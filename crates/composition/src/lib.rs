@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
-    MidnightIndexerConfig, MidnightIndexerConfigError, protected_live_midnight_wallet,
+    MidnightIndexerConfig, MidnightIndexerConfigError, MidnightStandaloneConfig,
+    MidnightStandaloneConfigError, protected_live_midnight_wallet,
+    protected_standalone_midnight_wallet,
 };
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
@@ -21,11 +23,11 @@ use oxid_wallet_application::{
     ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
     ListWalletProfilesUseCase, LockWalletUseCase, PrepareWalletTransferUseCase,
     SelectWalletNetworkUseCase, SelectWalletProfileService, SelectWalletProfileUseCase,
-    SignWalletDataUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
-    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
-    WalletAccountService, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
-    WalletNetworkService, WalletProfileRepository, WalletProtectionPort, WalletProtectionService,
-    WalletTransactionPort, WalletTransactionService,
+    SignWalletDataUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
+    WalletAccountReadPort, WalletAccountService, WalletKeyOperationPort, WalletKeyService,
+    WalletNetworkPort, WalletNetworkService, WalletProfileRepository, WalletProtectionPort,
+    WalletProtectionService, WalletTransactionPort, WalletTransactionService,
 };
 
 /// Application capabilities shared by every incoming adapter.
@@ -50,6 +52,7 @@ pub struct ApplicationServices {
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
+    submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
     get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
 }
 
@@ -150,6 +153,11 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn submit_wallet_transfer(&self) -> Arc<dyn SubmitWalletTransferUseCase> {
+        Arc::clone(&self.submit_wallet_transfer)
+    }
+
+    #[must_use]
     pub fn get_wallet_transfer_draft(&self) -> Arc<dyn GetWalletTransferDraftUseCase> {
         Arc::clone(&self.get_wallet_transfer_draft)
     }
@@ -192,6 +200,15 @@ pub const MIDNIGHT_INDEXER_WS_URL_ENV: &str = "OXID_MIDNIGHT_INDEXER_WS_URL";
 /// Environment variable holding the public unshielded address to observe.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MIDNIGHT_UNSHIELDED_ADDRESS_ENV: &str = "OXID_MIDNIGHT_UNSHIELDED_ADDRESS";
+/// Environment variable holding the standalone indexer GraphQL HTTP route.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MIDNIGHT_INDEXER_HTTP_URL_ENV: &str = "OXID_MIDNIGHT_INDEXER_HTTP_URL";
+/// Environment variable holding the standalone Midnight node WebSocket route.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MIDNIGHT_NODE_WS_URL_ENV: &str = "OXID_MIDNIGHT_NODE_WS_URL";
+/// Environment variable holding the standalone Midnight proof-server base route.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MIDNIGHT_PROOF_SERVER_URL_ENV: &str = "OXID_MIDNIGHT_PROOF_SERVER_URL";
 
 /// Safe startup failures for optional standalone-indexer composition.
 #[cfg(not(target_arch = "wasm32"))]
@@ -200,6 +217,7 @@ pub enum HeadlessCompositionError {
     IncompleteMidnightIndexerConfiguration,
     NonUnicodeMidnightIndexerConfiguration,
     InvalidMidnightIndexerConfiguration(MidnightIndexerConfigError),
+    InvalidMidnightStandaloneConfiguration(MidnightStandaloneConfigError),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -207,12 +225,13 @@ impl std::fmt::Display for HeadlessCompositionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let message = match self {
             Self::IncompleteMidnightIndexerConfiguration => {
-                "Midnight live mode requires network, indexer WebSocket, and unshielded address configuration together"
+                "Midnight live mode requires either network, indexer WebSocket, and unshielded address, or those values plus every standalone submission endpoint"
             }
             Self::NonUnicodeMidnightIndexerConfiguration => {
                 "Midnight live-mode configuration must be valid Unicode"
             }
             Self::InvalidMidnightIndexerConfiguration(error) => return error.fmt(formatter),
+            Self::InvalidMidnightStandaloneConfiguration(error) => return error.fmt(formatter),
         };
         formatter.write_str(message)
     }
@@ -221,18 +240,23 @@ impl std::fmt::Display for HeadlessCompositionError {
 #[cfg(not(target_arch = "wasm32"))]
 impl std::error::Error for HeadlessCompositionError {}
 
-/// Selects deterministic simulation when no live variables are present, or a
-/// real standalone-indexer source when all public variables are valid.
+/// Selects deterministic simulation when no live variables are present, a
+/// read-only indexer when the three read values are present, or complete
+/// standalone submission when all six public values are valid.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn compose_headless_from_environment() -> Result<ApplicationServices, HeadlessCompositionError>
 {
     let values = [
         read_optional_environment(MIDNIGHT_NETWORK_ID_ENV)?,
         read_optional_environment(MIDNIGHT_INDEXER_WS_URL_ENV)?,
+        read_optional_environment(MIDNIGHT_INDEXER_HTTP_URL_ENV)?,
+        read_optional_environment(MIDNIGHT_NODE_WS_URL_ENV)?,
+        read_optional_environment(MIDNIGHT_PROOF_SERVER_URL_ENV)?,
         read_optional_environment(MIDNIGHT_UNSHIELDED_ADDRESS_ENV)?,
     ];
-    match parse_optional_indexer_config(values)? {
-        Some(config) => Ok(compose_headless_live(config)),
+    match parse_optional_midnight_config(values)? {
+        Some(HeadlessMidnightConfig::Indexer(config)) => Ok(compose_headless_live(config)),
+        Some(HeadlessMidnightConfig::Standalone(config)) => Ok(compose_headless_standalone(config)),
         None => Ok(compose_headless()),
     }
 }
@@ -257,6 +281,25 @@ pub fn compose_headless_live(config: MidnightIndexerConfig) -> ApplicationServic
     )
 }
 
+/// Wires development custody to the complete, explicitly configured standalone stack.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let midnight = Arc::new(protected_standalone_midnight_wallet(
+        config,
+        Arc::clone(&clock),
+        Arc::clone(&security),
+    ));
+    compose_with_adapters(
+        Arc::new(JsonWalletProfileRepository::at_default_location()),
+        security,
+        midnight,
+    )
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn read_optional_environment(key: &str) -> Result<Option<String>, HeadlessCompositionError> {
     std::env::var_os(key)
@@ -269,17 +312,56 @@ fn read_optional_environment(key: &str) -> Result<Option<String>, HeadlessCompos
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_optional_indexer_config(
-    values: [Option<String>; 3],
-) -> Result<Option<MidnightIndexerConfig>, HeadlessCompositionError> {
-    let [network_id, websocket_url, address] = values;
-    match (network_id, websocket_url, address) {
-        (None, None, None) => Ok(None),
-        (Some(network_id), Some(websocket_url), Some(address)) => {
-            MidnightIndexerConfig::new(network_id, websocket_url, address)
+enum HeadlessMidnightConfig {
+    Indexer(MidnightIndexerConfig),
+    Standalone(MidnightStandaloneConfig),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_optional_midnight_config(
+    values: [Option<String>; 6],
+) -> Result<Option<HeadlessMidnightConfig>, HeadlessCompositionError> {
+    let [
+        network_id,
+        indexer_ws,
+        indexer_http,
+        node_ws,
+        proof_server,
+        address,
+    ] = values;
+    match (
+        network_id,
+        indexer_ws,
+        indexer_http,
+        node_ws,
+        proof_server,
+        address,
+    ) {
+        (None, None, None, None, None, None) => Ok(None),
+        (Some(network), Some(indexer_ws), None, None, None, Some(address)) => {
+            MidnightIndexerConfig::new(network, indexer_ws, address)
+                .map(HeadlessMidnightConfig::Indexer)
                 .map(Some)
                 .map_err(HeadlessCompositionError::InvalidMidnightIndexerConfiguration)
         }
+        (
+            Some(network),
+            Some(indexer_ws),
+            Some(indexer_http),
+            Some(node_ws),
+            Some(proof_server),
+            Some(address),
+        ) => MidnightStandaloneConfig::new(
+            network,
+            indexer_ws,
+            indexer_http,
+            node_ws,
+            proof_server,
+            address,
+        )
+        .map(HeadlessMidnightConfig::Standalone)
+        .map(Some)
+        .map_err(HeadlessCompositionError::InvalidMidnightStandaloneConfiguration),
         _ => Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration),
     }
 }
@@ -347,6 +429,7 @@ where
     let sync_wallet_account: Arc<dyn SyncWalletAccountUseCase> = accounts;
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();
     let authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase> = transactions.clone();
+    let submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase> = transactions.clone();
     let get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase> = transactions;
 
     ApplicationServices {
@@ -369,6 +452,7 @@ where
         sync_wallet_account,
         prepare_wallet_transfer,
         authorize_wallet_transfer,
+        submit_wallet_transfer,
         get_wallet_transfer_draft,
     }
 }
@@ -455,10 +539,45 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn standalone_live_configuration_is_all_or_nothing() {
-        assert_eq!(parse_optional_indexer_config([None, None, None]), Ok(None));
+        const ADDRESS: &str =
+            "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+        assert!(matches!(
+            parse_optional_midnight_config([None, None, None, None, None, None]),
+            Ok(None)
+        ));
+        assert!(matches!(
+            parse_optional_midnight_config([
+                Some("devnet".to_owned()),
+                Some("ws://127.0.0.1:8088/api/v1/graphql/ws".to_owned()),
+                None,
+                None,
+                None,
+                Some(ADDRESS.to_owned()),
+            ]),
+            Ok(Some(HeadlessMidnightConfig::Indexer(_)))
+        ));
+        assert!(matches!(
+            parse_optional_midnight_config([
+                Some("devnet".to_owned()),
+                Some("ws://127.0.0.1:8088/api/v1/graphql/ws".to_owned()),
+                Some("http://127.0.0.1:8088/api/v1/graphql".to_owned()),
+                Some("ws://127.0.0.1:9944".to_owned()),
+                Some("http://127.0.0.1:6300".to_owned()),
+                Some(ADDRESS.to_owned()),
+            ]),
+            Ok(Some(HeadlessMidnightConfig::Standalone(_)))
+        ));
         assert_eq!(
-            parse_optional_indexer_config([Some("undeployed".to_owned()), None, None,]),
-            Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
+            parse_optional_midnight_config([
+                Some("undeployed".to_owned()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ])
+            .err(),
+            Some(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
         );
     }
 }

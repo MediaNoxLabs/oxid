@@ -1,6 +1,6 @@
 # Midnight Git source policy
 
-- Status: source policy enforced; canonical transaction packages selected by issue #9
+- Status: source policy enforced; canonical transaction and standalone submission packages selected by issues #9/#11
 - Reviewed: 2026-08-12
 - Repositories: `midnightntwrk/midnight-ledger`, `midnightntwrk/midnight-zk`
 - ADR: [ADR-0015](../adr/0015-midnight-library-selection.md)
@@ -18,9 +18,12 @@ and protocols. Issue #9 adds a focused native transaction capability that does
 consume canonical ledger, coin, storage, serialization, and cryptographic
 types. Those packages are now direct Git dependencies at the selected revision
 and are present in `Cargo.lock`; the target-specific dependency section keeps
-them out of `wasm32`. `midnight-ledger` still resolves an unconditional
-transaction/proof graph with default features disabled, so proving features and
-a direct `midnight-zk` source remain absent.
+them out of `wasm32`. Issue #11 enables the ledger's `proving` feature for DUST
+spends and adds `midnight-onchain-runtime` from the same immutable Git revision.
+The feature resolves published `midnight-proofs`, `midnight-circuits`, and
+`midnight-zk-stdlib` releases transitively. There is still no direct
+`midnight-zk` dependency; a future local prover must make and review that source
+selection explicitly.
 
 The reviewed prototype at commit
 `074b1a4bccbfee1740ee188374b606a022ecef42` used paths relative to the
@@ -53,10 +56,13 @@ reviewed branches resolved to:
   `cd2c27b2659de157409a9b96dba0dbaf1218f00b`.
 
 ADR-0015 selects these as the initial compatibility baseline. The ledger
-revision is selected for canonical transaction authorization. The proof
-revision remains absent until a proving adapter requires it. Each direct use must
-still validate its exact feature set, license graph, security posture, and
-Tier-1 native target builds.
+revision is selected for canonical transaction authorization and remote DUST
+proof orchestration. The `midnight-zk` revision remains absent because Oxid has
+not added a direct local proof-system dependency. Registry proof crates reached
+through the selected ledger feature are lockfile-pinned transitive inputs, not a
+substitute for that future source decision. Each direct use must still validate
+its exact feature set, license graph, security posture, and Tier-1 native target
+builds.
 
 ## Enforcement
 

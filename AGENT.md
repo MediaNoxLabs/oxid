@@ -77,8 +77,31 @@ unshielded NIGHT preparation and authorization under ADR-0026. Native
 profile-scoped one-hour drafts, follows the prototype's descending greedy UTXO
 selection and sorted `0xCAFE` intent construction, and signs through the opaque
 custody reference. Headless prepare/authorize/draft methods expose public
-previews only. DUST balancing, proving, submission, and the one-shot send method
-remain queued; production/mobile composition remains fail-closed.
+previews only. This is the first stage of the transaction flow.
+
+[Issue #11](https://github.com/MediaNoxLabs/oxid/issues/11) and ADR-0027 complete
+the native development/headless flow. Submission derives the canonical DUST
+child at `m/44'/2400'/account'/2/0`, replays bounded DUST ledger events against
+the indexer's current ledger parameters, obtains a proof from the explicitly
+configured proof service, and submits the unsigned extrinsic to a standalone
+node. `wallet.transaction.submit_unshielded` and its prototype-named staged
+`wallet.transaction.send_unshielded` alias expose public outcomes only;
+zero-configuration headless runs use a deterministic simulated completion
+adapter. A retryable failure restores an authorized draft; cancelling the
+caller leaves the worker responsible for the eventual transition so a second
+send cannot race it. An ambiguous post-submit node outcome or unexpected worker
+termination remains `Submitting` and forbids blind retry until reconciliation
+exists. A submitted draft is idempotent.
+[Issue #12](https://github.com/MediaNoxLabs/oxid/issues/12)
+tracks private local proving. Production/mobile composition remains fail-closed
+until native custody, local proving, and production chain access are reviewed.
+
+[Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
+Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
+web --target wasm32-unknown-unknown` currently stops in the pre-existing
+`getrandom 0.2` graph because its JavaScript backend feature is not enabled.
+Keep that repair target-scoped; it must not add browser-only dependencies to
+the green Tier-1 Android and iOS graphs.
 
 ## Prototype provenance
 
@@ -135,8 +158,10 @@ ADR-0022 records Nix as the reproducible environment. ADR-0023 records the
 post-M0 prototype-parity priority. ADR-0024 records the versioned NDJSON
 headless adapter and forbids secret-bearing results. ADR-0025 separates durable
 public profile metadata from protected secret storage. ADR-0026 stages Midnight
-transaction authorization before proving/submission. ADR-0017 records the
-accepted platform-custody split. ADR status
+transaction authorization before proving/submission. ADR-0027 defines and
+implements standalone DUST synchronization, proving, and node submission for
+development/headless use. ADR-0017 records the accepted platform-custody split.
+ADR status
 and delivery state are deliberately separate: an accepted future boundary is
 binding but does not mean the capability is implemented. Proposed ADRs are
 gates, not dependency authorization.
@@ -152,7 +177,7 @@ Current package ownership:
 | `crates/adapters/storage-memory` | Development/test implementation of wallet persistence. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
-| `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, and retained development drafts. |
+| `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, and standalone DUST/proving/submission completion. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter and presentation state. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -172,10 +197,16 @@ reference.
 wallet protection and Midnight account state unavailable. `compose_headless()`
 combines persistent public profiles with the ephemeral development key adapter
 and public simulated Midnight source; `compose_headless_from_environment()`
-selects either that zero-configuration path or the explicit native live source;
-`compose_in_memory()` uses the development adapters for tests. Never change
-`compose()` to select `storage-dev`, simulation, or environment-derived indexer
-configuration. Headless protected-key methods accept only public labels,
+selects the zero-configuration simulated path, a read-only live source when the
+three original Midnight variables are present, or full standalone submission
+when all six Midnight variables are present. The additional submission variables
+are `OXID_MIDNIGHT_INDEXER_HTTP_URL`, `OXID_MIDNIGHT_NODE_WS_URL`, and
+`OXID_MIDNIGHT_PROOF_SERVER_URL`; partial groups fail startup. The original
+three are `OXID_MIDNIGHT_NETWORK_ID`, `OXID_MIDNIGHT_INDEXER_WS_URL`, and
+`OXID_MIDNIGHT_UNSHIELDED_ADDRESS`. `compose_in_memory()` uses the development
+adapters for tests. Never change `compose()` to select `storage-dev`, simulation,
+or environment-derived indexer, node, or proof configuration. Headless
+protected-key methods accept only public labels,
 algorithms, purposes, bounded payloads, opaque references, and explicit
 human-readable confirmations. Passphrases, seeds, recovery phrases, and raw
 private keys are rejected by strict parameter decoding.
@@ -189,20 +220,32 @@ replaces a fixture or watch-only address.
 
 The headless transaction surface is
 `wallet.transaction.prepare_unshielded`,
-`wallet.transaction.authorize_unshielded`, and `wallet.transaction.draft`.
-Every preview uses decimal-string atomic units and truthfully reports that DUST
-balancing/proving/submission remain pending. Never add signing payload,
-signature, transaction bytes, seed, or private-key fields to these DTOs. Drafts
-are process-local and profile-scoped; authorization must bind the exact public
-challenge and explicit human-readable confirmation.
+`wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
+`wallet.transaction.submit_unshielded`, and the
+`wallet.transaction.send_unshielded` alias. Pre-submission previews use
+decimal-string atomic units and report DUST balancing/proving/submission as
+pending; the submitted outcome exposes the final DUST fee plus public
+transaction and block identifiers. Never add signing payload, signature,
+transaction bytes, proof witness, seed, or private-key fields to these DTOs.
+Drafts are process-local and profile-scoped; authorization must bind the exact
+public challenge and explicit human-readable confirmation. Retryable worker
+failure restores `Authorized`; cancelling the caller leaves the draft
+`Submitting` until that worker publishes its result. A completed submission is
+replayed idempotently without using custody again. A post-submit timeout or
+transport loss remains `Submitting` because its external outcome is unknown;
+never make that state retryable without chain reconciliation.
 
 The accepted ledger compatibility revision is
 `d9414884db9da9e9b1f6f3a7f742d79a5732f817`. The native Midnight transaction
 adapter consumes its ledger/base-crypto/coin/serialize/storage/transient
 packages from the official HTTPS Git URL at that full `rev`, with ledger default
-features disabled. The upstream unconditional graph is substantial, so keep it
+features disabled and its `proving` feature enabled. It also consumes the
+official runtime at the same Git revision. Proving resolves published
+`midnight-proofs 0.7.3`, `midnight-circuits 6.3.0`, and
+`midnight-zk-stdlib 1.3.0` transitively; Oxid has no direct `midnight-zk` Git
+dependency. The upstream unconditional graph is substantial, so keep it
 target-gated out of `wasm32`, out of read-model/core APIs, and validated on iOS
-and Android. There is no direct `midnight-zk` or proving dependency yet.
+and Android.
 
 The development HD adapter pins `bip32` 0.5.3, `k256` 0.13.4, and `sha2`
 0.10.9. The stable BIP32 release already selects the same `k256` generation;
@@ -223,6 +266,14 @@ message/frame sizes, event and UTXO-record counts, cursor monotonicity, exact
 decimal `u128` decoding, address ownership, and checked aggregation. The
 `wasm32` graph intentionally excludes this native transport; browser WebSockets
 require a separate reviewed adapter.
+
+Standalone completion has separate bounded HTTP indexer replay, proof-service,
+and node-WebSocket paths. It rejects stale or malformed chain-tip parameters,
+replays canonical DUST events with checked decay and ordering, permits plain
+HTTP proof service access only on loopback, and otherwise requires HTTPS. The
+proof witness must never be logged or returned. Node submission waits for a
+successful finalized block event and exposes only public hashes. Keep every
+external error and response body behind sanitized adapter errors.
 
 The reviewed WebPKI root store brings Mozilla CA certificate data under
 `CDLA-Permissive-2.0`; `deny.toml` narrowly permits that permissive data license.
@@ -369,7 +420,11 @@ to silence the shell probe.
   `docs/security/advisory-exceptions.md`. Review the Dioxus exceptions on every
   Dioxus/Wry update. The pinned Midnight graph also retains unmaintained
   `bincode 2.0.1` through its ZK stack; issue #10 tracks removal. Review it on
-  every Midnight update and before production custody or release work.
+  every Midnight update and before production custody or release work. Subxt
+  also retains an active build-time `proc-macro-error2` exception; its
+  `subxt-lightclient`/Smoldot `libsecp256k1` and `lru` advisories are lockfile-only
+  because that feature is disabled. Enabling the light client requires a new
+  review rather than another blanket ignore.
 - A green aggregate must not hide a skipped core, architecture, security, or UI
   compile lane.
 - Coverage thresholds are enforced locally and in CI; hosted reporting may

@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-12
 - Source: Blueprint §§3, 7–8, 12–13 and [issue #9](https://github.com/MediaNoxLabs/oxid/issues/9)
-- Implementation state: Canonical unshielded NIGHT prepare/authorize/draft flow implemented for native development and headless compositions; proving, DUST balancing, and submission pending
+- Implementation state: Canonical unshielded NIGHT prepare/authorize/draft flow implemented; ADR-0027 now supplies the subsequent native development/headless submission stage
 
 ## Context
 
@@ -43,12 +43,15 @@ The headless methods are:
 - `wallet.transaction.authorize_unshielded`;
 - `wallet.transaction.draft`.
 
-They are `development_only` and always report `proofRequired: true` and
-`submissionReady: false`. The one-shot
-`wallet.transaction.send_unshielded` capability remains `queued` until DUST
-balancing, proving, serialization, node submission, and outcome tracking are
-real. Normal mobile/production composition remains fail-closed without native
-custody.
+They are `development_only`. A prepared result reports
+`submissionReady: false`; successful authorization changes it to `true` while
+`proofRequired` remains true. At this ADR's initial delivery the prototype-named
+`wallet.transaction.send_unshielded` capability remained queued. ADR-0027
+subsequently added an explicitly confirmed submit stage and a staged
+compatibility alias after DUST balancing, proving, serialization, node
+submission, and outcome tracking became real in native development/headless
+composition. Normal mobile/production composition remains fail-closed without
+native custody.
 
 ## Consequences
 
@@ -58,7 +61,8 @@ custody.
   Midnight adapter and must continue to pass both Tier-1 mobile builds.
 - Drafts do not survive process restart; durable queues require a separate
   protected-storage decision.
-- UTXO reservation, concurrent-draft conflict handling, DUST fees, proving,
-  replacement, submission, and confirmation tracking remain follow-up ports.
+- UTXO reservation, replacement, durable confirmation tracking, and
+  production-grade proving remain follow-up ports. Development submission is
+  governed by ADR-0027.
 - A future one-shot UI action may orchestrate these stages, but may not erase
   the preview/confirmation boundary or claim submission before it occurs.

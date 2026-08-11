@@ -15,6 +15,7 @@ revisions on 2026-08-11 and re-verified on 2026-08-12:
 | Indexer protocol | `midnight-indexer` `82759bf186184684f13a9ffa97b58b7b7684f47c`, `indexer-api/graphql/schema-v4.graphql` | `graphql-transport-ws`, progress-first `unshieldedTransactions`, decimal `u128` values, UTXO create/spend replay, block metadata, transaction status, and DUST fee shapes |
 | Prototype live transport | `midnight-ledger` `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/unshielded/{snapshot,transport}.rs` | bounded connection/ack/idle behavior, progress-first snapshot termination, ping/pong, and address-scoped replay semantics |
 | Prototype transfer | same prototype revision, `mobile-bench/wallet-core/src/{wallet.rs,unshielded/mod.rs}` | native NIGHT, same-network recipient decoding, descending greedy selection, sorted spends/outputs, change, `0xCAFE` intent segment, one-hour TTL, and BIP340 authorization before DUST/proving/submission |
+| Prototype completion | same prototype revision, `mobile-bench/wallet-core/src/{wallet.rs,dust/snapshot.rs,tx/balance.rs,tx/prove_http.rs,node/client.rs}` | DUST role `2/0`, event replay, live time/parameters, iterative `0xFEED` fee balancing, proof-server wire format, sealing, tagged serialization, and unsigned runtime submission |
 
 No Rust or TypeScript implementation was copied. Oxid owns the domain model,
 ports, simulation, and presentation. Public address payloads remain codec
@@ -50,9 +51,31 @@ through the opaque custody signing port. The returned BIP340 signature is
 verified before the signed transaction is retained.
 
 Headless prepare/authorize/draft responses contain exact public preview data
-only. Their fee is `requires_balancing`, `proofRequired` is true, and
-`submissionReady` is false. Drafts expire after one hour and expired signing or
-transaction material is cleared. The one-shot send method remains queued.
+only. Their fee is `requires_balancing` and `proofRequired` is true. Prepared
+drafts report `submissionReady: false`; successfully authorized drafts report
+`submissionReady: true`. Drafts expire after one hour and expired signing or
+transaction material is cleared. ADR-0027 adds the subsequent explicitly
+confirmed submit stage and keeps this review boundary intact.
+
+## Standalone completion mapping
+
+Issue #11 completes the development/headless path through a focused
+`WalletTransactionPort::submit` operation. The DUST secret is derived at
+`m/44'/2400'/account'/2/0` and borrowed only inside a custody callback. The
+adapter bounds and replays DUST ledger events, rejects malformed live chain
+parameters, balances fees at `0xFEED`, sends DUST proof preimages to a validated
+proof-server route, seals and serializes internally, and submits the dynamic
+`Midnight.send_mn_transaction` call unsigned. Only the final fee plus public
+transaction/block identifiers cross the application boundary.
+
+Headless simulation covers submission without contacting external services and
+labels its outcome. Locked custody and failures known to precede or reject node
+submission restore the authorized state. An ambiguous post-submit node outcome
+stays `submitting` rather than permitting a duplicate. Cancelling the async
+future leaves the worker responsible for publishing its eventual final or
+retryable state, so another send cannot race an external side effect. Completed
+retries return the identical outcome. No response contains the DUST child,
+proof input, signature, or transaction bytes.
 
 ## Protected account derivation mapping
 
@@ -122,8 +145,10 @@ slice now justifies direct native dependencies on the selected
 `midnight-ledger` packages with default ledger features disabled. Cargo still
 resolves the upstream unconditional transaction/proof graph, so the dependency
 is target-gated away from `wasm32` and must pass both native mobile graphs.
-There is no direct `midnight-zk` dependency or proving feature; an isolated
-proving adapter still requires design and measurements.
+The ledger `proving` feature is enabled for DUST proof orchestration and resolves
+published Midnight proof crates transitively. There is no direct
+`midnight-zk` Git dependency. A private local prover still requires the source,
+resource, and mobile measurements tracked by issue #12.
 
 ## Deliberate exclusions
 
@@ -131,12 +156,12 @@ proving adapter still requires design and measurements.
 - caller-supplied roots, mnemonics, recovery/import/export, durable software
   roots, or production mobile custody;
 - internal NIGHT/change roles beyond external receive derivation, shielded
-  Zswap keys, DUST keys, and metadata keys;
+  Zswap keys, exported DUST keys, and metadata keys;
 - committed local, tailnet, pre-production, node, indexer, or prover endpoints;
 - persisted unshielded cursors, background subscriptions, chain checkpoints,
   shielded state, DUST generations, and DUST raw-ledger events;
-- DUST balancing, proof generation, submission, replacement, fee estimation,
-  UTXO reservation, or durable draft queues;
+- local/private proof generation, replacement, fee preview/estimation, UTXO
+  reservation, durable DUST checkpoints, or durable draft queues;
 - generated proof artifacts, native projects, JavaScript bridges, QR scanning,
   copy/share integration, databases, and captured diagnostics.
 
@@ -144,7 +169,8 @@ Production composition therefore exposes the network catalog but returns an
 unavailable account snapshot with no account ID, address, balance, or activity
 claim. Native headless composition selects either the deterministic simulator
 or an explicitly configured public live source and adds process-local
-development derivation/BIP340 signing by opaque reference. Native development
-mode can construct and authorize canonical unshielded NIGHT intents, but no mode
-proves or submits them or provides shielded assets, DUST generation state,
-durable recovery, or production custody.
+development derivation/BIP340 signing by opaque reference. Full standalone
+configuration additionally proves and submits canonical unshielded NIGHT
+intents through a remote proof server. No mode provides shielded assets,
+durable DUST generation state, private local proving, durable recovery, or
+production custody.

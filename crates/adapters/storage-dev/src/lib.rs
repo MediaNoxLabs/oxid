@@ -13,8 +13,9 @@ use ed25519_dalek::{Signer as _, SigningKey as Ed25519SigningKey};
 use k256::schnorr::{SigningKey as Secp256k1SchnorrSigningKey, signature::Signer as _};
 use oxid_platform_ports::{ClockPort, RandomPort};
 use oxid_wallet_application::{
-    DeriveProtectedKeyRequest, GenerateProtectedKeyRequest, WalletHdPath, WalletKeyDerivationPort,
-    WalletKeyOperationPort, WalletProtectionPort, WalletSecurityPortError,
+    DeriveProtectedKeyRequest, GenerateProtectedKeyRequest, WalletDerivedSecretUsePort,
+    WalletHdPath, WalletKeyDerivationPort, WalletKeyOperationPort, WalletProtectionPort,
+    WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyReference,
@@ -184,16 +185,7 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
             return Err(WalletSecurityPortError::UnsupportedAlgorithm);
         }
 
-        let mut extended = XPrv::new(root_seed.as_slice())
-            .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
-        for component in path.components() {
-            let child = ChildNumber::new(component.index(), component.hardened())
-                .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
-            extended = extended
-                .derive_child(child)
-                .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
-        }
-        let private_bytes = Zeroizing::new(extended.to_bytes());
+        let private_bytes = Self::derive_secret(root_seed, path)?;
         let signing_key = Secp256k1SchnorrSigningKey::from_bytes(private_bytes.as_ref())
             .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
         let public_key = WalletPublicKey::new(
@@ -204,6 +196,22 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
             DevelopmentKeyMaterial::Secp256k1Schnorr(signing_key),
             public_key,
         ))
+    }
+
+    fn derive_secret(
+        root_seed: &[u8; 32],
+        path: &WalletHdPath,
+    ) -> Result<Zeroizing<[u8; 32]>, WalletSecurityPortError> {
+        let mut extended = XPrv::new(root_seed.as_slice())
+            .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+        for component in path.components() {
+            let child = ChildNumber::new(component.index(), component.hardened())
+                .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+            extended = extended
+                .derive_child(child)
+                .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+        }
+        Ok(Zeroizing::new(extended.to_bytes()))
     }
 }
 
@@ -441,6 +449,26 @@ where
     }
 }
 
+impl<C, N> WalletDerivedSecretUsePort for DevelopmentWalletSecurity<C, N>
+where
+    C: ClockPort,
+    N: RandomPort,
+{
+    fn use_derived_secret(
+        &self,
+        profile_id: &WalletProfileId,
+        path: &WalletHdPath,
+        operation: &mut dyn FnMut(&[u8; 32]) -> Result<(), WalletSecurityPortError>,
+    ) -> Result<(), WalletSecurityPortError> {
+        let secret = {
+            let profiles = self.profiles()?;
+            let profile = Self::unlocked_profile(&profiles, profile_id)?;
+            Self::derive_secret(&profile.root_seed, path)?
+        };
+        operation(&secret)
+    }
+}
+
 /// Fail-closed adapter used until a production platform adapter is composed.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UnavailableWalletSecurity;
@@ -506,6 +534,17 @@ impl WalletKeyDerivationPort for UnavailableWalletSecurity {
         _: &WalletProfileId,
         _: DeriveProtectedKeyRequest,
     ) -> Result<WalletKeyDescriptor, WalletSecurityPortError> {
+        Err(WalletSecurityPortError::Unavailable)
+    }
+}
+
+impl WalletDerivedSecretUsePort for UnavailableWalletSecurity {
+    fn use_derived_secret(
+        &self,
+        _: &WalletProfileId,
+        _: &WalletHdPath,
+        _: &mut dyn FnMut(&[u8; 32]) -> Result<(), WalletSecurityPortError>,
+    ) -> Result<(), WalletSecurityPortError> {
         Err(WalletSecurityPortError::Unavailable)
     }
 }
@@ -616,6 +655,17 @@ mod tests {
             WalletHdPathComponent::new(account, true).expect("account is valid"),
             WalletHdPathComponent::new(0, false).expect("role is valid"),
             WalletHdPathComponent::new(index, false).expect("index is valid"),
+        ])
+        .expect("path is valid")
+    }
+
+    fn midnight_dust_path(account: u32) -> WalletHdPath {
+        WalletHdPath::new(vec![
+            WalletHdPathComponent::new(44, true).expect("purpose is valid"),
+            WalletHdPathComponent::new(2400, true).expect("coin type is valid"),
+            WalletHdPathComponent::new(account, true).expect("account is valid"),
+            WalletHdPathComponent::new(2, false).expect("role is valid"),
+            WalletHdPathComponent::new(0, false).expect("index is valid"),
         ])
         .expect("path is valid")
     }
@@ -785,6 +835,47 @@ mod tests {
             public_hex,
             "b193e54524dc796402870a883fbdcd83869c9c307dda8c0d99c5f769169fc883"
         );
+    }
+
+    #[test]
+    fn bounded_dust_child_use_is_deterministic_and_requires_unlock() {
+        let adapter = DevelopmentWalletSecurity::new(Arc::new(FixedClock), Arc::new(SeedOneRandom));
+        adapter.initialize(&profile_id()).expect("setup succeeds");
+        let path = midnight_dust_path(7);
+        let mut first = None;
+        adapter
+            .use_derived_secret(&profile_id(), &path, &mut |secret| {
+                first = Some(*secret);
+                Ok(())
+            })
+            .expect("bounded child operation succeeds");
+        let mut second = None;
+        adapter
+            .use_derived_secret(&profile_id(), &path, &mut |secret| {
+                second = Some(*secret);
+                Ok(())
+            })
+            .expect("repeated bounded child operation succeeds");
+        assert_eq!(first, second);
+        assert!(first.is_some_and(|secret| secret != [0; 32]));
+
+        let propagated = adapter
+            .use_derived_secret(&profile_id(), &path, &mut |_| {
+                Err(WalletSecurityPortError::AuthorizationDenied)
+            })
+            .expect_err("operation failure is preserved");
+        assert_eq!(propagated, WalletSecurityPortError::AuthorizationDenied);
+
+        adapter.lock(&profile_id()).expect("lock succeeds");
+        let mut called = false;
+        let locked = adapter
+            .use_derived_secret(&profile_id(), &path, &mut |_| {
+                called = true;
+                Ok(())
+            })
+            .expect_err("locked wallet rejects secret use");
+        assert_eq!(locked, WalletSecurityPortError::Locked);
+        assert!(!called);
     }
 
     #[test]

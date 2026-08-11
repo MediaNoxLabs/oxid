@@ -42,7 +42,10 @@ impl ProcessHarness {
             .env("OXID_PROFILE_STORE_PATH", store_path)
             .env_remove("OXID_MIDNIGHT_NETWORK_ID")
             .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
-            .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS");
+            .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
+            .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
+            .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
+            .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL");
         for (key, value) in environment {
             command.env(key, value);
         }
@@ -368,12 +371,15 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
         .env("OXID_MIDNIGHT_NETWORK_ID", "undeployed")
         .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
         .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
+        .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
+        .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
+        .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
         .output()
         .expect("headless wallet should report startup failure");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
-    assert!(stderr.contains("requires network, indexer WebSocket, and unshielded address"));
+    assert!(stderr.contains("requires either network, indexer WebSocket"));
     assert!(!stderr.contains(LIVE_ADDRESS));
 }
 
@@ -800,7 +806,7 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
     assert_eq!(authorized["ok"], true, "unexpected response: {authorized}");
     assert_eq!(authorized["result"]["transfer"]["state"], "authorized");
     assert_eq!(authorized["result"]["transfer"]["proofRequired"], true);
-    assert_eq!(authorized["result"]["transfer"]["submissionReady"], false);
+    assert_eq!(authorized["result"]["transfer"]["submissionReady"], true);
     assert!(!authorized.to_string().contains("signatureHex"));
     assert!(!authorized.to_string().contains("transactionHex"));
 

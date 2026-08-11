@@ -1,0 +1,1213 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! Bounded standalone completion of an authorized Midnight transfer.
+
+use std::{fmt, net::IpAddr, sync::Arc, time::Duration};
+
+use futures::{SinkExt, StreamExt};
+use midnight_base_crypto::{schnorr::Signature, time::Timestamp};
+use midnight_coin_structure::coin::TokenType;
+use midnight_ledger::{
+    dust::{DustActions, DustLocalState, DustOutput, DustParameters, DustSecretKey},
+    events::Event,
+    structure::{
+        Intent, LedgerParameters, ProofPreimageMarker, ProofPreimageVersioned, ProofVersioned,
+        StandardTransaction, Transaction,
+    },
+};
+use midnight_onchain_runtime::cost_model::INITIAL_COST_MODEL;
+use midnight_storage::{
+    DefaultDB,
+    arena::Sp,
+    storage::{Array, HashMap as LedgerHashMap},
+};
+use midnight_transient_crypto::{
+    commitment::PedersenRandomness,
+    curve::Fr,
+    proofs::{Proof, ProofPreimage, ProvingKeyMaterial, ProvingProvider},
+};
+use oxid_wallet_application::WalletTransactionPortError;
+use oxid_wallet_domain::WalletTransferSubmissionMode;
+use rand::rngs::OsRng;
+use reqwest::Url;
+use serde_json::{Value, json};
+use subxt::{OnlineClient, SubstrateConfig, dynamic};
+use tokio::time::timeout;
+use tokio_tungstenite::{
+    connect_async_with_config,
+    tungstenite::{Message, client::IntoClientRequest, protocol::WebSocketConfig},
+};
+
+use crate::{
+    MidnightIndexerConfig, MidnightIndexerConfigError,
+    transaction::{
+        MidnightCompletionOutcome, MidnightCompletionRequest, MidnightTransactionCompleter,
+    },
+};
+
+const DUST_QUERY: &str = include_str!("../queries/dust_ledger_events.graphql");
+const CHAIN_TIP_QUERY: &str = include_str!("../queries/chain_tip.graphql");
+const DUST_BALANCE_SEGMENT: u16 = 0xFEED;
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const ACK_TIMEOUT: Duration = Duration::from_secs(15);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const PROOF_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const SUBMISSION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const MAX_ENDPOINT_CHARACTERS: usize = 2_048;
+const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+const MAX_FRAME_BYTES: usize = 256 * 1024;
+const MAX_DUST_EVENTS: usize = 100_000;
+const MAX_DUST_EVENT_BYTES: usize = 1024 * 1024;
+const MAX_DUST_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+const MAX_CHAIN_TIP_BYTES: usize = 1024 * 1024;
+const MAX_PROOF_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PROOF_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_TRANSACTION_BYTES: usize = 16 * 1024 * 1024;
+const MAX_BALANCE_ITERATIONS: usize = 16;
+
+type UnprovenTransaction =
+    Transaction<Signature, ProofPreimageMarker, PedersenRandomness, DefaultDB>;
+
+/// Validated public routes for the complete standalone transaction path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MidnightStandaloneConfig {
+    indexer: MidnightIndexerConfig,
+    indexer_http_url: String,
+    node_websocket_url: String,
+    proof_server_url: String,
+}
+
+impl MidnightStandaloneConfig {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        network_id: impl Into<String>,
+        indexer_websocket_url: impl AsRef<str>,
+        indexer_http_url: impl AsRef<str>,
+        node_websocket_url: impl AsRef<str>,
+        proof_server_url: impl AsRef<str>,
+        unshielded_address: impl AsRef<str>,
+    ) -> Result<Self, MidnightStandaloneConfigError> {
+        let indexer =
+            MidnightIndexerConfig::new(network_id, indexer_websocket_url, unshielded_address)
+                .map_err(MidnightStandaloneConfigError::Indexer)?;
+        let indexer_http_url = validate_http_url(indexer_http_url.as_ref(), false)
+            .map_err(|_| MidnightStandaloneConfigError::InvalidIndexerHttpEndpoint)?;
+        let node_websocket_url =
+            super::indexer::validate_websocket_url(node_websocket_url.as_ref())
+                .map_err(|_| MidnightStandaloneConfigError::InvalidNodeEndpoint)?;
+        let proof_server_url = validate_http_url(proof_server_url.as_ref(), true)
+            .map_err(|_| MidnightStandaloneConfigError::InvalidProofEndpoint)?;
+        Ok(Self {
+            indexer,
+            indexer_http_url,
+            node_websocket_url,
+            proof_server_url,
+        })
+    }
+
+    #[must_use]
+    pub const fn indexer(&self) -> &MidnightIndexerConfig {
+        &self.indexer
+    }
+
+    #[must_use]
+    pub fn indexer_http_url(&self) -> &str {
+        &self.indexer_http_url
+    }
+
+    #[must_use]
+    pub fn node_websocket_url(&self) -> &str {
+        &self.node_websocket_url
+    }
+
+    #[must_use]
+    pub fn proof_server_url(&self) -> &str {
+        &self.proof_server_url
+    }
+}
+
+/// Safe standalone route validation errors. Endpoint values are never rendered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MidnightStandaloneConfigError {
+    Indexer(MidnightIndexerConfigError),
+    InvalidIndexerHttpEndpoint,
+    InvalidNodeEndpoint,
+    InvalidProofEndpoint,
+}
+
+impl fmt::Display for MidnightStandaloneConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Indexer(error) => error.fmt(formatter),
+            Self::InvalidIndexerHttpEndpoint => {
+                formatter.write_str("Midnight indexer HTTP endpoint is invalid")
+            }
+            Self::InvalidNodeEndpoint => {
+                formatter.write_str("Midnight node WebSocket endpoint is invalid")
+            }
+            Self::InvalidProofEndpoint => formatter.write_str(
+                "Midnight proof endpoint must use loopback HTTP or HTTPS without credentials",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MidnightStandaloneConfigError {}
+
+#[derive(Clone)]
+pub(crate) struct LiveMidnightTransactionCompleter {
+    config: MidnightStandaloneConfig,
+}
+
+impl LiveMidnightTransactionCompleter {
+    pub(crate) const fn new(config: MidnightStandaloneConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl MidnightTransactionCompleter for LiveMidnightTransactionCompleter {
+    fn complete(
+        &self,
+        request: MidnightCompletionRequest,
+        dust_seed: &[u8; 32],
+    ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
+        let dust_key = DustSecretKey::derive_secret_key(dust_seed);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        runtime.block_on(complete_live(&self.config, request, &dust_key))
+    }
+}
+
+async fn complete_live(
+    config: &MidnightStandaloneConfig,
+    request: MidnightCompletionRequest,
+    dust_key: &DustSecretKey,
+) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
+    let chain_tip = fetch_chain_tip(config.indexer_http_url()).await?;
+    let mut dust_state = synchronize_dust(
+        config.indexer.websocket_url(),
+        dust_key,
+        chain_tip.parameters.dust,
+    )
+    .await?;
+    if dust_state.params != chain_tip.parameters.dust {
+        return Err(WalletTransactionPortError::InvalidChainState);
+    }
+    let current_time = if chain_tip.timestamp > dust_state.sync_time {
+        chain_tip.timestamp
+    } else {
+        dust_state.sync_time
+    };
+    let ttl = Timestamp::from_secs(request.expires_at_seconds);
+    if ttl <= current_time {
+        return Err(WalletTransactionPortError::DraftExpired);
+    }
+    let (balanced, fee_specks) = balance_dust(
+        request.transaction,
+        &mut dust_state,
+        dust_key,
+        &chain_tip.parameters,
+        current_time,
+        ttl,
+        config.indexer.network_id().as_str(),
+    )?;
+    let sealed = prove_via_http(balanced, config.proof_server_url()).await?;
+    let sealed_fee = sealed
+        .fees(&chain_tip.parameters, false)
+        .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+    if sealed_fee != fee_specks {
+        return Err(WalletTransactionPortError::InvalidChainState);
+    }
+    let mut transaction_bytes = Vec::new();
+    midnight_serialize::tagged_serialize(&sealed, &mut transaction_bytes)
+        .map_err(|_| WalletTransactionPortError::InvalidData)?;
+    if transaction_bytes.len() > MAX_TRANSACTION_BYTES {
+        return Err(WalletTransactionPortError::InvalidData);
+    }
+    let (transaction_hash, block_hash) =
+        submit_unsigned(config.node_websocket_url(), transaction_bytes).await?;
+    Ok(MidnightCompletionOutcome {
+        fee_specks,
+        transaction_hash,
+        block_hash,
+        mode: WalletTransferSubmissionMode::Live,
+    })
+}
+
+struct ChainTip {
+    timestamp: Timestamp,
+    parameters: LedgerParameters,
+}
+
+async fn fetch_chain_tip(endpoint: &str) -> Result<ChainTip, WalletTransactionPortError> {
+    ensure_tls_provider()?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(CONNECT_TIMEOUT)
+        .build()
+        .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    let response = client
+        .post(endpoint)
+        .json(&json!({ "query": CHAIN_TIP_QUERY, "variables": {} }))
+        .send()
+        .await
+        .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    if !response.status().is_success() {
+        return Err(WalletTransactionPortError::InvalidChainState);
+    }
+    let body = bounded_response(response, MAX_CHAIN_TIP_BYTES)
+        .await
+        .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+    let root: Value =
+        serde_json::from_slice(&body).map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+    decode_chain_tip(&root)
+}
+
+fn decode_chain_tip(root: &Value) -> Result<ChainTip, WalletTransactionPortError> {
+    if root
+        .get("errors")
+        .and_then(Value::as_array)
+        .is_some_and(|errors| !errors.is_empty())
+    {
+        return Err(WalletTransactionPortError::InvalidChainState);
+    }
+    let block = root
+        .pointer("/data/block")
+        .and_then(Value::as_object)
+        .ok_or(WalletTransactionPortError::InvalidChainState)?;
+    let timestamp_seconds = block
+        .get("timestamp")
+        .and_then(Value::as_i64)
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or(WalletTransactionPortError::InvalidChainState)?;
+    let parameters_hex = block
+        .get("ledgerParameters")
+        .and_then(Value::as_str)
+        .ok_or(WalletTransactionPortError::InvalidChainState)?;
+    let parameters_bytes = decode_bounded_hex(parameters_hex, MAX_CHAIN_TIP_BYTES)?;
+    let parameters = midnight_serialize::tagged_deserialize(&parameters_bytes[..])
+        .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+    Ok(ChainTip {
+        timestamp: Timestamp::from_secs(timestamp_seconds),
+        parameters,
+    })
+}
+
+async fn synchronize_dust(
+    endpoint: &str,
+    dust_key: &DustSecretKey,
+    parameters: DustParameters,
+) -> Result<DustLocalState<DefaultDB>, WalletTransactionPortError> {
+    ensure_tls_provider()?;
+    let mut request = endpoint
+        .into_client_request()
+        .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        "graphql-transport-ws"
+            .parse()
+            .map_err(|_| WalletTransactionPortError::InvalidChainState)?,
+    );
+    let mut websocket_config = WebSocketConfig::default();
+    websocket_config.max_message_size = Some(MAX_MESSAGE_BYTES);
+    websocket_config.max_frame_size = Some(MAX_FRAME_BYTES);
+    let (mut socket, response) = timeout(
+        CONNECT_TIMEOUT,
+        connect_async_with_config(request, Some(websocket_config), false),
+    )
+    .await
+    .map_err(|_| WalletTransactionPortError::Timeout)?
+    .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    if response
+        .headers()
+        .get("Sec-WebSocket-Protocol")
+        .and_then(|value| value.to_str().ok())
+        != Some("graphql-transport-ws")
+    {
+        return Err(WalletTransactionPortError::InvalidChainState);
+    }
+    send_websocket_json(
+        &mut socket,
+        json!({ "type": "connection_init", "payload": {} }),
+    )
+    .await?;
+    wait_for_ack(&mut socket).await?;
+    send_websocket_json(
+        &mut socket,
+        json!({
+            "type": "subscribe",
+            "id": "oxid-dust",
+            "payload": { "query": DUST_QUERY, "variables": { "id": 0 } }
+        }),
+    )
+    .await?;
+
+    let events = timeout(SNAPSHOT_TIMEOUT, async {
+        let mut events = Vec::<Event<DefaultDB>>::new();
+        let mut last_id = None;
+        let mut target_id = None;
+        let mut total_bytes = 0_usize;
+        loop {
+            let message = timeout(IDLE_TIMEOUT, socket.next())
+                .await
+                .map_err(|_| WalletTransactionPortError::Timeout)?
+                .ok_or(WalletTransactionPortError::InvalidChainState)?
+                .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+            match message {
+                Message::Text(text) => {
+                    let value: Value = serde_json::from_str(text.as_str())
+                        .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+                    match websocket_message_type(&value)? {
+                        "next" => {
+                            if value.get("id").and_then(Value::as_str) != Some("oxid-dust") {
+                                return Err(WalletTransactionPortError::InvalidChainState);
+                            }
+                            let data = value
+                                .pointer("/payload/data/dustLedgerEvents")
+                                .ok_or(WalletTransactionPortError::InvalidChainState)?;
+                            let decoded = decode_dust_event(data)?;
+                            if last_id.is_some_and(|last| decoded.id <= last)
+                                || decoded.id > decoded.max_id
+                                || target_id.is_some_and(|target| decoded.max_id < target)
+                            {
+                                return Err(WalletTransactionPortError::InvalidChainState);
+                            }
+                            target_id = Some(decoded.max_id);
+                            last_id = Some(decoded.id);
+                            total_bytes = total_bytes
+                                .checked_add(decoded.raw_bytes)
+                                .ok_or(WalletTransactionPortError::InvalidChainState)?;
+                            if total_bytes > MAX_DUST_TOTAL_BYTES || events.len() >= MAX_DUST_EVENTS
+                            {
+                                return Err(WalletTransactionPortError::InvalidChainState);
+                            }
+                            events.push(decoded.event);
+                            if decoded.id == decoded.max_id {
+                                break;
+                            }
+                        }
+                        "ping" => {
+                            send_websocket_json(
+                                &mut socket,
+                                json!({ "type": "pong", "payload": value.get("payload") }),
+                            )
+                            .await?;
+                        }
+                        "pong" => {}
+                        _ => return Err(WalletTransactionPortError::InvalidChainState),
+                    }
+                }
+                Message::Ping(payload) => socket
+                    .send(Message::Pong(payload))
+                    .await
+                    .map_err(|_| WalletTransactionPortError::Unavailable)?,
+                Message::Pong(_) => {}
+                _ => return Err(WalletTransactionPortError::InvalidChainState),
+            }
+        }
+        Ok::<_, WalletTransactionPortError>(events)
+    })
+    .await
+    .map_err(|_| WalletTransactionPortError::Timeout)??;
+
+    let _ = send_websocket_json(
+        &mut socket,
+        json!({ "type": "complete", "id": "oxid-dust" }),
+    )
+    .await;
+    let _ = socket.close(None).await;
+    DustLocalState::new(parameters)
+        .replay_events(dust_key, events.iter())
+        .map_err(|_| WalletTransactionPortError::InvalidChainState)
+}
+
+struct DecodedDustEvent {
+    id: u64,
+    max_id: u64,
+    raw_bytes: usize,
+    event: Event<DefaultDB>,
+}
+
+fn decode_dust_event(value: &Value) -> Result<DecodedDustEvent, WalletTransactionPortError> {
+    let id = value
+        .get("id")
+        .and_then(Value::as_i64)
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or(WalletTransactionPortError::InvalidChainState)?;
+    let max_id = value
+        .get("maxId")
+        .and_then(Value::as_i64)
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or(WalletTransactionPortError::InvalidChainState)?;
+    let raw = value
+        .get("raw")
+        .and_then(Value::as_str)
+        .ok_or(WalletTransactionPortError::InvalidChainState)?;
+    let bytes = decode_bounded_hex(raw, MAX_DUST_EVENT_BYTES)?;
+    let raw_bytes = bytes.len();
+    let event = midnight_serialize::tagged_deserialize(&bytes[..])
+        .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+    Ok(DecodedDustEvent {
+        id,
+        max_id,
+        raw_bytes,
+        event,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn balance_dust(
+    transaction: UnprovenTransaction,
+    dust_state: &mut DustLocalState<DefaultDB>,
+    dust_key: &DustSecretKey,
+    parameters: &LedgerParameters,
+    current_time: Timestamp,
+    ttl: Timestamp,
+    network_id: &str,
+) -> Result<(UnprovenTransaction, u128), WalletTransactionPortError> {
+    let original_transaction = transaction.clone();
+    let original_dust = dust_state.clone();
+    let mut current = transaction;
+    let mut accumulated_dust = 0_u128;
+    for _ in 0..MAX_BALANCE_ITERATIONS {
+        let fees = current
+            .fees(parameters, false)
+            .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+        let balance = current
+            .balance(Some(fees))
+            .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+        let shortfall = match balance.get(&(TokenType::Dust, 0)).copied() {
+            Some(value) if value < 0 => value
+                .checked_neg()
+                .and_then(|value| u128::try_from(value).ok())
+                .ok_or(WalletTransactionPortError::InvalidChainState)?,
+            _ => 0,
+        };
+        if shortfall == 0 {
+            return Ok((current, fees));
+        }
+        accumulated_dust = accumulated_dust
+            .checked_add(shortfall)
+            .ok_or(WalletTransactionPortError::InvalidChainState)?;
+        *dust_state = original_dust.clone();
+        let mut remaining = accumulated_dust;
+        let mut spends = Array::new();
+        let outputs = dust_state.utxos().collect::<Vec<_>>();
+        for output in outputs {
+            if remaining == 0 {
+                break;
+            }
+            let generation = dust_state
+                .generation_info(&output)
+                .ok_or(WalletTransactionPortError::InvalidChainState)?;
+            let value =
+                DustOutput::from(output).updated_value(&generation, current_time, &parameters.dust);
+            if value == 0 {
+                continue;
+            }
+            let spend_value = value.min(remaining);
+            let (next_state, spend) = dust_state
+                .clone()
+                .spend(dust_key, &output, spend_value, current_time)
+                .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+            *dust_state = next_state;
+            spends = spends.push(spend);
+            remaining = remaining.saturating_sub(spend_value);
+        }
+        if remaining > 0 {
+            return Err(WalletTransactionPortError::InsufficientDust);
+        }
+        let mut intent = Intent::empty(&mut OsRng, ttl);
+        intent.dust_actions = Some(Sp::new(DustActions {
+            spends,
+            registrations: Array::new(),
+            ctime: current_time,
+        }));
+        let mut intents = LedgerHashMap::new();
+        intents = intents.insert(DUST_BALANCE_SEGMENT, intent);
+        let dust_transaction = Transaction::Standard(StandardTransaction::new(
+            network_id,
+            intents,
+            None,
+            LedgerHashMap::new(),
+        ));
+        current = original_transaction
+            .merge(&dust_transaction)
+            .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+    }
+    Err(WalletTransactionPortError::InvalidChainState)
+}
+
+#[derive(Clone)]
+struct HttpDustProvingProvider {
+    client: reqwest::Client,
+    endpoint: String,
+}
+
+impl ProvingProvider for HttpDustProvingProvider {
+    async fn check(&self, _: &ProofPreimage) -> Result<Vec<Option<usize>>, anyhow::Error> {
+        Err(anyhow::anyhow!(
+            "standalone DUST prover does not support contract proof checks"
+        ))
+    }
+
+    async fn prove(
+        self,
+        preimage: &ProofPreimage,
+        overwrite_binding_input: Option<Fr>,
+    ) -> Result<Proof, anyhow::Error> {
+        let payload = (
+            ProofPreimageVersioned::V2(Arc::new(preimage.clone())),
+            Option::<ProvingKeyMaterial>::None,
+            overwrite_binding_input,
+        );
+        let mut body = Vec::new();
+        midnight_serialize::tagged_serialize(&payload, &mut body)?;
+        if body.len() > MAX_PROOF_REQUEST_BYTES {
+            return Err(anyhow::anyhow!(
+                "proof request exceeds the configured limit"
+            ));
+        }
+        let response = self
+            .client
+            .post(format!("{}/prove", self.endpoint.trim_end_matches('/')))
+            .body(body)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!("proof server rejected the request"));
+        }
+        let body = bounded_response(response, MAX_PROOF_RESPONSE_BYTES)
+            .await
+            .map_err(|_| anyhow::anyhow!("proof response exceeds the configured limit"))?;
+        let proof: ProofVersioned = midnight_serialize::tagged_deserialize(&body[..])?;
+        match proof {
+            ProofVersioned::V2(proof) => Ok(proof),
+            _ => Err(anyhow::anyhow!(
+                "proof server returned an unsupported proof"
+            )),
+        }
+    }
+
+    fn split(&mut self) -> Self {
+        self.clone()
+    }
+}
+
+async fn prove_via_http(
+    transaction: UnprovenTransaction,
+    endpoint: &str,
+) -> Result<
+    Transaction<
+        Signature,
+        midnight_ledger::structure::ProofMarker,
+        midnight_transient_crypto::commitment::PureGeneratorPedersen,
+        DefaultDB,
+    >,
+    WalletTransactionPortError,
+> {
+    ensure_tls_provider()?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(PROOF_TIMEOUT)
+        .build()
+        .map_err(|_| WalletTransactionPortError::ProvingFailed)?;
+    let provider = HttpDustProvingProvider {
+        client,
+        endpoint: endpoint.to_owned(),
+    };
+    let proved = timeout(
+        PROOF_TIMEOUT,
+        transaction.prove(provider, &INITIAL_COST_MODEL),
+    )
+    .await
+    .map_err(|_| WalletTransactionPortError::Timeout)?
+    .map_err(|_| WalletTransactionPortError::ProvingFailed)?;
+    Ok(proved.seal(OsRng))
+}
+
+async fn submit_unsigned(
+    endpoint: &str,
+    transaction: Vec<u8>,
+) -> Result<([u8; 32], [u8; 32]), WalletTransactionPortError> {
+    let client = timeout(
+        CONNECT_TIMEOUT,
+        OnlineClient::<SubstrateConfig>::from_insecure_url(endpoint),
+    )
+    .await
+    .map_err(|_| WalletTransactionPortError::Timeout)?
+    .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    let call = dynamic::tx(
+        "Midnight",
+        "send_mn_transaction",
+        vec![dynamic::Value::from_bytes(transaction)],
+    );
+    let unsigned = client
+        .tx()
+        .create_unsigned(&call)
+        .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+    let mut progress = timeout(SUBMISSION_TIMEOUT, unsigned.submit_and_watch())
+        .await
+        .map_err(|_| WalletTransactionPortError::SubmissionOutcomeUnknown)?
+        .map_err(|_| WalletTransactionPortError::SubmissionOutcomeUnknown)?;
+    timeout(SUBMISSION_TIMEOUT, async {
+        use subxt::tx::TxStatus;
+        loop {
+            let status = progress
+                .next()
+                .await
+                .ok_or(WalletTransactionPortError::SubmissionOutcomeUnknown)?
+                .map_err(|_| WalletTransactionPortError::SubmissionOutcomeUnknown)?;
+            match status {
+                TxStatus::InBestBlock(in_block) | TxStatus::InFinalizedBlock(in_block) => {
+                    in_block
+                        .wait_for_success()
+                        .await
+                        .map_err(|_| WalletTransactionPortError::SubmissionRejected)?;
+                    return Ok((in_block.extrinsic_hash().0, in_block.block_hash().0));
+                }
+                TxStatus::Error { .. } | TxStatus::Invalid { .. } | TxStatus::Dropped { .. } => {
+                    return Err(WalletTransactionPortError::SubmissionRejected);
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .map_err(|_| WalletTransactionPortError::SubmissionOutcomeUnknown)?
+}
+
+async fn bounded_response(
+    response: reqwest::Response,
+    maximum: usize,
+) -> Result<Vec<u8>, WalletTransactionPortError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > maximum as u64)
+    {
+        return Err(WalletTransactionPortError::InvalidData);
+    }
+    let mut result = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| WalletTransactionPortError::Unavailable)?;
+        if result
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > maximum)
+        {
+            return Err(WalletTransactionPortError::InvalidData);
+        }
+        result.extend_from_slice(&chunk);
+    }
+    Ok(result)
+}
+
+fn decode_bounded_hex(
+    value: &str,
+    maximum_bytes: usize,
+) -> Result<Vec<u8>, WalletTransactionPortError> {
+    let value = value.strip_prefix("0x").unwrap_or(value);
+    if value.len() > maximum_bytes.saturating_mul(2) || !value.len().is_multiple_of(2) {
+        return Err(WalletTransactionPortError::InvalidChainState);
+    }
+    hex::decode(value).map_err(|_| WalletTransactionPortError::InvalidChainState)
+}
+
+fn validate_http_url(value: &str, proof_endpoint: bool) -> Result<String, ()> {
+    if value.is_empty() || value.chars().count() > MAX_ENDPOINT_CHARACTERS {
+        return Err(());
+    }
+    let url = Url::parse(value).map_err(|_| ())?;
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.host_str().is_none()
+    {
+        return Err(());
+    }
+    match url.scheme() {
+        "https" => {}
+        "http" if !proof_endpoint || is_loopback(&url) => {}
+        _ => return Err(()),
+    }
+    Ok(url.to_string())
+}
+
+fn is_loopback(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let ip_literal = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    host.eq_ignore_ascii_case("localhost")
+        || ip_literal
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+fn ensure_tls_provider() -> Result<(), WalletTransactionPortError> {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+    rustls::crypto::CryptoProvider::get_default()
+        .map(|_| ())
+        .ok_or(WalletTransactionPortError::Unavailable)
+}
+
+async fn send_websocket_json<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+    value: Value,
+) -> Result<(), WalletTransactionPortError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    socket
+        .send(Message::Text(value.to_string().into()))
+        .await
+        .map_err(|_| WalletTransactionPortError::Unavailable)
+}
+
+async fn wait_for_ack<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+) -> Result<(), WalletTransactionPortError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    timeout(ACK_TIMEOUT, async {
+        loop {
+            let message = socket
+                .next()
+                .await
+                .ok_or(WalletTransactionPortError::InvalidChainState)?
+                .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+            match message {
+                Message::Text(text) => {
+                    let value: Value = serde_json::from_str(text.as_str())
+                        .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+                    match websocket_message_type(&value)? {
+                        "connection_ack" => return Ok(()),
+                        "ping" => {
+                            send_websocket_json(
+                                socket,
+                                json!({ "type": "pong", "payload": value.get("payload") }),
+                            )
+                            .await?;
+                        }
+                        _ => return Err(WalletTransactionPortError::InvalidChainState),
+                    }
+                }
+                Message::Ping(payload) => socket
+                    .send(Message::Pong(payload))
+                    .await
+                    .map_err(|_| WalletTransactionPortError::Unavailable)?,
+                Message::Pong(_) => {}
+                _ => return Err(WalletTransactionPortError::InvalidChainState),
+            }
+        }
+    })
+    .await
+    .map_err(|_| WalletTransactionPortError::Timeout)?
+}
+
+fn websocket_message_type(value: &Value) -> Result<&str, WalletTransactionPortError> {
+    value
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or(WalletTransactionPortError::InvalidChainState)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    use midnight_ledger::{
+        events::{EventDetails, EventSource},
+        structure::{INITIAL_PARAMETERS, TransactionHash},
+    };
+    use tokio_tungstenite::{
+        accept_hdr_async,
+        tungstenite::handshake::server::{Request, Response},
+    };
+
+    use super::*;
+
+    const ADDRESS: &str =
+        "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+
+    fn config(proof: &str) -> Result<MidnightStandaloneConfig, MidnightStandaloneConfigError> {
+        MidnightStandaloneConfig::new(
+            "devnet",
+            "ws://127.0.0.1:8088/api/v1/graphql/ws",
+            "http://127.0.0.1:8088/api/v1/graphql",
+            "ws://127.0.0.1:9944",
+            proof,
+            ADDRESS,
+        )
+    }
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds")
+    }
+
+    fn serve_http_once(status: &'static str, body: Vec<u8>) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener binds");
+        let address = listener.local_addr().expect("test listener has an address");
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("test request connects");
+            let mut request = [0_u8; 16 * 1024];
+            let _ = stream.read(&mut request).expect("test request is readable");
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("test response headers write");
+            stream.write_all(&body).expect("test response body writes");
+        });
+        (format!("http://{address}/graphql"), worker)
+    }
+
+    #[allow(clippy::result_large_err)] // tungstenite's test-server callback owns the error type.
+    fn serve_dust_event(raw: String) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener binds");
+        listener
+            .set_nonblocking(true)
+            .expect("test listener becomes nonblocking");
+        let address = listener.local_addr().expect("test listener has an address");
+        let worker = thread::spawn(move || {
+            runtime().block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener)
+                    .expect("Tokio listener accepts the socket");
+                let (stream, _) = listener.accept().await.expect("client connects");
+                let mut socket =
+                    accept_hdr_async(stream, |request: &Request, mut response: Response| {
+                        assert_eq!(
+                            request
+                                .headers()
+                                .get("Sec-WebSocket-Protocol")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("graphql-transport-ws")
+                        );
+                        response.headers_mut().insert(
+                            "Sec-WebSocket-Protocol",
+                            "graphql-transport-ws"
+                                .parse()
+                                .expect("protocol header is valid"),
+                        );
+                        Ok(response)
+                    })
+                    .await
+                    .expect("WebSocket handshake succeeds");
+                let initialization = socket
+                    .next()
+                    .await
+                    .expect("initialization arrives")
+                    .expect("initialization is valid");
+                assert!(initialization.to_text().is_ok_and(|text| {
+                    serde_json::from_str::<Value>(text)
+                        .ok()
+                        .and_then(|value| value.get("type").cloned())
+                        == Some(Value::String("connection_init".to_owned()))
+                }));
+                socket
+                    .send(Message::Text(
+                        json!({ "type": "connection_ack", "payload": {} })
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .expect("acknowledgement sends");
+                let subscription = socket
+                    .next()
+                    .await
+                    .expect("subscription arrives")
+                    .expect("subscription is valid");
+                assert!(subscription.to_text().is_ok_and(|text| {
+                    serde_json::from_str::<Value>(text)
+                        .ok()
+                        .and_then(|value| value.get("type").cloned())
+                        == Some(Value::String("subscribe".to_owned()))
+                }));
+                socket
+                    .send(Message::Text(
+                        json!({
+                            "type": "next",
+                            "id": "oxid-dust",
+                            "payload": {
+                                "data": {
+                                    "dustLedgerEvents": {
+                                        "id": 0,
+                                        "maxId": 0,
+                                        "raw": raw
+                                    }
+                                }
+                            }
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .expect("event sends");
+            });
+        });
+        (format!("ws://{address}/graphql/ws"), worker)
+    }
+
+    #[test]
+    fn standalone_routes_accept_loopback_http_proving() {
+        let value = config("http://127.0.0.1:6300").expect("routes are valid");
+        assert_eq!(value.indexer().network_id().as_str(), "devnet");
+        assert_eq!(
+            value.indexer_http_url(),
+            "http://127.0.0.1:8088/api/v1/graphql"
+        );
+        assert_eq!(value.node_websocket_url(), "ws://127.0.0.1:9944");
+        assert_eq!(value.proof_server_url(), "http://127.0.0.1:6300/");
+    }
+
+    #[test]
+    fn proof_route_rejects_remote_plaintext_and_credentials() {
+        assert_eq!(
+            config("http://proof.example.test"),
+            Err(MidnightStandaloneConfigError::InvalidProofEndpoint)
+        );
+        assert_eq!(
+            config("https://user:secret@proof.example.test"),
+            Err(MidnightStandaloneConfigError::InvalidProofEndpoint)
+        );
+        let bad_http = MidnightStandaloneConfig::new(
+            "devnet",
+            "ws://127.0.0.1:8088/graphql/ws",
+            "ftp://127.0.0.1/graphql",
+            "ws://127.0.0.1:9944",
+            "http://127.0.0.1:6300",
+            ADDRESS,
+        )
+        .expect_err("non-HTTP indexer route is rejected");
+        assert_eq!(
+            bad_http.to_string(),
+            "Midnight indexer HTTP endpoint is invalid"
+        );
+        let bad_node = MidnightStandaloneConfig::new(
+            "devnet",
+            "ws://127.0.0.1:8088/graphql/ws",
+            "http://127.0.0.1/graphql",
+            "http://127.0.0.1:9944",
+            "http://127.0.0.1:6300",
+            ADDRESS,
+        )
+        .expect_err("non-WebSocket node route is rejected");
+        assert_eq!(
+            bad_node.to_string(),
+            "Midnight node WebSocket endpoint is invalid"
+        );
+        let bad_network = MidnightStandaloneConfig::new(
+            "unknown-network",
+            "ws://127.0.0.1:8088/graphql/ws",
+            "http://127.0.0.1/graphql",
+            "ws://127.0.0.1:9944",
+            "http://127.0.0.1:6300",
+            ADDRESS,
+        )
+        .expect_err("unknown network is rejected");
+        assert!(matches!(
+            bad_network,
+            MidnightStandaloneConfigError::Indexer(_)
+        ));
+        assert_eq!(
+            bad_network.to_string(),
+            "Midnight indexer network is not supported"
+        );
+    }
+
+    #[test]
+    fn proof_route_accepts_remote_tls_without_rendering_it_in_errors() {
+        assert!(config("https://proof.example.test/base").is_ok());
+        let error = config("http://proof.example.test")
+            .expect_err("plaintext remote route is rejected")
+            .to_string();
+        assert!(!error.contains("proof.example.test"));
+    }
+
+    #[test]
+    fn route_validation_rejects_ambiguous_and_unbounded_urls() {
+        assert!(validate_http_url("", false).is_err());
+        assert!(validate_http_url(&format!("https://{}", "a".repeat(2_048)), false).is_err());
+        assert!(validate_http_url("https://indexer.test/graphql?token=public", false).is_err());
+        assert!(validate_http_url("https://indexer.test/graphql#fragment", false).is_err());
+        assert!(validate_http_url("ftp://indexer.test/graphql", false).is_err());
+        assert!(validate_http_url("http://proof.example.test", true).is_err());
+        assert!(validate_http_url("http://localhost:6300", true).is_ok());
+        assert!(validate_http_url("http://[::1]:6300", true).is_ok());
+        assert!(!is_loopback(
+            &Url::parse("https://proof.example.test").expect("URL is valid")
+        ));
+    }
+
+    #[test]
+    fn malformed_dust_envelopes_fail_before_ledger_decode() {
+        let missing = decode_dust_event(&json!({ "id": 0, "maxId": 0 }));
+        assert_eq!(
+            missing.err(),
+            Some(WalletTransactionPortError::InvalidChainState)
+        );
+        let oversized = "00".repeat(MAX_DUST_EVENT_BYTES + 1);
+        let result = decode_dust_event(&json!({ "id": 0, "maxId": 0, "raw": oversized }));
+        assert_eq!(
+            result.err(),
+            Some(WalletTransactionPortError::InvalidChainState)
+        );
+    }
+
+    #[test]
+    fn chain_tip_timestamp_is_already_unix_seconds() {
+        let mut parameters = Vec::new();
+        midnight_serialize::tagged_serialize(&INITIAL_PARAMETERS, &mut parameters)
+            .expect("initial parameters serialize");
+        let tip = decode_chain_tip(&json!({
+            "data": {
+                "block": {
+                    "timestamp": 1_750_000_000_i64,
+                    "ledgerParameters": hex::encode(parameters)
+                }
+            }
+        }))
+        .expect("valid chain tip decodes");
+
+        assert_eq!(tip.timestamp, Timestamp::from_secs(1_750_000_000));
+        assert_eq!(tip.parameters, INITIAL_PARAMETERS);
+    }
+
+    #[test]
+    fn chain_tip_decoder_rejects_missing_negative_and_malformed_fields() {
+        for value in [
+            json!({ "data": { "block": null } }),
+            json!({ "data": { "block": { "timestamp": -1, "ledgerParameters": "00" } } }),
+            json!({ "data": { "block": { "timestamp": 1 } } }),
+            json!({ "data": { "block": { "timestamp": 1, "ledgerParameters": "0" } } }),
+            json!({ "data": { "block": { "timestamp": 1, "ledgerParameters": "zz" } } }),
+        ] {
+            assert_eq!(
+                decode_chain_tip(&value).err(),
+                Some(WalletTransactionPortError::InvalidChainState)
+            );
+        }
+        assert_eq!(
+            decode_bounded_hex(&"00".repeat(3), 2).err(),
+            Some(WalletTransactionPortError::InvalidChainState)
+        );
+    }
+
+    #[test]
+    fn chain_tip_fetch_uses_the_bounded_http_adapter() {
+        let mut parameters = Vec::new();
+        midnight_serialize::tagged_serialize(&INITIAL_PARAMETERS, &mut parameters)
+            .expect("initial parameters serialize");
+        let body = serde_json::to_vec(&json!({
+            "data": {
+                "block": {
+                    "timestamp": 1_750_000_123_i64,
+                    "ledgerParameters": format!("0x{}", hex::encode(parameters))
+                }
+            }
+        }))
+        .expect("response serializes");
+        let (endpoint, worker) = serve_http_once("200 OK", body);
+        let tip = runtime()
+            .block_on(fetch_chain_tip(&endpoint))
+            .expect("loopback chain tip succeeds");
+        worker.join().expect("HTTP worker completes");
+
+        assert_eq!(tip.timestamp, Timestamp::from_secs(1_750_000_123));
+        assert_eq!(tip.parameters, INITIAL_PARAMETERS);
+    }
+
+    #[test]
+    fn chain_tip_fetch_rejects_http_and_graphql_failures() {
+        let (endpoint, worker) = serve_http_once("503 Service Unavailable", Vec::new());
+        assert_eq!(
+            runtime().block_on(fetch_chain_tip(&endpoint)).err(),
+            Some(WalletTransactionPortError::InvalidChainState)
+        );
+        worker.join().expect("HTTP worker completes");
+
+        let body = serde_json::to_vec(&json!({
+            "errors": [{ "message": "not exposed by the adapter" }],
+            "data": { "block": null }
+        }))
+        .expect("response serializes");
+        let (endpoint, worker) = serve_http_once("200 OK", body);
+        assert_eq!(
+            runtime().block_on(fetch_chain_tip(&endpoint)).err(),
+            Some(WalletTransactionPortError::InvalidChainState)
+        );
+        worker.join().expect("HTTP worker completes");
+    }
+
+    #[test]
+    fn dust_snapshot_negotiates_graphql_and_replays_tagged_events() {
+        let event = Event::<DefaultDB> {
+            source: EventSource {
+                transaction_hash: TransactionHash::default(),
+                logical_segment: 0,
+                physical_segment: 0,
+            },
+            content: EventDetails::ParamChange(Sp::new(INITIAL_PARAMETERS)),
+        };
+        let mut event_bytes = Vec::new();
+        midnight_serialize::tagged_serialize(&event, &mut event_bytes).expect("event serializes");
+        let (endpoint, worker) = serve_dust_event(hex::encode(event_bytes));
+        let dust_key = DustSecretKey::derive_secret_key(&[7; 32]);
+        let state = runtime()
+            .block_on(synchronize_dust(
+                &endpoint,
+                &dust_key,
+                INITIAL_PARAMETERS.dust,
+            ))
+            .expect("bounded DUST snapshot succeeds");
+        worker.join().expect("WebSocket worker completes");
+
+        assert_eq!(state.sync_time, Timestamp::from_secs(0));
+        assert_eq!(state.params, INITIAL_PARAMETERS.dust);
+    }
+
+    #[test]
+    fn empty_standard_transaction_fails_closed_without_dust() {
+        let transaction = Transaction::Standard(StandardTransaction::new(
+            "undeployed",
+            LedgerHashMap::new(),
+            None,
+            LedgerHashMap::new(),
+        ));
+        let dust_key = DustSecretKey::derive_secret_key(&[9; 32]);
+        let mut dust_state = DustLocalState::new(INITIAL_PARAMETERS.dust);
+        assert_eq!(
+            balance_dust(
+                transaction,
+                &mut dust_state,
+                &dust_key,
+                &INITIAL_PARAMETERS,
+                Timestamp::from_secs(1_700_000_000),
+                Timestamp::from_secs(1_700_003_600),
+                "undeployed",
+            )
+            .err(),
+            Some(WalletTransactionPortError::InsufficientDust)
+        );
+    }
+}

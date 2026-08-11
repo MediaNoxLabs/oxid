@@ -195,6 +195,21 @@ pub trait WalletKeyDerivationPort: Send + Sync {
     ) -> Result<WalletKeyDescriptor, WalletSecurityPortError>;
 }
 
+/// Focused adapter-to-adapter operation for algorithms that require a private witness.
+///
+/// The callback borrows one BIP32 child for the duration of the operation. The
+/// secret is never returned from the port and this capability has no incoming
+/// application use case. Production adapters may reject paths or operations
+/// their platform custody cannot support.
+pub trait WalletDerivedSecretUsePort: Send + Sync {
+    fn use_derived_secret(
+        &self,
+        profile_id: &WalletProfileId,
+        path: &WalletHdPath,
+        operation: &mut dyn FnMut(&[u8; 32]) -> Result<(), WalletSecurityPortError>,
+    ) -> Result<(), WalletSecurityPortError>;
+}
+
 /// Public status returned to incoming adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WalletSecurityStatusView {

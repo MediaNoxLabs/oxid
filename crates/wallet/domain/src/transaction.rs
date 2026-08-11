@@ -4,7 +4,10 @@ use std::{error::Error, fmt};
 
 use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
 
-use crate::{AssetBalance, ChainAccountId, ChainAddress, ChainAddressKind, ChainNetworkId};
+use crate::{
+    AssetBalance, ChainAccountId, ChainAddress, ChainAddressKind, ChainBlockId, ChainNetworkId,
+    ChainTransactionId,
+};
 
 /// Maximum number of public inputs that a wallet transfer preview may report.
 pub const MAX_WALLET_TRANSFER_INPUTS: u16 = 256;
@@ -44,6 +47,8 @@ impl WalletTransactionAuthorizationChallenge {
 pub enum WalletTransactionDraftState {
     Prepared,
     Authorized,
+    Submitting,
+    Submitted,
     Expired,
 }
 
@@ -192,6 +197,76 @@ impl WalletTransferPreview {
         let mut updated = self.clone();
         updated.state = state;
         updated
+    }
+
+    /// Records the exact chain fee once balancing/proving has completed.
+    #[must_use]
+    pub fn with_final_fee(&self, fee: AssetBalance) -> Self {
+        let mut updated = self.clone();
+        updated.fee = Some(fee);
+        updated.fee_state = WalletTransactionFeeState::Final;
+        updated
+    }
+}
+
+/// Whether a public submission outcome came from conformance simulation or a live chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletTransferSubmissionMode {
+    Simulated,
+    Live,
+}
+
+/// Public inclusion outcome; serialized transaction and proof material stay in the adapter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletTransferSubmission {
+    draft_id: WalletTransactionDraftId,
+    transaction_id: ChainTransactionId,
+    block_id: ChainBlockId,
+    fee: AssetBalance,
+    mode: WalletTransferSubmissionMode,
+}
+
+impl WalletTransferSubmission {
+    #[must_use]
+    pub const fn new(
+        draft_id: WalletTransactionDraftId,
+        transaction_id: ChainTransactionId,
+        block_id: ChainBlockId,
+        fee: AssetBalance,
+        mode: WalletTransferSubmissionMode,
+    ) -> Self {
+        Self {
+            draft_id,
+            transaction_id,
+            block_id,
+            fee,
+            mode,
+        }
+    }
+
+    #[must_use]
+    pub const fn draft_id(&self) -> &WalletTransactionDraftId {
+        &self.draft_id
+    }
+
+    #[must_use]
+    pub const fn transaction_id(&self) -> &ChainTransactionId {
+        &self.transaction_id
+    }
+
+    #[must_use]
+    pub const fn block_id(&self) -> &ChainBlockId {
+        &self.block_id
+    }
+
+    #[must_use]
+    pub const fn fee(&self) -> &AssetBalance {
+        &self.fee
+    }
+
+    #[must_use]
+    pub const fn mode(&self) -> WalletTransferSubmissionMode {
+        self.mode
     }
 }
 

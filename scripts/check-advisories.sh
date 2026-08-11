@@ -22,6 +22,10 @@ ignored_advisories=(
   RUSTSEC-2025-0057 # fxhash: unmaintained Wry HTML parser dependency
   RUSTSEC-2026-0097 # rand 0.7: constrained build-dependency unsoundness
   RUSTSEC-2025-0141 # bincode: unmaintained Midnight ZK dependency
+  RUSTSEC-2025-0161 # libsecp256k1: inactive optional Subxt light-client dependency
+  RUSTSEC-2026-0002 # lru 0.12: inactive optional Subxt light-client dependency
+  RUSTSEC-2026-0173 # proc-macro-error2: unmaintained Subxt build-time dependency
+  RUSTSEC-2026-0253 # lru 0.12: inactive optional Subxt light-client dependency
 )
 
 audit_arguments=(--deny warnings)

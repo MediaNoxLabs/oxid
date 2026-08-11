@@ -13,13 +13,14 @@ than layers bolted onto one chain-specific frontend.
 > through Dioxus and the standalone headless harness. A development-only
 > process-local adapter exercises opaque Ed25519/P-256 keys plus protected
 > Midnight HD/BIP340 account derivation headlessly; a deterministic adapter
-> exercises Midnight network, derived address, exact-balance, sync, and history
-> flows without secret input. Native headless runs can instead
-> opt into a real standalone-indexer unshielded account source using explicit
-> public startup configuration. The Assets page consumes the same account use
-> cases while production mobile custody and chain access remain fail-closed. The remaining shell
-> destinations deliberately label unconnected capabilities; Oxid is not ready
-> to hold real assets or identity credentials.
+> exercises Midnight network, derived address, exact-balance, sync, history, and
+> staged unshielded NIGHT submission without secret input. Native headless runs
+> can instead opt into either a real standalone-indexer read source or the
+> complete DUST/proof-server/node submission path using explicit public startup
+> configuration. The Assets page consumes the same account read use cases while
+> production mobile custody, private local proving, and chain access remain
+> fail-closed. The remaining shell destinations deliberately label unconnected
+> capabilities; Oxid is not ready to hold real assets or identity credentials.
 
 ## Architecture
 
@@ -80,6 +81,7 @@ The implemented account methods are `wallet.network.list`,
 `wallet.address.unshielded`, `wallet.balance.snapshot`,
 `wallet.transaction.history`, `wallet.transaction.prepare_unshielded`,
 `wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
+`wallet.transaction.submit_unshielded`, `wallet.transaction.send_unshielded`,
 `wallet.connect`, and `wallet.sync.force`.
 With no additional configuration their account data is explicitly `simulated`
 and contacts no node, indexer, or prover. After
@@ -91,11 +93,17 @@ private-key, and caller-defined path parameters are rejected.
 
 After derivation and sync, the transaction methods prepare an exact native
 NIGHT preview, authorize its retained canonical ledger intent through the
-opaque development key reference, and query draft state. They never return
-signing payloads, signatures, or serialized transactions. DUST balancing,
-proving, and node submission are not implemented: responses report
-`proofRequired: true` and `submissionReady: false`, while the one-shot
-`wallet.transaction.send_unshielded` method remains queued.
+opaque development key reference, submit it, and query draft state. The
+zero-configuration harness completes submission deterministically and labels
+the outcome `simulated`; it covers state/error/idempotency flows without
+contacting a node or prover. Live standalone mode synchronizes the DUST child,
+balances canonical fees, delegates DUST proofs to the configured proof server,
+submits `Midnight.send_mn_transaction` unsigned, and returns only successful
+public transaction/block identifiers. No method returns signing payloads,
+signatures, proof witnesses, derived secrets, or serialized transactions.
+If transport is lost after node submission, the adapter reports
+`submission_unknown` and leaves the draft `submitting`; it never risks a blind
+duplicate while the external outcome is ambiguous.
 
 For a native standalone-indexer run, set all three public values before starting
 the headless binary:
@@ -112,8 +120,24 @@ fragment. The Bech32m address HRP must match the selected network. Supplying
 only part of the configuration fails startup. A successful refresh reports
 `live`; subsequent in-process reads report `cached`. The configured address is
 an initial watch-only fallback; deriving an account binds subsequent sync to
-the derived public address. This mode does not import recovery material, sync
-shielded/DUST state, construct, prove, or submit transactions.
+the derived public address. This read-only live mode does not import recovery
+material, sync shielded/DUST state, prove, or submit transactions.
+
+To enable the complete development-only standalone submission path, supply the
+same three values plus all submission endpoints:
+
+```bash
+export OXID_MIDNIGHT_INDEXER_HTTP_URL='<graphql-http-url>'
+export OXID_MIDNIGHT_NODE_WS_URL='<node-websocket-url>'
+export OXID_MIDNIGHT_PROOF_SERVER_URL='<proof-server-base-url>'
+cargo run -p oxid-headless
+```
+
+All six values must be present together. Proof-server HTTP is accepted only on
+loopback; remote proving requires HTTPS. The proof server receives private
+witness material, so this is a standalone development adapter, not the
+production privacy design. The root is process-local and ephemeral; fund and
+exercise a newly derived address in the same run.
 
 Common commands are also exposed through `just`:
 

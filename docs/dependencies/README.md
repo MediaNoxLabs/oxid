@@ -20,3 +20,4 @@ Current reviews and source policies:
 - [Tokio and tokio-tungstenite](tokio-tungstenite-0.30.md)
 - [Midnight Git sources](midnight-git-sources.md)
 - [Midnight ledger transaction packages](midnight-ledger-8.2.md)
+- [Midnight standalone submission stack](midnight-standalone-submission.md)

@@ -5,6 +5,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod indexer;
 #[cfg(not(target_arch = "wasm32"))]
+mod submission;
+#[cfg(not(target_arch = "wasm32"))]
 mod transaction;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -12,6 +14,8 @@ pub use indexer::{
     LiveMidnightAccountSource, MidnightIndexerConfig, MidnightIndexerConfigError,
     live_midnight_wallet, protected_live_midnight_wallet,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use submission::{MidnightStandaloneConfig, MidnightStandaloneConfigError};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -22,8 +26,9 @@ use bech32::{Bech32m, Hrp};
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
     DeriveProtectedKeyRequest, WalletAccountDerivationPort, WalletAccountPortError,
-    WalletAccountPortFuture, WalletAccountReadPort, WalletHdPath, WalletHdPathComponent,
-    WalletKeyDerivationPort, WalletNetworkPort, WalletSecurityPortError,
+    WalletAccountPortFuture, WalletAccountReadPort, WalletDerivedSecretUsePort, WalletHdPath,
+    WalletHdPathComponent, WalletKeyDerivationPort, WalletKeyOperationPort, WalletNetworkPort,
+    WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     AssetBalance, AssetBalanceChange, AssetSymbol, BalanceChangeDirection, ChainAccountId,
@@ -36,8 +41,8 @@ use oxid_wallet_domain::{
 use sha2::{Digest, Sha256};
 
 const DEFAULT_NETWORK_ID: &str = "undeployed";
-const BIP44_PURPOSE: u32 = 44;
-const MIDNIGHT_COIN_TYPE: u32 = 2400;
+pub(crate) const BIP44_PURPOSE: u32 = 44;
+pub(crate) const MIDNIGHT_COIN_TYPE: u32 = 2400;
 const NIGHT_EXTERNAL_ROLE: u32 = 0;
 
 // Canonical ledger-8 atomic-unit semantics reviewed at
@@ -112,6 +117,14 @@ impl MidnightAccountDeriver for UnavailableMidnightAccountDeriver {
 /// Converts Midnight's canonical account path into an opaque protected child key.
 pub struct ProtectedMidnightAccountDeriver<K> {
     keys: Arc<K>,
+}
+
+impl<K> Clone for ProtectedMidnightAccountDeriver<K> {
+    fn clone(&self) -> Self {
+        Self {
+            keys: Arc::clone(&self.keys),
+        }
+    }
 }
 
 impl<K> ProtectedMidnightAccountDeriver<K> {
@@ -197,13 +210,17 @@ pub struct MidnightWalletAdapter<S, D = UnavailableMidnightAccountDeriver> {
     selections: Mutex<HashMap<WalletProfileId, ChainNetworkId>>,
     default_network: Option<ChainNetworkId>,
     #[cfg(not(target_arch = "wasm32"))]
-    drafts: Mutex<
-        HashMap<
-            (
-                WalletProfileId,
-                oxid_wallet_domain::WalletTransactionDraftId,
-            ),
-            transaction::RetainedMidnightDraft,
+    completer: Arc<dyn transaction::MidnightTransactionCompleter>,
+    #[cfg(not(target_arch = "wasm32"))]
+    drafts: Arc<
+        Mutex<
+            HashMap<
+                (
+                    WalletProfileId,
+                    oxid_wallet_domain::WalletTransactionDraftId,
+                ),
+                transaction::RetainedMidnightDraft,
+            >,
         >,
     >,
 }
@@ -217,7 +234,9 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             selections: Mutex::new(HashMap::new()),
             default_network: None,
             #[cfg(not(target_arch = "wasm32"))]
-            drafts: Mutex::new(HashMap::new()),
+            completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
+            #[cfg(not(target_arch = "wasm32"))]
+            drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -231,7 +250,9 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             selections: Mutex::new(HashMap::new()),
             default_network: Some(default_network),
             #[cfg(not(target_arch = "wasm32"))]
-            drafts: Mutex::new(HashMap::new()),
+            completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
+            #[cfg(not(target_arch = "wasm32"))]
+            drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -245,7 +266,9 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             selections: Mutex::new(HashMap::new()),
             default_network: None,
             #[cfg(not(target_arch = "wasm32"))]
-            drafts: Mutex::new(HashMap::new()),
+            completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
+            #[cfg(not(target_arch = "wasm32"))]
+            drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -261,7 +284,42 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             selections: Mutex::new(HashMap::new()),
             default_network: Some(default_network),
             #[cfg(not(target_arch = "wasm32"))]
-            drafts: Mutex::new(HashMap::new()),
+            completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
+            #[cfg(not(target_arch = "wasm32"))]
+            drafts: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn with_default_network_deriver_and_completer(
+        source: S,
+        default_network: ChainNetworkId,
+        deriver: D,
+        completer: Arc<dyn transaction::MidnightTransactionCompleter>,
+    ) -> Self {
+        Self {
+            source,
+            deriver,
+            selections: Mutex::new(HashMap::new()),
+            default_network: Some(default_network),
+            completer,
+            drafts: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn with_deriver_and_completer(
+        source: S,
+        deriver: D,
+        completer: Arc<dyn transaction::MidnightTransactionCompleter>,
+    ) -> Self {
+        Self {
+            source,
+            deriver,
+            selections: Mutex::new(HashMap::new()),
+            default_network: None,
+            completer,
+            drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -307,6 +365,14 @@ where
         oxid_wallet_application::WalletTransactionPortError,
     > {
         Err(oxid_wallet_application::WalletTransactionPortError::Unavailable)
+    }
+
+    fn submit<'a>(
+        &'a self,
+        _: &'a WalletProfileId,
+        _: oxid_wallet_application::SubmitWalletTransferRequest,
+    ) -> oxid_wallet_application::WalletTransactionPortFuture<'a> {
+        Box::pin(async { Err(oxid_wallet_application::WalletTransactionPortError::Unavailable) })
     }
 
     fn get(
@@ -596,11 +662,34 @@ pub fn protected_simulated_midnight_wallet<C, K>(
 ) -> MidnightWalletAdapter<SimulatedMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
 where
     C: ClockPort,
-    K: WalletKeyDerivationPort,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
 {
-    MidnightWalletAdapter::with_deriver(
+    MidnightWalletAdapter::with_deriver_and_completer(
         SimulatedMidnightAccountSource::new(clock),
         ProtectedMidnightAccountDeriver::new(keys),
+        Arc::new(transaction::SimulatedMidnightTransactionCompleter),
+    )
+}
+
+/// Development-only live standalone adapter with real DUST proving and node submission.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn protected_standalone_midnight_wallet<C, K>(
+    config: MidnightStandaloneConfig,
+    clock: Arc<C>,
+    keys: Arc<K>,
+) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
+{
+    let indexer = config.indexer().clone();
+    let default_network = indexer.network_id().clone();
+    MidnightWalletAdapter::with_default_network_deriver_and_completer(
+        LiveMidnightAccountSource::new(indexer, clock),
+        default_network,
+        ProtectedMidnightAccountDeriver::new(keys),
+        Arc::new(submission::LiveMidnightTransactionCompleter::new(config)),
     )
 }
 

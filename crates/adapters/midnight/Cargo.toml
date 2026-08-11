@@ -20,15 +20,19 @@ serde_json.workspace = true
 sha2.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+anyhow.workspace = true
 futures.workspace = true
 midnight-base-crypto.workspace = true
 midnight-coin-structure.workspace = true
-midnight-ledger.workspace = true
+midnight-ledger = { workspace = true, features = ["proving"] }
+midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-transient-crypto.workspace = true
 rand.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
 rustls.workspace = true
+subxt.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 zeroize.workspace = true

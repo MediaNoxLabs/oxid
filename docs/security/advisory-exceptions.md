@@ -6,8 +6,9 @@
   any release described as production-capable; the Midnight exception is also
   reviewed on every Midnight dependency update
 - Scope: development-stage Dioxus shell and native Midnight adapter. The
-  transaction path can authorize canonical intents through development custody,
-  but cannot yet balance DUST fees, prove, submit, or claim production readiness.
+  transaction path can balance DUST, prove through an explicitly configured
+  proof server, and submit in development/headless mode, but cannot claim
+  production custody or private local mobile proving.
 
 `scripts/check-advisories.sh` denies all Cargo audit warnings except the exact
 IDs below. These are transitive dependencies of Dioxus 0.7.10 and its desktop
@@ -68,6 +69,26 @@ its owning upstream graph drops the crate.
   that removes `bincode`. This exception blocks production custody/release until
   it is re-reviewed, and must be removed as soon as the selected upstream graph
   no longer resolves the crate.
+
+## Subxt submission-graph advisories
+
+- `RUSTSEC-2026-0173` classifies `proc-macro-error2 2.0.1` as unmaintained.
+  It is an active build-time dependency of `subxt-macro 0.44.3`; it is not
+  linked as runtime wallet logic. The reviewed Subxt submission surface matches
+  the prototype, and the latest Subxt release checked on 2026-08-12 still used
+  the same macro dependency. Remove the exception when Subxt migrates, or when
+  Oxid replaces the aggregate Subxt client behind the submission adapter.
+- `RUSTSEC-2025-0161` classifies `libsecp256k1 0.7.2` as unmaintained.
+  `RUSTSEC-2026-0002` and `RUSTSEC-2026-0253` describe soundness defects in
+  `lru 0.12.5`. These packages are present only in Cargo's resolved optional
+  `subxt-lightclient -> smoldot` lockfile graph. Oxid does not enable Subxt's
+  light-client feature, and `cargo tree` confirms neither package is in the
+  enabled native or WebAssembly trees. Cargo audit scans every lockfile package,
+  including disabled optionals, so the exact IDs are ignored to preserve a
+  deny-by-default gate without claiming they execute.
+- Enabling Subxt light-client support is forbidden under these exceptions. It
+  requires an ADR/dependency review and removal or replacement of the affected
+  packages first.
 
 ## Enforcement
 

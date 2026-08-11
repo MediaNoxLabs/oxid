@@ -184,7 +184,7 @@ pub struct LiveMidnightAccountSource<C> {
 }
 
 impl<C> LiveMidnightAccountSource<C> {
-    fn new(config: MidnightIndexerConfig, clock: std::sync::Arc<C>) -> Self {
+    pub(crate) fn new(config: MidnightIndexerConfig, clock: std::sync::Arc<C>) -> Self {
         let transport =
             std::sync::Arc::new(WebSocketMidnightIndexerTransport::new(config.websocket_url));
         Self::with_transport(
@@ -1185,7 +1185,7 @@ fn account_id(profile_id: &WalletProfileId) -> Result<ChainAccountId, WalletAcco
         .map_err(|_| WalletAccountPortError::InvalidData)
 }
 
-fn validate_websocket_url(value: &str) -> Result<String, MidnightIndexerConfigError> {
+pub(crate) fn validate_websocket_url(value: &str) -> Result<String, MidnightIndexerConfigError> {
     if value.chars().count() > MAX_ENDPOINT_CHARACTERS {
         return Err(MidnightIndexerConfigError::EndpointTooLong);
     }

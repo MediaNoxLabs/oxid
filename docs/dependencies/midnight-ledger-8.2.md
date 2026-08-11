@@ -5,9 +5,10 @@
   from the official HTTPS Git repository; `midnight-ledger` reports
   `8.2.0-rc.1` at this commit
 - Direct packages: `midnight-ledger`, `midnight-base-crypto`,
-  `midnight-coin-structure`, `midnight-serialize`, `midnight-storage`, and
-  `midnight-transient-crypto`
-- Features: ledger default features disabled; no proving feature selected
+  `midnight-coin-structure`, `midnight-onchain-runtime`, `midnight-serialize`,
+  `midnight-storage`, and `midnight-transient-crypto`
+- Features: ledger default features disabled; its `proving` feature is selected
+  for canonical DUST proof orchestration
 - License: Apache-2.0 for the selected direct packages; transitive license and
   source policy remain enforced by `cargo-deny` and repository checks
 - Maintenance/activity: official active Midnight monorepo revision reviewed on
@@ -17,7 +18,9 @@
   bounded and typed, external errors are not surfaced raw, and key use remains
   behind an opaque custody port. The graph's unmaintained `bincode 2.0.1`
   advisory is explicitly bounded and tracked in issue #10; see
-  `docs/security/advisory-exceptions.md`.
+  `docs/security/advisory-exceptions.md`. The transitive published proof graph
+  and transport/runtime dependencies are reviewed separately in
+  `midnight-standalone-submission.md`.
 - Android/iOS/desktop support: native Rust dependency, gated by workspace tests
   and both Tier-1 mobile target builds
 - WASM/web support: deliberately excluded by the adapter's target-specific
@@ -26,9 +29,10 @@
 - API stability: release-candidate/internal packages are not a stable public
   wallet API. Oxid-owned domain/application types and focused adapter mappings
   are the compatibility boundary.
-- Reason selected: issue #9 needs the exact `Intent`, `UnshieldedOffer`, UTXO,
-  user-address, BIP340, and transaction types used by the reviewed prototype.
-  Reimplementing their serialization would risk consensus incompatibility.
+- Reason selected: issues #9/#11 need the exact `Intent`, `UnshieldedOffer`,
+  UTXO, DUST, fee, proof, runtime-cost, user-address, BIP340, and transaction
+  types used by the reviewed prototype. Reimplementing their serialization or
+  fee/proof rules would risk consensus incompatibility.
 - Alternatives considered: copying prototype code, recreating the transaction
   format, waiting for crates.io publication, or importing the aggregate wallet
   runtime. These either lose provenance/compatibility, block current parity, or

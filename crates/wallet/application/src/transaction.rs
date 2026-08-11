@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{error::Error, fmt, sync::Arc};
+use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_foundation::{OpaqueIdError, UnixTimestampMillis};
 use oxid_platform_ports::{ClockPort, PlatformError};
 use oxid_wallet_domain::{
     AssetBalance, ChainAddress, ChainAddressError, ChainAddressKind, WalletProfileId,
     WalletTransactionAuthorizationChallenge, WalletTransactionDraftId, WalletTransactionDraftState,
-    WalletTransactionFeeState, WalletTransferPreview,
+    WalletTransactionFeeState, WalletTransferPreview, WalletTransferSubmission,
+    WalletTransferSubmissionMode,
 };
 
 use crate::{SensitiveOperationConfirmation, SensitiveWalletOperationError, validate_confirmation};
@@ -30,7 +31,14 @@ pub enum WalletTransactionPortError {
     DraftNotFound,
     DraftExpired,
     DraftConflict,
+    SubmissionInProgress,
     AuthorizationChallengeMismatch,
+    InsufficientDust,
+    InvalidChainState,
+    ProvingFailed,
+    SubmissionRejected,
+    SubmissionOutcomeUnknown,
+    Timeout,
     InvalidData,
 }
 
@@ -49,9 +57,18 @@ impl fmt::Display for WalletTransactionPortError {
             Self::DraftNotFound => "transaction draft was not found",
             Self::DraftExpired => "transaction draft has expired",
             Self::DraftConflict => "transaction draft conflicts with current wallet state",
+            Self::SubmissionInProgress => "transaction submission is already in progress",
             Self::AuthorizationChallengeMismatch => {
                 "transaction authorization does not match the prepared preview"
             }
+            Self::InsufficientDust => "wallet has insufficient DUST for the transaction fee",
+            Self::InvalidChainState => "Midnight chain state is invalid or unavailable",
+            Self::ProvingFailed => "transaction proving failed",
+            Self::SubmissionRejected => "Midnight rejected the transaction submission",
+            Self::SubmissionOutcomeUnknown => {
+                "Midnight transaction submission outcome is not yet known"
+            }
+            Self::Timeout => "transaction operation timed out",
             Self::InvalidData => "transaction adapter returned invalid data",
         };
         formatter.write_str(message)
@@ -76,6 +93,29 @@ pub struct AuthorizeWalletTransferRequest {
     pub now: UnixTimestampMillis,
 }
 
+/// Adapter-neutral request for completing an authorized retained transfer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubmitWalletTransferRequest {
+    pub draft_id: WalletTransactionDraftId,
+    pub now: UnixTimestampMillis,
+}
+
+/// Adapter result combining safe final preview metadata and public inclusion identifiers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubmittedWalletTransfer {
+    pub preview: WalletTransferPreview,
+    pub submission: WalletTransferSubmission,
+}
+
+/// Asynchronous result returned by a transaction adapter.
+pub type WalletTransactionPortFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<SubmittedWalletTransfer, WalletTransactionPortError>>
+            + Send
+            + 'a,
+    >,
+>;
+
 /// Focused outgoing port retaining chain-specific draft/signing material.
 pub trait WalletTransactionPort: Send + Sync {
     fn prepare(
@@ -89,6 +129,12 @@ pub trait WalletTransactionPort: Send + Sync {
         profile_id: &WalletProfileId,
         request: AuthorizeWalletTransferRequest,
     ) -> Result<WalletTransferPreview, WalletTransactionPortError>;
+
+    fn submit<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        request: SubmitWalletTransferRequest,
+    ) -> WalletTransactionPortFuture<'a>;
 
     fn get(
         &self,
@@ -112,6 +158,14 @@ pub struct AuthorizeWalletTransferCommand {
     pub profile_id: String,
     pub draft_id: String,
     pub authorization_challenge: String,
+    pub confirmation: SensitiveOperationConfirmation,
+}
+
+/// Incoming request for proving and submitting one authorized transfer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubmitWalletTransferCommand {
+    pub profile_id: String,
+    pub draft_id: String,
     pub confirmation: SensitiveOperationConfirmation,
 }
 
@@ -165,8 +219,8 @@ impl From<&WalletTransferPreview> for WalletTransferPreviewView {
             input_count: preview.input_count(),
             expires_at_millis: preview.expires_at().value(),
             state: draft_state_name(preview.state()).to_owned(),
-            proof_required: true,
-            submission_ready: false,
+            proof_required: !matches!(preview.state(), WalletTransactionDraftState::Submitted),
+            submission_ready: matches!(preview.state(), WalletTransactionDraftState::Authorized),
         }
     }
 }
@@ -186,6 +240,45 @@ pub trait AuthorizeWalletTransferUseCase: Send + Sync {
         command: AuthorizeWalletTransferCommand,
     ) -> Result<WalletTransferPreviewView, WalletTransactionError>;
 }
+
+/// Public result of an included transfer without proof or serialized transaction bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletTransferSubmissionView {
+    pub transfer: WalletTransferPreviewView,
+    pub transaction_id: String,
+    pub block_id: String,
+    pub fee: WalletTransferAssetView,
+    pub mode: String,
+}
+
+impl From<&SubmittedWalletTransfer> for WalletTransferSubmissionView {
+    fn from(value: &SubmittedWalletTransfer) -> Self {
+        Self {
+            transfer: WalletTransferPreviewView::from(&value.preview),
+            transaction_id: value.submission.transaction_id().as_str().to_owned(),
+            block_id: value.submission.block_id().as_str().to_owned(),
+            fee: asset_view(value.submission.fee()),
+            mode: submission_mode_name(value.submission.mode()).to_owned(),
+        }
+    }
+}
+
+/// Incoming use case for completing an authorized transfer off the UI thread.
+pub trait SubmitWalletTransferUseCase: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        command: SubmitWalletTransferCommand,
+    ) -> WalletTransferSubmissionViewFuture<'a>;
+}
+
+/// Asynchronous submission view returned to incoming adapters.
+pub type WalletTransferSubmissionViewFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<WalletTransferSubmissionView, WalletTransactionError>>
+            + Send
+            + 'a,
+    >,
+>;
 
 /// Incoming use case for reading safe retained-draft state.
 pub trait GetWalletTransferDraftUseCase: Send + Sync {
@@ -330,6 +423,37 @@ where
     }
 }
 
+impl<T, C> SubmitWalletTransferUseCase for WalletTransactionService<T, C>
+where
+    T: WalletTransactionPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute<'a>(
+        &'a self,
+        command: SubmitWalletTransferCommand,
+    ) -> WalletTransferSubmissionViewFuture<'a> {
+        Box::pin(async move {
+            validate_confirmation(&command.confirmation).map_err(map_confirmation_error)?;
+            let profile_id = WalletProfileId::parse(command.profile_id)
+                .map_err(WalletTransactionError::InvalidProfileIdentifier)?;
+            let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+                .map_err(WalletTransactionError::InvalidDraftIdentifier)?;
+            let submitted = self
+                .transactions
+                .submit(
+                    &profile_id,
+                    SubmitWalletTransferRequest {
+                        draft_id,
+                        now: self.now()?,
+                    },
+                )
+                .await
+                .map_err(WalletTransactionError::Operation)?;
+            Ok(WalletTransferSubmissionView::from(&submitted))
+        })
+    }
+}
+
 impl<T, C> GetWalletTransferDraftUseCase for WalletTransactionService<T, C>
 where
     T: WalletTransactionPort + 'static,
@@ -372,7 +496,16 @@ const fn draft_state_name(state: WalletTransactionDraftState) -> &'static str {
     match state {
         WalletTransactionDraftState::Prepared => "prepared",
         WalletTransactionDraftState::Authorized => "authorized",
+        WalletTransactionDraftState::Submitting => "submitting",
+        WalletTransactionDraftState::Submitted => "submitted",
         WalletTransactionDraftState::Expired => "expired",
+    }
+}
+
+const fn submission_mode_name(mode: WalletTransferSubmissionMode) -> &'static str {
+    match mode {
+        WalletTransferSubmissionMode::Simulated => "simulated",
+        WalletTransferSubmissionMode::Live => "live",
     }
 }
 
@@ -396,14 +529,29 @@ const fn map_confirmation_error(error: SensitiveWalletOperationError) -> WalletT
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::{
+        future::Future,
+        pin::pin,
+        sync::Mutex,
+        task::{Context, Poll, Waker},
+    };
 
     use oxid_wallet_domain::{
-        AssetSymbol, ChainAccountId, ChainAsset, ChainAssetId, ChainNetworkId,
-        WalletTransactionDraftState, WalletTransactionFeeState,
+        AssetSymbol, ChainAccountId, ChainAsset, ChainAssetId, ChainBlockId, ChainNetworkId,
+        ChainTransactionId, WalletTransactionDraftState, WalletTransactionFeeState,
+        WalletTransferSubmission, WalletTransferSubmissionMode,
     };
 
     use super::*;
+
+    fn ready<F: Future>(future: F) -> F::Output {
+        let mut future = pin!(future);
+        let waker = Waker::noop();
+        match future.as_mut().poll(&mut Context::from_waker(waker)) {
+            Poll::Ready(output) => output,
+            Poll::Pending => panic!("recording adapter unexpectedly returned a pending future"),
+        }
+    }
 
     struct FixedClock;
 
@@ -417,6 +565,7 @@ mod tests {
     struct RecordingTransactions {
         prepare_calls: Mutex<usize>,
         authorize_calls: Mutex<usize>,
+        submit_calls: Mutex<usize>,
     }
 
     impl RecordingTransactions {
@@ -476,6 +625,36 @@ mod tests {
             _: UnixTimestampMillis,
         ) -> Result<WalletTransferPreview, WalletTransactionPortError> {
             Ok(Self::preview(WalletTransactionDraftState::Prepared))
+        }
+
+        fn submit<'a>(
+            &'a self,
+            _: &'a WalletProfileId,
+            request: SubmitWalletTransferRequest,
+        ) -> WalletTransactionPortFuture<'a> {
+            *self.submit_calls.lock().expect("counter is available") += 1;
+            Box::pin(async move {
+                let fee = AssetBalance::new(
+                    ChainAsset::new(
+                        ChainAssetId::parse("midnight:dust").expect("asset id is valid"),
+                        AssetSymbol::parse("DUST").expect("symbol is valid"),
+                        15,
+                    ),
+                    42,
+                );
+                let preview = Self::preview(WalletTransactionDraftState::Submitted)
+                    .with_final_fee(fee.clone());
+                Ok(SubmittedWalletTransfer {
+                    preview,
+                    submission: WalletTransferSubmission::new(
+                        request.draft_id,
+                        ChainTransactionId::parse("tx_submitted").expect("transaction id is valid"),
+                        ChainBlockId::parse("block_submitted").expect("block id is valid"),
+                        fee,
+                        WalletTransferSubmissionMode::Simulated,
+                    ),
+                })
+            })
         }
     }
 
@@ -578,6 +757,52 @@ mod tests {
         )
         .expect("authorization succeeds");
         assert_eq!(result.state, "authorized");
-        assert!(!result.submission_ready);
+        assert!(result.submission_ready);
+    }
+
+    #[test]
+    fn submission_requires_confirmation_before_adapter_use() {
+        let transactions = Arc::new(RecordingTransactions::default());
+        let service =
+            WalletTransactionService::new(Arc::clone(&transactions), Arc::new(FixedClock));
+        let result = ready(SubmitWalletTransferUseCase::execute(
+            &service,
+            SubmitWalletTransferCommand {
+                profile_id: "profile_test".to_owned(),
+                draft_id: "txdraft_test".to_owned(),
+                confirmation: confirmation(false),
+            },
+        ));
+
+        assert_eq!(result, Err(WalletTransactionError::ConfirmationRequired));
+        assert_eq!(
+            *transactions
+                .submit_calls
+                .lock()
+                .expect("counter is available"),
+            0
+        );
+    }
+
+    #[test]
+    fn confirmed_submission_returns_only_public_inclusion_metadata() {
+        let result = ready(SubmitWalletTransferUseCase::execute(
+            &service(),
+            SubmitWalletTransferCommand {
+                profile_id: "profile_test".to_owned(),
+                draft_id: "txdraft_test".to_owned(),
+                confirmation: confirmation(true),
+            },
+        ))
+        .expect("submission succeeds");
+
+        assert_eq!(result.transfer.state, "submitted");
+        assert!(!result.transfer.proof_required);
+        assert!(!result.transfer.submission_ready);
+        assert_eq!(result.transaction_id, "tx_submitted");
+        assert_eq!(result.block_id, "block_submitted");
+        assert_eq!(result.fee.asset_id, "midnight:dust");
+        assert_eq!(result.fee.atomic_units, "42");
+        assert_eq!(result.mode, "simulated");
     }
 }

@@ -48,6 +48,7 @@ ADR status and delivery state answer different questions:
 | [0024](0024-versioned-headless-wallet-protocol.md) Versioned headless wallet protocol | Accepted | Prototype parity epic and issues #4/#5/#8 | v1 profiles, protected keys, account derivation/sync, and shutdown implemented |
 | [0025](0025-persist-public-wallet-profile-metadata.md) Persist public profile metadata separately from secrets | Accepted | §§3, 7, 12–13, 17 and issue #1 | JSON profile metadata, selection, restore, UI, and headless flows implemented |
 | [0026](0026-stage-midnight-transfer-authorization.md) Stage Midnight transfer authorization before proving/submission | Accepted | §§3, 7–8, 12–13 and issue #9 | Canonical unshielded NIGHT prepare/authorize/draft flow implemented; proving/submission queued |
+| [0027](0027-complete-standalone-midnight-transaction-submission.md) Complete Midnight submission through bounded standalone adapters | Accepted | §§3, 7–8, 12–13 and issue #11 | Native development/headless DUST, proof-server, and node submission implemented; local mobile proving tracked by #12 |
 
 ## Current boundaries
 

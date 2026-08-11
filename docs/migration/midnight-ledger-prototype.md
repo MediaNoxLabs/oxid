@@ -20,15 +20,15 @@ before migrating later work.
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
-| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, protected external NIGHT derivation, and canonical unshielded transfer prepare/authorization implemented; shielded/DUST checkpoints, proving/submission pending |
+| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, protected NIGHT/DUST derivation use, and canonical staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; shielded and durable checkpoints pending |
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; process-local Ed25519/P-256 plus BIP32/secp256k1-Schnorr conformance implemented; durable recovery and native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification | credential domain/store/verification ports and adapters | Deferred to M3/M5 |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
 | `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle and account-aware Assets page reimplemented; remaining capability pages and native bridges deferred |
-| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, protected key/account flows, simulated/live reads, and canonical transfer authorization implemented; submission and SSI flows queued |
-| `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Deferred to M2 |
+| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, protected key/account flows, simulated/live reads, and staged canonical transfer submission implemented; SSI flows queued |
+| `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Protocol-compatible remote DUST proving implemented for standalone development; private local mobile proving tracked in issue #12 |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated benchmarks/fixtures only when an adapter needs them | Not product code |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch through repository scripts; native bridges remain deferred |
 
@@ -150,10 +150,20 @@ changes, history, and rejected inputs. Detailed retained evidence and exclusions
 [Issue #9](https://github.com/MediaNoxLabs/oxid/issues/9) adds the next bounded
 write slice. Oxid now prepares, previews, explicitly authorizes, expires, and
 retrieves canonical unshielded NIGHT drafts with the pinned ledger types. The
-headless executable covers the complete simulated flow and never exposes the
-signing payload, signature, or serialized transaction. ADR-0026 deliberately
-keeps DUST balancing, proving, node submission, and outcome tracking outside
-this slice, so `wallet.transaction.send_unshielded` remains queued.
+headless executable covers that flow and never exposes the signing payload,
+signature, or serialized transaction. ADR-0026 deliberately kept completion
+outside that slice.
+
+[Issue #11](https://github.com/MediaNoxLabs/oxid/issues/11) and ADR-0027 add the
+next stage. The native adapter borrows only the canonical DUST child for one
+worker, replays bounded DUST events, uses live chain parameters/time, converges
+canonical DUST fees, proves through the configured proof server, seals and
+tagged-serializes internally, submits the unsigned Midnight runtime call, and
+returns public inclusion identifiers. Simulation exercises the same state,
+confirmation, failure-restoration, worker-owned cancellation, and idempotency
+contract without a network. An ambiguous node outcome remains `submitting` and
+blocks a blind duplicate. Remote proving is development-only; private local
+mobile proving remains issue #12.
 
 Issue #7 adds the next bounded account slice: native headless startup can opt
 into a real v4 standalone-indexer WebSocket route and public unshielded address.
@@ -169,10 +179,10 @@ fixtures or the live source's configured watch-only fallback for that profile.
 The real headless executable covers initialize/derive/repeat/sign/sync without
 accepting or returning secret material.
 
-Persisted cursors, shielded/DUST state and key roles, internal/change address
-management, DUST balancing, proof generation, submission,
-QR/copy/share bridges, production endpoint discovery, recovery, and native
-custody remain separate follow-ups.
+Persisted cursors, shielded/DUST checkpoints and additional key roles,
+internal/change address management, local mobile proving, replacement and
+durable confirmation tracking, QR/copy/share bridges, production endpoint
+discovery, recovery, and native custody remain separate follow-ups.
 
 ## Gate for each later slice
 

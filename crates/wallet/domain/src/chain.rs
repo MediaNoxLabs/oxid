@@ -434,6 +434,21 @@ impl ChainTransactionId {
     }
 }
 
+/// Stable public block identity owned by Oxid.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ChainBlockId(OpaqueId);
+
+impl ChainBlockId {
+    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
+        OpaqueId::parse(value).map(Self)
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 /// Wallet-relative transaction direction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalletTransactionDirection {
