@@ -9,7 +9,7 @@ strict=false
 
 usage() {
   cat <<'USAGE'
-Usage: ./run.sh [all|core|ui|coverage|quality|clean|targets] [--light] [--strict]
+Usage: ./run.sh [all|core|ui|headless|coverage|quality|clean|targets] [--light] [--strict]
 
   --light   Skip advisory, license, and rustdoc checks.
   --strict  Deny compiler and rustdoc warnings.
@@ -18,7 +18,7 @@ USAGE
 
 while (($# > 0)); do
   case "$1" in
-    all|core|ui|coverage|quality|clean|targets)
+    all|core|ui|headless|coverage|quality|clean|targets)
       target="$1"
       ;;
     --light)
@@ -53,12 +53,17 @@ run_ui() {
   cargo check -p oxid-app
 }
 
+run_headless() {
+  cargo check -p oxid-headless
+}
+
 run_coverage() {
   require_command cargo-llvm-cov
   cargo llvm-cov \
     --workspace \
     --exclude oxid-ui-dioxus \
     --exclude oxid-app \
+    --exclude oxid-headless \
     --summary-only \
     --fail-under-lines 80
 }
@@ -86,6 +91,7 @@ case "$target" in
   all)
     run_core
     run_ui
+    run_headless
     run_coverage
     if ! $light; then
       run_quality
@@ -97,6 +103,9 @@ case "$target" in
   ui)
     run_ui
     ;;
+  headless)
+    run_headless
+    ;;
   coverage)
     run_coverage
     ;;
@@ -107,6 +116,6 @@ case "$target" in
     cargo clean
     ;;
   targets)
-    printf '%s\n' all core ui coverage quality clean targets
+    printf '%s\n' all core ui headless coverage quality clean targets
     ;;
 esac

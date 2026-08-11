@@ -25,3 +25,6 @@ once public releases begin.
   navigation, safe-area handling, and honest deferred-capability states.
 - Public staged-parity epic and focused wallet-profile integration backlog.
 - Presentation migration provenance and third-party icon notices.
+- UI-neutral application composition plus a versioned NDJSON headless wallet
+  harness with capability discovery, profile creation, safe errors, and
+  graceful shutdown.

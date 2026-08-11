@@ -1,6 +1,6 @@
 [package]
-name = "oxid-composition"
-description = "Static composition root for Oxid application capabilities"
+name = "oxid-headless"
+description = "Versioned NDJSON incoming adapter for deterministic Oxid wallet flows"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,9 +9,10 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-oxid-adapter-platform-system.workspace = true
-oxid-adapter-storage-memory.workspace = true
+oxid-composition.workspace = true
 oxid-wallet-application.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

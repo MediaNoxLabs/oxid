@@ -80,8 +80,10 @@ check_workspace_dependencies oxid-adapter-platform-system \
 check_workspace_dependencies oxid-ui-dioxus oxid-wallet-application
 check_workspace_dependencies oxid-composition \
   oxid-adapter-platform-system oxid-adapter-storage-memory \
-  oxid-ui-dioxus oxid-wallet-application
+  oxid-wallet-application
 check_workspace_dependencies oxid-app oxid-composition oxid-ui-dioxus
+check_workspace_dependencies oxid-headless \
+  oxid-composition oxid-wallet-application
 
 check_no_external_dependencies oxid-foundation
 check_no_external_dependencies oxid-wallet-domain

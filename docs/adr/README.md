@@ -45,6 +45,7 @@ ADR status and delivery state answer different questions:
 | [0021](0021-staged-prototype-migration.md) Staged prototype migration | Accepted | §§14, 17–19 and prototype review | Profile and presentation shell migrated from immutable baseline |
 | [0022](0022-nix-reproducible-development-and-ci.md) Reproducible Nix environment | Accepted | Repository harness | Implemented locally and in CI |
 | [0023](0023-prioritize-midnight-prototype-parity.md) Prioritize staged Midnight prototype parity | Accepted | Product direction and parity epic | Wallet shell slice implemented; capability backlog open |
+| [0024](0024-versioned-headless-wallet-protocol.md) Versioned headless wallet protocol | Accepted | Prototype parity epic and issue #4 | v1 transport, discovery, profile creation, and shutdown implemented |
 
 ## Current boundaries
 
@@ -53,4 +54,5 @@ ADR-0011 through ADR-0013, ADR-0020, ADR-0021, and ADR-0022. ADR-0007 through
 ADR-0010 constrain future identity/protocol work without claiming it exists.
 ADR-0014 through ADR-0019 remain research or design gates as stated in their
 individual records. ADR-0023 reprioritizes prototype parity after M0 without
-bypassing those gates.
+bypassing those gates. ADR-0024 establishes a safe second incoming adapter for
+exercising each slice.

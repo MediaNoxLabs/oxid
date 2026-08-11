@@ -13,4 +13,5 @@ Current reviews and source policies:
 
 - [Dioxus 0.7](dioxus-0.7.md)
 - [getrandom 0.3](getrandom-0.3.md)
+- [Serde and serde_json](serde-json.md)
 - [Midnight Git sources](midnight-git-sources.md)

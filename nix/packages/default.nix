@@ -41,9 +41,36 @@
         };
       };
 
+      packages.headless = pkgs.rustPlatform.buildRustPackage {
+        pname = "oxid-headless";
+        version = "0.1.0";
+        src = pkgs.lib.cleanSource ../..;
+
+        cargoLock.lockFile = ../../Cargo.lock;
+        cargoBuildFlags = [
+          "-p"
+          "oxid-headless"
+        ];
+        cargoTestFlags = [
+          "-p"
+          "oxid-headless"
+        ];
+
+        doCheck = true;
+        strictDeps = true;
+
+        meta = {
+          description = "Headless Oxid wallet flow harness";
+          homepage = "https://github.com/MediaNoxLabs/oxid";
+          license = pkgs.lib.licenses.asl20;
+          mainProgram = "oxid-headless";
+        };
+      };
+
       packages.dioxus-cli = pkgs.dioxus-cli;
 
       checks.package = self'.packages.default;
+      checks.headless = self'.packages.headless;
       formatter = pkgs.nixfmt;
     };
 }

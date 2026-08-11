@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
   "apps/oxid",
+  "apps/oxid-headless",
   "crates/adapters/platform-system",
   "crates/adapters/storage-memory",
   "crates/composition",
@@ -13,6 +14,7 @@ members = [
 ]
 default-members = [
   "apps/oxid",
+  "apps/oxid-headless",
   "crates/adapters/platform-system",
   "crates/adapters/storage-memory",
   "crates/composition",
@@ -34,6 +36,8 @@ authors = ["Oxid contributors"]
 [workspace.dependencies]
 dioxus = { version = "=0.7.10", default-features = false }
 getrandom = { version = "=0.3.4", features = ["wasm_js"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.151" }
 
 oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }
 oxid-adapter-storage-memory = { version = "=0.1.0", path = "crates/adapters/storage-memory" }

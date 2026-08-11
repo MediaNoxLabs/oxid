@@ -29,6 +29,9 @@ sources:
 run:
     cargo run -p oxid-app
 
+headless:
+    cargo run -p oxid-headless
+
 ios-run:
     ./scripts/run-ios-simulator.sh
 

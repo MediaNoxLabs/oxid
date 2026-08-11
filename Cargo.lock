@@ -3356,13 +3356,22 @@ version = "0.1.0"
 dependencies = [
  "oxid-adapter-platform-system",
  "oxid-adapter-storage-memory",
- "oxid-ui-dioxus",
  "oxid-wallet-application",
 ]
 
 [[package]]
 name = "oxid-foundation"
 version = "0.1.0"
+
+[[package]]
+name = "oxid-headless"
+version = "0.1.0"
+dependencies = [
+ "oxid-composition",
+ "oxid-wallet-application",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "oxid-platform-ports"

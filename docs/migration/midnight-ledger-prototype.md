@@ -27,7 +27,7 @@ before migrating later work.
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification | credential domain/store/verification ports and adapters | Deferred to M3/M5 |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
 | `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile and safe presentation shell reimplemented; capability pages deferred |
-| `headless-wallet` | Line-delimited JSON driver for use cases | future incoming CLI/test adapter | Deferred; retain protocol lessons |
+| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport and profile flow implemented; chain/SSI flows queued |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Deferred to M2 |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated benchmarks/fixtures only when an adapter needs them | Not product code |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Deferred until mobile capability slice |
@@ -61,6 +61,21 @@ This is presentation parity, not functional parity. Assets, DIDs, credentials,
 diagnostics, and settings expose only composed behavior and label missing
 adapters as queued. Create Wallet Profile remains the only complete use case
 until subsequent vertical slices land.
+
+## Second post-M0 slice: standalone headless harness
+
+[Issue #4](https://github.com/MediaNoxLabs/oxid/issues/4) establishes a
+versioned NDJSON executable over the same UI-neutral composition used by the
+mobile application. It implements capability discovery, Create Wallet Profile,
+safe error recovery, and graceful shutdown. Its discovery result lists the
+remaining wallet, vault, identity, credential, DID, and diagnostics operations
+as queued rather than claiming them prematurely.
+
+The implementation retains the useful one-request/one-response streaming model
+and literal shutdown alias from the prototype. It deliberately does not retain
+the mandatory startup seed, raw external errors, wallet-facade coupling, or the
+bootstrap response containing `controllerSkHex`. ADR-0024 defines the durable
+protocol and secret-handling boundary.
 
 ## Material intentionally excluded
 

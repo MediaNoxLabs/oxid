@@ -8,10 +8,11 @@ It is designed for Android and iOS first, with desktop and web as secondary
 targets. Crypto assets and self-sovereign identity are peer capabilities rather
 than layers bolted onto one chain-specific frontend.
 
-> **Status:** M0 foundation plus the first prototype-parity presentation slice.
-> Create Wallet Profile is still the only complete use case. The Assets, DIDs,
-> Credentials, Diagnostics, and Settings shell deliberately labels unconnected
-> capabilities; Oxid is not ready to hold real assets or identity credentials.
+> **Status:** M0 foundation plus the first prototype-parity slices. Create
+> Wallet Profile is still the only complete use case, now available through
+> both Dioxus and a standalone headless harness. The remaining shell
+> destinations deliberately label unconnected capabilities; Oxid is not ready
+> to hold real assets or identity credentials.
 
 ## Architecture
 
@@ -20,14 +21,14 @@ boundaries; Dioxus, storage, operating systems, chains, and SSI libraries remain
 replaceable adapters.
 
 ```text
-apps/oxid
-    |
-    +--> ui-dioxus --------> wallet-application --> wallet-domain
-    |                                |                    |
-    +--> composition                 v                    v
-             |                platform-ports ------> foundation
-             +--> storage-memory
-             +--> platform-system
+apps/oxid --------> ui-dioxus --------+
+                                        |
+apps/oxid-headless ---------------------+--> wallet-application --> wallet-domain
+          |                             |             |                    |
+          +--> composition -------------+             v                    v
+                    |                         platform-ports ------> foundation
+                    +--> storage-memory
+                    +--> platform-system
 ```
 
 The detailed product and engineering definition is
@@ -52,6 +53,16 @@ Launch the desktop shell:
 cargo run -p oxid-app
 ```
 
+Exercise the same application services through the versioned NDJSON harness:
+
+```bash
+printf '%s\n' '{"protocol":"oxid.headless.v1","id":"demo-1","method":"system.capabilities","params":{}}' | cargo run --quiet -p oxid-headless
+```
+
+Stdout is reserved for JSON responses. Start with `system.capabilities`; it
+distinguishes implemented methods from queued parity work. The protocol never
+returns raw private key or seed material.
+
 Common commands are also exposed through `just`:
 
 ```bash
@@ -59,6 +70,7 @@ just check
 just test
 just coverage
 just run
+just headless
 just full
 ```
 
@@ -82,6 +94,7 @@ an explicit mobile adapter.
 | Path | Responsibility |
 | --- | --- |
 | `apps/oxid` | Executable shell and Dioxus launch configuration. |
+| `apps/oxid-headless` | Versioned NDJSON flow and integration-test harness. |
 | `crates/foundation` | Small Oxid-owned primitives. |
 | `crates/wallet/domain` | Wallet entities and invariants. |
 | `crates/wallet/application` | Use cases and wallet-owned ports. |

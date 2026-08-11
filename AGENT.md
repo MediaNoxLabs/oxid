@@ -24,7 +24,9 @@ before adding Cardano, Midnight, DID, VC, OIDC, or DIDComm SDKs:
 6. Dioxus UI adapter;
 7. composition root.
 
-The only complete use case remains **Create Wallet Profile**. ADR-0023 now
+The only complete use case remains **Create Wallet Profile**. It is available
+through both the Dioxus shell and the standalone `oxid-headless` incoming
+adapter. ADR-0023 now
 prioritizes staged functional parity with the reviewed Midnight mobile wallet.
 The ordered public backlog is
 [issue #2](https://github.com/MediaNoxLabs/oxid/issues/2); implement it in
@@ -58,8 +60,8 @@ and exclusions live in `docs/migration/ui-shell-provenance.md`.
 Dependencies point inward:
 
 ```text
-apps/composition -> incoming UI + outgoing adapters -> application -> domain
-                                                    -> platform ports -> foundation
+apps -> incoming adapters -> application -> domain
+   +-> composition -> outgoing adapters -> platform ports -> foundation
 ```
 
 Rules:
@@ -82,10 +84,11 @@ Rules:
 The blueprint's ADR summaries are materialized as ADR-0001 through ADR-0020 in
 `docs/adr/README.md`. ADR-0021 records the staged prototype migration and
 ADR-0022 records Nix as the reproducible environment. ADR-0023 records the
-post-M0 prototype-parity priority. ADR status and delivery state are deliberately
-separate: an accepted future boundary is binding but does not mean the
-capability is implemented. Proposed ADRs are gates, not dependency
-authorization.
+post-M0 prototype-parity priority. ADR-0024 records the versioned NDJSON
+headless adapter and forbids secret-bearing results. ADR status and delivery
+state are deliberately separate: an accepted future boundary is binding but
+does not mean the capability is implemented. Proposed ADRs are gates, not
+dependency authorization.
 
 Current package ownership:
 
@@ -100,6 +103,16 @@ Current package ownership:
 | `crates/ui-dioxus` | Dioxus incoming adapter and presentation state. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
 | `apps/oxid` | Executable shell and platform launch point. |
+| `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |
+
+`oxid-composition` exposes UI-neutral `ApplicationServices`. Incoming adapters
+adapt that object at their own boundary; composition must not depend on Dioxus,
+the headless protocol, or another incoming adapter. The headless protocol is
+`oxid.headless.v1`. Its stdout is protocol-only, invalid input must not poison
+the stream, and capability discovery must label unimplemented methods as
+`queued`. Never reproduce the prototype's `controllerSkHex` bootstrap result or
+require a seed before an implemented chain use case needs an opaque key
+reference.
 
 ## Development environment
 
@@ -138,6 +151,7 @@ Useful focused commands:
 cargo test -p oxid-wallet-domain
 cargo test -p oxid-wallet-application
 cargo test -p oxid-adapter-storage-memory
+cargo test -p oxid-headless
 cargo check -p oxid-app
 ./run.sh coverage --strict
 ./scripts/check-architecture.sh
@@ -197,8 +211,8 @@ to silence the shell probe.
 - Clippy runs workspace-wide with warnings denied.
 - Unit and integration tests run workspace-wide.
 - `cargo llvm-cov` enforces 80% line coverage across the core and outgoing
-  adapters; the Dioxus UI and executable shell are excluded from this core
-  threshold and remain compile-gated.
+  adapters; incoming adapters and executable shells are excluded from this core
+  threshold and remain test/compile-gated.
 - `scripts/check-architecture.sh` enforces the initial inward dependency graph.
 - `scripts/check-midnight-sources.sh` permits known Midnight ledger/proof crates
   only from the official GitHub repositories with full immutable `rev` pins.
