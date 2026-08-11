@@ -437,9 +437,10 @@ to silence the shell probe.
 - Never log secrets, seeds, private identifiers, credential claims, signing
   payloads, or raw external error bodies that may contain them.
 - Standalone indexer and proof-server HTTP routes are explicit trust-boundary
-  configuration and intentionally ignore ambient process proxy variables. This
-  also keeps their loopback integration tests valid in pure Nix builds, where a
-  dead proxy is installed to prevent network access.
+  configuration and intentionally ignore ambient process proxy variables.
+  Keep their HTTP status/body tests transport-free: reqwest loopback is not
+  reliable inside pure Linux Nix derivations even when the WebSocket loopback
+  harness succeeds.
 - Validate profile labels and all future QR/deep-link/protocol input at the
   boundary before use.
 - The JSON profile store contains public labels, identifiers, timestamps, and

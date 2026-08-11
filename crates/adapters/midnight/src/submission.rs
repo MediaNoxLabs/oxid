@@ -29,7 +29,7 @@ use midnight_transient_crypto::{
 use oxid_wallet_application::WalletTransactionPortError;
 use oxid_wallet_domain::WalletTransferSubmissionMode;
 use rand::rngs::OsRng;
-use reqwest::Url;
+use reqwest::{StatusCode, Url};
 use serde_json::{Value, json};
 use subxt::{OnlineClient, SubstrateConfig, dynamic};
 use tokio::time::timeout;
@@ -244,29 +244,54 @@ struct ChainTip {
 
 async fn fetch_chain_tip(endpoint: &str) -> Result<ChainTip, WalletTransactionPortError> {
     ensure_tls_provider()?;
-    let client = reqwest::Client::builder()
+    let client = chain_tip_client()?;
+    let request = chain_tip_request(&client, endpoint)?;
+    let response = client
+        .execute(request)
+        .await
+        .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    validate_chain_tip_status(response.status())?;
+    let body = bounded_response(response, MAX_CHAIN_TIP_BYTES)
+        .await
+        .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+    decode_chain_tip_body(&body)
+}
+
+fn chain_tip_request(
+    client: &reqwest::Client,
+    endpoint: &str,
+) -> Result<reqwest::Request, WalletTransactionPortError> {
+    client
+        .post(endpoint)
+        .json(&json!({ "query": CHAIN_TIP_QUERY, "variables": {} }))
+        .build()
+        .map_err(|_| WalletTransactionPortError::Unavailable)
+}
+
+fn chain_tip_client() -> Result<reqwest::Client, WalletTransactionPortError> {
+    reqwest::Client::builder()
         // Standalone wallet routes are explicit trust-boundary configuration. Do not let
-        // ambient proxy variables silently redirect them (Nix also installs a dead proxy
-        // inside pure builds, including for loopback integration tests).
+        // ambient proxy variables silently redirect them.
         .no_proxy()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(CONNECT_TIMEOUT)
         .build()
-        .map_err(|_| WalletTransactionPortError::Unavailable)?;
-    let response = client
-        .post(endpoint)
-        .json(&json!({ "query": CHAIN_TIP_QUERY, "variables": {} }))
-        .send()
-        .await
-        .map_err(|_| WalletTransactionPortError::Unavailable)?;
-    if !response.status().is_success() {
+        .map_err(|_| WalletTransactionPortError::Unavailable)
+}
+
+fn validate_chain_tip_status(status: StatusCode) -> Result<(), WalletTransactionPortError> {
+    status
+        .is_success()
+        .then_some(())
+        .ok_or(WalletTransactionPortError::InvalidChainState)
+}
+
+fn decode_chain_tip_body(body: &[u8]) -> Result<ChainTip, WalletTransactionPortError> {
+    if body.len() > MAX_CHAIN_TIP_BYTES {
         return Err(WalletTransactionPortError::InvalidChainState);
     }
-    let body = bounded_response(response, MAX_CHAIN_TIP_BYTES)
-        .await
-        .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
     let root: Value =
-        serde_json::from_slice(&body).map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+        serde_json::from_slice(body).map_err(|_| WalletTransactionPortError::InvalidChainState)?;
     decode_chain_tip(&root)
 }
 
@@ -691,16 +716,25 @@ async fn bounded_response(
     response: reqwest::Response,
     maximum: usize,
 ) -> Result<Vec<u8>, WalletTransactionPortError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > maximum as u64)
-    {
+    bounded_stream(response.content_length(), response.bytes_stream(), maximum).await
+}
+
+async fn bounded_stream<S, B, E>(
+    content_length: Option<u64>,
+    mut stream: S,
+    maximum: usize,
+) -> Result<Vec<u8>, WalletTransactionPortError>
+where
+    S: futures::Stream<Item = Result<B, E>> + Unpin,
+    B: AsRef<[u8]>,
+{
+    if content_length.is_some_and(|length| length > maximum as u64) {
         return Err(WalletTransactionPortError::InvalidData);
     }
     let mut result = Vec::new();
-    let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| WalletTransactionPortError::Unavailable)?;
+        let chunk = chunk.as_ref();
         if result
             .len()
             .checked_add(chunk.len())
@@ -708,7 +742,7 @@ async fn bounded_response(
         {
             return Err(WalletTransactionPortError::InvalidData);
         }
-        result.extend_from_slice(&chunk);
+        result.extend_from_slice(chunk);
     }
     Ok(result)
 }
@@ -832,11 +866,7 @@ fn websocket_message_type(value: &Value) -> Result<&str, WalletTransactionPortEr
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        io::{Read, Write},
-        net::TcpListener,
-        thread,
-    };
+    use std::{net::TcpListener, thread};
 
     use midnight_ledger::{
         events::{EventDetails, EventSource},
@@ -868,25 +898,6 @@ mod tests {
             .enable_all()
             .build()
             .expect("test runtime builds")
-    }
-
-    fn serve_http_once(status: &'static str, body: Vec<u8>) -> (String, thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener binds");
-        let address = listener.local_addr().expect("test listener has an address");
-        let worker = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("test request connects");
-            let mut request = [0_u8; 16 * 1024];
-            let _ = stream.read(&mut request).expect("test request is readable");
-            let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            stream
-                .write_all(response.as_bytes())
-                .expect("test response headers write");
-            stream.write_all(&body).expect("test response body writes");
-        });
-        (format!("http://{address}/graphql"), worker)
     }
 
     #[allow(clippy::result_large_err)] // tungstenite's test-server callback owns the error type.
@@ -949,6 +960,26 @@ mod tests {
                         .ok()
                         .and_then(|value| value.get("type").cloned())
                         == Some(Value::String("subscribe".to_owned()))
+                }));
+                socket
+                    .send(Message::Text(
+                        json!({ "type": "ping", "payload": { "request": "keepalive" } })
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .expect("protocol ping sends");
+                let pong = socket
+                    .next()
+                    .await
+                    .expect("protocol pong arrives")
+                    .expect("protocol pong is valid");
+                assert!(pong.to_text().is_ok_and(|text| {
+                    serde_json::from_str::<Value>(text).is_ok_and(|value| {
+                        value.get("type").and_then(Value::as_str) == Some("pong")
+                            && value.pointer("/payload/request").and_then(Value::as_str)
+                                == Some("keepalive")
+                    })
                 }));
                 socket
                     .send(Message::Text(
@@ -1121,7 +1152,7 @@ mod tests {
     }
 
     #[test]
-    fn chain_tip_fetch_uses_the_bounded_http_adapter() {
+    fn chain_tip_http_response_uses_the_bounded_decoder() {
         let mut parameters = Vec::new();
         midnight_serialize::tagged_serialize(&INITIAL_PARAMETERS, &mut parameters)
             .expect("initial parameters serialize");
@@ -1134,36 +1165,97 @@ mod tests {
             }
         }))
         .expect("response serializes");
-        let (endpoint, worker) = serve_http_once("200 OK", body);
-        let tip = runtime()
-            .block_on(fetch_chain_tip(&endpoint))
-            .expect("loopback chain tip succeeds");
-        worker.join().expect("HTTP worker completes");
+        validate_chain_tip_status(StatusCode::OK).expect("successful status is accepted");
+        let tip = decode_chain_tip_body(&body).expect("bounded chain tip succeeds");
 
         assert_eq!(tip.timestamp, Timestamp::from_secs(1_750_000_123));
         assert_eq!(tip.parameters, INITIAL_PARAMETERS);
+        let client = chain_tip_client().expect("chain tip client builds");
+        let request = chain_tip_request(&client, "http://127.0.0.1:8088/api/v1/graphql")
+            .expect("chain tip request builds");
+        assert_eq!(request.method(), reqwest::Method::POST);
+        assert_eq!(request.url().path(), "/api/v1/graphql");
+        assert!(
+            request
+                .body()
+                .and_then(reqwest::Body::as_bytes)
+                .is_some_and(|body| serde_json::from_slice::<Value>(body)
+                    .ok()
+                    .and_then(|value| value.get("query").cloned())
+                    == Some(Value::String(CHAIN_TIP_QUERY.to_owned())))
+        );
+        assert_eq!(
+            chain_tip_request(&client, "://invalid").err(),
+            Some(WalletTransactionPortError::Unavailable)
+        );
+        assert_eq!(
+            decode_chain_tip_body(&vec![0_u8; MAX_CHAIN_TIP_BYTES + 1]).err(),
+            Some(WalletTransactionPortError::InvalidChainState)
+        );
     }
 
     #[test]
-    fn chain_tip_fetch_rejects_http_and_graphql_failures() {
-        let (endpoint, worker) = serve_http_once("503 Service Unavailable", Vec::new());
+    fn chain_tip_http_response_rejects_http_and_graphql_failures() {
         assert_eq!(
-            runtime().block_on(fetch_chain_tip(&endpoint)).err(),
+            validate_chain_tip_status(StatusCode::SERVICE_UNAVAILABLE).err(),
             Some(WalletTransactionPortError::InvalidChainState)
         );
-        worker.join().expect("HTTP worker completes");
 
         let body = serde_json::to_vec(&json!({
             "errors": [{ "message": "not exposed by the adapter" }],
             "data": { "block": null }
         }))
         .expect("response serializes");
-        let (endpoint, worker) = serve_http_once("200 OK", body);
         assert_eq!(
-            runtime().block_on(fetch_chain_tip(&endpoint)).err(),
+            decode_chain_tip_body(&body).err(),
             Some(WalletTransactionPortError::InvalidChainState)
         );
-        worker.join().expect("HTTP worker completes");
+        assert_eq!(
+            decode_chain_tip_body(b"not-json").err(),
+            Some(WalletTransactionPortError::InvalidChainState)
+        );
+    }
+
+    #[test]
+    fn bounded_stream_rejects_declared_streamed_and_transport_overflow() {
+        let success = runtime()
+            .block_on(bounded_stream(
+                Some(4),
+                futures::stream::iter([Ok::<_, ()>(vec![1_u8, 2]), Ok(vec![3_u8, 4])]),
+                4,
+            ))
+            .expect("bounded chunks collect");
+        assert_eq!(success, vec![1, 2, 3, 4]);
+        assert_eq!(
+            runtime()
+                .block_on(bounded_stream(
+                    Some(5),
+                    futures::stream::iter([Ok::<_, ()>(vec![1_u8])]),
+                    4,
+                ))
+                .err(),
+            Some(WalletTransactionPortError::InvalidData)
+        );
+        assert_eq!(
+            runtime()
+                .block_on(bounded_stream(
+                    None,
+                    futures::stream::iter([Ok::<_, ()>(vec![1_u8, 2, 3]), Ok(vec![4, 5])]),
+                    4,
+                ))
+                .err(),
+            Some(WalletTransactionPortError::InvalidData)
+        );
+        assert_eq!(
+            runtime()
+                .block_on(bounded_stream(
+                    None,
+                    futures::stream::iter([Err::<Vec<u8>, _>(())]),
+                    4,
+                ))
+                .err(),
+            Some(WalletTransactionPortError::Unavailable)
+        );
     }
 
     #[test]
