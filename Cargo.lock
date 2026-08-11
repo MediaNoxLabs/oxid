@@ -252,6 +252,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "bech32"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d965446196e3b7decd44aa7ee49e31d630118f90ef12f97900f262eb915c951d"
+
+[[package]]
 name = "bit_field"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2370,6 +2376,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "hmac"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3552,6 +3564,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "oxid-adapter-midnight"
+version = "0.1.0"
+dependencies = [
+ "bech32",
+ "hex",
+ "oxid-foundation",
+ "oxid-platform-ports",
+ "oxid-wallet-application",
+ "oxid-wallet-domain",
+]
+
+[[package]]
 name = "oxid-adapter-platform-system"
 version = "0.1.0"
 dependencies = [
@@ -3609,6 +3633,7 @@ dependencies = [
 name = "oxid-composition"
 version = "0.1.0"
 dependencies = [
+ "oxid-adapter-midnight",
  "oxid-adapter-platform-system",
  "oxid-adapter-storage-dev",
  "oxid-adapter-storage-json",
@@ -3624,6 +3649,7 @@ version = "0.1.0"
 name = "oxid-headless"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "oxid-composition",
  "oxid-wallet-application",
  "oxid-wallet-domain",

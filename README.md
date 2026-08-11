@@ -12,7 +12,10 @@ than layers bolted onto one chain-specific frontend.
 > profile lifecycle—create, list, select, persist, and restore—is available
 > through Dioxus and the standalone headless harness. A development-only
 > process-local adapter exercises opaque Ed25519/P-256 key flows headlessly;
-> production mobile custody remains fail-closed. The remaining shell
+> a second simulated adapter exercises Midnight network, address, exact-balance,
+> sync, and history flows without secret input or a live chain. The Assets page
+> consumes the same account use cases while production mobile custody and chain
+> access remain fail-closed. The remaining shell
 > destinations deliberately label unconnected capabilities; Oxid is not ready
 > to hold real assets or identity credentials.
 
@@ -30,6 +33,7 @@ apps/oxid-headless ---------------------+--> wallet-application --> wallet-domai
           +--> composition -------------+             v                    v
                     |                         platform-ports ------> foundation
                     +--> storage-json / storage-memory / storage-dev
+                    +--> midnight (unavailable or simulated account source)
                     +--> platform-system
 ```
 
@@ -68,6 +72,13 @@ key lifecycle is explicitly `development_only`, process-local, and ephemeral;
 it is useful for conformance testing, not custody. Profile metadata persists in the
 platform application-data directory by default; set
 `OXID_PROFILE_STORE_PATH` to isolate an automation run.
+
+The implemented account methods are `wallet.network.list`,
+`wallet.network.select`, `wallet.account.get`, `wallet.address.list`,
+`wallet.address.unshielded`, `wallet.balance.snapshot`,
+`wallet.transaction.history`, `wallet.connect`, and `wallet.sync.force`.
+Their account data is explicitly `simulated`, uses public conformance payloads,
+and contacts no node, indexer, or prover.
 
 Common commands are also exposed through `just`:
 
@@ -146,9 +157,10 @@ The profile page is retained and now owns integrated onboarding, selection, and
 public-metadata persistence. Custody and protected secrets remain explicitly
 outside that record.
 
-M0 has no Midnight Cargo dependency. Future ledger and proof adapters must use
-official GitHub URLs with immutable commit pins; the policy and current upstream
-observations are recorded in
+The first Midnight read adapter has no direct ledger/proof dependency because
+it does not consume their runtime types. Future transaction and proof adapters
+must use official GitHub URLs with immutable commit pins; the selected baseline,
+build-trial result, and policy are recorded in
 [docs/dependencies/midnight-git-sources.md](docs/dependencies/midnight-git-sources.md).
 
 ## Security

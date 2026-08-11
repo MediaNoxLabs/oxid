@@ -7,9 +7,11 @@ use std::sync::Arc;
 use dioxus::prelude::*;
 use oxid_wallet_application::{
     CreateWalletProfileCommand, CreateWalletProfileUseCase, GetActiveWalletProfileUseCase,
-    GetWalletSecurityStatusUseCase, ListWalletProfilesUseCase, SelectWalletProfileCommand,
-    SelectWalletProfileUseCase, WalletProfileSecurityCommand, WalletProfileView,
-    WalletSecurityStatusView,
+    GetWalletAccountUseCase, GetWalletSecurityStatusUseCase, ListWalletNetworksUseCase,
+    ListWalletProfilesUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
+    SelectWalletProfileCommand, SelectWalletProfileUseCase, SyncWalletAccountUseCase,
+    WalletAccountQuery, WalletAccountView, WalletNetworkListView, WalletProfileSecurityCommand,
+    WalletProfileView, WalletSecurityStatusView,
 };
 
 const STYLES: &str = include_str!("../assets/styles.css");
@@ -22,9 +24,22 @@ pub struct WalletUiServices {
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
     get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
     get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
+    list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
+    select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
+    get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
+    sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
 }
 
-impl WalletUiServices {
+/// Profile and protection use cases consumed by the wallet shell.
+pub struct WalletProfileUiServices {
+    create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
+    list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
+    select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
+    get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
+    get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
+}
+
+impl WalletProfileUiServices {
     #[must_use]
     pub const fn new(
         create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
@@ -39,6 +54,48 @@ impl WalletUiServices {
             select_wallet_profile,
             get_active_wallet_profile,
             get_wallet_security_status,
+        }
+    }
+}
+
+/// Midnight account use cases consumed by the Assets page.
+pub struct WalletAccountUiServices {
+    list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
+    select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
+    get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
+    sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+}
+
+impl WalletAccountUiServices {
+    #[must_use]
+    pub const fn new(
+        list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
+        select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
+        get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
+        sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    ) -> Self {
+        Self {
+            list_wallet_networks,
+            select_wallet_network,
+            get_wallet_account,
+            sync_wallet_account,
+        }
+    }
+}
+
+impl WalletUiServices {
+    #[must_use]
+    pub fn new(profiles: WalletProfileUiServices, account: WalletAccountUiServices) -> Self {
+        Self {
+            create_wallet_profile: profiles.create_wallet_profile,
+            list_wallet_profiles: profiles.list_wallet_profiles,
+            select_wallet_profile: profiles.select_wallet_profile,
+            get_active_wallet_profile: profiles.get_active_wallet_profile,
+            get_wallet_security_status: profiles.get_wallet_security_status,
+            list_wallet_networks: account.list_wallet_networks,
+            select_wallet_network: account.select_wallet_network,
+            get_wallet_account: account.get_wallet_account,
+            sync_wallet_account: account.sync_wallet_account,
         }
     }
 
@@ -65,6 +122,26 @@ impl WalletUiServices {
     #[must_use]
     pub fn get_wallet_security_status(&self) -> Arc<dyn GetWalletSecurityStatusUseCase> {
         Arc::clone(&self.get_wallet_security_status)
+    }
+
+    #[must_use]
+    pub fn list_wallet_networks(&self) -> Arc<dyn ListWalletNetworksUseCase> {
+        Arc::clone(&self.list_wallet_networks)
+    }
+
+    #[must_use]
+    pub fn select_wallet_network(&self) -> Arc<dyn SelectWalletNetworkUseCase> {
+        Arc::clone(&self.select_wallet_network)
+    }
+
+    #[must_use]
+    pub fn get_wallet_account(&self) -> Arc<dyn GetWalletAccountUseCase> {
+        Arc::clone(&self.get_wallet_account)
+    }
+
+    #[must_use]
+    pub fn sync_wallet_account(&self) -> Arc<dyn SyncWalletAccountUseCase> {
+        Arc::clone(&self.sync_wallet_account)
     }
 }
 
@@ -136,6 +213,17 @@ enum ProfileListState {
 enum SecurityCapabilityState {
     Loading,
     Ready(WalletSecurityStatusView),
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum AccountPageState {
+    Loading,
+    Ready {
+        networks: WalletNetworkListView,
+        account: Box<WalletAccountView>,
+        syncing: bool,
+    },
     Failed(String),
 }
 
@@ -553,45 +641,375 @@ fn ProfileManager(
 
 #[component]
 fn AssetsPage(active_profile: WalletProfileView) -> Element {
-    rsx! {
-        section { class: "wallet-hero",
-            p { class: "eyebrow", "Wallet overview" }
-            div { class: "wallet-hero__number-row",
-                h1 { "—" }
-                span { "NIGHT" }
-            }
-            div { class: "dust-pill",
-                strong { "—" }
-                span { "DUST" }
-            }
-            p { class: "wallet-hero__hint", "Midnight account and balance adapters are not connected in this slice." }
-        }
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| AccountPageState::Loading);
+    let profile_id = active_profile.id.clone();
+    let services_for_load = services.clone();
+    use_effect(move || {
+        state.set(load_account_page(&services_for_load, &profile_id));
+    });
 
-        section { class: "trust-line", role: "status",
-            span { class: "trust-line__icon", aria_hidden: "true", "◇" }
-            div {
-                strong { "{active_profile.display_name} is active" }
-                p { "Profile selection is persisted locally. Asset custody, sync, and proving remain disabled until their reviewed adapters land." }
+    match state.read().clone() {
+        AccountPageState::Loading => rsx! {
+            section { class: "wallet-hero",
+                p { class: "eyebrow", "Wallet overview" }
+                div { class: "wallet-hero__number-row",
+                    h1 { "…" }
+                    span { "NIGHT" }
+                }
+                p { class: "wallet-hero__hint", "Loading the selected Midnight account boundary…" }
             }
-        }
-
-        button { class: "primary-action", r#type: "button", disabled: true,
-            "Connect Midnight wallet · queued"
-        }
-
-        div { class: "dashboard-grid",
-            article { class: "surface-card",
-                p { class: "card-eyebrow", "Receive" }
-                h2 { "Address unavailable" }
-                p { "A network-correct receive address and QR code will appear after account derivation is migrated." }
+        },
+        AccountPageState::Failed(error) => rsx! {
+            section { class: "wallet-hero",
+                p { class: "eyebrow", "Wallet overview" }
+                div { class: "wallet-hero__number-row",
+                    h1 { "—" }
+                    span { "NIGHT" }
+                }
+                p { class: "wallet-hero__hint", "Account state could not be loaded safely." }
             }
-            article { class: "surface-card",
-                p { class: "card-eyebrow", "Activity" }
-                h2 { "No synced history" }
-                p { "Indexer-backed transaction history is part of the Midnight read-capability slice." }
+            article { class: "empty-state surface-card", role: "alert",
+                h2 { "Midnight account unavailable" }
+                p { "{error}" }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    onclick: move |_| state.set(load_account_page(&services, &active_profile.id)),
+                    "Retry"
+                }
+            }
+        },
+        AccountPageState::Ready {
+            networks,
+            account,
+            syncing,
+        } => {
+            let night = balance_for(&account, "NIGHT")
+                .map(|balance| format_atomic_units(&balance.atomic_units, balance.decimals))
+                .unwrap_or_else(|| "—".to_owned());
+            let dust = balance_for(&account, "DUST")
+                .map(|balance| format_atomic_units(&balance.atomic_units, balance.decimals))
+                .unwrap_or_else(|| "—".to_owned());
+            let unavailable = account.source == "unavailable";
+            let account_hint = account_hint(&account, syncing);
+            let source_label = account_source_label(&account.source);
+            let sync_label = if syncing {
+                "Syncing Midnight account…"
+            } else if unavailable {
+                "Midnight account unavailable"
+            } else if account.sync.state == "synced" {
+                "Resync Midnight account"
+            } else {
+                "Connect Midnight account"
+            };
+            let selected_network_id = networks.selected_network_id.clone();
+            let select_services = services.clone();
+            let select_profile_id = active_profile.id.clone();
+            let mut select_state = state;
+            let sync_services = services.clone();
+            let sync_profile_id = active_profile.id.clone();
+            let sync_networks = networks.clone();
+            let sync_account = account.clone();
+            let mut sync_state = state;
+
+            rsx! {
+                section { class: "wallet-hero",
+                    div { class: "wallet-hero__heading-row",
+                        p { class: "eyebrow", "Wallet overview" }
+                        span { class: if account.source == "simulated" { "status-pill warning" } else { "status-pill" },
+                            "{source_label}"
+                        }
+                    }
+                    div { class: "wallet-hero__number-row",
+                        h1 { "{night}" }
+                        span { "NIGHT" }
+                    }
+                    div { class: "dust-pill",
+                        strong { "{dust}" }
+                        span { "DUST" }
+                    }
+                    p { class: "wallet-hero__hint", "{account_hint}" }
+                }
+
+                section { class: "trust-line", role: "status",
+                    span { class: "trust-line__icon", aria_hidden: "true", if unavailable { "○" } else { "◇" } }
+                    div {
+                        strong { "{active_profile.display_name} · {account.network_name}" }
+                        p {
+                            if let Some(height) = account.sync.chain_tip_height {
+                                "{sync_status_label(&account.sync.state)} · block {height} · {source_label} source"
+                            } else {
+                                "{sync_status_label(&account.sync.state)} · {source_label} source"
+                            }
+                        }
+                    }
+                }
+
+                label { class: "network-field",
+                    span { "Midnight network" }
+                    select {
+                        value: "{selected_network_id}",
+                        disabled: syncing,
+                        onchange: move |event| {
+                            let network_id = event.value();
+                            let result = select_services
+                                .select_wallet_network()
+                                .execute(SelectWalletNetworkCommand {
+                                    profile_id: select_profile_id.clone(),
+                                    network_id,
+                                })
+                                .and_then(|selected| {
+                                    select_services
+                                        .get_wallet_account()
+                                        .execute(WalletAccountQuery {
+                                            profile_id: select_profile_id.clone(),
+                                        })
+                                        .map(|account| (selected, account))
+                                });
+                            match result {
+                                Ok((networks, account)) => select_state.set(AccountPageState::Ready {
+                                    networks,
+                                    account: Box::new(account),
+                                    syncing: false,
+                                }),
+                                Err(error) => select_state.set(AccountPageState::Failed(error.to_string())),
+                            }
+                        },
+                        for network in networks.networks.iter() {
+                            option {
+                                key: "{network.network_id}",
+                                value: "{network.network_id}",
+                                selected: network.selected,
+                                "{network.display_name}"
+                            }
+                        }
+                    }
+                }
+
+                button {
+                    class: "primary-action",
+                    r#type: "button",
+                    disabled: syncing || unavailable,
+                    onclick: move |_| {
+                        sync_state.set(AccountPageState::Ready {
+                            networks: sync_networks.clone(),
+                            account: sync_account.clone(),
+                            syncing: true,
+                        });
+                        let service = sync_services.sync_wallet_account();
+                        let profile_id = sync_profile_id.clone();
+                        let networks = sync_networks.clone();
+                        spawn(async move {
+                            match service.execute(WalletAccountQuery { profile_id }).await {
+                                Ok(account) => sync_state.set(AccountPageState::Ready {
+                                    networks,
+                                    account: Box::new(account),
+                                    syncing: false,
+                                }),
+                                Err(error) => sync_state.set(AccountPageState::Failed(error.to_string())),
+                            }
+                        });
+                    },
+                    "{sync_label}"
+                }
+
+                div { class: "dashboard-grid",
+                    article { class: "surface-card",
+                        p { class: "card-eyebrow", "Receive" }
+                        if account.addresses.is_empty() {
+                            h2 { "Address unavailable" }
+                            p { "Protected Midnight account derivation is not connected in this composition." }
+                        } else {
+                            for address in account.addresses.iter() {
+                                div { class: "address-row", key: "{address.kind}",
+                                    div {
+                                        strong { "{address_kind_label(&address.kind)}" }
+                                        small { "{address_purpose(&address.kind)}" }
+                                    }
+                                    code { title: "{address.value}", "{truncate_middle(&address.value, 18, 8)}" }
+                                }
+                            }
+                            p { "QR and native copy/share actions remain a platform-adapter follow-up." }
+                        }
+                    }
+                    article { class: "surface-card",
+                        p { class: "card-eyebrow", "Activity" }
+                        if account.transactions.is_empty() {
+                            h2 { "No synced history" }
+                            p { if unavailable { "A live Midnight account source is not connected." } else { "Connect the account to synchronize transaction history." } }
+                        } else {
+                            div { class: "activity-list",
+                                for transaction in account.transactions.iter() {
+                                    div { class: "activity-row", key: "{transaction.transaction_id}",
+                                        span { class: "activity-row__mark", aria_hidden: "true", "{transaction_mark(&transaction.direction)}" }
+                                        div {
+                                            strong { "{transaction_direction_label(&transaction.direction)}" }
+                                            small { "{transaction_status_line(transaction)}" }
+                                        }
+                                        code { "{truncate_middle(&transaction.transaction_id, 12, 6)}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPageState {
+    let query = WalletAccountQuery {
+        profile_id: profile_id.to_owned(),
+    };
+    let result = services
+        .list_wallet_networks()
+        .execute(query.clone())
+        .and_then(|networks| {
+            services
+                .get_wallet_account()
+                .execute(query)
+                .map(|account| (networks, account))
+        });
+    match result {
+        Ok((networks, account)) => AccountPageState::Ready {
+            networks,
+            account: Box::new(account),
+            syncing: false,
+        },
+        Err(error) => AccountPageState::Failed(error.to_string()),
+    }
+}
+
+fn balance_for<'a>(
+    account: &'a WalletAccountView,
+    symbol: &str,
+) -> Option<&'a oxid_wallet_application::WalletAssetBalanceView> {
+    account
+        .balances
+        .iter()
+        .find(|balance| balance.symbol == symbol)
+}
+
+fn format_atomic_units(atomic_units: &str, decimals: u8) -> String {
+    if atomic_units.is_empty() || !atomic_units.bytes().all(|byte| byte.is_ascii_digit()) {
+        return "—".to_owned();
+    }
+    let atomic_units = atomic_units.trim_start_matches('0');
+    let atomic_units = if atomic_units.is_empty() {
+        "0"
+    } else {
+        atomic_units
+    };
+    if decimals == 0 {
+        return atomic_units.to_owned();
+    }
+    let decimals = usize::from(decimals);
+    let padded = if atomic_units.len() <= decimals {
+        format!(
+            "{}{}",
+            "0".repeat(decimals + 1 - atomic_units.len()),
+            atomic_units
+        )
+    } else {
+        atomic_units.to_owned()
+    };
+    let split = padded.len() - decimals;
+    let whole = &padded[..split];
+    let fraction = padded[split..].trim_end_matches('0');
+    if fraction.is_empty() {
+        whole.to_owned()
+    } else {
+        format!("{whole}.{fraction}")
+    }
+}
+
+fn account_hint(account: &WalletAccountView, syncing: bool) -> &'static str {
+    if syncing {
+        "Synchronizing account state from the configured source…"
+    } else {
+        match account.source.as_str() {
+            "unavailable" => {
+                "Native custody and a live Midnight account source are not connected yet."
+            }
+            "simulated" => "Development-only public fixture state; no chain was contacted.",
+            "cached" => "Showing local state from the most recent successful synchronization.",
+            _ => "Live account state reported by the configured Midnight adapter.",
+        }
+    }
+}
+
+fn account_source_label(source: &str) -> &'static str {
+    match source {
+        "live" => "Live",
+        "cached" => "Cached",
+        "simulated" => "Simulated",
+        _ => "Not connected",
+    }
+}
+
+fn sync_status_label(state: &str) -> &'static str {
+    match state {
+        "never_synced" => "Not synced",
+        "syncing" => "Syncing",
+        "synced" => "Synced",
+        "stalled" => "Stalled",
+        _ => "Unavailable",
+    }
+}
+
+fn address_kind_label(kind: &str) -> &'static str {
+    match kind {
+        "unshielded" => "Unshielded",
+        "shielded" => "Shielded",
+        "dust" => "DUST",
+        _ => "Reward",
+    }
+}
+
+fn address_purpose(kind: &str) -> &'static str {
+    match kind {
+        "unshielded" => "Send public NIGHT here",
+        "shielded" => "Private NIGHT receive",
+        "dust" => "Fee-token account",
+        _ => "Reward address",
+    }
+}
+
+fn truncate_middle(value: &str, head: usize, tail: usize) -> String {
+    let length = value.chars().count();
+    if length <= head + tail + 1 {
+        return value.to_owned();
+    }
+    let prefix = value.chars().take(head).collect::<String>();
+    let suffix = value.chars().skip(length - tail).collect::<String>();
+    format!("{prefix}…{suffix}")
+}
+
+fn transaction_mark(direction: &str) -> &'static str {
+    match direction {
+        "incoming" => "↓",
+        "outgoing" => "↑",
+        "self_transfer" => "↔",
+        _ => "◇",
+    }
+}
+
+fn transaction_direction_label(direction: &str) -> &'static str {
+    match direction {
+        "incoming" => "Received",
+        "outgoing" => "Sent",
+        "self_transfer" => "Self transfer",
+        _ => "Transaction",
+    }
+}
+
+fn transaction_status_line(transaction: &oxid_wallet_application::WalletTransactionView) -> String {
+    let block = transaction
+        .block_height
+        .map_or_else(|| "—".to_owned(), |height| height.to_string());
+    format!("{} · block {block}", transaction.status)
 }
 
 #[component]
@@ -850,5 +1268,20 @@ mod tests {
     fn profile_monogram_uses_the_first_visible_character() {
         assert_eq!(profile_monogram("  primary"), "P");
         assert_eq!(profile_monogram("---"), "O");
+    }
+
+    #[test]
+    fn atomic_units_are_rendered_without_floating_point_loss() {
+        assert_eq!(format_atomic_units("5000000", 6), "5");
+        assert_eq!(format_atomic_units("12000000000000000", 15), "12");
+        assert_eq!(format_atomic_units("1", 6), "0.000001");
+        assert_eq!(format_atomic_units("000000", 6), "0");
+        assert_eq!(format_atomic_units("not-a-number", 6), "—");
+    }
+
+    #[test]
+    fn long_public_identifiers_are_shortened_for_mobile_display() {
+        assert_eq!(truncate_middle("1234567890", 4, 3), "1234…890");
+        assert_eq!(truncate_middle("short", 4, 3), "short");
     }
 }

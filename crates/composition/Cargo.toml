@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+oxid-adapter-midnight.workspace = true
 oxid-adapter-platform-system.workspace = true
 oxid-adapter-storage-json.workspace = true
 oxid-adapter-storage-memory.workspace = true

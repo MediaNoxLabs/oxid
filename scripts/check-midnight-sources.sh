@@ -75,7 +75,7 @@ done < <(
 )
 
 if [ "$dependency_count" = "0" ]; then
-  echo "Midnight Git source rules passed (no M2 dependencies selected)."
+  echo "Midnight Git source rules passed (no direct Midnight Cargo packages present)."
 else
   echo "Midnight Git source rules passed for $dependency_count direct dependencies."
 fi

@@ -317,3 +317,136 @@ fn executable_exercises_the_standalone_protected_key_flow() {
     );
     process.quit();
 }
+
+#[test]
+fn executable_exercises_midnight_account_parity_without_secret_input() {
+    let store = TestStore::new();
+    let mut process = ProcessHarness::spawn(&store.path);
+    let created = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "account-create",
+        "method": "wallet.profile.create",
+        "params": { "displayName": "Standalone account flow" }
+    }));
+    let profile_id = created["result"]["profile"]["id"]
+        .as_str()
+        .expect("created profile should have an identifier");
+    assert_eq!(
+        process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "account-select-profile",
+            "method": "wallet.profile.select",
+            "params": { "profileId": profile_id }
+        }))["ok"],
+        true
+    );
+
+    let networks = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "networks",
+        "method": "wallet.network.list",
+        "params": {}
+    }));
+    assert_eq!(networks["result"]["selectedNetworkId"], "undeployed");
+    assert!(
+        networks["result"]["networks"]
+            .as_array()
+            .is_some_and(|items| items.len() == 7)
+    );
+
+    let before = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "account-before-sync",
+        "method": "wallet.account.get",
+        "params": {}
+    }));
+    assert_eq!(before["result"]["account"]["source"], "simulated");
+    assert_eq!(before["result"]["account"]["sync"]["state"], "never_synced");
+    assert_eq!(before["result"]["account"]["balances"], json!([]));
+    assert!(
+        before["result"]["account"]["addresses"][0]["value"]
+            .as_str()
+            .is_some_and(|address| address.starts_with("mn_addr_undeployed1"))
+    );
+    let balances_before = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "balances-before-sync",
+        "method": "wallet.balance.snapshot",
+        "params": {}
+    }));
+    assert_eq!(balances_before["result"]["balances"], json!([]));
+    assert_eq!(balances_before["result"]["sync"]["state"], "never_synced");
+
+    let connected = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "connect",
+        "method": "wallet.connect",
+        "params": {}
+    }));
+    assert_eq!(connected["result"]["account"]["sync"]["state"], "synced");
+    assert_eq!(connected["result"]["account"]["sync"]["chainTipHeight"], 42);
+    assert_eq!(
+        connected["result"]["account"]["balances"][0]["atomicUnits"],
+        "12000000000000000"
+    );
+    assert_eq!(
+        connected["result"]["account"]["balances"][1]["atomicUnits"],
+        "5000000"
+    );
+    let balances_after = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "balances-after-sync",
+        "method": "wallet.balance.snapshot",
+        "params": {}
+    }));
+    assert_eq!(
+        balances_after["result"]["balances"][0]["atomicUnits"],
+        "12000000000000000"
+    );
+    assert_eq!(balances_after["result"]["sync"]["state"], "synced");
+
+    let history = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "history",
+        "method": "wallet.transaction.history",
+        "params": {}
+    }));
+    assert_eq!(history["result"]["source"], "simulated");
+    assert_eq!(
+        history["result"]["transactions"][0]["transactionId"],
+        "simulated_outgoing"
+    );
+    assert_eq!(
+        history["result"]["transactions"][0]["direction"],
+        "outgoing"
+    );
+
+    let preprod = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "select-preprod",
+        "method": "wallet.network.select",
+        "params": { "networkId": "preprod" }
+    }));
+    assert_eq!(preprod["result"]["selectedNetworkId"], "preprod");
+    let preprod_address = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "preprod-address",
+        "method": "wallet.address.unshielded",
+        "params": {}
+    }));
+    assert!(
+        preprod_address["result"]["address"]["value"]
+            .as_str()
+            .is_some_and(|address| address.starts_with("mn_addr_preprod1"))
+    );
+    assert_eq!(preprod_address["result"]["source"], "simulated");
+
+    let rejected = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "unknown-network",
+        "method": "wallet.network.select",
+        "params": { "networkId": "unknown" }
+    }));
+    assert_eq!(rejected["error"]["code"], "unsupported_network");
+    process.quit();
+}

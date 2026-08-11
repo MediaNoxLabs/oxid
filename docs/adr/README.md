@@ -36,7 +36,7 @@ ADR status and delivery state answer different questions:
 | [0012](0012-mobile-first-target-priority.md) Mobile-first targets | Accepted | §§1, 4, 12–13, 16 | Features compile; native hosts deferred |
 | [0013](0013-local-first-and-telemetry-off.md) Local-first, telemetry-off | Accepted | §§4–5, 12–13 | Enforced for M0 |
 | [0014](0014-cardano-library-selection.md) Cardano libraries | Proposed | §§8, 17 | Research gate before M1 |
-| [0015](0015-midnight-library-selection.md) Midnight libraries | Proposed | §§8, 17 | Research gate before M2 |
+| [0015](0015-midnight-library-selection.md) Midnight libraries and protocols | Accepted | §§8, 17 | Compatibility baseline selected; account read model delivered in #6 |
 | [0016](0016-ssi-component-selection.md) SSI components | Proposed | §§9–11, 17 | Research gate before M3 |
 | [0017](0017-platform-backed-secret-storage.md) Platform custody, secret blobs, and authorization | Accepted | §§7, 12, 17 and prototype security review | Focused ports and development harness begin M1; native mobile adapters required |
 | [0018](0018-structured-error-taxonomy.md) Error taxonomy | Proposed | §§10, 13 | Partially exercised by M0 errors |
@@ -53,8 +53,9 @@ ADR status and delivery state answer different questions:
 M0 implements ADR-0001 through ADR-0006, the applicable policy portions of
 ADR-0011 through ADR-0013, ADR-0020, ADR-0021, and ADR-0022. ADR-0007 through
 ADR-0010 constrain future identity/protocol work without claiming it exists.
-ADR-0014 through ADR-0016 and ADR-0018 through ADR-0019 remain research or
-design gates as stated in their individual records. ADR-0017 now binds the M1
+ADR-0014, ADR-0016, and ADR-0018 through ADR-0019 remain research or design
+gates as stated in their individual records. ADR-0015 now binds all Midnight
+adapter work to the selected official Git and protocol surfaces. ADR-0017 now binds the M1
 custody design without claiming native adapters are complete. ADR-0023
 reprioritizes prototype parity after M0 without bypassing those gates. ADR-0024
 establishes a safe second incoming adapter for exercising each slice. ADR-0025

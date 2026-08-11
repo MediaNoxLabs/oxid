@@ -6,6 +6,10 @@ use std::{error::Error, fmt};
 
 use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
 
+mod chain;
+
+pub use chain::*;
+
 /// Stable identifier for one wallet profile.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WalletProfileId(OpaqueId);

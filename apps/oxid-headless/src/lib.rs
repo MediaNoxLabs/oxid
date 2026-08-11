@@ -7,11 +7,12 @@ use std::{error::Error, fmt, io, io::BufRead, io::Write};
 use oxid_composition::ApplicationServices;
 use oxid_wallet_application::{
     CreateWalletProfileCommand, CreateWalletProfileError, DeleteWalletKeyCommand,
-    GenerateWalletKeyCommand, ReadWalletProfilesError, SelectWalletProfileCommand,
-    SelectWalletProfileError, SensitiveOperationConfirmation, SensitiveWalletOperationError,
-    SignWalletDataCommand, WalletKeyError, WalletKeyView, WalletProfileRepositoryError,
-    WalletProfileSecurityCommand, WalletProfileView, WalletSecurityError, WalletSecurityPortError,
-    WalletSecurityStatusView,
+    GenerateWalletKeyCommand, ReadWalletProfilesError, SelectWalletNetworkCommand,
+    SelectWalletProfileCommand, SelectWalletProfileError, SensitiveOperationConfirmation,
+    SensitiveWalletOperationError, SignWalletDataCommand, WalletAccountError,
+    WalletAccountPortError, WalletAccountQuery, WalletAccountView, WalletKeyError, WalletKeyView,
+    WalletNetworkListView, WalletProfileRepositoryError, WalletProfileSecurityCommand,
+    WalletProfileView, WalletSecurityError, WalletSecurityPortError, WalletSecurityStatusView,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyPurpose, WalletProtectionClass,
@@ -133,6 +134,14 @@ impl HeadlessWallet {
             "wallet.key.list" => self.list_keys(request),
             "wallet.key.sign" => self.sign(request),
             "wallet.key.delete" => self.delete_key(request),
+            "wallet.network.list" => self.list_networks(request),
+            "wallet.network.select" => self.select_network(request),
+            "wallet.account.get" => self.get_account(request),
+            "wallet.address.list" => self.list_addresses(request),
+            "wallet.address.unshielded" => self.unshielded_address(request),
+            "wallet.balance.snapshot" => self.balance_snapshot(request),
+            "wallet.transaction.history" => self.transaction_history(request),
+            "wallet.connect" | "wallet.sync.force" => self.sync_account(request),
             _ => Dispatch::continue_with(Response::error(
                 request.id,
                 "method_not_found",
@@ -509,6 +518,169 @@ impl HeadlessWallet {
         }
     }
 
+    fn list_networks(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.network.list");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .list_wallet_networks()
+            .execute(WalletAccountQuery { profile_id })
+        {
+            Ok(networks) => Dispatch::continue_with(Response::success(
+                request.id,
+                network_list_value(&networks),
+            )),
+            Err(error) => Dispatch::continue_with(account_error(request.id, error)),
+        }
+    }
+
+    fn select_network(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<SelectNetworkParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.network.select requires only a string networkId",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .select_wallet_network()
+            .execute(SelectWalletNetworkCommand {
+                profile_id,
+                network_id: params.network_id,
+            }) {
+            Ok(networks) => Dispatch::continue_with(Response::success(
+                request.id,
+                network_list_value(&networks),
+            )),
+            Err(error) => Dispatch::continue_with(account_error(request.id, error)),
+        }
+    }
+
+    fn get_account(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.account.get");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .get_wallet_account()
+            .execute(WalletAccountQuery { profile_id })
+        {
+            Ok(account) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "account": account_value(&account) }),
+            )),
+            Err(error) => Dispatch::continue_with(account_error(request.id, error)),
+        }
+    }
+
+    fn sync_account(&self, request: Request) -> Dispatch {
+        let method = match request.method.as_str() {
+            "wallet.connect" => "wallet.connect",
+            _ => "wallet.sync.force",
+        };
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, method);
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match futures::executor::block_on(
+            self.application
+                .sync_wallet_account()
+                .execute(WalletAccountQuery { profile_id }),
+        ) {
+            Ok(account) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "account": account_value(&account) }),
+            )),
+            Err(error) => Dispatch::continue_with(account_error(request.id, error)),
+        }
+    }
+
+    fn list_addresses(&self, request: Request) -> Dispatch {
+        self.account_projection(request, "wallet.address.list", |account| {
+            json!({
+                "networkId": account.network_id,
+                "source": account.source,
+                "addresses": account.addresses.iter().map(address_value).collect::<Vec<_>>()
+            })
+        })
+    }
+
+    fn unshielded_address(&self, request: Request) -> Dispatch {
+        self.account_projection(request, "wallet.address.unshielded", |account| {
+            json!({
+                "networkId": account.network_id,
+                "source": account.source,
+                "address": account.addresses.iter().find(|address| address.kind == "unshielded").map(address_value)
+            })
+        })
+    }
+
+    fn balance_snapshot(&self, request: Request) -> Dispatch {
+        self.account_projection(request, "wallet.balance.snapshot", |account| {
+            json!({
+                "networkId": account.network_id,
+                "source": account.source,
+                "balances": account.balances.iter().map(balance_value).collect::<Vec<_>>(),
+                "sync": sync_value(account)
+            })
+        })
+    }
+
+    fn transaction_history(&self, request: Request) -> Dispatch {
+        self.account_projection(request, "wallet.transaction.history", |account| {
+            json!({
+                "networkId": account.network_id,
+                "source": account.source,
+                "transactions": account.transactions.iter().map(transaction_value).collect::<Vec<_>>()
+            })
+        })
+    }
+
+    fn account_projection(
+        &self,
+        request: Request,
+        method: &'static str,
+        projection: impl FnOnce(&WalletAccountView) -> Value,
+    ) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, method);
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .get_wallet_account()
+            .execute(WalletAccountQuery { profile_id })
+        {
+            Ok(account) => {
+                Dispatch::continue_with(Response::success(request.id, projection(&account)))
+            }
+            Err(error) => Dispatch::continue_with(account_error(request.id, error)),
+        }
+    }
+
     fn active_profile_id(&self, id: Option<String>) -> Result<String, Response> {
         match self.application.get_active_wallet_profile().execute() {
             Ok(Some(profile)) => Ok(profile.id),
@@ -542,6 +714,12 @@ struct CreateProfileParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SelectProfileParams {
     profile_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SelectNetworkParams {
+    network_id: String,
 }
 
 #[derive(Deserialize)]
@@ -748,6 +926,101 @@ fn profile_value(profile: &WalletProfileView) -> Value {
     })
 }
 
+fn network_list_value(networks: &WalletNetworkListView) -> Value {
+    json!({
+        "selectedNetworkId": networks.selected_network_id,
+        "networks": networks.networks.iter().map(|network| json!({
+            "chain": network.chain,
+            "networkId": network.network_id,
+            "displayName": network.display_name,
+            "environment": network.environment,
+            "selected": network.selected
+        })).collect::<Vec<_>>()
+    })
+}
+
+fn account_value(account: &WalletAccountView) -> Value {
+    json!({
+        "chain": account.chain,
+        "networkId": account.network_id,
+        "networkName": account.network_name,
+        "networkEnvironment": account.network_environment,
+        "accountId": account.account_id,
+        "source": account.source,
+        "addresses": account.addresses.iter().map(address_value).collect::<Vec<_>>(),
+        "balances": account.balances.iter().map(balance_value).collect::<Vec<_>>(),
+        "sync": sync_value(account),
+        "transactions": account.transactions.iter().map(transaction_value).collect::<Vec<_>>()
+    })
+}
+
+fn address_value(address: &oxid_wallet_application::WalletAddressView) -> Value {
+    json!({ "kind": address.kind, "value": address.value })
+}
+
+fn balance_value(balance: &oxid_wallet_application::WalletAssetBalanceView) -> Value {
+    json!({
+        "assetId": balance.asset_id,
+        "symbol": balance.symbol,
+        "decimals": balance.decimals,
+        "atomicUnits": balance.atomic_units
+    })
+}
+
+fn sync_value(account: &WalletAccountView) -> Value {
+    json!({
+        "state": account.sync.state,
+        "currentCursor": account.sync.current_cursor,
+        "targetCursor": account.sync.target_cursor,
+        "chainTipHeight": account.sync.chain_tip_height,
+        "updatedAtMillis": account.sync.updated_at_millis
+    })
+}
+
+fn transaction_value(transaction: &oxid_wallet_application::WalletTransactionView) -> Value {
+    json!({
+        "transactionId": transaction.transaction_id,
+        "direction": transaction.direction,
+        "status": transaction.status,
+        "blockHeight": transaction.block_height,
+        "observedAtMillis": transaction.observed_at_millis,
+        "changes": transaction.changes.iter().map(|change| json!({
+            "direction": change.direction,
+            "balance": balance_value(&change.balance)
+        })).collect::<Vec<_>>(),
+        "fee": transaction.fee.as_ref().map(balance_value)
+    })
+}
+
+fn account_error(id: Option<String>, error: WalletAccountError) -> Response {
+    match error {
+        WalletAccountError::InvalidProfileIdentifier(_)
+        | WalletAccountError::InvalidNetworkIdentifier(_) => Response::error(
+            id,
+            "invalid_argument",
+            "profile or network identifier is invalid",
+        ),
+        WalletAccountError::Port(WalletAccountPortError::NotFound) => {
+            Response::error(id, "not_found", "wallet account was not found")
+        }
+        WalletAccountError::Port(WalletAccountPortError::UnsupportedNetwork) => Response::error(
+            id,
+            "unsupported_network",
+            "selected wallet network is not supported",
+        ),
+        WalletAccountError::Port(WalletAccountPortError::Unavailable) => Response::error(
+            id,
+            "capability_unavailable",
+            "wallet account capability is unavailable",
+        ),
+        WalletAccountError::Port(WalletAccountPortError::InvalidData) => Response::error(
+            id,
+            "internal_error",
+            "wallet account state could not be decoded safely",
+        ),
+    }
+}
+
 fn security_status_value(status: WalletSecurityStatusView) -> Value {
     json!({
         "state": match status.state {
@@ -868,6 +1141,14 @@ fn invalid_empty_params(id: Option<String>, method: &'static str) -> Dispatch {
         "wallet.security.unlock" => "wallet.security.unlock does not accept parameters",
         "wallet.security.lock" => "wallet.security.lock does not accept parameters",
         "wallet.key.list" => "wallet.key.list does not accept parameters",
+        "wallet.network.list" => "wallet.network.list does not accept parameters",
+        "wallet.account.get" => "wallet.account.get does not accept parameters",
+        "wallet.address.list" => "wallet.address.list does not accept parameters",
+        "wallet.address.unshielded" => "wallet.address.unshielded does not accept parameters",
+        "wallet.balance.snapshot" => "wallet.balance.snapshot does not accept parameters",
+        "wallet.transaction.history" => "wallet.transaction.history does not accept parameters",
+        "wallet.connect" => "wallet.connect does not accept parameters",
+        "wallet.sync.force" => "wallet.sync.force does not accept parameters",
         _ => "method does not accept parameters",
     };
     Dispatch::continue_with(Response::error(id, "invalid_params", message))
@@ -991,12 +1272,17 @@ fn capability_manifest() -> Value {
         { "method": "wallet.key.list", "status": "ready", "mode": "development_only" },
         { "method": "wallet.key.sign", "status": "ready", "mode": "development_only" },
         { "method": "wallet.key.delete", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.connect", "status": "queued" },
+        { "method": "wallet.network.list", "status": "ready", "mode": "development_only" },
+        { "method": "wallet.network.select", "status": "ready", "mode": "development_only" },
+        { "method": "wallet.account.get", "status": "ready", "mode": "development_only", "source": "simulated" },
+        { "method": "wallet.connect", "status": "ready", "mode": "development_only", "source": "simulated" },
         { "method": "wallet.bootstrap", "status": "queued" },
-        { "method": "wallet.address.unshielded", "status": "queued" },
-        { "method": "wallet.balance.snapshot", "status": "queued" },
+        { "method": "wallet.address.list", "status": "ready", "mode": "development_only", "source": "official_public_vectors" },
+        { "method": "wallet.address.unshielded", "status": "ready", "mode": "development_only", "source": "official_public_vectors" },
+        { "method": "wallet.balance.snapshot", "status": "ready", "mode": "development_only", "source": "simulated" },
+        { "method": "wallet.transaction.history", "status": "ready", "mode": "development_only", "source": "simulated" },
         { "method": "wallet.transaction.send_unshielded", "status": "queued" },
-        { "method": "wallet.sync.force", "status": "queued" },
+        { "method": "wallet.sync.force", "status": "ready", "mode": "development_only", "source": "simulated" },
         { "method": "vault.total_locked", "status": "queued" },
         { "method": "vault.locks.list", "status": "queued" },
         { "method": "vault.credentials.list", "status": "queued" },
@@ -1088,6 +1374,11 @@ mod tests {
             capability["method"] == "wallet.key.sign"
                 && capability["status"] == "ready"
                 && capability["mode"] == "development_only"
+        }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "wallet.balance.snapshot"
+                && capability["status"] == "ready"
+                && capability["source"] == "simulated"
         }));
     }
 

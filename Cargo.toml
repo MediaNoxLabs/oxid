@@ -4,6 +4,7 @@ members = [
   "apps/oxid",
   "apps/oxid-headless",
   "crates/adapters/platform-system",
+  "crates/adapters/midnight",
   "crates/adapters/storage-json",
   "crates/adapters/storage-memory",
   "crates/adapters/storage-dev",
@@ -18,6 +19,7 @@ default-members = [
   "apps/oxid",
   "apps/oxid-headless",
   "crates/adapters/platform-system",
+  "crates/adapters/midnight",
   "crates/adapters/storage-json",
   "crates/adapters/storage-memory",
   "crates/adapters/storage-dev",
@@ -38,10 +40,13 @@ repository = "https://github.com/MediaNoxLabs/oxid"
 authors = ["Oxid contributors"]
 
 [workspace.dependencies]
+bech32 = { version = "=0.11.0" }
 dioxus = { version = "=0.7.10", default-features = false }
 directories = { version = "=6.0.0" }
 ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
+futures = { version = "=0.3.33", default-features = false, features = ["executor"] }
 getrandom = { version = "=0.3.4", features = ["wasm_js"] }
+hex = { version = "=0.4.3" }
 jni = { version = "=0.21.1" }
 ndk-context = { version = "=0.1.1" }
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa"] }
@@ -49,6 +54,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151" }
 zeroize = { version = "=1.9.0" }
 
+oxid-adapter-midnight = { version = "=0.1.0", path = "crates/adapters/midnight" }
 oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }
 oxid-adapter-storage-json = { version = "=0.1.0", path = "crates/adapters/storage-json" }
 oxid-adapter-storage-memory = { version = "=0.1.0", path = "crates/adapters/storage-memory" }

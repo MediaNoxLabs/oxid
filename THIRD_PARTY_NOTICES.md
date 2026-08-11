@@ -21,3 +21,12 @@ INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
 LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
 OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
+
+## Midnight Wallet SDK conformance data
+
+Oxid's development-only Midnight account adapter retains three public address
+payloads and expected Bech32m encodings from
+`packages/address-format/test/addresses.json` at Midnight Wallet SDK commit
+`25d0c3857fc0e20435e06a9225bd8709ecce1115`. The seed contained in the upstream
+test case is not retained. Midnight Wallet SDK is distributed under the Apache
+License 2.0, the same license used by this repository.

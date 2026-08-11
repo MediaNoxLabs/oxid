@@ -81,10 +81,12 @@ check_workspace_dependencies oxid-adapter-storage-json \
   oxid-foundation oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-platform-system \
   oxid-foundation oxid-platform-ports
+check_workspace_dependencies oxid-adapter-midnight \
+  oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-ui-dioxus oxid-wallet-application
 check_workspace_dependencies oxid-composition \
   oxid-adapter-platform-system oxid-adapter-storage-json \
-  oxid-adapter-storage-memory oxid-adapter-storage-dev \
+  oxid-adapter-storage-memory oxid-adapter-storage-dev oxid-adapter-midnight \
   oxid-wallet-application
 check_workspace_dependencies oxid-app oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \

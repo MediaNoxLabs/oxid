@@ -1,6 +1,6 @@
 [package]
-name = "oxid-headless"
-description = "Versioned NDJSON incoming adapter for deterministic Oxid wallet flows"
+name = "oxid-adapter-midnight"
+description = "Midnight network, address, and account read-model adapters for Oxid"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,12 +9,12 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-futures.workspace = true
-oxid-composition.workspace = true
+bech32.workspace = true
+hex.workspace = true
+oxid-foundation.workspace = true
+oxid-platform-ports.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

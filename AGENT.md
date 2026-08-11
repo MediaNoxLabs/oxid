@@ -43,6 +43,14 @@ Apple Keychain/Secure Enclave and Android Keystore/BiometricPrompt adapters are
 implemented. Track that slice and its follow-ups in
 [issue #5](https://github.com/MediaNoxLabs/oxid/issues/5).
 
+ADR-0015 is accepted with the immutable upstream baseline recorded in the ADR.
+The first M2 account slice owns chain-neutral networks, addresses, exact
+NIGHT/DUST balances, sync state, and transaction history. Production
+composition is unavailable until custody and a live source exist; headless and
+in-memory composition use a development-only simulated Midnight source made
+from public address payloads. Track the slice and its live follow-ups in
+[issue #6](https://github.com/MediaNoxLabs/oxid/issues/6).
+
 ## Prototype provenance
 
 The prototype remains useful migration input, not an architecture template.
@@ -62,7 +70,9 @@ mobile projects into Oxid without an explicit migration decision.
 
 The staged component inventory and destination map live in
 `docs/migration/midnight-ledger-prototype.md`. Presentation-specific provenance
-and exclusions live in `docs/migration/ui-shell-provenance.md`.
+and exclusions live in `docs/migration/ui-shell-provenance.md`. Account-specific
+upstream evidence, vectors, and exclusions live in
+`docs/migration/midnight-account-provenance.md`.
 
 ## Architecture boundaries
 
@@ -112,6 +122,7 @@ Current package ownership:
 | `crates/adapters/storage-memory` | Development/test implementation of wallet persistence. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 key lifecycle and signing adapter. |
+| `crates/adapters/midnight` | Midnight network/account adapter with fail-closed production and public simulated sources. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter and presentation state. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -128,13 +139,23 @@ require a seed before an implemented chain use case needs an opaque key
 reference.
 
 `compose()` is the production-facing composition and deliberately reports
-wallet protection unavailable. `compose_headless()` combines persistent public
-profiles with the ephemeral development key adapter; `compose_in_memory()`
-uses both development adapters for tests. Never change `compose()` to select
-`storage-dev`. Headless protected-key methods accept only public labels,
+wallet protection and Midnight account state unavailable. `compose_headless()`
+combines persistent public profiles with the ephemeral development key adapter
+and public simulated Midnight source; `compose_in_memory()` uses the same
+development adapters for tests. Never change `compose()` to select
+`storage-dev` or the simulated account source. Headless protected-key methods accept only public labels,
 algorithms, purposes, bounded payloads, opaque references, and explicit
 human-readable confirmations. Passphrases, seeds, recovery phrases, and raw
 private keys are rejected by strict parameter decoding.
+
+The accepted ledger compatibility revision is
+`d9414884db9da9e9b1f6f3a7f742d79a5732f817`. A host trial with
+`midnight-ledger` and `default-features = false` builds, but still resolves its
+unconditional transaction/proof graph. Do not add it to a read-model-only
+adapter for constants or public vectors. A future adapter that consumes ledger
+types must use the official HTTPS Git URL plus that full `rev`, then pass iOS
+and Android validation. The current `Cargo.lock` intentionally contains no
+Midnight Git package.
 
 ## Development environment
 
@@ -180,6 +201,7 @@ cargo test -p oxid-wallet-application
 cargo test -p oxid-adapter-storage-memory
 cargo test -p oxid-adapter-storage-json
 cargo test -p oxid-adapter-storage-dev
+cargo test -p oxid-adapter-midnight
 cargo test -p oxid-headless
 cargo check -p oxid-app
 ./run.sh coverage --strict

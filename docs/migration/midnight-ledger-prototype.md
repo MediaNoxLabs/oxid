@@ -20,14 +20,14 @@ before migrating later work.
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
-| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Deferred to M2 |
+| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account read model, public address vectors, exact balances, history, explicit sync, UI and headless simulation implemented; custody, live indexer, proving and submission pending |
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; standalone Ed25519/P-256 conformance slice implemented; native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification | credential domain/store/verification ports and adapters | Deferred to M3/M5 |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
-| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile onboarding/management and safe presentation shell reimplemented; capability pages deferred |
-| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport and complete profile lifecycle implemented; chain/SSI flows queued |
+| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle and account-aware Assets page reimplemented; remaining capability pages and native bridges deferred |
+| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, profile/key flows, and simulated Midnight account parity implemented; live chain and SSI flows queued |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Deferred to M2 |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated benchmarks/fixtures only when an adapter needs them | Not product code |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch through repository scripts; native bridges remain deferred |
@@ -122,6 +122,36 @@ flow testing, while production mobile composition reports custody unavailable
 until native Keychain/Keystore adapters meet the accepted policy. The
 development adapter is evidence for application sequencing and cryptographic
 contracts, never for production secret protection.
+
+## Fifth post-M0 slice: Midnight account read model
+
+[Issue #6](https://github.com/MediaNoxLabs/oxid/issues/6) introduces
+Oxid-owned network, account, address, asset, exact balance, synchronization, and
+transaction-history types. Focused application ports keep the domain free of
+SDK, transport, and UI types. Network selection is profile-scoped and network
+identity contains no HTTP, WebSocket, node, indexer, or prover route.
+
+`crates/adapters/midnight` supplies the seven reviewed Midnight network IDs,
+Bech32m encoding checked against official public vectors, and exact NIGHT/DUST
+unit semantics. Production composition returns an explicit unavailable
+snapshot until protected derivation and a live source exist. Development and
+headless composition use only public deterministic payloads and clearly mark
+the result `simulated`; balances and history remain empty until an explicit
+connect/sync request.
+
+The Assets page now renders the selected network, exact decimal balances,
+source/sync truth, public receive addresses, and recent activity through the
+same application use cases as the headless driver. The executable headless test
+covers profile creation, network discovery and selection, pre-sync state,
+explicit synchronization, balances, address HRP changes, history, and rejected
+unknown networks. Detailed retained evidence and exclusions are recorded in
+[midnight-account-provenance.md](midnight-account-provenance.md).
+
+This slice does not claim a live standalone stack: local node/indexer/prover
+services were not available during implementation. Protected HD/Jubjub account
+material, cursor-backed indexer synchronization, transaction construction,
+proof generation, submission, QR/copy/share bridges, and native custody remain
+separate follow-ups.
 
 ## Gate for each later slice
 

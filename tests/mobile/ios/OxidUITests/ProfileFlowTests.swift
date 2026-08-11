@@ -7,6 +7,7 @@ final class ProfileFlowTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    @MainActor
     func testCreatesAndRestoresActiveProfile() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         application.launch()
@@ -15,13 +16,13 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(createButton.waitForExistence(timeout: 15))
         createButton.tap()
 
-        XCTAssertTrue(application.staticTexts["My wallet is active"].waitForExistence(timeout: 15))
-        XCTAssertTrue(application.staticTexts["Assets"].exists)
-
         application.terminate()
         application.launch()
 
-        XCTAssertTrue(application.staticTexts["My wallet is active"].waitForExistence(timeout: 15))
+        let unavailableAccount = application.buttons["Midnight account unavailable"]
+        XCTAssertTrue(unavailableAccount.waitForExistence(timeout: 15))
+        XCTAssertFalse(unavailableAccount.isEnabled)
+        XCTAssertTrue(application.buttons["Assets"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
     }
 }

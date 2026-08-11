@@ -8,8 +8,10 @@ use oxid_foundation::OpaqueIdError;
 use oxid_platform_ports::{ClockPort, PlatformError, RandomPort};
 use oxid_wallet_domain::{ProfileName, ProfileNameError, WalletProfile, WalletProfileId};
 
+mod chain;
 mod security;
 
+pub use chain::*;
 pub use security::*;
 
 /// Input owned by the Create Wallet Profile application boundary.

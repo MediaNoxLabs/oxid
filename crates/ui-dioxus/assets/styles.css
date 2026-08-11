@@ -48,7 +48,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -101,7 +102,8 @@ button {
 .menu-item:focus-visible,
 .primary-action:focus-visible,
 .secondary-action:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid rgb(56 213 255 / 35%);
   outline-offset: 3px;
 }
@@ -270,6 +272,18 @@ input:focus-visible {
 
 .wallet-hero {
   padding: clamp(1.5rem, 6vw, 2.5rem) 0.35rem 1.5rem;
+}
+
+.wallet-hero__heading-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.wallet-hero__heading-row .status-pill {
+  flex: 0 0 auto;
+  margin-top: 0;
 }
 
 .wallet-hero__number-row {
@@ -505,6 +519,100 @@ input:focus-visible {
   border-color: rgb(70 243 181 / 26%);
   background: rgb(70 243 181 / 8%);
   color: var(--green);
+}
+
+.status-pill.warning {
+  border-color: rgb(251 191 36 / 28%);
+  background: rgb(251 191 36 / 9%);
+  color: var(--warning);
+}
+
+.network-field {
+  display: grid;
+  gap: 0.45rem;
+  margin: 1rem 0 0;
+}
+
+.network-field > span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.network-field select {
+  width: 100%;
+  min-height: 3.25rem;
+  padding: 0 0.95rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.85rem;
+  outline: 0;
+  background: rgb(7 11 20 / 70%);
+  color: var(--text-strong);
+}
+
+.network-field select:focus-visible {
+  border-color: var(--cyan);
+}
+
+.address-row,
+.activity-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  padding: 0.8rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.address-row:last-of-type,
+.activity-row:last-child {
+  border-bottom: 0;
+}
+
+.address-row > div,
+.activity-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.2rem;
+}
+
+.address-row strong,
+.activity-row strong {
+  color: var(--text-strong);
+  font-size: 0.84rem;
+}
+
+.address-row small,
+.activity-row small {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.address-row code,
+.activity-row code {
+  overflow: hidden;
+  color: var(--cyan);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-list {
+  display: grid;
+}
+
+.activity-row__mark {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 999px;
+  background: rgb(56 213 255 / 9%);
+  color: var(--cyan);
+  font-weight: 850;
 }
 
 .profile-heading {
