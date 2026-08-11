@@ -245,6 +245,10 @@ struct ChainTip {
 async fn fetch_chain_tip(endpoint: &str) -> Result<ChainTip, WalletTransactionPortError> {
     ensure_tls_provider()?;
     let client = reqwest::Client::builder()
+        // Standalone wallet routes are explicit trust-boundary configuration. Do not let
+        // ambient proxy variables silently redirect them (Nix also installs a dead proxy
+        // inside pure builds, including for loopback integration tests).
+        .no_proxy()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(CONNECT_TIMEOUT)
         .build()
@@ -611,6 +615,9 @@ async fn prove_via_http(
 > {
     ensure_tls_provider()?;
     let client = reqwest::Client::builder()
+        // Keep proof material on the explicitly configured route rather than an ambient
+        // process proxy. This also preserves loopback proving inside pure Nix builds.
+        .no_proxy()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(PROOF_TIMEOUT)
         .build()
