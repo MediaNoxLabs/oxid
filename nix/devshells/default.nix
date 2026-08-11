@@ -35,6 +35,7 @@
             openssl
             pi-coding-agent
             pkg-config
+            ripgrep
             rust-analyzer
             rustc
             rustfmt
