@@ -36,7 +36,7 @@ ADR status and delivery state answer different questions:
 | [0012](0012-mobile-first-target-priority.md) Mobile-first targets | Accepted | §§1, 4, 12–13, 16 | Features compile; native hosts deferred |
 | [0013](0013-local-first-and-telemetry-off.md) Local-first, telemetry-off | Accepted | §§4–5, 12–13 | Enforced for M0 |
 | [0014](0014-cardano-library-selection.md) Cardano libraries | Proposed | §§8, 17 | Research gate before M1 |
-| [0015](0015-midnight-library-selection.md) Midnight libraries and protocols | Accepted | §§8, 17 | Compatibility baseline selected; account read model delivered in #6 |
+| [0015](0015-midnight-library-selection.md) Midnight libraries and protocols | Accepted | §§8, 17 | Compatibility baseline selected; account model in #6 and live standalone unshielded sync in #7 |
 | [0016](0016-ssi-component-selection.md) SSI components | Proposed | §§9–11, 17 | Research gate before M3 |
 | [0017](0017-platform-backed-secret-storage.md) Platform custody, secret blobs, and authorization | Accepted | §§7, 12, 17 and prototype security review | Focused ports and development harness begin M1; native mobile adapters required |
 | [0018](0018-structured-error-taxonomy.md) Error taxonomy | Proposed | §§10, 13 | Partially exercised by M0 errors |

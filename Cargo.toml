@@ -52,6 +52,9 @@ ndk-context = { version = "=0.1.1" }
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151" }
+rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
+tokio = { version = "=1.53.1", default-features = false, features = ["net", "rt", "time"] }
+tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 zeroize = { version = "=1.9.0" }
 
 oxid-adapter-midnight = { version = "=0.1.0", path = "crates/adapters/midnight" }

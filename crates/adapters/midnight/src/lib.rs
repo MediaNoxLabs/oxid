@@ -2,6 +2,15 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_arch = "wasm32"))]
+mod indexer;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use indexer::{
+    LiveMidnightAccountSource, MidnightIndexerConfig, MidnightIndexerConfigError,
+    live_midnight_wallet,
+};
+
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
@@ -26,8 +35,8 @@ const DEFAULT_NETWORK_ID: &str = "undeployed";
 // midnight-ledger d9414884db9da9e9b1f6f3a7f742d79a5732f817,
 // ledger/src/structure.rs. Keeping these adapter-local avoids importing the
 // ledger's transaction/proof graph into a read-model-only capability.
-const STARS_PER_NIGHT: u128 = 1_000_000;
-const SPECKS_PER_DUST: u128 = 1_000_000_000_000_000;
+pub(crate) const STARS_PER_NIGHT: u128 = 1_000_000;
+pub(crate) const SPECKS_PER_DUST: u128 = 1_000_000_000_000_000;
 
 // Public payloads from the official Midnight Wallet SDK address conformance
 // vector for seed class 01. No seed or private key is retained in Oxid.
@@ -59,6 +68,7 @@ pub trait MidnightAccountSource: Send + Sync {
 pub struct MidnightWalletAdapter<S> {
     source: S,
     selections: Mutex<HashMap<WalletProfileId, ChainNetworkId>>,
+    default_network: Option<ChainNetworkId>,
 }
 
 impl<S> MidnightWalletAdapter<S> {
@@ -67,6 +77,18 @@ impl<S> MidnightWalletAdapter<S> {
         Self {
             source,
             selections: Mutex::new(HashMap::new()),
+            default_network: None,
+        }
+    }
+
+    /// Uses an explicitly configured initial network while preserving
+    /// profile-scoped selection after the first user choice.
+    #[must_use]
+    pub fn with_default_network(source: S, default_network: ChainNetworkId) -> Self {
+        Self {
+            source,
+            selections: Mutex::new(HashMap::new()),
+            default_network: Some(default_network),
         }
     }
 
@@ -81,6 +103,7 @@ impl<S> MidnightWalletAdapter<S> {
         selections
             .get(profile_id)
             .cloned()
+            .or_else(|| self.default_network.clone())
             .map_or_else(|| network_id(DEFAULT_NETWORK_ID), Ok)
     }
 }
@@ -311,7 +334,7 @@ fn network_catalog() -> Result<Vec<ChainNetwork>, WalletAccountPortError> {
     .collect()
 }
 
-fn network_by_id(
+pub(crate) fn network_by_id(
     network_id: &ChainNetworkId,
 ) -> Result<Option<ChainNetwork>, WalletAccountPortError> {
     Ok(network_catalog()?
@@ -319,11 +342,11 @@ fn network_by_id(
         .find(|network| network.id() == network_id))
 }
 
-fn network_id(value: &str) -> Result<ChainNetworkId, WalletAccountPortError> {
+pub(crate) fn network_id(value: &str) -> Result<ChainNetworkId, WalletAccountPortError> {
     ChainNetworkId::parse(value.to_owned()).map_err(|_| WalletAccountPortError::InvalidData)
 }
 
-fn fixture_addresses(
+pub(crate) fn fixture_addresses(
     network_id: &ChainNetworkId,
 ) -> Result<Vec<ChainAddress>, WalletAccountPortError> {
     [
@@ -396,7 +419,7 @@ fn simulated_ledger_state(
     Ok((balances, transactions))
 }
 
-fn midnight_asset(
+pub(crate) fn midnight_asset(
     id: &str,
     symbol: &str,
     atomic_units_per_whole: u128,
@@ -410,7 +433,7 @@ fn midnight_asset(
     ))
 }
 
-fn decimal_places(mut units: u128) -> Option<u8> {
+pub(crate) fn decimal_places(mut units: u128) -> Option<u8> {
     if units == 0 {
         return None;
     }

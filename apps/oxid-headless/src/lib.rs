@@ -1272,17 +1272,17 @@ fn capability_manifest() -> Value {
         { "method": "wallet.key.list", "status": "ready", "mode": "development_only" },
         { "method": "wallet.key.sign", "status": "ready", "mode": "development_only" },
         { "method": "wallet.key.delete", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.network.list", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.network.select", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.account.get", "status": "ready", "mode": "development_only", "source": "simulated" },
-        { "method": "wallet.connect", "status": "ready", "mode": "development_only", "source": "simulated" },
+        { "method": "wallet.network.list", "status": "ready", "mode": "standalone" },
+        { "method": "wallet.network.select", "status": "ready", "mode": "standalone" },
+        { "method": "wallet.account.get", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
+        { "method": "wallet.connect", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
         { "method": "wallet.bootstrap", "status": "queued" },
-        { "method": "wallet.address.list", "status": "ready", "mode": "development_only", "source": "official_public_vectors" },
-        { "method": "wallet.address.unshielded", "status": "ready", "mode": "development_only", "source": "official_public_vectors" },
-        { "method": "wallet.balance.snapshot", "status": "ready", "mode": "development_only", "source": "simulated" },
-        { "method": "wallet.transaction.history", "status": "ready", "mode": "development_only", "source": "simulated" },
+        { "method": "wallet.address.list", "status": "ready", "mode": "standalone", "sources": ["official_public_vectors", "configured_public_address"] },
+        { "method": "wallet.address.unshielded", "status": "ready", "mode": "standalone", "sources": ["official_public_vectors", "configured_public_address"] },
+        { "method": "wallet.balance.snapshot", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
+        { "method": "wallet.transaction.history", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
         { "method": "wallet.transaction.send_unshielded", "status": "queued" },
-        { "method": "wallet.sync.force", "status": "ready", "mode": "development_only", "source": "simulated" },
+        { "method": "wallet.sync.force", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
         { "method": "vault.total_locked", "status": "queued" },
         { "method": "vault.locks.list", "status": "queued" },
         { "method": "vault.credentials.list", "status": "queued" },
@@ -1378,7 +1378,7 @@ mod tests {
         assert!(methods.iter().any(|capability| {
             capability["method"] == "wallet.balance.snapshot"
                 && capability["status"] == "ready"
-                && capability["source"] == "simulated"
+                && capability["sources"] == json!(["simulated", "live", "cached"])
         }));
     }
 

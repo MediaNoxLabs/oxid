@@ -20,6 +20,14 @@ opaque-reference flows; those keys are never durable and are not asset custody.
 Production composition reports protected storage unavailable. No seed, DID, or
 credential material is persisted by the current slice.
 
+Native headless runs may opt into a public Midnight indexer subscription with
+an explicitly supplied network, WebSocket route, and unshielded receive
+address. The configuration rejects URL credentials, query parameters,
+fragments, invalid schemes, and network/address mismatches. It is process-local
+and is not written to wallet metadata. Indexer frames and values are untrusted,
+bounded, and mapped to safe errors without exposing external payloads. This
+read-only mode does not add custody or transaction authorization.
+
 The following rules are already enforced as architecture constraints:
 
 - no raw private key or seed material in UI/application DTOs;

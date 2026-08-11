@@ -20,7 +20,7 @@ before migrating later work.
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
-| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account read model, public address vectors, exact balances, history, explicit sync, UI and headless simulation implemented; custody, live indexer, proving and submission pending |
+| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account read model, public vectors, exact balances/history, simulated sync, and configurable live standalone unshielded indexer sync implemented; custody, shielded/DUST checkpoints, proving and submission pending |
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; standalone Ed25519/P-256 conformance slice implemented; native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
@@ -147,11 +147,15 @@ explicit synchronization, balances, address HRP changes, history, and rejected
 unknown networks. Detailed retained evidence and exclusions are recorded in
 [midnight-account-provenance.md](midnight-account-provenance.md).
 
-This slice does not claim a live standalone stack: local node/indexer/prover
-services were not available during implementation. Protected HD/Jubjub account
-material, cursor-backed indexer synchronization, transaction construction,
-proof generation, submission, QR/copy/share bridges, and native custody remain
-separate follow-ups.
+Issue #7 adds the next bounded account slice: native headless startup can opt
+into a real v4 standalone-indexer WebSocket route and public unshielded address.
+The executable harness contract-tests the protocol against an ephemeral local
+fixture and truthfully distinguishes live refreshes from later cached reads.
+No route is committed and normal mobile composition remains fail-closed.
+
+Protected HD/Jubjub account material, persisted cursors, shielded/DUST state,
+transaction construction, proof generation, submission, QR/copy/share bridges,
+production endpoint discovery, and native custody remain separate follow-ups.
 
 ## Gate for each later slice
 

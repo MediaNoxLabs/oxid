@@ -5,12 +5,23 @@
 use std::{
     fs,
     io::{BufRead as _, BufReader, Write as _},
+    net::TcpListener,
     path::PathBuf,
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
+    thread,
 };
 
+use futures::{SinkExt as _, StreamExt as _};
 use serde_json::{Value, json};
+use tokio_tungstenite::{
+    accept_hdr_async,
+    tungstenite::{
+        Message,
+        handshake::server::{Request, Response},
+        http::HeaderValue,
+    },
+};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -22,8 +33,20 @@ struct ProcessHarness {
 
 impl ProcessHarness {
     fn spawn(store_path: &PathBuf) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_oxid-headless"))
+        Self::spawn_with_environment(store_path, &[])
+    }
+
+    fn spawn_with_environment(store_path: &PathBuf, environment: &[(&str, &str)]) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        command
             .env("OXID_PROFILE_STORE_PATH", store_path)
+            .env_remove("OXID_MIDNIGHT_NETWORK_ID")
+            .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
+            .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS");
+        for (key, value) in environment {
+            command.env(key, value);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -68,6 +91,203 @@ impl ProcessHarness {
                 .success()
         );
     }
+}
+
+const LIVE_ADDRESS: &str =
+    "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+const NIGHT_TOKEN_TYPE: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+// The upstream handshake callback fixes a large HTTP response as its error
+// type; this test must use that signature to negotiate the GraphQL subprotocol.
+#[allow(clippy::result_large_err)]
+fn spawn_indexer_fixture() -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .expect("fixture listener should bind");
+    listener
+        .set_nonblocking(true)
+        .expect("fixture listener should become nonblocking");
+    let port = listener
+        .local_addr()
+        .expect("fixture address should be available")
+        .port();
+    let endpoint = format!("ws://127.0.0.1:{port}/api/v4/graphql/ws");
+    let handle = thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("fixture runtime should build");
+        runtime.block_on(async move {
+            let listener =
+                tokio::net::TcpListener::from_std(listener).expect("listener should convert");
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("fixture should accept client");
+            let callback = |request: &Request, mut response: Response| {
+                assert_eq!(
+                    request
+                        .headers()
+                        .get("Sec-WebSocket-Protocol")
+                        .and_then(|value| value.to_str().ok()),
+                    Some("graphql-transport-ws")
+                );
+                response.headers_mut().insert(
+                    "Sec-WebSocket-Protocol",
+                    HeaderValue::from_static("graphql-transport-ws"),
+                );
+                Ok(response)
+            };
+            let mut socket = accept_hdr_async(stream, callback)
+                .await
+                .expect("fixture handshake should succeed");
+            let init = socket
+                .next()
+                .await
+                .expect("connection init should arrive")
+                .expect("connection init should be readable");
+            let init: Value = serde_json::from_str(
+                init.into_text()
+                    .expect("connection init should be text")
+                    .as_str(),
+            )
+            .expect("connection init should be JSON");
+            assert_eq!(init["type"], "connection_init");
+            socket
+                .send(Message::Text(
+                    json!({ "type": "connection_ack" }).to_string().into(),
+                ))
+                .await
+                .expect("ack should send");
+
+            let subscribe = socket
+                .next()
+                .await
+                .expect("subscribe should arrive")
+                .expect("subscribe should be readable");
+            let subscribe: Value = serde_json::from_str(
+                subscribe
+                    .into_text()
+                    .expect("subscribe should be text")
+                    .as_str(),
+            )
+            .expect("subscribe should be JSON");
+            assert_eq!(subscribe["type"], "subscribe");
+            assert_eq!(subscribe["payload"]["variables"]["address"], LIVE_ADDRESS);
+            assert!(subscribe["payload"]["query"].as_str().is_some_and(|query| {
+                query.contains("highestTransactionId") && query.contains("fee")
+            }));
+
+            send_fixture_event(
+                &mut socket,
+                json!({
+                    "unshieldedTransactions": {
+                        "__typename": "UnshieldedTransactionsProgress",
+                        "highestTransactionId": 2
+                    }
+                }),
+            )
+            .await;
+            send_fixture_event(
+                &mut socket,
+                transaction_event(
+                    1,
+                    "11",
+                    41,
+                    vec![utxo("aa", 0, "3000000")],
+                    vec![],
+                    "SUCCESS",
+                    "100",
+                ),
+            )
+            .await;
+            send_fixture_event(
+                &mut socket,
+                transaction_event(
+                    2,
+                    "22",
+                    42,
+                    vec![utxo("bb", 0, "2500000")],
+                    vec![utxo("aa", 0, "3000000")],
+                    "SUCCESS",
+                    "1500",
+                ),
+            )
+            .await;
+
+            let complete = socket
+                .next()
+                .await
+                .expect("complete should arrive")
+                .expect("complete should be readable");
+            let complete: Value = serde_json::from_str(
+                complete
+                    .into_text()
+                    .expect("complete should be text")
+                    .as_str(),
+            )
+            .expect("complete should be JSON");
+            assert_eq!(complete["type"], "complete");
+        });
+    });
+    (endpoint, handle)
+}
+
+async fn send_fixture_event<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>, data: Value)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    socket
+        .send(Message::Text(
+            json!({
+                "type": "next",
+                "id": "oxid-account",
+                "payload": { "data": data }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("fixture event should send");
+}
+
+fn transaction_event(
+    id: i64,
+    hash_byte: &str,
+    height: i64,
+    created: Vec<Value>,
+    spent: Vec<Value>,
+    status: &str,
+    fee: &str,
+) -> Value {
+    json!({
+        "unshieldedTransactions": {
+            "__typename": "UnshieldedTransaction",
+            "transaction": {
+                "id": id,
+                "hash": hash_byte.repeat(32),
+                "block": {
+                    "height": height,
+                    "timestamp": 1_700_000_000_000_i64 + height
+                },
+                "__typename": "RegularTransaction",
+                "transactionResult": { "status": status },
+                "fee": fee
+            },
+            "createdUtxos": created,
+            "spentUtxos": spent
+        }
+    })
+}
+
+fn utxo(intent_byte: &str, output_index: i64, value: &str) -> Value {
+    json!({
+        "owner": LIVE_ADDRESS,
+        "tokenType": NIGHT_TOKEN_TYPE,
+        "value": value,
+        "intentHash": intent_byte.repeat(32),
+        "outputIndex": output_index
+    })
 }
 
 struct TestStore {
@@ -134,6 +354,23 @@ fn executable_restores_profile_selection_in_a_new_process() {
         "Persistent flow"
     );
     second_process.quit();
+}
+
+#[test]
+fn executable_fails_startup_on_partial_live_configuration_without_echoing_values() {
+    let store = TestStore::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_oxid-headless"))
+        .env("OXID_PROFILE_STORE_PATH", &store.path)
+        .env("OXID_MIDNIGHT_NETWORK_ID", "undeployed")
+        .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
+        .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
+        .output()
+        .expect("headless wallet should report startup failure");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
+    assert!(stderr.contains("requires network, indexer WebSocket, and unshielded address"));
+    assert!(!stderr.contains(LIVE_ADDRESS));
 }
 
 #[test]
@@ -449,4 +686,103 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
     }));
     assert_eq!(rejected["error"]["code"], "unsupported_network");
     process.quit();
+}
+
+#[test]
+fn executable_syncs_a_live_standalone_indexer_without_secret_input() {
+    let (endpoint, server) = spawn_indexer_fixture();
+    let store = TestStore::new();
+    let mut process = ProcessHarness::spawn_with_environment(
+        &store.path,
+        &[
+            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_INDEXER_WS_URL", endpoint.as_str()),
+            ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
+        ],
+    );
+    let created = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "live-create",
+        "method": "wallet.profile.create",
+        "params": { "displayName": "Live indexer flow" }
+    }));
+    let profile_id = created["result"]["profile"]["id"]
+        .as_str()
+        .expect("created profile should have an identifier");
+    assert_eq!(
+        process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "live-select",
+            "method": "wallet.profile.select",
+            "params": { "profileId": profile_id }
+        }))["ok"],
+        true
+    );
+
+    let before = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "live-before",
+        "method": "wallet.account.get",
+        "params": {}
+    }));
+    assert_eq!(before["result"]["account"]["networkId"], "devnet");
+    assert_eq!(before["result"]["account"]["source"], "live");
+    assert_eq!(before["result"]["account"]["sync"]["state"], "never_synced");
+    assert_eq!(
+        before["result"]["account"]["addresses"][0]["value"],
+        LIVE_ADDRESS
+    );
+
+    let connected = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "live-connect",
+        "method": "wallet.connect",
+        "params": {}
+    }));
+    assert_eq!(connected["ok"], true, "unexpected response: {connected}");
+    assert_eq!(connected["result"]["account"]["source"], "live");
+    assert_eq!(connected["result"]["account"]["sync"]["state"], "synced");
+    assert_eq!(connected["result"]["account"]["sync"]["currentCursor"], 2);
+    assert_eq!(connected["result"]["account"]["sync"]["targetCursor"], 2);
+    assert_eq!(connected["result"]["account"]["sync"]["chainTipHeight"], 42);
+    assert_eq!(
+        connected["result"]["account"]["balances"][0]["atomicUnits"],
+        "2500000"
+    );
+
+    let cached = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "live-cached",
+        "method": "wallet.balance.snapshot",
+        "params": {}
+    }));
+    assert_eq!(cached["result"]["source"], "cached");
+    assert_eq!(cached["result"]["balances"][0]["symbol"], "NIGHT");
+    assert_eq!(cached["result"]["balances"][0]["atomicUnits"], "2500000");
+
+    let history = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "live-history",
+        "method": "wallet.transaction.history",
+        "params": {}
+    }));
+    assert_eq!(history["result"]["source"], "cached");
+    assert_eq!(
+        history["result"]["transactions"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(history["result"]["transactions"][0]["blockHeight"], 42);
+    assert_eq!(
+        history["result"]["transactions"][0]["direction"],
+        "outgoing"
+    );
+    assert_eq!(
+        history["result"]["transactions"][0]["fee"]["atomicUnits"],
+        "1500"
+    );
+
+    process.quit();
+    server
+        .join()
+        .expect("indexer fixture should finish cleanly");
 }

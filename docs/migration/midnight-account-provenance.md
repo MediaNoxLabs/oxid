@@ -2,15 +2,16 @@
 
 ## Reviewed sources
 
-The account slice was reimplemented from behavior observed at these immutable
-revisions on 2026-08-11:
+The account slices were reimplemented from behavior observed at these immutable
+revisions on 2026-08-11 and re-verified on 2026-08-12:
 
 | Evidence | Revision and path | Retained behavior |
 | --- | --- | --- |
 | Mobile prototype | `midnight-ledger` `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core` and `mobile-bench/dioxus-wallet` | explicit connect/resync, network selection, receive addresses, NIGHT/DUST balances, activity presentation, and separate chain identity/transport concerns |
 | Ledger semantics | `midnight-ledger` `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, `ledger/src/structure.rs` | `STARS_PER_NIGHT = 1_000_000` and `SPECKS_PER_DUST = 1_000_000_000_000_000` |
 | Wallet address vectors | `midnight-wallet` `25d0c3857fc0e20435e06a9225bd8709ecce1115`, `packages/address-format/test/addresses.json` | public unshielded, shielded, and DUST payloads for seed class `01`, plus mainnet/devnet Bech32m expectations |
-| Indexer protocol research | `midnight-indexer` `82759bf186184684f13a9ffa97b58b7b7684f47c`, GraphQL v4 schema | decimal `u128` values, cursor-first progress/history ordering, block metadata, and transaction status/fee shapes for a later live adapter |
+| Indexer protocol | `midnight-indexer` `82759bf186184684f13a9ffa97b58b7b7684f47c`, `indexer-api/graphql/schema-v4.graphql` | `graphql-transport-ws`, progress-first `unshieldedTransactions`, decimal `u128` values, UTXO create/spend replay, block metadata, transaction status, and DUST fee shapes |
+| Prototype live transport | `midnight-ledger` `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/unshielded/{snapshot,transport}.rs` | bounded connection/ack/idle behavior, progress-first snapshot termination, ping/pong, and address-scoped replay semantics |
 
 No Rust or TypeScript implementation was copied. Oxid owns the domain model,
 ports, simulation, and presentation. The adapter retains public vector payloads
@@ -28,6 +29,38 @@ only; it does not retain the upstream seed or derive/store private material.
   and optional fee;
 - headless commands and Assets page -> two incoming adapters over the same use
   cases.
+
+## Live standalone-indexer mapping
+
+Issue #7 adds an optional native headless composition over the same account
+ports. It is enabled only when network identity, a GraphQL WebSocket route, and
+one public unshielded address are supplied together at startup. Those values
+are never written to profile metadata. Missing configuration retains the
+deterministic public simulator; partial or invalid configuration fails startup.
+
+The
+[embedded query](../../crates/adapters/midnight/queries/unshielded_transactions.graphql)
+is narrowed
+from the selected v4 schema. The native adapter:
+
+- requires successful `graphql-transport-ws` negotiation and handles
+  protocol/WebSocket ping-pong;
+- bounds endpoint length, connection/ack/idle/total snapshot time,
+  frame/message size, replay event count, and decoded UTXO-record count;
+- rejects URL credentials, queries, fragments, unsupported schemes, invalid
+  Bech32m payloads, and network/address HRP mismatches;
+- rejects foreign-owner UTXOs, malformed hex, negative cursors/heights/times,
+  numeric rather than decimal-string values, cursor regression, inconsistent
+  duplicate transactions, and arithmetic overflow;
+- recognizes official native unshielded NIGHT as the 32-byte zero token type,
+  retains custom unshielded tokens with deterministic raw identities, and maps
+  fees to exact DUST specks;
+- returns `live` for a completed refresh, `cached` for later reads, and a safe
+  stalled state after transport failure without exposing external payloads.
+
+The executable integration test starts an ephemeral local protocol fixture and
+drives the real headless binary through create/select/account/connect/balance/
+history/quit. No deployment endpoint, seed, or private key is committed.
 
 The seven catalog IDs are `mainnet`, `preprod`, `preview`, `testnet`, `qanet`,
 `devnet`, and `undeployed`. They carry identity and environment only. Runtime
@@ -53,9 +86,9 @@ targets.
 
 - prototype demo, genesis, pre-production, and raw seeds;
 - protected HD/Jubjub/root material or private derivation;
-- local, tailnet, pre-production, node, indexer, or prover endpoints;
-- live GraphQL subscriptions, cursor persistence, chain checkpoints, and DUST
-  raw-ledger events;
+- committed local, tailnet, pre-production, node, indexer, or prover endpoints;
+- persisted unshielded cursors, background subscriptions, chain checkpoints,
+  shielded state, DUST generations, and DUST raw-ledger events;
 - transaction construction, signing, proving, submission, replacement, or fee
   estimation;
 - generated proof artifacts, native projects, JavaScript bridges, QR scanning,
@@ -63,6 +96,6 @@ targets.
 
 Production composition therefore exposes the network catalog but returns an
 unavailable account snapshot with no account ID, address, balance, or activity
-claim. Only development/headless composition can select the simulated source,
-which remains empty until explicit synchronization and labels every response
-`simulated`.
+claim. Native headless composition selects either the deterministic simulator
+or an explicitly configured public live source. Neither mode provides custody,
+shielded assets, DUST generation state, transaction signing, or submission.

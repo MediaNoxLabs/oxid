@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Narrowed from midnightntwrk/midnight-indexer GraphQL v4 at
+# 82759bf186184684f13a9ffa97b58b7b7684f47c. The extra transaction fields
+# let Oxid build its owned account history without importing indexer types.
+
+subscription OxidUnshieldedTransactions(
+  $address: UnshieldedAddress!
+  $transactionId: Int
+) {
+  unshieldedTransactions(address: $address, transactionId: $transactionId) {
+    __typename
+    ... on UnshieldedTransaction {
+      transaction {
+        id
+        hash
+        block {
+          height
+          timestamp
+        }
+        __typename
+        ... on RegularTransaction {
+          transactionResult {
+            status
+          }
+          fee
+        }
+      }
+      createdUtxos {
+        owner
+        tokenType
+        value
+        intentHash
+        outputIndex
+      }
+      spentUtxos {
+        owner
+        tokenType
+        value
+        intentHash
+        outputIndex
+      }
+    }
+    ... on UnshieldedTransactionsProgress {
+      highestTransactionId
+    }
+  }
+}

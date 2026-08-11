@@ -12,10 +12,11 @@ than layers bolted onto one chain-specific frontend.
 > profile lifecycle—create, list, select, persist, and restore—is available
 > through Dioxus and the standalone headless harness. A development-only
 > process-local adapter exercises opaque Ed25519/P-256 key flows headlessly;
-> a second simulated adapter exercises Midnight network, address, exact-balance,
-> sync, and history flows without secret input or a live chain. The Assets page
-> consumes the same account use cases while production mobile custody and chain
-> access remain fail-closed. The remaining shell
+> a deterministic adapter exercises Midnight network, address, exact-balance,
+> sync, and history flows without secret input. Native headless runs can instead
+> opt into a real standalone-indexer unshielded account source using explicit
+> public startup configuration. The Assets page consumes the same account use
+> cases while production mobile custody and chain access remain fail-closed. The remaining shell
 > destinations deliberately label unconnected capabilities; Oxid is not ready
 > to hold real assets or identity credentials.
 
@@ -33,7 +34,7 @@ apps/oxid-headless ---------------------+--> wallet-application --> wallet-domai
           +--> composition -------------+             v                    v
                     |                         platform-ports ------> foundation
                     +--> storage-json / storage-memory / storage-dev
-                    +--> midnight (unavailable or simulated account source)
+                    +--> midnight (unavailable, simulated, or live headless source)
                     +--> platform-system
 ```
 
@@ -77,8 +78,25 @@ The implemented account methods are `wallet.network.list`,
 `wallet.network.select`, `wallet.account.get`, `wallet.address.list`,
 `wallet.address.unshielded`, `wallet.balance.snapshot`,
 `wallet.transaction.history`, `wallet.connect`, and `wallet.sync.force`.
-Their account data is explicitly `simulated`, uses public conformance payloads,
-and contacts no node, indexer, or prover.
+With no additional configuration their account data is explicitly `simulated`,
+uses public conformance payloads, and contacts no node, indexer, or prover.
+
+For a native standalone-indexer run, set all three public values before starting
+the headless binary:
+
+```bash
+export OXID_MIDNIGHT_NETWORK_ID='<network-id>'
+export OXID_MIDNIGHT_INDEXER_WS_URL='<graphql-websocket-url>'
+export OXID_MIDNIGHT_UNSHIELDED_ADDRESS='<public-unshielded-address>'
+cargo run -p oxid-headless
+```
+
+The route must use `ws` or `wss` without credentials, query parameters, or a
+fragment. The Bech32m address HRP must match the selected network. Supplying
+only part of the configuration fails startup. A successful refresh reports
+`live`; subsequent in-process reads report `cached`. This mode observes public
+unshielded state only—it does not import a seed, derive keys, sync shielded/DUST
+state, sign, prove, or submit transactions.
 
 Common commands are also exposed through `just`:
 

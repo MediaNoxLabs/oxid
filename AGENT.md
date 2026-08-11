@@ -51,6 +51,15 @@ in-memory composition use a development-only simulated Midnight source made
 from public address payloads. Track the slice and its live follow-ups in
 [issue #6](https://github.com/MediaNoxLabs/oxid/issues/6).
 
+The next M2 slice, [issue #7](https://github.com/MediaNoxLabs/oxid/issues/7),
+implements native live unshielded sync against the pinned indexer GraphQL v4
+`unshieldedTransactions` subscription. The normal mobile `compose()` remains
+unavailable. `oxid-headless` selects the live source only when
+`OXID_MIDNIGHT_NETWORK_ID`, `OXID_MIDNIGHT_INDEXER_WS_URL`, and
+`OXID_MIDNIGHT_UNSHIELDED_ADDRESS` are all present and valid; zero variables
+retains simulation and partial configuration fails startup. These are public,
+process-local adapter values and are never persisted with profile metadata.
+
 ## Prototype provenance
 
 The prototype remains useful migration input, not an architecture template.
@@ -122,7 +131,7 @@ Current package ownership:
 | `crates/adapters/storage-memory` | Development/test implementation of wallet persistence. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 key lifecycle and signing adapter. |
-| `crates/adapters/midnight` | Midnight network/account adapter with fail-closed production and public simulated sources. |
+| `crates/adapters/midnight` | Midnight network/account adapter with fail-closed production, public simulation, and native configurable indexer sources. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter and presentation state. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -141,9 +150,11 @@ reference.
 `compose()` is the production-facing composition and deliberately reports
 wallet protection and Midnight account state unavailable. `compose_headless()`
 combines persistent public profiles with the ephemeral development key adapter
-and public simulated Midnight source; `compose_in_memory()` uses the same
-development adapters for tests. Never change `compose()` to select
-`storage-dev` or the simulated account source. Headless protected-key methods accept only public labels,
+and public simulated Midnight source; `compose_headless_from_environment()`
+selects either that zero-configuration path or the explicit native live source;
+`compose_in_memory()` uses the development adapters for tests. Never change
+`compose()` to select `storage-dev`, simulation, or environment-derived indexer
+configuration. Headless protected-key methods accept only public labels,
 algorithms, purposes, bounded payloads, opaque references, and explicit
 human-readable confirmations. Passphrases, seeds, recovery phrases, and raw
 private keys are rejected by strict parameter decoding.
@@ -156,6 +167,21 @@ adapter for constants or public vectors. A future adapter that consumes ledger
 types must use the official HTTPS Git URL plus that full `rev`, then pass iOS
 and Android validation. The current `Cargo.lock` intentionally contains no
 Midnight Git package.
+
+The live indexer route is implemented with native-only Tokio 1.53.1 and
+tokio-tungstenite 0.30.0 using Rustls 0.23.43 with the explicit Ring provider
+and WebPKI roots. It runs on a short-lived worker
+runtime so incoming adapters do not block their executor. The embedded query is
+pinned to indexer revision `82759bf186184684f13a9ffa97b58b7b7684f47c`.
+Preserve the bounds on endpoint length, credentials/query/fragment rejection,
+connect/ack/idle/total snapshot timeouts, required subprotocol negotiation,
+message/frame sizes, event and UTXO-record counts, cursor monotonicity, exact
+decimal `u128` decoding, address ownership, and checked aggregation. The
+`wasm32` graph intentionally excludes this native transport; browser WebSockets
+require a separate reviewed adapter.
+
+The reviewed WebPKI root store brings Mozilla CA certificate data under
+`CDLA-Permissive-2.0`; `deny.toml` narrowly permits that permissive data license.
 
 ## Development environment
 

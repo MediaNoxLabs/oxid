@@ -3,7 +3,8 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Blueprint source: Sections 8 and 17
-- Implementation state: Binding for M2; first account read-model slice implemented by issue #6
+- Implementation state: Binding for M2; account read model implemented by #6
+  and native standalone-indexer sync implemented by #7
 
 ## Context
 
@@ -59,6 +60,13 @@ adapter needs and pin their provenance to an upstream commit. Contract tests
 must cover cursor ordering, decimal `u128` values, transaction result mapping,
 and schema drift.
 
+The first live indexer adapter uses the v4 `unshieldedTransactions`
+`graphql-transport-ws` subscription from the selected revision. Its WebSocket
+route and public address are explicit startup configuration for the native
+headless composition; they are not persisted in chain identity or selected by
+normal mobile composition. The adapter enforces progress-first replay,
+protocol and resource bounds, exact values, and safe transport-error mapping.
+
 Network identity is not a transport route. Core types may contain `mainnet`,
 `preprod`, `preview`, `qanet`, `devnet`, `testnet`, `undeployed`, or a validated
 custom network identifier. HTTP, WebSocket, prover, and dApp URLs are runtime
@@ -85,8 +93,9 @@ ledger types does not imply acceptable proving latency or memory use.
   a reviewed build trial showed that its minimal feature set still resolves an
   unnecessary transaction/proof graph. This does not waive the Git pin for a
   later adapter that actually consumes ledger types.
-- Live NIGHT, shielded, and DUST synchronization can be added incrementally;
-  simulated headless adapters must identify their data source truthfully.
+- Live unshielded NIGHT synchronization is available to explicitly configured
+  native headless runs. Shielded and DUST synchronization remain incremental;
+  every headless adapter identifies live, cached, or simulated data truthfully.
 - A source revision update requires dependency review, conformance tests,
   mobile builds, and an update to the recorded compatibility baseline.
 - If maintained Rust wallet packages are published later, a follow-up ADR may
