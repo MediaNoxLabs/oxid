@@ -1,0 +1,46 @@
+# Wallet presentation-shell provenance
+
+## Source baseline
+
+The first post-M0 migration slice was derived from the presentation structure
+of `midnight-ledger` commit
+`074b1a4bccbfee1740ee188374b606a022ecef42`, specifically:
+
+- `mobile-bench/dioxus-wallet/src/app.rs` for the five primary destinations and
+  mobile bottom-navigation hierarchy;
+- `mobile-bench/dioxus-wallet/assets/styles.css` for visual-system and safe-area
+  design evidence;
+- the inline Lucide icon paths retained by that application.
+
+The source repository and the reimplemented Oxid code are Apache-2.0 licensed.
+The selected Lucide icons retain their ISC notice in
+[`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md).
+
+## Retained behavior and presentation
+
+- primary Assets, DIDs, Credentials, Diagnostics, and Settings destinations;
+- fixed mobile navigation with active-state icon and label treatment;
+- dark navy surfaces with cyan, mint, and purple capability accents;
+- iOS safe-area-aware page and navigation spacing;
+- compact application header, overflow menu, responsive cards, focus states,
+  and reduced-motion handling;
+- an explicit diagnostics surface.
+
+The Oxid mark, wordmark, components, and stylesheet are reauthored. Midnight
+trademarks and wordmark assets are not republished as Oxid branding.
+
+## Intentionally not copied
+
+- the prototype's monolithic `app.rs` or complete stylesheet;
+- wallet, ledger, indexer, node, proving, DID, credential, vault, or JavaScript
+  bridge state held directly by UI components;
+- remote font imports or other runtime presentation dependencies;
+- splash timers, benchmark panels, demo-wallet controls, telemetry, and test
+  tabs as production surfaces;
+- generated native hosts, signing configuration, secrets, endpoints, databases,
+  proof artifacts, or vendored JavaScript.
+
+Until each capability slice is composed, its destination renders an explicit
+unavailable/migration state. The existing Create Wallet Profile use case remains
+functional as a temporary profile destination. Its final lifecycle integration
+is tracked by [issue #1](https://github.com/MediaNoxLabs/oxid/issues/1).

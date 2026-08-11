@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Blueprint source: Sections 1, 4, 12, 13, and 16
-- Implementation state: Feature boundaries compile; native hosts are deferred
+- Implementation state: Shared shell smoke-tested on iOS; Android host deferred
 
 ## Context
 
@@ -18,14 +18,15 @@ User-facing capabilities are not complete until they receive an appropriate
 mobile smoke test. Platform APIs remain behind ports rather than leaking into
 shared components.
 
-M0 uses a desktop default for fast local execution while preserving explicit
-Dioxus `mobile` and `web` features. Generated Android/iOS projects arrive with
-the first capability that needs native hosting; empty hosts are not scaffolded.
+Oxid uses a desktop default for fast local execution while preserving explicit
+Dioxus `mobile` and `web` features. The shared shell is built and launched with
+Dioxus's generated iOS simulator bundle; generated output remains uncommitted.
+Custom Android/iOS hosts arrive only with capabilities that need native bridges.
 
 ## Consequences
 
 - Dependency reviews must assess both Android and iOS support.
 - Desktop success alone cannot declare a user-facing milestone complete.
 - Native build, signing, and device automation become required in later slices.
-- The current M0 proves compilation and shared composition, not mobile release
-  readiness.
+- The iOS shell smoke proves rendering and shared composition, not custody,
+  native-bridge parity, signing, distribution, or mobile release readiness.

@@ -26,7 +26,7 @@ before migrating later work.
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification | credential domain/store/verification ports and adapters | Deferred to M3/M5 |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
-| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | M0 profile screen reimplemented |
+| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile and safe presentation shell reimplemented; capability pages deferred |
 | `headless-wallet` | Line-delimited JSON driver for use cases | future incoming CLI/test adapter | Deferred; retain protocol lessons |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Deferred to M2 |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated benchmarks/fixtures only when an adapter needs them | Not product code |
@@ -47,6 +47,20 @@ before migrating later work.
 - Future ledger and proof dependencies must replace prototype-relative paths
   and mutable fork branches with the official GitHub sources and full commit
   pins defined in [the Midnight Git source policy](../dependencies/midnight-git-sources.md).
+
+## First post-M0 slice: wallet presentation shell
+
+ADR-0023 prioritizes the complete parity backlog in
+[issue #2](https://github.com/MediaNoxLabs/oxid/issues/2). The first slice,
+[issue #3](https://github.com/MediaNoxLabs/oxid/issues/3), reimplements the
+recognizable navigation, design tokens, safe-area layout, and capability-status
+surfaces. The precise source mapping and exclusions are recorded in
+[ui-shell-provenance.md](ui-shell-provenance.md).
+
+This is presentation parity, not functional parity. Assets, DIDs, credentials,
+diagnostics, and settings expose only composed behavior and label missing
+adapters as queued. Create Wallet Profile remains the only complete use case
+until subsequent vertical slices land.
 
 ## Material intentionally excluded
 

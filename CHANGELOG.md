@@ -21,3 +21,7 @@ once public releases begin.
 - Immutable official-GitHub source enforcement for future Midnight ledger and
   proof dependencies.
 - Reproducible Dioxus build, install, and launch command for the iOS simulator.
+- Prototype-derived mobile wallet shell with Oxid branding, responsive
+  navigation, safe-area handling, and honest deferred-capability states.
+- Public staged-parity epic and focused wallet-profile integration backlog.
+- Presentation migration provenance and third-party icon notices.

@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Blueprint source: Sections 3 and 6
-- Implementation state: Implemented for the M0 UI and composition root
+- Implementation state: Implemented for the M0 use case and parity shell
 
 ## Context
 
@@ -16,9 +16,10 @@ Dioxus renders application state and invokes incoming use-case traits. It does
 not call storage, chain, identity, credential, protocol, or platform adapters.
 The composition root provides use-case implementations through Dioxus context.
 
-The M0 shell uses Dioxus 0.7 and a desktop default for local validation while
-retaining explicit mobile and web feature boundaries. Platform host projects
-are introduced only when the first mobile capability needs them.
+The shared shell uses Dioxus 0.7 and a desktop default for fast local validation
+while retaining explicit mobile and web feature boundaries. Its prototype-
+derived navigation renders only Oxid-owned view state; unavailable adapters are
+shown as unavailable rather than simulated in UI code.
 
 ## Consequences
 

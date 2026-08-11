@@ -13,9 +13,8 @@ Oxid is a Rust-first, mobile-first wallet in which crypto and self-sovereign
 identity are peer capabilities. Dioxus is an incoming UI adapter; it is not the
 application architecture.
 
-The current milestone is M0. Implement only the smallest complete vertical
-slice needed to prove the architecture before adding Cardano, Midnight, DID,
-VC, OIDC, or DIDComm SDKs:
+The M0 foundation is complete. It proved the smallest vertical architecture
+before adding Cardano, Midnight, DID, VC, OIDC, or DIDComm SDKs:
 
 1. foundation primitives;
 2. wallet domain;
@@ -25,7 +24,13 @@ VC, OIDC, or DIDComm SDKs:
 6. Dioxus UI adapter;
 7. composition root.
 
-The first and only M0 use case is **Create Wallet Profile**.
+The only complete use case remains **Create Wallet Profile**. ADR-0023 now
+prioritizes staged functional parity with the reviewed Midnight mobile wallet.
+The ordered public backlog is
+[issue #2](https://github.com/MediaNoxLabs/oxid/issues/2); implement it in
+bounded slices and never turn parity work into a bulk source copy. The wallet
+presentation shell is the first post-M0 slice. Its deferred destinations are
+status surfaces, not claims of working custody or identity capabilities.
 
 ## Prototype provenance
 
@@ -45,7 +50,8 @@ proof artifacts, pre-production keys, vendored JS, or environment-specific
 mobile projects into Oxid without an explicit migration decision.
 
 The staged component inventory and destination map live in
-`docs/migration/midnight-ledger-prototype.md`.
+`docs/migration/midnight-ledger-prototype.md`. Presentation-specific provenance
+and exclusions live in `docs/migration/ui-shell-provenance.md`.
 
 ## Architecture boundaries
 
@@ -75,10 +81,11 @@ Rules:
 
 The blueprint's ADR summaries are materialized as ADR-0001 through ADR-0020 in
 `docs/adr/README.md`. ADR-0021 records the staged prototype migration and
-ADR-0022 records Nix as the reproducible environment. ADR status and delivery
-state are deliberately separate: an accepted future boundary is binding but
-does not mean the capability is implemented. Proposed ADRs are gates, not
-dependency authorization.
+ADR-0022 records Nix as the reproducible environment. ADR-0023 records the
+post-M0 prototype-parity priority. ADR status and delivery state are deliberately
+separate: an accepted future boundary is binding but does not mean the
+capability is implemented. Proposed ADRs are gates, not dependency
+authorization.
 
 Current package ownership:
 
@@ -142,7 +149,9 @@ from the locked flake and the host Apple/Rust toolchain to build, install, and
 launch the mobile feature. The Nix shell's non-Apple `xcrun` compatibility tool
 must not be used for simulator discovery. `OXID_IOS_DEVICE=<UDID>` selects a
 specific simulator. The first verified smoke test used an arm64 iPhone
-simulator and rendered the Create Wallet Profile screen successfully.
+simulator and rendered the Create Wallet Profile screen successfully. The
+prototype-derived wallet shell was subsequently built, launched, and visually
+verified through the same command.
 
 Run repository commands from `nix develop` unless CI performs the equivalent
 setup. Keep `Cargo.lock` committed and use workspace dependencies rather than
@@ -233,6 +242,8 @@ to silence the shell probe.
 - Do not commit generated `target/`, Dioxus build output, mobile signing data,
   local databases, `.env` files, Pi package installs, or editor state.
 - Preserve third-party licenses and provenance when code or assets are migrated.
+- Inline Lucide icons retained from the prototype require the ISC notice in
+  `THIRD_PARTY_NOTICES.md`; do not remove it while those paths remain.
 
 ## Maintaining this guide
 

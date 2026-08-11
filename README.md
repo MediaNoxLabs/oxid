@@ -8,10 +8,10 @@ It is designed for Android and iOS first, with desktop and web as secondary
 targets. Crypto assets and self-sovereign identity are peer capabilities rather
 than layers bolted onto one chain-specific frontend.
 
-> **Status:** foundation milestone (M0). The repository currently proves one
-> complete use case—Create Wallet Profile—through domain, application, ports,
-> adapters, Dioxus UI, and composition. It is not ready to hold real assets or
-> identity credentials.
+> **Status:** M0 foundation plus the first prototype-parity presentation slice.
+> Create Wallet Profile is still the only complete use case. The Assets, DIDs,
+> Credentials, Diagnostics, and Settings shell deliberately labels unconnected
+> capabilities; Oxid is not ready to hold real assets or identity credentials.
 
 ## Architecture
 
@@ -34,6 +34,7 @@ The detailed product and engineering definition is
 [OXID_IDENTITY_WALLET_BLUEPRINT.md](OXID_IDENTITY_WALLET_BLUEPRINT.md). Accepted
 decisions live in [docs/adr](docs/adr), and the staged prototype migration is
 tracked in [docs/migration/midnight-ledger-prototype.md](docs/migration/midnight-ledger-prototype.md).
+The complete parity backlog is [GitHub issue #2](https://github.com/MediaNoxLabs/oxid/issues/2).
 
 ## Quick start
 
@@ -100,6 +101,12 @@ in vertical slices. Ledger-relative dependencies, demo seeds, pre-production
 keys, generated proof artifacts, and vendored JavaScript are intentionally not
 carried into M0.
 
+The first post-M0 slice reimplements the prototype's recognizable mobile wallet
+shell without its SDK coupling. Its exact retained/excluded surface is recorded
+in [docs/migration/ui-shell-provenance.md](docs/migration/ui-shell-provenance.md).
+The profile page is retained during migration; final onboarding and profile
+selection are tracked in [issue #1](https://github.com/MediaNoxLabs/oxid/issues/1).
+
 M0 has no Midnight Cargo dependency. Future ledger and proof adapters must use
 official GitHub URLs with immutable commit pins; the policy and current upstream
 observations are recorded in
@@ -117,4 +124,5 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENT.md](AGENT.md) before making
 changes. Contributions require DCO sign-off, and repository-facing commits must
 be GPG signed.
 
-Oxid is licensed under the [Apache License 2.0](LICENSE).
+Oxid is licensed under the [Apache License 2.0](LICENSE). Retained icon notices
+are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -42,8 +42,9 @@ ADR status and delivery state answer different questions:
 | [0018](0018-structured-error-taxonomy.md) Error taxonomy | Proposed | §§10, 13 | Partially exercised by M0 errors |
 | [0019](0019-explicit-application-events-only-when-needed.md) Event model | Proposed | §§3, 13 | No event infrastructure in M0 |
 | [0020](0020-layered-testing-strategy.md) Layered testing | Accepted | §§3, 13, 18 | M0 baseline and coverage gate implemented |
-| [0021](0021-staged-prototype-migration.md) Staged prototype migration | Accepted | §§14, 17–19 and prototype review | M0 slice migrated from immutable baseline |
+| [0021](0021-staged-prototype-migration.md) Staged prototype migration | Accepted | §§14, 17–19 and prototype review | Profile and presentation shell migrated from immutable baseline |
 | [0022](0022-nix-reproducible-development-and-ci.md) Reproducible Nix environment | Accepted | Repository harness | Implemented locally and in CI |
+| [0023](0023-prioritize-midnight-prototype-parity.md) Prioritize staged Midnight prototype parity | Accepted | Product direction and parity epic | Wallet shell slice implemented; capability backlog open |
 
 ## Current boundaries
 
@@ -51,4 +52,5 @@ M0 implements ADR-0001 through ADR-0006, the applicable policy portions of
 ADR-0011 through ADR-0013, ADR-0020, ADR-0021, and ADR-0022. ADR-0007 through
 ADR-0010 constrain future identity/protocol work without claiming it exists.
 ADR-0014 through ADR-0019 remain research or design gates as stated in their
-individual records.
+individual records. ADR-0023 reprioritizes prototype parity after M0 without
+bypassing those gates.

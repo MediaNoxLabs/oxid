@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Source: Blueprint Sections 14, 17, 18, and 19 plus prototype review
-- Implementation state: M0 profile slice implemented
+- Implementation state: M0 profile and wallet presentation-shell slices implemented
 
 ## Context
 
@@ -29,6 +29,10 @@ M0 migrates exactly Create Wallet Profile through foundation, domain,
 application, platform ports, in-memory/system adapters, Dioxus, and composition.
 The remaining source inventory and milestone destinations are maintained in
 `docs/migration/midnight-ledger-prototype.md`.
+
+After M0, ADR-0023 prioritizes the remaining parity work. The first follow-up
+slice reimplements the safe visual shell, navigation, and capability-status
+surfaces without importing SDK calls or pretending deferred adapters exist.
 
 ## Consequences
 
