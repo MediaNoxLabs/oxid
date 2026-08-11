@@ -1,0 +1,66 @@
+name: Check PR
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate-pr-title:
+    name: Validate PR title
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            chore
+            ci
+            build
+            revert
+          scopes: |
+            wallet
+            platform
+            adapter
+            ui
+            composition
+            architecture
+            deps
+            docs
+            config
+            harness
+            ci
+          requireScope: false
+          subjectPattern: ^(?=.*\S).+$
+          subjectPatternError: The pull request subject must not be empty.
+          wip: true
+
+  validate-pr-body:
+    name: Validate PR body
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const body = (context.payload.pull_request.body || '').trim();
+            if (!body) {
+              core.setFailed('PR body is empty. Describe the change and validation.');
+            }

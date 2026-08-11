@@ -1,0 +1,56 @@
+[workspace]
+resolver = "3"
+members = [
+  "apps/oxid",
+  "crates/adapters/platform-system",
+  "crates/adapters/storage-memory",
+  "crates/composition",
+  "crates/foundation",
+  "crates/platform/ports",
+  "crates/ui-dioxus",
+  "crates/wallet/application",
+  "crates/wallet/domain",
+]
+default-members = [
+  "apps/oxid",
+  "crates/adapters/platform-system",
+  "crates/adapters/storage-memory",
+  "crates/composition",
+  "crates/foundation",
+  "crates/platform/ports",
+  "crates/ui-dioxus",
+  "crates/wallet/application",
+  "crates/wallet/domain",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+repository = "https://github.com/MediaNoxLabs/oxid"
+authors = ["Oxid contributors"]
+
+[workspace.dependencies]
+dioxus = { version = "=0.7.10", default-features = false }
+getrandom = { version = "=0.3.4", features = ["wasm_js"] }
+
+oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }
+oxid-adapter-storage-memory = { version = "=0.1.0", path = "crates/adapters/storage-memory" }
+oxid-composition = { version = "=0.1.0", path = "crates/composition" }
+oxid-foundation = { version = "=0.1.0", path = "crates/foundation" }
+oxid-platform-ports = { version = "=0.1.0", path = "crates/platform/ports" }
+oxid-ui-dioxus = { version = "=0.1.0", path = "crates/ui-dioxus" }
+oxid-wallet-application = { version = "=0.1.0", path = "crates/wallet/application" }
+oxid-wallet-domain = { version = "=0.1.0", path = "crates/wallet/domain" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

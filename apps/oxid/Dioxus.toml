@@ -1,0 +1,3 @@
+[application]
+name = "oxid"
+default_platform = "desktop"

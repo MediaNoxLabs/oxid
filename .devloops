@@ -1,0 +1,89 @@
+# Repository-specific dev-loops policy for Oxid.
+version: 1
+
+refinement:
+  fanOut: 3
+  mode: parallel
+  maxCopilotRounds: 0
+  stopOnLowSignal: false
+  lowSignalRoundThreshold: 3
+  lowSignalMaxComments: 2
+  roles:
+    - scope
+    - correctness
+    - coverage
+    - architecture
+    - security
+
+gates:
+  draft:
+    angles:
+      - scope
+      - correctness
+      - coverage
+      - architecture
+      - ci-guard
+      - docs
+      - config-drift
+      - security
+      - external-review
+    mandatoryAngles:
+      - pr-description
+    required: true
+    requireCi: true
+  preApproval:
+    angles:
+      - correctness
+      - coverage
+      - architecture
+      - ci-guard
+      - docs
+      - config-drift
+      - security
+      - external-review
+    mandatoryAngles:
+      - pr-checklist-matrix
+    required: true
+    requireCi: true
+  requireFanoutEvidence: true
+  requireFanoutProvenance: false
+  maxFanoutReviewers: 8
+  postFindingsComments: true
+  rejectForeignAngles: true
+
+personas:
+  architecture:
+    persona: review
+    prompt: >-
+      Review dependency direction, Oxid-owned core types, port ownership,
+      adapter isolation, composition, and ADR alignment. Report concrete
+      findings with file and line references.
+    defaultModel: null
+
+  security:
+    persona: review
+    prompt: >-
+      Review secret and identifier exposure, unsafe key boundaries, input
+      validation, storage claims, dependency risk, and GitHub workflow safety.
+      Report concrete findings with file and line references.
+    defaultModel: null
+
+  external-review:
+    persona: review
+    prompt: >-
+      Independently review correctness, security, architecture, tests,
+      documentation, public-repository safety, and regression risk. Do not
+      modify files. Return actionable findings with file/line references, or
+      No findings.
+    defaultModel: null
+
+autonomy:
+  stopAt:
+    - pre-approval
+    - merge
+  humanMergeOnly: true
+
+workflow:
+  requireDraftFirst: true
+  requireRetrospective: true
+  devModeDefault: false

@@ -1,0 +1,32 @@
+[advisories]
+yanked = "deny"
+
+[licenses]
+confidence-threshold = 0.8
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "MPL-2.0",
+  "NCSA",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Dioxus 0.7.10's multi-platform WebView graph intentionally resolves legacy
+# target-specific versions in parallel. Keep duplicate warnings enabled for
+# every dependency graph outside this reviewed framework subtree.
+skip-tree = [{ crate = "dioxus@0.7.10", depth = 20 }]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

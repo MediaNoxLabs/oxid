@@ -1,0 +1,39 @@
+name: Documentation links
+
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - ".lychee.toml"
+      - ".github/workflows/docs-link-check.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "**/*.md"
+      - ".lychee.toml"
+      - ".github/workflows/docs-link-check.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oxid-doc-links-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  links:
+    name: Check documentation links
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Check Markdown links
+        run: nix develop --command lychee --config .lychee.toml --no-progress --exclude-path LICENSE './**/*.md'

@@ -1,0 +1,23 @@
+[package]
+name = "oxid-app"
+description = "Oxid identity wallet application shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = ["desktop"]
+desktop = ["dioxus/desktop"]
+mobile = ["dioxus/mobile"]
+web = ["dioxus/web"]
+
+[dependencies]
+dioxus = { workspace = true, features = ["launch"] }
+oxid-composition.workspace = true
+oxid-ui-dioxus.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,38 @@
+# Rust and Dioxus build output
+/target/
+/.dioxus/
+/result
+/result-*
+
+# Nix and direnv
+/.direnv/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.mobileprovision
+*.p12
+local.properties
+
+# Local wallet state
+*.db
+*.db-shm
+*.db-wal
+/.oxid/
+
+# Project-local agent package installs and transient state
+/.pi/npm/
+/.pi/runner-coordination/
+/.pi-subagents/
+
+# JavaScript dependencies used by future controlled adapters
+node_modules/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp

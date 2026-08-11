@@ -1,0 +1,12 @@
+[package]
+name = "oxid-foundation"
+description = "Dependency-free primitives shared by Oxid core boundaries"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true

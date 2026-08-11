@@ -1,0 +1,18 @@
+[package]
+name = "oxid-composition"
+description = "Static composition root for Oxid application capabilities"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+oxid-adapter-platform-system.workspace = true
+oxid-adapter-storage-memory.workspace = true
+oxid-ui-dioxus.workspace = true
+oxid-wallet-application.workspace = true
+
+[lints]
+workspace = true
