@@ -15,3 +15,5 @@ once public releases begin.
 - Modular hexagonal Rust workspace.
 - Create Wallet Profile use case with in-memory persistence and Dioxus UI.
 - Migration inventory for the Midnight ledger wallet prototype.
+- Blueprint-to-repository architecture decision catalog with explicit delivery
+  states and research gates.

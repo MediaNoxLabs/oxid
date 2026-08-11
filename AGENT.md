@@ -73,6 +73,13 @@ Rules:
 - Add an ADR for architectural changes. Do not silently reverse an accepted ADR.
 - Keep the core independently testable without UI, network, or OS services.
 
+The blueprint's ADR summaries are materialized as ADR-0001 through ADR-0020 in
+`docs/adr/README.md`. ADR-0021 records the staged prototype migration and
+ADR-0022 records Nix as the reproducible environment. ADR status and delivery
+state are deliberately separate: an accepted future boundary is binding but
+does not mean the capability is implemented. Proposed ADRs are gates, not
+dependency authorization.
+
 Current package ownership:
 
 | Path | Responsibility |

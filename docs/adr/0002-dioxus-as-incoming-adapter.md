@@ -2,6 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-08-11
+- Blueprint source: Sections 3 and 6
+- Implementation state: Implemented for the M0 UI and composition root
 
 ## Context
 

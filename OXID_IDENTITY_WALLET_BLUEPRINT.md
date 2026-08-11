@@ -331,6 +331,11 @@ Do not scaffold every crate immediately. Start with the first vertical slice and
 
 ## 15. ADRs
 
+These decision summaries are materialized as ADR-0001 through ADR-0020 in
+[the ADR catalog](docs/adr/README.md). The catalog distinguishes a binding
+architectural decision from its current delivery state and also records
+repository-derived decisions made while implementing M0.
+
 ### ADR-001 — Modular hexagonal architecture
 **Accepted.** Bounded domain/application modules own ports; integrations are adapters.
 

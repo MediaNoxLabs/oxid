@@ -2,6 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-08-11
+- Blueprint source: Sections 3 and 6
+- Implementation state: Enforced for the M0 dependency graph
 
 ## Context
 
@@ -20,9 +22,10 @@ The initial dependency graph is executable policy in
 `scripts/check-architecture.sh`. Core crates may depend only on explicitly
 allowed inward workspace crates.
 
-Oxid owns its public core types. Third-party types are converted at adapter
-boundaries. Ports are capability-specific rather than aggregate wallet or SSI
-interfaces.
+Boundary type ownership and port granularity are specified independently by
+[ADR-0003](0003-oxid-owned-domain-types.md) and
+[ADR-0004](0004-capability-specific-ports.md). This record governs the overall
+module and dependency direction.
 
 ## Consequences
 
