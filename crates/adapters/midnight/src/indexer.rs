@@ -16,13 +16,15 @@ use bech32::{Bech32m, primitives::decode::CheckedHrpstring};
 use futures::{SinkExt, StreamExt, channel::oneshot, future::BoxFuture};
 use oxid_foundation::UnixTimestampMillis;
 use oxid_platform_ports::ClockPort;
-use oxid_wallet_application::{WalletAccountPortError, WalletAccountPortFuture};
+use oxid_wallet_application::{
+    WalletAccountPortError, WalletAccountPortFuture, WalletKeyDerivationPort,
+};
 use oxid_wallet_domain::{
     AssetBalance, AssetBalanceChange, AssetSymbol, BalanceChangeDirection, ChainAccountId,
     ChainAddress, ChainAddressKind, ChainAsset, ChainAssetId, ChainNetwork, ChainNetworkId,
-    ChainTransactionId, WalletAccountSnapshot, WalletAccountSource, WalletProfileId,
-    WalletSyncState, WalletSyncStatus, WalletTransaction, WalletTransactionDirection,
-    WalletTransactionStatus,
+    ChainTransactionId, DerivedChainAccount, WalletAccountSnapshot, WalletAccountSource,
+    WalletProfileId, WalletSyncState, WalletSyncStatus, WalletTransaction,
+    WalletTransactionDirection, WalletTransactionStatus,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -33,8 +35,8 @@ use tokio_tungstenite::{
 };
 
 use super::{
-    MidnightAccountSource, MidnightWalletAdapter, SPECKS_PER_DUST, STARS_PER_NIGHT, decimal_places,
-    midnight_asset, network_by_id,
+    MidnightAccountSource, MidnightWalletAdapter, ProtectedMidnightAccountDeriver, SPECKS_PER_DUST,
+    STARS_PER_NIGHT, decimal_places, midnight_asset, network_by_id,
 };
 
 const INDEXER_QUERY: &str = include_str!("../queries/unshielded_transactions.graphql");
@@ -149,6 +151,25 @@ where
     MidnightWalletAdapter::with_default_network(source, default_network)
 }
 
+/// Builds live sync with the same protected derivation port used by custody.
+pub fn protected_live_midnight_wallet<C, K>(
+    config: MidnightIndexerConfig,
+    clock: std::sync::Arc<C>,
+    keys: std::sync::Arc<K>,
+) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort,
+    K: WalletKeyDerivationPort,
+{
+    let default_network = config.network_id.clone();
+    let source = LiveMidnightAccountSource::new(config, clock);
+    MidnightWalletAdapter::with_default_network_and_deriver(
+        source,
+        default_network,
+        ProtectedMidnightAccountDeriver::new(keys),
+    )
+}
+
 /// Live unshielded account source backed by a replaceable indexer transport.
 pub struct LiveMidnightAccountSource<C> {
     network_id: ChainNetworkId,
@@ -156,6 +177,7 @@ pub struct LiveMidnightAccountSource<C> {
     clock: std::sync::Arc<C>,
     transport: std::sync::Arc<dyn MidnightIndexerTransport>,
     cached: std::sync::Mutex<HashMap<WalletProfileId, WalletAccountSnapshot>>,
+    derived_accounts: std::sync::Mutex<HashMap<WalletProfileId, DerivedChainAccount>>,
 }
 
 impl<C> LiveMidnightAccountSource<C> {
@@ -182,6 +204,7 @@ impl<C> LiveMidnightAccountSource<C> {
             clock,
             transport,
             cached: std::sync::Mutex::new(HashMap::new()),
+            derived_accounts: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -198,15 +221,33 @@ impl<C> LiveMidnightAccountSource<C> {
         profile_id: &WalletProfileId,
         network: &ChainNetwork,
     ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
+        let (account_id, address) = self.active_account(profile_id)?;
         Ok(WalletAccountSnapshot::new(
             network.clone(),
-            Some(account_id(profile_id)?),
+            Some(account_id),
             WalletAccountSource::Live,
-            vec![self.address.clone()],
+            vec![address],
             Vec::new(),
             WalletSyncStatus::new(WalletSyncState::NeverSynced, None, None, None, None),
             Vec::new(),
         ))
+    }
+
+    fn active_account(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<(ChainAccountId, ChainAddress), WalletAccountPortError> {
+        self.derived_accounts
+            .lock()
+            .map_err(|_| WalletAccountPortError::Unavailable)?
+            .get(profile_id)
+            .map(|derived| {
+                (
+                    derived.account_id().clone(),
+                    derived.receive_address().clone(),
+                )
+            })
+            .map_or_else(|| Ok((account_id(profile_id)?, self.address.clone())), Ok)
     }
 
     fn replace_sync_status(
@@ -267,17 +308,47 @@ impl<C> MidnightAccountSource for LiveMidnightAccountSource<C>
 where
     C: ClockPort + 'static,
 {
+    fn bind_derived_account(
+        &self,
+        profile_id: &WalletProfileId,
+        network: &ChainNetwork,
+        derived: &DerivedChainAccount,
+    ) -> Result<(), WalletAccountPortError> {
+        self.ensure_network(network)?;
+        if derived.network_id() != network.id() {
+            return Err(WalletAccountPortError::InvalidData);
+        }
+        let mut accounts = self
+            .derived_accounts
+            .lock()
+            .map_err(|_| WalletAccountPortError::Unavailable)?;
+        if accounts.get(profile_id) != Some(derived) {
+            accounts.insert(profile_id.clone(), derived.clone());
+            drop(accounts);
+            self.cached
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?
+                .remove(profile_id);
+        }
+        Ok(())
+    }
+
     fn account(
         &self,
         profile_id: &WalletProfileId,
         network: &ChainNetwork,
     ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
         self.ensure_network(network)?;
+        let (expected_account_id, expected_address) = self.active_account(profile_id)?;
         self.cached
             .lock()
             .map_err(|_| WalletAccountPortError::Unavailable)?
             .get(profile_id)
             .cloned()
+            .filter(|snapshot| {
+                snapshot.account_id() == Some(&expected_account_id)
+                    && snapshot.addresses() == [expected_address.clone()]
+            })
             .map_or_else(|| self.initial_snapshot(profile_id, network), Ok)
     }
 
@@ -302,7 +373,13 @@ where
             );
             self.store(profile_id.clone(), syncing)?;
 
-            let indexer = match self.transport.snapshot(self.address.value()).await {
+            let address = previous
+                .addresses()
+                .first()
+                .ok_or(WalletAccountPortError::InvalidData)?
+                .clone();
+
+            let indexer = match self.transport.snapshot(address.value()).await {
                 Ok(indexer) => indexer,
                 Err(error) => {
                     self.store_stalled(profile_id, &previous)?;
@@ -332,9 +409,9 @@ where
             );
             let live = WalletAccountSnapshot::new(
                 network.clone(),
-                Some(account_id(profile_id)?),
+                previous.account_id().cloned(),
                 WalletAccountSource::Live,
-                vec![self.address.clone()],
+                vec![address],
                 balances,
                 sync,
                 transactions,
@@ -1126,14 +1203,19 @@ mod tests {
 
     struct ScriptedTransport {
         results: Mutex<VecDeque<Result<IndexerSnapshot, IndexerTransportError>>>,
+        addresses: Mutex<Vec<String>>,
     }
 
     impl MidnightIndexerTransport for ScriptedTransport {
         fn snapshot<'a>(
             &'a self,
-            _: &'a str,
+            address: &'a str,
         ) -> BoxFuture<'a, Result<IndexerSnapshot, IndexerTransportError>> {
             Box::pin(async move {
+                self.addresses
+                    .lock()
+                    .expect("address lock should be available")
+                    .push(address.to_owned());
                 self.results
                     .lock()
                     .expect("script lock should be available")
@@ -1443,6 +1525,7 @@ mod tests {
     fn live_source_returns_live_then_cached_exact_account_state() {
         let transport = Arc::new(ScriptedTransport {
             results: Mutex::new(VecDeque::from([Ok(live_snapshot())])),
+            addresses: Mutex::new(Vec::new()),
         });
         let source = LiveMidnightAccountSource::with_transport(
             network().id().clone(),
@@ -1489,6 +1572,7 @@ mod tests {
                 Ok(live_snapshot()),
                 Err(IndexerTransportError::Connect),
             ])),
+            addresses: Mutex::new(Vec::new()),
         });
         let source = LiveMidnightAccountSource::with_transport(
             network().id().clone(),
@@ -1509,5 +1593,68 @@ mod tests {
         assert_eq!(stalled.balances(), live.balances());
         assert_eq!(stalled.transactions(), live.transactions());
         assert_eq!(stalled.sync().current_cursor(), Some(9));
+    }
+
+    #[test]
+    fn binding_a_derived_account_resets_cache_and_scopes_the_next_sync() {
+        let transport = Arc::new(ScriptedTransport {
+            results: Mutex::new(VecDeque::from([Ok(live_snapshot()), Ok(live_snapshot())])),
+            addresses: Mutex::new(Vec::new()),
+        });
+        let configured_address = address();
+        let source = LiveMidnightAccountSource::with_transport(
+            network().id().clone(),
+            configured_address.clone(),
+            Arc::new(FixedClock),
+            transport.clone(),
+        );
+
+        resolve(source.sync(&profile(), &network())).expect("configured watch sync succeeds");
+        let derived_address = crate::encode_midnight_address(
+            network().id(),
+            ChainAddressKind::Unshielded,
+            "addr",
+            &[0x2a; 32],
+        )
+        .expect("derived address fixture encodes");
+        let derived = DerivedChainAccount::new(
+            network().id().clone(),
+            ChainAccountId::parse("midnight_account_0_0").expect("account id is valid"),
+            0,
+            0,
+            derived_address.clone(),
+            oxid_wallet_domain::WalletKeyReference::parse("key_derived")
+                .expect("key reference is valid"),
+        )
+        .expect("derived account is valid");
+        source
+            .bind_derived_account(&profile(), &network(), &derived)
+            .expect("derived account binds");
+
+        let rebound = source
+            .account(&profile(), &network())
+            .expect("rebound account is readable");
+        assert_eq!(rebound.sync().state(), WalletSyncState::NeverSynced);
+        assert_eq!(rebound.account_id(), Some(derived.account_id()));
+        assert_eq!(rebound.addresses(), std::slice::from_ref(&derived_address));
+        resolve(source.sync(&profile(), &network())).expect("derived account sync succeeds");
+        source
+            .bind_derived_account(&profile(), &network(), &derived)
+            .expect("identical account binding is idempotent");
+        let unchanged = source
+            .account(&profile(), &network())
+            .expect("idempotent binding keeps cached state");
+        assert_eq!(unchanged.source(), WalletAccountSource::Cached);
+        assert_eq!(unchanged.sync().state(), WalletSyncState::Synced);
+        assert_eq!(
+            *transport
+                .addresses
+                .lock()
+                .expect("recorded addresses are readable"),
+            vec![
+                configured_address.value().to_owned(),
+                derived_address.value().to_owned(),
+            ]
+        );
     }
 }

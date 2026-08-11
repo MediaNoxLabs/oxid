@@ -7,12 +7,13 @@ use std::{error::Error, fmt, io, io::BufRead, io::Write};
 use oxid_composition::ApplicationServices;
 use oxid_wallet_application::{
     CreateWalletProfileCommand, CreateWalletProfileError, DeleteWalletKeyCommand,
-    GenerateWalletKeyCommand, ReadWalletProfilesError, SelectWalletNetworkCommand,
-    SelectWalletProfileCommand, SelectWalletProfileError, SensitiveOperationConfirmation,
-    SensitiveWalletOperationError, SignWalletDataCommand, WalletAccountError,
-    WalletAccountPortError, WalletAccountQuery, WalletAccountView, WalletKeyError, WalletKeyView,
-    WalletNetworkListView, WalletProfileRepositoryError, WalletProfileSecurityCommand,
-    WalletProfileView, WalletSecurityError, WalletSecurityPortError, WalletSecurityStatusView,
+    DeriveWalletAccountCommand, DerivedWalletAccountView, GenerateWalletKeyCommand,
+    ReadWalletProfilesError, SelectWalletNetworkCommand, SelectWalletProfileCommand,
+    SelectWalletProfileError, SensitiveOperationConfirmation, SensitiveWalletOperationError,
+    SignWalletDataCommand, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
+    WalletAccountView, WalletKeyError, WalletKeyView, WalletNetworkListView,
+    WalletProfileRepositoryError, WalletProfileSecurityCommand, WalletProfileView,
+    WalletSecurityError, WalletSecurityPortError, WalletSecurityStatusView,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyPurpose, WalletProtectionClass,
@@ -136,6 +137,7 @@ impl HeadlessWallet {
             "wallet.key.delete" => self.delete_key(request),
             "wallet.network.list" => self.list_networks(request),
             "wallet.network.select" => self.select_network(request),
+            "wallet.account.derive" => self.derive_account(request),
             "wallet.account.get" => self.get_account(request),
             "wallet.address.list" => self.list_addresses(request),
             "wallet.address.unshielded" => self.unshielded_address(request),
@@ -387,7 +389,7 @@ impl HeadlessWallet {
                 return Dispatch::continue_with(Response::error(
                     request.id,
                     "invalid_params",
-                    "algorithm must be ed25519, p256, or jubjub",
+                    "algorithm must be ed25519, p256, secp256k1-schnorr, or jubjub",
                 ));
             }
         };
@@ -590,6 +592,37 @@ impl HeadlessWallet {
         }
     }
 
+    fn derive_account(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<DeriveAccountParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.account.derive accepts only optional accountIndex and addressIndex integers",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .derive_wallet_account()
+            .execute(DeriveWalletAccountCommand {
+                profile_id,
+                account_index: params.account_index,
+                address_index: params.address_index,
+            }) {
+            Ok(account) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "account": derived_account_value(&account) }),
+            )),
+            Err(error) => Dispatch::continue_with(account_error(request.id, error)),
+        }
+    }
+
     fn sync_account(&self, request: Request) -> Dispatch {
         let method = match request.method.as_str() {
             "wallet.connect" => "wallet.connect",
@@ -720,6 +753,15 @@ struct SelectProfileParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SelectNetworkParams {
     network_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeriveAccountParams {
+    #[serde(default)]
+    account_index: u32,
+    #[serde(default)]
+    address_index: u32,
 }
 
 #[derive(Deserialize)]
@@ -954,6 +996,18 @@ fn account_value(account: &WalletAccountView) -> Value {
     })
 }
 
+fn derived_account_value(account: &DerivedWalletAccountView) -> Value {
+    json!({
+        "networkId": account.network_id,
+        "accountId": account.account_id,
+        "accountIndex": account.account_index,
+        "addressIndex": account.address_index,
+        "receiveAddress": address_value(&account.receive_address),
+        "transactionKeyRef": account.transaction_key_reference,
+        "custodyMode": "development_only"
+    })
+}
+
 fn address_value(address: &oxid_wallet_application::WalletAddressView) -> Value {
     json!({ "kind": address.kind, "value": address.value })
 }
@@ -1000,6 +1054,12 @@ fn account_error(id: Option<String>, error: WalletAccountError) -> Response {
             "invalid_argument",
             "profile or network identifier is invalid",
         ),
+        WalletAccountError::AccountIndexOutOfBounds
+        | WalletAccountError::AddressIndexOutOfBounds => Response::error(
+            id,
+            "invalid_argument",
+            "accountIndex and addressIndex must be less than 2^31",
+        ),
         WalletAccountError::Port(WalletAccountPortError::NotFound) => {
             Response::error(id, "not_found", "wallet account was not found")
         }
@@ -1008,6 +1068,16 @@ fn account_error(id: Option<String>, error: WalletAccountError) -> Response {
             "unsupported_network",
             "selected wallet network is not supported",
         ),
+        WalletAccountError::Port(WalletAccountPortError::ProtectionNotInitialized) => {
+            Response::error(
+                id,
+                "failed_precondition",
+                "wallet protection is not initialized",
+            )
+        }
+        WalletAccountError::Port(WalletAccountPortError::ProtectionLocked) => {
+            Response::error(id, "wallet_locked", "wallet is locked")
+        }
         WalletAccountError::Port(WalletAccountPortError::Unavailable) => Response::error(
             id,
             "capability_unavailable",
@@ -1050,6 +1120,7 @@ fn key_value(key: &WalletKeyView) -> Value {
             "encoding": match key.public_key_encoding {
                 PublicKeyEncoding::Ed25519Compressed => "ed25519-compressed",
                 PublicKeyEncoding::Sec1Compressed => "sec1-compressed",
+                PublicKeyEncoding::Secp256k1XOnly => "secp256k1-x-only",
                 PublicKeyEncoding::JubjubCompressed => "jubjub-compressed",
             },
             "bytesHex": encode_hex(&key.public_key_bytes),
@@ -1062,6 +1133,7 @@ const fn algorithm_name(algorithm: WalletKeyAlgorithm) -> &'static str {
     match algorithm {
         WalletKeyAlgorithm::Ed25519 => "ed25519",
         WalletKeyAlgorithm::P256 => "p256",
+        WalletKeyAlgorithm::Secp256k1Schnorr => "secp256k1-schnorr",
         WalletKeyAlgorithm::Jubjub => "jubjub",
     }
 }
@@ -1070,6 +1142,7 @@ fn key_algorithm(value: &str) -> Option<WalletKeyAlgorithm> {
     match value {
         "ed25519" => Some(WalletKeyAlgorithm::Ed25519),
         "p256" => Some(WalletKeyAlgorithm::P256),
+        "secp256k1-schnorr" => Some(WalletKeyAlgorithm::Secp256k1Schnorr),
         "jubjub" => Some(WalletKeyAlgorithm::Jubjub),
         _ => None,
     }
@@ -1268,17 +1341,18 @@ fn capability_manifest() -> Value {
         { "method": "wallet.security.initialize", "status": "ready", "mode": "development_only" },
         { "method": "wallet.security.unlock", "status": "ready", "mode": "development_only" },
         { "method": "wallet.security.lock", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.key.generate", "status": "ready", "mode": "development_only", "algorithms": ["ed25519", "p256"] },
+        { "method": "wallet.key.generate", "status": "ready", "mode": "development_only", "algorithms": ["ed25519", "p256", "secp256k1-schnorr"] },
         { "method": "wallet.key.list", "status": "ready", "mode": "development_only" },
         { "method": "wallet.key.sign", "status": "ready", "mode": "development_only" },
         { "method": "wallet.key.delete", "status": "ready", "mode": "development_only" },
         { "method": "wallet.network.list", "status": "ready", "mode": "standalone" },
         { "method": "wallet.network.select", "status": "ready", "mode": "standalone" },
+        { "method": "wallet.account.derive", "status": "ready", "mode": "development_only", "paths": ["midnight-night-external"] },
         { "method": "wallet.account.get", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
         { "method": "wallet.connect", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
         { "method": "wallet.bootstrap", "status": "queued" },
-        { "method": "wallet.address.list", "status": "ready", "mode": "standalone", "sources": ["official_public_vectors", "configured_public_address"] },
-        { "method": "wallet.address.unshielded", "status": "ready", "mode": "standalone", "sources": ["official_public_vectors", "configured_public_address"] },
+        { "method": "wallet.address.list", "status": "ready", "mode": "standalone", "sources": ["protected_derivation", "official_public_vectors", "configured_public_address"] },
+        { "method": "wallet.address.unshielded", "status": "ready", "mode": "standalone", "sources": ["protected_derivation", "official_public_vectors", "configured_public_address"] },
         { "method": "wallet.balance.snapshot", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
         { "method": "wallet.transaction.history", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
         { "method": "wallet.transaction.send_unshielded", "status": "queued" },
@@ -1379,6 +1453,11 @@ mod tests {
             capability["method"] == "wallet.balance.snapshot"
                 && capability["status"] == "ready"
                 && capability["sources"] == json!(["simulated", "live", "cached"])
+        }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "wallet.account.derive"
+                && capability["status"] == "ready"
+                && capability["mode"] == "development_only"
         }));
     }
 
@@ -1617,6 +1696,96 @@ mod tests {
         assert_eq!(cleaned[1]["error"]["code"], "confirmation_required");
         assert_eq!(cleaned[2]["result"]["deleted"], true);
         assert_eq!(cleaned[3]["result"]["keys"], json!([]));
+    }
+
+    #[test]
+    fn derives_and_binds_a_midnight_account_without_secret_protocol_fields() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"derive-create","method":"wallet.profile.create","params":{"displayName":"Derived account"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile identifier is returned");
+        let setup = format!(
+            "{}\n{}\n{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "derive-select",
+                "method": "wallet.profile.select",
+                "params": { "profileId": profile_id }
+            }),
+            r#"{"protocol":"oxid.headless.v1","id":"derive-before-init","method":"wallet.account.derive","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"derive-init","method":"wallet.security.initialize","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"derive-account","method":"wallet.account.derive","params":{"accountIndex":0,"addressIndex":0}}"#,
+        );
+        let responses = execute_with_wallet(&wallet, &setup);
+        assert_eq!(responses[1]["error"]["code"], "failed_precondition");
+        assert_eq!(
+            responses[3]["ok"], true,
+            "unexpected response: {responses:?}"
+        );
+        let derived = &responses[3]["result"]["account"];
+        assert_eq!(derived["networkId"], "undeployed");
+        assert_eq!(derived["accountId"], "midnight_account_0_0");
+        assert_eq!(derived["receiveAddress"]["kind"], "unshielded");
+        assert!(
+            derived["receiveAddress"]["value"]
+                .as_str()
+                .is_some_and(|address| address.starts_with("mn_addr_undeployed1"))
+        );
+        let key_ref = derived["transactionKeyRef"]
+            .as_str()
+            .expect("opaque key reference is returned");
+
+        let flow = format!(
+            "{}\n{}\n{}\n{}",
+            r#"{"protocol":"oxid.headless.v1","id":"derive-get","method":"wallet.account.get","params":{}}"#,
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "derive-sign",
+                "method": "wallet.key.sign",
+                "params": {
+                    "keyRef": key_ref,
+                    "payloadHex": "7472616e73616374696f6e2d696e74656e74",
+                    "confirmation": {
+                        "title": "Sign Midnight transaction intent",
+                        "summary": "Authorize the bounded headless conformance payload",
+                        "confirmed": true
+                    }
+                }
+            }),
+            r#"{"protocol":"oxid.headless.v1","id":"derive-lock","method":"wallet.security.lock","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"derive-locked","method":"wallet.account.derive","params":{"addressIndex":1}}"#,
+        );
+        let flowed = execute_with_wallet(&wallet, &flow);
+        assert_eq!(
+            flowed[0]["result"]["account"]["accountId"],
+            "midnight_account_0_0"
+        );
+        assert_eq!(flowed[1]["result"]["algorithm"], "secp256k1-schnorr");
+        assert_eq!(
+            flowed[1]["result"]["signatureHex"]
+                .as_str()
+                .expect("signature is encoded")
+                .len(),
+            128
+        );
+        assert_eq!(flowed[3]["error"]["code"], "wallet_locked");
+
+        let out_of_bounds = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"derive-bounds","method":"wallet.account.derive","params":{"accountIndex":2147483648}}"#,
+        );
+        assert_eq!(out_of_bounds[0]["error"]["code"], "invalid_argument");
+
+        let rejected = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"derive-secret","method":"wallet.account.derive","params":{"seedHex":"do-not-accept"}}"#,
+        );
+        assert_eq!(rejected[0]["error"]["code"], "invalid_params");
+        assert!(!rejected[0].to_string().contains("do-not-accept"));
     }
 
     #[test]

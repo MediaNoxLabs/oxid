@@ -106,6 +106,7 @@ impl Error for WalletKeyLabelError {}
 pub enum WalletKeyAlgorithm {
     Ed25519,
     P256,
+    Secp256k1Schnorr,
     Jubjub,
 }
 
@@ -124,6 +125,7 @@ pub enum WalletKeyPurpose {
 pub enum PublicKeyEncoding {
     Ed25519Compressed,
     Sec1Compressed,
+    Secp256k1XOnly,
     JubjubCompressed,
 }
 

@@ -5,9 +5,9 @@ use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 use oxid_foundation::OpaqueIdError;
 use oxid_wallet_domain::{
     AssetBalance, AssetBalanceChange, BalanceChangeDirection, ChainAddress, ChainAddressKind,
-    ChainKind, ChainNetwork, ChainNetworkId, NetworkEnvironment, WalletAccountSnapshot,
-    WalletAccountSource, WalletProfileId, WalletSyncState, WalletTransaction,
-    WalletTransactionDirection, WalletTransactionStatus,
+    ChainKind, ChainNetwork, ChainNetworkId, DerivedChainAccount, MAX_HD_CHILD_INDEX,
+    NetworkEnvironment, WalletAccountSnapshot, WalletAccountSource, WalletProfileId,
+    WalletSyncState, WalletTransaction, WalletTransactionDirection, WalletTransactionStatus,
 };
 
 /// Asynchronous result returned by a chain-account adapter.
@@ -24,6 +24,8 @@ pub type WalletAccountViewFuture<'a> =
 pub enum WalletAccountPortError {
     NotFound,
     UnsupportedNetwork,
+    ProtectionNotInitialized,
+    ProtectionLocked,
     Unavailable,
     InvalidData,
 }
@@ -33,6 +35,8 @@ impl fmt::Display for WalletAccountPortError {
         let message = match self {
             Self::NotFound => "wallet chain account was not found",
             Self::UnsupportedNetwork => "wallet network is not supported",
+            Self::ProtectionNotInitialized => "wallet protection is not initialized",
+            Self::ProtectionLocked => "wallet is locked",
             Self::Unavailable => "wallet chain capability is unavailable",
             Self::InvalidData => "wallet chain adapter returned invalid data",
         };
@@ -68,6 +72,16 @@ pub trait WalletAccountReadPort: Send + Sync {
     fn sync<'a>(&'a self, profile_id: &'a WalletProfileId) -> WalletAccountPortFuture<'a>;
 }
 
+/// Focused outgoing port for deriving an account through protected key custody.
+pub trait WalletAccountDerivationPort: Send + Sync {
+    fn derive_account(
+        &self,
+        profile_id: &WalletProfileId,
+        account_index: u32,
+        address_index: u32,
+    ) -> Result<DerivedChainAccount, WalletAccountPortError>;
+}
+
 /// Profile-scoped query shared by network and account use cases.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletAccountQuery {
@@ -79,6 +93,14 @@ pub struct WalletAccountQuery {
 pub struct SelectWalletNetworkCommand {
     pub profile_id: String,
     pub network_id: String,
+}
+
+/// Input for deriving one account on the profile's selected network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeriveWalletAccountCommand {
+    pub profile_id: String,
+    pub account_index: u32,
+    pub address_index: u32,
 }
 
 /// Public network metadata returned to incoming adapters.
@@ -103,6 +125,30 @@ pub struct WalletNetworkListView {
 pub struct WalletAddressView {
     pub kind: String,
     pub value: String,
+}
+
+/// Safe public account-derivation result returned to incoming adapters.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DerivedWalletAccountView {
+    pub network_id: String,
+    pub account_id: String,
+    pub account_index: u32,
+    pub address_index: u32,
+    pub receive_address: WalletAddressView,
+    pub transaction_key_reference: String,
+}
+
+impl From<&DerivedChainAccount> for DerivedWalletAccountView {
+    fn from(account: &DerivedChainAccount) -> Self {
+        Self {
+            network_id: account.network_id().as_str().to_owned(),
+            account_id: account.account_id().as_str().to_owned(),
+            account_index: account.account_index(),
+            address_index: account.address_index(),
+            receive_address: address_view(account.receive_address()),
+            transaction_key_reference: account.transaction_key().as_str().to_owned(),
+        }
+    }
 }
 
 /// Exact asset amount represented as a decimal integer string.
@@ -217,6 +263,8 @@ impl WalletAccountView {
 pub enum WalletAccountError {
     InvalidProfileIdentifier(OpaqueIdError),
     InvalidNetworkIdentifier(OpaqueIdError),
+    AccountIndexOutOfBounds,
+    AddressIndexOutOfBounds,
     Port(WalletAccountPortError),
 }
 
@@ -225,6 +273,12 @@ impl fmt::Display for WalletAccountError {
         match self {
             Self::InvalidProfileIdentifier(error) | Self::InvalidNetworkIdentifier(error) => {
                 error.fmt(formatter)
+            }
+            Self::AccountIndexOutOfBounds => {
+                formatter.write_str("account index must be less than 2^31")
+            }
+            Self::AddressIndexOutOfBounds => {
+                formatter.write_str("address index must be less than 2^31")
             }
             Self::Port(error) => error.fmt(formatter),
         }
@@ -247,6 +301,14 @@ pub trait SelectWalletNetworkUseCase: Send + Sync {
         &self,
         command: SelectWalletNetworkCommand,
     ) -> Result<WalletNetworkListView, WalletAccountError>;
+}
+
+/// Incoming use case for deriving an account without handling private bytes.
+pub trait DeriveWalletAccountUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: DeriveWalletAccountCommand,
+    ) -> Result<DerivedWalletAccountView, WalletAccountError>;
 }
 
 /// Incoming query for the most recent public account state.
@@ -341,6 +403,42 @@ where
             .select_network(&profile_id, &network_id)
             .map_err(WalletAccountError::Port)?;
         self.view(&profile_id)
+    }
+}
+
+/// Application service for profile-scoped protected account derivation.
+pub struct WalletAccountDerivationService<D> {
+    derivation: Arc<D>,
+}
+
+impl<D> WalletAccountDerivationService<D> {
+    #[must_use]
+    pub const fn new(derivation: Arc<D>) -> Self {
+        Self { derivation }
+    }
+}
+
+impl<D> DeriveWalletAccountUseCase for WalletAccountDerivationService<D>
+where
+    D: WalletAccountDerivationPort + 'static,
+{
+    fn execute(
+        &self,
+        command: DeriveWalletAccountCommand,
+    ) -> Result<DerivedWalletAccountView, WalletAccountError> {
+        if command.account_index > MAX_HD_CHILD_INDEX {
+            return Err(WalletAccountError::AccountIndexOutOfBounds);
+        }
+        if command.address_index > MAX_HD_CHILD_INDEX {
+            return Err(WalletAccountError::AddressIndexOutOfBounds);
+        }
+        let profile_id = WalletProfileId::parse(command.profile_id)
+            .map_err(WalletAccountError::InvalidProfileIdentifier)?;
+        let derived = self
+            .derivation
+            .derive_account(&profile_id, command.account_index, command.address_index)
+            .map_err(WalletAccountError::Port)?;
+        Ok(DerivedWalletAccountView::from(&derived))
     }
 }
 
@@ -526,7 +624,8 @@ mod tests {
 
     use oxid_foundation::UnixTimestampMillis;
     use oxid_wallet_domain::{
-        AssetSymbol, ChainAccountId, ChainAsset, ChainAssetId, NetworkDisplayName, WalletSyncStatus,
+        AssetSymbol, ChainAccountId, ChainAsset, ChainAssetId, NetworkDisplayName,
+        WalletKeyReference, WalletSyncStatus,
     };
 
     use super::*;
@@ -668,6 +767,33 @@ mod tests {
         }
     }
 
+    impl WalletAccountDerivationPort for RecordingAdapter {
+        fn derive_account(
+            &self,
+            _: &WalletProfileId,
+            account_index: u32,
+            address_index: u32,
+        ) -> Result<DerivedChainAccount, WalletAccountPortError> {
+            let network_id = self
+                .selected
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?
+                .clone();
+            DerivedChainAccount::new(
+                network_id,
+                ChainAccountId::parse(format!("account_{account_index}_{address_index}"))
+                    .map_err(|_| WalletAccountPortError::InvalidData)?,
+                account_index,
+                address_index,
+                ChainAddress::parse(ChainAddressKind::Unshielded, "mn_addr1derived")
+                    .map_err(|_| WalletAccountPortError::InvalidData)?,
+                WalletKeyReference::parse("key_derived")
+                    .map_err(|_| WalletAccountPortError::InvalidData)?,
+            )
+            .map_err(|_| WalletAccountPortError::InvalidData)
+        }
+    }
+
     fn network_id(value: &str) -> ChainNetworkId {
         ChainNetworkId::parse(value).expect("network id is valid")
     }
@@ -747,6 +873,48 @@ mod tests {
 
         assert_eq!(view.network_id, "undeployed");
         assert_eq!(view.sync.chain_tip_height, Some(9));
+    }
+
+    #[test]
+    fn derivation_service_validates_indices_and_returns_only_public_metadata() {
+        let adapter = Arc::new(RecordingAdapter::new());
+        let service = WalletAccountDerivationService::new(adapter);
+        let view = DeriveWalletAccountUseCase::execute(
+            &service,
+            DeriveWalletAccountCommand {
+                profile_id: "profile_test".to_owned(),
+                account_index: 7,
+                address_index: 3,
+            },
+        )
+        .expect("derivation succeeds");
+
+        assert_eq!(view.network_id, "undeployed");
+        assert_eq!(view.account_id, "account_7_3");
+        assert_eq!(view.receive_address.kind, "unshielded");
+        assert_eq!(view.transaction_key_reference, "key_derived");
+        assert_eq!(
+            DeriveWalletAccountUseCase::execute(
+                &service,
+                DeriveWalletAccountCommand {
+                    profile_id: "profile_test".to_owned(),
+                    account_index: MAX_HD_CHILD_INDEX + 1,
+                    address_index: 0,
+                },
+            ),
+            Err(WalletAccountError::AccountIndexOutOfBounds)
+        );
+        assert_eq!(
+            DeriveWalletAccountUseCase::execute(
+                &service,
+                DeriveWalletAccountCommand {
+                    profile_id: "profile_test".to_owned(),
+                    account_index: 0,
+                    address_index: MAX_HD_CHILD_INDEX + 1,
+                },
+            ),
+            Err(WalletAccountError::AddressIndexOutOfBounds)
+        );
     }
 
     #[test]

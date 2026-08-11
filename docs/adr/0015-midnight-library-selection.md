@@ -3,8 +3,9 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Blueprint source: Sections 8 and 17
-- Implementation state: Binding for M2; account read model implemented by #6
-  and native standalone-indexer sync implemented by #7
+- Implementation state: Binding for M2; account read model implemented by #6,
+  native standalone-indexer sync by #7, and protected external NIGHT account
+  derivation/binding by #8
 
 ## Context
 
@@ -54,6 +55,22 @@ HD roles, Bech32m address formats, synchronization state, transaction history,
 and public test vectors. Do not embed its TypeScript runtime, Node polyfills,
 or WebView bridge in the Rust application.
 
+Midnight HD account derivation uses the Wallet SDK path
+`m/44'/2400'/account'/role/index`, with purpose, coin type, and account
+hardened and role/index non-hardened. Every component is in `[0, 2^31)`. The
+first delivered role is `NightExternal = 0`. A custody port derives and retains
+the secp256k1 child, returns only BIP340 x-only public metadata plus an opaque
+reference, and signs only through that reference. The Midnight adapter computes
+the unshielded payload as SHA-256 of the x-only public key and Bech32m-encodes it
+for the selected network.
+
+The official address-format JSON vectors feed their `seed` directly to the
+unshielded key constructor; they prove key/address formatting but are not an HD
+root-to-child fixture. Root derivation conformance therefore uses an explicit
+cross-language vector from the pinned `HDWallet.ts` and its locked
+`@scure/bip32` 2.2.0 implementation. This distinction must remain visible in
+tests and provenance.
+
 Consume indexer and node capabilities as protocols, not implementation-crate
 dependencies. Embed only the GraphQL documents or reviewed metadata a focused
 adapter needs and pin their provenance to an upstream commit. Contract tests
@@ -66,6 +83,9 @@ route and public address are explicit startup configuration for the native
 headless composition; they are not persisted in chain identity or selected by
 normal mobile composition. The adapter enforces progress-first replay,
 protocol and resource bounds, exact values, and safe transport-error mapping.
+Its configured public address is an initial watch-only fallback. After the
+profile derives an account, the source clears any cached snapshot and scopes
+subsequent reads and subscriptions to that derived address.
 
 Network identity is not a transport route. Core types may contain `mainnet`,
 `preprod`, `preview`, `qanet`, `devnet`, `testnet`, `undeployed`, or a validated
@@ -96,6 +116,10 @@ ledger types does not imply acceptable proving latency or memory use.
 - Live unshielded NIGHT synchronization is available to explicitly configured
   native headless runs. Shielded and DUST synchronization remain incremental;
   every headless adapter identifies live, cached, or simulated data truthfully.
+- The development headless composition can derive and bind external NIGHT
+  accounts and sign bounded conformance payloads by opaque reference. It does
+  not construct or submit a transaction and does not create a production
+  custody claim.
 - A source revision update requires dependency review, conformance tests,
   mobile builds, and an update to the recorded compatibility baseline.
 - If maintained Rust wallet packages are published later, a follow-up ADR may

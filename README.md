@@ -11,9 +11,10 @@ than layers bolted onto one chain-specific frontend.
 > **Status:** M0 foundation plus the first prototype-parity slices. The wallet
 > profile lifecycle—create, list, select, persist, and restore—is available
 > through Dioxus and the standalone headless harness. A development-only
-> process-local adapter exercises opaque Ed25519/P-256 key flows headlessly;
-> a deterministic adapter exercises Midnight network, address, exact-balance,
-> sync, and history flows without secret input. Native headless runs can instead
+> process-local adapter exercises opaque Ed25519/P-256 keys plus protected
+> Midnight HD/BIP340 account derivation headlessly; a deterministic adapter
+> exercises Midnight network, derived address, exact-balance, sync, and history
+> flows without secret input. Native headless runs can instead
 > opt into a real standalone-indexer unshielded account source using explicit
 > public startup configuration. The Assets page consumes the same account use
 > cases while production mobile custody and chain access remain fail-closed. The remaining shell
@@ -75,11 +76,16 @@ platform application-data directory by default; set
 `OXID_PROFILE_STORE_PATH` to isolate an automation run.
 
 The implemented account methods are `wallet.network.list`,
-`wallet.network.select`, `wallet.account.get`, `wallet.address.list`,
+`wallet.network.select`, `wallet.account.derive`, `wallet.account.get`, `wallet.address.list`,
 `wallet.address.unshielded`, `wallet.balance.snapshot`,
 `wallet.transaction.history`, `wallet.connect`, and `wallet.sync.force`.
-With no additional configuration their account data is explicitly `simulated`,
-uses public conformance payloads, and contacts no node, indexer, or prover.
+With no additional configuration their account data is explicitly `simulated`
+and contacts no node, indexer, or prover. After
+`wallet.security.initialize`, `wallet.account.derive` creates and retains the
+canonical external NIGHT child key inside the process-local development
+adapter, then returns only its public address and opaque transaction-key
+reference. Account and address indices must be below `2^31`; seed, mnemonic,
+private-key, and caller-defined path parameters are rejected.
 
 For a native standalone-indexer run, set all three public values before starting
 the headless binary:
@@ -94,9 +100,10 @@ cargo run -p oxid-headless
 The route must use `ws` or `wss` without credentials, query parameters, or a
 fragment. The Bech32m address HRP must match the selected network. Supplying
 only part of the configuration fails startup. A successful refresh reports
-`live`; subsequent in-process reads report `cached`. This mode observes public
-unshielded state only—it does not import a seed, derive keys, sync shielded/DUST
-state, sign, prove, or submit transactions.
+`live`; subsequent in-process reads report `cached`. The configured address is
+an initial watch-only fallback; deriving an account binds subsequent sync to
+the derived public address. This mode does not import recovery material, sync
+shielded/DUST state, construct, prove, or submit transactions.
 
 Common commands are also exposed through `just`:
 
@@ -184,7 +191,7 @@ build-trial result, and policy are recorded in
 ## Security
 
 The JSON repository is durable only for public profile metadata; it is not a
-secret store. The software signing adapter is process-local development/test
+secret store. The software signing and HD-derivation adapter is process-local development/test
 infrastructure and production composition does not select it. Never use this
 milestone to custody assets or credentials. See
 [SECURITY.md](SECURITY.md) for reporting and the current threat boundaries.

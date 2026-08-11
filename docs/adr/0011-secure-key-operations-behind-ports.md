@@ -3,7 +3,8 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Blueprint source: Sections 3, 7, 12, and 13
-- Implementation state: Policy enforced; custody adapters begin in M1
+- Implementation state: Policy enforced; protected development derivation and
+  signing implemented by #5/#8, native custody still required
 
 ## Context
 
@@ -22,14 +23,15 @@ raw private keys as their normal result.
 Human-readable signing and disclosure confirmation must precede sensitive
 operations. Export and backup require explicit authorization and re-authentication.
 
-M0 creates only public profile metadata and deliberately contains no key or
-seed type.
+The application may pass a bounded, validated HD path to a derivation port, but
+the root and child private bytes stay inside custody. Chain adapters receive
+only public-key metadata and an opaque child-key reference.
 
 ## Consequences
 
 - Platform custody can change without redefining wallet use cases.
-- Tests use fake references and operation outcomes rather than production key
-  material.
+- Tests may use explicit development adapters and public conformance inputs,
+  but cannot expose their root or child private bytes through incoming APIs.
 - Recovery/export flows need separate, strongly reviewed capabilities.
-- M1 cannot be production-capable until the proposed secret-storage decision
-  in ADR-0017 is resolved.
+- M1 cannot be production-capable until native adapters satisfy the accepted
+  platform-custody policy in ADR-0017.

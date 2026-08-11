@@ -20,14 +20,14 @@ before migrating later work.
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
-| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account read model, public vectors, exact balances/history, simulated sync, and configurable live standalone unshielded indexer sync implemented; custody, shielded/DUST checkpoints, proving and submission pending |
-| `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; standalone Ed25519/P-256 conformance slice implemented; native custody pending |
+| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account read model, exact balances/history, simulated/live sync, protected external NIGHT HD derivation, address binding, and BIP340 signing implemented; shielded/DUST checkpoints, transaction build/proving/submission pending |
+| `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; process-local Ed25519/P-256 plus BIP32/secp256k1-Schnorr conformance implemented; durable recovery and native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification | credential domain/store/verification ports and adapters | Deferred to M3/M5 |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
 | `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle and account-aware Assets page reimplemented; remaining capability pages and native bridges deferred |
-| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, profile/key flows, and simulated Midnight account parity implemented; live chain and SSI flows queued |
+| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, protected key/account flows, and simulated/live unshielded Midnight reads implemented; SSI flows queued |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Deferred to M2 |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated benchmarks/fixtures only when an adapter needs them | Not product code |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch through repository scripts; native bridges remain deferred |
@@ -134,17 +134,17 @@ identity contains no HTTP, WebSocket, node, indexer, or prover route.
 `crates/adapters/midnight` supplies the seven reviewed Midnight network IDs,
 Bech32m encoding checked against official public vectors, and exact NIGHT/DUST
 unit semantics. Production composition returns an explicit unavailable
-snapshot until protected derivation and a live source exist. Development and
-headless composition use only public deterministic payloads and clearly mark
-the result `simulated`; balances and history remain empty until an explicit
-connect/sync request.
+snapshot until native protected derivation and a production-approved live
+source exist. Development and headless composition can bind a process-local
+derived public address and clearly mark simulated data; balances and history
+remain empty until an explicit connect/sync request.
 
 The Assets page now renders the selected network, exact decimal balances,
 source/sync truth, public receive addresses, and recent activity through the
 same application use cases as the headless driver. The executable headless test
-covers profile creation, network discovery and selection, pre-sync state,
-explicit synchronization, balances, address HRP changes, history, and rejected
-unknown networks. Detailed retained evidence and exclusions are recorded in
+covers profile creation, network discovery and selection, protected derivation,
+BIP340 signing, pre-sync state, explicit synchronization, balances, address HRP
+changes, history, and rejected inputs. Detailed retained evidence and exclusions are recorded in
 [midnight-account-provenance.md](midnight-account-provenance.md).
 
 Issue #7 adds the next bounded account slice: native headless startup can opt
@@ -153,9 +153,18 @@ The executable harness contract-tests the protocol against an ephemeral local
 fixture and truthfully distinguishes live refreshes from later cached reads.
 No route is committed and normal mobile composition remains fail-closed.
 
-Protected HD/Jubjub account material, persisted cursors, shielded/DUST state,
-transaction construction, proof generation, submission, QR/copy/share bridges,
-production endpoint discovery, and native custody remain separate follow-ups.
+[Issue #8](https://github.com/MediaNoxLabs/oxid/issues/8) adds protected
+external NIGHT derivation. A generated process-local development root remains
+inside `storage-dev`; typed BIP32 paths produce retained BIP340 keys, public
+addresses, and opaque references. The same derived address replaces simulation
+fixtures or the live source's configured watch-only fallback for that profile.
+The real headless executable covers initialize/derive/repeat/sign/sync without
+accepting or returning secret material.
+
+Persisted cursors, shielded/DUST state and key roles, internal/change address
+management, transaction construction, proof generation, submission,
+QR/copy/share bridges, production endpoint discovery, recovery, and native
+custody remain separate follow-ups.
 
 ## Gate for each later slice
 

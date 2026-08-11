@@ -6,23 +6,24 @@ use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
-    MidnightIndexerConfig, MidnightIndexerConfigError, live_midnight_wallet,
+    MidnightIndexerConfig, MidnightIndexerConfigError, protected_live_midnight_wallet,
 };
-use oxid_adapter_midnight::{simulated_midnight_wallet, unavailable_midnight_wallet};
+use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_dev::{DevelopmentWalletSecurity, UnavailableWalletSecurity};
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
 use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;
 use oxid_wallet_application::{
     CreateWalletProfileService, CreateWalletProfileUseCase, DeleteWalletKeyUseCase,
-    GenerateWalletKeyUseCase, GetActiveWalletProfileService, GetActiveWalletProfileUseCase,
-    GetWalletAccountUseCase, GetWalletSecurityStatusUseCase, InitializeWalletSecurityUseCase,
-    ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
-    ListWalletProfilesUseCase, LockWalletUseCase, SelectWalletNetworkUseCase,
-    SelectWalletProfileService, SelectWalletProfileUseCase, SignWalletDataUseCase,
-    SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountReadPort, WalletAccountService,
-    WalletKeyOperationPort, WalletKeyService, WalletNetworkPort, WalletNetworkService,
-    WalletProfileRepository, WalletProtectionPort, WalletProtectionService,
+    DeriveWalletAccountUseCase, GenerateWalletKeyUseCase, GetActiveWalletProfileService,
+    GetActiveWalletProfileUseCase, GetWalletAccountUseCase, GetWalletSecurityStatusUseCase,
+    InitializeWalletSecurityUseCase, ListWalletKeysUseCase, ListWalletNetworksUseCase,
+    ListWalletProfilesService, ListWalletProfilesUseCase, LockWalletUseCase,
+    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectWalletProfileUseCase,
+    SignWalletDataUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
+    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
+    WalletAccountService, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
+    WalletNetworkService, WalletProfileRepository, WalletProtectionPort, WalletProtectionService,
 };
 
 /// Application capabilities shared by every incoming adapter.
@@ -42,6 +43,7 @@ pub struct ApplicationServices {
     delete_wallet_key: Arc<dyn DeleteWalletKeyUseCase>,
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
     select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
+    derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
 }
@@ -118,6 +120,11 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn derive_wallet_account(&self) -> Arc<dyn DeriveWalletAccountUseCase> {
+        Arc::clone(&self.derive_wallet_account)
+    }
+
+    #[must_use]
     pub fn get_wallet_account(&self) -> Arc<dyn GetWalletAccountUseCase> {
         Arc::clone(&self.get_wallet_account)
     }
@@ -145,10 +152,14 @@ pub fn compose_headless() -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let midnight = Arc::new(protected_simulated_midnight_wallet(
+        Arc::clone(&clock),
+        Arc::clone(&security),
+    ));
     compose_with_adapters(
         Arc::new(JsonWalletProfileRepository::at_default_location()),
         security,
-        Arc::new(simulated_midnight_wallet(clock)),
+        midnight,
     )
 }
 
@@ -214,10 +225,15 @@ pub fn compose_headless_live(config: MidnightIndexerConfig) -> ApplicationServic
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let midnight = Arc::new(protected_live_midnight_wallet(
+        config,
+        Arc::clone(&clock),
+        Arc::clone(&security),
+    ));
     compose_with_adapters(
         Arc::new(JsonWalletProfileRepository::at_default_location()),
         security,
-        Arc::new(live_midnight_wallet(config, clock)),
+        midnight,
     )
 }
 
@@ -254,10 +270,14 @@ pub fn compose_in_memory() -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let midnight = Arc::new(protected_simulated_midnight_wallet(
+        Arc::clone(&clock),
+        Arc::clone(&security),
+    ));
     compose_with_adapters(
         Arc::new(InMemoryWalletProfileRepository::new()),
         security,
-        Arc::new(simulated_midnight_wallet(clock)),
+        midnight,
     )
 }
 
@@ -269,7 +289,7 @@ fn compose_with_adapters<R, S, M>(
 where
     R: WalletProfileRepository + 'static,
     S: WalletProtectionPort + WalletKeyOperationPort + 'static,
-    M: WalletNetworkPort + WalletAccountReadPort + 'static,
+    M: WalletNetworkPort + WalletAccountReadPort + WalletAccountDerivationPort + 'static,
 {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
@@ -284,6 +304,7 @@ where
     let protection = Arc::new(WalletProtectionService::new(Arc::clone(&security)));
     let keys = Arc::new(WalletKeyService::new(security));
     let networks = Arc::new(WalletNetworkService::new(Arc::clone(&midnight)));
+    let account_derivation = Arc::new(WalletAccountDerivationService::new(Arc::clone(&midnight)));
     let accounts = Arc::new(WalletAccountService::new(midnight));
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
@@ -296,6 +317,7 @@ where
     let delete_wallet_key: Arc<dyn DeleteWalletKeyUseCase> = keys;
     let list_wallet_networks: Arc<dyn ListWalletNetworksUseCase> = networks.clone();
     let select_wallet_network: Arc<dyn SelectWalletNetworkUseCase> = networks;
+    let derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase> = account_derivation;
     let get_wallet_account: Arc<dyn GetWalletAccountUseCase> = accounts.clone();
     let sync_wallet_account: Arc<dyn SyncWalletAccountUseCase> = accounts;
 
@@ -314,6 +336,7 @@ where
         delete_wallet_key,
         list_wallet_networks,
         select_wallet_network,
+        derive_wallet_account,
         get_wallet_account,
         sync_wallet_account,
     }

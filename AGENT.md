@@ -37,7 +37,8 @@ status surfaces, not claims of working custody or identity capabilities.
 
 ADR-0017 is accepted. The first M1 security slice separates protection/session
 state from key operations, secret blobs, and native user authorization. The
-standalone harness has a process-local Ed25519/P-256 adapter for conformance;
+standalone harness has a process-local Ed25519/P-256 plus
+BIP32/secp256k1-Schnorr adapter for conformance;
 normal mobile composition uses a fail-closed unavailable adapter until native
 Apple Keychain/Secure Enclave and Android Keystore/BiometricPrompt adapters are
 implemented. Track that slice and its follow-ups in
@@ -59,6 +60,16 @@ unavailable. `oxid-headless` selects the live source only when
 `OXID_MIDNIGHT_UNSHIELDED_ADDRESS` are all present and valid; zero variables
 retains simulation and partial configuration fails startup. These are public,
 process-local adapter values and are never persisted with profile metadata.
+
+[Issue #8](https://github.com/MediaNoxLabs/oxid/issues/8) connects those
+boundaries for external NIGHT accounts. The development adapter generates its
+root during profile security initialization and implements typed protected
+derivation for `m/44'/2400'/account'/0/index`. Simulation and live sources bind
+the public derived address and opaque transaction-key reference; the live
+source clears its previous watch-only cache before the next subscription. The
+headless protocol accepts only bounded account/address indices and never a
+seed, mnemonic, private key, or path string. Normal mobile composition remains
+fail-closed pending native custody.
 
 ## Prototype provenance
 
@@ -130,8 +141,8 @@ Current package ownership:
 | `crates/platform/ports` | Clock and randomness capabilities used by applications. |
 | `crates/adapters/storage-memory` | Development/test implementation of wallet persistence. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
-| `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 key lifecycle and signing adapter. |
-| `crates/adapters/midnight` | Midnight network/account adapter with fail-closed production, public simulation, and native configurable indexer sources. |
+| `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
+| `crates/adapters/midnight` | Midnight network/account adapter with fail-closed production, public simulation, native configurable indexer sources, and protected public-account binding. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter and presentation state. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -159,6 +170,13 @@ algorithms, purposes, bounded payloads, opaque references, and explicit
 human-readable confirmations. Passphrases, seeds, recovery phrases, and raw
 private keys are rejected by strict parameter decoding.
 
+The development root and every derived child remain inside `storage-dev`.
+`wallet.account.derive` exposes only bounded public indices, the selected
+network, account/address metadata, and an opaque transaction-key reference.
+Preserve idempotence for identical path metadata, fail closed on conflict or
+lock state, and reset account sync state whenever a newly bound public address
+replaces a fixture or watch-only address.
+
 The accepted ledger compatibility revision is
 `d9414884db9da9e9b1f6f3a7f742d79a5732f817`. A host trial with
 `midnight-ledger` and `default-features = false` builds, but still resolves its
@@ -167,6 +185,14 @@ adapter for constants or public vectors. A future adapter that consumes ledger
 types must use the official HTTPS Git URL plus that full `rev`, then pass iOS
 and Android validation. The current `Cargo.lock` intentionally contains no
 Midnight Git package.
+
+The development HD adapter pins `bip32` 0.5.3, `k256` 0.13.4, and `sha2`
+0.10.9. The stable BIP32 release already selects the same `k256` generation;
+do not upgrade the direct Schnorr dependency independently and duplicate the
+secp256k1 stack. The path and cross-language fixture are recorded in
+`docs/dependencies/rustcrypto-midnight-hd-derivation.md`. The official address
+JSON treats its seed as an already-derived scalar, so it is a codec fixture,
+not an HD root-to-child fixture.
 
 The live indexer route is implemented with native-only Tokio 1.53.1 and
 tokio-tungstenite 0.30.0 using Rustls 0.23.43 with the explicit Ring provider

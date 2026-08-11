@@ -40,3 +40,6 @@
   unavailable adapter instead
 - Exit strategy: remove or replace this adapter without changing wallet domain,
   application, Dioxus, headless protocol, or native platform adapters
+
+Midnight BIP32/secp256k1-Schnorr derivation is reviewed separately in
+[rustcrypto-midnight-hd-derivation.md](rustcrypto-midnight-hd-derivation.md).

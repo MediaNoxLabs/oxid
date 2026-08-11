@@ -8,11 +8,13 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
+use bip32::{ChildNumber, XPrv};
 use ed25519_dalek::{Signer as _, SigningKey as Ed25519SigningKey};
+use k256::schnorr::{SigningKey as Secp256k1SchnorrSigningKey, signature::Signer as _};
 use oxid_platform_ports::{ClockPort, RandomPort};
 use oxid_wallet_application::{
-    GenerateProtectedKeyRequest, WalletKeyOperationPort, WalletProtectionPort,
-    WalletSecurityPortError,
+    DeriveProtectedKeyRequest, GenerateProtectedKeyRequest, WalletHdPath, WalletKeyDerivationPort,
+    WalletKeyOperationPort, WalletProtectionPort, WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyReference,
@@ -24,6 +26,7 @@ use zeroize::Zeroizing;
 
 const KEY_REFERENCE_ATTEMPTS: usize = 8;
 const P256_SCALAR_ATTEMPTS: usize = 128;
+const SECP256K1_SCALAR_ATTEMPTS: usize = 128;
 
 /// Explicitly insecure, process-local adapter for tests and headless flows.
 ///
@@ -148,8 +151,59 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
                 }
                 Err(WalletSecurityPortError::InvalidOperation)
             }
+            WalletKeyAlgorithm::Secp256k1Schnorr => {
+                for _ in 0..SECP256K1_SCALAR_ATTEMPTS {
+                    let mut secret = Zeroizing::new([0_u8; 32]);
+                    self.random
+                        .fill_bytes(secret.as_mut())
+                        .map_err(|_| WalletSecurityPortError::Unavailable)?;
+                    if let Ok(signing_key) = Secp256k1SchnorrSigningKey::from_bytes(secret.as_ref())
+                    {
+                        let public_key = WalletPublicKey::new(
+                            PublicKeyEncoding::Secp256k1XOnly,
+                            signing_key.verifying_key().to_bytes().to_vec(),
+                        );
+                        return Ok((
+                            DevelopmentKeyMaterial::Secp256k1Schnorr(signing_key),
+                            public_key,
+                        ));
+                    }
+                }
+                Err(WalletSecurityPortError::InvalidOperation)
+            }
             WalletKeyAlgorithm::Jubjub => Err(WalletSecurityPortError::UnsupportedAlgorithm),
         }
+    }
+
+    fn derive_material(
+        root_seed: &[u8; 32],
+        path: &WalletHdPath,
+        algorithm: WalletKeyAlgorithm,
+    ) -> Result<(DevelopmentKeyMaterial, WalletPublicKey), WalletSecurityPortError> {
+        if algorithm != WalletKeyAlgorithm::Secp256k1Schnorr {
+            return Err(WalletSecurityPortError::UnsupportedAlgorithm);
+        }
+
+        let mut extended = XPrv::new(root_seed.as_slice())
+            .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+        for component in path.components() {
+            let child = ChildNumber::new(component.index(), component.hardened())
+                .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+            extended = extended
+                .derive_child(child)
+                .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+        }
+        let private_bytes = Zeroizing::new(extended.to_bytes());
+        let signing_key = Secp256k1SchnorrSigningKey::from_bytes(private_bytes.as_ref())
+            .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+        let public_key = WalletPublicKey::new(
+            PublicKeyEncoding::Secp256k1XOnly,
+            signing_key.verifying_key().to_bytes().to_vec(),
+        );
+        Ok((
+            DevelopmentKeyMaterial::Secp256k1Schnorr(signing_key),
+            public_key,
+        ))
     }
 }
 
@@ -179,10 +233,15 @@ where
         if profiles.contains_key(profile_id.as_str()) {
             return Err(WalletSecurityPortError::AlreadyInitialized);
         }
+        let mut root_seed = Zeroizing::new([0_u8; 32]);
+        self.random
+            .fill_bytes(root_seed.as_mut())
+            .map_err(|_| WalletSecurityPortError::Unavailable)?;
         profiles.insert(
             profile_id.as_str().to_owned(),
             DevelopmentProfile {
                 state: WalletProtectionState::Unlocked,
+                root_seed,
                 keys: BTreeMap::new(),
             },
         );
@@ -253,6 +312,7 @@ where
             StoredDevelopmentKey {
                 descriptor: descriptor.clone(),
                 material,
+                derivation: None,
             },
         );
         Ok(descriptor)
@@ -295,6 +355,13 @@ where
                     signature.to_bytes().to_vec(),
                 ))
             }
+            DevelopmentKeyMaterial::Secp256k1Schnorr(signing_key) => {
+                let signature: k256::schnorr::Signature = signing_key.sign(payload);
+                Ok(WalletSignature::new(
+                    WalletKeyAlgorithm::Secp256k1Schnorr,
+                    signature.to_bytes().to_vec(),
+                ))
+            }
         }
     }
 
@@ -310,6 +377,67 @@ where
             .remove(key_reference.as_str())
             .map(|_| ())
             .ok_or(WalletSecurityPortError::NotFound)
+    }
+}
+
+impl<C, N> WalletKeyDerivationPort for DevelopmentWalletSecurity<C, N>
+where
+    C: ClockPort,
+    N: RandomPort,
+{
+    fn derive(
+        &self,
+        profile_id: &WalletProfileId,
+        request: DeriveProtectedKeyRequest,
+    ) -> Result<WalletKeyDescriptor, WalletSecurityPortError> {
+        let mut profiles = self.profiles()?;
+        let profile = Self::unlocked_profile_mut(&mut profiles, profile_id)?;
+
+        if let Some(existing) = profile
+            .keys
+            .values()
+            .find(|key| key.derivation.as_ref() == Some(&request.path))
+        {
+            if existing.descriptor.label() == &request.label
+                && existing.descriptor.algorithm() == request.algorithm
+                && existing.descriptor.purpose() == request.purpose
+            {
+                return Ok(existing.descriptor.clone());
+            }
+            return Err(WalletSecurityPortError::Conflict);
+        }
+        if profile
+            .keys
+            .values()
+            .any(|key| key.descriptor.label() == &request.label)
+        {
+            return Err(WalletSecurityPortError::Conflict);
+        }
+
+        let reference = self.new_reference(&profile.keys)?;
+        let (material, public_key) =
+            Self::derive_material(&profile.root_seed, &request.path, request.algorithm)?;
+        let created_at = self
+            .clock
+            .now()
+            .map_err(|_| WalletSecurityPortError::Unavailable)?;
+        let descriptor = WalletKeyDescriptor::new(
+            reference.clone(),
+            request.label,
+            request.algorithm,
+            request.purpose,
+            public_key,
+            created_at,
+        );
+        profile.keys.insert(
+            reference.as_str().to_owned(),
+            StoredDevelopmentKey {
+                descriptor: descriptor.clone(),
+                material,
+                derivation: Some(request.path),
+            },
+        );
+        Ok(descriptor)
     }
 }
 
@@ -372,19 +500,32 @@ impl WalletKeyOperationPort for UnavailableWalletSecurity {
     }
 }
 
+impl WalletKeyDerivationPort for UnavailableWalletSecurity {
+    fn derive(
+        &self,
+        _: &WalletProfileId,
+        _: DeriveProtectedKeyRequest,
+    ) -> Result<WalletKeyDescriptor, WalletSecurityPortError> {
+        Err(WalletSecurityPortError::Unavailable)
+    }
+}
+
 struct DevelopmentProfile {
     state: WalletProtectionState,
+    root_seed: Zeroizing<[u8; 32]>,
     keys: BTreeMap<String, StoredDevelopmentKey>,
 }
 
 struct StoredDevelopmentKey {
     descriptor: WalletKeyDescriptor,
     material: DevelopmentKeyMaterial,
+    derivation: Option<WalletHdPath>,
 }
 
 enum DevelopmentKeyMaterial {
     Ed25519(Ed25519SigningKey),
     P256(P256SigningKey),
+    Secp256k1Schnorr(Secp256k1SchnorrSigningKey),
 }
 
 const fn development_status(state: WalletProtectionState) -> WalletSecurityStatus {
@@ -394,8 +535,13 @@ const fn development_status(state: WalletProtectionState) -> WalletSecurityStatu
 #[cfg(test)]
 mod tests {
     use ed25519_dalek::{Signature as Ed25519Signature, Verifier as _, VerifyingKey};
+    use k256::schnorr::{
+        Signature as SchnorrSignature, VerifyingKey as SchnorrVerifyingKey,
+        signature::Verifier as _,
+    };
     use oxid_foundation::UnixTimestampMillis;
     use oxid_platform_ports::PlatformError;
+    use oxid_wallet_application::WalletHdPathComponent;
     use oxid_wallet_domain::{WalletKeyLabel, WalletKeyPurpose};
     use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256VerifyingKey};
 
@@ -429,6 +575,15 @@ mod tests {
         }
     }
 
+    struct SeedOneRandom;
+
+    impl RandomPort for SeedOneRandom {
+        fn fill_bytes(&self, destination: &mut [u8]) -> Result<(), PlatformError> {
+            destination.fill(1);
+            Ok(())
+        }
+    }
+
     fn adapter() -> DevelopmentWalletSecurity<FixedClock, IncrementingRandom> {
         DevelopmentWalletSecurity::new(Arc::new(FixedClock), Arc::new(IncrementingRandom::new()))
     }
@@ -452,6 +607,17 @@ mod tests {
                 },
             )
             .expect("development key should be generated")
+    }
+
+    fn midnight_night_path(account: u32, index: u32) -> WalletHdPath {
+        WalletHdPath::new(vec![
+            WalletHdPathComponent::new(44, true).expect("purpose is valid"),
+            WalletHdPathComponent::new(2400, true).expect("coin type is valid"),
+            WalletHdPathComponent::new(account, true).expect("account is valid"),
+            WalletHdPathComponent::new(0, false).expect("role is valid"),
+            WalletHdPathComponent::new(index, false).expect("index is valid"),
+        ])
+        .expect("path is valid")
     }
 
     #[test]
@@ -529,6 +695,96 @@ mod tests {
         verifying_key
             .verify(payload, &signature)
             .expect("signature must verify");
+    }
+
+    #[test]
+    fn protected_hd_derivation_is_idempotent_and_signs_without_exporting_secrets() {
+        let adapter = adapter();
+        adapter.initialize(&profile_id()).expect("setup succeeds");
+        let request = DeriveProtectedKeyRequest {
+            label: WalletKeyLabel::parse("Midnight NIGHT account 0/0").expect("label is valid"),
+            algorithm: WalletKeyAlgorithm::Secp256k1Schnorr,
+            purpose: WalletKeyPurpose::Transaction,
+            path: midnight_night_path(0, 0),
+        };
+        let first = adapter
+            .derive(&profile_id(), request.clone())
+            .expect("derivation succeeds");
+        let second = adapter
+            .derive(&profile_id(), request)
+            .expect("repeated derivation succeeds");
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first.public_key().encoding(),
+            PublicKeyEncoding::Secp256k1XOnly
+        );
+        assert_eq!(first.public_key().bytes().len(), 32);
+
+        let payload = b"Midnight transaction intent";
+        let signature = adapter
+            .sign(&profile_id(), first.reference(), payload)
+            .expect("opaque child key signs");
+        let public_bytes: [u8; 32] = first
+            .public_key()
+            .bytes()
+            .try_into()
+            .expect("x-only public key is 32 bytes");
+        let verifying_key =
+            SchnorrVerifyingKey::from_bytes(&public_bytes).expect("x-only public key is valid");
+        let signature =
+            SchnorrSignature::try_from(signature.bytes()).expect("signature bytes are valid");
+        verifying_key
+            .verify(payload, &signature)
+            .expect("BIP340 signature must verify");
+
+        adapter.lock(&profile_id()).expect("lock succeeds");
+        assert_eq!(
+            adapter
+                .derive(
+                    &profile_id(),
+                    DeriveProtectedKeyRequest {
+                        label: WalletKeyLabel::parse("Midnight NIGHT account 0/1")
+                            .expect("label is valid"),
+                        algorithm: WalletKeyAlgorithm::Secp256k1Schnorr,
+                        purpose: WalletKeyPurpose::Transaction,
+                        path: midnight_night_path(0, 1),
+                    },
+                )
+                .expect_err("locked derivation must fail"),
+            WalletSecurityPortError::Locked
+        );
+    }
+
+    #[test]
+    fn hd_derivation_matches_the_pinned_wallet_sdk_public_key_vector() {
+        let adapter = DevelopmentWalletSecurity::new(Arc::new(FixedClock), Arc::new(SeedOneRandom));
+        adapter.initialize(&profile_id()).expect("setup succeeds");
+        let descriptor = adapter
+            .derive(
+                &profile_id(),
+                DeriveProtectedKeyRequest {
+                    label: WalletKeyLabel::parse("Midnight NIGHT account 0/0")
+                        .expect("label is valid"),
+                    algorithm: WalletKeyAlgorithm::Secp256k1Schnorr,
+                    purpose: WalletKeyPurpose::Transaction,
+                    path: midnight_night_path(0, 0),
+                },
+            )
+            .expect("derivation succeeds");
+        let public_hex = descriptor
+            .public_key()
+            .bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+
+        // Pinned Wallet SDK HDWallet.ts + @scure/bip32 2.2.0 for public
+        // conformance input [0x01; 32] at m/44'/2400'/0'/0/0.
+        assert_eq!(
+            public_hex,
+            "b193e54524dc796402870a883fbdcd83869c9c307dda8c0d99c5f769169fc883"
+        );
     }
 
     #[test]

@@ -8,7 +8,7 @@ mod indexer;
 #[cfg(not(target_arch = "wasm32"))]
 pub use indexer::{
     LiveMidnightAccountSource, MidnightIndexerConfig, MidnightIndexerConfigError,
-    live_midnight_wallet,
+    live_midnight_wallet, protected_live_midnight_wallet,
 };
 
 use std::{
@@ -19,17 +19,24 @@ use std::{
 use bech32::{Bech32m, Hrp};
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
-    WalletAccountPortError, WalletAccountPortFuture, WalletAccountReadPort, WalletNetworkPort,
+    DeriveProtectedKeyRequest, WalletAccountDerivationPort, WalletAccountPortError,
+    WalletAccountPortFuture, WalletAccountReadPort, WalletHdPath, WalletHdPathComponent,
+    WalletKeyDerivationPort, WalletNetworkPort, WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     AssetBalance, AssetBalanceChange, AssetSymbol, BalanceChangeDirection, ChainAccountId,
     ChainAddress, ChainAddressKind, ChainAsset, ChainAssetId, ChainKind, ChainNetwork,
-    ChainNetworkId, ChainTransactionId, NetworkDisplayName, NetworkEnvironment,
-    WalletAccountSnapshot, WalletAccountSource, WalletProfileId, WalletSyncState, WalletSyncStatus,
-    WalletTransaction, WalletTransactionDirection, WalletTransactionStatus,
+    ChainNetworkId, ChainTransactionId, DerivedChainAccount, NetworkDisplayName,
+    NetworkEnvironment, PublicKeyEncoding, WalletAccountSnapshot, WalletAccountSource,
+    WalletKeyAlgorithm, WalletKeyLabel, WalletKeyPurpose, WalletProfileId, WalletSyncState,
+    WalletSyncStatus, WalletTransaction, WalletTransactionDirection, WalletTransactionStatus,
 };
+use sha2::{Digest, Sha256};
 
 const DEFAULT_NETWORK_ID: &str = "undeployed";
+const BIP44_PURPOSE: u32 = 44;
+const MIDNIGHT_COIN_TYPE: u32 = 2400;
+const NIGHT_EXTERNAL_ROLE: u32 = 0;
 
 // Canonical ledger-8 atomic-unit semantics reviewed at
 // midnight-ledger d9414884db9da9e9b1f6f3a7f742d79a5732f817,
@@ -51,6 +58,15 @@ const FIXTURE_DUST_PAYLOAD: &str =
 
 /// Account state provider used behind the common Midnight network adapter.
 pub trait MidnightAccountSource: Send + Sync {
+    fn bind_derived_account(
+        &self,
+        _: &WalletProfileId,
+        _: &ChainNetwork,
+        _: &DerivedChainAccount,
+    ) -> Result<(), WalletAccountPortError> {
+        Err(WalletAccountPortError::Unavailable)
+    }
+
     fn account(
         &self,
         profile_id: &WalletProfileId,
@@ -64,18 +80,127 @@ pub trait MidnightAccountSource: Send + Sync {
     ) -> WalletAccountPortFuture<'a>;
 }
 
+/// Midnight-specific account derivation implemented over a protected key port.
+pub trait MidnightAccountDeriver: Send + Sync {
+    fn derive(
+        &self,
+        profile_id: &WalletProfileId,
+        network: &ChainNetwork,
+        account_index: u32,
+        address_index: u32,
+    ) -> Result<DerivedChainAccount, WalletAccountPortError>;
+}
+
+/// Fail-closed derivation adapter for compositions without protected root material.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableMidnightAccountDeriver;
+
+impl MidnightAccountDeriver for UnavailableMidnightAccountDeriver {
+    fn derive(
+        &self,
+        _: &WalletProfileId,
+        _: &ChainNetwork,
+        _: u32,
+        _: u32,
+    ) -> Result<DerivedChainAccount, WalletAccountPortError> {
+        Err(WalletAccountPortError::Unavailable)
+    }
+}
+
+/// Converts Midnight's canonical account path into an opaque protected child key.
+pub struct ProtectedMidnightAccountDeriver<K> {
+    keys: Arc<K>,
+}
+
+impl<K> ProtectedMidnightAccountDeriver<K> {
+    #[must_use]
+    pub const fn new(keys: Arc<K>) -> Self {
+        Self { keys }
+    }
+}
+
+impl<K> MidnightAccountDeriver for ProtectedMidnightAccountDeriver<K>
+where
+    K: WalletKeyDerivationPort + 'static,
+{
+    fn derive(
+        &self,
+        profile_id: &WalletProfileId,
+        network: &ChainNetwork,
+        account_index: u32,
+        address_index: u32,
+    ) -> Result<DerivedChainAccount, WalletAccountPortError> {
+        let component = |index, hardened| {
+            WalletHdPathComponent::new(index, hardened)
+                .map_err(|_| WalletAccountPortError::InvalidData)
+        };
+        let path = WalletHdPath::new(vec![
+            component(BIP44_PURPOSE, true)?,
+            component(MIDNIGHT_COIN_TYPE, true)?,
+            component(account_index, true)?,
+            component(NIGHT_EXTERNAL_ROLE, false)?,
+            component(address_index, false)?,
+        ])
+        .map_err(|_| WalletAccountPortError::InvalidData)?;
+        let label = WalletKeyLabel::parse(format!(
+            "Midnight NIGHT account {account_index}/{address_index}"
+        ))
+        .map_err(|_| WalletAccountPortError::InvalidData)?;
+        let descriptor = self
+            .keys
+            .derive(
+                profile_id,
+                DeriveProtectedKeyRequest {
+                    label,
+                    algorithm: WalletKeyAlgorithm::Secp256k1Schnorr,
+                    purpose: WalletKeyPurpose::Transaction,
+                    path,
+                },
+            )
+            .map_err(map_security_error)?;
+        if descriptor.algorithm() != WalletKeyAlgorithm::Secp256k1Schnorr
+            || descriptor.public_key().encoding() != PublicKeyEncoding::Secp256k1XOnly
+            || descriptor.public_key().bytes().len() != 32
+        {
+            return Err(WalletAccountPortError::InvalidData);
+        }
+
+        let payload = Sha256::digest(descriptor.public_key().bytes());
+        let address = encode_midnight_address(
+            network.id(),
+            ChainAddressKind::Unshielded,
+            "addr",
+            payload.as_slice(),
+        )?;
+        let account_id =
+            ChainAccountId::parse(format!("midnight_account_{account_index}_{address_index}"))
+                .map_err(|_| WalletAccountPortError::InvalidData)?;
+        DerivedChainAccount::new(
+            network.id().clone(),
+            account_id,
+            account_index,
+            address_index,
+            address,
+            descriptor.reference().clone(),
+        )
+        .map_err(|_| WalletAccountPortError::InvalidData)
+    }
+}
+
 /// Midnight adapter with profile-scoped network selection and replaceable data source.
-pub struct MidnightWalletAdapter<S> {
+pub struct MidnightWalletAdapter<S, D = UnavailableMidnightAccountDeriver> {
     source: S,
+    deriver: D,
     selections: Mutex<HashMap<WalletProfileId, ChainNetworkId>>,
     default_network: Option<ChainNetworkId>,
 }
 
-impl<S> MidnightWalletAdapter<S> {
+impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
     #[must_use]
     pub fn new(source: S) -> Self {
         Self {
             source,
+            deriver: UnavailableMidnightAccountDeriver,
             selections: Mutex::new(HashMap::new()),
             default_network: None,
         }
@@ -87,6 +212,33 @@ impl<S> MidnightWalletAdapter<S> {
     pub fn with_default_network(source: S, default_network: ChainNetworkId) -> Self {
         Self {
             source,
+            deriver: UnavailableMidnightAccountDeriver,
+            selections: Mutex::new(HashMap::new()),
+            default_network: Some(default_network),
+        }
+    }
+}
+
+impl<S, D> MidnightWalletAdapter<S, D> {
+    #[must_use]
+    pub fn with_deriver(source: S, deriver: D) -> Self {
+        Self {
+            source,
+            deriver,
+            selections: Mutex::new(HashMap::new()),
+            default_network: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_default_network_and_deriver(
+        source: S,
+        default_network: ChainNetworkId,
+        deriver: D,
+    ) -> Self {
+        Self {
+            source,
+            deriver,
             selections: Mutex::new(HashMap::new()),
             default_network: Some(default_network),
         }
@@ -108,9 +260,10 @@ impl<S> MidnightWalletAdapter<S> {
     }
 }
 
-impl<S> WalletNetworkPort for MidnightWalletAdapter<S>
+impl<S, D> WalletNetworkPort for MidnightWalletAdapter<S, D>
 where
     S: MidnightAccountSource,
+    D: Send + Sync,
 {
     fn available_networks(&self) -> Result<Vec<ChainNetwork>, WalletAccountPortError> {
         network_catalog()
@@ -139,9 +292,10 @@ where
     }
 }
 
-impl<S> WalletAccountReadPort for MidnightWalletAdapter<S>
+impl<S, D> WalletAccountReadPort for MidnightWalletAdapter<S, D>
 where
     S: MidnightAccountSource,
+    D: Send + Sync,
 {
     fn account(
         &self,
@@ -160,6 +314,29 @@ where
                 network_by_id(&selected)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
             self.source.sync(profile_id, &network).await
         })
+    }
+}
+
+impl<S, D> WalletAccountDerivationPort for MidnightWalletAdapter<S, D>
+where
+    S: MidnightAccountSource,
+    D: MidnightAccountDeriver,
+{
+    fn derive_account(
+        &self,
+        profile_id: &WalletProfileId,
+        account_index: u32,
+        address_index: u32,
+    ) -> Result<DerivedChainAccount, WalletAccountPortError> {
+        let selected = self.selected(profile_id)?;
+        let network =
+            network_by_id(&selected)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
+        let derived = self
+            .deriver
+            .derive(profile_id, &network, account_index, address_index)?;
+        self.source
+            .bind_derived_account(profile_id, &network, &derived)?;
+        Ok(derived)
     }
 }
 
@@ -189,6 +366,7 @@ impl MidnightAccountSource for UnavailableMidnightAccountSource {
 pub struct SimulatedMidnightAccountSource<C> {
     clock: Arc<C>,
     synchronized: Mutex<HashSet<(WalletProfileId, ChainNetworkId)>>,
+    derived_accounts: Mutex<HashMap<(WalletProfileId, ChainNetworkId), DerivedChainAccount>>,
 }
 
 impl<C> SimulatedMidnightAccountSource<C> {
@@ -197,6 +375,7 @@ impl<C> SimulatedMidnightAccountSource<C> {
         Self {
             clock,
             synchronized: Mutex::new(HashSet::new()),
+            derived_accounts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -209,9 +388,23 @@ impl<C> SimulatedMidnightAccountSource<C> {
     where
         C: ClockPort,
     {
-        let account_id = ChainAccountId::parse(profile_id.as_str().to_owned())
-            .map_err(|_| WalletAccountPortError::InvalidData)?;
-        let addresses = fixture_addresses(network.id())?;
+        let derived = self
+            .derived_accounts
+            .lock()
+            .map_err(|_| WalletAccountPortError::Unavailable)?
+            .get(&(profile_id.clone(), network.id().clone()))
+            .cloned();
+        let (account_id, addresses) = match derived {
+            Some(derived) => (
+                derived.account_id().clone(),
+                vec![derived.receive_address().clone()],
+            ),
+            None => (
+                ChainAccountId::parse(profile_id.as_str().to_owned())
+                    .map_err(|_| WalletAccountPortError::InvalidData)?,
+                fixture_addresses(network.id())?,
+            ),
+        };
         let sync = if synchronized {
             WalletSyncStatus::new(
                 WalletSyncState::Synced,
@@ -264,6 +457,31 @@ impl<C> MidnightAccountSource for SimulatedMidnightAccountSource<C>
 where
     C: ClockPort + 'static,
 {
+    fn bind_derived_account(
+        &self,
+        profile_id: &WalletProfileId,
+        network: &ChainNetwork,
+        derived: &DerivedChainAccount,
+    ) -> Result<(), WalletAccountPortError> {
+        if derived.network_id() != network.id() {
+            return Err(WalletAccountPortError::InvalidData);
+        }
+        let key = (profile_id.clone(), network.id().clone());
+        let mut accounts = self
+            .derived_accounts
+            .lock()
+            .map_err(|_| WalletAccountPortError::Unavailable)?;
+        if accounts.get(&key) != Some(derived) {
+            accounts.insert(key.clone(), derived.clone());
+            drop(accounts);
+            self.synchronized
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?
+                .remove(&key);
+        }
+        Ok(())
+    }
+
     fn account(
         &self,
         profile_id: &WalletProfileId,
@@ -306,6 +524,22 @@ where
     C: ClockPort,
 {
     MidnightWalletAdapter::new(SimulatedMidnightAccountSource::new(clock))
+}
+
+/// Development-only adapter that binds protected HD-derived public accounts.
+#[must_use]
+pub fn protected_simulated_midnight_wallet<C, K>(
+    clock: Arc<C>,
+    keys: Arc<K>,
+) -> MidnightWalletAdapter<SimulatedMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort,
+    K: WalletKeyDerivationPort,
+{
+    MidnightWalletAdapter::with_deriver(
+        SimulatedMidnightAccountSource::new(clock),
+        ProtectedMidnightAccountDeriver::new(keys),
+    )
 }
 
 fn network_catalog() -> Result<Vec<ChainNetwork>, WalletAccountPortError> {
@@ -365,17 +599,40 @@ pub(crate) fn fixture_addresses(
     .into_iter()
     .map(|(kind, address_type, payload)| {
         let payload = hex::decode(payload).map_err(|_| WalletAccountPortError::InvalidData)?;
-        let hrp = if network_id.as_str() == "mainnet" {
-            format!("mn_{address_type}")
-        } else {
-            format!("mn_{address_type}_{}", network_id.as_str())
-        };
-        let hrp = Hrp::parse(&hrp).map_err(|_| WalletAccountPortError::InvalidData)?;
-        let encoded = bech32::encode::<Bech32m>(hrp, &payload)
-            .map_err(|_| WalletAccountPortError::InvalidData)?;
-        ChainAddress::parse(kind, encoded).map_err(|_| WalletAccountPortError::InvalidData)
+        encode_midnight_address(network_id, kind, address_type, &payload)
     })
     .collect()
+}
+
+fn encode_midnight_address(
+    network_id: &ChainNetworkId,
+    kind: ChainAddressKind,
+    address_type: &str,
+    payload: &[u8],
+) -> Result<ChainAddress, WalletAccountPortError> {
+    let hrp = if network_id.as_str() == "mainnet" {
+        format!("mn_{address_type}")
+    } else {
+        format!("mn_{address_type}_{}", network_id.as_str())
+    };
+    let hrp = Hrp::parse(&hrp).map_err(|_| WalletAccountPortError::InvalidData)?;
+    let encoded =
+        bech32::encode::<Bech32m>(hrp, payload).map_err(|_| WalletAccountPortError::InvalidData)?;
+    ChainAddress::parse(kind, encoded).map_err(|_| WalletAccountPortError::InvalidData)
+}
+
+const fn map_security_error(error: WalletSecurityPortError) -> WalletAccountPortError {
+    match error {
+        WalletSecurityPortError::NotInitialized => WalletAccountPortError::ProtectionNotInitialized,
+        WalletSecurityPortError::Locked => WalletAccountPortError::ProtectionLocked,
+        WalletSecurityPortError::Unavailable => WalletAccountPortError::Unavailable,
+        WalletSecurityPortError::AlreadyInitialized
+        | WalletSecurityPortError::NotFound
+        | WalletSecurityPortError::Conflict
+        | WalletSecurityPortError::UnsupportedAlgorithm
+        | WalletSecurityPortError::AuthorizationDenied
+        | WalletSecurityPortError::InvalidOperation => WalletAccountPortError::InvalidData,
+    }
 }
 
 fn simulated_ledger_state(
@@ -458,6 +715,7 @@ mod tests {
 
     use oxid_foundation::UnixTimestampMillis;
     use oxid_platform_ports::PlatformError;
+    use oxid_wallet_domain::{WalletKeyDescriptor, WalletKeyReference, WalletPublicKey};
 
     use super::*;
 
@@ -466,6 +724,40 @@ mod tests {
     impl ClockPort for FixedClock {
         fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
             Ok(UnixTimestampMillis::new(1_700_000_000_000))
+        }
+    }
+
+    struct WalletSdkVectorKeys;
+
+    impl WalletKeyDerivationPort for WalletSdkVectorKeys {
+        fn derive(
+            &self,
+            _: &WalletProfileId,
+            request: DeriveProtectedKeyRequest,
+        ) -> Result<WalletKeyDescriptor, WalletSecurityPortError> {
+            let path = request
+                .path
+                .components()
+                .iter()
+                .map(|component| (component.index(), component.hardened()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                path,
+                vec![(44, true), (2400, true), (0, true), (0, false), (0, false)]
+            );
+            assert_eq!(request.algorithm, WalletKeyAlgorithm::Secp256k1Schnorr);
+            assert_eq!(request.purpose, WalletKeyPurpose::Transaction);
+            let public_key =
+                hex::decode("b193e54524dc796402870a883fbdcd83869c9c307dda8c0d99c5f769169fc883")
+                    .expect("public vector is valid hex");
+            Ok(WalletKeyDescriptor::new(
+                WalletKeyReference::parse("key_wallet_sdk_vector").expect("key reference is valid"),
+                request.label,
+                request.algorithm,
+                request.purpose,
+                WalletPublicKey::new(PublicKeyEncoding::Secp256k1XOnly, public_key),
+                UnixTimestampMillis::new(1_700_000_000_000),
+            ))
         }
     }
 
@@ -522,6 +814,23 @@ mod tests {
         assert_eq!(
             devnet[0].value(),
             "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y"
+        );
+    }
+
+    #[test]
+    fn protected_deriver_matches_the_pinned_wallet_sdk_address_vector() {
+        let devnet = network_by_id(&network_id("devnet").expect("network is valid"))
+            .expect("catalog is valid")
+            .expect("devnet exists");
+        let derived = ProtectedMidnightAccountDeriver::new(Arc::new(WalletSdkVectorKeys))
+            .derive(&profile(), &devnet, 0, 0)
+            .expect("public account derives");
+
+        assert_eq!(derived.account_id().as_str(), "midnight_account_0_0");
+        assert_eq!(derived.transaction_key().as_str(), "key_wallet_sdk_vector");
+        assert_eq!(
+            derived.receive_address().value(),
+            "mn_addr_devnet13gn5semyxq8w3cd9fv0av5v4crkzcfmt7mlmvh83wwu6gtc8w3sqr2gnec"
         );
     }
 

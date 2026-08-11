@@ -4,6 +4,11 @@ use std::{error::Error, fmt};
 
 use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
 
+use crate::WalletKeyReference;
+
+/// Largest valid non-hardened BIP32 account or address index.
+pub const MAX_HD_CHILD_INDEX: u32 = (1 << 31) - 1;
+
 /// A blockchain family supported by Oxid-owned account semantics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ChainKind {
@@ -195,6 +200,92 @@ impl fmt::Display for ChainAddressError {
 }
 
 impl Error for ChainAddressError {}
+
+/// Safe public result of deriving one chain account from protected material.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DerivedChainAccount {
+    network_id: ChainNetworkId,
+    account_id: ChainAccountId,
+    account_index: u32,
+    address_index: u32,
+    receive_address: ChainAddress,
+    transaction_key: WalletKeyReference,
+}
+
+impl DerivedChainAccount {
+    pub fn new(
+        network_id: ChainNetworkId,
+        account_id: ChainAccountId,
+        account_index: u32,
+        address_index: u32,
+        receive_address: ChainAddress,
+        transaction_key: WalletKeyReference,
+    ) -> Result<Self, ChainAccountDerivationError> {
+        if account_index > MAX_HD_CHILD_INDEX {
+            return Err(ChainAccountDerivationError::AccountIndexOutOfBounds);
+        }
+        if address_index > MAX_HD_CHILD_INDEX {
+            return Err(ChainAccountDerivationError::AddressIndexOutOfBounds);
+        }
+        Ok(Self {
+            network_id,
+            account_id,
+            account_index,
+            address_index,
+            receive_address,
+            transaction_key,
+        })
+    }
+
+    #[must_use]
+    pub const fn network_id(&self) -> &ChainNetworkId {
+        &self.network_id
+    }
+
+    #[must_use]
+    pub const fn account_id(&self) -> &ChainAccountId {
+        &self.account_id
+    }
+
+    #[must_use]
+    pub const fn account_index(&self) -> u32 {
+        self.account_index
+    }
+
+    #[must_use]
+    pub const fn address_index(&self) -> u32 {
+        self.address_index
+    }
+
+    #[must_use]
+    pub const fn receive_address(&self) -> &ChainAddress {
+        &self.receive_address
+    }
+
+    #[must_use]
+    pub const fn transaction_key(&self) -> &WalletKeyReference {
+        &self.transaction_key
+    }
+}
+
+/// Derivation-index validation failures enforced by the chain domain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChainAccountDerivationError {
+    AccountIndexOutOfBounds,
+    AddressIndexOutOfBounds,
+}
+
+impl fmt::Display for ChainAccountDerivationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::AccountIndexOutOfBounds => "account index must be less than 2^31",
+            Self::AddressIndexOutOfBounds => "address index must be less than 2^31",
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl Error for ChainAccountDerivationError {}
 
 /// Stable asset identity within a chain adapter.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -761,5 +852,30 @@ mod tests {
         assert!(snapshot.addresses().is_empty());
         assert!(snapshot.balances().is_empty());
         assert_eq!(snapshot.sync().state(), WalletSyncState::Unavailable);
+    }
+
+    #[test]
+    fn derived_account_rejects_bip32_indices_at_two_to_the_thirty_first() {
+        let make = |account_index, address_index| {
+            DerivedChainAccount::new(
+                network().id().clone(),
+                ChainAccountId::parse("midnight_account_0_0").expect("account id is valid"),
+                account_index,
+                address_index,
+                ChainAddress::parse(ChainAddressKind::Unshielded, "mn_addr_undeployed1derived")
+                    .expect("address is valid"),
+                WalletKeyReference::parse("key_derived").expect("key reference is valid"),
+            )
+        };
+
+        assert!(make(MAX_HD_CHILD_INDEX, MAX_HD_CHILD_INDEX).is_ok());
+        assert_eq!(
+            make(MAX_HD_CHILD_INDEX + 1, 0),
+            Err(ChainAccountDerivationError::AccountIndexOutOfBounds)
+        );
+        assert_eq!(
+            make(0, MAX_HD_CHILD_INDEX + 1),
+            Err(ChainAccountDerivationError::AddressIndexOutOfBounds)
+        );
     }
 }

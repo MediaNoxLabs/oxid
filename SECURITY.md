@@ -16,9 +16,12 @@ report as promptly as possible and coordinate disclosure after a fix is ready.
 Oxid is in an early migration milestone and is **not production-ready**. Public
 wallet-profile metadata can be persisted separately. The standalone headless
 harness can create process-local Ed25519 and P-256 development keys to test
-opaque-reference flows; those keys are never durable and are not asset custody.
-Production composition reports protected storage unavailable. No seed, DID, or
-credential material is persisted by the current slice.
+opaque-reference flows. It can also generate an internal process-local root,
+derive canonical external NIGHT BIP32/BIP340 child keys, bind the resulting
+public address, and sign bounded confirmed test payloads. Roots and child keys
+are never durable or exposed through the protocol, and this is not production
+asset custody. Production composition reports protected storage unavailable.
+No recovery, DID, or credential material is persisted by the current slice.
 
 Native headless runs may opt into a public Midnight indexer subscription with
 an explicitly supplied network, WebSocket route, and unshielded receive
@@ -26,7 +29,9 @@ address. The configuration rejects URL credentials, query parameters,
 fragments, invalid schemes, and network/address mismatches. It is process-local
 and is not written to wallet metadata. Indexer frames and values are untrusted,
 bounded, and mapped to safe errors without exposing external payloads. This
-read-only mode does not add custody or transaction authorization.
+read source does not construct or submit transactions. A headless profile may
+replace the configured watch-only address with its development-derived public
+address; cache state is cleared before that address is synchronized.
 
 The following rules are already enforced as architecture constraints:
 
@@ -40,8 +45,9 @@ The following rules are already enforced as architecture constraints:
 
 The in-memory profile adapter and `storage-dev` signing adapter are not secure
 storage. `storage-dev` is selected only by explicit headless/test composition,
-reports `development_only`, requires application confirmation before signing
-or deletion, and zeroizes supported software key types on drop. Future custody
+reports `development_only`, accepts only bounded typed derivation indices,
+requires application confirmation before signing or deletion, and zeroizes
+supported software key types on drop. Future custody
 code must satisfy ADR-0017 with platform-backed protection and native user
 authorization before it is described as production-capable.
 

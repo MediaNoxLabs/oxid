@@ -173,7 +173,11 @@ fn spawn_indexer_fixture() -> (String, thread::JoinHandle<()>) {
             )
             .expect("subscribe should be JSON");
             assert_eq!(subscribe["type"], "subscribe");
-            assert_eq!(subscribe["payload"]["variables"]["address"], LIVE_ADDRESS);
+            let subscribed_address = subscribe["payload"]["variables"]["address"]
+                .as_str()
+                .expect("subscription address should be a string")
+                .to_owned();
+            assert!(subscribed_address.starts_with("mn_addr_devnet1"));
             assert!(subscribe["payload"]["query"].as_str().is_some_and(|query| {
                 query.contains("highestTransactionId") && query.contains("fee")
             }));
@@ -194,7 +198,7 @@ fn spawn_indexer_fixture() -> (String, thread::JoinHandle<()>) {
                     1,
                     "11",
                     41,
-                    vec![utxo("aa", 0, "3000000")],
+                    vec![utxo(&subscribed_address, "aa", 0, "3000000")],
                     vec![],
                     "SUCCESS",
                     "100",
@@ -207,8 +211,8 @@ fn spawn_indexer_fixture() -> (String, thread::JoinHandle<()>) {
                     2,
                     "22",
                     42,
-                    vec![utxo("bb", 0, "2500000")],
-                    vec![utxo("aa", 0, "3000000")],
+                    vec![utxo(&subscribed_address, "bb", 0, "2500000")],
+                    vec![utxo(&subscribed_address, "aa", 0, "3000000")],
                     "SUCCESS",
                     "1500",
                 ),
@@ -280,9 +284,9 @@ fn transaction_event(
     })
 }
 
-fn utxo(intent_byte: &str, output_index: i64, value: &str) -> Value {
+fn utxo(owner: &str, intent_byte: &str, output_index: i64, value: &str) -> Value {
     json!({
-        "owner": LIVE_ADDRESS,
+        "owner": owner,
         "tokenType": NIGHT_TOKEN_TYPE,
         "value": value,
         "intentHash": intent_byte.repeat(32),
@@ -591,6 +595,93 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
             .is_some_and(|items| items.len() == 7)
     );
 
+    let before_initialize = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "derive-before-initialize",
+        "method": "wallet.account.derive",
+        "params": {}
+    }));
+    assert_eq!(before_initialize["error"]["code"], "failed_precondition");
+    assert_eq!(
+        process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "account-security-initialize",
+            "method": "wallet.security.initialize",
+            "params": {}
+        }))["result"]["security"]["state"],
+        "unlocked"
+    );
+    let derived = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "derive-account",
+        "method": "wallet.account.derive",
+        "params": { "accountIndex": 0, "addressIndex": 0 }
+    }));
+    assert_eq!(derived["ok"], true, "unexpected response: {derived}");
+    assert_eq!(
+        derived["result"]["account"]["accountId"],
+        "midnight_account_0_0"
+    );
+    assert_eq!(
+        derived["result"]["account"]["custodyMode"],
+        "development_only"
+    );
+    let derived_address = derived["result"]["account"]["receiveAddress"]["value"]
+        .as_str()
+        .expect("derived public address should be returned")
+        .to_owned();
+    let transaction_key_ref = derived["result"]["account"]["transactionKeyRef"]
+        .as_str()
+        .expect("opaque transaction key reference should be returned")
+        .to_owned();
+    assert!(derived_address.starts_with("mn_addr_undeployed1"));
+    assert!(!derived.to_string().contains("seed"));
+    assert!(!derived.to_string().contains("private"));
+
+    let repeated = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "derive-account-again",
+        "method": "wallet.account.derive",
+        "params": { "accountIndex": 0, "addressIndex": 0 }
+    }));
+    assert_eq!(
+        repeated["result"]["account"]["transactionKeyRef"],
+        transaction_key_ref
+    );
+    assert_eq!(
+        repeated["result"]["account"]["receiveAddress"]["value"],
+        derived_address
+    );
+    let signed = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "sign-derived-account",
+        "method": "wallet.key.sign",
+        "params": {
+            "keyRef": transaction_key_ref,
+            "payloadHex": "4d69646e69676874207472616e73616374696f6e20696e74656e74",
+            "confirmation": {
+                "title": "Sign Midnight transaction intent",
+                "summary": "Authorize the bounded public headless conformance payload",
+                "confirmed": true
+            }
+        }
+    }));
+    assert_eq!(signed["result"]["algorithm"], "secp256k1-schnorr");
+    assert!(
+        signed["result"]["signatureHex"]
+            .as_str()
+            .is_some_and(|signature| signature.len() == 128)
+    );
+    assert_eq!(
+        process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "derive-account-out-of-bounds",
+            "method": "wallet.account.derive",
+            "params": { "addressIndex": 2147483648_u64 }
+        }))["error"]["code"],
+        "invalid_argument"
+    );
+
     let before = process.request(json!({
         "protocol": "oxid.headless.v1",
         "id": "account-before-sync",
@@ -600,10 +691,9 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
     assert_eq!(before["result"]["account"]["source"], "simulated");
     assert_eq!(before["result"]["account"]["sync"]["state"], "never_synced");
     assert_eq!(before["result"]["account"]["balances"], json!([]));
-    assert!(
-        before["result"]["account"]["addresses"][0]["value"]
-            .as_str()
-            .is_some_and(|address| address.starts_with("mn_addr_undeployed1"))
+    assert_eq!(
+        before["result"]["account"]["addresses"][0]["value"],
+        derived_address
     );
     let balances_before = process.request(json!({
         "protocol": "oxid.headless.v1",
@@ -629,6 +719,16 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
     assert_eq!(
         connected["result"]["account"]["balances"][1]["atomicUnits"],
         "5000000"
+    );
+    let repeated_after_sync = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "derive-account-after-sync",
+        "method": "wallet.account.derive",
+        "params": { "accountIndex": 0, "addressIndex": 0 }
+    }));
+    assert_eq!(
+        repeated_after_sync["result"]["account"]["transactionKeyRef"],
+        transaction_key_ref
     );
     let balances_after = process.request(json!({
         "protocol": "oxid.headless.v1",
@@ -689,7 +789,7 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
 }
 
 #[test]
-fn executable_syncs_a_live_standalone_indexer_without_secret_input() {
+fn executable_derives_and_syncs_a_live_account_without_secret_input() {
     let (endpoint, server) = spawn_indexer_fixture();
     let store = TestStore::new();
     let mut process = ProcessHarness::spawn_with_environment(
@@ -719,6 +819,37 @@ fn executable_syncs_a_live_standalone_indexer_without_secret_input() {
         true
     );
 
+    let watch_only = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "live-watch-only",
+        "method": "wallet.account.get",
+        "params": {}
+    }));
+    assert_eq!(
+        watch_only["result"]["account"]["addresses"][0]["value"],
+        LIVE_ADDRESS
+    );
+    assert_eq!(
+        process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "live-security-initialize",
+            "method": "wallet.security.initialize",
+            "params": {}
+        }))["result"]["security"]["state"],
+        "unlocked"
+    );
+    let derived = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "live-account-derive",
+        "method": "wallet.account.derive",
+        "params": {}
+    }));
+    let derived_address = derived["result"]["account"]["receiveAddress"]["value"]
+        .as_str()
+        .expect("derived live address should be returned")
+        .to_owned();
+    assert!(derived_address.starts_with("mn_addr_devnet1"));
+
     let before = process.request(json!({
         "protocol": "oxid.headless.v1",
         "id": "live-before",
@@ -730,7 +861,7 @@ fn executable_syncs_a_live_standalone_indexer_without_secret_input() {
     assert_eq!(before["result"]["account"]["sync"]["state"], "never_synced");
     assert_eq!(
         before["result"]["account"]["addresses"][0]["value"],
-        LIVE_ADDRESS
+        derived_address
     );
 
     let connected = process.request(json!({

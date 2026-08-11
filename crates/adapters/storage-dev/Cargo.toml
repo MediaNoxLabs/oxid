@@ -9,7 +9,9 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+bip32.workspace = true
 ed25519-dalek.workspace = true
+k256.workspace = true
 oxid-foundation.workspace = true
 oxid-platform-ports.workspace = true
 oxid-wallet-application.workspace = true

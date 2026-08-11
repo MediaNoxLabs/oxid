@@ -41,6 +41,7 @@ authors = ["Oxid contributors"]
 
 [workspace.dependencies]
 bech32 = { version = "=0.11.0" }
+bip32 = { version = "=0.5.3", default-features = false, features = ["secp256k1", "std"] }
 dioxus = { version = "=0.7.10", default-features = false }
 directories = { version = "=6.0.0" }
 ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
@@ -48,10 +49,12 @@ futures = { version = "=0.3.33", default-features = false, features = ["executor
 getrandom = { version = "=0.3.4", features = ["wasm_js"] }
 hex = { version = "=0.4.3" }
 jni = { version = "=0.21.1" }
+k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
 ndk-context = { version = "=0.1.1" }
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151" }
+sha2 = { version = "=0.10.9", default-features = false }
 rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
 tokio = { version = "=1.53.1", default-features = false, features = ["net", "rt", "time"] }
 tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }

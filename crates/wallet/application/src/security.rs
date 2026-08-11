@@ -78,6 +78,87 @@ pub struct GenerateProtectedKeyRequest {
     pub purpose: WalletKeyPurpose,
 }
 
+/// One validated BIP32 child segment. The hardened bit is metadata, never key material.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WalletHdPathComponent {
+    index: u32,
+    hardened: bool,
+}
+
+impl WalletHdPathComponent {
+    pub const MAX_INDEX: u32 = (1 << 31) - 1;
+
+    pub const fn new(index: u32, hardened: bool) -> Result<Self, WalletHdPathError> {
+        if index > Self::MAX_INDEX {
+            return Err(WalletHdPathError::IndexOutOfBounds);
+        }
+        Ok(Self { index, hardened })
+    }
+
+    #[must_use]
+    pub const fn index(self) -> u32 {
+        self.index
+    }
+
+    #[must_use]
+    pub const fn hardened(self) -> bool {
+        self.hardened
+    }
+}
+
+/// Bounded derivation path passed only between application and custody adapters.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WalletHdPath(Vec<WalletHdPathComponent>);
+
+impl WalletHdPath {
+    pub const MAX_DEPTH: usize = 10;
+
+    pub fn new(components: Vec<WalletHdPathComponent>) -> Result<Self, WalletHdPathError> {
+        if components.is_empty() {
+            return Err(WalletHdPathError::Empty);
+        }
+        if components.len() > Self::MAX_DEPTH {
+            return Err(WalletHdPathError::TooDeep);
+        }
+        Ok(Self(components))
+    }
+
+    #[must_use]
+    pub fn components(&self) -> &[WalletHdPathComponent] {
+        &self.0
+    }
+}
+
+/// Validation failures for adapter-neutral protected derivation paths.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletHdPathError {
+    Empty,
+    TooDeep,
+    IndexOutOfBounds,
+}
+
+impl fmt::Display for WalletHdPathError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::Empty => "wallet derivation path must not be empty",
+            Self::TooDeep => "wallet derivation path exceeds the maximum depth",
+            Self::IndexOutOfBounds => "wallet derivation index must be less than 2^31",
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl Error for WalletHdPathError {}
+
+/// Adapter-neutral request for deriving and retaining a protected child key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeriveProtectedKeyRequest {
+    pub label: WalletKeyLabel,
+    pub algorithm: WalletKeyAlgorithm,
+    pub purpose: WalletKeyPurpose,
+    pub path: WalletHdPath,
+}
+
 /// Focused outgoing port for operations that must keep private bytes protected.
 pub trait WalletKeyOperationPort: Send + Sync {
     fn generate(
@@ -103,6 +184,15 @@ pub trait WalletKeyOperationPort: Send + Sync {
         profile_id: &WalletProfileId,
         key_reference: &WalletKeyReference,
     ) -> Result<(), WalletSecurityPortError>;
+}
+
+/// Focused outgoing port for HD derivation without exposing root or child secrets.
+pub trait WalletKeyDerivationPort: Send + Sync {
+    fn derive(
+        &self,
+        profile_id: &WalletProfileId,
+        request: DeriveProtectedKeyRequest,
+    ) -> Result<WalletKeyDescriptor, WalletSecurityPortError>;
 }
 
 /// Public status returned to incoming adapters.
@@ -558,6 +648,23 @@ mod tests {
     use oxid_wallet_domain::{PublicKeyEncoding, WalletPublicKey};
 
     use super::*;
+
+    #[test]
+    fn hd_paths_are_nonempty_bounded_and_retain_hardening_metadata() {
+        let hardened = WalletHdPathComponent::new(WalletHdPathComponent::MAX_INDEX, true)
+            .expect("largest child index is valid");
+        assert_eq!(hardened.index(), (1 << 31) - 1);
+        assert!(hardened.hardened());
+        assert_eq!(
+            WalletHdPathComponent::new(1 << 31, false),
+            Err(WalletHdPathError::IndexOutOfBounds)
+        );
+        assert_eq!(WalletHdPath::new(Vec::new()), Err(WalletHdPathError::Empty));
+        assert_eq!(
+            WalletHdPath::new(vec![hardened; WalletHdPath::MAX_DEPTH + 1]),
+            Err(WalletHdPathError::TooDeep)
+        );
+    }
 
     struct RecordingAdapter {
         status: Mutex<WalletSecurityStatus>,

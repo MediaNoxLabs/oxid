@@ -4,7 +4,9 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 7, 12, 15, and 17
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`
-- Implementation state: Focused ports and a development-only headless adapter begin M1; native mobile adapters remain required
+- Implementation state: Focused ports plus process-local generated roots,
+  protected BIP32/BIP340 derivation, and headless signing are implemented for
+  development; native mobile adapters remain required
 
 ## Context
 
@@ -95,6 +97,17 @@ software key types on drop, and never be selected by production mobile
 composition. Production composition reports custody as unavailable until a
 native adapter is present.
 
+For development account conformance, `initialize` generates a random
+process-local root inside the adapter. A focused derivation port accepts only a
+validated HD path, public label, algorithm, and purpose. It retains the child
+signing key and returns public metadata plus an opaque reference; no ordinary
+DTO accepts or returns the root, child scalar, mnemonic, or recovery phrase.
+Repeated derivation of the same path and metadata is idempotent, while path or
+label conflicts fail closed. Locking blocks derivation and signing. The root,
+raw scalar buffers, and supported signing-key types use zeroization where the
+selected libraries expose it, but the adapter remains process-local
+development infrastructure rather than a durable software vault.
+
 ## Consequences
 
 - Android and Apple have different adapter implementations and capability
@@ -104,7 +117,8 @@ native adapter is present.
 - Device migration requires an explicit recovery or backup flow; device-only
   keychain/keystore records are not silently portable.
 - Headless flows can test application sequencing, confirmation, opaque
-  references, and signatures without creating a production-security claim.
+  references, canonical Midnight HD derivation, and signatures without
+  creating a production-security claim.
 - The prototype's hard-coded passphrase, raw key/seed DTOs, broad store trait,
   and implicit file backup are permanent migration exclusions.
 - Adding Askar or another encrypted store requires a dependency review and an
