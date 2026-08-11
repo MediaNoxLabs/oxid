@@ -18,6 +18,7 @@ use oxid_foundation::UnixTimestampMillis;
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
     WalletAccountPortError, WalletAccountPortFuture, WalletKeyDerivationPort,
+    WalletTransactionPortError,
 };
 use oxid_wallet_domain::{
     AssetBalance, AssetBalanceChange, AssetSymbol, BalanceChangeDirection, ChainAccountId,
@@ -37,6 +38,7 @@ use tokio_tungstenite::{
 use super::{
     MidnightAccountSource, MidnightWalletAdapter, ProtectedMidnightAccountDeriver, SPECKS_PER_DUST,
     STARS_PER_NIGHT, decimal_places, midnight_asset, network_by_id,
+    transaction::{MidnightSpendableAccount, MidnightSpendableUtxo, MidnightTransactionSource},
 };
 
 const INDEXER_QUERY: &str = include_str!("../queries/unshielded_transactions.graphql");
@@ -178,6 +180,7 @@ pub struct LiveMidnightAccountSource<C> {
     transport: std::sync::Arc<dyn MidnightIndexerTransport>,
     cached: std::sync::Mutex<HashMap<WalletProfileId, WalletAccountSnapshot>>,
     derived_accounts: std::sync::Mutex<HashMap<WalletProfileId, DerivedChainAccount>>,
+    spendable_utxos: std::sync::Mutex<HashMap<WalletProfileId, Vec<MidnightSpendableUtxo>>>,
 }
 
 impl<C> LiveMidnightAccountSource<C> {
@@ -205,6 +208,7 @@ impl<C> LiveMidnightAccountSource<C> {
             transport,
             cached: std::sync::Mutex::new(HashMap::new()),
             derived_accounts: std::sync::Mutex::new(HashMap::new()),
+            spendable_utxos: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -329,6 +333,10 @@ where
                 .lock()
                 .map_err(|_| WalletAccountPortError::Unavailable)?
                 .remove(profile_id);
+            self.spendable_utxos
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?
+                .remove(profile_id);
         }
         Ok(())
     }
@@ -418,10 +426,65 @@ where
             );
             let cached =
                 self.replace_sync_status(&live, WalletAccountSource::Cached, live.sync().clone());
+            let spendable_utxos = indexer
+                .utxos
+                .iter()
+                .filter(|utxo| utxo.token_type == NATIVE_NIGHT_TOKEN_TYPE)
+                .map(map_spendable_utxo)
+                .collect::<Result<Vec<_>, _>>()?;
+            self.spendable_utxos
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?
+                .insert(profile_id.clone(), spendable_utxos);
             self.store(profile_id.clone(), cached)?;
             Ok(live)
         })
     }
+}
+
+impl<C> MidnightTransactionSource for LiveMidnightAccountSource<C>
+where
+    C: ClockPort + 'static,
+{
+    fn spendable_account(
+        &self,
+        profile_id: &WalletProfileId,
+        network: &ChainNetwork,
+    ) -> Result<MidnightSpendableAccount, WalletTransactionPortError> {
+        self.ensure_network(network).map_err(|error| match error {
+            WalletAccountPortError::UnsupportedNetwork => {
+                WalletTransactionPortError::UnsupportedNetwork
+            }
+            _ => WalletTransactionPortError::Unavailable,
+        })?;
+        let account = self
+            .derived_accounts
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?
+            .get(profile_id)
+            .cloned()
+            .ok_or(WalletTransactionPortError::AccountNotDerived)?;
+        let utxos = self
+            .spendable_utxos
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?
+            .get(profile_id)
+            .cloned()
+            .ok_or(WalletTransactionPortError::AccountNotSynchronized)?;
+        Ok(MidnightSpendableAccount { account, utxos })
+    }
+}
+
+fn map_spendable_utxo(utxo: &IndexerUtxo) -> Result<MidnightSpendableUtxo, WalletAccountPortError> {
+    let bytes = hex::decode(&utxo.intent_hash).map_err(|_| WalletAccountPortError::InvalidData)?;
+    let intent_hash: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| WalletAccountPortError::InvalidData)?;
+    Ok(MidnightSpendableUtxo {
+        value: utxo.value,
+        intent_hash,
+        output_index: utxo.output_index,
+    })
 }
 
 trait MidnightIndexerTransport: Send + Sync {
@@ -1623,6 +1686,10 @@ mod tests {
             0,
             0,
             derived_address.clone(),
+            oxid_wallet_domain::WalletPublicKey::new(
+                oxid_wallet_domain::PublicKeyEncoding::Secp256k1XOnly,
+                vec![0x2a; 32],
+            ),
             oxid_wallet_domain::WalletKeyReference::parse("key_derived")
                 .expect("key reference is valid"),
         )

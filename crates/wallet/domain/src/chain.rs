@@ -4,7 +4,7 @@ use std::{error::Error, fmt};
 
 use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
 
-use crate::WalletKeyReference;
+use crate::{WalletKeyReference, WalletPublicKey};
 
 /// Largest valid non-hardened BIP32 account or address index.
 pub const MAX_HD_CHILD_INDEX: u32 = (1 << 31) - 1;
@@ -209,6 +209,7 @@ pub struct DerivedChainAccount {
     account_index: u32,
     address_index: u32,
     receive_address: ChainAddress,
+    transaction_public_key: WalletPublicKey,
     transaction_key: WalletKeyReference,
 }
 
@@ -219,6 +220,7 @@ impl DerivedChainAccount {
         account_index: u32,
         address_index: u32,
         receive_address: ChainAddress,
+        transaction_public_key: WalletPublicKey,
         transaction_key: WalletKeyReference,
     ) -> Result<Self, ChainAccountDerivationError> {
         if account_index > MAX_HD_CHILD_INDEX {
@@ -233,6 +235,7 @@ impl DerivedChainAccount {
             account_index,
             address_index,
             receive_address,
+            transaction_public_key,
             transaction_key,
         })
     }
@@ -260,6 +263,11 @@ impl DerivedChainAccount {
     #[must_use]
     pub const fn receive_address(&self) -> &ChainAddress {
         &self.receive_address
+    }
+
+    #[must_use]
+    pub const fn transaction_public_key(&self) -> &WalletPublicKey {
+        &self.transaction_public_key
     }
 
     #[must_use]
@@ -864,6 +872,7 @@ mod tests {
                 address_index,
                 ChainAddress::parse(ChainAddressKind::Unshielded, "mn_addr_undeployed1derived")
                     .expect("address is valid"),
+                WalletPublicKey::new(crate::PublicKeyEncoding::Secp256k1XOnly, vec![7; 32]),
                 WalletKeyReference::parse("key_derived").expect("key reference is valid"),
             )
         };

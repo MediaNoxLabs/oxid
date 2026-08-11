@@ -50,12 +50,19 @@ getrandom = { version = "=0.3.4", features = ["wasm_js"] }
 hex = { version = "=0.4.3" }
 jni = { version = "=0.21.1" }
 k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
+midnight-base-crypto = { version = "=1.0.0", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-base-crypto" }
+midnight-coin-structure = { version = "=2.0.1", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-coin-structure" }
+midnight-ledger = { version = "=8.2.0-rc.1", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", default-features = false }
+midnight-serialize = { version = "=1.1.0", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-serialize" }
+midnight-storage = { version = "=2.0.2", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-storage" }
+midnight-transient-crypto = { version = "=2.1.0", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-transient-crypto" }
 ndk-context = { version = "=0.1.1" }
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151" }
 sha2 = { version = "=0.10.9", default-features = false }
 rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
+rand = { version = "=0.8.5" }
 tokio = { version = "=1.53.1", default-features = false, features = ["net", "rt", "time"] }
 tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 zeroize = { version = "=1.9.0" }

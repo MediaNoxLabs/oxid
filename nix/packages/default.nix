@@ -22,7 +22,12 @@
           version = "0.1.0";
           src = pkgs.lib.cleanSource ../..;
 
-          cargoLock.lockFile = ../../Cargo.lock;
+          cargoLock = {
+            lockFile = ../../Cargo.lock;
+            outputHashes = {
+              "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
+            };
+          };
           cargoBuildFlags = [
             "-p"
             "oxid-app"
@@ -48,7 +53,12 @@
           version = "0.1.0";
           src = pkgs.lib.cleanSource ../..;
 
-          cargoLock.lockFile = ../../Cargo.lock;
+          cargoLock = {
+            lockFile = ../../Cargo.lock;
+            outputHashes = {
+              "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
+            };
+          };
           cargoBuildFlags = [
             "-p"
             "oxid-headless"

@@ -4,8 +4,8 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 8 and 17
 - Implementation state: Binding for M2; account read model implemented by #6,
-  native standalone-indexer sync by #7, and protected external NIGHT account
-  derivation/binding by #8
+  native standalone-indexer sync by #7, protected external NIGHT account
+  derivation/binding by #8, and canonical transfer authorization by #9
 
 ## Context
 
@@ -109,17 +109,17 @@ ledger types does not imply acceptable proving latency or memory use.
   advance at different rates.
 - The first account slice can use ledger semantics and Wallet SDK vectors
   without importing a foreign runtime or granting access to private key bytes.
-- The first read-model adapter does not directly depend on `midnight-ledger`:
-  a reviewed build trial showed that its minimal feature set still resolves an
-  unnecessary transaction/proof graph. This does not waive the Git pin for a
-  later adapter that actually consumes ledger types.
+- The account read model itself does not need ledger types. Issue #9 now adds
+  the selected Git packages to the same native adapter for canonical
+  transaction construction; their unconditional graph must not leak into core
+  domain/application crates or the `wasm32` target.
 - Live unshielded NIGHT synchronization is available to explicitly configured
   native headless runs. Shielded and DUST synchronization remain incremental;
   every headless adapter identifies live, cached, or simulated data truthfully.
 - The development headless composition can derive and bind external NIGHT
-  accounts and sign bounded conformance payloads by opaque reference. It does
-  not construct or submit a transaction and does not create a production
-  custody claim.
+  accounts, build/review canonical unshielded intents, and authorize them by
+  opaque reference. It does not balance DUST, prove, serialize for submission,
+  submit, or create a production custody claim.
 - A source revision update requires dependency review, conformance tests,
   mobile builds, and an update to the recorded compatibility baseline.
 - If maintained Rust wallet packages are published later, a follow-up ADR may

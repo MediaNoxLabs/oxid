@@ -758,6 +758,52 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
         "outgoing"
     );
 
+    let prepared = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "transfer-prepare",
+        "method": "wallet.transaction.prepare_unshielded",
+        "params": {
+            "recipientAddress": derived_address,
+            "amountAtomicUnits": "1500000"
+        }
+    }));
+    assert_eq!(prepared["ok"], true, "unexpected response: {prepared}");
+    assert_eq!(prepared["result"]["transfer"]["state"], "prepared");
+    assert_eq!(prepared["result"]["transfer"]["inputCount"], 1);
+    assert_eq!(
+        prepared["result"]["transfer"]["change"]["atomicUnits"],
+        "500000"
+    );
+    assert_eq!(prepared["result"]["transfer"]["submissionReady"], false);
+    let draft_id = prepared["result"]["transfer"]["draftId"]
+        .as_str()
+        .expect("draft id should be returned")
+        .to_owned();
+    let challenge = prepared["result"]["transfer"]["authorizationChallenge"]
+        .as_str()
+        .expect("authorization challenge should be returned")
+        .to_owned();
+    let authorized = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "transfer-authorize",
+        "method": "wallet.transaction.authorize_unshielded",
+        "params": {
+            "draftId": draft_id,
+            "authorizationChallenge": challenge,
+            "confirmation": {
+                "title": "Authorize NIGHT transfer",
+                "summary": "Send 1.5 NIGHT; proving and submission remain pending",
+                "confirmed": true
+            }
+        }
+    }));
+    assert_eq!(authorized["ok"], true, "unexpected response: {authorized}");
+    assert_eq!(authorized["result"]["transfer"]["state"], "authorized");
+    assert_eq!(authorized["result"]["transfer"]["proofRequired"], true);
+    assert_eq!(authorized["result"]["transfer"]["submissionReady"], false);
+    assert!(!authorized.to_string().contains("signatureHex"));
+    assert!(!authorized.to_string().contains("transactionHex"));
+
     let preprod = process.request(json!({
         "protocol": "oxid.headless.v1",
         "id": "select-preprod",

@@ -625,7 +625,7 @@ mod tests {
     use oxid_foundation::UnixTimestampMillis;
     use oxid_wallet_domain::{
         AssetSymbol, ChainAccountId, ChainAsset, ChainAssetId, NetworkDisplayName,
-        WalletKeyReference, WalletSyncStatus,
+        PublicKeyEncoding, WalletKeyReference, WalletPublicKey, WalletSyncStatus,
     };
 
     use super::*;
@@ -787,6 +787,7 @@ mod tests {
                 address_index,
                 ChainAddress::parse(ChainAddressKind::Unshielded, "mn_addr1derived")
                     .map_err(|_| WalletAccountPortError::InvalidData)?,
+                WalletPublicKey::new(PublicKeyEncoding::Secp256k1XOnly, vec![7; 32]),
                 WalletKeyReference::parse("key_derived")
                     .map_err(|_| WalletAccountPortError::InvalidData)?,
             )

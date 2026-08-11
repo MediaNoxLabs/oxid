@@ -1,10 +1,13 @@
 # RustSec advisory exceptions
 
-- Decision date: 2026-08-11
+- Initial decision date: 2026-08-11
+- Last updated: 2026-08-12
 - Next mandatory review: before 2026-10-01, every Dioxus/Wry upgrade, and before
-  any release described as production-capable
-- Scope: M0 profile shell only; no asset keys, seeds, DIDs, credentials, or
-  durable storage
+  any release described as production-capable; the Midnight exception is also
+  reviewed on every Midnight dependency update
+- Scope: development-stage Dioxus shell and native Midnight adapter. The
+  transaction path can authorize canonical intents through development custody,
+  but cannot yet balance DUST fees, prove, submit, or claim production readiness.
 
 `scripts/check-advisories.sh` denies all Cargo audit warnings except the exact
 IDs below. These are transitive dependencies of Dioxus 0.7.10 and its desktop
@@ -51,6 +54,20 @@ without a new review.
 Each has no compatible safe upgrade at the Oxid boundary. They carry maintenance
 risk but no vulnerability described by the advisory. Remove each exception when
 its owning upstream graph drops the crate.
+
+## Midnight ledger maintenance advisory
+
+- `RUSTSEC-2025-0141` classifies `bincode 2.0.1` as unmaintained and reports no
+  vulnerability or patched version. The immutable Midnight ledger revision
+  `d9414884db9da9e9b1f6f3a7f742d79a5732f817` pulls it through
+  `midnight-zk-stdlib -> midnight-transient-crypto`.
+- Oxid does not call `bincode` directly. Replacing a serialization dependency
+  inside the consensus/proof dependency graph locally would create a larger
+  compatibility risk than this development-only exception.
+- Issue #10 tracks moving to an upstream Midnight revision or compatible graph
+  that removes `bincode`. This exception blocks production custody/release until
+  it is re-reviewed, and must be removed as soon as the selected upstream graph
+  no longer resolves the crate.
 
 ## Enforcement
 

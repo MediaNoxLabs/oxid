@@ -5,7 +5,7 @@
 - Source: Prototype parity epic and [issue #4](https://github.com/MediaNoxLabs/oxid/issues/4)
 - Implementation state: Version 1 transport, profile lifecycle,
   development-only protected-key and Midnight account-derivation flows, live
-  sync, and shutdown implemented
+  sync, canonical transfer authorization, and shutdown implemented
 
 ## Context
 
@@ -63,6 +63,13 @@ returns the selected network, public receive address, account identifier, and
 opaque transaction-key reference. It never accepts a seed or path string and
 never returns private derivation data. Capability discovery labels the method
 `development_only` until native custody is composed.
+
+Canonical transfer staging uses strict
+`wallet.transaction.prepare_unshielded`,
+`wallet.transaction.authorize_unshielded`, and `wallet.transaction.draft`
+methods. Responses contain a public preview and opaque draft/challenge only.
+They do not expose signing or serialized transaction bytes, and they must keep
+proof/submission readiness false until those separate adapters are composed.
 
 The initial loop is synchronous because the only implemented use case is
 synchronous. An async runtime may be added when a network, proving, or protocol

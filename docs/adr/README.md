@@ -47,6 +47,7 @@ ADR status and delivery state answer different questions:
 | [0023](0023-prioritize-midnight-prototype-parity.md) Prioritize staged Midnight prototype parity | Accepted | Product direction and parity epic | Wallet shell, headless harness, and profile lifecycle implemented; capability backlog open |
 | [0024](0024-versioned-headless-wallet-protocol.md) Versioned headless wallet protocol | Accepted | Prototype parity epic and issues #4/#5/#8 | v1 profiles, protected keys, account derivation/sync, and shutdown implemented |
 | [0025](0025-persist-public-wallet-profile-metadata.md) Persist public profile metadata separately from secrets | Accepted | §§3, 7, 12–13, 17 and issue #1 | JSON profile metadata, selection, restore, UI, and headless flows implemented |
+| [0026](0026-stage-midnight-transfer-authorization.md) Stage Midnight transfer authorization before proving/submission | Accepted | §§3, 7–8, 12–13 and issue #9 | Canonical unshielded NIGHT prepare/authorize/draft flow implemented; proving/submission queued |
 
 ## Current boundaries
 
@@ -62,4 +63,6 @@ establishes a safe second incoming adapter for exercising each slice. ADR-0025
 makes profile metadata durable without conflating it with protected custody.
 Issue #8 composes ADR-0011, ADR-0015, ADR-0017, and ADR-0024 for a
 development-only external NIGHT derivation flow; it does not change their
-production-custody requirements.
+production-custody requirements. ADR-0026 composes those same boundaries into
+canonical transaction authorization while keeping proving and submission
+truthfully separate.

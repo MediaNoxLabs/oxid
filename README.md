@@ -78,7 +78,9 @@ platform application-data directory by default; set
 The implemented account methods are `wallet.network.list`,
 `wallet.network.select`, `wallet.account.derive`, `wallet.account.get`, `wallet.address.list`,
 `wallet.address.unshielded`, `wallet.balance.snapshot`,
-`wallet.transaction.history`, `wallet.connect`, and `wallet.sync.force`.
+`wallet.transaction.history`, `wallet.transaction.prepare_unshielded`,
+`wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
+`wallet.connect`, and `wallet.sync.force`.
 With no additional configuration their account data is explicitly `simulated`
 and contacts no node, indexer, or prover. After
 `wallet.security.initialize`, `wallet.account.derive` creates and retains the
@@ -86,6 +88,14 @@ canonical external NIGHT child key inside the process-local development
 adapter, then returns only its public address and opaque transaction-key
 reference. Account and address indices must be below `2^31`; seed, mnemonic,
 private-key, and caller-defined path parameters are rejected.
+
+After derivation and sync, the transaction methods prepare an exact native
+NIGHT preview, authorize its retained canonical ledger intent through the
+opaque development key reference, and query draft state. They never return
+signing payloads, signatures, or serialized transactions. DUST balancing,
+proving, and node submission are not implemented: responses report
+`proofRequired: true` and `submissionReady: false`, while the one-shot
+`wallet.transaction.send_unshielded` method remains queued.
 
 For a native standalone-indexer run, set all three public values before starting
 the headless binary:
@@ -182,10 +192,10 @@ The profile page is retained and now owns integrated onboarding, selection, and
 public-metadata persistence. Custody and protected secrets remain explicitly
 outside that record.
 
-The first Midnight read adapter has no direct ledger/proof dependency because
-it does not consume their runtime types. Future transaction and proof adapters
-must use official GitHub URLs with immutable commit pins; the selected baseline,
-build-trial result, and policy are recorded in
+The Midnight read model uses owned types, while its native canonical transaction
+adapter consumes full-revision-pinned official ledger packages. Proving remains
+a separate future adapter. The selected baseline, dependency review, and source
+policy are recorded in
 [docs/dependencies/midnight-git-sources.md](docs/dependencies/midnight-git-sources.md).
 
 ## Security

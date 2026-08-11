@@ -620,7 +620,7 @@ fn parse_profile_id(profile_id: String) -> Result<WalletProfileId, WalletSecurit
     WalletProfileId::parse(profile_id).map_err(WalletSecurityError::InvalidProfileIdentifier)
 }
 
-fn validate_confirmation(
+pub(crate) fn validate_confirmation(
     confirmation: &SensitiveOperationConfirmation,
 ) -> Result<(), SensitiveWalletOperationError> {
     if !confirmation.confirmed {

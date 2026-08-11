@@ -4,6 +4,8 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod indexer;
+#[cfg(not(target_arch = "wasm32"))]
+mod transaction;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use indexer::{
@@ -181,6 +183,7 @@ where
             account_index,
             address_index,
             address,
+            descriptor.public_key().clone(),
             descriptor.reference().clone(),
         )
         .map_err(|_| WalletAccountPortError::InvalidData)
@@ -193,6 +196,16 @@ pub struct MidnightWalletAdapter<S, D = UnavailableMidnightAccountDeriver> {
     deriver: D,
     selections: Mutex<HashMap<WalletProfileId, ChainNetworkId>>,
     default_network: Option<ChainNetworkId>,
+    #[cfg(not(target_arch = "wasm32"))]
+    drafts: Mutex<
+        HashMap<
+            (
+                WalletProfileId,
+                oxid_wallet_domain::WalletTransactionDraftId,
+            ),
+            transaction::RetainedMidnightDraft,
+        >,
+    >,
 }
 
 impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
@@ -203,6 +216,8 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             deriver: UnavailableMidnightAccountDeriver,
             selections: Mutex::new(HashMap::new()),
             default_network: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            drafts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -215,6 +230,8 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             deriver: UnavailableMidnightAccountDeriver,
             selections: Mutex::new(HashMap::new()),
             default_network: Some(default_network),
+            #[cfg(not(target_arch = "wasm32"))]
+            drafts: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -227,6 +244,8 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             deriver,
             selections: Mutex::new(HashMap::new()),
             default_network: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            drafts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -241,6 +260,8 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             deriver,
             selections: Mutex::new(HashMap::new()),
             default_network: Some(default_network),
+            #[cfg(not(target_arch = "wasm32"))]
+            drafts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -257,6 +278,47 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             .cloned()
             .or_else(|| self.default_network.clone())
             .map_or_else(|| network_id(DEFAULT_NETWORK_ID), Ok)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<S, D> oxid_wallet_application::WalletTransactionPort for MidnightWalletAdapter<S, D>
+where
+    S: Send + Sync,
+    D: Send + Sync,
+{
+    fn prepare(
+        &self,
+        _: &WalletProfileId,
+        _: oxid_wallet_application::PrepareWalletTransferRequest,
+    ) -> Result<
+        oxid_wallet_domain::WalletTransferPreview,
+        oxid_wallet_application::WalletTransactionPortError,
+    > {
+        Err(oxid_wallet_application::WalletTransactionPortError::Unavailable)
+    }
+
+    fn authorize(
+        &self,
+        _: &WalletProfileId,
+        _: oxid_wallet_application::AuthorizeWalletTransferRequest,
+    ) -> Result<
+        oxid_wallet_domain::WalletTransferPreview,
+        oxid_wallet_application::WalletTransactionPortError,
+    > {
+        Err(oxid_wallet_application::WalletTransactionPortError::Unavailable)
+    }
+
+    fn get(
+        &self,
+        _: &WalletProfileId,
+        _: &oxid_wallet_domain::WalletTransactionDraftId,
+        _: oxid_foundation::UnixTimestampMillis,
+    ) -> Result<
+        oxid_wallet_domain::WalletTransferPreview,
+        oxid_wallet_application::WalletTransactionPortError,
+    > {
+        Err(oxid_wallet_application::WalletTransactionPortError::Unavailable)
     }
 }
 

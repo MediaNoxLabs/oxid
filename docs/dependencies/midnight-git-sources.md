@@ -1,7 +1,7 @@
 # Midnight Git source policy
 
-- Status: source policy established; initial M2 baseline selected by ADR-0015
-- Reviewed: 2026-08-11
+- Status: source policy enforced; canonical transaction packages selected by issue #9
+- Reviewed: 2026-08-12
 - Repositories: `midnightntwrk/midnight-ledger`, `midnightntwrk/midnight-zk`
 - ADR: [ADR-0015](../adr/0015-midnight-library-selection.md)
 
@@ -13,15 +13,14 @@ may still omit a selected package when its capability does not use it;
 selection is not permission to add proving or aggregate wallet dependencies to
 an account-read adapter.
 
-The first `adapters/midnight` account-read implementation intentionally has no
-direct Midnight Git dependency. A host build trial of `midnight-ledger` at the
-selected revision with `default-features = false` succeeded, but Cargo still
-resolved the ledger's unconditional transaction/proof dependency graph. The
-adapter needs only the reviewed atomic-unit constants and public Wallet SDK
-address vectors, so importing that graph would add coupling without providing a
-runtime capability. The trial dependency was removed and no Midnight package is
-present in `Cargo.lock`. A later transaction adapter that uses canonical ledger
-types must use the exact source form below and pass both native target graphs.
+The account-read portion of `adapters/midnight` intentionally uses owned types
+and protocols. Issue #9 adds a focused native transaction capability that does
+consume canonical ledger, coin, storage, serialization, and cryptographic
+types. Those packages are now direct Git dependencies at the selected revision
+and are present in `Cargo.lock`; the target-specific dependency section keeps
+them out of `wasm32`. `midnight-ledger` still resolves an unconditional
+transaction/proof graph with default features disabled, so proving features and
+a direct `midnight-zk` source remain absent.
 
 The reviewed prototype at commit
 `074b1a4bccbfee1740ee188374b606a022ecef42` used paths relative to the
@@ -53,10 +52,9 @@ reviewed branches resolved to:
 - `midnight-zk`, `main`:
   `cd2c27b2659de157409a9b96dba0dbaf1218f00b`.
 
-ADR-0015 selects these as the initial compatibility baseline. Only the ledger
-revision is appropriate for a future transaction adapter; neither revision is
-currently selected in Cargo. The proof revision remains absent until a proving
-adapter requires it. Each direct use must
+ADR-0015 selects these as the initial compatibility baseline. The ledger
+revision is selected for canonical transaction authorization. The proof
+revision remains absent until a proving adapter requires it. Each direct use must
 still validate its exact feature set, license graph, security posture, and
 Tier-1 native target builds.
 

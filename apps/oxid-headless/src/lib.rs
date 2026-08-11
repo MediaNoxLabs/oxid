@@ -6,14 +6,16 @@ use std::{error::Error, fmt, io, io::BufRead, io::Write};
 
 use oxid_composition::ApplicationServices;
 use oxid_wallet_application::{
-    CreateWalletProfileCommand, CreateWalletProfileError, DeleteWalletKeyCommand,
-    DeriveWalletAccountCommand, DerivedWalletAccountView, GenerateWalletKeyCommand,
-    ReadWalletProfilesError, SelectWalletNetworkCommand, SelectWalletProfileCommand,
-    SelectWalletProfileError, SensitiveOperationConfirmation, SensitiveWalletOperationError,
-    SignWalletDataCommand, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
-    WalletAccountView, WalletKeyError, WalletKeyView, WalletNetworkListView,
-    WalletProfileRepositoryError, WalletProfileSecurityCommand, WalletProfileView,
-    WalletSecurityError, WalletSecurityPortError, WalletSecurityStatusView,
+    AuthorizeWalletTransferCommand, CreateWalletProfileCommand, CreateWalletProfileError,
+    DeleteWalletKeyCommand, DeriveWalletAccountCommand, DerivedWalletAccountView,
+    GenerateWalletKeyCommand, PrepareWalletTransferCommand, ReadWalletProfilesError,
+    SelectWalletNetworkCommand, SelectWalletProfileCommand, SelectWalletProfileError,
+    SensitiveOperationConfirmation, SensitiveWalletOperationError, SignWalletDataCommand,
+    WalletAccountError, WalletAccountPortError, WalletAccountQuery, WalletAccountView,
+    WalletKeyError, WalletKeyView, WalletNetworkListView, WalletProfileRepositoryError,
+    WalletProfileSecurityCommand, WalletProfileView, WalletSecurityError, WalletSecurityPortError,
+    WalletSecurityStatusView, WalletTransactionError, WalletTransactionPortError,
+    WalletTransferDraftQuery, WalletTransferPreviewView,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyPurpose, WalletProtectionClass,
@@ -143,6 +145,9 @@ impl HeadlessWallet {
             "wallet.address.unshielded" => self.unshielded_address(request),
             "wallet.balance.snapshot" => self.balance_snapshot(request),
             "wallet.transaction.history" => self.transaction_history(request),
+            "wallet.transaction.prepare_unshielded" => self.prepare_unshielded(request),
+            "wallet.transaction.authorize_unshielded" => self.authorize_unshielded(request),
+            "wallet.transaction.draft" => self.transaction_draft(request),
             "wallet.connect" | "wallet.sync.force" => self.sync_account(request),
             _ => Dispatch::continue_with(Response::error(
                 request.id,
@@ -689,6 +694,99 @@ impl HeadlessWallet {
         })
     }
 
+    fn prepare_unshielded(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<PrepareTransferParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.transaction.prepare_unshielded requires only string recipientAddress and amountAtomicUnits fields",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .prepare_wallet_transfer()
+            .execute(PrepareWalletTransferCommand {
+                profile_id,
+                recipient_address: params.recipient_address,
+                amount_atomic_units: params.amount_atomic_units,
+            }) {
+            Ok(preview) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "transfer": transfer_preview_value(&preview) }),
+            )),
+            Err(error) => Dispatch::continue_with(transaction_error(request.id, error)),
+        }
+    }
+
+    fn authorize_unshielded(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<AuthorizeTransferParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.transaction.authorize_unshielded requires only string draftId and authorizationChallenge fields plus confirmation",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .authorize_wallet_transfer()
+            .execute(AuthorizeWalletTransferCommand {
+                profile_id,
+                draft_id: params.draft_id,
+                authorization_challenge: params.authorization_challenge,
+                confirmation: params.confirmation.into(),
+            }) {
+            Ok(preview) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "transfer": transfer_preview_value(&preview) }),
+            )),
+            Err(error) => Dispatch::continue_with(transaction_error(request.id, error)),
+        }
+    }
+
+    fn transaction_draft(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<TransactionDraftParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.transaction.draft requires only a string draftId",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .get_wallet_transfer_draft()
+            .execute(WalletTransferDraftQuery {
+                profile_id,
+                draft_id: params.draft_id,
+            }) {
+            Ok(preview) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "transfer": transfer_preview_value(&preview) }),
+            )),
+            Err(error) => Dispatch::continue_with(transaction_error(request.id, error)),
+        }
+    }
+
     fn account_projection(
         &self,
         request: Request,
@@ -762,6 +860,27 @@ struct DeriveAccountParams {
     account_index: u32,
     #[serde(default)]
     address_index: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PrepareTransferParams {
+    recipient_address: String,
+    amount_atomic_units: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AuthorizeTransferParams {
+    draft_id: String,
+    authorization_challenge: String,
+    confirmation: ConfirmationParams,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TransactionDraftParams {
+    draft_id: String,
 }
 
 #[derive(Deserialize)]
@@ -1044,6 +1163,133 @@ fn transaction_value(transaction: &oxid_wallet_application::WalletTransactionVie
         })).collect::<Vec<_>>(),
         "fee": transaction.fee.as_ref().map(balance_value)
     })
+}
+
+fn transfer_preview_value(preview: &WalletTransferPreviewView) -> Value {
+    json!({
+        "draftId": preview.draft_id,
+        "authorizationChallenge": preview.authorization_challenge,
+        "networkId": preview.network_id,
+        "accountId": preview.account_id,
+        "recipientAddress": preview.recipient_address,
+        "amount": transfer_asset_value(&preview.amount),
+        "change": transfer_asset_value(&preview.change),
+        "fee": preview.fee.as_ref().map(transfer_asset_value),
+        "feeState": preview.fee_state,
+        "inputCount": preview.input_count,
+        "expiresAtMillis": preview.expires_at_millis,
+        "state": preview.state,
+        "proofRequired": preview.proof_required,
+        "submissionReady": preview.submission_ready,
+        "custodyMode": "development_only"
+    })
+}
+
+fn transfer_asset_value(asset: &oxid_wallet_application::WalletTransferAssetView) -> Value {
+    json!({
+        "assetId": asset.asset_id,
+        "symbol": asset.symbol,
+        "decimals": asset.decimals,
+        "atomicUnits": asset.atomic_units,
+    })
+}
+
+fn transaction_error(id: Option<String>, error: WalletTransactionError) -> Response {
+    match error {
+        WalletTransactionError::InvalidProfileIdentifier(_)
+        | WalletTransactionError::InvalidDraftIdentifier(_)
+        | WalletTransactionError::InvalidAuthorizationChallenge(_)
+        | WalletTransactionError::InvalidRecipient(_)
+        | WalletTransactionError::InvalidAmount
+        | WalletTransactionError::ZeroAmount => Response::error(
+            id,
+            "invalid_argument",
+            "transfer recipient, amount, draft, or authorization challenge is invalid",
+        ),
+        WalletTransactionError::ConfirmationRequired => Response::error(
+            id,
+            "confirmation_required",
+            "explicit human-readable confirmation is required",
+        ),
+        WalletTransactionError::InvalidConfirmation => Response::error(
+            id,
+            "invalid_argument",
+            "confirmation title and summary must be non-empty and bounded",
+        ),
+        WalletTransactionError::Clock(_) => Response::error(
+            id,
+            "platform_unavailable",
+            "required platform clock is unavailable",
+        ),
+        WalletTransactionError::Operation(error) => transaction_port_error(id, error),
+    }
+}
+
+fn transaction_port_error(id: Option<String>, error: WalletTransactionPortError) -> Response {
+    match error {
+        WalletTransactionPortError::Unavailable => Response::error(
+            id,
+            "capability_unavailable",
+            "wallet transaction capability is unavailable",
+        ),
+        WalletTransactionPortError::ProtectionNotInitialized => Response::error(
+            id,
+            "failed_precondition",
+            "wallet protection is not initialized",
+        ),
+        WalletTransactionPortError::ProtectionLocked => {
+            Response::error(id, "wallet_locked", "wallet is locked")
+        }
+        WalletTransactionPortError::AccountNotDerived => Response::error(
+            id,
+            "failed_precondition",
+            "a protected wallet account must be derived first",
+        ),
+        WalletTransactionPortError::AccountNotSynchronized => Response::error(
+            id,
+            "failed_precondition",
+            "wallet account must be synchronized first",
+        ),
+        WalletTransactionPortError::UnsupportedNetwork => Response::error(
+            id,
+            "unsupported_network",
+            "selected wallet network is not supported",
+        ),
+        WalletTransactionPortError::InvalidRecipient => {
+            Response::error(id, "invalid_argument", "recipient address is invalid")
+        }
+        WalletTransactionPortError::RecipientNetworkMismatch => Response::error(
+            id,
+            "invalid_argument",
+            "recipient address belongs to another network",
+        ),
+        WalletTransactionPortError::InsufficientFunds => Response::error(
+            id,
+            "insufficient_funds",
+            "wallet has insufficient unshielded NIGHT",
+        ),
+        WalletTransactionPortError::DraftNotFound => {
+            Response::error(id, "not_found", "transaction draft was not found")
+        }
+        WalletTransactionPortError::DraftExpired => {
+            Response::error(id, "failed_precondition", "transaction draft has expired")
+        }
+        WalletTransactionPortError::DraftConflict => Response::error(
+            id,
+            "conflict",
+            "transaction draft conflicts with current wallet state",
+        ),
+        WalletTransactionPortError::AuthorizationChallengeMismatch => Response::error(
+            id,
+            "authorization_mismatch",
+            "authorization does not match the prepared transfer preview",
+        ),
+        WalletTransactionPortError::InvalidData => Response::error(
+            id,
+            "internal_error",
+            "transaction material could not be constructed safely",
+        ),
+    }
 }
 
 fn account_error(id: Option<String>, error: WalletAccountError) -> Response {
@@ -1355,6 +1601,9 @@ fn capability_manifest() -> Value {
         { "method": "wallet.address.unshielded", "status": "ready", "mode": "standalone", "sources": ["protected_derivation", "official_public_vectors", "configured_public_address"] },
         { "method": "wallet.balance.snapshot", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
         { "method": "wallet.transaction.history", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
+        { "method": "wallet.transaction.prepare_unshielded", "status": "ready", "mode": "development_only", "submissionReady": false },
+        { "method": "wallet.transaction.authorize_unshielded", "status": "ready", "mode": "development_only", "submissionReady": false },
+        { "method": "wallet.transaction.draft", "status": "ready", "mode": "development_only", "submissionReady": false },
         { "method": "wallet.transaction.send_unshielded", "status": "queued" },
         { "method": "wallet.sync.force", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
         { "method": "vault.total_locked", "status": "queued" },
@@ -1458,6 +1707,11 @@ mod tests {
             capability["method"] == "wallet.account.derive"
                 && capability["status"] == "ready"
                 && capability["mode"] == "development_only"
+        }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "wallet.transaction.prepare_unshielded"
+                && capability["status"] == "ready"
+                && capability["submissionReady"] == false
         }));
     }
 
@@ -1786,6 +2040,215 @@ mod tests {
         );
         assert_eq!(rejected[0]["error"]["code"], "invalid_params");
         assert!(!rejected[0].to_string().contains("do-not-accept"));
+    }
+
+    #[test]
+    fn prepares_and_authorizes_an_exact_unshielded_transfer_without_exposing_material() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"transfer-create","method":"wallet.profile.create","params":{"displayName":"Transfer flow"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile identifier is returned");
+        let setup = format!(
+            "{}\n{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "transfer-select",
+                "method": "wallet.profile.select",
+                "params": { "profileId": profile_id }
+            }),
+            r#"{"protocol":"oxid.headless.v1","id":"transfer-init","method":"wallet.security.initialize","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"transfer-derive","method":"wallet.account.derive","params":{}}"#,
+        );
+        let setup = execute_with_wallet(&wallet, &setup);
+        let recipient = setup[2]["result"]["account"]["receiveAddress"]["value"]
+            .as_str()
+            .expect("derived address is returned");
+        let before_sync = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "transfer-before-sync",
+                "method": "wallet.transaction.prepare_unshielded",
+                "params": {
+                    "recipientAddress": recipient,
+                    "amountAtomicUnits": "1500000"
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(before_sync[0]["error"]["code"], "failed_precondition");
+        let synchronized = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"transfer-sync","method":"wallet.connect","params":{}}"#,
+        );
+        assert_eq!(synchronized[0]["ok"], true);
+        let prepared = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "transfer-prepare",
+                "method": "wallet.transaction.prepare_unshielded",
+                "params": {
+                    "recipientAddress": recipient,
+                    "amountAtomicUnits": "1500000"
+                }
+            })
+            .to_string(),
+        );
+        let transfer = &prepared[0]["result"]["transfer"];
+        assert_eq!(transfer["state"], "prepared");
+        assert_eq!(transfer["amount"]["atomicUnits"], "1500000");
+        assert_eq!(transfer["change"]["atomicUnits"], "500000");
+        assert_eq!(transfer["inputCount"], 1);
+        assert_eq!(transfer["feeState"], "requires_balancing");
+        assert_eq!(transfer["proofRequired"], true);
+        assert_eq!(transfer["submissionReady"], false);
+        let draft_id = transfer["draftId"].as_str().expect("draft id is returned");
+        let challenge = transfer["authorizationChallenge"]
+            .as_str()
+            .expect("challenge is returned");
+
+        let denied = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "transfer-denied",
+                "method": "wallet.transaction.authorize_unshielded",
+                "params": {
+                    "draftId": draft_id,
+                    "authorizationChallenge": challenge,
+                    "confirmation": {
+                        "title": "Authorize NIGHT transfer",
+                        "summary": "Send 1.5 NIGHT; proving and submission remain pending",
+                        "confirmed": false
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(denied[0]["error"]["code"], "confirmation_required");
+
+        let mismatch = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "transfer-mismatch",
+                "method": "wallet.transaction.authorize_unshielded",
+                "params": {
+                    "draftId": draft_id,
+                    "authorizationChallenge": "txauth_wrong",
+                    "confirmation": {
+                        "title": "Authorize NIGHT transfer",
+                        "summary": "Send 1.5 NIGHT; proving and submission remain pending",
+                        "confirmed": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(mismatch[0]["error"]["code"], "authorization_mismatch");
+
+        let locked = execute_with_wallet(
+            &wallet,
+            &format!(
+                "{}\n{}",
+                r#"{"protocol":"oxid.headless.v1","id":"transfer-lock","method":"wallet.security.lock","params":{}}"#,
+                json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "id": "transfer-locked-authorize",
+                    "method": "wallet.transaction.authorize_unshielded",
+                    "params": {
+                        "draftId": draft_id,
+                        "authorizationChallenge": challenge,
+                        "confirmation": {
+                            "title": "Authorize NIGHT transfer",
+                            "summary": "Send 1.5 NIGHT; proving and submission remain pending",
+                            "confirmed": true
+                        }
+                    }
+                })
+            ),
+        );
+        assert_eq!(locked[1]["error"]["code"], "wallet_locked");
+        let unlocked = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"transfer-unlock","method":"wallet.security.unlock","params":{}}"#,
+        );
+        assert_eq!(unlocked[0]["result"]["security"]["state"], "unlocked");
+
+        let authorized = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "transfer-authorize",
+                "method": "wallet.transaction.authorize_unshielded",
+                "params": {
+                    "draftId": draft_id,
+                    "authorizationChallenge": challenge,
+                    "confirmation": {
+                        "title": "Authorize NIGHT transfer",
+                        "summary": "Send 1.5 NIGHT; proving and submission remain pending",
+                        "confirmed": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(authorized[0]["result"]["transfer"]["state"], "authorized");
+        assert_eq!(
+            authorized[0]["result"]["transfer"]["submissionReady"],
+            false
+        );
+        let encoded = authorized[0].to_string();
+        assert!(!encoded.contains("signatureHex"));
+        assert!(!encoded.contains("transactionHex"));
+        assert!(!encoded.contains("private"));
+
+        let retained = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "transfer-get",
+                "method": "wallet.transaction.draft",
+                "params": { "draftId": draft_id }
+            })
+            .to_string(),
+        );
+        assert_eq!(retained[0]["result"]["transfer"]["state"], "authorized");
+
+        let insufficient = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "transfer-insufficient",
+                "method": "wallet.transaction.prepare_unshielded",
+                "params": {
+                    "recipientAddress": recipient,
+                    "amountAtomicUnits": "6000000"
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(insufficient[0]["error"]["code"], "insufficient_funds");
+
+        let foreign_network = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "transfer-foreign-network",
+                "method": "wallet.transaction.prepare_unshielded",
+                "params": {
+                    "recipientAddress": "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y",
+                    "amountAtomicUnits": "1"
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(foreign_network[0]["error"]["code"], "invalid_argument");
     }
 
     #[test]

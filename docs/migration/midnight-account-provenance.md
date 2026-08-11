@@ -14,6 +14,7 @@ revisions on 2026-08-11 and re-verified on 2026-08-12:
 | Ledger key/address semantics | `midnight-ledger` `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, `base-crypto/src/{schnorr,hash}.rs` and `coin-structure/src/coin.rs` | BIP340 x-only verifying-key bytes and SHA-256 `UserAddress` construction |
 | Indexer protocol | `midnight-indexer` `82759bf186184684f13a9ffa97b58b7b7684f47c`, `indexer-api/graphql/schema-v4.graphql` | `graphql-transport-ws`, progress-first `unshieldedTransactions`, decimal `u128` values, UTXO create/spend replay, block metadata, transaction status, and DUST fee shapes |
 | Prototype live transport | `midnight-ledger` `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/unshielded/{snapshot,transport}.rs` | bounded connection/ack/idle behavior, progress-first snapshot termination, ping/pong, and address-scoped replay semantics |
+| Prototype transfer | same prototype revision, `mobile-bench/wallet-core/src/{wallet.rs,unshielded/mod.rs}` | native NIGHT, same-network recipient decoding, descending greedy selection, sorted spends/outputs, change, `0xCAFE` intent segment, one-hour TTL, and BIP340 authorization before DUST/proving/submission |
 
 No Rust or TypeScript implementation was copied. Oxid owns the domain model,
 ports, simulation, and presentation. Public address payloads remain codec
@@ -36,6 +37,22 @@ accepts recovery material.
   hash, and network-specific Bech32m address;
 - headless commands and Assets page -> two incoming adapters over the same use
   cases.
+
+## Canonical transfer authorization mapping
+
+[Issue #9](https://github.com/MediaNoxLabs/oxid/issues/9) adds the first write
+slice under ADR-0026. The native adapter uses the selected official Git
+revision's canonical ledger types. It retains profile-scoped drafts internally,
+constructs native NIGHT spends and recipient/change outputs, uses OS-generated
+binding randomness, uses a public-data fingerprint only to make repeated
+prepare requests idempotent, and sends only the canonical intent payload
+through the opaque custody signing port. The returned BIP340 signature is
+verified before the signed transaction is retained.
+
+Headless prepare/authorize/draft responses contain exact public preview data
+only. Their fee is `requires_balancing`, `proofRequired` is true, and
+`submissionReady` is false. Drafts expire after one hour and expired signing or
+transaction material is cleared. The one-shot send method remains queued.
 
 ## Protected account derivation mapping
 
@@ -100,18 +117,13 @@ configuration.
 
 ## Dependency decision
 
-A temporary host build added the selected `midnight-ledger` Git revision with
-default features disabled. It compiled successfully, proving the official
-unpublished Cargo source is consumable, but resolved 131 additional packages,
-including the ledger transaction/proof graph. This read adapter uses neither
-canonical transaction serialization nor proving, so that dependency was
-removed. Adapter-local constants are pinned to the exact reviewed source line,
-and conformance tests prevent silent drift.
-
-The accepted Git pin remains mandatory for the future transaction adapter that
-actually consumes ledger types. Proof packages remain outside the dependency
-graph until an isolated proving adapter is designed and measured on both mobile
-targets.
+The account read model does not consume ledger runtime types. The transaction
+slice now justifies direct native dependencies on the selected
+`midnight-ledger` packages with default ledger features disabled. Cargo still
+resolves the upstream unconditional transaction/proof graph, so the dependency
+is target-gated away from `wasm32` and must pass both native mobile graphs.
+There is no direct `midnight-zk` dependency or proving feature; an isolated
+proving adapter still requires design and measurements.
 
 ## Deliberate exclusions
 
@@ -123,8 +135,8 @@ targets.
 - committed local, tailnet, pre-production, node, indexer, or prover endpoints;
 - persisted unshielded cursors, background subscriptions, chain checkpoints,
   shielded state, DUST generations, and DUST raw-ledger events;
-- transaction construction, signing, proving, submission, replacement, or fee
-  estimation;
+- DUST balancing, proof generation, submission, replacement, fee estimation,
+  UTXO reservation, or durable draft queues;
 - generated proof artifacts, native projects, JavaScript bridges, QR scanning,
   copy/share integration, databases, and captured diagnostics.
 
@@ -132,6 +144,7 @@ Production composition therefore exposes the network catalog but returns an
 unavailable account snapshot with no account ID, address, balance, or activity
 claim. Native headless composition selects either the deterministic simulator
 or an explicitly configured public live source and adds process-local
-development derivation/BIP340 signing by opaque reference. Neither mode
-constructs, proves, or submits transactions, or provides shielded assets, DUST
-generation state, durable recovery, or production custody.
+development derivation/BIP340 signing by opaque reference. Native development
+mode can construct and authorize canonical unshielded NIGHT intents, but no mode
+proves or submits them or provides shielded assets, DUST generation state,
+durable recovery, or production custody.

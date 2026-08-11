@@ -71,6 +71,15 @@ headless protocol accepts only bounded account/address indices and never a
 seed, mnemonic, private key, or path string. Normal mobile composition remains
 fail-closed pending native custody.
 
+[Issue #9](https://github.com/MediaNoxLabs/oxid/issues/9) adds canonical
+unshielded NIGHT preparation and authorization under ADR-0026. Native
+`adapters/midnight` consumes the accepted ledger Git revision, retains
+profile-scoped one-hour drafts, follows the prototype's descending greedy UTXO
+selection and sorted `0xCAFE` intent construction, and signs through the opaque
+custody reference. Headless prepare/authorize/draft methods expose public
+previews only. DUST balancing, proving, submission, and the one-shot send method
+remain queued; production/mobile composition remains fail-closed.
+
 ## Prototype provenance
 
 The prototype remains useful migration input, not an architecture template.
@@ -125,7 +134,8 @@ The blueprint's ADR summaries are materialized as ADR-0001 through ADR-0020 in
 ADR-0022 records Nix as the reproducible environment. ADR-0023 records the
 post-M0 prototype-parity priority. ADR-0024 records the versioned NDJSON
 headless adapter and forbids secret-bearing results. ADR-0025 separates durable
-public profile metadata from protected secret storage. ADR-0017 records the
+public profile metadata from protected secret storage. ADR-0026 stages Midnight
+transaction authorization before proving/submission. ADR-0017 records the
 accepted platform-custody split. ADR status
 and delivery state are deliberately separate: an accepted future boundary is
 binding but does not mean the capability is implemented. Proposed ADRs are
@@ -142,7 +152,7 @@ Current package ownership:
 | `crates/adapters/storage-memory` | Development/test implementation of wallet persistence. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
-| `crates/adapters/midnight` | Midnight network/account adapter with fail-closed production, public simulation, native configurable indexer sources, and protected public-account binding. |
+| `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, and retained development drafts. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter and presentation state. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -177,14 +187,22 @@ Preserve idempotence for identical path metadata, fail closed on conflict or
 lock state, and reset account sync state whenever a newly bound public address
 replaces a fixture or watch-only address.
 
+The headless transaction surface is
+`wallet.transaction.prepare_unshielded`,
+`wallet.transaction.authorize_unshielded`, and `wallet.transaction.draft`.
+Every preview uses decimal-string atomic units and truthfully reports that DUST
+balancing/proving/submission remain pending. Never add signing payload,
+signature, transaction bytes, seed, or private-key fields to these DTOs. Drafts
+are process-local and profile-scoped; authorization must bind the exact public
+challenge and explicit human-readable confirmation.
+
 The accepted ledger compatibility revision is
-`d9414884db9da9e9b1f6f3a7f742d79a5732f817`. A host trial with
-`midnight-ledger` and `default-features = false` builds, but still resolves its
-unconditional transaction/proof graph. Do not add it to a read-model-only
-adapter for constants or public vectors. A future adapter that consumes ledger
-types must use the official HTTPS Git URL plus that full `rev`, then pass iOS
-and Android validation. The current `Cargo.lock` intentionally contains no
-Midnight Git package.
+`d9414884db9da9e9b1f6f3a7f742d79a5732f817`. The native Midnight transaction
+adapter consumes its ledger/base-crypto/coin/serialize/storage/transient
+packages from the official HTTPS Git URL at that full `rev`, with ledger default
+features disabled. The upstream unconditional graph is substantial, so keep it
+target-gated out of `wasm32`, out of read-model/core APIs, and validated on iOS
+and Android. There is no direct `midnight-zk` or proving dependency yet.
 
 The development HD adapter pins `bip32` 0.5.3, `k256` 0.13.4, and `sha2`
 0.10.9. The stable BIP32 release already selects the same `k256` generation;
@@ -345,11 +363,13 @@ to silence the shell probe.
 - `scripts/check-architecture.sh` enforces the initial inward dependency graph.
 - `scripts/check-midnight-sources.sh` permits known Midnight ledger/proof crates
   only from the official GitHub repositories with full immutable `rev` pins.
-  M0 intentionally selects none; ADR-0015 remains the dependency gate.
+  ADR-0015/ADR-0026 and the dependency reviews remain the gate.
 - Security and dependency-policy checks remain distinct from test coverage.
-- The Dioxus desktop graph's bounded RustSec exceptions are documented in
-  `docs/security/advisory-exceptions.md`; review them on every Dioxus/Wry update
-  and before production custody work.
+- Bounded RustSec exceptions are documented in
+  `docs/security/advisory-exceptions.md`. Review the Dioxus exceptions on every
+  Dioxus/Wry update. The pinned Midnight graph also retains unmaintained
+  `bincode 2.0.1` through its ZK stack; issue #10 tracks removal. Review it on
+  every Midnight update and before production custody or release work.
 - A green aggregate must not hide a skipped core, architecture, security, or UI
   compile lane.
 - Coverage thresholds are enforced locally and in CI; hosted reporting may

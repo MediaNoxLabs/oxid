@@ -21,6 +21,7 @@ ignored_advisories=(
   RUSTSEC-2024-0436 # paste: unmaintained image-codec build dependency
   RUSTSEC-2025-0057 # fxhash: unmaintained Wry HTML parser dependency
   RUSTSEC-2026-0097 # rand 0.7: constrained build-dependency unsoundness
+  RUSTSEC-2025-0141 # bincode: unmaintained Midnight ZK dependency
 )
 
 audit_arguments=(--deny warnings)
