@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Source: Prototype parity epic and [issue #4](https://github.com/MediaNoxLabs/oxid/issues/4)
-- Implementation state: Version 1 transport, capability discovery, complete profile lifecycle, and shutdown implemented
+- Implementation state: Version 1 transport, profile lifecycle, development-only protected-key conformance flow, and shutdown implemented
 
 ## Context
 
@@ -49,6 +49,13 @@ recovery material, and other secrets are never protocol results. In particular,
 Oxid will not reproduce the prototype's `controllerSkHex` response. Future key
 operations use opaque references under ADR-0011.
 
+ADR-0017 permits the local process to exercise an ephemeral development key
+adapter. Its capabilities must report `development_only`; initialization and
+unlock accept no passphrase, seed, recovery phrase, or private-key parameter.
+Signing accepts a bounded public payload plus an explicit human-readable
+confirmation and returns only an opaque reference's public metadata or
+signature. Recovery/import/export remain outside v1.
+
 The initial loop is synchronous because the only implemented use case is
 synchronous. An async runtime may be added when a network, proving, or protocol
 adapter needs concurrency; it is not part of the wire contract.
@@ -57,6 +64,9 @@ adapter needs concurrency; it is not part of the wire contract.
 
 - Profile create, list, select, and active-restore flows can be exercised without
   Dioxus, Xcode, or a network.
+- Initialize/lock/unlock and opaque generate/list/sign/delete sequencing can be
+  tested with ephemeral Ed25519/P-256 keys without weakening production
+  composition.
 - Each later parity slice gains a deterministic integration surface and must
   update capability discovery when its method becomes ready.
 - Protocol evolution requires either backward-compatible additions or a new

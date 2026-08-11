@@ -7,8 +7,9 @@ use std::sync::Arc;
 use dioxus::prelude::*;
 use oxid_wallet_application::{
     CreateWalletProfileCommand, CreateWalletProfileUseCase, GetActiveWalletProfileUseCase,
-    ListWalletProfilesUseCase, SelectWalletProfileCommand, SelectWalletProfileUseCase,
-    WalletProfileView,
+    GetWalletSecurityStatusUseCase, ListWalletProfilesUseCase, SelectWalletProfileCommand,
+    SelectWalletProfileUseCase, WalletProfileSecurityCommand, WalletProfileView,
+    WalletSecurityStatusView,
 };
 
 const STYLES: &str = include_str!("../assets/styles.css");
@@ -20,6 +21,7 @@ pub struct WalletUiServices {
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
     get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
+    get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
 }
 
 impl WalletUiServices {
@@ -29,12 +31,14 @@ impl WalletUiServices {
         list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
         select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
         get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
+        get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
     ) -> Self {
         Self {
             create_wallet_profile,
             list_wallet_profiles,
             select_wallet_profile,
             get_active_wallet_profile,
+            get_wallet_security_status,
         }
     }
 
@@ -56,6 +60,11 @@ impl WalletUiServices {
     #[must_use]
     pub fn get_active_wallet_profile(&self) -> Arc<dyn GetActiveWalletProfileUseCase> {
         Arc::clone(&self.get_active_wallet_profile)
+    }
+
+    #[must_use]
+    pub fn get_wallet_security_status(&self) -> Arc<dyn GetWalletSecurityStatusUseCase> {
+        Arc::clone(&self.get_wallet_security_status)
     }
 }
 
@@ -120,6 +129,13 @@ enum ProfileSessionState {
 enum ProfileListState {
     Loading,
     Ready(Vec<WalletProfileView>),
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SecurityCapabilityState {
+    Loading,
+    Ready(WalletSecurityStatusView),
     Failed(String),
 }
 
@@ -639,6 +655,69 @@ fn SettingsPage(
     active_profile: WalletProfileView,
     on_open_profile: EventHandler<MouseEvent>,
 ) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut security = use_signal(|| SecurityCapabilityState::Loading);
+    let profile_id = active_profile.id.clone();
+    use_effect(move || {
+        security.set(
+            services
+                .get_wallet_security_status()
+                .execute(WalletProfileSecurityCommand {
+                    profile_id: profile_id.clone(),
+                })
+                .map_or_else(
+                    |error| SecurityCapabilityState::Failed(error.to_string()),
+                    SecurityCapabilityState::Ready,
+                ),
+        );
+    });
+    let security_card = match security.read().clone() {
+        SecurityCapabilityState::Loading => rsx! {
+            article { class: "settings-card surface-card", role: "status", aria_busy: "true",
+                div {
+                    p { class: "card-eyebrow", "Wallet protection" }
+                    h2 { "Checking custody capability" }
+                    p { "Reading the effective protection class from the composed adapter." }
+                }
+                span { class: "status-pill", "Loading" }
+            }
+        },
+        SecurityCapabilityState::Ready(status) => {
+            let available = status.is_available();
+            let state = status.state_name();
+            let protection = status.protection_name();
+            rsx! {
+                article { class: "settings-card surface-card",
+                    div {
+                        p { class: "card-eyebrow", "Wallet protection" }
+                        h2 { "{state} · {protection}" }
+                        p {
+                            if available {
+                                "This reports the effective adapter capability. Development-only protection is never a production custody claim."
+                            } else {
+                                "Production composition fails closed until a native Keychain or Keystore adapter is connected. Public profile metadata remains available."
+                            }
+                        }
+                    }
+                    span {
+                        class: if available { "status-pill success" } else { "status-pill" },
+                        if available { "Available" } else { "Fail closed" }
+                    }
+                }
+            }
+        }
+        SecurityCapabilityState::Failed(message) => rsx! {
+            article { class: "settings-card surface-card", role: "alert",
+                div {
+                    p { class: "card-eyebrow", "Wallet protection" }
+                    h2 { "Status unavailable" }
+                    p { "{message}" }
+                }
+                span { class: "status-pill", "Error" }
+            }
+        },
+    };
+
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Local controls" }
@@ -658,6 +737,7 @@ fn SettingsPage(
                 "Open profile page"
             }
         }
+        {security_card}
         article { class: "settings-card surface-card",
             div {
                 p { class: "card-eyebrow", "Privacy" }

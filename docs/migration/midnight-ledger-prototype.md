@@ -21,7 +21,7 @@ before migrating later work.
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
 | `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Deferred to M2 |
-| `wallet-core/secret_storage` | Multi-curve keys, encrypted files, redb, key references | platform key/secret ports plus platform-backed and development adapters | Deferred; security review required |
+| `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; standalone Ed25519/P-256 conformance slice implemented; native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification | credential domain/store/verification ports and adapters | Deferred to M3/M5 |
@@ -105,6 +105,23 @@ Do not migrate these without explicit review:
   captured diagnostics;
 - generated Android/iOS project output and signing configuration;
 - benchmark-only probes, tabs, and telemetry panels.
+
+## Fourth post-M0 slice: protected wallet boundaries
+
+ADR-0017 decomposes the prototype's aggregate secret store into wallet
+protection/session, key-operation, secret-blob, and user-authorization
+capabilities. Oxid retains the boot-locked lifecycle, opaque references,
+multi-curve metadata, confirmation before sensitive operations, and safe
+lockout semantics. It permanently excludes the prototype's pre-filled
+`midnight` passphrase, `seed_hex` wallet DTO, raw private-key/seed inputs on
+ordinary ports, and accidental backup of device-bound ciphertext.
+
+The first implementation is deliberately split by composition: the standalone
+headless wallet can use a process-local development adapter for deterministic
+flow testing, while production mobile composition reports custody unavailable
+until native Keychain/Keystore adapters meet the accepted policy. The
+development adapter is evidence for application sequencing and cryptographic
+contracts, never for production secret protection.
 
 ## Gate for each later slice
 

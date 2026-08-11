@@ -6,9 +6,16 @@ use std::{error::Error, fmt, io, io::BufRead, io::Write};
 
 use oxid_composition::ApplicationServices;
 use oxid_wallet_application::{
-    CreateWalletProfileCommand, CreateWalletProfileError, ReadWalletProfilesError,
-    SelectWalletProfileCommand, SelectWalletProfileError, WalletProfileRepositoryError,
-    WalletProfileView,
+    CreateWalletProfileCommand, CreateWalletProfileError, DeleteWalletKeyCommand,
+    GenerateWalletKeyCommand, ReadWalletProfilesError, SelectWalletProfileCommand,
+    SelectWalletProfileError, SensitiveOperationConfirmation, SensitiveWalletOperationError,
+    SignWalletDataCommand, WalletKeyError, WalletKeyView, WalletProfileRepositoryError,
+    WalletProfileSecurityCommand, WalletProfileView, WalletSecurityError, WalletSecurityPortError,
+    WalletSecurityStatusView,
+};
+use oxid_wallet_domain::{
+    PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyPurpose, WalletProtectionClass,
+    WalletProtectionState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -118,6 +125,14 @@ impl HeadlessWallet {
             "wallet.profile.list" => self.list_profiles(request),
             "wallet.profile.select" => self.select_profile(request),
             "wallet.profile.active" => self.active_profile(request),
+            "wallet.security.status" => self.security_status(request),
+            "wallet.security.initialize" => self.initialize_security(request),
+            "wallet.security.unlock" => self.unlock_wallet(request),
+            "wallet.security.lock" => self.lock_wallet(request),
+            "wallet.key.generate" => self.generate_key(request),
+            "wallet.key.list" => self.list_keys(request),
+            "wallet.key.sign" => self.sign(request),
+            "wallet.key.delete" => self.delete_key(request),
             _ => Dispatch::continue_with(Response::error(
                 request.id,
                 "method_not_found",
@@ -143,6 +158,7 @@ impl HeadlessWallet {
                     "version": env!("CARGO_PKG_VERSION")
                 },
                 "methods": capability_manifest(),
+                "custodyMode": "development_only",
                 "compatibilityAliases": ["quit", "exit"]
             }),
         ))
@@ -260,6 +276,250 @@ impl HeadlessWallet {
             Err(error) => Dispatch::continue_with(read_profiles_error(request.id, error)),
         }
     }
+
+    fn security_status(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.security.status");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .get_wallet_security_status()
+            .execute(WalletProfileSecurityCommand { profile_id })
+        {
+            Ok(status) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "security": security_status_value(status) }),
+            )),
+            Err(error) => Dispatch::continue_with(security_error(request.id, error)),
+        }
+    }
+
+    fn initialize_security(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.security.initialize");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .initialize_wallet_security()
+            .execute(WalletProfileSecurityCommand { profile_id })
+        {
+            Ok(status) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "security": security_status_value(status) }),
+            )),
+            Err(error) => Dispatch::continue_with(security_error(request.id, error)),
+        }
+    }
+
+    fn unlock_wallet(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.security.unlock");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .unlock_wallet()
+            .execute(WalletProfileSecurityCommand { profile_id })
+        {
+            Ok(status) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "security": security_status_value(status) }),
+            )),
+            Err(error) => Dispatch::continue_with(security_error(request.id, error)),
+        }
+    }
+
+    fn lock_wallet(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.security.lock");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .lock_wallet()
+            .execute(WalletProfileSecurityCommand { profile_id })
+        {
+            Ok(status) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "security": security_status_value(status) }),
+            )),
+            Err(error) => Dispatch::continue_with(security_error(request.id, error)),
+        }
+    }
+
+    fn generate_key(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<GenerateKeyParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.key.generate requires only label, algorithm, and purpose strings",
+                ));
+            }
+        };
+        let algorithm = match key_algorithm(&params.algorithm) {
+            Some(algorithm) => algorithm,
+            None => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "algorithm must be ed25519, p256, or jubjub",
+                ));
+            }
+        };
+        let purpose = match key_purpose(&params.purpose) {
+            Some(purpose) => purpose,
+            None => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "purpose is not supported",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .generate_wallet_key()
+            .execute(GenerateWalletKeyCommand {
+                profile_id,
+                label: params.label,
+                algorithm,
+                purpose,
+            }) {
+            Ok(key) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "key": key_value(&key) }),
+            )),
+            Err(error) => Dispatch::continue_with(key_error(request.id, error)),
+        }
+    }
+
+    fn list_keys(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.key.list");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .list_wallet_keys()
+            .execute(WalletProfileSecurityCommand { profile_id })
+        {
+            Ok(keys) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "keys": keys.iter().map(key_value).collect::<Vec<_>>() }),
+            )),
+            Err(error) => Dispatch::continue_with(key_error(request.id, error)),
+        }
+    }
+
+    fn sign(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<SignParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.key.sign requires keyRef, payloadHex, and confirmation",
+                ));
+            }
+        };
+        let payload = match decode_hex(&params.payload_hex) {
+            Some(payload) => payload,
+            None => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "payloadHex must be bounded even-length hexadecimal",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .sign_wallet_data()
+            .execute(SignWalletDataCommand {
+                profile_id,
+                key_reference: params.key_reference,
+                payload,
+                confirmation: params.confirmation.into(),
+            }) {
+            Ok(signature) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "algorithm": algorithm_name(signature.algorithm),
+                    "signatureHex": encode_hex(&signature.signature_bytes)
+                }),
+            )),
+            Err(error) => Dispatch::continue_with(sensitive_error(request.id, error)),
+        }
+    }
+
+    fn delete_key(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<DeleteKeyParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.key.delete requires keyRef and confirmation",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .delete_wallet_key()
+            .execute(DeleteWalletKeyCommand {
+                profile_id,
+                key_reference: params.key_reference,
+                confirmation: params.confirmation.into(),
+            }) {
+            Ok(()) => {
+                Dispatch::continue_with(Response::success(request.id, json!({ "deleted": true })))
+            }
+            Err(error) => Dispatch::continue_with(sensitive_error(request.id, error)),
+        }
+    }
+
+    fn active_profile_id(&self, id: Option<String>) -> Result<String, Response> {
+        match self.application.get_active_wallet_profile().execute() {
+            Ok(Some(profile)) => Ok(profile.id),
+            Ok(None) => Err(Response::error(
+                id,
+                "failed_precondition",
+                "an active wallet profile is required",
+            )),
+            Err(error) => Err(read_profiles_error(id, error)),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -282,6 +542,49 @@ struct CreateProfileParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SelectProfileParams {
     profile_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GenerateKeyParams {
+    label: String,
+    algorithm: String,
+    purpose: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConfirmationParams {
+    title: String,
+    summary: String,
+    confirmed: bool,
+}
+
+impl From<ConfirmationParams> for SensitiveOperationConfirmation {
+    fn from(value: ConfirmationParams) -> Self {
+        Self {
+            title: value.title,
+            summary: value.summary,
+            confirmed: value.confirmed,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SignParams {
+    #[serde(rename = "keyRef")]
+    key_reference: String,
+    payload_hex: String,
+    confirmation: ConfirmationParams,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteKeyParams {
+    #[serde(rename = "keyRef")]
+    key_reference: String,
+    confirmation: ConfirmationParams,
 }
 
 #[derive(Serialize)]
@@ -445,6 +748,233 @@ fn profile_value(profile: &WalletProfileView) -> Value {
     })
 }
 
+fn security_status_value(status: WalletSecurityStatusView) -> Value {
+    json!({
+        "state": match status.state {
+            WalletProtectionState::Uninitialized => "uninitialized",
+            WalletProtectionState::Locked => "locked",
+            WalletProtectionState::Unlocked => "unlocked",
+            WalletProtectionState::Unavailable => "unavailable",
+        },
+        "protection": match status.protection {
+            WalletProtectionClass::DevelopmentOnly => "development_only",
+            WalletProtectionClass::OperatingSystem => "operating_system",
+            WalletProtectionClass::HardwareBacked => "hardware_backed",
+            WalletProtectionClass::Unavailable => "unavailable",
+        },
+        "userPresenceRequired": status.user_presence_required,
+        "portableBackupSupported": status.portable_backup_supported,
+    })
+}
+
+fn key_value(key: &WalletKeyView) -> Value {
+    json!({
+        "keyRef": key.key_reference,
+        "label": key.label,
+        "algorithm": algorithm_name(key.algorithm),
+        "purpose": purpose_name(key.purpose),
+        "publicKey": {
+            "encoding": match key.public_key_encoding {
+                PublicKeyEncoding::Ed25519Compressed => "ed25519-compressed",
+                PublicKeyEncoding::Sec1Compressed => "sec1-compressed",
+                PublicKeyEncoding::JubjubCompressed => "jubjub-compressed",
+            },
+            "bytesHex": encode_hex(&key.public_key_bytes),
+        },
+        "createdAtMillis": key.created_at_millis,
+    })
+}
+
+const fn algorithm_name(algorithm: WalletKeyAlgorithm) -> &'static str {
+    match algorithm {
+        WalletKeyAlgorithm::Ed25519 => "ed25519",
+        WalletKeyAlgorithm::P256 => "p256",
+        WalletKeyAlgorithm::Jubjub => "jubjub",
+    }
+}
+
+fn key_algorithm(value: &str) -> Option<WalletKeyAlgorithm> {
+    match value {
+        "ed25519" => Some(WalletKeyAlgorithm::Ed25519),
+        "p256" => Some(WalletKeyAlgorithm::P256),
+        "jubjub" => Some(WalletKeyAlgorithm::Jubjub),
+        _ => None,
+    }
+}
+
+const fn purpose_name(purpose: WalletKeyPurpose) -> &'static str {
+    match purpose {
+        WalletKeyPurpose::Transaction => "transaction",
+        WalletKeyPurpose::Authentication => "authentication",
+        WalletKeyPurpose::Assertion => "assertion",
+        WalletKeyPurpose::KeyAgreement => "key_agreement",
+        WalletKeyPurpose::Recovery => "recovery",
+    }
+}
+
+fn key_purpose(value: &str) -> Option<WalletKeyPurpose> {
+    match value {
+        "transaction" => Some(WalletKeyPurpose::Transaction),
+        "authentication" => Some(WalletKeyPurpose::Authentication),
+        "assertion" => Some(WalletKeyPurpose::Assertion),
+        "key_agreement" => Some(WalletKeyPurpose::KeyAgreement),
+        "recovery" => Some(WalletKeyPurpose::Recovery),
+        _ => None,
+    }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    if value.is_empty()
+        || value.len() > oxid_wallet_application::MAX_SIGNING_PAYLOAD_BYTES * 2
+        || !value.len().is_multiple_of(2)
+        || !value.is_ascii()
+    {
+        return None;
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = hex_nibble(pair[0])?;
+            let low = hex_nibble(pair[1])?;
+            Some((high << 4) | low)
+        })
+        .collect()
+}
+
+const fn hex_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn invalid_empty_params(id: Option<String>, method: &'static str) -> Dispatch {
+    let message = match method {
+        "wallet.security.status" => "wallet.security.status does not accept parameters",
+        "wallet.security.initialize" => "wallet.security.initialize does not accept parameters",
+        "wallet.security.unlock" => "wallet.security.unlock does not accept parameters",
+        "wallet.security.lock" => "wallet.security.lock does not accept parameters",
+        "wallet.key.list" => "wallet.key.list does not accept parameters",
+        _ => "method does not accept parameters",
+    };
+    Dispatch::continue_with(Response::error(id, "invalid_params", message))
+}
+
+fn security_error(id: Option<String>, error: WalletSecurityError) -> Response {
+    match error {
+        WalletSecurityError::InvalidProfileIdentifier(_) => Response::error(
+            id,
+            "invalid_argument",
+            "active profile identifier is invalid",
+        ),
+        WalletSecurityError::Operation(error) => security_port_error(id, error),
+    }
+}
+
+fn key_error(id: Option<String>, error: WalletKeyError) -> Response {
+    match error {
+        WalletKeyError::InvalidProfileIdentifier(_) => Response::error(
+            id,
+            "invalid_argument",
+            "active profile identifier is invalid",
+        ),
+        WalletKeyError::InvalidKeyReference(_) => {
+            Response::error(id, "invalid_argument", "keyRef is invalid")
+        }
+        WalletKeyError::InvalidLabel(_) => Response::error(
+            id,
+            "invalid_argument",
+            "key label must be non-empty, bounded, and contain no control characters",
+        ),
+        WalletKeyError::Operation(error) => security_port_error(id, error),
+    }
+}
+
+fn sensitive_error(id: Option<String>, error: SensitiveWalletOperationError) -> Response {
+    match error {
+        SensitiveWalletOperationError::InvalidProfileIdentifier(_) => Response::error(
+            id,
+            "invalid_argument",
+            "active profile identifier is invalid",
+        ),
+        SensitiveWalletOperationError::InvalidKeyReference(_) => {
+            Response::error(id, "invalid_argument", "keyRef is invalid")
+        }
+        SensitiveWalletOperationError::EmptyPayload => {
+            Response::error(id, "invalid_argument", "signing payload must not be empty")
+        }
+        SensitiveWalletOperationError::PayloadTooLarge => Response::error(
+            id,
+            "invalid_argument",
+            "signing payload exceeds the application limit",
+        ),
+        SensitiveWalletOperationError::ConfirmationRequired => Response::error(
+            id,
+            "confirmation_required",
+            "explicit human-readable confirmation is required",
+        ),
+        SensitiveWalletOperationError::InvalidConfirmation => Response::error(
+            id,
+            "invalid_argument",
+            "confirmation title and summary must be non-empty and bounded",
+        ),
+        SensitiveWalletOperationError::Operation(error) => security_port_error(id, error),
+    }
+}
+
+fn security_port_error(id: Option<String>, error: WalletSecurityPortError) -> Response {
+    match error {
+        WalletSecurityPortError::Unavailable => Response::error(
+            id,
+            "capability_unavailable",
+            "wallet protection is unavailable",
+        ),
+        WalletSecurityPortError::NotInitialized => Response::error(
+            id,
+            "failed_precondition",
+            "wallet protection is not initialized",
+        ),
+        WalletSecurityPortError::AlreadyInitialized => {
+            Response::error(id, "conflict", "wallet protection is already initialized")
+        }
+        WalletSecurityPortError::Locked => Response::error(id, "wallet_locked", "wallet is locked"),
+        WalletSecurityPortError::NotFound => {
+            Response::error(id, "not_found", "protected key was not found")
+        }
+        WalletSecurityPortError::Conflict => {
+            Response::error(id, "conflict", "protected key metadata conflicts")
+        }
+        WalletSecurityPortError::UnsupportedAlgorithm => Response::error(
+            id,
+            "unsupported_algorithm",
+            "key algorithm is not supported by this adapter",
+        ),
+        WalletSecurityPortError::AuthorizationDenied => Response::error(
+            id,
+            "authorization_denied",
+            "wallet authorization was denied",
+        ),
+        WalletSecurityPortError::InvalidOperation => Response::error(
+            id,
+            "internal_error",
+            "protected operation could not be completed",
+        ),
+    }
+}
+
 fn capability_manifest() -> Value {
     json!([
         { "method": "system.capabilities", "status": "ready" },
@@ -453,6 +983,14 @@ fn capability_manifest() -> Value {
         { "method": "wallet.profile.list", "status": "ready" },
         { "method": "wallet.profile.select", "status": "ready" },
         { "method": "wallet.profile.active", "status": "ready" },
+        { "method": "wallet.security.status", "status": "ready", "mode": "development_only" },
+        { "method": "wallet.security.initialize", "status": "ready", "mode": "development_only" },
+        { "method": "wallet.security.unlock", "status": "ready", "mode": "development_only" },
+        { "method": "wallet.security.lock", "status": "ready", "mode": "development_only" },
+        { "method": "wallet.key.generate", "status": "ready", "mode": "development_only", "algorithms": ["ed25519", "p256"] },
+        { "method": "wallet.key.list", "status": "ready", "mode": "development_only" },
+        { "method": "wallet.key.sign", "status": "ready", "mode": "development_only" },
+        { "method": "wallet.key.delete", "status": "ready", "mode": "development_only" },
         { "method": "wallet.connect", "status": "queued" },
         { "method": "wallet.bootstrap", "status": "queued" },
         { "method": "wallet.address.unshielded", "status": "queued" },
@@ -544,6 +1082,12 @@ mod tests {
         assert!(methods.iter().any(|capability| {
             capability["method"] == "wallet.transaction.send_unshielded"
                 && capability["status"] == "queued"
+        }));
+        assert_eq!(responses[0]["result"]["custodyMode"], "development_only");
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "wallet.key.sign"
+                && capability["status"] == "ready"
+                && capability["mode"] == "development_only"
         }));
     }
 
@@ -677,5 +1221,125 @@ mod tests {
         assert_eq!(responses.len(), 1);
         assert_eq!(responses[0]["ok"], true);
         assert_eq!(responses[0]["result"]["alias"], "quit");
+    }
+
+    #[test]
+    fn exercises_the_protected_key_lifecycle_without_secret_parameters() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"secure-create","method":"wallet.profile.create","params":{"displayName":"Secure flow"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile identifier is returned");
+        let select = json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "secure-select",
+            "method": "wallet.profile.select",
+            "params": { "profileId": profile_id }
+        });
+        let setup = format!(
+            "{select}\n{}\n{}\n{}",
+            r#"{"protocol":"oxid.headless.v1","id":"secure-status","method":"wallet.security.status","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"secure-init","method":"wallet.security.initialize","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"secure-generate","method":"wallet.key.generate","params":{"label":"Authentication key","algorithm":"ed25519","purpose":"authentication"}}"#,
+        );
+        let responses = execute_with_wallet(&wallet, &setup);
+
+        assert_eq!(responses[1]["result"]["security"]["state"], "uninitialized");
+        assert_eq!(responses[2]["result"]["security"]["state"], "unlocked");
+        assert_eq!(
+            responses[2]["result"]["security"]["protection"],
+            "development_only"
+        );
+        let key_ref = responses[3]["result"]["key"]["keyRef"]
+            .as_str()
+            .expect("opaque key reference is returned");
+        let confirmation = json!({
+            "title": "Sign conformance challenge",
+            "summary": "Authorize a non-secret test payload",
+            "confirmed": true
+        });
+        let sign = json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "secure-sign",
+            "method": "wallet.key.sign",
+            "params": {
+                "keyRef": key_ref,
+                "payloadHex": "6368616c6c656e6765",
+                "confirmation": confirmation
+            }
+        });
+        let signed = execute_with_wallet(&wallet, &sign.to_string());
+        assert_eq!(signed[0]["ok"], true, "unexpected response: {signed:?}");
+        assert_eq!(signed[0]["result"]["algorithm"], "ed25519");
+        assert_eq!(
+            signed[0]["result"]["signatureHex"]
+                .as_str()
+                .expect("signature is encoded")
+                .len(),
+            128
+        );
+
+        let locked_sign = format!(
+            "{}\n{sign}",
+            r#"{"protocol":"oxid.headless.v1","id":"secure-lock","method":"wallet.security.lock","params":{}}"#,
+        );
+        let locked = execute_with_wallet(&wallet, &locked_sign);
+        assert_eq!(locked[0]["result"]["security"]["state"], "locked");
+        assert_eq!(locked[1]["error"]["code"], "wallet_locked");
+
+        let delete_without_confirmation = json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "secure-delete-denied",
+            "method": "wallet.key.delete",
+            "params": {
+                "keyRef": key_ref,
+                "confirmation": {
+                    "title": "Delete test key",
+                    "summary": "Remove the ephemeral test key",
+                    "confirmed": false
+                }
+            }
+        });
+        let delete = json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "secure-delete",
+            "method": "wallet.key.delete",
+            "params": {
+                "keyRef": key_ref,
+                "confirmation": {
+                    "title": "Delete test key",
+                    "summary": "Remove the ephemeral test key",
+                    "confirmed": true
+                }
+            }
+        });
+        let cleanup = format!(
+            "{}\n{delete_without_confirmation}\n{delete}\n{}",
+            r#"{"protocol":"oxid.headless.v1","id":"secure-unlock","method":"wallet.security.unlock","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"secure-list","method":"wallet.key.list","params":{}}"#,
+        );
+        let cleaned = execute_with_wallet(&wallet, &cleanup);
+        assert_eq!(cleaned[0]["result"]["security"]["state"], "unlocked");
+        assert_eq!(cleaned[1]["error"]["code"], "confirmation_required");
+        assert_eq!(cleaned[2]["result"]["deleted"], true);
+        assert_eq!(cleaned[3]["result"]["keys"], json!([]));
+    }
+
+    #[test]
+    fn rejects_secret_bearing_security_parameters_without_echoing_them() {
+        let responses = execute(concat!(
+            r#"{"protocol":"oxid.headless.v1","id":"secret-passphrase","method":"wallet.security.initialize","params":{"passphrase":"never-echo-this"}}"#,
+            "\n",
+            r#"{"protocol":"oxid.headless.v1","id":"secret-seed","method":"wallet.key.generate","params":{"label":"Key","algorithm":"ed25519","purpose":"authentication","seedHex":"deadbeef-private"}}"#,
+        ));
+
+        assert_eq!(responses[0]["error"]["code"], "invalid_params");
+        assert_eq!(responses[1]["error"]["code"], "invalid_params");
+        let output = Value::Array(responses).to_string();
+        assert!(!output.contains("never-echo-this"));
+        assert!(!output.contains("deadbeef-private"));
     }
 }

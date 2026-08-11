@@ -10,7 +10,9 @@ than layers bolted onto one chain-specific frontend.
 
 > **Status:** M0 foundation plus the first prototype-parity slices. The wallet
 > profile lifecycle—create, list, select, persist, and restore—is available
-> through Dioxus and the standalone headless harness. The remaining shell
+> through Dioxus and the standalone headless harness. A development-only
+> process-local adapter exercises opaque Ed25519/P-256 key flows headlessly;
+> production mobile custody remains fail-closed. The remaining shell
 > destinations deliberately label unconnected capabilities; Oxid is not ready
 > to hold real assets or identity credentials.
 
@@ -27,7 +29,7 @@ apps/oxid-headless ---------------------+--> wallet-application --> wallet-domai
           |                             |             |                    |
           +--> composition -------------+             v                    v
                     |                         platform-ports ------> foundation
-                    +--> storage-json / storage-memory
+                    +--> storage-json / storage-memory / storage-dev
                     +--> platform-system
 ```
 
@@ -61,9 +63,11 @@ printf '%s\n' '{"protocol":"oxid.headless.v1","id":"demo-1","method":"system.cap
 
 Stdout is reserved for JSON responses. Start with `system.capabilities`; it
 distinguishes implemented methods from queued parity work. The protocol never
-returns raw private key or seed material. Profile metadata persists in the
-platform application-data directory by default; set `OXID_PROFILE_STORE_PATH`
-to isolate an automation run.
+accepts or returns raw private key, passphrase, recovery, or seed material. Its
+key lifecycle is explicitly `development_only`, process-local, and ephemeral;
+it is useful for conformance testing, not custody. Profile metadata persists in the
+platform application-data directory by default; set
+`OXID_PROFILE_STORE_PATH` to isolate an automation run.
 
 Common commands are also exposed through `just`:
 
@@ -150,8 +154,9 @@ observations are recorded in
 ## Security
 
 The JSON repository is durable only for public profile metadata; it is not a
-secret store. The in-memory repository remains development/test-only. Never use
-this milestone to custody assets or credentials. See
+secret store. The software signing adapter is process-local development/test
+infrastructure and production composition does not select it. Never use this
+milestone to custody assets or credentials. See
 [SECURITY.md](SECURITY.md) for reporting and the current threat boundaries.
 
 ## Contributing

@@ -40,8 +40,15 @@ rustup target add "$rust_target"
 rust_toolchain_bin="$(dirname -- "$(rustup which cargo)")"
 dioxus_output="$(nix build .#dioxus-cli --no-link --print-out-paths)"
 dioxus_cli="$dioxus_output/bin/dx"
+xcode_developer_dir="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p)"
+simulator_sdk_root="$(
+  env -u SDKROOT DEVELOPER_DIR="$xcode_developer_dir" \
+    /usr/bin/xcrun --sdk iphonesimulator --show-sdk-path
+)"
 
 PATH="$rust_toolchain_bin:/usr/bin:$PATH" \
+  DEVELOPER_DIR="$xcode_developer_dir" \
+  SDKROOT="$simulator_sdk_root" \
   "$dioxus_cli" build \
     --ios \
     --package oxid-app \

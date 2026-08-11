@@ -9,6 +9,7 @@ fn main() {
         application.list_wallet_profiles(),
         application.select_wallet_profile(),
         application.get_active_wallet_profile(),
+        application.get_wallet_security_status(),
     );
 
     dioxus::LaunchBuilder::new()

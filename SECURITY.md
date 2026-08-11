@@ -13,9 +13,12 @@ report as promptly as possible and coordinate disclosure after a fix is ready.
 
 ## Current security posture
 
-Oxid is in its foundation milestone and is **not production-ready**. The current
-slice creates public wallet-profile metadata in process-local memory. It does
-not create or persist asset keys, seeds, DIDs, or credentials.
+Oxid is in an early migration milestone and is **not production-ready**. Public
+wallet-profile metadata can be persisted separately. The standalone headless
+harness can create process-local Ed25519 and P-256 development keys to test
+opaque-reference flows; those keys are never durable and are not asset custody.
+Production composition reports protected storage unavailable. No seed, DID, or
+credential material is persisted by the current slice.
 
 The following rules are already enforced as architecture constraints:
 
@@ -27,9 +30,12 @@ The following rules are already enforced as architecture constraints:
 - no secrets or claims in logs;
 - dependency and advisory checks independent from tests.
 
-The in-memory adapter is not secure storage. Future custody code must use
-platform-backed protection, opaque key references, explicit authorization, and
-separate security review before it is described as production-capable.
+The in-memory profile adapter and `storage-dev` signing adapter are not secure
+storage. `storage-dev` is selected only by explicit headless/test composition,
+reports `development_only`, requires application confirmation before signing
+or deletion, and zeroizes supported software key types on drop. Future custody
+code must satisfy ADR-0017 with platform-backed protection and native user
+authorization before it is described as production-capable.
 
 ## Supported versions
 

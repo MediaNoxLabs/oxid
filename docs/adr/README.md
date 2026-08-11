@@ -38,14 +38,14 @@ ADR status and delivery state answer different questions:
 | [0014](0014-cardano-library-selection.md) Cardano libraries | Proposed | §§8, 17 | Research gate before M1 |
 | [0015](0015-midnight-library-selection.md) Midnight libraries | Proposed | §§8, 17 | Research gate before M2 |
 | [0016](0016-ssi-component-selection.md) SSI components | Proposed | §§9–11, 17 | Research gate before M3 |
-| [0017](0017-platform-backed-secret-storage.md) Secret storage | Proposed | §§7, 12, 17 | Decision required before M1 custody |
+| [0017](0017-platform-backed-secret-storage.md) Platform custody, secret blobs, and authorization | Accepted | §§7, 12, 17 and prototype security review | Focused ports and development harness begin M1; native mobile adapters required |
 | [0018](0018-structured-error-taxonomy.md) Error taxonomy | Proposed | §§10, 13 | Partially exercised by M0 errors |
 | [0019](0019-explicit-application-events-only-when-needed.md) Event model | Proposed | §§3, 13 | No event infrastructure in M0 |
 | [0020](0020-layered-testing-strategy.md) Layered testing | Accepted | §§3, 13, 18 | M0 baseline and coverage gate implemented |
 | [0021](0021-staged-prototype-migration.md) Staged prototype migration | Accepted | §§14, 17–19 and prototype review | Profile lifecycle, presentation shell, and headless harness migrated from immutable baseline |
 | [0022](0022-nix-reproducible-development-and-ci.md) Reproducible Nix environment | Accepted | Repository harness | Implemented locally and in CI |
 | [0023](0023-prioritize-midnight-prototype-parity.md) Prioritize staged Midnight prototype parity | Accepted | Product direction and parity epic | Wallet shell, headless harness, and profile lifecycle implemented; capability backlog open |
-| [0024](0024-versioned-headless-wallet-protocol.md) Versioned headless wallet protocol | Accepted | Prototype parity epic and issue #4 | v1 transport, discovery, complete profile lifecycle, and shutdown implemented |
+| [0024](0024-versioned-headless-wallet-protocol.md) Versioned headless wallet protocol | Accepted | Prototype parity epic and issues #4/#5 | v1 transport, profiles, development protected-key conformance, and shutdown implemented |
 | [0025](0025-persist-public-wallet-profile-metadata.md) Persist public profile metadata separately from secrets | Accepted | §§3, 7, 12–13, 17 and issue #1 | JSON profile metadata, selection, restore, UI, and headless flows implemented |
 
 ## Current boundaries
@@ -53,8 +53,9 @@ ADR status and delivery state answer different questions:
 M0 implements ADR-0001 through ADR-0006, the applicable policy portions of
 ADR-0011 through ADR-0013, ADR-0020, ADR-0021, and ADR-0022. ADR-0007 through
 ADR-0010 constrain future identity/protocol work without claiming it exists.
-ADR-0014 through ADR-0019 remain research or design gates as stated in their
-individual records. ADR-0023 reprioritizes prototype parity after M0 without
-bypassing those gates. ADR-0024 establishes a safe second incoming adapter for
-exercising each slice. ADR-0025 makes profile metadata durable without
-weakening the unresolved protected-secret-storage gate.
+ADR-0014 through ADR-0016 and ADR-0018 through ADR-0019 remain research or
+design gates as stated in their individual records. ADR-0017 now binds the M1
+custody design without claiming native adapters are complete. ADR-0023
+reprioritizes prototype parity after M0 without bypassing those gates. ADR-0024
+establishes a safe second incoming adapter for exercising each slice. ADR-0025
+makes profile metadata durable without conflating it with protected custody.

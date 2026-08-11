@@ -12,6 +12,7 @@ publish = false
 oxid-adapter-platform-system.workspace = true
 oxid-adapter-storage-json.workspace = true
 oxid-adapter-storage-memory.workspace = true
+oxid-adapter-storage-dev.workspace = true
 oxid-wallet-application.workspace = true
 
 [lints]

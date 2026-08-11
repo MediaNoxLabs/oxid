@@ -1,6 +1,6 @@
 [package]
-name = "oxid-headless"
-description = "Versioned NDJSON incoming adapter for deterministic Oxid wallet flows"
+name = "oxid-adapter-storage-dev"
+description = "Process-local development-only protected wallet adapter"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,11 +9,13 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-oxid-composition.workspace = true
+ed25519-dalek.workspace = true
+oxid-foundation.workspace = true
+oxid-platform-ports.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
-serde.workspace = true
-serde_json.workspace = true
+p256.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

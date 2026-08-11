@@ -75,6 +75,8 @@ check_workspace_dependencies oxid-wallet-application \
   oxid-foundation oxid-platform-ports oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-foundation oxid-wallet-application oxid-wallet-domain
+check_workspace_dependencies oxid-adapter-storage-dev \
+  oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-json \
   oxid-foundation oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-platform-system \
@@ -82,11 +84,11 @@ check_workspace_dependencies oxid-adapter-platform-system \
 check_workspace_dependencies oxid-ui-dioxus oxid-wallet-application
 check_workspace_dependencies oxid-composition \
   oxid-adapter-platform-system oxid-adapter-storage-json \
-  oxid-adapter-storage-memory \
+  oxid-adapter-storage-memory oxid-adapter-storage-dev \
   oxid-wallet-application
 check_workspace_dependencies oxid-app oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
-  oxid-composition oxid-wallet-application
+  oxid-composition oxid-wallet-application oxid-wallet-domain
 
 unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' || true)"
 if [ "$unsafe_sources" != "crates/adapters/storage-json/src/lib.rs" ]; then

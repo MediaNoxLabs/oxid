@@ -35,3 +35,8 @@ once public releases begin.
   metadata, with strict validation and no secret-bearing fields.
 - Automated iOS XCUITest and Android emulator profile-flow smoke harnesses,
   including process restart and active-profile restoration.
+- Accepted platform-custody policy, opaque key-operation ports, fail-closed
+  production composition, and a development-only headless Ed25519/P-256
+  initialize/lock/unlock/generate/list/sign/delete conformance flow.
+- Made the iOS simulator and XCUITest harness select the host Xcode SDK and
+  isolate Apple builds from Nix compiler/linker environment variables.

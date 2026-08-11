@@ -35,6 +35,14 @@ bounded slices and never turn parity work into a bulk source copy. The wallet
 presentation shell is the first post-M0 slice. Its deferred destinations are
 status surfaces, not claims of working custody or identity capabilities.
 
+ADR-0017 is accepted. The first M1 security slice separates protection/session
+state from key operations, secret blobs, and native user authorization. The
+standalone harness has a process-local Ed25519/P-256 adapter for conformance;
+normal mobile composition uses a fail-closed unavailable adapter until native
+Apple Keychain/Secure Enclave and Android Keystore/BiometricPrompt adapters are
+implemented. Track that slice and its follow-ups in
+[issue #5](https://github.com/MediaNoxLabs/oxid/issues/5).
+
 ## Prototype provenance
 
 The prototype remains useful migration input, not an architecture template.
@@ -87,7 +95,8 @@ The blueprint's ADR summaries are materialized as ADR-0001 through ADR-0020 in
 ADR-0022 records Nix as the reproducible environment. ADR-0023 records the
 post-M0 prototype-parity priority. ADR-0024 records the versioned NDJSON
 headless adapter and forbids secret-bearing results. ADR-0025 separates durable
-public profile metadata from unresolved protected secret storage. ADR status
+public profile metadata from protected secret storage. ADR-0017 records the
+accepted platform-custody split. ADR status
 and delivery state are deliberately separate: an accepted future boundary is
 binding but does not mean the capability is implemented. Proposed ADRs are
 gates, not dependency authorization.
@@ -102,6 +111,7 @@ Current package ownership:
 | `crates/platform/ports` | Clock and randomness capabilities used by applications. |
 | `crates/adapters/storage-memory` | Development/test implementation of wallet persistence. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
+| `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 key lifecycle and signing adapter. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter and presentation state. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -116,6 +126,15 @@ the stream, and capability discovery must label unimplemented methods as
 `queued`. Never reproduce the prototype's `controllerSkHex` bootstrap result or
 require a seed before an implemented chain use case needs an opaque key
 reference.
+
+`compose()` is the production-facing composition and deliberately reports
+wallet protection unavailable. `compose_headless()` combines persistent public
+profiles with the ephemeral development key adapter; `compose_in_memory()`
+uses both development adapters for tests. Never change `compose()` to select
+`storage-dev`. Headless protected-key methods accept only public labels,
+algorithms, purposes, bounded payloads, opaque references, and explicit
+human-readable confirmations. Passphrases, seeds, recovery phrases, and raw
+private keys are rejected by strict parameter decoding.
 
 ## Development environment
 
@@ -160,6 +179,7 @@ cargo test -p oxid-wallet-domain
 cargo test -p oxid-wallet-application
 cargo test -p oxid-adapter-storage-memory
 cargo test -p oxid-adapter-storage-json
+cargo test -p oxid-adapter-storage-dev
 cargo test -p oxid-headless
 cargo check -p oxid-app
 ./run.sh coverage --strict
@@ -170,10 +190,16 @@ cargo check -p oxid-app
 On macOS with Xcode and Rustup installed, `just ios-run` uses the Dioxus CLI
 from the locked flake and the host Apple/Rust toolchain to build, install, and
 launch the mobile feature. The Nix shell's non-Apple `xcrun` compatibility tool
-must not be used for simulator discovery. `OXID_IOS_DEVICE=<UDID>` selects a
-specific simulator. The first verified smoke test used an arm64 iPhone
-simulator. The prototype-derived shell and first-launch profile gateway were
-subsequently built, launched, and visually verified through the same command.
+must not be used for simulator discovery. The launcher also replaces Nix's
+`DEVELOPER_DIR` and macOS `SDKROOT` with the selected Xcode installation and
+its `iphonesimulator` SDK for the Dioxus build; preserve those overrides so
+`nix develop --command just ios-smoke` remains valid. The XCUITest invocation
+also uses a minimal host environment so Nix compiler/linker variables cannot
+leak into Apple's build system.
+`OXID_IOS_DEVICE=<UDID>` selects a specific simulator. The first verified smoke
+test used an arm64 iPhone simulator. The prototype-derived shell and
+first-launch profile gateway were subsequently built, launched, and visually
+verified through the same command.
 `just android-run` performs the equivalent Dioxus build, install, and launch
 using an Android SDK/NDK plus a connected device or local AVD. Generated
 Gradle/Xcode output remains under ignored `target/` paths.

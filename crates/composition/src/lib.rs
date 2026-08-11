@@ -5,12 +5,17 @@
 use std::sync::Arc;
 
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
+use oxid_adapter_storage_dev::{DevelopmentWalletSecurity, UnavailableWalletSecurity};
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
 use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;
 use oxid_wallet_application::{
-    CreateWalletProfileService, CreateWalletProfileUseCase, GetActiveWalletProfileService,
-    GetActiveWalletProfileUseCase, ListWalletProfilesService, ListWalletProfilesUseCase,
-    SelectWalletProfileService, SelectWalletProfileUseCase, WalletProfileRepository,
+    CreateWalletProfileService, CreateWalletProfileUseCase, DeleteWalletKeyUseCase,
+    GenerateWalletKeyUseCase, GetActiveWalletProfileService, GetActiveWalletProfileUseCase,
+    GetWalletSecurityStatusUseCase, InitializeWalletSecurityUseCase, ListWalletKeysUseCase,
+    ListWalletProfilesService, ListWalletProfilesUseCase, LockWalletUseCase,
+    SelectWalletProfileService, SelectWalletProfileUseCase, SignWalletDataUseCase,
+    UnlockWalletUseCase, WalletKeyOperationPort, WalletKeyService, WalletProfileRepository,
+    WalletProtectionPort, WalletProtectionService,
 };
 
 /// Application capabilities shared by every incoming adapter.
@@ -20,24 +25,17 @@ pub struct ApplicationServices {
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
     get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
+    get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
+    initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
+    unlock_wallet: Arc<dyn UnlockWalletUseCase>,
+    lock_wallet: Arc<dyn LockWalletUseCase>,
+    generate_wallet_key: Arc<dyn GenerateWalletKeyUseCase>,
+    list_wallet_keys: Arc<dyn ListWalletKeysUseCase>,
+    sign_wallet_data: Arc<dyn SignWalletDataUseCase>,
+    delete_wallet_key: Arc<dyn DeleteWalletKeyUseCase>,
 }
 
 impl ApplicationServices {
-    #[must_use]
-    pub const fn new(
-        create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
-        list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
-        select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
-        get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
-    ) -> Self {
-        Self {
-            create_wallet_profile,
-            list_wallet_profiles,
-            select_wallet_profile,
-            get_active_wallet_profile,
-        }
-    }
-
     #[must_use]
     pub fn create_wallet_profile(&self) -> Arc<dyn CreateWalletProfileUseCase> {
         Arc::clone(&self.create_wallet_profile)
@@ -57,23 +55,84 @@ impl ApplicationServices {
     pub fn get_active_wallet_profile(&self) -> Arc<dyn GetActiveWalletProfileUseCase> {
         Arc::clone(&self.get_active_wallet_profile)
     }
+
+    #[must_use]
+    pub fn get_wallet_security_status(&self) -> Arc<dyn GetWalletSecurityStatusUseCase> {
+        Arc::clone(&self.get_wallet_security_status)
+    }
+
+    #[must_use]
+    pub fn initialize_wallet_security(&self) -> Arc<dyn InitializeWalletSecurityUseCase> {
+        Arc::clone(&self.initialize_wallet_security)
+    }
+
+    #[must_use]
+    pub fn unlock_wallet(&self) -> Arc<dyn UnlockWalletUseCase> {
+        Arc::clone(&self.unlock_wallet)
+    }
+
+    #[must_use]
+    pub fn lock_wallet(&self) -> Arc<dyn LockWalletUseCase> {
+        Arc::clone(&self.lock_wallet)
+    }
+
+    #[must_use]
+    pub fn generate_wallet_key(&self) -> Arc<dyn GenerateWalletKeyUseCase> {
+        Arc::clone(&self.generate_wallet_key)
+    }
+
+    #[must_use]
+    pub fn list_wallet_keys(&self) -> Arc<dyn ListWalletKeysUseCase> {
+        Arc::clone(&self.list_wallet_keys)
+    }
+
+    #[must_use]
+    pub fn sign_wallet_data(&self) -> Arc<dyn SignWalletDataUseCase> {
+        Arc::clone(&self.sign_wallet_data)
+    }
+
+    #[must_use]
+    pub fn delete_wallet_key(&self) -> Arc<dyn DeleteWalletKeyUseCase> {
+        Arc::clone(&self.delete_wallet_key)
+    }
 }
 
 /// Wires the application with persistent public-profile metadata storage.
 #[must_use]
 pub fn compose() -> ApplicationServices {
-    compose_with_repository(Arc::new(JsonWalletProfileRepository::at_default_location()))
+    compose_with_adapters(
+        Arc::new(JsonWalletProfileRepository::at_default_location()),
+        Arc::new(UnavailableWalletSecurity),
+    )
+}
+
+/// Wires persistent public profiles with an explicit process-local custody
+/// adapter for the standalone development harness.
+#[must_use]
+pub fn compose_headless() -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    compose_with_adapters(
+        Arc::new(JsonWalletProfileRepository::at_default_location()),
+        Arc::new(DevelopmentWalletSecurity::new(clock, random)),
+    )
 }
 
 /// Wires deterministic process-local services for tests and development tools.
 #[must_use]
 pub fn compose_in_memory() -> ApplicationServices {
-    compose_with_repository(Arc::new(InMemoryWalletProfileRepository::new()))
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    compose_with_adapters(
+        Arc::new(InMemoryWalletProfileRepository::new()),
+        Arc::new(DevelopmentWalletSecurity::new(clock, random)),
+    )
 }
 
-fn compose_with_repository<R>(repository: Arc<R>) -> ApplicationServices
+fn compose_with_adapters<R, S>(repository: Arc<R>, security: Arc<S>) -> ApplicationServices
 where
     R: WalletProfileRepository + 'static,
+    S: WalletProtectionPort + WalletKeyOperationPort + 'static,
 {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
@@ -85,20 +144,38 @@ where
     let list_wallet_profiles = Arc::new(ListWalletProfilesService::new(Arc::clone(&repository)));
     let select_wallet_profile = Arc::new(SelectWalletProfileService::new(Arc::clone(&repository)));
     let get_active_wallet_profile = Arc::new(GetActiveWalletProfileService::new(repository));
+    let protection = Arc::new(WalletProtectionService::new(Arc::clone(&security)));
+    let keys = Arc::new(WalletKeyService::new(security));
 
-    ApplicationServices::new(
+    let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
+    let initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase> = protection.clone();
+    let unlock_wallet: Arc<dyn UnlockWalletUseCase> = protection.clone();
+    let lock_wallet: Arc<dyn LockWalletUseCase> = protection;
+    let generate_wallet_key: Arc<dyn GenerateWalletKeyUseCase> = keys.clone();
+    let list_wallet_keys: Arc<dyn ListWalletKeysUseCase> = keys.clone();
+    let sign_wallet_data: Arc<dyn SignWalletDataUseCase> = keys.clone();
+    let delete_wallet_key: Arc<dyn DeleteWalletKeyUseCase> = keys;
+
+    ApplicationServices {
         create_wallet_profile,
         list_wallet_profiles,
         select_wallet_profile,
         get_active_wallet_profile,
-    )
+        get_wallet_security_status,
+        initialize_wallet_security,
+        unlock_wallet,
+        lock_wallet,
+        generate_wallet_key,
+        list_wallet_keys,
+        sign_wallet_data,
+        delete_wallet_key,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use oxid_wallet_application::CreateWalletProfileCommand;
-
     use super::*;
+    use oxid_wallet_application::{CreateWalletProfileCommand, WalletProfileSecurityCommand};
 
     #[test]
     fn composed_application_executes_the_vertical_slice() {
@@ -119,5 +196,45 @@ mod tests {
                 .expect("composed query should succeed"),
             vec![result]
         );
+    }
+
+    #[test]
+    fn in_memory_composition_exposes_only_development_protection() {
+        let services = compose_in_memory();
+        let command = WalletProfileSecurityCommand {
+            profile_id: "profile_test".to_owned(),
+        };
+        let initial = services
+            .get_wallet_security_status()
+            .execute(command.clone())
+            .expect("development status should be available");
+
+        assert_eq!(initial.state_name(), "Uninitialized");
+        assert_eq!(initial.protection_name(), "Development only");
+        assert_eq!(
+            services
+                .initialize_wallet_security()
+                .execute(command)
+                .expect("development setup should succeed")
+                .state_name(),
+            "Unlocked"
+        );
+    }
+
+    #[test]
+    fn production_facing_composition_fails_closed_without_native_custody() {
+        let services = compose_with_adapters(
+            Arc::new(InMemoryWalletProfileRepository::new()),
+            Arc::new(UnavailableWalletSecurity),
+        );
+        let status = services
+            .get_wallet_security_status()
+            .execute(WalletProfileSecurityCommand {
+                profile_id: "profile_test".to_owned(),
+            })
+            .expect("unavailable status should be safely reportable");
+
+        assert_eq!(status.state_name(), "Unavailable");
+        assert_eq!(status.protection_name(), "Not connected");
     }
 }

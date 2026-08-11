@@ -45,7 +45,17 @@ OXID_REPOSITORY_ROOT="$repository_root" \
     --spec "$repository_root/tests/mobile/ios/project.yml" \
     --project "$generated_project_root"
 
-/usr/bin/xcodebuild test \
+xcode_developer_dir="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p)"
+host_user="$(id -un)"
+env -i \
+  "DEVELOPER_DIR=$xcode_developer_dir" \
+  "HOME=$HOME" \
+  "LANG=${LANG:-en_US.UTF-8}" \
+  "LOGNAME=$host_user" \
+  "PATH=/usr/bin:/bin:/usr/sbin:/sbin" \
+  "TMPDIR=${TMPDIR:-/tmp}" \
+  "USER=$host_user" \
+  /usr/bin/xcodebuild test \
   -project "$generated_project_root/OxidMobileSmoke.xcodeproj" \
   -scheme OxidUITests \
   -destination "platform=iOS Simulator,id=$device" \
