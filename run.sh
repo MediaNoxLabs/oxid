@@ -43,6 +43,7 @@ done
 run_core() {
   cargo fmt --all --check
   ./scripts/check-architecture.sh
+  ./scripts/check-midnight-sources.sh
   cargo clippy --workspace --all-targets -- -D warnings
   cargo test --workspace
 }

@@ -31,3 +31,8 @@ source of ledger-relative Cargo paths or production configuration.
   adapters.
 - Mobile proof feasibility must be measured rather than inferred from desktop.
 - This proposal does not select or authorize a dependency today.
+
+The repository-location and immutable-revision prerequisites are documented and
+enforced in [Midnight Git source policy](../dependencies/midnight-git-sources.md).
+That policy narrows acceptable sources without accepting this ADR or selecting
+a particular upstream commit.

@@ -17,3 +17,7 @@ once public releases begin.
 - Migration inventory for the Midnight ledger wallet prototype.
 - Blueprint-to-repository architecture decision catalog with explicit delivery
   states and research gates.
+- Project-local Pi peer-review extension and skill at version 0.5.0.
+- Immutable official-GitHub source enforcement for future Midnight ledger and
+  proof dependencies.
+- Reproducible Dioxus build, install, and launch command for the iOS simulator.

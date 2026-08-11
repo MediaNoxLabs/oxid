@@ -44,6 +44,9 @@ before migrating later work.
   0.7 line selected by the blueprint and isolated in `ui-dioxus`/`apps/oxid`.
 - The initial profile contains only an identifier, normalized public label, and
   creation time. It contains no seed, private key, DID, or credential material.
+- Future ledger and proof dependencies must replace prototype-relative paths
+  and mutable fork branches with the official GitHub sources and full commit
+  pins defined in [the Midnight Git source policy](../dependencies/midnight-git-sources.md).
 
 ## Material intentionally excluded
 

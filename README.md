@@ -62,9 +62,19 @@ just full
 ```
 
 The Dioxus package has `desktop`, `mobile`, and `web` feature boundaries. The
-desktop feature is the default for the first slice; platform host projects and
-secure storage arrive as explicit mobile adapters rather than generated code
-committed prematurely.
+desktop feature is the default for the first slice. On macOS with Xcode and
+Rustup installed, build, install, and launch the mobile feature in an available
+iPhone simulator with:
+
+```bash
+just ios-run
+```
+
+Set `OXID_IOS_DEVICE` to a simulator UDID to select a particular device. The
+script obtains the pinned Dioxus CLI from the locked Nix flake but deliberately
+uses the host Xcode and Rustup toolchain for Apple SDK discovery. Generated
+platform output and signing state remain uncommitted; secure storage arrives as
+an explicit mobile adapter.
 
 ## Repository layout
 
@@ -89,6 +99,11 @@ The capable Midnight/SSI prototype was researched at
 in vertical slices. Ledger-relative dependencies, demo seeds, pre-production
 keys, generated proof artifacts, and vendored JavaScript are intentionally not
 carried into M0.
+
+M0 has no Midnight Cargo dependency. Future ledger and proof adapters must use
+official GitHub URLs with immutable commit pins; the policy and current upstream
+observations are recorded in
+[docs/dependencies/midnight-git-sources.md](docs/dependencies/midnight-git-sources.md).
 
 ## Security
 

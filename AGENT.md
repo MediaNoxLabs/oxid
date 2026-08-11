@@ -106,6 +106,13 @@ Direnv users can run `direnv allow`. The shell provides Rust, Cargo tooling,
 `dx`, `just`, Node.js, and the pinned project-local Pi packages from
 `.pi/settings.json`.
 
+The Pi review integration is pinned as
+`@input-output-hk/agent-review-pi@0.5.0`. That package declares both its review
+extension and bundled review skill in Pi metadata; the shell installs them
+together into the ignored project-local `.pi/npm` tree. Installation requires
+an existing GitHub token with package-read access. Never write that token into
+repository configuration or diagnostics.
+
 Fast validation:
 
 ```bash
@@ -127,7 +134,15 @@ cargo test -p oxid-adapter-storage-memory
 cargo check -p oxid-app
 ./run.sh coverage --strict
 ./scripts/check-architecture.sh
+./scripts/check-midnight-sources.sh
 ```
+
+On macOS with Xcode and Rustup installed, `just ios-run` uses the Dioxus CLI
+from the locked flake and the host Apple/Rust toolchain to build, install, and
+launch the mobile feature. The Nix shell's non-Apple `xcrun` compatibility tool
+must not be used for simulator discovery. `OXID_IOS_DEVICE=<UDID>` selects a
+specific simulator. The first verified smoke test used an arm64 iPhone
+simulator and rendered the Create Wallet Profile screen successfully.
 
 Run repository commands from `nix develop` unless CI performs the equivalent
 setup. Keep `Cargo.lock` committed and use workspace dependencies rather than
@@ -176,6 +191,9 @@ to silence the shell probe.
   adapters; the Dioxus UI and executable shell are excluded from this core
   threshold and remain compile-gated.
 - `scripts/check-architecture.sh` enforces the initial inward dependency graph.
+- `scripts/check-midnight-sources.sh` permits known Midnight ledger/proof crates
+  only from the official GitHub repositories with full immutable `rev` pins.
+  M0 intentionally selects none; ADR-0015 remains the dependency gate.
 - Security and dependency-policy checks remain distinct from test coverage.
 - The Dioxus desktop graph's bounded RustSec exceptions are documented in
   `docs/security/advisory-exceptions.md`; review them on every Dioxus/Wry update

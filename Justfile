@@ -23,8 +23,14 @@ lint:
 architecture:
     ./scripts/check-architecture.sh
 
+sources:
+    ./scripts/check-midnight-sources.sh
+
 run:
     cargo run -p oxid-app
+
+ios-run:
+    ./scripts/run-ios-simulator.sh
 
 nix-check:
     nix flake check --print-build-logs

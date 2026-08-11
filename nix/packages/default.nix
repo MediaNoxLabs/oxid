@@ -41,6 +41,8 @@
         };
       };
 
+      packages.dioxus-cli = pkgs.dioxus-cli;
+
       checks.package = self'.packages.default;
       formatter = pkgs.nixfmt;
     };

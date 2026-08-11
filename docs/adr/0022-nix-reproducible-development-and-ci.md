@@ -25,6 +25,11 @@ commands aligned. Direnv is an optional entry point, not a second environment.
 Private credentials remain inherited user state and are never committed by the
 shell.
 
+Project-local Pi configuration pins the external-review package; that package's
+own metadata registers its extension and skill together. Apple simulator builds
+use the flake's Dioxus CLI while delegating SDK discovery and target compilation
+to the host Xcode and Rustup toolchain.
+
 ## Consequences
 
 - Local and CI gates share versions and commands.
