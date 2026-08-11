@@ -29,7 +29,7 @@ use midnight_transient_crypto::{
 use oxid_wallet_application::WalletTransactionPortError;
 use oxid_wallet_domain::WalletTransferSubmissionMode;
 use rand::rngs::OsRng;
-use reqwest::{StatusCode, Url};
+use reqwest::{Method, StatusCode, Url, header::CONTENT_TYPE};
 use serde_json::{Value, json};
 use subxt::{OnlineClient, SubstrateConfig, dynamic};
 use tokio::time::timeout;
@@ -245,7 +245,7 @@ struct ChainTip {
 async fn fetch_chain_tip(endpoint: &str) -> Result<ChainTip, WalletTransactionPortError> {
     ensure_tls_provider()?;
     let client = chain_tip_client()?;
-    let request = chain_tip_request(&client, endpoint)?;
+    let request = chain_tip_request(endpoint)?;
     let response = client
         .execute(request)
         .await
@@ -257,15 +257,17 @@ async fn fetch_chain_tip(endpoint: &str) -> Result<ChainTip, WalletTransactionPo
     decode_chain_tip_body(&body)
 }
 
-fn chain_tip_request(
-    client: &reqwest::Client,
-    endpoint: &str,
-) -> Result<reqwest::Request, WalletTransactionPortError> {
-    client
-        .post(endpoint)
-        .json(&json!({ "query": CHAIN_TIP_QUERY, "variables": {} }))
-        .build()
-        .map_err(|_| WalletTransactionPortError::Unavailable)
+fn chain_tip_request(endpoint: &str) -> Result<reqwest::Request, WalletTransactionPortError> {
+    let endpoint = Url::parse(endpoint).map_err(|_| WalletTransactionPortError::Unavailable)?;
+    let body = serde_json::to_vec(&json!({ "query": CHAIN_TIP_QUERY, "variables": {} }))
+        .map_err(|_| WalletTransactionPortError::InvalidData)?;
+    let mut request = reqwest::Request::new(Method::POST, endpoint);
+    request.headers_mut().insert(
+        CONTENT_TYPE,
+        reqwest::header::HeaderValue::from_static("application/json"),
+    );
+    *request.body_mut() = Some(reqwest::Body::from(body));
+    Ok(request)
 }
 
 fn chain_tip_client() -> Result<reqwest::Client, WalletTransactionPortError> {
@@ -1170,11 +1172,17 @@ mod tests {
 
         assert_eq!(tip.timestamp, Timestamp::from_secs(1_750_000_123));
         assert_eq!(tip.parameters, INITIAL_PARAMETERS);
-        let client = chain_tip_client().expect("chain tip client builds");
-        let request = chain_tip_request(&client, "http://127.0.0.1:8088/api/v1/graphql")
+        let request = chain_tip_request("http://127.0.0.1:8088/api/v1/graphql")
             .expect("chain tip request builds");
         assert_eq!(request.method(), reqwest::Method::POST);
         assert_eq!(request.url().path(), "/api/v1/graphql");
+        assert_eq!(
+            request
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
         assert!(
             request
                 .body()
@@ -1185,7 +1193,7 @@ mod tests {
                     == Some(Value::String(CHAIN_TIP_QUERY.to_owned())))
         );
         assert_eq!(
-            chain_tip_request(&client, "://invalid").err(),
+            chain_tip_request("://invalid").err(),
             Some(WalletTransactionPortError::Unavailable)
         );
         assert_eq!(
