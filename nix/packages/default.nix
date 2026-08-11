@@ -9,6 +9,7 @@
         pkgs.gtk3
         pkgs.libsoup_3
         pkgs.webkitgtk_4_1
+        pkgs.xdotool
       ];
       linuxNativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         pkgs.wrapGAppsHook3

@@ -122,6 +122,11 @@ Nix is the supported environment and the flake lock is authoritative:
 nix develop
 ```
 
+The Linux Dioxus desktop graph links `libxdo`; keep `pkgs.xdotool` in both the
+Linux development-shell libraries and package build inputs. macOS validation
+cannot detect this linker requirement, so the hosted Linux gate is the
+cross-platform evidence for it.
+
 Direnv users can run `direnv allow`. The shell provides Rust, Cargo tooling,
 `dx`, `just`, Node.js, and the pinned project-local Pi packages from
 `.pi/settings.json`.

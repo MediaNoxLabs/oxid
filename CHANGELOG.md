@@ -28,3 +28,4 @@ once public releases begin.
 - UI-neutral application composition plus a versioned NDJSON headless wallet
   harness with capability discovery, profile creation, safe errors, and
   graceful shutdown.
+- Linux Nix inputs for Dioxus's `libxdo` linker requirement.

@@ -9,6 +9,7 @@
         pkgs.gtk3
         pkgs.libsoup_3
         pkgs.webkitgtk_4_1
+        pkgs.xdotool
       ];
     in
     {
