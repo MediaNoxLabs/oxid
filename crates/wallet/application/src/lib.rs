@@ -4,6 +4,7 @@
 
 use std::{error::Error, fmt, fmt::Write as _, sync::Arc};
 
+use oxid_foundation::OpaqueIdError;
 use oxid_platform_ports::{ClockPort, PlatformError, RandomPort};
 use oxid_wallet_domain::{ProfileName, ProfileNameError, WalletProfile, WalletProfileId};
 
@@ -35,6 +36,7 @@ impl From<&WalletProfile> for WalletProfileView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalletProfileRepositoryError {
     Conflict,
+    NotFound,
     Unavailable,
 }
 
@@ -42,6 +44,7 @@ impl fmt::Display for WalletProfileRepositoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
             Self::Conflict => "wallet profile already exists",
+            Self::NotFound => "wallet profile was not found",
             Self::Unavailable => "wallet profile storage is unavailable",
         };
         formatter.write_str(message)
@@ -55,6 +58,13 @@ pub trait WalletProfileRepository: Send + Sync {
     fn save(&self, profile: WalletProfile) -> Result<(), WalletProfileRepositoryError>;
 
     fn list(&self) -> Result<Vec<WalletProfile>, WalletProfileRepositoryError>;
+
+    fn set_active(
+        &self,
+        id: &WalletProfileId,
+    ) -> Result<WalletProfile, WalletProfileRepositoryError>;
+
+    fn active(&self) -> Result<Option<WalletProfile>, WalletProfileRepositoryError>;
 }
 
 /// Incoming port consumed by UI, CLI, deep-link, and test adapters.
@@ -63,6 +73,30 @@ pub trait CreateWalletProfileUseCase: Send + Sync {
         &self,
         command: CreateWalletProfileCommand,
     ) -> Result<WalletProfileView, CreateWalletProfileError>;
+}
+
+/// Incoming query for public wallet profile metadata.
+pub trait ListWalletProfilesUseCase: Send + Sync {
+    fn execute(&self) -> Result<Vec<WalletProfileView>, ReadWalletProfilesError>;
+}
+
+/// Input owned by the Select Wallet Profile application boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectWalletProfileCommand {
+    pub profile_id: String,
+}
+
+/// Incoming command for choosing the active wallet profile.
+pub trait SelectWalletProfileUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: SelectWalletProfileCommand,
+    ) -> Result<WalletProfileView, SelectWalletProfileError>;
+}
+
+/// Incoming query for the currently active wallet profile.
+pub trait GetActiveWalletProfileUseCase: Send + Sync {
+    fn execute(&self) -> Result<Option<WalletProfileView>, ReadWalletProfilesError>;
 }
 
 /// Structured failures for Create Wallet Profile.
@@ -88,6 +122,40 @@ impl fmt::Display for CreateWalletProfileError {
 }
 
 impl Error for CreateWalletProfileError {}
+
+/// Structured failures for profile metadata queries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadWalletProfilesError {
+    Persistence(WalletProfileRepositoryError),
+}
+
+impl fmt::Display for ReadWalletProfilesError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Persistence(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for ReadWalletProfilesError {}
+
+/// Structured failures for selecting an active profile.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectWalletProfileError {
+    InvalidIdentifier(OpaqueIdError),
+    Persistence(WalletProfileRepositoryError),
+}
+
+impl fmt::Display for SelectWalletProfileError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidIdentifier(error) => error.fmt(formatter),
+            Self::Persistence(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for SelectWalletProfileError {}
 
 /// Application service for the first Oxid vertical slice.
 pub struct CreateWalletProfileService<R, C, N> {
@@ -139,6 +207,90 @@ where
     }
 }
 
+/// Application service for listing public profile metadata.
+pub struct ListWalletProfilesService<R> {
+    repository: Arc<R>,
+}
+
+impl<R> ListWalletProfilesService<R> {
+    #[must_use]
+    pub const fn new(repository: Arc<R>) -> Self {
+        Self { repository }
+    }
+}
+
+impl<R> ListWalletProfilesUseCase for ListWalletProfilesService<R>
+where
+    R: WalletProfileRepository + 'static,
+{
+    fn execute(&self) -> Result<Vec<WalletProfileView>, ReadWalletProfilesError> {
+        let mut profiles = self
+            .repository
+            .list()
+            .map_err(ReadWalletProfilesError::Persistence)?;
+        profiles.sort_by(|left, right| {
+            left.created_at()
+                .cmp(&right.created_at())
+                .then_with(|| left.id().cmp(right.id()))
+        });
+
+        Ok(profiles.iter().map(WalletProfileView::from).collect())
+    }
+}
+
+/// Application service for selecting the active wallet profile.
+pub struct SelectWalletProfileService<R> {
+    repository: Arc<R>,
+}
+
+impl<R> SelectWalletProfileService<R> {
+    #[must_use]
+    pub const fn new(repository: Arc<R>) -> Self {
+        Self { repository }
+    }
+}
+
+impl<R> SelectWalletProfileUseCase for SelectWalletProfileService<R>
+where
+    R: WalletProfileRepository + 'static,
+{
+    fn execute(
+        &self,
+        command: SelectWalletProfileCommand,
+    ) -> Result<WalletProfileView, SelectWalletProfileError> {
+        let id = WalletProfileId::parse(command.profile_id)
+            .map_err(SelectWalletProfileError::InvalidIdentifier)?;
+        self.repository
+            .set_active(&id)
+            .map(|profile| WalletProfileView::from(&profile))
+            .map_err(SelectWalletProfileError::Persistence)
+    }
+}
+
+/// Application service for restoring the selected wallet profile.
+pub struct GetActiveWalletProfileService<R> {
+    repository: Arc<R>,
+}
+
+impl<R> GetActiveWalletProfileService<R> {
+    #[must_use]
+    pub const fn new(repository: Arc<R>) -> Self {
+        Self { repository }
+    }
+}
+
+impl<R> GetActiveWalletProfileUseCase for GetActiveWalletProfileService<R>
+where
+    R: WalletProfileRepository + 'static,
+{
+    fn execute(&self) -> Result<Option<WalletProfileView>, ReadWalletProfilesError> {
+        self.repository
+            .active()
+            .map(|profile| profile.as_ref().map(WalletProfileView::from))
+            .map_err(ReadWalletProfilesError::Persistence)
+    }
+}
+
 fn profile_id(mut bytes: [u8; 16]) -> Result<WalletProfileId, CreateWalletProfileError> {
     // RFC 9562 UUIDv4 variant/version bits make the random identifier familiar
     // without leaking a UUID crate type into Oxid's domain.
@@ -172,6 +324,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingRepository {
         profiles: Mutex<Vec<WalletProfile>>,
+        active_profile_id: Mutex<Option<String>>,
     }
 
     impl WalletProfileRepository for RecordingRepository {
@@ -188,6 +341,49 @@ mod tests {
                 .lock()
                 .map(|profiles| profiles.clone())
                 .map_err(|_| WalletProfileRepositoryError::Unavailable)
+        }
+
+        fn set_active(
+            &self,
+            id: &WalletProfileId,
+        ) -> Result<WalletProfile, WalletProfileRepositoryError> {
+            let profiles = self
+                .profiles
+                .lock()
+                .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+            let profile = profiles
+                .iter()
+                .find(|profile| profile.id() == id)
+                .cloned()
+                .ok_or(WalletProfileRepositoryError::NotFound)?;
+            *self
+                .active_profile_id
+                .lock()
+                .map_err(|_| WalletProfileRepositoryError::Unavailable)? =
+                Some(id.as_str().to_owned());
+
+            Ok(profile)
+        }
+
+        fn active(&self) -> Result<Option<WalletProfile>, WalletProfileRepositoryError> {
+            let profiles = self
+                .profiles
+                .lock()
+                .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+            let active_profile_id = self
+                .active_profile_id
+                .lock()
+                .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+            let Some(active_profile_id) = active_profile_id.as_deref() else {
+                return Ok(None);
+            };
+
+            profiles
+                .iter()
+                .find(|profile| profile.id().as_str() == active_profile_id)
+                .cloned()
+                .map(Some)
+                .ok_or(WalletProfileRepositoryError::NotFound)
         }
     }
 
@@ -249,6 +445,58 @@ mod tests {
             }),
             Err(CreateWalletProfileError::InvalidName(
                 ProfileNameError::Empty
+            ))
+        );
+    }
+
+    #[test]
+    fn lists_selects_and_restores_profiles_through_focused_use_cases() {
+        let repository = Arc::new(RecordingRepository::default());
+        let create = CreateWalletProfileService::new(
+            Arc::clone(&repository),
+            Arc::new(FixedClock),
+            Arc::new(FixedRandom),
+        );
+        let list = ListWalletProfilesService::new(Arc::clone(&repository));
+        let select = SelectWalletProfileService::new(Arc::clone(&repository));
+        let active = GetActiveWalletProfileService::new(Arc::clone(&repository));
+
+        let created = create
+            .execute(CreateWalletProfileCommand {
+                display_name: "Primary".to_owned(),
+            })
+            .expect("profile should be created");
+
+        assert_eq!(
+            list.execute().expect("profiles should load"),
+            vec![created.clone()]
+        );
+        assert_eq!(active.execute().expect("active query should work"), None);
+        assert_eq!(
+            select
+                .execute(SelectWalletProfileCommand {
+                    profile_id: created.id.clone(),
+                })
+                .expect("profile should be selectable"),
+            created.clone()
+        );
+        assert_eq!(
+            active.execute().expect("selection should be restored"),
+            Some(created)
+        );
+    }
+
+    #[test]
+    fn selecting_an_unknown_profile_returns_not_found() {
+        let repository = Arc::new(RecordingRepository::default());
+        let select = SelectWalletProfileService::new(repository);
+
+        assert_eq!(
+            select.execute(SelectWalletProfileCommand {
+                profile_id: "profile_missing".to_owned(),
+            }),
+            Err(SelectWalletProfileError::Persistence(
+                WalletProfileRepositoryError::NotFound
             ))
         );
     }

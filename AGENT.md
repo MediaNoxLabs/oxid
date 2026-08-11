@@ -24,9 +24,10 @@ before adding Cardano, Midnight, DID, VC, OIDC, or DIDComm SDKs:
 6. Dioxus UI adapter;
 7. composition root.
 
-The only complete use case remains **Create Wallet Profile**. It is available
-through both the Dioxus shell and the standalone `oxid-headless` incoming
-adapter. ADR-0023 now
+The complete profile lifecycle now includes **create, list, select, and restore
+active wallet profile**. It is available through both the Dioxus shell and the
+standalone `oxid-headless` incoming adapter, with public metadata persisted by a
+replaceable JSON adapter. ADR-0023 now
 prioritizes staged functional parity with the reviewed Midnight mobile wallet.
 The ordered public backlog is
 [issue #2](https://github.com/MediaNoxLabs/oxid/issues/2); implement it in
@@ -85,10 +86,11 @@ The blueprint's ADR summaries are materialized as ADR-0001 through ADR-0020 in
 `docs/adr/README.md`. ADR-0021 records the staged prototype migration and
 ADR-0022 records Nix as the reproducible environment. ADR-0023 records the
 post-M0 prototype-parity priority. ADR-0024 records the versioned NDJSON
-headless adapter and forbids secret-bearing results. ADR status and delivery
-state are deliberately separate: an accepted future boundary is binding but
-does not mean the capability is implemented. Proposed ADRs are gates, not
-dependency authorization.
+headless adapter and forbids secret-bearing results. ADR-0025 separates durable
+public profile metadata from unresolved protected secret storage. ADR status
+and delivery state are deliberately separate: an accepted future boundary is
+binding but does not mean the capability is implemented. Proposed ADRs are
+gates, not dependency authorization.
 
 Current package ownership:
 
@@ -99,6 +101,7 @@ Current package ownership:
 | `crates/wallet/application` | Incoming use cases and owned outgoing repository ports. |
 | `crates/platform/ports` | Clock and randomness capabilities used by applications. |
 | `crates/adapters/storage-memory` | Development/test implementation of wallet persistence. |
+| `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter and presentation state. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -156,6 +159,7 @@ Useful focused commands:
 cargo test -p oxid-wallet-domain
 cargo test -p oxid-wallet-application
 cargo test -p oxid-adapter-storage-memory
+cargo test -p oxid-adapter-storage-json
 cargo test -p oxid-headless
 cargo check -p oxid-app
 ./run.sh coverage --strict
@@ -168,9 +172,29 @@ from the locked flake and the host Apple/Rust toolchain to build, install, and
 launch the mobile feature. The Nix shell's non-Apple `xcrun` compatibility tool
 must not be used for simulator discovery. `OXID_IOS_DEVICE=<UDID>` selects a
 specific simulator. The first verified smoke test used an arm64 iPhone
-simulator and rendered the Create Wallet Profile screen successfully. The
-prototype-derived wallet shell was subsequently built, launched, and visually
-verified through the same command.
+simulator. The prototype-derived shell and first-launch profile gateway were
+subsequently built, launched, and visually verified through the same command.
+`just android-run` performs the equivalent Dioxus build, install, and launch
+using an Android SDK/NDK plus a connected device or local AVD. Generated
+Gradle/Xcode output remains under ignored `target/` paths.
+
+`just ios-smoke` generates an ignored XCUITest project from
+`tests/mobile/ios/project.yml`, resets only the installed Oxid simulator data,
+and verifies create/select/restart/restore through visible UI elements. `just
+android-smoke` resets only Oxid's Android app data, drives the first-run action
+with keyboard focus events, validates the durable JSON document in the app
+sandbox, and verifies restart. Both commands are destructive to the selected
+simulator's Oxid test profile state.
+
+Android processes do not reliably provide `HOME`, so `directories` cannot
+resolve the intended durable location there. The JSON adapter deliberately uses
+the initialized `ndk-context` plus JNI to resolve `Context.getFilesDir()` on
+Android. Path-resolution failure makes the repository unavailable; it never
+falls back to temporary or cache storage. Keep that audited unsafe boundary
+isolated and do not replace it with cache storage or a package-name-derived
+filesystem path. Workspace linting denies unsafe code, every other crate
+explicitly forbids it, and the architecture checker rejects unsafe source
+outside that reviewed adapter file.
 
 Run repository commands from `nix develop` unless CI performs the equivalent
 setup. Keep `Cargo.lock` committed and use workspace dependencies rather than
@@ -239,6 +263,9 @@ to silence the shell probe.
   payloads, or raw external error bodies that may contain them.
 - Validate profile labels and all future QR/deep-link/protocol input at the
   boundary before use.
+- The JSON profile store contains public labels, identifiers, timestamps, and
+  active selection only. It serializes one repository instance; overlapping
+  headless processes must use distinct `OXID_PROFILE_STORE_PATH` values.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.

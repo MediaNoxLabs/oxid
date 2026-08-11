@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Source: Product direction and [parity epic](https://github.com/MediaNoxLabs/oxid/issues/2)
-- Implementation state: Wallet shell slice implemented; capability backlog open
+- Implementation state: Wallet shell, headless harness, and profile lifecycle implemented; capability backlog open
 
 ## Context
 
@@ -26,9 +26,10 @@ bounded vertical slices, starting with the safe wallet presentation shell and
 then adding capabilities behind Oxid-owned domain types, application use cases,
 focused ports, and reviewed adapters.
 
-Keep Create Wallet Profile throughout the migration. Its final onboarding,
-selection, and persistence integration is tracked separately in
-[issue #1](https://github.com/MediaNoxLabs/oxid/issues/1).
+Keep Create Wallet Profile throughout the migration. Its onboarding, selection,
+and public-metadata persistence integration is delivered under
+[issue #1](https://github.com/MediaNoxLabs/oxid/issues/1); protected key custody
+remains gated by ADR-0017.
 
 This reprioritizes delivery, not architecture. Proposed ADR-0015 through
 ADR-0018 remain gates for Midnight, SSI, secret storage, and error-taxonomy

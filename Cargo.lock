@@ -1326,6 +1326,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "directories"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
 name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3333,6 +3342,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-adapter-storage-json"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "jni 0.21.1",
+ "ndk-context",
+ "oxid-foundation",
+ "oxid-wallet-application",
+ "oxid-wallet-domain",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oxid-adapter-storage-memory"
 version = "0.1.0"
 dependencies = [
@@ -3355,6 +3378,7 @@ name = "oxid-composition"
 version = "0.1.0"
 dependencies = [
  "oxid-adapter-platform-system",
+ "oxid-adapter-storage-json",
  "oxid-adapter-storage-memory",
  "oxid-wallet-application",
 ]

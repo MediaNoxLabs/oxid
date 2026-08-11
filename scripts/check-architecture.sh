@@ -75,15 +75,27 @@ check_workspace_dependencies oxid-wallet-application \
   oxid-foundation oxid-platform-ports oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-foundation oxid-wallet-application oxid-wallet-domain
+check_workspace_dependencies oxid-adapter-storage-json \
+  oxid-foundation oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-platform-system \
   oxid-foundation oxid-platform-ports
 check_workspace_dependencies oxid-ui-dioxus oxid-wallet-application
 check_workspace_dependencies oxid-composition \
-  oxid-adapter-platform-system oxid-adapter-storage-memory \
+  oxid-adapter-platform-system oxid-adapter-storage-json \
+  oxid-adapter-storage-memory \
   oxid-wallet-application
 check_workspace_dependencies oxid-app oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
   oxid-composition oxid-wallet-application
+
+unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' || true)"
+if [ "$unsafe_sources" != "crates/adapters/storage-json/src/lib.rs" ]; then
+  echo "Unsafe Rust is permitted only in the reviewed Android profile-path boundary." >&2
+  if [ -n "$unsafe_sources" ]; then
+    echo "$unsafe_sources" >&2
+  fi
+  exit 1
+fi
 
 check_no_external_dependencies oxid-foundation
 check_no_external_dependencies oxid-wallet-domain

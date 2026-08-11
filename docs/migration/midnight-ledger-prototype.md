@@ -19,18 +19,18 @@ before migrating later work.
 
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
-| `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | M0 profile slice reimplemented |
+| `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
 | `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Deferred to M2 |
 | `wallet-core/secret_storage` | Multi-curve keys, encrypted files, redb, key references | platform key/secret ports plus platform-backed and development adapters | Deferred; security review required |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification | credential domain/store/verification ports and adapters | Deferred to M3/M5 |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
-| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile and safe presentation shell reimplemented; capability pages deferred |
-| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport and profile flow implemented; chain/SSI flows queued |
+| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile onboarding/management and safe presentation shell reimplemented; capability pages deferred |
+| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport and complete profile lifecycle implemented; chain/SSI flows queued |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Deferred to M2 |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated benchmarks/fixtures only when an adapter needs them | Not product code |
-| Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Deferred until mobile capability slice |
+| Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch through repository scripts; native bridges remain deferred |
 
 ## M0 migration decisions
 
@@ -76,6 +76,22 @@ and literal shutdown alias from the prototype. It deliberately does not retain
 the mandatory startup seed, raw external errors, wallet-facade coupling, or the
 bootstrap response containing `controllerSkHex`. ADR-0024 defines the durable
 protocol and secret-handling boundary.
+
+## Third post-M0 slice: integrated profile lifecycle
+
+[Issue #1](https://github.com/MediaNoxLabs/oxid/issues/1) turns the M0 profile
+form into the application entry point. First launch now gates on profile
+creation, an existing public profile can be selected from onboarding or the
+wallet profile page, and the active selection restores on a later launch. The
+same create/list/select/active sequence is exposed through the headless harness
+for deterministic flow testing.
+
+The JSON adapter introduced by ADR-0025 persists only versioned public profile
+metadata. It is not the prototype's key database or encrypted secret store and
+does not resolve ADR-0017. Dioxus continues to call application use cases rather
+than storage directly. Both mobile target graphs compile from the same
+composition, with repository scripts providing local simulator/emulator smoke
+entry points.
 
 ## Material intentionally excluded
 

@@ -8,9 +8,9 @@ It is designed for Android and iOS first, with desktop and web as secondary
 targets. Crypto assets and self-sovereign identity are peer capabilities rather
 than layers bolted onto one chain-specific frontend.
 
-> **Status:** M0 foundation plus the first prototype-parity slices. Create
-> Wallet Profile is still the only complete use case, now available through
-> both Dioxus and a standalone headless harness. The remaining shell
+> **Status:** M0 foundation plus the first prototype-parity slices. The wallet
+> profile lifecycle—create, list, select, persist, and restore—is available
+> through Dioxus and the standalone headless harness. The remaining shell
 > destinations deliberately label unconnected capabilities; Oxid is not ready
 > to hold real assets or identity credentials.
 
@@ -27,7 +27,7 @@ apps/oxid-headless ---------------------+--> wallet-application --> wallet-domai
           |                             |             |                    |
           +--> composition -------------+             v                    v
                     |                         platform-ports ------> foundation
-                    +--> storage-memory
+                    +--> storage-json / storage-memory
                     +--> platform-system
 ```
 
@@ -61,7 +61,9 @@ printf '%s\n' '{"protocol":"oxid.headless.v1","id":"demo-1","method":"system.cap
 
 Stdout is reserved for JSON responses. Start with `system.capabilities`; it
 distinguishes implemented methods from queued parity work. The protocol never
-returns raw private key or seed material.
+returns raw private key or seed material. Profile metadata persists in the
+platform application-data directory by default; set `OXID_PROFILE_STORE_PATH`
+to isolate an automation run.
 
 Common commands are also exposed through `just`:
 
@@ -88,6 +90,25 @@ script obtains the pinned Dioxus CLI from the locked Nix flake but deliberately
 uses the host Xcode and Rustup toolchain for Apple SDK discovery. Generated
 platform output and signing state remain uncommitted; secure storage arrives as
 an explicit mobile adapter.
+
+With an Android SDK/NDK and a connected device or configured AVD, build,
+install, and launch the same mobile feature with:
+
+```bash
+just android-run
+```
+
+Set `OXID_ANDROID_DEVICE` to an adb serial or `OXID_ANDROID_AVD` to an AVD name
+when automatic selection is not appropriate.
+
+The focused profile smoke tests reset Oxid's app data on their selected
+simulator/emulator, create and select the default profile, restart the process,
+and assert restoration:
+
+```bash
+just ios-smoke
+just android-smoke
+```
 
 ## Repository layout
 
@@ -117,8 +138,9 @@ carried into M0.
 The first post-M0 slice reimplements the prototype's recognizable mobile wallet
 shell without its SDK coupling. Its exact retained/excluded surface is recorded
 in [docs/migration/ui-shell-provenance.md](docs/migration/ui-shell-provenance.md).
-The profile page is retained during migration; final onboarding and profile
-selection are tracked in [issue #1](https://github.com/MediaNoxLabs/oxid/issues/1).
+The profile page is retained and now owns integrated onboarding, selection, and
+public-metadata persistence. Custody and protected secrets remain explicitly
+outside that record.
 
 M0 has no Midnight Cargo dependency. Future ledger and proof adapters must use
 official GitHub URLs with immutable commit pins; the policy and current upstream
@@ -127,8 +149,9 @@ observations are recorded in
 
 ## Security
 
-The current in-memory repository is development-only: it is neither durable nor
-a secret store. Never use this milestone to custody assets or credentials. See
+The JSON repository is durable only for public profile metadata; it is not a
+secret store. The in-memory repository remains development/test-only. Never use
+this milestone to custody assets or credentials. See
 [SECURITY.md](SECURITY.md) for reporting and the current threat boundaries.
 
 ## Contributing

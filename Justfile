@@ -35,6 +35,15 @@ headless:
 ios-run:
     ./scripts/run-ios-simulator.sh
 
+ios-smoke:
+    ./scripts/test-ios-profile-flow.sh
+
+android-run:
+    ./scripts/run-android-emulator.sh
+
+android-smoke:
+    ./scripts/test-android-profile-flow.sh
+
 nix-check:
     nix flake check --print-build-logs
 

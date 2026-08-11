@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Blueprint source: Sections 3 and 4
-- Implementation state: Enforced as policy; M0 has no foreign runtime fallback
+- Implementation state: Enforced; one reviewed Android JNI path boundary is isolated in the profile metadata adapter
 
 ## Context
 
@@ -21,6 +21,12 @@ core types or bypass application use cases.
 Dioxus web output is a Rust target and does not itself justify importing
 third-party JavaScript wallet logic. The prototype's vendored JS and WebView
 bridges are deliberately excluded from M0.
+
+Android durable application-path discovery is the first controlled native
+edge. ADR-0025 permits two documented unsafe pointer conversions in the JSON
+metadata adapter so checked JNI calls can resolve `Context.getFilesDir()`. Every
+other Oxid crate continues to forbid unsafe Rust, and the architecture gate
+rejects unsafe source outside that reviewed file.
 
 ## Consequences
 

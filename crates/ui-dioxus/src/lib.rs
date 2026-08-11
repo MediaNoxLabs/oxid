@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use oxid_wallet_application::{
-    CreateWalletProfileCommand, CreateWalletProfileUseCase, WalletProfileView,
+    CreateWalletProfileCommand, CreateWalletProfileUseCase, GetActiveWalletProfileUseCase,
+    ListWalletProfilesUseCase, SelectWalletProfileCommand, SelectWalletProfileUseCase,
+    WalletProfileView,
 };
 
 const STYLES: &str = include_str!("../assets/styles.css");
@@ -15,19 +17,45 @@ const STYLES: &str = include_str!("../assets/styles.css");
 #[derive(Clone)]
 pub struct WalletUiServices {
     create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
+    list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
+    select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
+    get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
 }
 
 impl WalletUiServices {
     #[must_use]
-    pub const fn new(create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>) -> Self {
+    pub const fn new(
+        create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
+        list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
+        select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
+        get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
+    ) -> Self {
         Self {
             create_wallet_profile,
+            list_wallet_profiles,
+            select_wallet_profile,
+            get_active_wallet_profile,
         }
     }
 
     #[must_use]
     pub fn create_wallet_profile(&self) -> Arc<dyn CreateWalletProfileUseCase> {
         Arc::clone(&self.create_wallet_profile)
+    }
+
+    #[must_use]
+    pub fn list_wallet_profiles(&self) -> Arc<dyn ListWalletProfilesUseCase> {
+        Arc::clone(&self.list_wallet_profiles)
+    }
+
+    #[must_use]
+    pub fn select_wallet_profile(&self) -> Arc<dyn SelectWalletProfileUseCase> {
+        Arc::clone(&self.select_wallet_profile)
+    }
+
+    #[must_use]
+    pub fn get_active_wallet_profile(&self) -> Arc<dyn GetActiveWalletProfileUseCase> {
+        Arc::clone(&self.get_active_wallet_profile)
     }
 }
 
@@ -79,12 +107,53 @@ enum CreationState {
     Failed(String),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ProfileSessionState {
+    Loading,
+    Onboarding,
+    Choosing(Vec<WalletProfileView>),
+    Active(WalletProfileView),
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ProfileListState {
+    Loading,
+    Ready(Vec<WalletProfileView>),
+    Failed(String),
+}
+
 /// Oxid's Dioxus incoming adapter and mobile-first application shell.
 #[component]
 pub fn App() -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut profile_session = use_signal(|| ProfileSessionState::Loading);
     let mut active_destination = use_signal(|| Destination::Assets);
     let mut menu_open = use_signal(|| false);
+    let services_for_load = services.clone();
+    use_effect(move || {
+        profile_session.set(load_profile_session(&services_for_load));
+    });
+
+    let session = profile_session.read().clone();
+    let ProfileSessionState::Active(active_profile) = session else {
+        return rsx! {
+            style { {STYLES} }
+            ProfileGateway {
+                state: session,
+                on_selected: move |profile| {
+                    profile_session.set(ProfileSessionState::Active(profile));
+                    active_destination.set(Destination::Assets);
+                },
+                on_retry: move |_| {
+                    profile_session.set(load_profile_session(&services));
+                },
+            }
+        };
+    };
+
     let active = *active_destination.read();
+    let profile_monogram = profile_monogram(&active_profile.display_name);
 
     rsx! {
         style { {STYLES} }
@@ -115,7 +184,7 @@ pub fn App() -> Element {
                             active_destination.set(Destination::Profile);
                             menu_open.set(false);
                         },
-                        "O"
+                        "{profile_monogram}"
                     }
                     button {
                         class: if *menu_open.read() { "menu-button active" } else { "menu-button" },
@@ -134,7 +203,7 @@ pub fn App() -> Element {
             div { class: "page-context",
                 span { class: "connection-state",
                     span { class: "status-dot" }
-                    "Local foundation"
+                    "{active_profile.display_name}"
                 }
                 span { class: "page-context__title", "{active.label()}" }
             }
@@ -165,7 +234,7 @@ pub fn App() -> Element {
 
             main { class: "page-content",
                 match active {
-                    Destination::Assets => rsx! { AssetsPage {} },
+                    Destination::Assets => rsx! { AssetsPage { active_profile: active_profile.clone() } },
                     Destination::Dids => rsx! {
                         DeferredPage {
                             eyebrow: "Decentralized identity",
@@ -187,10 +256,19 @@ pub fn App() -> Element {
                     Destination::Diagnostics => rsx! { DiagnosticsPage {} },
                     Destination::Settings => rsx! {
                         SettingsPage {
+                            active_profile: active_profile.clone(),
                             on_open_profile: move |_| active_destination.set(Destination::Profile),
                         }
                     },
-                    Destination::Profile => rsx! { ProfilePage {} },
+                    Destination::Profile => rsx! {
+                        ProfilePage {
+                            active_profile: active_profile.clone(),
+                            on_selected: move |profile| {
+                                profile_session.set(ProfileSessionState::Active(profile));
+                                active_destination.set(Destination::Assets);
+                            },
+                        }
+                    },
                 }
             }
 
@@ -224,8 +302,241 @@ pub fn App() -> Element {
     }
 }
 
+fn load_profile_session(services: &WalletUiServices) -> ProfileSessionState {
+    match services.get_active_wallet_profile().execute() {
+        Ok(Some(profile)) => ProfileSessionState::Active(profile),
+        Ok(None) => match services.list_wallet_profiles().execute() {
+            Ok(profiles) => profile_session_route(None, profiles),
+            Err(error) => ProfileSessionState::Failed(error.to_string()),
+        },
+        Err(error) => ProfileSessionState::Failed(error.to_string()),
+    }
+}
+
+fn profile_session_route(
+    active_profile: Option<WalletProfileView>,
+    profiles: Vec<WalletProfileView>,
+) -> ProfileSessionState {
+    match active_profile {
+        Some(profile) => ProfileSessionState::Active(profile),
+        None if profiles.is_empty() => ProfileSessionState::Onboarding,
+        None => ProfileSessionState::Choosing(profiles),
+    }
+}
+
+fn profile_monogram(display_name: &str) -> String {
+    display_name
+        .chars()
+        .find(|character| character.is_alphanumeric())
+        .map(|character| character.to_uppercase().collect())
+        .unwrap_or_else(|| "O".to_owned())
+}
+
 #[component]
-fn AssetsPage() -> Element {
+fn ProfileGateway(
+    state: ProfileSessionState,
+    on_selected: EventHandler<WalletProfileView>,
+    on_retry: EventHandler<MouseEvent>,
+) -> Element {
+    let content = match state {
+        ProfileSessionState::Loading => rsx! {
+            section {
+                class: "gateway-state surface-card",
+                role: "status",
+                aria_live: "polite",
+                aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                h1 { "Loading wallet profiles" }
+                p { "Restoring public profile metadata and the last active selection." }
+            }
+        },
+        ProfileSessionState::Onboarding => rsx! {
+            section { class: "page-heading onboarding-heading",
+                p { class: "eyebrow", "Welcome to Oxid" }
+                h1 { "Create your wallet profile" }
+                p { "A profile is a public local label for wallet state. It never contains a seed, private key, credential, or recovery phrase." }
+            }
+            ProfileManager {
+                profiles: Vec::new(),
+                active_profile_id: None,
+                onboarding: true,
+                on_selected,
+            }
+        },
+        ProfileSessionState::Choosing(profiles) => rsx! {
+            section { class: "page-heading onboarding-heading",
+                p { class: "eyebrow", "Choose a profile" }
+                h1 { "Continue to your wallet" }
+                p { "Select a previously created profile or add another public wallet label." }
+            }
+            ProfileManager {
+                profiles,
+                active_profile_id: None,
+                onboarding: true,
+                on_selected,
+            }
+        },
+        ProfileSessionState::Failed(message) => rsx! {
+            section { class: "gateway-state surface-card", role: "alert",
+                span { class: "empty-state__mark", aria_hidden: "true", "!" }
+                h1 { "Profiles could not be loaded" }
+                p { "{message}" }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    onclick: move |event| on_retry.call(event),
+                    "Try again"
+                }
+            }
+        },
+        ProfileSessionState::Active(_) => return rsx! {},
+    };
+
+    rsx! {
+        div { class: "app-shell onboarding-shell",
+            header { class: "app-header onboarding-header",
+                div { class: "brand-button",
+                    span { class: "oxid-mark", aria_hidden: "true",
+                        span { class: "oxid-mark__dot" }
+                        span { class: "oxid-mark__dot" }
+                        span { class: "oxid-mark__dot" }
+                    }
+                    span { class: "wordmark",
+                        strong { "oxid" }
+                        small { "identity wallet" }
+                    }
+                }
+            }
+            main { class: "page-content", {content} }
+        }
+    }
+}
+
+#[component]
+fn ProfileManager(
+    profiles: Vec<WalletProfileView>,
+    active_profile_id: Option<String>,
+    onboarding: bool,
+    on_selected: EventHandler<WalletProfileView>,
+) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let create_wallet_profile = services.create_wallet_profile();
+    let select_wallet_profile = services.select_wallet_profile();
+    let mut profile_list = use_signal(|| profiles);
+    let mut display_name = use_signal(|| "My wallet".to_owned());
+    let mut state = use_signal(|| CreationState::Idle);
+    let can_submit = !display_name.read().trim().is_empty();
+
+    let feedback = match state.read().clone() {
+        CreationState::Idle => rsx! {
+            p { class: "form-hint", "Only public profile metadata is stored here. Protected key operations remain a separate capability." }
+        },
+        CreationState::Created(profile) => rsx! {
+            section { class: "result success", role: "status", aria_live: "polite",
+                span { class: "capability-dot ready" }
+                div {
+                    strong { "Profile ready" }
+                    p { "{profile.display_name}" }
+                    code { "{profile.id}" }
+                }
+            }
+        },
+        CreationState::Failed(message) => rsx! {
+            section { class: "result error", role: "alert",
+                strong { "Profile action failed" }
+                p { "{message}" }
+            }
+        },
+    };
+
+    let create_for_button = Arc::clone(&create_wallet_profile);
+    let select_for_button = Arc::clone(&select_wallet_profile);
+    rsx! {
+        if !profile_list.read().is_empty() {
+            section { class: "profile-list", aria_label: "Wallet profiles",
+                for profile in profile_list.read().clone() {
+                    {
+                        let profile_id = profile.id.clone();
+                        let is_active = active_profile_id.as_deref() == Some(profile.id.as_str());
+                        let select = Arc::clone(&select_wallet_profile);
+                        rsx! {
+                            article { class: if is_active { "profile-row active" } else { "profile-row" },
+                                div { class: "profile-row__identity",
+                                    span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram(&profile.display_name)}" }
+                                    div {
+                                        strong { "{profile.display_name}" }
+                                        code { "{profile.id}" }
+                                    }
+                                }
+                                if is_active {
+                                    span { class: "status-pill success", "Active" }
+                                } else {
+                                    button {
+                                        class: "secondary-action",
+                                        r#type: "button",
+                                        aria_label: "Use {profile.display_name}",
+                                        onclick: move |_| {
+                                            match select.execute(SelectWalletProfileCommand {
+                                                profile_id: profile_id.clone(),
+                                            }) {
+                                                Ok(selected) => on_selected.call(selected),
+                                                Err(error) => state.set(CreationState::Failed(error.to_string())),
+                                            }
+                                        },
+                                        "Use profile"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        section { class: "profile-card surface-card",
+            p { class: "card-eyebrow", if onboarding && profile_list.read().is_empty() { "First profile" } else { "Add profile" } }
+            label { r#for: "profile-name", "Profile name" }
+            input {
+                id: "profile-name",
+                r#type: "text",
+                maxlength: 64,
+                autocomplete: "off",
+                value: "{display_name}",
+                oninput: move |event| display_name.set(event.value()),
+            }
+            button {
+                class: "primary-action",
+                r#type: "button",
+                disabled: !can_submit,
+                onclick: move |_| {
+                    let command = CreateWalletProfileCommand {
+                        display_name: display_name.read().clone(),
+                    };
+                    match create_for_button.execute(command) {
+                        Ok(created) => {
+                            profile_list.write().push(created.clone());
+                            match select_for_button.execute(SelectWalletProfileCommand {
+                                profile_id: created.id,
+                            }) {
+                                Ok(selected) => {
+                                    state.set(CreationState::Created(selected.clone()));
+                                    on_selected.call(selected);
+                                }
+                                Err(error) => state.set(CreationState::Failed(error.to_string())),
+                            }
+                        }
+                        Err(error) => state.set(CreationState::Failed(error.to_string())),
+                    }
+                },
+                if onboarding && profile_list.read().is_empty() { "Create and continue" } else { "Create and use profile" }
+            }
+            {feedback}
+        }
+    }
+}
+
+#[component]
+fn AssetsPage(active_profile: WalletProfileView) -> Element {
     rsx! {
         section { class: "wallet-hero",
             p { class: "eyebrow", "Wallet overview" }
@@ -243,8 +554,8 @@ fn AssetsPage() -> Element {
         section { class: "trust-line", role: "status",
             span { class: "trust-line__icon", aria_hidden: "true", "◇" }
             div {
-                strong { "Foundation ready" }
-                p { "Profile creation works locally. Asset custody, sync, and proving remain disabled until their reviewed adapters land." }
+                strong { "{active_profile.display_name} is active" }
+                p { "Profile selection is persisted locally. Asset custody, sync, and proving remain disabled until their reviewed adapters land." }
             }
         }
 
@@ -299,8 +610,9 @@ fn DiagnosticsPage() -> Element {
             p { "This view reports only capabilities that are actually composed into the current application." }
         }
         div { class: "diagnostic-grid",
-            CapabilityStatus { name: "Profile use case", state: "Ready", ready: true }
-            CapabilityStatus { name: "In-memory profile store", state: "Development only", ready: true }
+            CapabilityStatus { name: "Profile lifecycle", state: "Create · list · select · restore", ready: true }
+            CapabilityStatus { name: "Profile metadata store", state: "Persistent · public metadata only", ready: true }
+            CapabilityStatus { name: "Protected secret store", state: "Not connected", ready: false }
             CapabilityStatus { name: "Midnight ledger", state: "Not connected", ready: false }
             CapabilityStatus { name: "Proof provider", state: "Not connected", ready: false }
             CapabilityStatus { name: "DID adapter", state: "Not connected", ready: false }
@@ -323,7 +635,10 @@ fn CapabilityStatus(name: &'static str, state: &'static str, ready: bool) -> Ele
 }
 
 #[component]
-fn SettingsPage(on_open_profile: EventHandler<MouseEvent>) -> Element {
+fn SettingsPage(
+    active_profile: WalletProfileView,
+    on_open_profile: EventHandler<MouseEvent>,
+) -> Element {
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Local controls" }
@@ -333,8 +648,8 @@ fn SettingsPage(on_open_profile: EventHandler<MouseEvent>) -> Element {
         article { class: "settings-card surface-card",
             div {
                 p { class: "card-eyebrow", "Profile" }
-                h2 { "Wallet profile" }
-                p { "The M0 profile page is retained during shell migration. Persistent selection and onboarding are tracked separately." }
+                h2 { "{active_profile.display_name}" }
+                p { "Public profile metadata and active selection are persisted. Seeds and keys are never part of this record." }
             }
             button {
                 class: "secondary-action",
@@ -355,29 +670,37 @@ fn SettingsPage(on_open_profile: EventHandler<MouseEvent>) -> Element {
 }
 
 #[component]
-fn ProfilePage() -> Element {
+fn ProfilePage(
+    active_profile: WalletProfileView,
+    on_selected: EventHandler<WalletProfileView>,
+) -> Element {
     let services = consume_context::<WalletUiServices>();
-    let mut display_name = use_signal(|| "My wallet".to_owned());
-    let mut state = use_signal(|| CreationState::Idle);
-    let can_submit = !display_name.read().trim().is_empty();
+    let mut profiles = use_signal(|| ProfileListState::Loading);
+    use_effect(move || {
+        profiles.set(services.list_wallet_profiles().execute().map_or_else(
+            |error| ProfileListState::Failed(error.to_string()),
+            ProfileListState::Ready,
+        ));
+    });
 
-    let feedback = match state.read().clone() {
-        CreationState::Idle => rsx! {
-            p { class: "form-hint", "Profiles contain public labels only. Keys are created through separate protected capabilities." }
-        },
-        CreationState::Created(profile) => rsx! {
-            section { class: "result success", role: "status",
-                span { class: "capability-dot ready" }
-                div {
-                    strong { "Profile created" }
-                    p { "{profile.display_name}" }
-                    code { "{profile.id}" }
-                }
+    let content = match profiles.read().clone() {
+        ProfileListState::Loading => rsx! {
+            section { class: "gateway-state surface-card", role: "status", aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                strong { "Loading profiles" }
             }
         },
-        CreationState::Failed(message) => rsx! {
+        ProfileListState::Ready(loaded) => rsx! {
+            ProfileManager {
+                profiles: loaded,
+                active_profile_id: Some(active_profile.id),
+                onboarding: false,
+                on_selected,
+            }
+        },
+        ProfileListState::Failed(message) => rsx! {
             section { class: "result error", role: "alert",
-                strong { "Could not create profile" }
+                strong { "Profiles could not be loaded" }
                 p { "{message}" }
             }
         },
@@ -386,40 +709,10 @@ fn ProfilePage() -> Element {
     rsx! {
         section { class: "page-heading profile-heading",
             p { class: "eyebrow", "Wallet profile" }
-            h1 { "Create your profile" }
-            p { "Start with a local public identity for this wallet. Account keys, DIDs, and credentials attach through protected capabilities in later slices." }
+            h1 { "Manage profiles" }
+            p { "Choose the active public wallet context or add another. Account keys, DIDs, and credentials remain behind separate protected capabilities." }
         }
-        section { class: "profile-card surface-card",
-            label { r#for: "profile-name", "Profile name" }
-            input {
-                id: "profile-name",
-                r#type: "text",
-                maxlength: 64,
-                autocomplete: "off",
-                value: "{display_name}",
-                oninput: move |event| display_name.set(event.value()),
-            }
-            button {
-                class: "primary-action",
-                r#type: "button",
-                disabled: !can_submit,
-                onclick: move |_| {
-                    let command = CreateWalletProfileCommand {
-                        display_name: display_name.read().clone(),
-                    };
-                    let next_state = services
-                        .create_wallet_profile()
-                        .execute(command)
-                        .map_or_else(
-                            |error| CreationState::Failed(error.to_string()),
-                            CreationState::Created,
-                        );
-                    state.set(next_state);
-                },
-                "Create profile"
-            }
-            {feedback}
-        }
+        {content}
     }
 }
 
@@ -449,5 +742,33 @@ mod tests {
     fn profile_remains_an_explicit_non_primary_destination() {
         assert_eq!(Destination::Profile.label(), "Wallet profile");
         assert!(!PRIMARY_DESTINATIONS.contains(&Destination::Profile));
+    }
+
+    #[test]
+    fn profile_route_gates_first_launch_and_restores_active_selection() {
+        let profile = WalletProfileView {
+            id: "profile_test".to_owned(),
+            display_name: "Primary".to_owned(),
+            created_at_millis: 42,
+        };
+
+        assert_eq!(
+            profile_session_route(None, Vec::new()),
+            ProfileSessionState::Onboarding
+        );
+        assert_eq!(
+            profile_session_route(None, vec![profile.clone()]),
+            ProfileSessionState::Choosing(vec![profile.clone()])
+        );
+        assert_eq!(
+            profile_session_route(Some(profile.clone()), vec![profile.clone()]),
+            ProfileSessionState::Active(profile)
+        );
+    }
+
+    #[test]
+    fn profile_monogram_uses_the_first_visible_character() {
+        assert_eq!(profile_monogram("  primary"), "P");
+        assert_eq!(profile_monogram("---"), "O");
     }
 }

@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Source: Prototype parity epic and [issue #4](https://github.com/MediaNoxLabs/oxid/issues/4)
-- Implementation state: Version 1 transport, capability discovery, profile creation, and shutdown implemented
+- Implementation state: Version 1 transport, capability discovery, complete profile lifecycle, and shutdown implemented
 
 ## Context
 
@@ -55,7 +55,8 @@ adapter needs concurrency; it is not part of the wire contract.
 
 ## Consequences
 
-- Profile creation can be exercised without Dioxus, Xcode, or a network.
+- Profile create, list, select, and active-restore flows can be exercised without
+  Dioxus, Xcode, or a network.
 - Each later parity slice gains a deterministic integration surface and must
   update capability discovery when its method becomes ready.
 - Protocol evolution requires either backward-compatible additions or a new

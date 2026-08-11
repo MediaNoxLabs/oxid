@@ -4,7 +4,12 @@
 
 fn main() {
     let application = oxid_composition::compose();
-    let ui = oxid_ui_dioxus::WalletUiServices::new(application.create_wallet_profile());
+    let ui = oxid_ui_dioxus::WalletUiServices::new(
+        application.create_wallet_profile(),
+        application.list_wallet_profiles(),
+        application.select_wallet_profile(),
+        application.get_active_wallet_profile(),
+    );
 
     dioxus::LaunchBuilder::new()
         .with_context(ui)

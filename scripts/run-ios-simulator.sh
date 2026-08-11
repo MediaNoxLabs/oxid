@@ -88,6 +88,9 @@ fi
 
 /usr/bin/open -a Simulator --args -CurrentDeviceUDID "$device"
 /usr/bin/xcrun simctl bootstatus "$device" -b
+if [ "${OXID_IOS_RESET_DATA:-0}" = "1" ]; then
+  /usr/bin/xcrun simctl uninstall "$device" io.medianox.oxid >/dev/null 2>&1 || true
+fi
 /usr/bin/xcrun simctl install "$device" "$app_bundle"
 
 bundle_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app_bundle/Info.plist")"

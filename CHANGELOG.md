@@ -29,3 +29,9 @@ once public releases begin.
   harness with capability discovery, profile creation, safe errors, and
   graceful shutdown.
 - Linux Nix inputs for Dioxus's `libxdo` linker requirement.
+- Profile onboarding, listing, active selection, management, and launch-time
+  restoration across the Dioxus shell and headless protocol.
+- Versioned write-through-temp JSON persistence for public wallet profile
+  metadata, with strict validation and no secret-bearing fields.
+- Automated iOS XCUITest and Android emulator profile-flow smoke harnesses,
+  including process restart and active-profile restoration.

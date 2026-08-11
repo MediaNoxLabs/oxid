@@ -4,6 +4,7 @@ members = [
   "apps/oxid",
   "apps/oxid-headless",
   "crates/adapters/platform-system",
+  "crates/adapters/storage-json",
   "crates/adapters/storage-memory",
   "crates/composition",
   "crates/foundation",
@@ -16,6 +17,7 @@ default-members = [
   "apps/oxid",
   "apps/oxid-headless",
   "crates/adapters/platform-system",
+  "crates/adapters/storage-json",
   "crates/adapters/storage-memory",
   "crates/composition",
   "crates/foundation",
@@ -35,11 +37,15 @@ authors = ["Oxid contributors"]
 
 [workspace.dependencies]
 dioxus = { version = "=0.7.10", default-features = false }
+directories = { version = "=6.0.0" }
 getrandom = { version = "=0.3.4", features = ["wasm_js"] }
+jni = { version = "=0.21.1" }
+ndk-context = { version = "=0.1.1" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151" }
 
 oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }
+oxid-adapter-storage-json = { version = "=0.1.0", path = "crates/adapters/storage-json" }
 oxid-adapter-storage-memory = { version = "=0.1.0", path = "crates/adapters/storage-memory" }
 oxid-composition = { version = "=0.1.0", path = "crates/composition" }
 oxid-foundation = { version = "=0.1.0", path = "crates/foundation" }
@@ -49,7 +55,7 @@ oxid-wallet-application = { version = "=0.1.0", path = "crates/wallet/applicatio
 oxid-wallet-domain = { version = "=0.1.0", path = "crates/wallet/domain" }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = "warn"

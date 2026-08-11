@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Source: Blueprint Sections 14, 17, 18, and 19 plus prototype review
-- Implementation state: M0 profile and wallet presentation-shell slices implemented
+- Implementation state: M0 profile, wallet presentation shell, headless harness, and persistent profile lifecycle slices implemented
 
 ## Context
 
@@ -33,6 +33,9 @@ The remaining source inventory and milestone destinations are maintained in
 After M0, ADR-0023 prioritizes the remaining parity work. The first follow-up
 slice reimplements the safe visual shell, navigation, and capability-status
 surfaces without importing SDK calls or pretending deferred adapters exist.
+The next slices add a versioned headless driver and integrate profile
+onboarding, selection, management, and public-metadata persistence into that
+shell. ADR-0024 and ADR-0025 define their respective boundaries.
 
 ## Consequences
 

@@ -5,7 +5,7 @@
 use std::{collections::BTreeMap, sync::RwLock};
 
 use oxid_wallet_application::{WalletProfileRepository, WalletProfileRepositoryError};
-use oxid_wallet_domain::WalletProfile;
+use oxid_wallet_domain::{WalletProfile, WalletProfileId};
 
 /// Process-local profile storage for development, demos, and tests.
 ///
@@ -13,6 +13,7 @@ use oxid_wallet_domain::WalletProfile;
 #[derive(Default)]
 pub struct InMemoryWalletProfileRepository {
     profiles: RwLock<BTreeMap<String, WalletProfile>>,
+    active_profile_id: RwLock<Option<String>>,
 }
 
 impl InMemoryWalletProfileRepository {
@@ -41,6 +42,46 @@ impl WalletProfileRepository for InMemoryWalletProfileRepository {
             .read()
             .map(|profiles| profiles.values().cloned().collect())
             .map_err(|_| WalletProfileRepositoryError::Unavailable)
+    }
+
+    fn set_active(
+        &self,
+        id: &WalletProfileId,
+    ) -> Result<WalletProfile, WalletProfileRepositoryError> {
+        let profiles = self
+            .profiles
+            .read()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+        let profile = profiles
+            .get(id.as_str())
+            .cloned()
+            .ok_or(WalletProfileRepositoryError::NotFound)?;
+        *self
+            .active_profile_id
+            .write()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)? = Some(id.as_str().to_owned());
+
+        Ok(profile)
+    }
+
+    fn active(&self) -> Result<Option<WalletProfile>, WalletProfileRepositoryError> {
+        let profiles = self
+            .profiles
+            .read()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+        let active_profile_id = self
+            .active_profile_id
+            .read()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+        let Some(active_profile_id) = active_profile_id.as_deref() else {
+            return Ok(None);
+        };
+
+        profiles
+            .get(active_profile_id)
+            .cloned()
+            .map(Some)
+            .ok_or(WalletProfileRepositoryError::NotFound)
     }
 }
 
@@ -79,6 +120,39 @@ mod tests {
         assert_eq!(
             repository.save(profile()),
             Err(WalletProfileRepositoryError::Conflict)
+        );
+    }
+
+    #[test]
+    fn persists_active_selection_for_the_process_lifetime() {
+        let repository = InMemoryWalletProfileRepository::new();
+        let profile = profile();
+        let profile_id = profile.id().clone();
+        repository
+            .save(profile.clone())
+            .expect("save should succeed");
+
+        assert_eq!(repository.active().expect("active read should work"), None);
+        assert_eq!(
+            repository
+                .set_active(&profile_id)
+                .expect("selection should succeed"),
+            profile
+        );
+        assert_eq!(
+            repository.active().expect("selection should persist"),
+            Some(profile)
+        );
+    }
+
+    #[test]
+    fn rejects_selecting_an_unknown_profile() {
+        let repository = InMemoryWalletProfileRepository::new();
+        let missing = WalletProfileId::parse("profile_missing").expect("identifier should parse");
+
+        assert_eq!(
+            repository.set_active(&missing),
+            Err(WalletProfileRepositoryError::NotFound)
         );
     }
 }

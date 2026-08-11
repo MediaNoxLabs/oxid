@@ -14,29 +14,32 @@
     in
     {
       devShells.default = pkgs.mkShell {
-        packages = with pkgs; [
-          cargo
-          cargo-audit
-          cargo-deny
-          cargo-edit
-          cargo-llvm-cov
-          cargo-nextest
-          clippy
-          dioxus-cli
-          git
-          jq
-          just
-          lychee
-          llvmPackages.llvm
-          nixfmt
-          nodejs_24
-          openssl
-          pi-coding-agent
-          pkg-config
-          rust-analyzer
-          rustc
-          rustfmt
-        ];
+        packages =
+          with pkgs;
+          [
+            cargo
+            cargo-audit
+            cargo-deny
+            cargo-edit
+            cargo-llvm-cov
+            cargo-nextest
+            clippy
+            dioxus-cli
+            git
+            jq
+            just
+            lychee
+            llvmPackages.llvm
+            nixfmt
+            nodejs_24
+            openssl
+            pi-coding-agent
+            pkg-config
+            rust-analyzer
+            rustc
+            rustfmt
+          ]
+          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.xcodegen ];
 
         buildInputs = linuxLibraries;
 

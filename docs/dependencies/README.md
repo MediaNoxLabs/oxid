@@ -12,6 +12,8 @@ gates.
 Current reviews and source policies:
 
 - [Dioxus 0.7](dioxus-0.7.md)
+- [directories 6](directories-6.md)
 - [getrandom 0.3](getrandom-0.3.md)
+- [jni 0.21 and ndk-context 0.1](jni-ndk-context.md)
 - [Serde and serde_json](serde-json.md)
 - [Midnight Git sources](midnight-git-sources.md)
