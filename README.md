@@ -16,12 +16,14 @@ than layers bolted onto one chain-specific frontend.
 > exercises Midnight network, canonical unshielded and shielded receive
 > addresses, exact-balance, sync, history, and
 > staged unshielded NIGHT submission, durable public submission recovery, and
-> finalized-chain reconciliation without secret input. Native headless runs
+> finalized-chain reconciliation without secret input. The first peer identity
+> slice resolves current `did:midnight` public documents into a profile-scoped
+> inventory through standalone or explicitly configured native adapters. Native headless runs
 > can instead opt into a real standalone-indexer source for public-account and
 > shielded Zswap synchronization, or the complete DUST/local-prover/node
 > submission path using explicit public startup configuration; remote proving
 > remains an explicit development option. The
-> Assets page consumes the same account and transaction use cases. The
+> Assets and DIDs pages consume the same application use cases. The
 > repository simulator/emulator launchers explicitly select process-local
 > development custody so receive QR plus prepare/review/authorize/submit can be
 > exercised end to end; normal production composition remains fail-closed. The remaining shell destinations deliberately label unconnected
@@ -42,6 +44,9 @@ apps/oxid-headless ---------------------+--> wallet-application --> wallet-domai
                     |                         platform-ports ------> foundation
                     +--> storage-json / storage-memory / storage-dev
                     +--> midnight (unavailable, simulated, or live headless source)
+                    +--> identity-application --> identity-domain
+                    |         ^                       ^
+                    |         +-- DID resolver / public DID JSON adapters
                     +--> platform-system
 ```
 
@@ -93,7 +98,9 @@ The implemented account methods are `wallet.network.list`,
 `wallet.connect`, `wallet.sync.force`, `wallet.dust.sync.status`,
 `wallet.dust.sync.start`, `wallet.dust.sync.cancel`,
 `wallet.shielded.sync.status`, `wallet.shielded.sync.start`, and
-`wallet.shielded.sync.cancel`.
+`wallet.shielded.sync.cancel`. The implemented identity methods are
+`did.resolve`, `did.list`, `did.get`, and `did.forget`; their profile scope is
+always taken from the active wallet profile rather than caller parameters.
 With no additional configuration their account data is explicitly `simulated`
 and contacts no node, indexer, or prover. After
 `wallet.security.initialize`, `wallet.account.derive` creates and retains the
@@ -127,6 +134,30 @@ the public extrinsic hash and finalized pre-broadcast anchor before contacting
 the node. Submission status/history survive restart, and explicit
 reconciliation scans a bounded finalized ancestor window before classifying an
 attempt as included, rejected, expired, or still unknown.
+
+With no DID configuration, explicit standalone development composition resolves
+only this deterministic public fixture and returns not-found for every other
+identifier:
+
+```text
+did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+Native headless runs may select the official resolver-service HTTP contract:
+
+```bash
+export OXID_MIDNIGHT_DID_RESOLVER_URL='<resolver-base-url>'
+export OXID_DID_STORE_PATH='<absolute-app-private-public-did-file>' # optional
+cargo run -p oxid-headless
+```
+
+The resolver base URL must use HTTPS, except for loopback HTTP, and may not
+contain credentials, a query, or a fragment. Redirects and ambient proxies are
+disabled. Responses are bounded and fully revalidated before the separate
+versioned public DID store is changed. That store contains no private JWK,
+credential, claim, token, route, or recovery material. Normal production
+composition leaves both identity ports unavailable; this is not DID lifecycle
+mutation or production identity custody.
 
 For a native standalone-indexer run, set all three public values before starting
 the headless binary:
@@ -299,7 +330,8 @@ when automatic selection is not appropriate.
 The focused wallet smoke tests reset Oxid's app data on their selected
 simulator/emulator, create the default profile, activate the protected
 development account, render receive QR, complete a staged simulated transfer,
-restart the process, and assert public-profile restoration:
+resolve the standalone DID, restart the process, and assert public-profile,
+submission, and DID-inventory restoration:
 
 ```bash
 just ios-smoke
@@ -315,6 +347,8 @@ just android-smoke
 | `crates/foundation` | Small Oxid-owned primitives. |
 | `crates/wallet/domain` | Wallet entities and invariants. |
 | `crates/wallet/application` | Use cases and wallet-owned ports. |
+| `crates/identity/domain` | DID document, public JWK, relationship, and resolution invariants. |
+| `crates/identity/application` | Profile-scoped DID use cases and identity-owned ports. |
 | `crates/platform/ports` | Time and randomness capability ports. |
 | `crates/adapters` | Replaceable outgoing implementations. |
 | `crates/ui-dioxus` | Incoming Dioxus UI adapter. |

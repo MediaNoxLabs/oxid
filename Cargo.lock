@@ -5350,6 +5350,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "oxid-adapter-did-midnight"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "oxid-identity-application",
+ "oxid-identity-domain",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "oxid-adapter-midnight"
 version = "0.1.0"
 dependencies = [
@@ -5407,6 +5420,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-adapter-storage-identity-json"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "oxid-identity-application",
+ "oxid-identity-domain",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oxid-adapter-storage-json"
 version = "0.1.0"
 dependencies = [
@@ -5442,11 +5466,14 @@ dependencies = [
 name = "oxid-composition"
 version = "0.1.0"
 dependencies = [
+ "oxid-adapter-did-midnight",
  "oxid-adapter-midnight",
  "oxid-adapter-platform-system",
  "oxid-adapter-storage-dev",
+ "oxid-adapter-storage-identity-json",
  "oxid-adapter-storage-json",
  "oxid-adapter-storage-memory",
+ "oxid-identity-application",
  "oxid-wallet-application",
 ]
 
@@ -5460,12 +5487,28 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "oxid-composition",
+ "oxid-identity-application",
  "oxid-wallet-application",
  "oxid-wallet-domain",
  "serde",
  "serde_json",
  "tokio",
  "tokio-tungstenite",
+]
+
+[[package]]
+name = "oxid-identity-application"
+version = "0.1.0"
+dependencies = [
+ "oxid-foundation",
+ "oxid-identity-domain",
+]
+
+[[package]]
+name = "oxid-identity-domain"
+version = "0.1.0"
+dependencies = [
+ "oxid-foundation",
 ]
 
 [[package]]
@@ -5480,6 +5523,7 @@ name = "oxid-ui-dioxus"
 version = "0.1.0"
 dependencies = [
  "dioxus",
+ "oxid-identity-application",
  "oxid-wallet-application",
  "qrcode",
  "tokio",

@@ -97,11 +97,21 @@ final class ProfileFlowTests: XCTestCase {
         submit.tap()
         XCTAssertTrue(application.staticTexts["Transfer submitted"].waitForExistence(timeout: 15))
 
+        let dids = application.buttons["DIDs"]
+        XCTAssertTrue(dids.waitForExistence(timeout: 5))
+        dids.tap()
+        let resolveDid = application.buttons["Resolve and save"]
+        XCTAssertTrue(resolveDid.waitForExistence(timeout: 5))
+        resolveDid.tap()
+        XCTAssertTrue(application.staticTexts["standalone-fixture-v1"].waitForExistence(timeout: 10))
+
         application.terminate()
         application.launch()
 
         XCTAssertTrue(activateButton.waitForExistence(timeout: 15))
         XCTAssertTrue(application.staticTexts["Transfer included"].waitForExistence(timeout: 15))
+        dids.tap()
+        XCTAssertTrue(application.staticTexts["standalone-fixture-v1"].waitForExistence(timeout: 10))
         XCTAssertTrue(application.buttons["Assets"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
     }

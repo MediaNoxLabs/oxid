@@ -70,9 +70,12 @@ check_no_external_dependencies() {
 
 check_workspace_dependencies oxid-foundation
 check_workspace_dependencies oxid-wallet-domain oxid-foundation
+check_workspace_dependencies oxid-identity-domain oxid-foundation
 check_workspace_dependencies oxid-platform-ports oxid-foundation
 check_workspace_dependencies oxid-wallet-application \
   oxid-foundation oxid-platform-ports oxid-wallet-domain
+check_workspace_dependencies oxid-identity-application \
+  oxid-foundation oxid-identity-domain
 check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-foundation oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-dev \
@@ -83,14 +86,19 @@ check_workspace_dependencies oxid-adapter-platform-system \
   oxid-foundation oxid-platform-ports
 check_workspace_dependencies oxid-adapter-midnight \
   oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
-check_workspace_dependencies oxid-ui-dioxus oxid-wallet-application
+check_workspace_dependencies oxid-adapter-did-midnight \
+  oxid-identity-application oxid-identity-domain
+check_workspace_dependencies oxid-adapter-storage-identity-json \
+  oxid-identity-application oxid-identity-domain
+check_workspace_dependencies oxid-ui-dioxus oxid-identity-application oxid-wallet-application
 check_workspace_dependencies oxid-composition \
-  oxid-adapter-platform-system oxid-adapter-storage-json \
+  oxid-adapter-did-midnight oxid-adapter-platform-system oxid-adapter-storage-json \
+  oxid-adapter-storage-identity-json \
   oxid-adapter-storage-memory oxid-adapter-storage-dev oxid-adapter-midnight \
-  oxid-wallet-application
+  oxid-identity-application oxid-wallet-application
 check_workspace_dependencies oxid-app oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
-  oxid-composition oxid-wallet-application oxid-wallet-domain
+  oxid-composition oxid-identity-application oxid-wallet-application oxid-wallet-domain
 
 unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' || true)"
 if [ "$unsafe_sources" != "crates/adapters/storage-json/src/lib.rs" ]; then
@@ -103,7 +111,9 @@ fi
 
 check_no_external_dependencies oxid-foundation
 check_no_external_dependencies oxid-wallet-domain
+check_no_external_dependencies oxid-identity-domain
 check_no_external_dependencies oxid-platform-ports
 check_no_external_dependencies oxid-wallet-application
+check_no_external_dependencies oxid-identity-application
 
 echo "Architecture dependency rules passed."

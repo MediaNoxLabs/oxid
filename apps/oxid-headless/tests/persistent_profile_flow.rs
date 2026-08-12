@@ -40,6 +40,13 @@ impl ProcessHarness {
         let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
         command
             .env("OXID_PROFILE_STORE_PATH", store_path)
+            .env(
+                "OXID_DID_STORE_PATH",
+                store_path
+                    .parent()
+                    .expect("profile store should have a parent")
+                    .join("private/did-records.json"),
+            )
             .env_remove("OXID_MIDNIGHT_NETWORK_ID")
             .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
             .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
@@ -51,6 +58,7 @@ impl ProcessHarness {
             .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH");
+        command.env_remove("OXID_MIDNIGHT_DID_RESOLVER_URL");
         for (key, value) in environment {
             command.env(key, value);
         }
@@ -526,6 +534,72 @@ fn executable_restores_profile_selection_in_a_new_process() {
 }
 
 #[test]
+fn executable_restores_profile_scoped_did_inventory_in_a_new_process() {
+    const FIXTURE_DID: &str =
+        "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let store = TestStore::new();
+    let mut first_process = ProcessHarness::spawn(&store.path);
+    let created = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "did-create-profile",
+        "method": "wallet.profile.create", "params": { "displayName": "DID owner" }
+    }));
+    let profile_id = created["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile id")
+        .to_owned();
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1", "id": "did-select-profile",
+            "method": "wallet.profile.select", "params": { "profileId": profile_id }
+        }))["ok"],
+        true
+    );
+    let resolved = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "did-resolve",
+        "method": "did.resolve", "params": { "did": FIXTURE_DID }
+    }));
+    assert_eq!(resolved["ok"], true);
+    assert_eq!(
+        resolved["result"]["didRecord"]["document"]["id"],
+        FIXTURE_DID
+    );
+    assert_eq!(resolved["result"]["didRecord"]["source"], "standalone");
+    assert_eq!(
+        resolved["result"]["didRecord"]["document"]["verificationMethods"]
+            .as_array()
+            .expect("methods")
+            .len(),
+        2
+    );
+    let unknown = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "did-unknown", "method": "did.resolve",
+        "params": { "did": format!("did:midnight:undeployed:{}", "f".repeat(64)) }
+    }));
+    assert_eq!(unknown["error"]["code"], "not_found");
+    first_process.quit();
+
+    let mut second_process = ProcessHarness::spawn(&store.path);
+    let inventory = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "did-list", "method": "did.list", "params": {}
+    }));
+    assert_eq!(
+        inventory["result"]["didRecords"][0]["document"]["id"],
+        FIXTURE_DID
+    );
+    assert_eq!(inventory["result"]["didRecords"][0]["source"], "stored");
+    assert_eq!(second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "did-get", "method": "did.get", "params": { "did": FIXTURE_DID }
+    }))["ok"], true);
+    assert_eq!(second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "did-forget", "method": "did.forget", "params": { "did": FIXTURE_DID }
+    }))["result"]["forgotten"], true);
+    assert!(second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "did-list-empty", "method": "did.list", "params": {}
+    }))["result"]["didRecords"].as_array().expect("records").is_empty());
+    second_process.quit();
+}
+
+#[test]
 fn executable_restores_public_submission_status_in_a_new_process() {
     let store = TestStore::new();
     let journal_path = store.root.join("private/submission-journal.json");
@@ -683,6 +757,7 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
         .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
         .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
         .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
+        .env_remove("OXID_MIDNIGHT_DID_RESOLVER_URL")
         .output()
         .expect("headless wallet should report startup failure");
 
@@ -690,6 +765,32 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
     let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
     assert!(stderr.contains("requires the read-only indexer values"));
     assert!(!stderr.contains(LIVE_ADDRESS));
+}
+
+#[test]
+fn executable_rejects_insecure_did_resolver_without_echoing_the_route() {
+    let store = TestStore::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_oxid-headless"))
+        .env("OXID_PROFILE_STORE_PATH", &store.path)
+        .env(
+            "OXID_MIDNIGHT_DID_RESOLVER_URL",
+            "http://resolver.example/sensitive-route-name",
+        )
+        .env_remove("OXID_MIDNIGHT_NETWORK_ID")
+        .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
+        .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
+        .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
+        .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
+        .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
+        .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+        .output()
+        .expect("headless wallet should report startup failure");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
+    assert!(stderr.contains("non-loopback DID resolver URLs must use HTTPS"));
+    assert!(!stderr.contains("sensitive-route-name"));
+    assert!(!stderr.contains("resolver.example"));
 }
 
 #[test]

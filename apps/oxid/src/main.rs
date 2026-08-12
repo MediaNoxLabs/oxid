@@ -49,6 +49,11 @@ fn main() {
                 application.reconcile_wallet_transfer_submission(),
             ),
         ),
+        oxid_ui_dioxus::DidUiServices::new(
+            application.resolve_did(),
+            application.list_did_records(),
+            application.forget_did(),
+        ),
     );
 
     dioxus::LaunchBuilder::new()

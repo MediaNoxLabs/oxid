@@ -1,0 +1,15 @@
+[package]
+name = "oxid-identity-domain"
+description = "Oxid-owned identity domain entities and invariants"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+oxid-foundation.workspace = true
+
+[lints]
+workspace = true

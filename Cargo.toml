@@ -5,11 +5,15 @@ members = [
   "apps/oxid-headless",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
+  "crates/adapters/did-midnight",
+  "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
   "crates/adapters/storage-memory",
   "crates/adapters/storage-dev",
   "crates/composition",
   "crates/foundation",
+  "crates/identity/application",
+  "crates/identity/domain",
   "crates/platform/ports",
   "crates/ui-dioxus",
   "crates/wallet/application",
@@ -20,11 +24,15 @@ default-members = [
   "apps/oxid-headless",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
+  "crates/adapters/did-midnight",
+  "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
   "crates/adapters/storage-memory",
   "crates/adapters/storage-dev",
   "crates/composition",
   "crates/foundation",
+  "crates/identity/application",
+  "crates/identity/domain",
   "crates/platform/ports",
   "crates/ui-dioxus",
   "crates/wallet/application",
@@ -75,12 +83,16 @@ tokio-tungstenite = { version = "=0.30.0", default-features = false, features = 
 zeroize = { version = "=1.9.0" }
 
 oxid-adapter-midnight = { version = "=0.1.0", path = "crates/adapters/midnight" }
+oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-midnight" }
+oxid-adapter-storage-identity-json = { version = "=0.1.0", path = "crates/adapters/storage-identity-json" }
 oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }
 oxid-adapter-storage-json = { version = "=0.1.0", path = "crates/adapters/storage-json" }
 oxid-adapter-storage-memory = { version = "=0.1.0", path = "crates/adapters/storage-memory" }
 oxid-adapter-storage-dev = { version = "=0.1.0", path = "crates/adapters/storage-dev" }
 oxid-composition = { version = "=0.1.0", path = "crates/composition" }
 oxid-foundation = { version = "=0.1.0", path = "crates/foundation" }
+oxid-identity-application = { version = "=0.1.0", path = "crates/identity/application" }
+oxid-identity-domain = { version = "=0.1.0", path = "crates/identity/domain" }
 oxid-platform-ports = { version = "=0.1.0", path = "crates/platform/ports" }
 oxid-ui-dioxus = { version = "=0.1.0", path = "crates/ui-dioxus" }
 oxid-wallet-application = { version = "=0.1.0", path = "crates/wallet/application" }

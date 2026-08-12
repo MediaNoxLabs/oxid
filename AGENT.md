@@ -33,7 +33,9 @@ The ordered public backlog is
 [issue #2](https://github.com/MediaNoxLabs/oxid/issues/2); implement it in
 bounded slices and never turn parity work into a bulk source copy. The wallet
 presentation shell is the first post-M0 slice. Its deferred destinations are
-status surfaces, not claims of working custody or identity capabilities.
+status surfaces, not claims of working custody or identity capabilities. The
+DIDs destination is now functional in standalone development; credentials and
+vault behavior remain deferred.
 
 ADR-0017 is accepted. The first M1 security slice separates protection/session
 state from key operations, secret blobs, and native user authorization. The
@@ -191,6 +193,21 @@ methods are `wallet.transaction.submission_history` and
 `wallet.transaction.reconcile_submission`; Dioxus shows the latest restored
 public attempt even when process-local custody is unavailable.
 
+[Issue #21](https://github.com/MediaNoxLabs/oxid/issues/21) and ADR-0036 begin
+the peer identity capability with profile-scoped DID inventory and resolution.
+`identity/domain` and `identity/application` have no external dependencies and
+own current Midnight DID 0.5.0 syntax/document invariants plus resolve/list/get/
+forget ports. `adapters/did-midnight` provides exactly one successful
+standalone fixture and a native official `POST /resolve` adapter selected only
+by `OXID_MIDNIGHT_DID_RESOLVER_URL`; unknown standalone DIDs are not found.
+`adapters/storage-identity-json` stores validated public documents separately
+under `OXID_DID_STORE_PATH` or `private/did-records.json` beside the profile
+store. Headless DID params never accept a profile, route, key, or credential.
+Normal `compose()` remains unavailable; DID create/update/deactivate,
+credentials, lifecycle authorization, and production-native storage remain
+follow-ups. Preserve the immutable conformance sources in
+`docs/migration/midnight-did-provenance.md` when upgrading the contract.
+
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
 web --target wasm32-unknown-unknown` currently stops in the pre-existing
@@ -269,6 +286,8 @@ ADR-0034 keeps transaction cancellation adapter-owned, requires an atomic
 pre-broadcast boundary, and separates attempt status from retained draft state.
 ADR-0035 adds the bounded public submission journal, persist-before-broadcast
 rule, restart duplicate prevention, and finalized-chain reconciliation.
+ADR-0036 adds the identity hexagon, current Midnight DID public-document
+validation, bounded resolver adapters, and separate public DID inventory.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -282,11 +301,15 @@ Current package ownership:
 | `crates/foundation` | Small dependency-free primitives shared across core boundaries. |
 | `crates/wallet/domain` | Wallet profile invariants and entities. |
 | `crates/wallet/application` | Incoming use cases and owned outgoing repository ports. |
+| `crates/identity/domain` | Dependency-free Midnight DID, public JWK, document, and resolution invariants. |
+| `crates/identity/application` | Profile-scoped DID resolve/list/get/forget use cases and owned outgoing ports. |
 | `crates/platform/ports` | Clock and randomness capabilities used by applications. |
 | `crates/adapters/storage-memory` | Development/test implementation of wallet persistence. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
+| `crates/adapters/storage-identity-json` | Strict versioned persistence for validated profile-scoped public DID documents only. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
+| `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolver adapters. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, and public receive-QR rendering. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -322,6 +345,17 @@ protected-key methods accept only public labels,
 algorithms, purposes, bounded payloads, opaque references, and explicit
 human-readable confirmations. Passphrases, seeds, recovery phrases, and raw
 private keys are rejected by strict parameter decoding.
+
+Identity composition is independent of chain mode. Native headless startup
+uses deterministic `StandaloneDidResolver` unless the complete explicit
+`OXID_MIDNIGHT_DID_RESOLVER_URL` is valid; non-loopback HTTP, credentials,
+query, fragment, redirects, and ambient proxies are forbidden. The HTTP result
+is capped at 512 KiB/depth 16 and every document collection is bounded. The
+public store uses `OXID_DID_STORE_PATH` when set, otherwise a private sibling of
+the public profile file. The headless surface is `did.resolve`, `did.list`,
+`did.get`, and `did.forget`; profile scope always comes from the active profile.
+The standalone fixture is
+`did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`.
 
 The headless DUST surface is `wallet.dust.sync.status`,
 `wallet.dust.sync.start`, and `wallet.dust.sync.cancel`. These commands never
@@ -619,6 +653,12 @@ to silence the shell probe.
 - The JSON profile store contains public labels, identifiers, timestamps, and
   active selection only. It serializes one repository instance; overlapping
   headless processes must use distinct `OXID_PROFILE_STORE_PATH` values.
+- The DID JSON store contains validated public DID documents/metadata only. It
+  is a separate 128-record/2 MiB owner-private atomic file, rejects symlinks and
+  unknown fields, and revalidates domain invariants on read. Never add private
+  JWK `d`, credential claims, tokens, endpoint configuration, recovery data, or
+  keys. Treat every resolver response as hostile and keep route/body details
+  out of errors and logs.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

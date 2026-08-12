@@ -66,3 +66,9 @@ once public releases begin.
   committed before node broadcast, with restart status/history, duplicate
   prevention, finalized-chain reconciliation, two-process headless coverage,
   and a mobile recovery/reconcile surface.
+- Dependency-free identity domain/application boundaries plus current
+  Midnight DID 0.5.0 syntax, public JWK, document, and relationship validation.
+- Explicit bounded native `POST /resolve` and single-fixture standalone DID
+  adapters, with profile-scoped list/get/forget headless methods.
+- Separate versioned owner-private public DID-record persistence with restart
+  coverage and a functional Dioxus/iOS/Android DID inventory page.

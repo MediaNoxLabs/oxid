@@ -1,6 +1,6 @@
 [package]
-name = "oxid-ui-dioxus"
-description = "Dioxus incoming UI adapter for Oxid"
+name = "oxid-adapter-storage-identity-json"
+description = "Hardened public DID-record persistence adapter for Oxid"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,11 +9,11 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-dioxus = { workspace = true, features = ["minimal"] }
-oxid-wallet-application.workspace = true
+directories.workspace = true
 oxid-identity-application.workspace = true
-qrcode.workspace = true
-tokio.workspace = true
+oxid-identity-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

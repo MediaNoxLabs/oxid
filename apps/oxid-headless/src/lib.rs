@@ -6,6 +6,10 @@
 use std::{error::Error, fmt, io, io::BufRead, io::Write, thread, time::Duration};
 
 use oxid_composition::ApplicationServices;
+use oxid_identity_application::{
+    DidOperationError, DidRecordQuery, DidRecordRepositoryError, DidRecordView,
+    DidResolutionPortError, ListDidRecordsQuery, ResolveDidCommand,
+};
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, CreateWalletProfileCommand, CreateWalletProfileError,
     DeleteWalletKeyCommand, DeriveWalletAccountCommand, DerivedWalletAccountView,
@@ -169,6 +173,10 @@ impl HeadlessWallet {
             "wallet.shielded.sync.status" => self.shielded_sync_status(request),
             "wallet.shielded.sync.start" => self.start_shielded_sync(request),
             "wallet.shielded.sync.cancel" => self.cancel_shielded_sync(request),
+            "did.resolve" => self.resolve_did(request),
+            "did.list" => self.list_dids(request),
+            "did.get" => self.get_did(request),
+            "did.forget" => self.forget_did(request),
             _ => Dispatch::continue_with(Response::error(
                 request.id,
                 "method_not_found",
@@ -213,6 +221,106 @@ impl HeadlessWallet {
             request.id,
             json!({ "shuttingDown": true }),
         ))
+    }
+
+    fn resolve_did(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<DidParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "did.resolve requires only a string did field",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match futures::executor::block_on(self.application.resolve_did().execute(
+            ResolveDidCommand {
+                profile_id,
+                did: params.did,
+            },
+        )) {
+            Ok(record) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "didRecord": did_record_value(&record) }),
+            )),
+            Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+        }
+    }
+
+    fn list_dids(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "did.list");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .list_did_records()
+            .execute(ListDidRecordsQuery { profile_id })
+        {
+            Ok(records) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "didRecords": records.iter().map(did_record_value).collect::<Vec<_>>() }),
+            )),
+            Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+        }
+    }
+
+    fn get_did(&self, request: Request) -> Dispatch {
+        self.did_record_operation(request, false)
+    }
+
+    fn forget_did(&self, request: Request) -> Dispatch {
+        self.did_record_operation(request, true)
+    }
+
+    fn did_record_operation(&self, request: Request, remove: bool) -> Dispatch {
+        let params = match serde_json::from_value::<DidParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    if remove {
+                        "did.forget requires only a string did field"
+                    } else {
+                        "did.get requires only a string did field"
+                    },
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let query = DidRecordQuery {
+            profile_id,
+            did: params.did,
+        };
+        if remove {
+            match self.application.forget_did().execute(query) {
+                Ok(()) => Dispatch::continue_with(Response::success(
+                    request.id,
+                    json!({ "forgotten": true }),
+                )),
+                Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+            }
+        } else {
+            match self.application.get_did_record().execute(query) {
+                Ok(record) => Dispatch::continue_with(Response::success(
+                    request.id,
+                    json!({ "didRecord": did_record_value(&record) }),
+                )),
+                Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+            }
+        }
     }
 
     fn create_profile(&self, request: Request) -> Dispatch {
@@ -1300,6 +1408,12 @@ struct DeleteKeyParams {
     confirmation: ConfirmationParams,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DidParams {
+    did: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Response {
@@ -1630,6 +1744,116 @@ fn transfer_asset_value(asset: &oxid_wallet_application::WalletTransferAssetView
         "decimals": asset.decimals,
         "atomicUnits": asset.atomic_units,
     })
+}
+
+fn did_record_value(record: &DidRecordView) -> Value {
+    let document = &record.document;
+    json!({
+        "document": {
+            "contexts": document.contexts,
+            "id": document.id,
+            "network": document.network,
+            "alsoKnownAs": document.also_known_as,
+            "verificationMethods": document.verification_methods.iter().map(|method| json!({
+                "id": method.id,
+                "controller": method.controller,
+                "publicKeyJwk": {
+                    "kty": method.public_key_jwk.key_type,
+                    "crv": method.public_key_jwk.curve,
+                    "x": method.public_key_jwk.x,
+                    "y": method.public_key_jwk.y,
+                }
+            })).collect::<Vec<_>>(),
+            "relationships": document.relationships.iter().map(|relationship| json!({
+                "relationship": relationship.relationship,
+                "methodIds": relationship.method_ids,
+            })).collect::<Vec<_>>(),
+            "services": document.services.iter().map(|service| json!({
+                "id": service.id,
+                "types": service.types,
+                "endpoints": service.endpoints.iter().map(|endpoint| json!({
+                    "value": endpoint.value,
+                    "jsonObject": endpoint.is_json_object,
+                })).collect::<Vec<_>>(),
+                "endpointWasArray": service.endpoint_was_array,
+            })).collect::<Vec<_>>(),
+        },
+        "documentMetadata": {
+            "created": record.document_metadata.created,
+            "updated": record.document_metadata.updated,
+            "deactivated": record.document_metadata.deactivated,
+            "versionId": record.document_metadata.version_id,
+            "nextUpdate": record.document_metadata.next_update,
+            "nextVersionId": record.document_metadata.next_version_id,
+            "equivalentIds": record.document_metadata.equivalent_ids,
+            "canonicalId": record.document_metadata.canonical_id,
+        },
+        "contentType": record.content_type,
+        "source": record.source,
+    })
+}
+
+fn did_error(id: Option<String>, error: DidOperationError) -> Response {
+    match error {
+        DidOperationError::InvalidProfileIdentifier(_) | DidOperationError::InvalidDid(_) => {
+            Response::error(
+                id,
+                "invalid_argument",
+                "active profile or Midnight DID is invalid",
+            )
+        }
+        DidOperationError::SubjectMismatch => Response::error(
+            id,
+            "invalid_response",
+            "resolved DID document does not match the requested subject",
+        ),
+        DidOperationError::Resolution(error) => match error {
+            DidResolutionPortError::Unavailable => Response::error(
+                id,
+                "capability_unavailable",
+                "DID resolution capability is unavailable",
+            ),
+            DidResolutionPortError::NotFound => {
+                Response::error(id, "not_found", "DID was not found")
+            }
+            DidResolutionPortError::InvalidDid => Response::error(
+                id,
+                "invalid_argument",
+                "DID resolver rejected the identifier",
+            ),
+            DidResolutionPortError::MethodNotSupported => Response::error(
+                id,
+                "unsupported_method",
+                "DID method is not supported by the resolver",
+            ),
+            DidResolutionPortError::InvalidResponse => Response::error(
+                id,
+                "invalid_response",
+                "DID resolver returned an invalid response",
+            ),
+            DidResolutionPortError::Rejected => {
+                Response::error(id, "resolution_rejected", "DID resolution was rejected")
+            }
+        },
+        DidOperationError::Persistence(error) => match error {
+            DidRecordRepositoryError::NotFound => {
+                Response::error(id, "not_found", "DID record was not found")
+            }
+            DidRecordRepositoryError::CapacityExceeded => {
+                Response::error(id, "resource_exhausted", "DID record capacity was exceeded")
+            }
+            DidRecordRepositoryError::Integrity => Response::error(
+                id,
+                "integrity_error",
+                "DID record storage failed integrity validation",
+            ),
+            DidRecordRepositoryError::Unavailable => Response::error(
+                id,
+                "storage_unavailable",
+                "DID record storage is unavailable",
+            ),
+        },
+    }
 }
 
 fn transaction_error(id: Option<String>, error: WalletTransactionError) -> Response {
@@ -2205,7 +2429,10 @@ fn capability_manifest() -> Value {
         { "method": "credential.request", "status": "queued" },
         { "method": "credential.verify", "status": "queued" },
         { "method": "did.create", "status": "queued" },
-        { "method": "did.resolve", "status": "queued" },
+        { "method": "did.resolve", "status": "ready", "mode": "standalone", "sources": ["standalone", "live"] },
+        { "method": "did.list", "status": "ready", "mode": "standalone", "scope": "active_profile" },
+        { "method": "did.get", "status": "ready", "mode": "standalone", "scope": "active_profile" },
+        { "method": "did.forget", "status": "ready", "mode": "standalone", "scope": "active_profile" },
         { "method": "did.update", "status": "queued" },
         { "method": "did.deactivate", "status": "queued" },
         { "method": "diagnostics.snapshot", "status": "queued" }
@@ -2302,6 +2529,11 @@ mod tests {
             capability["method"] == "wallet.transaction.prepare_unshielded"
                 && capability["status"] == "ready"
                 && capability["submissionReady"] == false
+        }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "did.resolve"
+                && capability["status"] == "ready"
+                && capability["sources"] == json!(["standalone", "live"])
         }));
     }
 

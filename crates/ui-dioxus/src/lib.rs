@@ -5,6 +5,10 @@
 use std::{sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
+use oxid_identity_application::{
+    DidOperationError, DidRecordQuery, DidRecordView, ForgetDidUseCase, ListDidRecordsQuery,
+    ListDidRecordsUseCase, ResolveDidCommand, ResolveDidUseCase,
+};
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
     CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
@@ -58,6 +62,31 @@ pub struct WalletUiServices {
     cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
     list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
     reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
+    resolve_did: Arc<dyn ResolveDidUseCase>,
+    list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    forget_did: Arc<dyn ForgetDidUseCase>,
+}
+
+/// DID inventory and resolution use cases consumed by the DIDs page.
+pub struct DidUiServices {
+    resolve_did: Arc<dyn ResolveDidUseCase>,
+    list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    forget_did: Arc<dyn ForgetDidUseCase>,
+}
+
+impl DidUiServices {
+    #[must_use]
+    pub const fn new(
+        resolve_did: Arc<dyn ResolveDidUseCase>,
+        list_did_records: Arc<dyn ListDidRecordsUseCase>,
+        forget_did: Arc<dyn ForgetDidUseCase>,
+    ) -> Self {
+        Self {
+            resolve_did,
+            list_did_records,
+            forget_did,
+        }
+    }
 }
 
 /// Public profile lifecycle use cases consumed by the wallet shell.
@@ -246,6 +275,7 @@ impl WalletUiServices {
         dust: WalletDustSyncUiServices,
         shielded: WalletShieldedSyncUiServices,
         transactions: WalletTransactionUiServices,
+        dids: DidUiServices,
     ) -> Self {
         Self {
             create_wallet_profile: profiles.create_wallet_profile,
@@ -276,6 +306,9 @@ impl WalletUiServices {
             cancel_wallet_transfer_submission: transactions.cancel_wallet_transfer_submission,
             list_wallet_transfer_submissions: transactions.list_wallet_transfer_submissions,
             reconcile_wallet_transfer_submission: transactions.reconcile_wallet_transfer_submission,
+            resolve_did: dids.resolve_did,
+            list_did_records: dids.list_did_records,
+            forget_did: dids.forget_did,
         }
     }
 
@@ -421,6 +454,21 @@ impl WalletUiServices {
     ) -> Arc<dyn ReconcileWalletTransferSubmissionUseCase> {
         Arc::clone(&self.reconcile_wallet_transfer_submission)
     }
+
+    #[must_use]
+    pub fn resolve_did(&self) -> Arc<dyn ResolveDidUseCase> {
+        Arc::clone(&self.resolve_did)
+    }
+
+    #[must_use]
+    pub fn list_did_records(&self) -> Arc<dyn ListDidRecordsUseCase> {
+        Arc::clone(&self.list_did_records)
+    }
+
+    #[must_use]
+    pub fn forget_did(&self) -> Arc<dyn ForgetDidUseCase> {
+        Arc::clone(&self.forget_did)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -484,6 +532,17 @@ enum ProfileSessionState {
 enum ProfileListState {
     Loading,
     Ready(Vec<WalletProfileView>),
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DidPageState {
+    Loading,
+    Ready {
+        records: Vec<DidRecordView>,
+        resolving: bool,
+        operation_error: Option<String>,
+    },
     Failed(String),
 }
 
@@ -679,15 +738,7 @@ pub fn App() -> Element {
             main { class: "page-content",
                 match active {
                     Destination::Assets => rsx! { AssetsPage { active_profile: active_profile.clone() } },
-                    Destination::Dids => rsx! {
-                        DeferredPage {
-                            eyebrow: "Decentralized identity",
-                            title: "Your DIDs",
-                            description: "DID inventory and did:midnight lifecycle operations will arrive behind identity-owned ports.",
-                            empty_title: "No DID adapter connected",
-                            empty_body: "Create, resolve, update, deactivate, and signing flows are tracked in the parity backlog.",
-                        }
-                    },
+                    Destination::Dids => rsx! { DidsPage { active_profile: active_profile.clone() } },
                     Destination::Credentials => rsx! {
                         DeferredPage {
                             eyebrow: "Identity centre",
@@ -2641,6 +2692,184 @@ fn transaction_status_line(transaction: &oxid_wallet_application::WalletTransact
         .block_height
         .map_or_else(|| "—".to_owned(), |height| height.to_string());
     format!("{} · block {block}", transaction.status)
+}
+
+const STANDALONE_DID_FIXTURE: &str =
+    "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn load_did_page(services: &WalletUiServices, profile_id: &str) -> DidPageState {
+    services
+        .list_did_records()
+        .execute(ListDidRecordsQuery {
+            profile_id: profile_id.to_owned(),
+        })
+        .map_or_else(
+            |error| DidPageState::Failed(did_operation_message(error)),
+            |records| DidPageState::Ready {
+                records,
+                resolving: false,
+                operation_error: None,
+            },
+        )
+}
+
+fn did_operation_message(error: DidOperationError) -> String {
+    error.to_string()
+}
+
+#[component]
+fn DidsPage(active_profile: WalletProfileView) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| DidPageState::Loading);
+    let mut did_input = use_signal(|| STANDALONE_DID_FIXTURE.to_owned());
+    let profile_id = active_profile.id.clone();
+    let load_services = services.clone();
+    let load_profile = profile_id.clone();
+    use_effect(move || state.set(load_did_page(&load_services, &load_profile)));
+
+    let state_snapshot = state.read().clone();
+    match state_snapshot {
+        DidPageState::Loading => rsx! {
+            section { class: "page-heading",
+                p { class: "eyebrow", "Decentralized identity" }
+                h1 { "Your DIDs" }
+                p { "Loading public DID records for this wallet profile…" }
+            }
+        },
+        DidPageState::Failed(message) => rsx! {
+            section { class: "page-heading",
+                p { class: "eyebrow", "Decentralized identity" }
+                h1 { "Your DIDs" }
+                p { "DID inventory is an independently composed identity capability." }
+            }
+            article { class: "empty-state surface-card", role: "alert",
+                span { class: "empty-state__mark", aria_hidden: "true", "◇" }
+                h2 { "DID capability unavailable" }
+                p { "{message}" }
+                button {
+                    class: "secondary-action", r#type: "button",
+                    onclick: move |_| state.set(load_did_page(&services, &profile_id)),
+                    "Retry"
+                }
+            }
+        },
+        DidPageState::Ready {
+            records,
+            resolving,
+            operation_error,
+        } => {
+            let can_resolve = !resolving
+                && !did_input.read().trim().is_empty()
+                && did_input.read().len() <= 8_192;
+            let resolve_services = services.clone();
+            let resolve_profile = profile_id.clone();
+            let retained_records = records.clone();
+            rsx! {
+                section { class: "page-heading",
+                    p { class: "eyebrow", "Decentralized identity" }
+                    h1 { "Your DIDs" }
+                    p { "Resolve standards-shaped did:midnight documents and retain their public methods and services under the active profile." }
+                }
+                article { class: "surface-card did-resolver-card",
+                    p { class: "card-eyebrow", "Resolve a DID" }
+                    label { r#for: "did-identifier", "Midnight DID" }
+                    input {
+                        id: "did-identifier", r#type: "text", maxlength: 8192,
+                        autocomplete: "off", spellcheck: false,
+                        value: "{did_input}",
+                        oninput: move |event| did_input.set(event.value()),
+                    }
+                    p { class: "form-hint", "Standalone mode recognizes the documented fixture shown by default. A live resolver is used only when its base URL is explicitly configured." }
+                    button {
+                        class: "primary-action", r#type: "button", disabled: !can_resolve,
+                        onclick: move |_| {
+                            state.set(DidPageState::Ready { records: retained_records.clone(), resolving: true, operation_error: None });
+                            let service = resolve_services.resolve_did();
+                            let profile_id = resolve_profile.clone();
+                            let did = did_input.read().trim().to_owned();
+                            let mut records = retained_records.clone();
+                            spawn(async move {
+                                match service.execute(ResolveDidCommand { profile_id, did }).await {
+                                    Ok(record) => {
+                                        records.retain(|existing| existing.document.id != record.document.id);
+                                        records.push(record);
+                                        records.sort_by(|left, right| left.document.id.cmp(&right.document.id));
+                                        state.set(DidPageState::Ready { records, resolving: false, operation_error: None });
+                                    }
+                                    Err(error) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(did_operation_message(error)) }),
+                                }
+                            });
+                        },
+                        if resolving { "Resolving…" } else { "Resolve and save" }
+                    }
+                    if let Some(error) = operation_error {
+                        p { class: "field-error", role: "alert", "{error}" }
+                    }
+                }
+                if records.is_empty() {
+                    article { class: "empty-state surface-card",
+                        span { class: "empty-state__mark", aria_hidden: "true", "◇" }
+                        h2 { "No saved DIDs" }
+                        p { "Resolve a did:midnight identifier to add its public document to this profile." }
+                        span { class: "status-pill", "Profile scoped" }
+                    }
+                } else {
+                    section { class: "did-inventory", aria_label: "Saved decentralized identifiers",
+                        for record in records.clone() {
+                            {
+                                let did = record.document.id.clone();
+                                let forget_did = did.clone();
+                                let forget_profile = profile_id.clone();
+                                let forget_services = services.clone();
+                                let retained = records.clone();
+                                let source = record.source.clone();
+                                let version = record.document_metadata.version_id.clone().unwrap_or_else(|| "Unversioned".to_owned());
+                                rsx! {
+                                    article { class: "surface-card did-record", key: "{did}",
+                                        div { class: "did-record__heading",
+                                            div {
+                                                p { class: "card-eyebrow", "{record.document.network} · {source}" }
+                                                h2 { title: "{did}", "{truncate_middle(&did, 22, 12)}" }
+                                            }
+                                            span { class: if record.document_metadata.deactivated == Some(true) { "status-pill" } else { "status-pill success" },
+                                                if record.document_metadata.deactivated == Some(true) { "Deactivated" } else { "Resolved" }
+                                            }
+                                        }
+                                        dl { class: "did-record__facts",
+                                            div { dt { "Version" } dd { "{version}" } }
+                                            div { dt { "Public methods" } dd { "{record.document.verification_methods.len()}" } }
+                                            div { dt { "Services" } dd { "{record.document.services.len()}" } }
+                                        }
+                                        if !record.document.verification_methods.is_empty() {
+                                            ul { class: "did-method-list",
+                                                for method in record.document.verification_methods.clone() {
+                                                    li { key: "{method.id}",
+                                                        strong { "{method.public_key_jwk.curve}" }
+                                                        code { title: "{method.id}", "{truncate_middle(&method.id, 16, 8)}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        button {
+                                            class: "secondary-action", r#type: "button",
+                                            aria_label: "Forget saved DID {did}",
+                                            onclick: move |_| {
+                                                match forget_services.forget_did().execute(DidRecordQuery { profile_id: forget_profile.clone(), did: forget_did.clone() }) {
+                                                    Ok(()) => state.set(DidPageState::Ready { records: retained.iter().filter(|record| record.document.id != forget_did).cloned().collect(), resolving: false, operation_error: None }),
+                                                    Err(error) => state.set(DidPageState::Ready { records: retained.clone(), resolving: false, operation_error: Some(did_operation_message(error)) }),
+                                                }
+                                            },
+                                            "Forget from profile"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[component]

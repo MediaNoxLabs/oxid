@@ -4,6 +4,11 @@
 
 use std::sync::Arc;
 
+use oxid_adapter_did_midnight::StandaloneDidResolver;
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_adapter_did_midnight::{
+    HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
     MidnightAccountCheckpointConfig, MidnightAccountCheckpointConfigError,
@@ -24,8 +29,14 @@ use oxid_adapter_midnight::{
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_dev::{DevelopmentWalletSecurity, UnavailableWalletSecurity};
+use oxid_adapter_storage_identity_json::JsonDidRecordRepository;
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
 use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;
+use oxid_identity_application::{
+    DidRecordRepository, DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase,
+    ListDidRecordsUseCase, ResolveDidUseCase, UnavailableDidRecordRepository,
+    UnavailableDidResolver,
+};
 use oxid_wallet_application::{
     AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
     CancelWalletTransferSubmissionUseCase, CreateWalletProfileService, CreateWalletProfileUseCase,
@@ -81,6 +92,10 @@ pub struct ApplicationServices {
     cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
     list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
     reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
+    resolve_did: Arc<dyn ResolveDidUseCase>,
+    list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    get_did_record: Arc<dyn GetDidRecordUseCase>,
+    forget_did: Arc<dyn ForgetDidUseCase>,
 }
 
 impl ApplicationServices {
@@ -246,15 +261,37 @@ impl ApplicationServices {
     ) -> Arc<dyn ReconcileWalletTransferSubmissionUseCase> {
         Arc::clone(&self.reconcile_wallet_transfer_submission)
     }
+
+    #[must_use]
+    pub fn resolve_did(&self) -> Arc<dyn ResolveDidUseCase> {
+        Arc::clone(&self.resolve_did)
+    }
+
+    #[must_use]
+    pub fn list_did_records(&self) -> Arc<dyn ListDidRecordsUseCase> {
+        Arc::clone(&self.list_did_records)
+    }
+
+    #[must_use]
+    pub fn get_did_record(&self) -> Arc<dyn GetDidRecordUseCase> {
+        Arc::clone(&self.get_did_record)
+    }
+
+    #[must_use]
+    pub fn forget_did(&self) -> Arc<dyn ForgetDidUseCase> {
+        Arc::clone(&self.forget_did)
+    }
 }
 
 /// Wires the application with persistent public-profile metadata storage.
 #[must_use]
 pub fn compose() -> ApplicationServices {
-    compose_with_adapters(
+    compose_with_identity_adapters(
         Arc::new(JsonWalletProfileRepository::at_default_location()),
         Arc::new(UnavailableWalletSecurity),
         Arc::new(unavailable_midnight_wallet()),
+        Arc::new(UnavailableDidRecordRepository),
+        Arc::new(UnavailableDidResolver),
     )
 }
 
@@ -325,6 +362,11 @@ pub const MIDNIGHT_SHIELDED_CHECKPOINT_PATH_ENV: &str = "OXID_MIDNIGHT_SHIELDED_
 /// Environment variable holding the app-private public submission journal.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MIDNIGHT_SUBMISSION_JOURNAL_PATH_ENV: &str = "OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH";
+/// Environment variable holding the explicitly trusted Midnight DID resolver base route.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MIDNIGHT_DID_RESOLVER_URL_ENV: &str = "OXID_MIDNIGHT_DID_RESOLVER_URL";
+/// Environment variable holding the app-private public DID record file.
+pub const DID_STORE_PATH_ENV: &str = "OXID_DID_STORE_PATH";
 
 /// Safe startup failures for optional standalone-indexer composition.
 #[cfg(not(target_arch = "wasm32"))]
@@ -339,6 +381,7 @@ pub enum HeadlessCompositionError {
     InvalidMidnightDustCheckpointConfiguration(MidnightDustCheckpointConfigError),
     InvalidMidnightShieldedCheckpointConfiguration(MidnightShieldedCheckpointConfigError),
     InvalidMidnightSubmissionJournalConfiguration(MidnightSubmissionJournalConfigError),
+    InvalidMidnightDidResolverConfiguration(HttpDidResolverConfigError),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -364,6 +407,7 @@ impl std::fmt::Display for HeadlessCompositionError {
             Self::InvalidMidnightSubmissionJournalConfiguration(error) => {
                 return error.fmt(formatter);
             }
+            Self::InvalidMidnightDidResolverConfiguration(error) => return error.fmt(formatter),
         };
         formatter.write_str(message)
     }
@@ -378,6 +422,10 @@ impl std::error::Error for HeadlessCompositionError {}
 #[cfg(not(target_arch = "wasm32"))]
 pub fn compose_headless_from_environment() -> Result<ApplicationServices, HeadlessCompositionError>
 {
+    read_optional_environment(MIDNIGHT_DID_RESOLVER_URL_ENV)?
+        .map(HttpDidResolverConfig::new)
+        .transpose()
+        .map_err(HeadlessCompositionError::InvalidMidnightDidResolverConfiguration)?;
     let values = [
         read_optional_environment(MIDNIGHT_NETWORK_ID_ENV)?,
         read_optional_environment(MIDNIGHT_INDEXER_WS_URL_ENV)?,
@@ -758,10 +806,12 @@ pub fn compose_in_memory() -> ApplicationServices {
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
-    compose_with_adapters(
+    compose_with_identity_adapters(
         Arc::new(InMemoryWalletProfileRepository::new()),
         security,
         midnight,
+        Arc::new(UnavailableDidRecordRepository),
+        Arc::new(UnavailableDidResolver),
     )
 }
 
@@ -769,6 +819,33 @@ fn compose_with_adapters<R, S, M>(
     repository: Arc<R>,
     security: Arc<S>,
     midnight: Arc<M>,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository + 'static,
+    S: WalletProtectionPort + WalletKeyOperationPort + 'static,
+    M: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletAccountDerivationPort
+        + WalletDustSyncPort
+        + WalletShieldedSyncPort
+        + WalletTransactionPort
+        + 'static,
+{
+    compose_with_identity_adapters(
+        repository,
+        security,
+        midnight,
+        headless_did_repository(),
+        headless_did_resolver(),
+    )
+}
+
+fn compose_with_identity_adapters<R, S, M>(
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    did_repository: Arc<dyn DidRecordRepository>,
+    did_resolver: Arc<dyn DidResolutionPort>,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository + 'static,
@@ -799,6 +876,7 @@ where
     let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let shielded = Arc::new(WalletShieldedSyncService::new(Arc::clone(&midnight)));
     let transactions = Arc::new(WalletTransactionService::new(midnight, clock));
+    let identity = Arc::new(DidService::from_ports(did_repository, did_resolver));
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
     let initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase> = protection.clone();
@@ -832,6 +910,10 @@ where
         transactions.clone();
     let reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase> =
         transactions;
+    let resolve_did: Arc<dyn ResolveDidUseCase> = identity.clone();
+    let list_did_records: Arc<dyn ListDidRecordsUseCase> = identity.clone();
+    let get_did_record: Arc<dyn GetDidRecordUseCase> = identity.clone();
+    let forget_did: Arc<dyn ForgetDidUseCase> = identity;
 
     ApplicationServices {
         create_wallet_profile,
@@ -865,12 +947,50 @@ where
         cancel_wallet_transfer_submission,
         list_wallet_transfer_submissions,
         reconcile_wallet_transfer_submission,
+        resolve_did,
+        list_did_records,
+        get_did_record,
+        forget_did,
     }
+}
+
+fn headless_did_repository() -> Arc<dyn DidRecordRepository> {
+    let path = std::env::var_os(DID_STORE_PATH_ENV)
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            JsonWalletProfileRepository::at_default_location()
+                .configured_path()
+                .and_then(std::path::Path::parent)
+                .map(|directory| directory.join("private/did-records.json"))
+        });
+    path.map_or_else(
+        || Arc::new(UnavailableDidRecordRepository) as Arc<dyn DidRecordRepository>,
+        |path| Arc::new(JsonDidRecordRepository::new(path)) as Arc<dyn DidRecordRepository>,
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn headless_did_resolver() -> Arc<dyn DidResolutionPort> {
+    std::env::var_os(MIDNIGHT_DID_RESOLVER_URL_ENV)
+        .and_then(|value| value.into_string().ok())
+        .and_then(|value| HttpDidResolverConfig::new(value).ok())
+        .map_or_else(
+            || Arc::new(StandaloneDidResolver) as Arc<dyn DidResolutionPort>,
+            |config| Arc::new(HttpDidResolver::new(config)) as Arc<dyn DidResolutionPort>,
+        )
+}
+
+#[cfg(target_arch = "wasm32")]
+fn headless_did_resolver() -> Arc<dyn DidResolutionPort> {
+    Arc::new(StandaloneDidResolver)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxid_identity_application::{
+        DidOperationError, DidRecordRepositoryError, ListDidRecordsQuery,
+    };
     use oxid_wallet_application::{
         CreateWalletProfileCommand, WalletAccountQuery, WalletDustSyncCommand,
         WalletProfileSecurityCommand, WalletShieldedSyncCommand,
@@ -932,6 +1052,10 @@ mod tests {
         drop(services.cancel_wallet_transfer_submission());
         drop(services.list_wallet_transfer_submissions());
         drop(services.reconcile_wallet_transfer_submission());
+        drop(services.resolve_did());
+        drop(services.list_did_records());
+        drop(services.get_did_record());
+        drop(services.forget_did());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1044,10 +1168,12 @@ mod tests {
 
     #[test]
     fn production_facing_composition_fails_closed_without_native_custody() {
-        let services = compose_with_adapters(
+        let services = compose_with_identity_adapters(
             Arc::new(InMemoryWalletProfileRepository::new()),
             Arc::new(UnavailableWalletSecurity),
             Arc::new(unavailable_midnight_wallet()),
+            Arc::new(UnavailableDidRecordRepository),
+            Arc::new(UnavailableDidResolver),
         );
         let status = services
             .get_wallet_security_status()
@@ -1085,6 +1211,14 @@ mod tests {
                     profile_id: "profile_test".to_owned(),
                 })
                 .is_err()
+        );
+        assert_eq!(
+            services.list_did_records().execute(ListDidRecordsQuery {
+                profile_id: "profile_test".to_owned(),
+            }),
+            Err(DidOperationError::Persistence(
+                DidRecordRepositoryError::Unavailable
+            ))
         );
         assert_eq!(
             services

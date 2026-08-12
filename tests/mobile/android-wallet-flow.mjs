@@ -165,15 +165,25 @@ try {
       "simulated transfer inclusion",
     );
 
-    const publicResult = await evaluate(`(() => ({
+    const walletResult = await evaluate(`(() => ({
       submitted: document.body.innerText.includes("Transfer submitted"),
       simulated: document.body.innerText.includes("Mode: simulated"),
       dustSynced: document.body.innerText.includes("12 DUST"),
       shieldedSynced: document.body.innerText.includes("1 shielded notes")
         && document.body.innerText.includes("5000000 atomic units"),
     }))()`);
-    const result = { ...publicResult, qrRendered, shieldedAddressRendered };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.qrRendered || !result.shieldedAddressRendered) {
+    await clickButton("DIDs");
+    await waitForButton("Resolve and save");
+    await clickButton("Resolve and save");
+    await waitFor(
+      "document.body.innerText.includes('standalone-fixture-v1')",
+      "resolved standalone DID",
+    );
+    const didResolved = await evaluate(
+      "document.body.innerText.includes('standalone-fixture-v1')",
+    );
+    const result = { ...walletResult, didResolved, qrRendered, shieldedAddressRendered };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.didResolved || !result.qrRendered || !result.shieldedAddressRendered) {
       throw new Error("Android standalone wallet flow did not expose the expected public result");
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -181,12 +191,21 @@ try {
     await waitForButton("Assets");
     await clickButton("Assets");
     await waitForButton("Activate development wallet");
-    const restored = await evaluate(`(() => ({
+    const walletRestored = await evaluate(`(() => ({
       profileRestored: !document.body.innerText.includes("Create your wallet profile"),
       developmentRootReset: document.body.innerText.includes("Activate protected test account"),
       submissionRestored: document.body.innerText.includes("Transfer included"),
     }))()`);
-    if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored) {
+    await clickButton("DIDs");
+    await waitFor(
+      "document.body.innerText.includes('standalone-fixture-v1')",
+      "restored DID inventory",
+    );
+    const didRestored = await evaluate(
+      "document.body.innerText.includes('standalone-fixture-v1')",
+    );
+    const restored = { ...walletRestored, didRestored };
+    if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored || !restored.didRestored) {
       throw new Error("Android restart did not restore public profile and submission metadata");
     }
     process.stdout.write(`${JSON.stringify(restored)}\n`);
