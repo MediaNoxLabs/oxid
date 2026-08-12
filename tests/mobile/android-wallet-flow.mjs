@@ -156,6 +156,10 @@ try {
     await clickButton("Review transfer");
     await clickButtonByLabel("Authorize reviewed NIGHT transfer");
     await clickButtonByLabel("Prove and submit NIGHT transfer");
+    await clickButtonByLabel("Cancel NIGHT transfer submission");
+    await waitForButton("Retry safe submission");
+    await clickButton("Retry safe submission");
+    await clickButtonByLabel("Prove and submit NIGHT transfer");
     await waitFor(
       "document.body.innerText.includes('Transfer submitted')",
       "simulated transfer inclusion",

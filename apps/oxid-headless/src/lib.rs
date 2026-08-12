@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
+#![recursion_limit = "256"]
 
-use std::{error::Error, fmt, io, io::BufRead, io::Write};
+use std::{error::Error, fmt, io, io::BufRead, io::Write, thread, time::Duration};
 
 use oxid_composition::ApplicationServices;
 use oxid_wallet_application::{
@@ -18,7 +19,8 @@ use oxid_wallet_application::{
     WalletSecurityError, WalletSecurityPortError, WalletSecurityStatusView,
     WalletShieldedSyncCommand, WalletShieldedSyncError, WalletShieldedSyncPortError,
     WalletShieldedSyncView, WalletTransactionError, WalletTransactionPortError,
-    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionView,
+    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
+    WalletTransferSubmissionStatusView, WalletTransferSubmissionView, validate_confirmation,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyPurpose, WalletProtectionClass,
@@ -154,6 +156,9 @@ impl HeadlessWallet {
             "wallet.transaction.submit_unshielded" | "wallet.transaction.send_unshielded" => {
                 self.submit_unshielded(request)
             }
+            "wallet.transaction.start_submission" => self.start_submission(request),
+            "wallet.transaction.submission_status" => self.submission_status(request),
+            "wallet.transaction.cancel_submission" => self.cancel_submission(request),
             "wallet.transaction.draft" => self.transaction_draft(request),
             "wallet.connect" | "wallet.sync.force" => self.sync_account(request),
             "wallet.dust.sync.status" => self.dust_sync_status(request),
@@ -940,6 +945,170 @@ impl HeadlessWallet {
         }
     }
 
+    fn start_submission(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<SubmitTransferParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.transaction.start_submission requires only a string draftId and confirmation",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let preview =
+            match self
+                .application
+                .get_wallet_transfer_draft()
+                .execute(WalletTransferDraftQuery {
+                    profile_id: profile_id.clone(),
+                    draft_id: params.draft_id.clone(),
+                }) {
+                Ok(preview) => preview,
+                Err(error) => return Dispatch::continue_with(transaction_error(request.id, error)),
+            };
+        match preview.state.as_str() {
+            "authorized" | "submitting" | "submitted" => {}
+            "expired" => {
+                return Dispatch::continue_with(transaction_port_error(
+                    request.id,
+                    WalletTransactionPortError::DraftExpired,
+                ));
+            }
+            _ => {
+                return Dispatch::continue_with(transaction_port_error(
+                    request.id,
+                    WalletTransactionPortError::DraftConflict,
+                ));
+            }
+        }
+
+        let confirmation: SensitiveOperationConfirmation = params.confirmation.into();
+        if let Err(error) = validate_confirmation(&confirmation) {
+            return Dispatch::continue_with(sensitive_error(request.id, error));
+        }
+        let service = self.application.submit_wallet_transfer();
+        let command = SubmitWalletTransferCommand {
+            profile_id: profile_id.clone(),
+            draft_id: params.draft_id.clone(),
+            confirmation,
+        };
+        if thread::Builder::new()
+            .name("oxid-headless-submit".to_owned())
+            .spawn(move || {
+                let _ = futures::executor::block_on(service.execute(command));
+            })
+            .is_err()
+        {
+            return Dispatch::continue_with(Response::error(
+                request.id,
+                "unavailable",
+                "transaction submission worker could not be started",
+            ));
+        }
+
+        let status_service = self.application.get_wallet_transfer_submission_status();
+        let query = WalletTransferSubmissionQuery {
+            profile_id,
+            draft_id: params.draft_id,
+        };
+        for _ in 0..100 {
+            match status_service.execute(query.clone()) {
+                Ok(status) if status.state != "not_started" => {
+                    return Dispatch::continue_with(Response::success(
+                        request.id,
+                        json!({ "submissionStatus": transfer_submission_status_value(&status) }),
+                    ));
+                }
+                Ok(_) => thread::sleep(Duration::from_millis(1)),
+                Err(error) => {
+                    return Dispatch::continue_with(transaction_error(request.id, error));
+                }
+            }
+        }
+        Dispatch::continue_with(Response::error(
+            request.id,
+            "unavailable",
+            "transaction submission worker did not start",
+        ))
+    }
+
+    fn submission_status(&self, request: Request) -> Dispatch {
+        self.submission_operation(
+            request,
+            "wallet.transaction.submission_status",
+            |application, query| {
+                application
+                    .get_wallet_transfer_submission_status()
+                    .execute(query)
+            },
+        )
+    }
+
+    fn cancel_submission(&self, request: Request) -> Dispatch {
+        self.submission_operation(
+            request,
+            "wallet.transaction.cancel_submission",
+            |application, query| {
+                application
+                    .cancel_wallet_transfer_submission()
+                    .execute(query)
+            },
+        )
+    }
+
+    fn submission_operation(
+        &self,
+        request: Request,
+        method: &'static str,
+        operation: impl FnOnce(
+            &ApplicationServices,
+            WalletTransferSubmissionQuery,
+        )
+            -> Result<WalletTransferSubmissionStatusView, WalletTransactionError>,
+    ) -> Dispatch {
+        let params = match serde_json::from_value::<TransactionDraftParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                let message = match method {
+                    "wallet.transaction.submission_status" => {
+                        "wallet.transaction.submission_status requires only a string draftId"
+                    }
+                    "wallet.transaction.cancel_submission" => {
+                        "wallet.transaction.cancel_submission requires only a string draftId"
+                    }
+                    _ => "transaction submission method requires only a string draftId",
+                };
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    message,
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match operation(
+            &self.application,
+            WalletTransferSubmissionQuery {
+                profile_id,
+                draft_id: params.draft_id,
+            },
+        ) {
+            Ok(status) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "submissionStatus": transfer_submission_status_value(&status) }),
+            )),
+            Err(error) => Dispatch::continue_with(transaction_error(request.id, error)),
+        }
+    }
+
     fn account_projection(
         &self,
         request: Request,
@@ -1393,6 +1562,20 @@ fn transfer_submission_value(submission: &WalletTransferSubmissionView) -> Value
     })
 }
 
+fn transfer_submission_status_value(status: &WalletTransferSubmissionStatusView) -> Value {
+    json!({
+        "draftId": status.draft_id,
+        "state": status.state,
+        "cancellationAllowed": status.cancellation_allowed,
+        "retryable": status.retryable,
+        "transactionId": status.transaction_id,
+        "blockId": status.block_id,
+        "fee": status.fee.as_ref().map(transfer_asset_value),
+        "mode": status.mode,
+        "custodyMode": "development_only"
+    })
+}
+
 fn transfer_asset_value(asset: &oxid_wallet_application::WalletTransferAssetView) -> Value {
     json!({
         "assetId": asset.asset_id,
@@ -1492,10 +1675,20 @@ fn transaction_port_error(id: Option<String>, error: WalletTransactionPortError)
             "conflict",
             "transaction submission is already in progress",
         ),
+        WalletTransactionPortError::SubmissionNotInProgress => Response::error(
+            id,
+            "failed_precondition",
+            "transaction submission is not in progress",
+        ),
         WalletTransactionPortError::SubmissionCancelled => Response::error(
             id,
             "submission_cancelled",
             "transaction submission was cancelled before broadcast",
+        ),
+        WalletTransactionPortError::SubmissionCancellationUnsafe => Response::error(
+            id,
+            "failed_precondition",
+            "transaction submission can no longer be cancelled safely",
         ),
         WalletTransactionPortError::AuthorizationChallengeMismatch => Response::error(
             id,
@@ -1940,6 +2133,9 @@ fn capability_manifest() -> Value {
         { "method": "wallet.transaction.draft", "status": "ready", "mode": "development_only", "submissionReady": "state_dependent" },
         { "method": "wallet.transaction.submit_unshielded", "status": "ready", "mode": "development_only", "sources": ["simulated", "live"] },
         { "method": "wallet.transaction.send_unshielded", "status": "ready", "mode": "development_only", "aliasFor": "wallet.transaction.submit_unshielded" },
+        { "method": "wallet.transaction.start_submission", "status": "ready", "mode": "development_only", "execution": "adapter_worker" },
+        { "method": "wallet.transaction.submission_status", "status": "ready", "mode": "development_only" },
+        { "method": "wallet.transaction.cancel_submission", "status": "ready", "mode": "development_only", "boundary": "pre_broadcast_only" },
         { "method": "wallet.sync.force", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
         { "method": "wallet.dust.sync.status", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached", "unavailable"] },
         { "method": "wallet.dust.sync.start", "status": "ready", "mode": "standalone", "execution": "adapter_worker" },
@@ -2736,6 +2932,160 @@ mod tests {
             .to_string(),
         );
         assert_eq!(foreign_network[0]["error"]["code"], "invalid_argument");
+    }
+
+    #[test]
+    fn starts_cancels_and_retries_a_submission_through_the_headless_protocol() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"cancel-create","method":"wallet.profile.create","params":{"displayName":"Cancellation flow"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile identifier is returned");
+        let setup = execute_with_wallet(
+            &wallet,
+            &format!(
+                "{}\n{}\n{}\n{}",
+                json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "id": "cancel-select",
+                    "method": "wallet.profile.select",
+                    "params": { "profileId": profile_id }
+                }),
+                r#"{"protocol":"oxid.headless.v1","id":"cancel-init","method":"wallet.security.initialize","params":{}}"#,
+                r#"{"protocol":"oxid.headless.v1","id":"cancel-derive","method":"wallet.account.derive","params":{}}"#,
+                r#"{"protocol":"oxid.headless.v1","id":"cancel-sync","method":"wallet.connect","params":{}}"#,
+            ),
+        );
+        let recipient = setup[2]["result"]["account"]["receiveAddress"]["value"]
+            .as_str()
+            .expect("receive address is returned");
+        let prepared = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "cancel-prepare",
+                "method": "wallet.transaction.prepare_unshielded",
+                "params": {
+                    "recipientAddress": recipient,
+                    "amountAtomicUnits": "1500000"
+                }
+            })
+            .to_string(),
+        );
+        let transfer = &prepared[0]["result"]["transfer"];
+        let draft_id = transfer["draftId"]
+            .as_str()
+            .expect("draft id is returned")
+            .to_owned();
+        let challenge = transfer["authorizationChallenge"]
+            .as_str()
+            .expect("authorization challenge is returned");
+        let authorized = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "cancel-authorize",
+                "method": "wallet.transaction.authorize_unshielded",
+                "params": {
+                    "draftId": draft_id,
+                    "authorizationChallenge": challenge,
+                    "confirmation": {
+                        "title": "Authorize NIGHT transfer",
+                        "summary": "Authorize the cancellable headless transfer",
+                        "confirmed": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(authorized[0]["result"]["transfer"]["state"], "authorized");
+
+        let started = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "cancel-start",
+                "method": "wallet.transaction.start_submission",
+                "params": {
+                    "draftId": draft_id,
+                    "confirmation": {
+                        "title": "Submit NIGHT transfer",
+                        "summary": "Start the cancellable headless transfer",
+                        "confirmed": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(started[0]["result"]["submissionStatus"]["state"], "running");
+        assert_eq!(
+            started[0]["result"]["submissionStatus"]["cancellationAllowed"],
+            true
+        );
+        let cancelled = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "cancel-request",
+                "method": "wallet.transaction.cancel_submission",
+                "params": { "draftId": draft_id }
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            cancelled[0]["result"]["submissionStatus"]["state"],
+            "cancellation_requested"
+        );
+
+        let status_request = json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "cancel-status",
+            "method": "wallet.transaction.submission_status",
+            "params": { "draftId": draft_id }
+        })
+        .to_string();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        let final_status = loop {
+            let response = execute_with_wallet(&wallet, &status_request);
+            if response[0]["result"]["submissionStatus"]["state"] == "cancelled" {
+                break response;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "submission cancellation was not acknowledged"
+            );
+            thread::yield_now();
+        };
+        assert_eq!(
+            final_status[0]["result"]["submissionStatus"]["retryable"],
+            true
+        );
+        assert!(!final_status[0].to_string().contains("transactionHex"));
+
+        let retried = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "cancel-retry",
+                "method": "wallet.transaction.submit_unshielded",
+                "params": {
+                    "draftId": draft_id,
+                    "confirmation": {
+                        "title": "Retry NIGHT transfer",
+                        "summary": "Retry only after pre-broadcast cancellation was acknowledged",
+                        "confirmed": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            retried[0]["result"]["submission"]["transfer"]["state"],
+            "submitted"
+        );
     }
 
     #[test]

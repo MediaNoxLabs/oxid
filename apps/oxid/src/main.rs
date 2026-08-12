@@ -42,6 +42,8 @@ fn main() {
             application.authorize_wallet_transfer(),
             application.submit_wallet_transfer(),
             application.get_wallet_transfer_draft(),
+            application.get_wallet_transfer_submission_status(),
+            application.cancel_wallet_transfer_submission(),
         ),
     );
 

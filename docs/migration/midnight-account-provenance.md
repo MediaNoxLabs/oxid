@@ -84,6 +84,14 @@ retryable state, so another send cannot race an external side effect. Completed
 retries return the identical outcome. No response contains the DUST child,
 proof input, signature, or transaction bytes.
 
+Issue #19 and ADR-0034 make that worker control explicit without broadening the
+chain-material boundary. Oxid-owned status distinguishes running,
+cancellation-requested, broadcasting, cancelled, included, and unknown
+attempts. The Midnight adapter atomically closes cancellation immediately
+before its node call. A pre-broadcast cancellation restores `Authorized` only
+after worker acknowledgement; broadcasting and ambiguous outcomes remain
+non-retryable. Headless and Dioxus consume the same status/cancel use cases.
+
 ## Protected account derivation mapping
 
 Issue #8 connects ADR-0015's Midnight semantics to ADR-0017's custody boundary.

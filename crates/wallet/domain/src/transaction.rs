@@ -52,6 +52,75 @@ pub enum WalletTransactionDraftState {
     Expired,
 }
 
+/// Public lifecycle of one submission attempt.
+///
+/// This is deliberately separate from the retained draft state: a cancelled
+/// pre-broadcast attempt restores an authorized draft so it can be retried,
+/// while the submission status records that the previous attempt ended by
+/// explicit cancellation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletTransactionSubmissionState {
+    NotStarted,
+    Running,
+    CancellationRequested,
+    Broadcasting,
+    Cancelled,
+    Included,
+    OutcomeUnknown,
+}
+
+/// Safe status for an adapter-owned submission attempt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletTransactionSubmissionStatus {
+    draft_id: WalletTransactionDraftId,
+    state: WalletTransactionSubmissionState,
+    submission: Option<WalletTransferSubmission>,
+}
+
+impl WalletTransactionSubmissionStatus {
+    #[must_use]
+    pub const fn new(
+        draft_id: WalletTransactionDraftId,
+        state: WalletTransactionSubmissionState,
+        submission: Option<WalletTransferSubmission>,
+    ) -> Self {
+        Self {
+            draft_id,
+            state,
+            submission,
+        }
+    }
+
+    #[must_use]
+    pub const fn draft_id(&self) -> &WalletTransactionDraftId {
+        &self.draft_id
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> WalletTransactionSubmissionState {
+        self.state
+    }
+
+    #[must_use]
+    pub const fn submission(&self) -> Option<&WalletTransferSubmission> {
+        self.submission.as_ref()
+    }
+
+    #[must_use]
+    pub const fn cancellation_allowed(&self) -> bool {
+        matches!(self.state, WalletTransactionSubmissionState::Running)
+    }
+
+    #[must_use]
+    pub const fn retryable(&self) -> bool {
+        matches!(
+            self.state,
+            WalletTransactionSubmissionState::NotStarted
+                | WalletTransactionSubmissionState::Cancelled
+        )
+    }
+}
+
 /// Fee state surfaced before a chain-specific balancing adapter is invoked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalletTransactionFeeState {
@@ -354,5 +423,25 @@ mod tests {
             prepared.authorization_challenge()
         );
         assert_eq!(authorized.recipient(), prepared.recipient());
+    }
+
+    #[test]
+    fn submission_status_separates_cancellation_from_draft_retryability() {
+        let draft_id = WalletTransactionDraftId::parse("txdraft_test").expect("draft is valid");
+        let running = WalletTransactionSubmissionStatus::new(
+            draft_id.clone(),
+            WalletTransactionSubmissionState::Running,
+            None,
+        );
+        assert!(running.cancellation_allowed());
+        assert!(!running.retryable());
+
+        let cancelled = WalletTransactionSubmissionStatus::new(
+            draft_id,
+            WalletTransactionSubmissionState::Cancelled,
+            None,
+        );
+        assert!(!cancelled.cancellation_allowed());
+        assert!(cancelled.retryable());
     }
 }

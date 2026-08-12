@@ -7,8 +7,8 @@ use oxid_platform_ports::{ClockPort, PlatformError};
 use oxid_wallet_domain::{
     AssetBalance, ChainAddress, ChainAddressError, ChainAddressKind, WalletProfileId,
     WalletTransactionAuthorizationChallenge, WalletTransactionDraftId, WalletTransactionDraftState,
-    WalletTransactionFeeState, WalletTransferPreview, WalletTransferSubmission,
-    WalletTransferSubmissionMode,
+    WalletTransactionFeeState, WalletTransactionSubmissionState, WalletTransactionSubmissionStatus,
+    WalletTransferPreview, WalletTransferSubmission, WalletTransferSubmissionMode,
 };
 
 use crate::{SensitiveOperationConfirmation, SensitiveWalletOperationError, validate_confirmation};
@@ -32,7 +32,9 @@ pub enum WalletTransactionPortError {
     DraftExpired,
     DraftConflict,
     SubmissionInProgress,
+    SubmissionNotInProgress,
     SubmissionCancelled,
+    SubmissionCancellationUnsafe,
     AuthorizationChallengeMismatch,
     InsufficientDust,
     InvalidChainState,
@@ -59,7 +61,11 @@ impl fmt::Display for WalletTransactionPortError {
             Self::DraftExpired => "transaction draft has expired",
             Self::DraftConflict => "transaction draft conflicts with current wallet state",
             Self::SubmissionInProgress => "transaction submission is already in progress",
+            Self::SubmissionNotInProgress => "transaction submission is not in progress",
             Self::SubmissionCancelled => "transaction submission was cancelled before broadcast",
+            Self::SubmissionCancellationUnsafe => {
+                "transaction submission can no longer be cancelled safely"
+            }
             Self::AuthorizationChallengeMismatch => {
                 "transaction authorization does not match the prepared preview"
             }
@@ -144,6 +150,18 @@ pub trait WalletTransactionPort: Send + Sync {
         draft_id: &WalletTransactionDraftId,
         now: UnixTimestampMillis,
     ) -> Result<WalletTransferPreview, WalletTransactionPortError>;
+
+    fn submission_status(
+        &self,
+        profile_id: &WalletProfileId,
+        draft_id: &WalletTransactionDraftId,
+    ) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError>;
+
+    fn cancel_submission(
+        &self,
+        profile_id: &WalletProfileId,
+        draft_id: &WalletTransactionDraftId,
+    ) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError>;
 }
 
 /// Incoming request for preparing an unshielded NIGHT transfer.
@@ -174,6 +192,13 @@ pub struct SubmitWalletTransferCommand {
 /// Incoming query for safe retained-draft metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletTransferDraftQuery {
+    pub profile_id: String,
+    pub draft_id: String,
+}
+
+/// Incoming query/command identifying one retained submission attempt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletTransferSubmissionQuery {
     pub profile_id: String,
     pub draft_id: String,
 }
@@ -253,6 +278,35 @@ pub struct WalletTransferSubmissionView {
     pub mode: String,
 }
 
+/// Safe submission lifecycle view with optional public inclusion metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletTransferSubmissionStatusView {
+    pub draft_id: String,
+    pub state: String,
+    pub cancellation_allowed: bool,
+    pub retryable: bool,
+    pub transaction_id: Option<String>,
+    pub block_id: Option<String>,
+    pub fee: Option<WalletTransferAssetView>,
+    pub mode: Option<String>,
+}
+
+impl From<&WalletTransactionSubmissionStatus> for WalletTransferSubmissionStatusView {
+    fn from(status: &WalletTransactionSubmissionStatus) -> Self {
+        let submission = status.submission();
+        Self {
+            draft_id: status.draft_id().as_str().to_owned(),
+            state: submission_state_name(status.state()).to_owned(),
+            cancellation_allowed: status.cancellation_allowed(),
+            retryable: status.retryable(),
+            transaction_id: submission.map(|value| value.transaction_id().as_str().to_owned()),
+            block_id: submission.map(|value| value.block_id().as_str().to_owned()),
+            fee: submission.map(|value| asset_view(value.fee())),
+            mode: submission.map(|value| submission_mode_name(value.mode()).to_owned()),
+        }
+    }
+}
+
 impl From<&SubmittedWalletTransfer> for WalletTransferSubmissionView {
     fn from(value: &SubmittedWalletTransfer) -> Self {
         Self {
@@ -288,6 +342,22 @@ pub trait GetWalletTransferDraftUseCase: Send + Sync {
         &self,
         query: WalletTransferDraftQuery,
     ) -> Result<WalletTransferPreviewView, WalletTransactionError>;
+}
+
+/// Incoming use case for reading an adapter-owned submission attempt.
+pub trait GetWalletTransferSubmissionStatusUseCase: Send + Sync {
+    fn execute(
+        &self,
+        query: WalletTransferSubmissionQuery,
+    ) -> Result<WalletTransferSubmissionStatusView, WalletTransactionError>;
+}
+
+/// Incoming use case for requesting cooperative pre-broadcast cancellation.
+pub trait CancelWalletTransferSubmissionUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: WalletTransferSubmissionQuery,
+    ) -> Result<WalletTransferSubmissionStatusView, WalletTransactionError>;
 }
 
 /// Stable transaction failures exposed by the application boundary.
@@ -477,6 +547,48 @@ where
     }
 }
 
+impl<T, C> GetWalletTransferSubmissionStatusUseCase for WalletTransactionService<T, C>
+where
+    T: WalletTransactionPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute(
+        &self,
+        query: WalletTransferSubmissionQuery,
+    ) -> Result<WalletTransferSubmissionStatusView, WalletTransactionError> {
+        let profile_id = WalletProfileId::parse(query.profile_id)
+            .map_err(WalletTransactionError::InvalidProfileIdentifier)?;
+        let draft_id = WalletTransactionDraftId::parse(query.draft_id)
+            .map_err(WalletTransactionError::InvalidDraftIdentifier)?;
+        let status = self
+            .transactions
+            .submission_status(&profile_id, &draft_id)
+            .map_err(WalletTransactionError::Operation)?;
+        Ok(WalletTransferSubmissionStatusView::from(&status))
+    }
+}
+
+impl<T, C> CancelWalletTransferSubmissionUseCase for WalletTransactionService<T, C>
+where
+    T: WalletTransactionPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute(
+        &self,
+        command: WalletTransferSubmissionQuery,
+    ) -> Result<WalletTransferSubmissionStatusView, WalletTransactionError> {
+        let profile_id = WalletProfileId::parse(command.profile_id)
+            .map_err(WalletTransactionError::InvalidProfileIdentifier)?;
+        let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+            .map_err(WalletTransactionError::InvalidDraftIdentifier)?;
+        let status = self
+            .transactions
+            .cancel_submission(&profile_id, &draft_id)
+            .map_err(WalletTransactionError::Operation)?;
+        Ok(WalletTransferSubmissionStatusView::from(&status))
+    }
+}
+
 fn asset_view(balance: &AssetBalance) -> WalletTransferAssetView {
     WalletTransferAssetView {
         asset_id: balance.asset().id().as_str().to_owned(),
@@ -508,6 +620,18 @@ const fn submission_mode_name(mode: WalletTransferSubmissionMode) -> &'static st
     match mode {
         WalletTransferSubmissionMode::Simulated => "simulated",
         WalletTransferSubmissionMode::Live => "live",
+    }
+}
+
+const fn submission_state_name(state: WalletTransactionSubmissionState) -> &'static str {
+    match state {
+        WalletTransactionSubmissionState::NotStarted => "not_started",
+        WalletTransactionSubmissionState::Running => "running",
+        WalletTransactionSubmissionState::CancellationRequested => "cancellation_requested",
+        WalletTransactionSubmissionState::Broadcasting => "broadcasting",
+        WalletTransactionSubmissionState::Cancelled => "cancelled",
+        WalletTransactionSubmissionState::Included => "included",
+        WalletTransactionSubmissionState::OutcomeUnknown => "outcome_unknown",
     }
 }
 
@@ -658,6 +782,26 @@ mod tests {
                 })
             })
         }
+
+        fn submission_status(
+            &self,
+            _: &WalletProfileId,
+            draft_id: &WalletTransactionDraftId,
+        ) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError> {
+            Ok(WalletTransactionSubmissionStatus::new(
+                draft_id.clone(),
+                WalletTransactionSubmissionState::NotStarted,
+                None,
+            ))
+        }
+
+        fn cancel_submission(
+            &self,
+            _: &WalletProfileId,
+            _: &WalletTransactionDraftId,
+        ) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError> {
+            Err(WalletTransactionPortError::SubmissionNotInProgress)
+        }
     }
 
     fn service() -> WalletTransactionService<RecordingTransactions, FixedClock> {
@@ -731,8 +875,16 @@ mod tests {
                 "transaction submission is already in progress",
             ),
             (
+                WalletTransactionPortError::SubmissionNotInProgress,
+                "transaction submission is not in progress",
+            ),
+            (
                 WalletTransactionPortError::SubmissionCancelled,
                 "transaction submission was cancelled before broadcast",
+            ),
+            (
+                WalletTransactionPortError::SubmissionCancellationUnsafe,
+                "transaction submission can no longer be cancelled safely",
             ),
             (
                 WalletTransactionPortError::AuthorizationChallengeMismatch,
@@ -904,5 +1056,24 @@ mod tests {
         assert_eq!(result.fee.asset_id, "midnight:dust");
         assert_eq!(result.fee.atomic_units, "42");
         assert_eq!(result.mode, "simulated");
+    }
+
+    #[test]
+    fn submission_status_maps_safe_lifecycle_without_chain_material() {
+        let status = GetWalletTransferSubmissionStatusUseCase::execute(
+            &service(),
+            WalletTransferSubmissionQuery {
+                profile_id: "profile_test".to_owned(),
+                draft_id: "txdraft_test".to_owned(),
+            },
+        )
+        .expect("submission status is readable");
+
+        assert_eq!(status.draft_id, "txdraft_test");
+        assert_eq!(status.state, "not_started");
+        assert!(status.retryable);
+        assert!(!status.cancellation_allowed);
+        assert!(status.transaction_id.is_none());
+        assert!(status.fee.is_none());
     }
 }

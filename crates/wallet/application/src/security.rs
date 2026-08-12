@@ -635,7 +635,9 @@ fn parse_profile_id(profile_id: String) -> Result<WalletProfileId, WalletSecurit
     WalletProfileId::parse(profile_id).map_err(WalletSecurityError::InvalidProfileIdentifier)
 }
 
-pub(crate) fn validate_confirmation(
+/// Validates a bounded human-readable consent record before an incoming
+/// adapter schedules sensitive work asynchronously.
+pub fn validate_confirmation(
     confirmation: &SensitiveOperationConfirmation,
 ) -> Result<(), SensitiveWalletOperationError> {
     if !confirmation.confirmed {

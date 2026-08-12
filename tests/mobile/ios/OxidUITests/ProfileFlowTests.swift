@@ -87,6 +87,14 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(submit.waitForExistence(timeout: 10))
         scrollTo(submit, in: application)
         submit.tap()
+        let cancelSubmission = application.buttons["Cancel NIGHT transfer submission"]
+        XCTAssertTrue(cancelSubmission.waitForExistence(timeout: 5))
+        cancelSubmission.tap()
+        let retrySubmission = application.buttons["Retry safe submission"]
+        XCTAssertTrue(retrySubmission.waitForExistence(timeout: 5))
+        retrySubmission.tap()
+        XCTAssertTrue(submit.waitForExistence(timeout: 5))
+        submit.tap()
         XCTAssertTrue(application.staticTexts["Transfer submitted"].waitForExistence(timeout: 15))
 
         application.terminate()

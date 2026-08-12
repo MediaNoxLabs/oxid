@@ -690,6 +690,28 @@ where
     > {
         Err(oxid_wallet_application::WalletTransactionPortError::Unavailable)
     }
+
+    fn submission_status(
+        &self,
+        _: &WalletProfileId,
+        _: &oxid_wallet_domain::WalletTransactionDraftId,
+    ) -> Result<
+        oxid_wallet_domain::WalletTransactionSubmissionStatus,
+        oxid_wallet_application::WalletTransactionPortError,
+    > {
+        Err(oxid_wallet_application::WalletTransactionPortError::Unavailable)
+    }
+
+    fn cancel_submission(
+        &self,
+        _: &WalletProfileId,
+        _: &oxid_wallet_domain::WalletTransactionDraftId,
+    ) -> Result<
+        oxid_wallet_domain::WalletTransactionSubmissionStatus,
+        oxid_wallet_application::WalletTransactionPortError,
+    > {
+        Err(oxid_wallet_application::WalletTransactionPortError::Unavailable)
+    }
 }
 
 impl<S, D> WalletNetworkPort for MidnightWalletAdapter<S, D>

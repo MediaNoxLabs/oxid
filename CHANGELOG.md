@@ -58,3 +58,7 @@ once public releases begin.
 - Bounded native `zswapLedgerEvents` synchronization on an off-renderer worker,
   with optional durable shielded checkpoint wiring for read-only and complete
   standalone headless configurations.
+- Explicit transaction submission status and cooperative pre-broadcast
+  cancellation across application, Midnight adapter, headless, and mobile
+  flows, with acknowledged cancellation restoring safe retryability and
+  post-broadcast cancellation refused.

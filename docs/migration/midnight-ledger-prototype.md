@@ -20,14 +20,14 @@ before migrating later work.
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
-| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded plus private DUST/Zswap checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, native shielded replay lifecycle, and staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; shielded spending and durable production custody pending |
+| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded plus private DUST/Zswap checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, native shielded replay lifecycle, and staged unshielded transfer through DUST proof, safe pre-broadcast cancellation, and node inclusion implemented for development/headless; shielded spending and durable production custody pending |
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; process-local Ed25519/P-256 plus BIP32/secp256k1-Schnorr conformance implemented; durable recovery and native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification | credential domain/store/verification ports and adapters | Deferred to M3/M5 |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
 | `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, protected development activation, and staged transfer UI reimplemented; remaining capability pages and native bridges deferred |
-| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, protected key/account flows, simulated/live reads, and staged canonical transfer submission implemented; SSI flows queued |
+| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, protected key/account flows, simulated/live reads, and staged canonical transfer submission/status/cancellation implemented; SSI flows queued |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness implemented and measured on iOS/Android; generated artifacts remain uncommitted |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch the explicit standalone-development composition through repository scripts; native camera/copy/share/custody bridges remain deferred |
@@ -252,10 +252,15 @@ consistent official-state batch, resumes from the next cursor, and retries an
 incompatible cached delta once from zero. Headless environment composition
 accepts the private store for read-only or complete standalone live modes.
 
+Issue #19 and ADR-0034 add a deliberate improvement over the prototype's
+submit-and-wait flow: Oxid-owned submission status plus explicit headless and
+mobile cancellation before the adapter's atomic broadcast boundary. An
+acknowledged cancellation restores the authorized draft for explicit retry;
+after broadcast, cancellation is refused and unknown outcomes remain blocked.
+
 Shielded spending, internal/change address management, replacement and
-durable confirmation tracking, camera/copy/share bridges, explicit mobile
-submission cancellation, production endpoint discovery, recovery, and native
-custody remain separate follow-ups.
+durable confirmation tracking, camera/copy/share bridges, production endpoint
+discovery, recovery, and native custody remain separate follow-ups.
 
 ## Gate for each later slice
 

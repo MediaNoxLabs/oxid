@@ -25,21 +25,22 @@ use oxid_adapter_storage_json::JsonWalletProfileRepository;
 use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;
 use oxid_wallet_application::{
     AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
-    CreateWalletProfileService, CreateWalletProfileUseCase, DeleteWalletKeyUseCase,
-    DeriveWalletAccountUseCase, GenerateWalletKeyUseCase, GetActiveWalletProfileService,
-    GetActiveWalletProfileUseCase, GetWalletAccountUseCase, GetWalletDustSyncStatusUseCase,
-    GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
-    GetWalletTransferDraftUseCase, InitializeWalletSecurityUseCase, ListWalletKeysUseCase,
-    ListWalletNetworksUseCase, ListWalletProfilesService, ListWalletProfilesUseCase,
-    LockWalletUseCase, PrepareWalletTransferUseCase, SelectWalletNetworkUseCase,
-    SelectWalletProfileService, SelectWalletProfileUseCase, SignWalletDataUseCase,
-    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase, SubmitWalletTransferUseCase,
-    SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountDerivationPort,
-    WalletAccountDerivationService, WalletAccountReadPort, WalletAccountService,
-    WalletDustSyncPort, WalletDustSyncService, WalletKeyOperationPort, WalletKeyService,
-    WalletNetworkPort, WalletNetworkService, WalletProfileRepository, WalletProtectionPort,
-    WalletProtectionService, WalletShieldedSyncPort, WalletShieldedSyncService,
-    WalletTransactionPort, WalletTransactionService,
+    CancelWalletTransferSubmissionUseCase, CreateWalletProfileService, CreateWalletProfileUseCase,
+    DeleteWalletKeyUseCase, DeriveWalletAccountUseCase, GenerateWalletKeyUseCase,
+    GetActiveWalletProfileService, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
+    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
+    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
+    ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
+    ListWalletProfilesUseCase, LockWalletUseCase, PrepareWalletTransferUseCase,
+    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectWalletProfileUseCase,
+    SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
+    SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
+    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
+    WalletAccountService, WalletDustSyncPort, WalletDustSyncService, WalletKeyOperationPort,
+    WalletKeyService, WalletNetworkPort, WalletNetworkService, WalletProfileRepository,
+    WalletProtectionPort, WalletProtectionService, WalletShieldedSyncPort,
+    WalletShieldedSyncService, WalletTransactionPort, WalletTransactionService,
 };
 
 /// Application capabilities shared by every incoming adapter.
@@ -72,6 +73,8 @@ pub struct ApplicationServices {
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
     get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
+    get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase>,
+    cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
 }
 
 impl ApplicationServices {
@@ -208,6 +211,20 @@ impl ApplicationServices {
     #[must_use]
     pub fn get_wallet_transfer_draft(&self) -> Arc<dyn GetWalletTransferDraftUseCase> {
         Arc::clone(&self.get_wallet_transfer_draft)
+    }
+
+    #[must_use]
+    pub fn get_wallet_transfer_submission_status(
+        &self,
+    ) -> Arc<dyn GetWalletTransferSubmissionStatusUseCase> {
+        Arc::clone(&self.get_wallet_transfer_submission_status)
+    }
+
+    #[must_use]
+    pub fn cancel_wallet_transfer_submission(
+        &self,
+    ) -> Arc<dyn CancelWalletTransferSubmissionUseCase> {
+        Arc::clone(&self.cancel_wallet_transfer_submission)
     }
 }
 
@@ -723,7 +740,11 @@ where
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();
     let authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase> = transactions.clone();
     let submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase> = transactions.clone();
-    let get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase> = transactions;
+    let get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase> = transactions.clone();
+    let get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase> =
+        transactions.clone();
+    let cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase> =
+        transactions;
 
     ApplicationServices {
         create_wallet_profile,
@@ -753,6 +774,8 @@ where
         authorize_wallet_transfer,
         submit_wallet_transfer,
         get_wallet_transfer_draft,
+        get_wallet_transfer_submission_status,
+        cancel_wallet_transfer_submission,
     }
 }
 
@@ -816,6 +839,8 @@ mod tests {
         drop(services.authorize_wallet_transfer());
         drop(services.submit_wallet_transfer());
         drop(services.get_wallet_transfer_draft());
+        drop(services.get_wallet_transfer_submission_status());
+        drop(services.cancel_wallet_transfer_submission());
     }
 
     #[cfg(not(target_arch = "wasm32"))]

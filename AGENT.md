@@ -163,6 +163,16 @@ checkpoint every consistent official-state batch, resume at `cursor + 1`, and
 retry an incompatible cached delta once from zero. Production composition
 remains fail-closed pending durable native custody and endpoint discovery.
 
+[Issue #19](https://github.com/MediaNoxLabs/oxid/issues/19) and ADR-0034 expose
+transaction submission status and deliberate pre-broadcast cancellation. The
+Midnight adapter retains a profile/draft-scoped control object and atomically
+marks the broadcast boundary immediately before node submission. An
+acknowledged cancellation restores `Authorized` and records the attempt as
+`Cancelled`; broadcasting, included, and unknown attempts cannot be cancelled
+or made retryable. Headless adds asynchronous start/status/cancel methods, and
+Dioxus uses the same application boundary for its Cancel and safe-retry flow.
+Active attempts remain process-local pending durable reconciliation.
+
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
 web --target wasm32-unknown-unknown` currently stops in the pre-existing
@@ -237,6 +247,8 @@ the adapter-owned DUST session and partial-checkpoint cancellation/resume rule
 without weakening live-before-spend. ADR-0033 keeps Zswap keys/state
 adapter-private and owns the explicit shielded sync lifecycle and worker
 without exposing ledger or secret types.
+ADR-0034 keeps transaction cancellation adapter-owned, requires an atomic
+pre-broadcast boundary, and separates attempt status from retained draft state.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -309,6 +321,16 @@ connects. `OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH` optionally enables the
 owner-private store only when the rest of a read-only or complete live
 configuration is present; it is invalid with simulation or by itself.
 
+The controllable headless submission surface is
+`wallet.transaction.start_submission`,
+`wallet.transaction.submission_status`, and
+`wallet.transaction.cancel_submission`. Start validates the same explicit
+human-readable confirmation as synchronous submit, returns once adapter-owned
+work is running, and never exposes worker handles or chain material.
+Cancellation is allowed only in `running`; `cancellation_requested` becomes
+`cancelled` after worker acknowledgement. `broadcasting`, `included`, and
+`outcome_unknown` are non-retryable and cancellation must fail closed.
+
 `oxid-app/standalone-development` is the only mobile-development exception: it
 selects the same zero-configuration `compose_headless()` stack explicitly at
 compile time. Repository simulator/emulator scripts enable it; default
@@ -325,7 +347,10 @@ The headless transaction surface is
 `wallet.transaction.prepare_unshielded`,
 `wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
 `wallet.transaction.submit_unshielded`, and the
-`wallet.transaction.send_unshielded` alias. Pre-submission previews use
+`wallet.transaction.send_unshielded` alias. Controllable attempts add
+`wallet.transaction.start_submission`,
+`wallet.transaction.submission_status`, and
+`wallet.transaction.cancel_submission`. Pre-submission previews use
 decimal-string atomic units and report DUST balancing/proving/submission as
 pending; the submitted outcome exposes the final DUST fee plus public
 transaction and block identifiers. Never add signing payload, signature,
@@ -599,6 +624,10 @@ to silence the shell probe.
   Preserve native connect/ack/idle/total timeouts, WebSocket message/frame
   bounds, linear cursor and non-regressing target checks, 256-event/4 MiB
   replay batches, and one-million-event/512 MiB run limits.
+- Transaction attempt status must remain separate from draft lifecycle. Retain
+  cancellation primitives inside the Midnight adapter, mark broadcast before
+  the node call, restore `Authorized` only after acknowledged pre-broadcast
+  cancellation, and never label broadcasting or unknown outcomes retryable.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.

@@ -86,6 +86,8 @@ The implemented account methods are `wallet.network.list`,
 `wallet.transaction.history`, `wallet.transaction.prepare_unshielded`,
 `wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
 `wallet.transaction.submit_unshielded`, `wallet.transaction.send_unshielded`,
+`wallet.transaction.start_submission`, `wallet.transaction.submission_status`,
+`wallet.transaction.cancel_submission`,
 `wallet.connect`, `wallet.sync.force`, `wallet.dust.sync.status`,
 `wallet.dust.sync.start`, `wallet.dust.sync.cancel`,
 `wallet.shielded.sync.status`, `wallet.shielded.sync.start`, and
@@ -109,6 +111,10 @@ balances canonical fees, proves DUST spends locally when configured with an
 app-private cache, submits `Midnight.send_mn_transaction` unsigned, and returns only successful
 public transaction/block identifiers. No method returns signing payloads,
 signatures, proof witnesses, derived secrets, or serialized transactions.
+The asynchronous start/status/cancel methods expose a deliberate
+pre-broadcast cancellation window. Once node broadcast begins, cancellation is
+refused; an acknowledged cancellation restores the authorized draft for an
+explicit retry.
 The DUST methods expose only exact atomic balance, bounded cursor progress,
 freshness, and sanitized state. Cached or cancelled checkpoints remain
 resumable but are never labelled live enough to spend.

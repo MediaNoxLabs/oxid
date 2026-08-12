@@ -36,7 +36,8 @@ use oxid_wallet_domain::{
     DerivedChainAccount, MAX_WALLET_TRANSFER_INPUTS, PublicKeyEncoding, WalletKeyAlgorithm,
     WalletProfileId, WalletSignature, WalletTransactionAuthorizationChallenge,
     WalletTransactionDraftId, WalletTransactionDraftState, WalletTransactionFeeState,
-    WalletTransferPreview, WalletTransferSubmission, WalletTransferSubmissionMode,
+    WalletTransactionSubmissionState, WalletTransactionSubmissionStatus, WalletTransferPreview,
+    WalletTransferSubmission, WalletTransferSubmissionMode,
 };
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
@@ -58,12 +59,89 @@ type LedgerTransaction = Transaction<Signature, ProofPreimageMarker, PedersenRan
 pub(crate) struct MidnightCompletionRequest {
     pub(crate) transaction: LedgerTransaction,
     pub(crate) expires_at_seconds: u64,
-    cancellation: Arc<AtomicBool>,
+    control: Arc<MidnightSubmissionControl>,
 }
 
 impl MidnightCompletionRequest {
     pub(crate) fn cancellation_token(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.cancellation)
+        Arc::clone(&self.control.cancellation)
+    }
+
+    pub(crate) fn begin_broadcast(&self) -> Result<(), WalletTransactionPortError> {
+        self.control.begin_broadcast()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MidnightSubmissionPhase {
+    Working,
+    CancellationRequested,
+    Broadcasting,
+}
+
+#[derive(Debug)]
+pub(crate) struct MidnightSubmissionControl {
+    cancellation: Arc<AtomicBool>,
+    phase: Mutex<MidnightSubmissionPhase>,
+}
+
+impl MidnightSubmissionControl {
+    fn new() -> Self {
+        Self {
+            cancellation: Arc::new(AtomicBool::new(false)),
+            phase: Mutex::new(MidnightSubmissionPhase::Working),
+        }
+    }
+
+    fn request_cancellation(&self) -> Result<(), WalletTransactionPortError> {
+        let mut phase = self
+            .phase
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        match *phase {
+            MidnightSubmissionPhase::Working => {
+                self.cancellation.store(true, Ordering::Release);
+                *phase = MidnightSubmissionPhase::CancellationRequested;
+                Ok(())
+            }
+            MidnightSubmissionPhase::CancellationRequested => Ok(()),
+            MidnightSubmissionPhase::Broadcasting => {
+                Err(WalletTransactionPortError::SubmissionCancellationUnsafe)
+            }
+        }
+    }
+
+    fn begin_broadcast(&self) -> Result<(), WalletTransactionPortError> {
+        let mut phase = self
+            .phase
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        match *phase {
+            MidnightSubmissionPhase::Working => {
+                *phase = MidnightSubmissionPhase::Broadcasting;
+                Ok(())
+            }
+            MidnightSubmissionPhase::CancellationRequested => {
+                Err(WalletTransactionPortError::SubmissionCancelled)
+            }
+            MidnightSubmissionPhase::Broadcasting => {
+                Err(WalletTransactionPortError::SubmissionInProgress)
+            }
+        }
+    }
+
+    fn public_state(&self) -> Result<WalletTransactionSubmissionState, WalletTransactionPortError> {
+        let phase = self
+            .phase
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        Ok(match *phase {
+            MidnightSubmissionPhase::Working => WalletTransactionSubmissionState::Running,
+            MidnightSubmissionPhase::CancellationRequested => {
+                WalletTransactionSubmissionState::CancellationRequested
+            }
+            MidnightSubmissionPhase::Broadcasting => WalletTransactionSubmissionState::Broadcasting,
+        })
     }
 }
 
@@ -105,6 +183,17 @@ impl MidnightTransactionCompleter for SimulatedMidnightTransactionCompleter {
         request: MidnightCompletionRequest,
         _: &[u8; 32],
     ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
+        // The deterministic development adapter keeps a visible pre-broadcast
+        // window so headless and mobile conformance can exercise cancellation.
+        // XCTest observes the WebView accessibility tree at a coarser cadence.
+        let steps = if cfg!(target_os = "ios") { 240 } else { 40 };
+        for _ in 0..steps {
+            if request.cancellation_token().load(Ordering::Acquire) {
+                return Err(WalletTransactionPortError::SubmissionCancelled);
+            }
+            thread::sleep(std::time::Duration::from_millis(25));
+        }
+        request.begin_broadcast()?;
         let mut encoded = Vec::new();
         midnight_serialize::tagged_serialize(&request.transaction, &mut encoded)
             .map_err(|_| WalletTransactionPortError::InvalidData)?;
@@ -174,6 +263,8 @@ pub(crate) struct RetainedMidnightDraft {
     unsigned_intent: LedgerIntent,
     signed_transaction: Option<LedgerTransaction>,
     submission: Option<WalletTransferSubmission>,
+    submission_state: WalletTransactionSubmissionState,
+    submission_control: Option<Arc<MidnightSubmissionControl>>,
 }
 
 pub(crate) type RetainedMidnightDrafts =
@@ -418,6 +509,8 @@ where
             unsigned_intent: intent,
             signed_transaction: None,
             submission: None,
+            submission_state: WalletTransactionSubmissionState::NotStarted,
+            submission_control: None,
         };
         let key = (profile_id.clone(), draft_id);
         let mut drafts = self
@@ -520,6 +613,7 @@ where
     ) -> WalletTransactionPortFuture<'a> {
         Box::pin(async move {
             let key = (profile_id.clone(), request.draft_id.clone());
+            let control = Arc::new(MidnightSubmissionControl::new());
             let (transaction, account_index, expires_at_seconds) = {
                 let mut drafts = self
                     .drafts
@@ -566,6 +660,8 @@ where
                 retained.preview = retained
                     .preview
                     .with_state(WalletTransactionDraftState::Submitting);
+                retained.submission_state = WalletTransactionSubmissionState::Running;
+                retained.submission_control = Some(Arc::clone(&control));
                 (
                     transaction,
                     retained.account.account_index(),
@@ -579,8 +675,7 @@ where
             let drafts = Arc::clone(&self.drafts);
             let worker_key = key.clone();
             let draft_id = request.draft_id;
-            let cancellation = Arc::new(AtomicBool::new(false));
-            let mut cancel_on_drop = CancelSubmissionOnDrop::new(Arc::clone(&cancellation));
+            let mut cancel_on_drop = CancelSubmissionOnDrop::new(Arc::clone(&control));
             let (sender, receiver) = futures::channel::oneshot::channel();
             let spawn = thread::Builder::new()
                 .name("oxid-midnight-submit".to_owned())
@@ -590,7 +685,7 @@ where
                             MidnightCompletionRequest {
                                 transaction: transaction.clone(),
                                 expires_at_seconds,
-                                cancellation: Arc::clone(&cancellation),
+                                control: Arc::clone(&control),
                             },
                             dust_seed,
                         )
@@ -602,7 +697,11 @@ where
                 });
             if spawn.is_err() {
                 cancel_on_drop.disarm();
-                restore_authorized(self.drafts.as_ref(), &key)?;
+                restore_authorized(
+                    self.drafts.as_ref(),
+                    &key,
+                    WalletTransactionSubmissionState::NotStarted,
+                )?;
                 return Err(WalletTransactionPortError::Unavailable);
             }
 
@@ -642,17 +741,67 @@ where
         }
         Ok(retained.preview.clone())
     }
+
+    fn submission_status(
+        &self,
+        profile_id: &WalletProfileId,
+        draft_id: &WalletTransactionDraftId,
+    ) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError> {
+        let drafts = self
+            .drafts
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        let retained = drafts
+            .get(&(profile_id.clone(), draft_id.clone()))
+            .ok_or(WalletTransactionPortError::DraftNotFound)?;
+        submission_status(retained)
+    }
+
+    fn cancel_submission(
+        &self,
+        profile_id: &WalletProfileId,
+        draft_id: &WalletTransactionDraftId,
+    ) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError> {
+        let mut drafts = self
+            .drafts
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        let retained = drafts
+            .get_mut(&(profile_id.clone(), draft_id.clone()))
+            .ok_or(WalletTransactionPortError::DraftNotFound)?;
+        match retained.submission_state {
+            WalletTransactionSubmissionState::Running => {
+                let control = retained
+                    .submission_control
+                    .as_ref()
+                    .ok_or(WalletTransactionPortError::InvalidData)?;
+                control.request_cancellation()?;
+                retained.submission_state = WalletTransactionSubmissionState::CancellationRequested;
+            }
+            WalletTransactionSubmissionState::CancellationRequested
+            | WalletTransactionSubmissionState::Cancelled => {}
+            WalletTransactionSubmissionState::NotStarted => {
+                return Err(WalletTransactionPortError::SubmissionNotInProgress);
+            }
+            WalletTransactionSubmissionState::Included
+            | WalletTransactionSubmissionState::Broadcasting
+            | WalletTransactionSubmissionState::OutcomeUnknown => {
+                return Err(WalletTransactionPortError::SubmissionCancellationUnsafe);
+            }
+        }
+        submission_status(retained)
+    }
 }
 
 struct CancelSubmissionOnDrop {
-    cancellation: Arc<AtomicBool>,
+    control: Arc<MidnightSubmissionControl>,
     armed: bool,
 }
 
 impl CancelSubmissionOnDrop {
-    fn new(cancellation: Arc<AtomicBool>) -> Self {
+    fn new(control: Arc<MidnightSubmissionControl>) -> Self {
         Self {
-            cancellation,
+            control,
             armed: true,
         }
     }
@@ -665,9 +814,28 @@ impl CancelSubmissionOnDrop {
 impl Drop for CancelSubmissionOnDrop {
     fn drop(&mut self) {
         if self.armed {
-            self.cancellation.store(true, Ordering::Release);
+            let _ = self.control.request_cancellation();
         }
     }
+}
+
+fn submission_status(
+    retained: &RetainedMidnightDraft,
+) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError> {
+    let state = if retained.submission_state == WalletTransactionSubmissionState::Running {
+        retained
+            .submission_control
+            .as_ref()
+            .ok_or(WalletTransactionPortError::InvalidData)?
+            .public_state()?
+    } else {
+        retained.submission_state
+    };
+    Ok(WalletTransactionSubmissionStatus::new(
+        retained.preview.draft_id().clone(),
+        state,
+        retained.submission.clone(),
+    ))
 }
 
 fn finish_submission(
@@ -683,10 +851,15 @@ fn finish_submission(
             return Err(WalletTransactionPortError::DraftExpired);
         }
         Err(WalletTransactionPortError::SubmissionOutcomeUnknown) => {
+            mark_submission_outcome_unknown(drafts, key)?;
             return Err(WalletTransactionPortError::SubmissionOutcomeUnknown);
         }
+        Err(WalletTransactionPortError::SubmissionCancelled) => {
+            restore_authorized(drafts, key, WalletTransactionSubmissionState::Cancelled)?;
+            return Err(WalletTransactionPortError::SubmissionCancelled);
+        }
         Err(error) => {
-            restore_authorized(drafts, key)?;
+            restore_authorized(drafts, key, WalletTransactionSubmissionState::NotStarted)?;
             return Err(error);
         }
     };
@@ -716,6 +889,8 @@ fn finish_submission(
         .with_final_fee(fee)
         .with_state(WalletTransactionDraftState::Submitted);
     retained.submission = Some(submission.clone());
+    retained.submission_state = WalletTransactionSubmissionState::Included;
+    retained.submission_control = None;
     retained.signed_transaction = None;
     Ok(SubmittedWalletTransfer {
         preview: retained.preview.clone(),
@@ -726,6 +901,7 @@ fn finish_submission(
 fn restore_authorized(
     drafts: &RetainedMidnightDrafts,
     key: &(WalletProfileId, WalletTransactionDraftId),
+    submission_state: WalletTransactionSubmissionState,
 ) -> Result<(), WalletTransactionPortError> {
     let mut drafts = drafts
         .lock()
@@ -737,6 +913,25 @@ fn restore_authorized(
         retained.preview = retained
             .preview
             .with_state(WalletTransactionDraftState::Authorized);
+        retained.submission_state = submission_state;
+        retained.submission_control = None;
+    }
+    Ok(())
+}
+
+fn mark_submission_outcome_unknown(
+    drafts: &RetainedMidnightDrafts,
+    key: &(WalletProfileId, WalletTransactionDraftId),
+) -> Result<(), WalletTransactionPortError> {
+    let mut drafts = drafts
+        .lock()
+        .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    let retained = drafts
+        .get_mut(key)
+        .ok_or(WalletTransactionPortError::DraftNotFound)?;
+    if retained.preview.state() == WalletTransactionDraftState::Submitting {
+        retained.submission_state = WalletTransactionSubmissionState::OutcomeUnknown;
+        retained.submission_control = None;
     }
     Ok(())
 }
@@ -757,6 +952,8 @@ fn expire_submission(
             .with_state(WalletTransactionDraftState::Expired);
         retained.signing_payload = Zeroizing::new(Vec::new());
         retained.signed_transaction = None;
+        retained.submission_state = WalletTransactionSubmissionState::NotStarted;
+        retained.submission_control = None;
     }
     Ok(())
 }
@@ -1088,6 +1285,39 @@ mod tests {
                 std::thread::yield_now();
             }
             Err(WalletTransactionPortError::SubmissionCancelled)
+        }
+    }
+
+    struct BroadcastBlockingCompleter {
+        started: mpsc::SyncSender<()>,
+        release: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl MidnightTransactionCompleter for BroadcastBlockingCompleter {
+        fn complete(
+            &self,
+            request: MidnightCompletionRequest,
+            _: &[u8; 32],
+        ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
+            request.begin_broadcast()?;
+            self.started
+                .send(())
+                .map_err(|_| WalletTransactionPortError::Unavailable)?;
+            let (lock, condition) = self.release.as_ref();
+            let mut released = lock
+                .lock()
+                .map_err(|_| WalletTransactionPortError::Unavailable)?;
+            while !*released {
+                released = condition
+                    .wait(released)
+                    .map_err(|_| WalletTransactionPortError::Unavailable)?;
+            }
+            Ok(MidnightCompletionOutcome {
+                fee_specks: 1,
+                transaction_hash: [1; 32],
+                block_hash: [2; 32],
+                mode: WalletTransferSubmissionMode::Simulated,
+            })
         }
     }
 
@@ -1493,6 +1723,121 @@ mod tests {
             );
             std::thread::yield_now();
         }
+    }
+
+    #[test]
+    fn explicit_cancellation_is_reported_and_leaves_the_draft_retryable() {
+        let (started_sender, started_receiver) = mpsc::sync_channel(1);
+        let adapter = submittable_adapter(Arc::new(CancellationAwareCompleter {
+            started: started_sender,
+        }));
+        let authorized = authorize_transfer(&adapter);
+        let profile = profile();
+        assert_eq!(
+            adapter
+                .submission_status(&profile, authorized.draft_id())
+                .expect("initial submission status is readable")
+                .state(),
+            WalletTransactionSubmissionState::NotStarted
+        );
+        let mut future = adapter.submit(
+            &profile,
+            SubmitWalletTransferRequest {
+                draft_id: authorized.draft_id().clone(),
+                now: UnixTimestampMillis::new(1_000),
+            },
+        );
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(future.as_mut().poll(&mut context), Poll::Pending));
+        started_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("completion worker starts");
+
+        let requested = adapter
+            .cancel_submission(&profile, authorized.draft_id())
+            .expect("pre-broadcast cancellation is accepted");
+        assert_eq!(
+            requested.state(),
+            WalletTransactionSubmissionState::CancellationRequested
+        );
+        assert!(!requested.cancellation_allowed());
+        assert_eq!(
+            futures::executor::block_on(future),
+            Err(WalletTransactionPortError::SubmissionCancelled)
+        );
+        let final_status = adapter
+            .submission_status(&profile, authorized.draft_id())
+            .expect("cancelled status remains readable");
+        assert_eq!(
+            final_status.state(),
+            WalletTransactionSubmissionState::Cancelled
+        );
+        assert!(final_status.retryable());
+        assert_eq!(
+            adapter
+                .get(
+                    &profile,
+                    authorized.draft_id(),
+                    UnixTimestampMillis::new(1_000),
+                )
+                .expect("cancelled draft remains readable")
+                .state(),
+            WalletTransactionDraftState::Authorized
+        );
+    }
+
+    #[test]
+    fn cancellation_is_refused_once_the_broadcast_boundary_is_crossed() {
+        let (started_sender, started_receiver) = mpsc::sync_channel(1);
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let adapter = submittable_adapter(Arc::new(BroadcastBlockingCompleter {
+            started: started_sender,
+            release: Arc::clone(&release),
+        }));
+        let authorized = authorize_transfer(&adapter);
+        let profile = profile();
+        let mut future = adapter.submit(
+            &profile,
+            SubmitWalletTransferRequest {
+                draft_id: authorized.draft_id().clone(),
+                now: UnixTimestampMillis::new(1_000),
+            },
+        );
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(future.as_mut().poll(&mut context), Poll::Pending));
+        started_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("completion crosses the broadcast boundary");
+        let status = adapter
+            .submission_status(&profile, authorized.draft_id())
+            .expect("broadcasting status is readable");
+        assert_eq!(
+            status.state(),
+            WalletTransactionSubmissionState::Broadcasting
+        );
+        assert!(!status.cancellation_allowed());
+        assert_eq!(
+            adapter.cancel_submission(&profile, authorized.draft_id()),
+            Err(WalletTransactionPortError::SubmissionCancellationUnsafe)
+        );
+
+        let (lock, condition) = release.as_ref();
+        *lock.lock().expect("release lock is available") = true;
+        condition.notify_one();
+        let submitted = futures::executor::block_on(future).expect("submission completes");
+        assert_eq!(
+            adapter
+                .submission_status(&profile, authorized.draft_id())
+                .expect("included status remains readable")
+                .state(),
+            WalletTransactionSubmissionState::Included
+        );
+        assert_eq!(
+            submitted.submission.transaction_id().as_str(),
+            hex::encode([1; 32])
+        );
     }
 
     #[test]

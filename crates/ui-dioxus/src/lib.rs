@@ -7,19 +7,22 @@ use std::{sync::Arc, time::Duration};
 use dioxus::prelude::*;
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
-    CancelWalletShieldedSyncUseCase, CreateWalletProfileCommand, CreateWalletProfileUseCase,
-    DeriveWalletAccountCommand, DeriveWalletAccountUseCase, GetActiveWalletProfileUseCase,
-    GetWalletAccountUseCase, GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
+    CreateWalletProfileCommand, CreateWalletProfileUseCase, DeriveWalletAccountCommand,
+    DeriveWalletAccountUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
+    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
-    InitializeWalletSecurityUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
-    LockWalletUseCase, PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
-    SelectWalletNetworkCommand, SelectWalletNetworkUseCase, SelectWalletProfileCommand,
-    SelectWalletProfileUseCase, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
-    SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountQuery, WalletAccountView,
-    WalletDustSyncCommand, WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand,
-    WalletProfileView, WalletSecurityStatusView, WalletShieldedSyncCommand, WalletShieldedSyncView,
-    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionView,
+    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
+    ListWalletNetworksUseCase, ListWalletProfilesUseCase, LockWalletUseCase,
+    PrepareWalletTransferCommand, PrepareWalletTransferUseCase, SelectWalletNetworkCommand,
+    SelectWalletNetworkUseCase, SelectWalletProfileCommand, SelectWalletProfileUseCase,
+    SensitiveOperationConfirmation, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
+    SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountQuery, WalletAccountView, WalletDustSyncCommand,
+    WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
+    WalletSecurityStatusView, WalletShieldedSyncCommand, WalletShieldedSyncView,
+    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
+    WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
 
 const STYLES: &str = include_str!("../assets/styles.css");
@@ -50,6 +53,8 @@ pub struct WalletUiServices {
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
     get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
+    get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase>,
+    cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
 }
 
 /// Public profile lifecycle use cases consumed by the wallet shell.
@@ -180,6 +185,8 @@ pub struct WalletTransactionUiServices {
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
     get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
+    get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase>,
+    cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
 }
 
 impl WalletTransactionUiServices {
@@ -189,12 +196,16 @@ impl WalletTransactionUiServices {
         authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
         submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
         get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
+        get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase>,
+        cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
     ) -> Self {
         Self {
             prepare_wallet_transfer,
             authorize_wallet_transfer,
             submit_wallet_transfer,
             get_wallet_transfer_draft,
+            get_wallet_transfer_submission_status,
+            cancel_wallet_transfer_submission,
         }
     }
 }
@@ -233,6 +244,9 @@ impl WalletUiServices {
             authorize_wallet_transfer: transactions.authorize_wallet_transfer,
             submit_wallet_transfer: transactions.submit_wallet_transfer,
             get_wallet_transfer_draft: transactions.get_wallet_transfer_draft,
+            get_wallet_transfer_submission_status: transactions
+                .get_wallet_transfer_submission_status,
+            cancel_wallet_transfer_submission: transactions.cancel_wallet_transfer_submission,
         }
     }
 
@@ -349,6 +363,20 @@ impl WalletUiServices {
     #[must_use]
     pub fn get_wallet_transfer_draft(&self) -> Arc<dyn GetWalletTransferDraftUseCase> {
         Arc::clone(&self.get_wallet_transfer_draft)
+    }
+
+    #[must_use]
+    pub fn get_wallet_transfer_submission_status(
+        &self,
+    ) -> Arc<dyn GetWalletTransferSubmissionStatusUseCase> {
+        Arc::clone(&self.get_wallet_transfer_submission_status)
+    }
+
+    #[must_use]
+    pub fn cancel_wallet_transfer_submission(
+        &self,
+    ) -> Arc<dyn CancelWalletTransferSubmissionUseCase> {
+        Arc::clone(&self.cancel_wallet_transfer_submission)
     }
 }
 
@@ -469,6 +497,7 @@ enum TransferPanelState {
     Prepared(Box<WalletTransferPreviewView>),
     Authorized(Box<WalletTransferPreviewView>),
     Submitting(Box<WalletTransferPreviewView>),
+    Cancelling(Box<WalletTransferPreviewView>),
     Submitted(Box<WalletTransferSubmissionView>),
     Failed {
         message: String,
@@ -1976,13 +2005,61 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                 }
             }
         }
-        TransferPanelState::Submitting(preview) => rsx! {
+        TransferPanelState::Submitting(preview) => {
+            let cancel_services = services.clone();
+            let cancel_profile = profile_id.clone();
+            let cancel_draft = preview.draft_id.clone();
+            let cancelling_preview = preview.clone();
+            rsx! {
+                article { class: "surface-card transfer-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
+                    span { class: "loading-mark", aria_hidden: "true" }
+                    div {
+                        p { class: "card-eyebrow", "Submitting" }
+                        h2 { "Proving {format_transfer_asset(&preview.amount)}" }
+                        p { "The worker is balancing the DUST fee and proving locally. Cancellation is available only before broadcast." }
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            aria_label: "Cancel NIGHT transfer submission",
+                            onclick: move |_| {
+                                let query = WalletTransferSubmissionQuery {
+                                    profile_id: cancel_profile.clone(),
+                                    draft_id: cancel_draft.clone(),
+                                };
+                                match cancel_services
+                                    .cancel_wallet_transfer_submission()
+                                    .execute(query)
+                                {
+                                    Ok(status) => {
+                                        panel.set(TransferPanelState::Cancelling(cancelling_preview.clone()));
+                                        poll_transfer_cancellation(
+                                            cancel_services.clone(),
+                                            cancel_profile.clone(),
+                                            cancel_draft.clone(),
+                                            panel,
+                                            status,
+                                        );
+                                    }
+                                    Err(error) => panel.set(TransferPanelState::Failed {
+                                        message: error.to_string(),
+                                        retained: Some(preview.clone()),
+                                        recovery: TransferRecovery::ReconcileUnknown,
+                                    }),
+                                }
+                            },
+                            "Cancel before broadcast"
+                        }
+                    }
+                }
+            }
+        }
+        TransferPanelState::Cancelling(preview) => rsx! {
             article { class: "surface-card transfer-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
                 span { class: "loading-mark", aria_hidden: "true" }
                 div {
-                    p { class: "card-eyebrow", "Submitting" }
-                    h2 { "Proving {format_transfer_asset(&preview.amount)}" }
-                    p { "The worker is balancing the DUST fee, proving locally, and waiting for a public inclusion result." }
+                    p { class: "card-eyebrow", "Cancelling" }
+                    h2 { "Stopping {format_transfer_asset(&preview.amount)} safely" }
+                    p { "Oxid is waiting for the worker to acknowledge cancellation at a pre-broadcast boundary." }
                 }
             }
         },
@@ -2053,6 +2130,61 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
             }
         }
     }
+}
+
+fn poll_transfer_cancellation(
+    services: WalletUiServices,
+    profile_id: String,
+    draft_id: String,
+    mut panel: Signal<TransferPanelState>,
+    initial: WalletTransferSubmissionStatusView,
+) {
+    spawn(async move {
+        let mut status = initial;
+        loop {
+            match status.state.as_str() {
+                "running" | "cancellation_requested" => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    match services.get_wallet_transfer_submission_status().execute(
+                        WalletTransferSubmissionQuery {
+                            profile_id: profile_id.clone(),
+                            draft_id: draft_id.clone(),
+                        },
+                    ) {
+                        Ok(updated) => status = updated,
+                        Err(_) => break,
+                    }
+                }
+                "cancelled" => {
+                    let retained = services
+                        .get_wallet_transfer_draft()
+                        .execute(WalletTransferDraftQuery {
+                            profile_id,
+                            draft_id,
+                        })
+                        .ok()
+                        .map(Box::new);
+                    panel.set(TransferPanelState::Failed {
+                        message: "Transaction submission was cancelled before broadcast."
+                            .to_owned(),
+                        retained,
+                        recovery: TransferRecovery::RetryAuthorized,
+                    });
+                    break;
+                }
+                "outcome_unknown" => {
+                    panel.set(TransferPanelState::Failed {
+                        message: "Transaction submission may have reached Midnight and requires reconciliation."
+                            .to_owned(),
+                        retained: None,
+                        recovery: TransferRecovery::ReconcileUnknown,
+                    });
+                    break;
+                }
+                _ => break,
+            }
+        }
+    });
 }
 
 fn post_submission_recovery(retained_state: Option<&str>) -> TransferRecovery {

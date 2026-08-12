@@ -782,6 +782,8 @@ const fn sync_failure(error: WalletTransactionPortError) -> WalletDustSyncFailur
         | WalletTransactionPortError::DraftExpired
         | WalletTransactionPortError::DraftConflict
         | WalletTransactionPortError::SubmissionInProgress
+        | WalletTransactionPortError::SubmissionNotInProgress
+        | WalletTransactionPortError::SubmissionCancellationUnsafe
         | WalletTransactionPortError::AuthorizationChallengeMismatch
         | WalletTransactionPortError::InsufficientDust
         | WalletTransactionPortError::InvalidChainState

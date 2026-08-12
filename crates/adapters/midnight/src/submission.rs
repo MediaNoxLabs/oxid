@@ -344,7 +344,7 @@ where
         return Err(WalletTransactionPortError::DraftExpired);
     }
     let (balanced, fee_specks) = balance_dust(
-        request.transaction,
+        request.transaction.clone(),
         &mut dust_state,
         dust_key,
         &chain_tip.parameters,
@@ -377,6 +377,7 @@ where
         return Err(WalletTransactionPortError::InvalidData);
     }
     ensure_submission_active(&cancellation)?;
+    request.begin_broadcast()?;
     let (transaction_hash, block_hash) =
         submit_unsigned(config.node_websocket_url(), transaction_bytes).await?;
     Ok(MidnightCompletionOutcome {
