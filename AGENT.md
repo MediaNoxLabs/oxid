@@ -92,8 +92,8 @@ caller signals cooperative cancellation while leaving the worker responsible
 for the eventual transition so a second send cannot race it. Live completion
 checks cancellation at safe pre-broadcast boundaries and restores `Authorized`;
 it never makes a possibly broadcast transaction retryable. An ambiguous post-submit node outcome or unexpected worker
-termination remains `Submitting` and forbids blind retry until reconciliation
-exists. A submitted draft is idempotent.
+termination remains `Submitting` and forbids blind retry until durable
+reconciliation resolves the public attempt. A submitted draft is idempotent.
 [Issue #12](https://github.com/MediaNoxLabs/oxid/issues/12) and ADR-0028 add
 private local DUST proving through the official pinned ZKIR provider. The cache
 is explicit, app-private, hash-authenticated, symlink-rejecting, and bounded to
@@ -109,7 +109,8 @@ explicit `oxid-app/standalone-development` feature, which reuses persistent
 public profiles plus process-local development custody and deterministic
 simulated completion. A default app build still calls `compose()` and remains
 fail-closed. Restarting the development app intentionally loses its protected
-root and retained drafts; reactivate the account before another flow.
+root and retained drafts; reactivate the account before another flow. Public
+submission outcomes remain visible through the separate durable journal.
 
 [Issue #15](https://github.com/MediaNoxLabs/oxid/issues/15) and ADR-0030 add an
 explicit native public-account checkpoint store. Headless live modes enable it
@@ -171,7 +172,24 @@ acknowledged cancellation restores `Authorized` and records the attempt as
 `Cancelled`; broadcasting, included, and unknown attempts cannot be cancelled
 or made retryable. Headless adds asynchronous start/status/cancel methods, and
 Dioxus uses the same application boundary for its Cancel and safe-retry flow.
-Active attempts remain process-local pending durable reconciliation.
+
+[Issue #20](https://github.com/MediaNoxLabs/oxid/issues/20) and ADR-0035 make
+the post-broadcast attempt durable without persisting the signed transaction.
+The Midnight adapter must save the public fee, extrinsic hash, finalized
+pre-broadcast anchor, expiry/update time, profile/network/draft scope, one-way
+planning fingerprint, mode, and state before calling the node. Store no signed
+or sealed transaction, proof, witness, secret, key, route, or authorization
+payload. The v1 JSON journal is capped at 128 records/256 KiB, rejects symlinks
+and permissive files, and uses owner-only atomic replacement. Development
+mobile composition derives its private journal path beside the resolved profile
+store; headless can override it with the normalized absolute
+`OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH`. Restored `Broadcasting` and
+`OutcomeUnknown` attempts block duplicate planning. Live reconciliation scans
+at most 2,048 finalized ancestors to the saved anchor and permits a fresh
+replacement only after finalized rejection or chain-time expiry. Headless
+methods are `wallet.transaction.submission_history` and
+`wallet.transaction.reconcile_submission`; Dioxus shows the latest restored
+public attempt even when process-local custody is unavailable.
 
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
@@ -249,6 +267,8 @@ adapter-private and owns the explicit shielded sync lifecycle and worker
 without exposing ledger or secret types.
 ADR-0034 keeps transaction cancellation adapter-owned, requires an atomic
 pre-broadcast boundary, and separates attempt status from retained draft state.
+ADR-0035 adds the bounded public submission journal, persist-before-broadcast
+rule, restart duplicate prevention, and finalized-chain reconciliation.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -266,7 +286,7 @@ Current package ownership:
 | `crates/adapters/storage-memory` | Development/test implementation of wallet persistence. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
-| `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, and standalone DUST/proving/submission completion. |
+| `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, and public receive-QR rendering. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -503,9 +523,10 @@ and verifies profile creation, development account activation, receive QR,
 staged simulated transfer, and profile restore through visible UI elements.
 `just android-smoke` resets only Oxid's Android app data, drives the equivalent
 development flow, validates the durable public JSON document, and verifies
-restart. Both commands are destructive to the selected simulator's Oxid test
-profile state; protected development roots and transaction drafts are
-process-local and are expected to disappear on restart.
+restart. Both now assert that the included public submission journal survives
+while development custody resets. The commands are destructive to the selected
+simulator's Oxid test profile state; protected development roots and
+transaction drafts are process-local and are expected to disappear on restart.
 
 Android processes do not reliably provide `HOME`, so `directories` cannot
 resolve the intended durable location there. The JSON adapter deliberately uses

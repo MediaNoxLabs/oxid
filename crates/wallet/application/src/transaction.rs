@@ -124,6 +124,15 @@ pub type WalletTransactionPortFuture<'a> = Pin<
     >,
 >;
 
+/// Asynchronous safe status returned by transaction reconciliation.
+pub type WalletTransactionStatusPortFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<WalletTransactionSubmissionStatus, WalletTransactionPortError>>
+            + Send
+            + 'a,
+    >,
+>;
+
 /// Focused outgoing port retaining chain-specific draft/signing material.
 pub trait WalletTransactionPort: Send + Sync {
     fn prepare(
@@ -162,6 +171,17 @@ pub trait WalletTransactionPort: Send + Sync {
         profile_id: &WalletProfileId,
         draft_id: &WalletTransactionDraftId,
     ) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError>;
+
+    fn submission_history(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<Vec<WalletTransactionSubmissionStatus>, WalletTransactionPortError>;
+
+    fn reconcile_submission<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        draft_id: &'a WalletTransactionDraftId,
+    ) -> WalletTransactionStatusPortFuture<'a>;
 }
 
 /// Incoming request for preparing an unshielded NIGHT transfer.
@@ -285,6 +305,8 @@ pub struct WalletTransferSubmissionStatusView {
     pub state: String,
     pub cancellation_allowed: bool,
     pub retryable: bool,
+    pub replacement_allowed: bool,
+    pub reconciliation_allowed: bool,
     pub transaction_id: Option<String>,
     pub block_id: Option<String>,
     pub fee: Option<WalletTransferAssetView>,
@@ -293,16 +315,21 @@ pub struct WalletTransferSubmissionStatusView {
 
 impl From<&WalletTransactionSubmissionStatus> for WalletTransferSubmissionStatusView {
     fn from(status: &WalletTransactionSubmissionStatus) -> Self {
-        let submission = status.submission();
         Self {
             draft_id: status.draft_id().as_str().to_owned(),
             state: submission_state_name(status.state()).to_owned(),
             cancellation_allowed: status.cancellation_allowed(),
             retryable: status.retryable(),
-            transaction_id: submission.map(|value| value.transaction_id().as_str().to_owned()),
-            block_id: submission.map(|value| value.block_id().as_str().to_owned()),
-            fee: submission.map(|value| asset_view(value.fee())),
-            mode: submission.map(|value| submission_mode_name(value.mode()).to_owned()),
+            replacement_allowed: status.replacement_allowed(),
+            reconciliation_allowed: status.reconciliation_allowed(),
+            transaction_id: status
+                .transaction_id()
+                .map(|value| value.as_str().to_owned()),
+            block_id: status.block_id().map(|value| value.as_str().to_owned()),
+            fee: status.fee().map(asset_view),
+            mode: status
+                .mode()
+                .map(|value| submission_mode_name(value).to_owned()),
         }
     }
 }
@@ -359,6 +386,31 @@ pub trait CancelWalletTransferSubmissionUseCase: Send + Sync {
         command: WalletTransferSubmissionQuery,
     ) -> Result<WalletTransferSubmissionStatusView, WalletTransactionError>;
 }
+
+/// Incoming use case for listing durable public submission attempts.
+pub trait ListWalletTransferSubmissionsUseCase: Send + Sync {
+    fn execute(
+        &self,
+        profile_id: String,
+    ) -> Result<Vec<WalletTransferSubmissionStatusView>, WalletTransactionError>;
+}
+
+/// Incoming use case for reconciling one broadcast against finalized chain state.
+pub trait ReconcileWalletTransferSubmissionUseCase: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        query: WalletTransferSubmissionQuery,
+    ) -> WalletTransferSubmissionStatusViewFuture<'a>;
+}
+
+/// Asynchronous safe lifecycle view returned by reconciliation.
+pub type WalletTransferSubmissionStatusViewFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<WalletTransferSubmissionStatusView, WalletTransactionError>>
+            + Send
+            + 'a,
+    >,
+>;
 
 /// Stable transaction failures exposed by the application boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -589,6 +641,53 @@ where
     }
 }
 
+impl<T, C> ListWalletTransferSubmissionsUseCase for WalletTransactionService<T, C>
+where
+    T: WalletTransactionPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute(
+        &self,
+        profile_id: String,
+    ) -> Result<Vec<WalletTransferSubmissionStatusView>, WalletTransactionError> {
+        let profile_id = WalletProfileId::parse(profile_id)
+            .map_err(WalletTransactionError::InvalidProfileIdentifier)?;
+        self.transactions
+            .submission_history(&profile_id)
+            .map_err(WalletTransactionError::Operation)
+            .map(|statuses| {
+                statuses
+                    .iter()
+                    .map(WalletTransferSubmissionStatusView::from)
+                    .collect()
+            })
+    }
+}
+
+impl<T, C> ReconcileWalletTransferSubmissionUseCase for WalletTransactionService<T, C>
+where
+    T: WalletTransactionPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute<'a>(
+        &'a self,
+        query: WalletTransferSubmissionQuery,
+    ) -> WalletTransferSubmissionStatusViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = WalletProfileId::parse(query.profile_id)
+                .map_err(WalletTransactionError::InvalidProfileIdentifier)?;
+            let draft_id = WalletTransactionDraftId::parse(query.draft_id)
+                .map_err(WalletTransactionError::InvalidDraftIdentifier)?;
+            let status = self
+                .transactions
+                .reconcile_submission(&profile_id, &draft_id)
+                .await
+                .map_err(WalletTransactionError::Operation)?;
+            Ok(WalletTransferSubmissionStatusView::from(&status))
+        })
+    }
+}
+
 fn asset_view(balance: &AssetBalance) -> WalletTransferAssetView {
     WalletTransferAssetView {
         asset_id: balance.asset().id().as_str().to_owned(),
@@ -631,6 +730,8 @@ const fn submission_state_name(state: WalletTransactionSubmissionState) -> &'sta
         WalletTransactionSubmissionState::Broadcasting => "broadcasting",
         WalletTransactionSubmissionState::Cancelled => "cancelled",
         WalletTransactionSubmissionState::Included => "included",
+        WalletTransactionSubmissionState::Rejected => "rejected",
+        WalletTransactionSubmissionState::Expired => "expired",
         WalletTransactionSubmissionState::OutcomeUnknown => "outcome_unknown",
     }
 }
@@ -801,6 +902,21 @@ mod tests {
             _: &WalletTransactionDraftId,
         ) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError> {
             Err(WalletTransactionPortError::SubmissionNotInProgress)
+        }
+
+        fn submission_history(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<Vec<WalletTransactionSubmissionStatus>, WalletTransactionPortError> {
+            Ok(Vec::new())
+        }
+
+        fn reconcile_submission<'a>(
+            &'a self,
+            _: &'a WalletProfileId,
+            _: &'a WalletTransactionDraftId,
+        ) -> WalletTransactionStatusPortFuture<'a> {
+            Box::pin(async { Err(WalletTransactionPortError::Unavailable) })
         }
     }
 
@@ -1075,5 +1191,35 @@ mod tests {
         assert!(!status.cancellation_allowed);
         assert!(status.transaction_id.is_none());
         assert!(status.fee.is_none());
+    }
+
+    #[test]
+    fn recorded_submission_maps_public_broadcast_metadata_without_an_inclusion_block() {
+        let fee = AssetBalance::new(
+            ChainAsset::new(
+                ChainAssetId::parse("midnight:dust").expect("asset id is valid"),
+                AssetSymbol::parse("DUST").expect("symbol is valid"),
+                15,
+            ),
+            42,
+        );
+        let status = WalletTransactionSubmissionStatus::recorded(
+            WalletTransactionDraftId::parse("txdraft_test").expect("draft id is valid"),
+            WalletTransactionSubmissionState::OutcomeUnknown,
+            ChainTransactionId::parse("tx_recorded").expect("transaction id is valid"),
+            fee,
+            WalletTransferSubmissionMode::Live,
+        );
+        let view = WalletTransferSubmissionStatusView::from(&status);
+
+        assert_eq!(view.transaction_id.as_deref(), Some("tx_recorded"));
+        assert!(view.block_id.is_none());
+        assert_eq!(
+            view.fee.as_ref().map(|value| value.atomic_units.as_str()),
+            Some("42")
+        );
+        assert_eq!(view.mode.as_deref(), Some("live"));
+        assert!(view.reconciliation_allowed);
+        assert!(!view.replacement_allowed);
     }
 }

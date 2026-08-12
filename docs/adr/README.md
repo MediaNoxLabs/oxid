@@ -55,7 +55,8 @@ ADR status and delivery state answer different questions:
 | [0031](0031-persist-private-midnight-dust-checkpoints.md) Persist private Midnight DUST checkpoints behind live catch-up | Accepted | §§3, 5–8, 12–13, 17–18 and issue #16 | Scoped DUST resume, bounded incremental replay, and live-before-spend gate implemented; shielded Zswap is governed by ADR-0033 |
 | [0032](0032-expose-resumable-dust-sync-sessions.md) Expose resumable DUST synchronization as an adapter-owned session | Accepted | §§3, 5–8, 12–13, 16–18 and issue #17 | Native worker, partial checkpoints, headless lifecycle, and Assets progress implemented; production custody pending |
 | [0033](0033-keep-shielded-zswap-state-adapter-private.md) Keep shielded Zswap keys and replay state inside the Midnight adapter | Accepted | §§3, 5–8, 12–13, 16–18 and issue #18 | Protected receive address, bounded native replay/worker, private checkpoints, and headless/mobile lifecycle implemented; spending and production custody pending |
-| [0034](0034-expose-safe-transaction-submission-cancellation.md) Expose transaction submission status and safe cancellation | Accepted | §§7–8, 12–13, 16–18 and issue #19 | Adapter-owned pre-broadcast cancel boundary plus headless/mobile status, cancel, and retry implemented; durable reconciliation pending |
+| [0034](0034-expose-safe-transaction-submission-cancellation.md) Expose transaction submission status and safe cancellation | Accepted | §§7–8, 12–13, 16–18 and issue #19 | Adapter-owned pre-broadcast cancel boundary plus headless/mobile status, cancel, and retry implemented; durable follow-up delivered by ADR-0035 |
+| [0035](0035-persist-and-reconcile-midnight-submissions.md) Persist and reconcile Midnight transaction submissions | Accepted | §§3, 5–8, 12–13, 16–18 and issue #20 | Public persist-before-broadcast journal, restart duplicate prevention, finalized reconciliation, and headless/mobile recovery implemented |
 
 ## Current boundaries
 
@@ -88,3 +89,5 @@ replay, and checkpoints inside the native Midnight adapter while
 allowing only public shielded addresses and bounded safe projections outward.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
+ADR-0035 makes that boundary durable, restores safe public outcomes after a
+restart, and permits replacement only after finalized rejection or expiry.

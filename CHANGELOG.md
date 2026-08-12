@@ -62,3 +62,7 @@ once public releases begin.
   cancellation across application, Midnight adapter, headless, and mobile
   flows, with acknowledged cancellation restoring safe retryability and
   post-broadcast cancellation refused.
+- Bounded owner-private persistence for public Midnight submission metadata,
+  committed before node broadcast, with restart status/history, duplicate
+  prevention, finalized-chain reconciliation, two-process headless coverage,
+  and a mobile recovery/reconcile surface.

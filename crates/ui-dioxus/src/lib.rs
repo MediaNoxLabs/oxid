@@ -13,8 +13,9 @@ use oxid_wallet_application::{
     GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
-    ListWalletNetworksUseCase, ListWalletProfilesUseCase, LockWalletUseCase,
-    PrepareWalletTransferCommand, PrepareWalletTransferUseCase, SelectWalletNetworkCommand,
+    ListWalletNetworksUseCase, ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase,
+    LockWalletUseCase, PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
+    ReconcileWalletTransferSubmissionUseCase, SelectWalletNetworkCommand,
     SelectWalletNetworkUseCase, SelectWalletProfileCommand, SelectWalletProfileUseCase,
     SensitiveOperationConfirmation, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
     SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
@@ -55,6 +56,8 @@ pub struct WalletUiServices {
     get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
     get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase>,
     cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
+    list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
+    reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
 }
 
 /// Public profile lifecycle use cases consumed by the wallet shell.
@@ -187,17 +190,39 @@ pub struct WalletTransactionUiServices {
     get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
     get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase>,
     cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
+    list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
+    reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
+}
+
+/// Public submission recovery use cases consumed by the Assets page.
+pub struct WalletTransactionRecoveryUiServices {
+    list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
+    reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
+}
+
+impl WalletTransactionRecoveryUiServices {
+    #[must_use]
+    pub const fn new(
+        list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
+        reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
+    ) -> Self {
+        Self {
+            list_wallet_transfer_submissions,
+            reconcile_wallet_transfer_submission,
+        }
+    }
 }
 
 impl WalletTransactionUiServices {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
         authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
         submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
         get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
         get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase>,
         cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
+        recovery: WalletTransactionRecoveryUiServices,
     ) -> Self {
         Self {
             prepare_wallet_transfer,
@@ -206,6 +231,8 @@ impl WalletTransactionUiServices {
             get_wallet_transfer_draft,
             get_wallet_transfer_submission_status,
             cancel_wallet_transfer_submission,
+            list_wallet_transfer_submissions: recovery.list_wallet_transfer_submissions,
+            reconcile_wallet_transfer_submission: recovery.reconcile_wallet_transfer_submission,
         }
     }
 }
@@ -247,6 +274,8 @@ impl WalletUiServices {
             get_wallet_transfer_submission_status: transactions
                 .get_wallet_transfer_submission_status,
             cancel_wallet_transfer_submission: transactions.cancel_wallet_transfer_submission,
+            list_wallet_transfer_submissions: transactions.list_wallet_transfer_submissions,
+            reconcile_wallet_transfer_submission: transactions.reconcile_wallet_transfer_submission,
         }
     }
 
@@ -378,6 +407,20 @@ impl WalletUiServices {
     ) -> Arc<dyn CancelWalletTransferSubmissionUseCase> {
         Arc::clone(&self.cancel_wallet_transfer_submission)
     }
+
+    #[must_use]
+    pub fn list_wallet_transfer_submissions(
+        &self,
+    ) -> Arc<dyn ListWalletTransferSubmissionsUseCase> {
+        Arc::clone(&self.list_wallet_transfer_submissions)
+    }
+
+    #[must_use]
+    pub fn reconcile_wallet_transfer_submission(
+        &self,
+    ) -> Arc<dyn ReconcileWalletTransferSubmissionUseCase> {
+        Arc::clone(&self.reconcile_wallet_transfer_submission)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -486,6 +529,17 @@ enum ShieldedSyncPaneState {
     Loading,
     Ready {
         status: WalletShieldedSyncView,
+        operation_error: Option<String>,
+    },
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SubmissionRecoveryPaneState {
+    Loading,
+    Ready {
+        latest: Option<Box<WalletTransferSubmissionStatusView>>,
+        reconciling: bool,
         operation_error: Option<String>,
     },
     Failed(String),
@@ -1223,10 +1277,145 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                     }
                 }
 
+                SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
+
                 if protected_account && protection_unlocked && account.sync.state == "synced" {
                     SendTransferPanel {
                         profile_id: active_profile.id.clone(),
                         receive_address: account.addresses[0].value.clone(),
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SubmissionRecoveryPane(profile_id: String) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| SubmissionRecoveryPaneState::Loading);
+    let load_services = services.clone();
+    let load_profile = profile_id.clone();
+    use_effect(move || {
+        state.set(
+            load_services
+                .list_wallet_transfer_submissions()
+                .execute(load_profile.clone())
+                .map_or_else(
+                    |error| SubmissionRecoveryPaneState::Failed(error.to_string()),
+                    |submissions| SubmissionRecoveryPaneState::Ready {
+                        latest: submissions.into_iter().next().map(Box::new),
+                        reconciling: false,
+                        operation_error: None,
+                    },
+                ),
+        );
+    });
+
+    match state.read().clone() {
+        SubmissionRecoveryPaneState::Loading => rsx! {},
+        SubmissionRecoveryPaneState::Failed(error) => rsx! {
+            article { class: "surface-card submission-recovery-card", role: "alert",
+                p { class: "card-eyebrow", "Transaction recovery" }
+                h2 { "Submission history unavailable" }
+                p { "{error}" }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    onclick: move |_| {
+                        state.set(
+                            services
+                                .list_wallet_transfer_submissions()
+                                .execute(profile_id.clone())
+                                .map_or_else(
+                                    |error| SubmissionRecoveryPaneState::Failed(error.to_string()),
+                                    |submissions| SubmissionRecoveryPaneState::Ready {
+                                        latest: submissions.into_iter().next().map(Box::new),
+                                        reconciling: false,
+                                        operation_error: None,
+                                    },
+                                ),
+                        );
+                    },
+                    "Retry"
+                }
+            }
+        },
+        SubmissionRecoveryPaneState::Ready { latest: None, .. } => rsx! {},
+        SubmissionRecoveryPaneState::Ready {
+            latest: Some(submission),
+            reconciling,
+            operation_error,
+        } => {
+            let draft_id = submission.draft_id.clone();
+            let current = submission.clone();
+            let reconcile_services = services.clone();
+            let reconcile_profile = profile_id.clone();
+            rsx! {
+                article {
+                    class: "surface-card submission-recovery-card",
+                    role: "status",
+                    aria_live: "polite",
+                    aria_busy: if reconciling { "true" } else { "false" },
+                    p { class: "card-eyebrow", "Latest transaction" }
+                    h2 { "{submission_status_heading(&submission.state)}" }
+                    p { "{submission_status_note(&submission.state)}" }
+                    dl { class: "preview-list",
+                        div { dt { "State" } dd { "{submission_status_label(&submission.state)}" } }
+                        if let Some(mode) = submission.mode.as_deref() {
+                            div { dt { "Mode" } dd { "{mode}" } }
+                        }
+                        if let Some(transaction_id) = submission.transaction_id.as_deref() {
+                            div { dt { "Transaction" } dd { title: "{transaction_id}", "{truncate_middle(transaction_id, 16, 8)}" } }
+                        }
+                        if let Some(block_id) = submission.block_id.as_deref() {
+                            div { dt { "Block" } dd { title: "{block_id}", "{truncate_middle(block_id, 16, 8)}" } }
+                        }
+                        if let Some(fee) = submission.fee.as_ref() {
+                            div { dt { "DUST fee" } dd { "{format_transfer_asset(fee)}" } }
+                        }
+                    }
+                    if let Some(error) = operation_error {
+                        p { class: "field-error", role: "alert", "{error}" }
+                    }
+                    if submission.reconciliation_allowed {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            disabled: reconciling,
+                            aria_label: "Reconcile transaction submission with Midnight",
+                            onclick: move |_| {
+                                let recovery_status = current.clone();
+                                state.set(SubmissionRecoveryPaneState::Ready {
+                                    latest: Some(current.clone()),
+                                    reconciling: true,
+                                    operation_error: None,
+                                });
+                                let service = reconcile_services.reconcile_wallet_transfer_submission();
+                                let profile_id = reconcile_profile.clone();
+                                let draft_id = draft_id.clone();
+                                spawn(async move {
+                                    match service.execute(WalletTransferSubmissionQuery {
+                                        profile_id,
+                                        draft_id,
+                                    }).await {
+                                        Ok(updated) => state.set(SubmissionRecoveryPaneState::Ready {
+                                            latest: Some(Box::new(updated)),
+                                            reconciling: false,
+                                            operation_error: None,
+                                        }),
+                                        Err(error) => state.set(SubmissionRecoveryPaneState::Ready {
+                                            latest: Some(recovery_status),
+                                            reconciling: false,
+                                            operation_error: Some(error.to_string()),
+                                        }),
+                                    }
+                                });
+                            },
+                            if reconciling { "Reconciling…" } else { "Reconcile with Midnight" }
+                        }
+                    } else if submission.replacement_allowed {
+                        p { class: "consent-copy", "Midnight finalized no inclusion for this attempt. A newly prepared transfer may replace it." }
                     }
                 }
             }
@@ -2194,6 +2383,50 @@ fn post_submission_recovery(retained_state: Option<&str>) -> TransferRecovery {
     }
 }
 
+fn submission_status_heading(state: &str) -> &'static str {
+    match state {
+        "included" => "Transfer included",
+        "broadcasting" => "Transfer broadcast",
+        "outcome_unknown" => "Submission outcome unknown",
+        "rejected" => "Submission rejected",
+        "expired" => "Submission expired",
+        _ => "Submission in progress",
+    }
+}
+
+fn submission_status_label(state: &str) -> &'static str {
+    match state {
+        "included" => "Included",
+        "broadcasting" => "Broadcasting",
+        "outcome_unknown" => "Outcome unknown",
+        "rejected" => "Rejected",
+        "expired" => "Expired",
+        "running" => "Preparing",
+        "cancellation_requested" => "Cancelling",
+        "cancelled" => "Cancelled",
+        _ => "Not started",
+    }
+}
+
+fn submission_status_note(state: &str) -> &'static str {
+    match state {
+        "included" => {
+            "The durable journal confirms this transfer was included in a finalized Midnight block."
+        }
+        "broadcasting" => {
+            "This transaction was durably recorded before broadcast. Reconcile it before preparing a replacement."
+        }
+        "outcome_unknown" => {
+            "The transaction may have reached Midnight. Oxid will not submit a duplicate while its outcome is unknown."
+        }
+        "rejected" => {
+            "Midnight finalized this submission as rejected. Its public record is retained for recovery history."
+        }
+        "expired" => "The submission was not included before its bounded validity window expired.",
+        _ => "Oxid is still preparing this submission and has not crossed the broadcast boundary.",
+    }
+}
+
 fn render_qr_svg(value: &str) -> Option<String> {
     use qrcode::{QrCode, render::svg};
 
@@ -2898,6 +3131,18 @@ mod tests {
             post_submission_recovery(None),
             TransferRecovery::ReconcileUnknown
         );
+    }
+
+    #[test]
+    fn durable_submission_states_have_truthful_mobile_copy() {
+        assert_eq!(submission_status_heading("included"), "Transfer included");
+        assert_eq!(
+            submission_status_label("outcome_unknown"),
+            "Outcome unknown"
+        );
+        assert!(submission_status_note("broadcasting").contains("before broadcast"));
+        assert!(submission_status_note("outcome_unknown").contains("not submit a duplicate"));
+        assert!(submission_status_note("expired").contains("expired"));
     }
 
     #[test]

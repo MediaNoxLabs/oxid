@@ -92,6 +92,20 @@ before its node call. A pre-broadcast cancellation restores `Authorized` only
 after worker acknowledgement; broadcasting and ambiguous outcomes remain
 non-retryable. Headless and Dioxus consume the same status/cancel use cases.
 
+Issue #20 and ADR-0035 make the post-broadcast boundary durable without moving
+chain material into core. The Midnight adapter atomically journals the public
+extrinsic hash, finalized pre-broadcast anchor, fee, expiry, profile/network/
+draft scope, and one-way planning fingerprint before node submission. Restart
+status/history block a matching duplicate. Explicit reconciliation walks at
+most 2,048 finalized ancestors to the anchor, inspects the exact extrinsic's
+System result, and otherwise uses the authoritative chain-tip timestamp only
+after the anchor is reached. Included, rejected, expired, and unresolved
+results are persisted. Headless simulation has a two-process recovery fixture;
+the Assets page shows the latest restored outcome and offers reconciliation
+only when it is safe and meaningful. The iOS and Android standalone smoke flows
+assert that included public metadata survives an application restart while the
+development root and signed draft do not.
+
 ## Protected account derivation mapping
 
 Issue #8 connects ADR-0015's Midnight semantics to ADR-0017's custody boundary.
@@ -239,8 +253,8 @@ dependency review.
 - committed local, tailnet, pre-production, node, indexer, or prover endpoints;
 - continuous background subscriptions and retained raw DUST/Zswap event
   history;
-- replacement, fee preview/estimation, UTXO reservation, durable submission
-  reconciliation, or durable draft queues;
+- automatic replacement, fee preview/estimation, UTXO reservation, or durable
+  signed-draft queues;
 - generated proof artifacts, native projects, JavaScript bridges, QR scanning,
   copy/share integration, databases, and captured diagnostics.
 
@@ -255,4 +269,6 @@ server. Explicit complete-standalone mode may persist key-scoped DUST state.
 Either explicit live mode may persist key-scoped official Zswap state and
 expose only bounded shielded balance/note projections. Protected development
 accounts expose a canonical shielded receive address, but no mode yet supports
-shielded spending, durable recovery, or production custody.
+shielded spending or production custody. Development composition now persists
+only public submission recovery metadata; protected roots and signed drafts
+remain process-local.

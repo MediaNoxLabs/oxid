@@ -44,6 +44,10 @@ fn main() {
             application.get_wallet_transfer_draft(),
             application.get_wallet_transfer_submission_status(),
             application.cancel_wallet_transfer_submission(),
+            oxid_ui_dioxus::WalletTransactionRecoveryUiServices::new(
+                application.list_wallet_transfer_submissions(),
+                application.reconcile_wallet_transfer_submission(),
+            ),
         ),
     );
 

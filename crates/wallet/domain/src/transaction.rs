@@ -66,6 +66,8 @@ pub enum WalletTransactionSubmissionState {
     Broadcasting,
     Cancelled,
     Included,
+    Rejected,
+    Expired,
     OutcomeUnknown,
 }
 
@@ -74,20 +76,50 @@ pub enum WalletTransactionSubmissionState {
 pub struct WalletTransactionSubmissionStatus {
     draft_id: WalletTransactionDraftId,
     state: WalletTransactionSubmissionState,
+    transaction_id: Option<ChainTransactionId>,
+    fee: Option<AssetBalance>,
+    mode: Option<WalletTransferSubmissionMode>,
     submission: Option<WalletTransferSubmission>,
 }
 
 impl WalletTransactionSubmissionStatus {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         draft_id: WalletTransactionDraftId,
         state: WalletTransactionSubmissionState,
         submission: Option<WalletTransferSubmission>,
     ) -> Self {
+        let transaction_id = submission
+            .as_ref()
+            .map(|value| value.transaction_id().clone());
+        let fee = submission.as_ref().map(|value| value.fee().clone());
+        let mode = submission.as_ref().map(WalletTransferSubmission::mode);
         Self {
             draft_id,
             state,
+            transaction_id,
+            fee,
+            mode,
             submission,
+        }
+    }
+
+    /// Constructs a durable post-broadcast status before an inclusion block is known.
+    #[must_use]
+    pub fn recorded(
+        draft_id: WalletTransactionDraftId,
+        state: WalletTransactionSubmissionState,
+        transaction_id: ChainTransactionId,
+        fee: AssetBalance,
+        mode: WalletTransferSubmissionMode,
+    ) -> Self {
+        Self {
+            draft_id,
+            state,
+            transaction_id: Some(transaction_id),
+            fee: Some(fee),
+            mode: Some(mode),
+            submission: None,
         }
     }
 
@@ -107,6 +139,28 @@ impl WalletTransactionSubmissionStatus {
     }
 
     #[must_use]
+    pub const fn transaction_id(&self) -> Option<&ChainTransactionId> {
+        self.transaction_id.as_ref()
+    }
+
+    #[must_use]
+    pub fn block_id(&self) -> Option<&ChainBlockId> {
+        self.submission
+            .as_ref()
+            .map(WalletTransferSubmission::block_id)
+    }
+
+    #[must_use]
+    pub const fn fee(&self) -> Option<&AssetBalance> {
+        self.fee.as_ref()
+    }
+
+    #[must_use]
+    pub const fn mode(&self) -> Option<WalletTransferSubmissionMode> {
+        self.mode
+    }
+
+    #[must_use]
     pub const fn cancellation_allowed(&self) -> bool {
         matches!(self.state, WalletTransactionSubmissionState::Running)
     }
@@ -117,6 +171,25 @@ impl WalletTransactionSubmissionStatus {
             self.state,
             WalletTransactionSubmissionState::NotStarted
                 | WalletTransactionSubmissionState::Cancelled
+        )
+    }
+
+    /// Whether a newly built transfer may safely replace this attempt.
+    #[must_use]
+    pub const fn replacement_allowed(&self) -> bool {
+        matches!(
+            self.state,
+            WalletTransactionSubmissionState::Rejected | WalletTransactionSubmissionState::Expired
+        )
+    }
+
+    /// Whether finalized chain state can still resolve this attempt.
+    #[must_use]
+    pub const fn reconciliation_allowed(&self) -> bool {
+        matches!(
+            self.state,
+            WalletTransactionSubmissionState::Broadcasting
+                | WalletTransactionSubmissionState::OutcomeUnknown
         )
     }
 }
@@ -437,11 +510,49 @@ mod tests {
         assert!(!running.retryable());
 
         let cancelled = WalletTransactionSubmissionStatus::new(
-            draft_id,
+            draft_id.clone(),
             WalletTransactionSubmissionState::Cancelled,
             None,
         );
         assert!(!cancelled.cancellation_allowed());
         assert!(cancelled.retryable());
+
+        let unknown = WalletTransactionSubmissionStatus::new(
+            draft_id.clone(),
+            WalletTransactionSubmissionState::OutcomeUnknown,
+            None,
+        );
+        assert!(unknown.reconciliation_allowed());
+        assert!(!unknown.retryable());
+        assert!(!unknown.replacement_allowed());
+
+        let dust = ChainAsset::new(
+            crate::ChainAssetId::parse("midnight:dust").expect("asset id is valid"),
+            crate::AssetSymbol::parse("DUST").expect("symbol is valid"),
+            15,
+        );
+        let recorded = WalletTransactionSubmissionStatus::recorded(
+            draft_id.clone(),
+            WalletTransactionSubmissionState::OutcomeUnknown,
+            ChainTransactionId::parse("tx_recorded").expect("transaction id is valid"),
+            AssetBalance::new(dust, 42),
+            WalletTransferSubmissionMode::Live,
+        );
+        assert_eq!(
+            recorded.transaction_id().map(ChainTransactionId::as_str),
+            Some("tx_recorded")
+        );
+        assert_eq!(recorded.fee().map(AssetBalance::atomic_units), Some(42));
+        assert_eq!(recorded.mode(), Some(WalletTransferSubmissionMode::Live));
+        assert!(recorded.submission().is_none());
+
+        let expired = WalletTransactionSubmissionStatus::new(
+            draft_id,
+            WalletTransactionSubmissionState::Expired,
+            None,
+        );
+        assert!(expired.replacement_allowed());
+        assert!(!expired.retryable());
+        assert!(!expired.reconciliation_allowed());
     }
 }

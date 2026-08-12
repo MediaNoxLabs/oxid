@@ -49,7 +49,8 @@ impl ProcessHarness {
             .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
             .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
-            .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH");
+            .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
+            .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH");
         for (key, value) in environment {
             command.env(key, value);
         }
@@ -525,6 +526,148 @@ fn executable_restores_profile_selection_in_a_new_process() {
 }
 
 #[test]
+fn executable_restores_public_submission_status_in_a_new_process() {
+    let store = TestStore::new();
+    let journal_path = store.root.join("private/submission-journal.json");
+    let journal_path = journal_path
+        .to_str()
+        .expect("fixture journal path should be Unicode");
+    let environment = [("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH", journal_path)];
+    let mut first_process = ProcessHarness::spawn_with_environment(&store.path, &environment);
+    let created = first_process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "submission-create",
+        "method": "wallet.profile.create",
+        "params": { "displayName": "Submission recovery" }
+    }));
+    let profile_id = created["result"]["profile"]["id"]
+        .as_str()
+        .expect("created profile should have an identifier")
+        .to_owned();
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "submission-select",
+            "method": "wallet.profile.select",
+            "params": { "profileId": profile_id }
+        }))["ok"],
+        true
+    );
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "submission-initialize",
+            "method": "wallet.security.initialize",
+            "params": {}
+        }))["ok"],
+        true
+    );
+    let derived = first_process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "submission-derive",
+        "method": "wallet.account.derive",
+        "params": {}
+    }));
+    let recipient = derived["result"]["account"]["receiveAddress"]["value"]
+        .as_str()
+        .expect("derived receive address should be public")
+        .to_owned();
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "submission-sync",
+            "method": "wallet.connect",
+            "params": {}
+        }))["ok"],
+        true
+    );
+    let prepared = first_process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "submission-prepare",
+        "method": "wallet.transaction.prepare_unshielded",
+        "params": {
+            "recipientAddress": recipient,
+            "amountAtomicUnits": "1500000"
+        }
+    }));
+    let transfer = &prepared["result"]["transfer"];
+    let draft_id = transfer["draftId"]
+        .as_str()
+        .expect("draft identifier should be public")
+        .to_owned();
+    let challenge = transfer["authorizationChallenge"]
+        .as_str()
+        .expect("authorization challenge should be public")
+        .to_owned();
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "submission-authorize",
+            "method": "wallet.transaction.authorize_unshielded",
+            "params": {
+                "draftId": draft_id,
+                "authorizationChallenge": challenge,
+                "confirmation": {
+                    "title": "Authorize NIGHT transfer",
+                    "summary": "Authorize the persistent submission fixture",
+                    "confirmed": true
+                }
+            }
+        }))["ok"],
+        true
+    );
+    let submitted = first_process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "submission-submit",
+        "method": "wallet.transaction.submit_unshielded",
+        "params": {
+            "draftId": draft_id,
+            "confirmation": {
+                "title": "Submit NIGHT transfer",
+                "summary": "Submit the persistent submission fixture",
+                "confirmed": true
+            }
+        }
+    }));
+    assert_eq!(submitted["ok"], true);
+    let transaction_id = submitted["result"]["submission"]["transactionId"]
+        .as_str()
+        .expect("transaction identifier should be public")
+        .to_owned();
+    first_process.quit();
+
+    let mut second_process = ProcessHarness::spawn_with_environment(&store.path, &environment);
+    let history = second_process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "submission-history",
+        "method": "wallet.transaction.submission_history",
+        "params": {}
+    }));
+    assert_eq!(history["result"]["submissions"][0]["draftId"], draft_id);
+    assert_eq!(history["result"]["submissions"][0]["state"], "included");
+    assert_eq!(
+        history["result"]["submissions"][0]["transactionId"],
+        transaction_id
+    );
+    assert_eq!(
+        history["result"]["submissions"][0]["reconciliationAllowed"],
+        false
+    );
+    let restored = second_process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "submission-status",
+        "method": "wallet.transaction.submission_status",
+        "params": { "draftId": draft_id }
+    }));
+    assert_eq!(restored["result"]["submissionStatus"]["state"], "included");
+    assert_eq!(
+        restored["result"]["submissionStatus"]["transactionId"],
+        transaction_id
+    );
+    second_process.quit();
+}
+
+#[test]
 fn executable_fails_startup_on_partial_live_configuration_without_echoing_values() {
     let store = TestStore::new();
     let output = Command::new(env!("CARGO_BIN_EXE_oxid-headless"))
@@ -539,6 +682,7 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
         .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
         .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
         .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
+        .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
         .output()
         .expect("headless wallet should report startup failure");
 
@@ -576,6 +720,7 @@ fn executable_accepts_private_checkpoints_only_for_supported_live_stacks() {
             .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
+            .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
             .env(variable, path);
         let output = command
             .output()

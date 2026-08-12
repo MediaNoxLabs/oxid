@@ -656,7 +656,8 @@ select:focus-visible {
 }
 
 .development-card,
-.transfer-card {
+.transfer-card,
+.submission-recovery-card {
   margin-top: 1rem;
 }
 
@@ -809,6 +810,19 @@ select:focus-visible {
 
 .submitted-card {
   border-color: rgb(70 243 181 / 28%);
+}
+
+.submission-recovery-card {
+  border-color: rgb(56 213 255 / 24%);
+  background:
+    linear-gradient(145deg, rgb(56 213 255 / 7%), transparent 52%),
+    var(--surface-2);
+}
+
+.submission-recovery-card > p:not(.card-eyebrow) {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
 }
 
 .profile-heading {

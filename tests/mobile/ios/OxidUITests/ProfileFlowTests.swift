@@ -101,6 +101,7 @@ final class ProfileFlowTests: XCTestCase {
         application.launch()
 
         XCTAssertTrue(activateButton.waitForExistence(timeout: 15))
+        XCTAssertTrue(application.staticTexts["Transfer included"].waitForExistence(timeout: 15))
         XCTAssertTrue(application.buttons["Assets"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
     }

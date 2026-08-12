@@ -158,6 +158,8 @@ impl HeadlessWallet {
             }
             "wallet.transaction.start_submission" => self.start_submission(request),
             "wallet.transaction.submission_status" => self.submission_status(request),
+            "wallet.transaction.submission_history" => self.submission_history(request),
+            "wallet.transaction.reconcile_submission" => self.reconcile_submission(request),
             "wallet.transaction.cancel_submission" => self.cancel_submission(request),
             "wallet.transaction.draft" => self.transaction_draft(request),
             "wallet.connect" | "wallet.sync.force" => self.sync_account(request),
@@ -1049,6 +1051,46 @@ impl HeadlessWallet {
         )
     }
 
+    fn submission_history(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.transaction.submission_history");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .list_wallet_transfer_submissions()
+            .execute(profile_id)
+        {
+            Ok(statuses) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "submissions": statuses
+                        .iter()
+                        .map(transfer_submission_status_value)
+                        .collect::<Vec<_>>()
+                }),
+            )),
+            Err(error) => Dispatch::continue_with(transaction_error(request.id, error)),
+        }
+    }
+
+    fn reconcile_submission(&self, request: Request) -> Dispatch {
+        self.submission_operation(
+            request,
+            "wallet.transaction.reconcile_submission",
+            |application, query| {
+                futures::executor::block_on(
+                    application
+                        .reconcile_wallet_transfer_submission()
+                        .execute(query),
+                )
+            },
+        )
+    }
+
     fn cancel_submission(&self, request: Request) -> Dispatch {
         self.submission_operation(
             request,
@@ -1080,6 +1122,9 @@ impl HeadlessWallet {
                     }
                     "wallet.transaction.cancel_submission" => {
                         "wallet.transaction.cancel_submission requires only a string draftId"
+                    }
+                    "wallet.transaction.reconcile_submission" => {
+                        "wallet.transaction.reconcile_submission requires only a string draftId"
                     }
                     _ => "transaction submission method requires only a string draftId",
                 };
@@ -1568,6 +1613,8 @@ fn transfer_submission_status_value(status: &WalletTransferSubmissionStatusView)
         "state": status.state,
         "cancellationAllowed": status.cancellation_allowed,
         "retryable": status.retryable,
+        "replacementAllowed": status.replacement_allowed,
+        "reconciliationAllowed": status.reconciliation_allowed,
         "transactionId": status.transaction_id,
         "blockId": status.block_id,
         "fee": status.fee.as_ref().map(transfer_asset_value),
@@ -1986,6 +2033,9 @@ fn invalid_empty_params(id: Option<String>, method: &'static str) -> Dispatch {
         "wallet.address.shielded" => "wallet.address.shielded does not accept parameters",
         "wallet.balance.snapshot" => "wallet.balance.snapshot does not accept parameters",
         "wallet.transaction.history" => "wallet.transaction.history does not accept parameters",
+        "wallet.transaction.submission_history" => {
+            "wallet.transaction.submission_history does not accept parameters"
+        }
         "wallet.connect" => "wallet.connect does not accept parameters",
         "wallet.sync.force" => "wallet.sync.force does not accept parameters",
         "wallet.dust.sync.status" => "wallet.dust.sync.status does not accept parameters",
@@ -2135,6 +2185,8 @@ fn capability_manifest() -> Value {
         { "method": "wallet.transaction.send_unshielded", "status": "ready", "mode": "development_only", "aliasFor": "wallet.transaction.submit_unshielded" },
         { "method": "wallet.transaction.start_submission", "status": "ready", "mode": "development_only", "execution": "adapter_worker" },
         { "method": "wallet.transaction.submission_status", "status": "ready", "mode": "development_only" },
+        { "method": "wallet.transaction.submission_history", "status": "ready", "mode": "standalone", "persistence": "public_metadata_only" },
+        { "method": "wallet.transaction.reconcile_submission", "status": "ready", "mode": "standalone", "scope": "finalized_chain" },
         { "method": "wallet.transaction.cancel_submission", "status": "ready", "mode": "development_only", "boundary": "pre_broadcast_only" },
         { "method": "wallet.sync.force", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
         { "method": "wallet.dust.sync.status", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached", "unavailable"] },
@@ -2872,6 +2924,21 @@ mod tests {
         assert!(!submitted_wire.contains("signatureHex"));
         assert!(!submitted_wire.contains("transactionHex"));
         assert!(!submitted_wire.contains("dustSeed"));
+
+        let submission_history = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"transfer-submission-history","method":"wallet.transaction.submission_history","params":{}}"#,
+        );
+        let recovered = &submission_history[0]["result"]["submissions"][0];
+        assert_eq!(recovered["draftId"], draft_id);
+        assert_eq!(recovered["state"], "included");
+        assert_eq!(recovered["transactionId"], submission["transactionId"]);
+        assert_eq!(recovered["replacementAllowed"], false);
+        assert_eq!(recovered["reconciliationAllowed"], false);
+        let recovered_wire = submission_history[0].to_string();
+        assert!(!recovered_wire.contains("signatureHex"));
+        assert!(!recovered_wire.contains("transactionHex"));
+        assert!(!recovered_wire.contains("dustSeed"));
 
         let repeated = execute_with_wallet(
             &wallet,

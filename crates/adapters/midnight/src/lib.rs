@@ -23,6 +23,8 @@ mod shielded_transport;
 #[cfg(not(target_arch = "wasm32"))]
 mod submission;
 #[cfg(not(target_arch = "wasm32"))]
+mod submission_journal;
+#[cfg(not(target_arch = "wasm32"))]
 mod transaction;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -49,6 +51,10 @@ pub use shielded_checkpoint::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use submission::{
     MidnightProvingMode, MidnightStandaloneConfig, MidnightStandaloneConfigError,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use submission_journal::{
+    MidnightSubmissionJournalConfig, MidnightSubmissionJournalConfigError,
 };
 
 use std::{
@@ -300,6 +306,10 @@ pub struct MidnightWalletAdapter<S, D = UnavailableMidnightAccountDeriver> {
     #[cfg(not(target_arch = "wasm32"))]
     shielded_sync: Arc<dyn shielded_sync::MidnightShieldedSyncController>,
     #[cfg(not(target_arch = "wasm32"))]
+    submission_journal: Arc<dyn submission_journal::MidnightSubmissionJournalStore>,
+    #[cfg(not(target_arch = "wasm32"))]
+    submission_reconciler: Arc<dyn transaction::MidnightSubmissionReconciler>,
+    #[cfg(not(target_arch = "wasm32"))]
     drafts: Arc<
         Mutex<
             HashMap<
@@ -329,6 +339,12 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             #[cfg(not(target_arch = "wasm32"))]
             shielded_sync: Arc::new(shielded_sync::UnavailableMidnightShieldedSyncController),
             #[cfg(not(target_arch = "wasm32"))]
+            submission_journal: Arc::new(
+                submission_journal::UnavailableMidnightSubmissionJournalStore,
+            ),
+            #[cfg(not(target_arch = "wasm32"))]
+            submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
+            #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -350,6 +366,12 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             #[cfg(not(target_arch = "wasm32"))]
             shielded_sync: Arc::new(shielded_sync::UnavailableMidnightShieldedSyncController),
             #[cfg(not(target_arch = "wasm32"))]
+            submission_journal: Arc::new(
+                submission_journal::UnavailableMidnightSubmissionJournalStore,
+            ),
+            #[cfg(not(target_arch = "wasm32"))]
+            submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
+            #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -370,6 +392,12 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
             #[cfg(not(target_arch = "wasm32"))]
             shielded_sync: Arc::new(shielded_sync::UnavailableMidnightShieldedSyncController),
+            #[cfg(not(target_arch = "wasm32"))]
+            submission_journal: Arc::new(
+                submission_journal::MemoryMidnightSubmissionJournalStore::default(),
+            ),
+            #[cfg(not(target_arch = "wasm32"))]
+            submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -394,6 +422,12 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             #[cfg(not(target_arch = "wasm32"))]
             shielded_sync: Arc::new(shielded_sync::UnavailableMidnightShieldedSyncController),
             #[cfg(not(target_arch = "wasm32"))]
+            submission_journal: Arc::new(
+                submission_journal::MemoryMidnightSubmissionJournalStore::default(),
+            ),
+            #[cfg(not(target_arch = "wasm32"))]
+            submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
+            #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -414,6 +448,10 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             completer,
             dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
             shielded_sync: Arc::new(shielded_sync::UnavailableMidnightShieldedSyncController),
+            submission_journal: Arc::new(
+                submission_journal::MemoryMidnightSubmissionJournalStore::default(),
+            ),
+            submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -433,6 +471,10 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             completer,
             dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
             shielded_sync: Arc::new(shielded_sync::UnavailableMidnightShieldedSyncController),
+            submission_journal: Arc::new(
+                submission_journal::MemoryMidnightSubmissionJournalStore::default(),
+            ),
+            submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -496,6 +538,17 @@ impl<S, D> MidnightWalletAdapter<S, D> {
         shielded_sync: Arc<dyn shielded_sync::MidnightShieldedSyncController>,
     ) -> Self {
         self.shielded_sync = shielded_sync;
+        self
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn with_submission_recovery(
+        mut self,
+        journal: Arc<dyn submission_journal::MidnightSubmissionJournalStore>,
+        reconciler: Arc<dyn transaction::MidnightSubmissionReconciler>,
+    ) -> Self {
+        self.submission_journal = journal;
+        self.submission_reconciler = reconciler;
         self
     }
 }
@@ -711,6 +764,24 @@ where
         oxid_wallet_application::WalletTransactionPortError,
     > {
         Err(oxid_wallet_application::WalletTransactionPortError::Unavailable)
+    }
+
+    fn submission_history(
+        &self,
+        _: &WalletProfileId,
+    ) -> Result<
+        Vec<oxid_wallet_domain::WalletTransactionSubmissionStatus>,
+        oxid_wallet_application::WalletTransactionPortError,
+    > {
+        Ok(Vec::new())
+    }
+
+    fn reconcile_submission<'a>(
+        &'a self,
+        _: &'a WalletProfileId,
+        _: &'a oxid_wallet_domain::WalletTransactionDraftId,
+    ) -> oxid_wallet_application::WalletTransactionStatusPortFuture<'a> {
+        Box::pin(async { Err(oxid_wallet_application::WalletTransactionPortError::Unavailable) })
     }
 }
 
@@ -1008,6 +1079,25 @@ where
     .with_shielded_sync(shielded_sync)
 }
 
+/// Development-only simulated adapter with a durable public submission journal.
+#[must_use]
+pub fn protected_simulated_midnight_wallet_with_submission_journal<C, K>(
+    journal: MidnightSubmissionJournalConfig,
+    clock: Arc<C>,
+    keys: Arc<K>,
+) -> MidnightWalletAdapter<SimulatedMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort + 'static,
+{
+    protected_simulated_midnight_wallet(clock, keys).with_submission_recovery(
+        Arc::new(submission_journal::JsonMidnightSubmissionJournalStore::new(
+            journal,
+        )),
+        Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
+    )
+}
+
 /// Development-only live standalone adapter with real DUST proving and node submission.
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
@@ -1173,6 +1263,7 @@ pub fn protected_standalone_midnight_wallet_with_checkpoint_options<C, K>(
     account_checkpoints: Option<MidnightAccountCheckpointConfig>,
     dust_checkpoints: Option<MidnightDustCheckpointConfig>,
     shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+    submission_journal: Option<MidnightSubmissionJournalConfig>,
     clock: Arc<C>,
     keys: Arc<K>,
 ) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
@@ -1210,6 +1301,18 @@ where
                 ) as Arc<_>
             },
         );
+    let submission_store: Arc<dyn submission_journal::MidnightSubmissionJournalStore> =
+        submission_journal.map_or_else(
+            || {
+                Arc::new(submission_journal::MemoryMidnightSubmissionJournalStore::default())
+                    as Arc<_>
+            },
+            |journal| {
+                Arc::new(submission_journal::JsonMidnightSubmissionJournalStore::new(
+                    journal,
+                )) as Arc<_>
+            },
+        );
     let dust_sync = Arc::new(dust_sync::LiveMidnightDustSyncController::new(
         config.clone(),
         Arc::clone(&dust_store),
@@ -1221,6 +1324,9 @@ where
         shielded_store,
         Arc::clone(&clock),
         Arc::clone(&keys),
+    ));
+    let reconciler = Arc::new(submission::LiveMidnightSubmissionReconciler::new(
+        config.clone(),
     ));
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         source,
@@ -1234,6 +1340,7 @@ where
     )
     .with_dust_sync(dust_sync)
     .with_shielded_sync(shielded_sync)
+    .with_submission_recovery(submission_store, reconciler)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

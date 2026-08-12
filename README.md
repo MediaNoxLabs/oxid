@@ -15,7 +15,8 @@ than layers bolted onto one chain-specific frontend.
 > Midnight HD/BIP340 account derivation headlessly; a deterministic adapter
 > exercises Midnight network, canonical unshielded and shielded receive
 > addresses, exact-balance, sync, history, and
-> staged unshielded NIGHT submission without secret input. Native headless runs
+> staged unshielded NIGHT submission, durable public submission recovery, and
+> finalized-chain reconciliation without secret input. Native headless runs
 > can instead opt into a real standalone-indexer source for public-account and
 > shielded Zswap synchronization, or the complete DUST/local-prover/node
 > submission path using explicit public startup configuration; remote proving
@@ -87,6 +88,7 @@ The implemented account methods are `wallet.network.list`,
 `wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
 `wallet.transaction.submit_unshielded`, `wallet.transaction.send_unshielded`,
 `wallet.transaction.start_submission`, `wallet.transaction.submission_status`,
+`wallet.transaction.submission_history`, `wallet.transaction.reconcile_submission`,
 `wallet.transaction.cancel_submission`,
 `wallet.connect`, `wallet.sync.force`, `wallet.dust.sync.status`,
 `wallet.dust.sync.start`, `wallet.dust.sync.cancel`,
@@ -120,7 +122,11 @@ freshness, and sanitized state. Cached or cancelled checkpoints remain
 resumable but are never labelled live enough to spend.
 If transport is lost after node submission, the adapter reports
 `submission_unknown` and leaves the draft `submitting`; it never risks a blind
-duplicate while the external outcome is ambiguous.
+duplicate while the external outcome is ambiguous. The adapter durably records
+the public extrinsic hash and finalized pre-broadcast anchor before contacting
+the node. Submission status/history survive restart, and explicit
+reconciliation scans a bounded finalized ancestor window before classifying an
+attempt as included, rejected, expired, or still unknown.
 
 For a native standalone-indexer run, set all three public values before starting
 the headless binary:
@@ -217,6 +223,24 @@ cancelled, or stalled projections are display/resume state only. Invalid state
 is ignored and rebuilt from zero; an incompatible delta retries once from
 zero. Development roots remain ephemeral, so useful cross-process resume
 awaits durable native custody of the same root.
+
+Standalone development composition automatically keeps bounded public
+submission metadata in an owner-private journal beside the resolved profile
+store. Headless automation may select an explicit normalized absolute path:
+
+```bash
+export OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH='<absolute-app-private-submission-journal>'
+cargo run -p oxid-headless
+```
+
+The v1 JSON journal is capped at 128 records and 256 KiB and is atomically
+written before network broadcast. It contains profile/network/draft scope, a
+one-way planning fingerprint, expiry/update times, fee, extrinsic/finalized
+anchor hashes, optional inclusion block, mode, and state—never signed or sealed
+transactions, signatures, proofs, witnesses, keys, seeds, or routes. The path
+can also be used with deterministic simulation for multi-process flow tests.
+For live reconciliation it must accompany the complete standalone submission
+configuration; it is intentionally rejected with the read-only live stack.
 
 An opt-in headless proving harness constructs one synthetic DUST spend, proves
 and seals it locally, and checks tagged-codec interoperability without node

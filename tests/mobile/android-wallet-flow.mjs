@@ -184,9 +184,10 @@ try {
     const restored = await evaluate(`(() => ({
       profileRestored: !document.body.innerText.includes("Create your wallet profile"),
       developmentRootReset: document.body.innerText.includes("Activate protected test account"),
+      submissionRestored: document.body.innerText.includes("Transfer included"),
     }))()`);
-    if (!restored.profileRestored || !restored.developmentRootReset) {
-      throw new Error("Android restart did not restore only public profile metadata");
+    if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored) {
+      throw new Error("Android restart did not restore public profile and submission metadata");
     }
     process.stdout.write(`${JSON.stringify(restored)}\n`);
   }

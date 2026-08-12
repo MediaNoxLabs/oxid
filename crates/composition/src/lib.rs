@@ -10,9 +10,12 @@ use oxid_adapter_midnight::{
     MidnightDustCheckpointConfig, MidnightDustCheckpointConfigError, MidnightIndexerConfig,
     MidnightIndexerConfigError, MidnightLocalProvingConfig, MidnightLocalProvingConfigError,
     MidnightShieldedCheckpointConfig, MidnightShieldedCheckpointConfigError,
-    MidnightStandaloneConfig, MidnightStandaloneConfigError, protected_live_midnight_wallet,
+    MidnightStandaloneConfig, MidnightStandaloneConfigError, MidnightSubmissionJournalConfig,
+    MidnightSubmissionJournalConfigError, protected_live_midnight_wallet,
     protected_live_midnight_wallet_with_checkpoint_options,
-    protected_live_midnight_wallet_with_checkpoints, protected_standalone_midnight_wallet,
+    protected_live_midnight_wallet_with_checkpoints,
+    protected_simulated_midnight_wallet_with_submission_journal,
+    protected_standalone_midnight_wallet,
     protected_standalone_midnight_wallet_with_all_checkpoints,
     protected_standalone_midnight_wallet_with_checkpoint_options,
     protected_standalone_midnight_wallet_with_checkpoints,
@@ -32,7 +35,8 @@ use oxid_wallet_application::{
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
     ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
-    ListWalletProfilesUseCase, LockWalletUseCase, PrepareWalletTransferUseCase,
+    ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
+    PrepareWalletTransferUseCase, ReconcileWalletTransferSubmissionUseCase,
     SelectWalletNetworkUseCase, SelectWalletProfileService, SelectWalletProfileUseCase,
     SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
     SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
@@ -75,6 +79,8 @@ pub struct ApplicationServices {
     get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
     get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase>,
     cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
+    list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
+    reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
 }
 
 impl ApplicationServices {
@@ -226,6 +232,20 @@ impl ApplicationServices {
     ) -> Arc<dyn CancelWalletTransferSubmissionUseCase> {
         Arc::clone(&self.cancel_wallet_transfer_submission)
     }
+
+    #[must_use]
+    pub fn list_wallet_transfer_submissions(
+        &self,
+    ) -> Arc<dyn ListWalletTransferSubmissionsUseCase> {
+        Arc::clone(&self.list_wallet_transfer_submissions)
+    }
+
+    #[must_use]
+    pub fn reconcile_wallet_transfer_submission(
+        &self,
+    ) -> Arc<dyn ReconcileWalletTransferSubmissionUseCase> {
+        Arc::clone(&self.reconcile_wallet_transfer_submission)
+    }
 }
 
 /// Wires the application with persistent public-profile metadata storage.
@@ -245,15 +265,31 @@ pub fn compose_headless() -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    #[cfg(not(target_arch = "wasm32"))]
+    let midnight = profiles
+        .configured_path()
+        .and_then(|path| path.parent())
+        .map(|directory| directory.join("private/midnight-submissions.json"))
+        .and_then(|path| MidnightSubmissionJournalConfig::new(path).ok())
+        .map_or_else(
+            || protected_simulated_midnight_wallet(Arc::clone(&clock), Arc::clone(&security)),
+            |journal| {
+                protected_simulated_midnight_wallet_with_submission_journal(
+                    journal,
+                    Arc::clone(&clock),
+                    Arc::clone(&security),
+                )
+            },
+        );
+    #[cfg(target_arch = "wasm32")]
     let midnight = Arc::new(protected_simulated_midnight_wallet(
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
-    compose_with_adapters(
-        Arc::new(JsonWalletProfileRepository::at_default_location()),
-        security,
-        midnight,
-    )
+    #[cfg(not(target_arch = "wasm32"))]
+    let midnight = Arc::new(midnight);
+    compose_with_adapters(profiles, security, midnight)
 }
 
 /// Environment variable holding the selected Midnight network identity.
@@ -286,6 +322,9 @@ pub const MIDNIGHT_DUST_CHECKPOINT_PATH_ENV: &str = "OXID_MIDNIGHT_DUST_CHECKPOI
 /// Environment variable holding the app-private key-scoped shielded checkpoint file.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MIDNIGHT_SHIELDED_CHECKPOINT_PATH_ENV: &str = "OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH";
+/// Environment variable holding the app-private public submission journal.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MIDNIGHT_SUBMISSION_JOURNAL_PATH_ENV: &str = "OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH";
 
 /// Safe startup failures for optional standalone-indexer composition.
 #[cfg(not(target_arch = "wasm32"))]
@@ -299,6 +338,7 @@ pub enum HeadlessCompositionError {
     InvalidMidnightAccountCheckpointConfiguration(MidnightAccountCheckpointConfigError),
     InvalidMidnightDustCheckpointConfiguration(MidnightDustCheckpointConfigError),
     InvalidMidnightShieldedCheckpointConfiguration(MidnightShieldedCheckpointConfigError),
+    InvalidMidnightSubmissionJournalConfiguration(MidnightSubmissionJournalConfigError),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -319,6 +359,9 @@ impl std::fmt::Display for HeadlessCompositionError {
             }
             Self::InvalidMidnightDustCheckpointConfiguration(error) => return error.fmt(formatter),
             Self::InvalidMidnightShieldedCheckpointConfiguration(error) => {
+                return error.fmt(formatter);
+            }
+            Self::InvalidMidnightSubmissionJournalConfiguration(error) => {
                 return error.fmt(formatter);
             }
         };
@@ -356,8 +399,14 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
         .map(MidnightShieldedCheckpointConfig::new)
         .transpose()
         .map_err(HeadlessCompositionError::InvalidMidnightShieldedCheckpointConfiguration)?;
+    let submission_journal = read_optional_environment(MIDNIGHT_SUBMISSION_JOURNAL_PATH_ENV)?
+        .map(MidnightSubmissionJournalConfig::new)
+        .transpose()
+        .map_err(HeadlessCompositionError::InvalidMidnightSubmissionJournalConfiguration)?;
     match parse_optional_midnight_config(values)? {
-        Some(HeadlessMidnightConfig::Indexer(config)) if dust_checkpoints.is_none() => {
+        Some(HeadlessMidnightConfig::Indexer(config))
+            if dust_checkpoints.is_none() && submission_journal.is_none() =>
+        {
             Ok(compose_headless_live_with_checkpoint_options(
                 config,
                 checkpoints,
@@ -370,16 +419,27 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
                 checkpoints,
                 dust_checkpoints,
                 shielded_checkpoints,
+                submission_journal,
             ))
         }
-        Some(HeadlessMidnightConfig::Indexer(_)) | None
+        Some(HeadlessMidnightConfig::Indexer(_))
             if checkpoints.is_some()
                 || dust_checkpoints.is_some()
-                || shielded_checkpoints.is_some() =>
+                || shielded_checkpoints.is_some()
+                || submission_journal.is_some() =>
         {
             Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
         }
-        None => Ok(compose_headless()),
+        None if checkpoints.is_some()
+            || dust_checkpoints.is_some()
+            || shielded_checkpoints.is_some() =>
+        {
+            Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
+        }
+        None => submission_journal.map_or_else(
+            || Ok(compose_headless()),
+            |journal| Ok(compose_headless_with_submission_journal(journal)),
+        ),
         Some(HeadlessMidnightConfig::Indexer(_)) => {
             Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
         }
@@ -419,6 +479,7 @@ pub fn compose_headless_standalone_with_checkpoint_options(
     account_checkpoints: Option<MidnightAccountCheckpointConfig>,
     dust_checkpoints: Option<MidnightDustCheckpointConfig>,
     shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+    submission_journal: Option<MidnightSubmissionJournalConfig>,
 ) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
@@ -429,10 +490,32 @@ pub fn compose_headless_standalone_with_checkpoint_options(
             account_checkpoints,
             dust_checkpoints,
             shielded_checkpoints,
+            submission_journal,
             Arc::clone(&clock),
             Arc::clone(&security),
         ),
     );
+    compose_with_adapters(
+        Arc::new(JsonWalletProfileRepository::at_default_location()),
+        security,
+        midnight,
+    )
+}
+
+/// Wires deterministic simulation to an explicit durable public submission journal.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn compose_headless_with_submission_journal(
+    journal: MidnightSubmissionJournalConfig,
+) -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let midnight = Arc::new(protected_simulated_midnight_wallet_with_submission_journal(
+        journal,
+        Arc::clone(&clock),
+        Arc::clone(&security),
+    ));
     compose_with_adapters(
         Arc::new(JsonWalletProfileRepository::at_default_location()),
         security,
@@ -744,6 +827,10 @@ where
     let get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase> =
         transactions.clone();
     let cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase> =
+        transactions.clone();
+    let list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase> =
+        transactions.clone();
+    let reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase> =
         transactions;
 
     ApplicationServices {
@@ -776,6 +863,8 @@ where
         get_wallet_transfer_draft,
         get_wallet_transfer_submission_status,
         cancel_wallet_transfer_submission,
+        list_wallet_transfer_submissions,
+        reconcile_wallet_transfer_submission,
     }
 }
 
@@ -841,6 +930,8 @@ mod tests {
         drop(services.get_wallet_transfer_draft());
         drop(services.get_wallet_transfer_submission_status());
         drop(services.cancel_wallet_transfer_submission());
+        drop(services.list_wallet_transfer_submissions());
+        drop(services.reconcile_wallet_transfer_submission());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -883,6 +974,10 @@ mod tests {
             std::env::temp_dir().join("oxid-composition-shielded-checkpoints.bin"),
         )
         .expect("shielded checkpoint fixture is valid");
+        let submission_journal = MidnightSubmissionJournalConfig::new(
+            std::env::temp_dir().join("oxid-composition-submission-journal.json"),
+        )
+        .expect("submission journal fixture is valid");
         drop(compose_headless_live_with_checkpoint_options(
             remote.indexer().clone(),
             Some(checkpoint.clone()),
@@ -902,6 +997,7 @@ mod tests {
             Some(checkpoint),
             Some(dust_checkpoint),
             Some(shielded_checkpoint),
+            Some(submission_journal),
         ));
 
         let local_proving = MidnightLocalProvingConfig::new(

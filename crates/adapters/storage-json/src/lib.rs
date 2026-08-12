@@ -59,6 +59,13 @@ impl JsonWalletProfileRepository {
         }
     }
 
+    /// Returns the resolved public-profile store path so the composition root
+    /// can colocate other independently bounded public metadata stores.
+    #[must_use]
+    pub fn configured_path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
     fn path(&self) -> Result<&Path, WalletProfileRepositoryError> {
         self.path
             .as_deref()

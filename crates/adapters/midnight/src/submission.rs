@@ -53,8 +53,10 @@ use crate::{
         MidnightDustCheckpointStore, StoredDustCheckpoint, UnavailableMidnightDustCheckpointStore,
     },
     local_proving,
+    submission_journal::{StoredSubmissionJournalEntry, StoredSubmissionState},
     transaction::{
-        MidnightCompletionOutcome, MidnightCompletionRequest, MidnightTransactionCompleter,
+        MidnightCompletionOutcome, MidnightCompletionRequest, MidnightSubmissionReconciler,
+        MidnightSubmissionReconciliation, MidnightTransactionCompleter,
     },
 };
 
@@ -80,6 +82,7 @@ const MAX_PROOF_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROOF_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TRANSACTION_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BALANCE_ITERATIONS: usize = 16;
+const MAX_RECONCILIATION_BLOCKS: usize = 2_048;
 
 type UnprovenTransaction =
     Transaction<Signature, ProofPreimageMarker, PedersenRandomness, DefaultDB>;
@@ -236,6 +239,111 @@ impl<C> LiveMidnightTransactionCompleter<C> {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct LiveMidnightSubmissionReconciler {
+    config: MidnightStandaloneConfig,
+}
+
+impl LiveMidnightSubmissionReconciler {
+    pub(crate) const fn new(config: MidnightStandaloneConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl MidnightSubmissionReconciler for LiveMidnightSubmissionReconciler {
+    fn reconcile(
+        &self,
+        entry: &StoredSubmissionJournalEntry,
+    ) -> Result<MidnightSubmissionReconciliation, WalletTransactionPortError> {
+        if entry.mode != WalletTransferSubmissionMode::Live
+            || !matches!(
+                entry.state,
+                StoredSubmissionState::Broadcasting | StoredSubmissionState::OutcomeUnknown
+            )
+            || &entry.network_id != self.config.indexer().network_id()
+        {
+            return Err(WalletTransactionPortError::InvalidData);
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        runtime.block_on(reconcile_live_submission(&self.config, entry))
+    }
+}
+
+async fn reconcile_live_submission(
+    config: &MidnightStandaloneConfig,
+    entry: &StoredSubmissionJournalEntry,
+) -> Result<MidnightSubmissionReconciliation, WalletTransactionPortError> {
+    let client = timeout(
+        CONNECT_TIMEOUT,
+        OnlineClient::<SubstrateConfig>::from_insecure_url(config.node_websocket_url()),
+    )
+    .await
+    .map_err(|_| WalletTransactionPortError::Timeout)?
+    .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    let mut block = timeout(CONNECT_TIMEOUT, client.blocks().at_latest())
+        .await
+        .map_err(|_| WalletTransactionPortError::Timeout)?
+        .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    let mut reached_anchor = false;
+    for _ in 0..MAX_RECONCILIATION_BLOCKS {
+        if block.hash().0 == entry.anchor_block_hash {
+            reached_anchor = true;
+            break;
+        }
+        let extrinsics = timeout(CONNECT_TIMEOUT, block.extrinsics())
+            .await
+            .map_err(|_| WalletTransactionPortError::Timeout)?
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        for extrinsic in extrinsics.iter() {
+            if extrinsic.hash().0 != entry.transaction_hash {
+                continue;
+            }
+            let events = timeout(CONNECT_TIMEOUT, extrinsic.events())
+                .await
+                .map_err(|_| WalletTransactionPortError::Timeout)?
+                .map_err(|_| WalletTransactionPortError::Unavailable)?;
+            let mut succeeded = false;
+            let mut failed = false;
+            for event in events.iter() {
+                let event = event.map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+                if event.pallet_name() == "System" && event.variant_name() == "ExtrinsicSuccess" {
+                    succeeded = true;
+                }
+                if event.pallet_name() == "System" && event.variant_name() == "ExtrinsicFailed" {
+                    failed = true;
+                }
+            }
+            return match (succeeded, failed) {
+                (true, false) => Ok(MidnightSubmissionReconciliation::Included {
+                    block_hash: block.hash().0,
+                }),
+                (false, true) => Ok(MidnightSubmissionReconciliation::Rejected),
+                _ => Err(WalletTransactionPortError::InvalidChainState),
+            };
+        }
+        let parent_hash = block.header().parent_hash;
+        block = timeout(CONNECT_TIMEOUT, client.blocks().at(parent_hash))
+            .await
+            .map_err(|_| WalletTransactionPortError::Timeout)?
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    }
+    if block.hash().0 == entry.anchor_block_hash {
+        reached_anchor = true;
+    }
+    if !reached_anchor {
+        return Ok(MidnightSubmissionReconciliation::Unresolved);
+    }
+    let chain_tip = fetch_chain_tip(config.indexer_http_url()).await?;
+    if Timestamp::from_secs(entry.expires_at.value() / 1_000) <= chain_tip.timestamp {
+        Ok(MidnightSubmissionReconciliation::Expired)
+    } else {
+        Ok(MidnightSubmissionReconciliation::Unresolved)
+    }
+}
+
 impl<C> MidnightTransactionCompleter for LiveMidnightTransactionCompleter<C>
 where
     C: ClockPort + 'static,
@@ -377,9 +485,13 @@ where
         return Err(WalletTransactionPortError::InvalidData);
     }
     ensure_submission_active(&cancellation)?;
-    request.begin_broadcast()?;
-    let (transaction_hash, block_hash) =
-        submit_unsigned(config.node_websocket_url(), transaction_bytes).await?;
+    let (transaction_hash, block_hash) = submit_unsigned(
+        config.node_websocket_url(),
+        transaction_bytes,
+        &request,
+        fee_specks,
+    )
+    .await?;
     Ok(MidnightCompletionOutcome {
         fee_specks,
         transaction_hash,
@@ -1056,6 +1168,8 @@ async fn prove_via_http(
 async fn submit_unsigned(
     endpoint: &str,
     transaction: Vec<u8>,
+    request: &MidnightCompletionRequest,
+    fee_specks: u128,
 ) -> Result<([u8; 32], [u8; 32]), WalletTransactionPortError> {
     let client = timeout(
         CONNECT_TIMEOUT,
@@ -1073,6 +1187,17 @@ async fn submit_unsigned(
         .tx()
         .create_unsigned(&call)
         .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+    let anchor = timeout(CONNECT_TIMEOUT, client.blocks().at_latest())
+        .await
+        .map_err(|_| WalletTransactionPortError::Timeout)?
+        .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    let transaction_hash = unsigned.hash().0;
+    request.begin_broadcast(
+        fee_specks,
+        transaction_hash,
+        anchor.hash().0,
+        WalletTransferSubmissionMode::Live,
+    )?;
     let mut progress = timeout(SUBMISSION_TIMEOUT, unsigned.submit_and_watch())
         .await
         .map_err(|_| WalletTransactionPortError::SubmissionOutcomeUnknown)?
@@ -1086,15 +1211,42 @@ async fn submit_unsigned(
                 .ok_or(WalletTransactionPortError::SubmissionOutcomeUnknown)?
                 .map_err(|_| WalletTransactionPortError::SubmissionOutcomeUnknown)?;
             match status {
-                TxStatus::InBestBlock(in_block) | TxStatus::InFinalizedBlock(in_block) => {
-                    in_block
-                        .wait_for_success()
+                TxStatus::InFinalizedBlock(in_block) => {
+                    if in_block.extrinsic_hash().0 != transaction_hash {
+                        return Err(WalletTransactionPortError::InvalidChainState);
+                    }
+                    let events = in_block
+                        .fetch_events()
                         .await
-                        .map_err(|_| WalletTransactionPortError::SubmissionRejected)?;
-                    return Ok((in_block.extrinsic_hash().0, in_block.block_hash().0));
+                        .map_err(|_| WalletTransactionPortError::SubmissionOutcomeUnknown)?;
+                    let mut succeeded = false;
+                    let mut failed = false;
+                    for event in events.iter() {
+                        let event = event
+                            .map_err(|_| WalletTransactionPortError::SubmissionOutcomeUnknown)?;
+                        if event.pallet_name() == "System"
+                            && event.variant_name() == "ExtrinsicSuccess"
+                        {
+                            succeeded = true;
+                        }
+                        if event.pallet_name() == "System"
+                            && event.variant_name() == "ExtrinsicFailed"
+                        {
+                            failed = true;
+                        }
+                    }
+                    return match (succeeded, failed) {
+                        (true, false) => Ok((transaction_hash, in_block.block_hash().0)),
+                        (false, true) => Err(WalletTransactionPortError::SubmissionRejected),
+                        _ => Err(WalletTransactionPortError::SubmissionOutcomeUnknown),
+                    };
                 }
+                TxStatus::InBestBlock(_) => {}
                 TxStatus::Error { .. } | TxStatus::Invalid { .. } | TxStatus::Dropped { .. } => {
-                    return Err(WalletTransactionPortError::SubmissionRejected);
+                    // Subxt explicitly documents these stream-terminal states as
+                    // probabilistic: the transaction can still reach a block.
+                    // Only a finalized extrinsic failure is safe to replace.
+                    return Err(WalletTransactionPortError::SubmissionOutcomeUnknown);
                 }
                 _ => {}
             }

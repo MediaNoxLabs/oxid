@@ -29,7 +29,7 @@ use oxid_wallet_application::{
     AuthorizeWalletTransferRequest, PrepareWalletTransferRequest, SubmitWalletTransferRequest,
     SubmittedWalletTransfer, WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent,
     WalletKeyOperationPort, WalletSecurityPortError, WalletTransactionPort,
-    WalletTransactionPortError, WalletTransactionPortFuture,
+    WalletTransactionPortError, WalletTransactionPortFuture, WalletTransactionStatusPortFuture,
 };
 use oxid_wallet_domain::{
     AssetBalance, ChainAddress, ChainBlockId, ChainNetwork, ChainTransactionId,
@@ -48,6 +48,10 @@ use crate::{
     ProtectedMidnightAccountDeriver, SPECKS_PER_DUST, STARS_PER_NIGHT,
     SimulatedMidnightAccountSource, UnavailableMidnightAccountDeriver,
     UnavailableMidnightAccountSource, midnight_asset, network_by_id,
+    submission_journal::{
+        MidnightSubmissionJournalStore, StoredSubmissionJournalEntry, StoredSubmissionState,
+        SubmissionJournalStoreError,
+    },
 };
 
 const SEND_UNSHIELDED_SEGMENT: u16 = 0xCAFE;
@@ -67,9 +71,26 @@ impl MidnightCompletionRequest {
         Arc::clone(&self.control.cancellation)
     }
 
-    pub(crate) fn begin_broadcast(&self) -> Result<(), WalletTransactionPortError> {
-        self.control.begin_broadcast()
+    pub(crate) fn begin_broadcast(
+        &self,
+        fee_specks: u128,
+        transaction_hash: [u8; 32],
+        anchor_block_hash: [u8; 32],
+        mode: WalletTransferSubmissionMode,
+    ) -> Result<(), WalletTransactionPortError> {
+        self.control
+            .begin_broadcast(fee_specks, transaction_hash, anchor_block_hash, mode)
     }
+}
+
+#[derive(Clone, Debug)]
+struct MidnightSubmissionAttempt {
+    profile_id: WalletProfileId,
+    network_id: oxid_wallet_domain::ChainNetworkId,
+    draft_id: WalletTransactionDraftId,
+    planning_fingerprint: [u8; 32],
+    expires_at: oxid_foundation::UnixTimestampMillis,
+    updated_at: oxid_foundation::UnixTimestampMillis,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,17 +100,23 @@ enum MidnightSubmissionPhase {
     Broadcasting,
 }
 
-#[derive(Debug)]
 pub(crate) struct MidnightSubmissionControl {
     cancellation: Arc<AtomicBool>,
     phase: Mutex<MidnightSubmissionPhase>,
+    attempt: MidnightSubmissionAttempt,
+    journal: Arc<dyn MidnightSubmissionJournalStore>,
 }
 
 impl MidnightSubmissionControl {
-    fn new() -> Self {
+    fn new(
+        attempt: MidnightSubmissionAttempt,
+        journal: Arc<dyn MidnightSubmissionJournalStore>,
+    ) -> Self {
         Self {
             cancellation: Arc::new(AtomicBool::new(false)),
             phase: Mutex::new(MidnightSubmissionPhase::Working),
+            attempt,
+            journal,
         }
     }
 
@@ -111,13 +138,35 @@ impl MidnightSubmissionControl {
         }
     }
 
-    fn begin_broadcast(&self) -> Result<(), WalletTransactionPortError> {
+    fn begin_broadcast(
+        &self,
+        fee_specks: u128,
+        transaction_hash: [u8; 32],
+        anchor_block_hash: [u8; 32],
+        mode: WalletTransferSubmissionMode,
+    ) -> Result<(), WalletTransactionPortError> {
         let mut phase = self
             .phase
             .lock()
             .map_err(|_| WalletTransactionPortError::Unavailable)?;
         match *phase {
             MidnightSubmissionPhase::Working => {
+                self.journal
+                    .save(&StoredSubmissionJournalEntry {
+                        profile_id: self.attempt.profile_id.clone(),
+                        network_id: self.attempt.network_id.clone(),
+                        draft_id: self.attempt.draft_id.clone(),
+                        planning_fingerprint: self.attempt.planning_fingerprint,
+                        expires_at: self.attempt.expires_at,
+                        updated_at: self.attempt.updated_at,
+                        fee_specks,
+                        transaction_hash,
+                        anchor_block_hash,
+                        block_hash: None,
+                        state: StoredSubmissionState::Broadcasting,
+                        mode,
+                    })
+                    .map_err(map_submission_store_error)?;
                 *phase = MidnightSubmissionPhase::Broadcasting;
                 Ok(())
             }
@@ -142,6 +191,57 @@ impl MidnightSubmissionControl {
             }
             MidnightSubmissionPhase::Broadcasting => WalletTransactionSubmissionState::Broadcasting,
         })
+    }
+
+    fn mark_terminal(
+        &self,
+        state: StoredSubmissionState,
+        block_hash: Option<[u8; 32]>,
+    ) -> Result<(), WalletTransactionPortError> {
+        let mut entry = self
+            .journal
+            .load(&self.attempt.profile_id, &self.attempt.draft_id)
+            .map_err(map_submission_store_error)?
+            .ok_or(WalletTransactionPortError::InvalidData)?;
+        entry.state = state;
+        entry.block_hash = block_hash;
+        self.journal
+            .save(&entry)
+            .map_err(map_submission_store_error)
+    }
+
+    fn broadcast_started(&self) -> Result<bool, WalletTransactionPortError> {
+        self.phase
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)
+            .map(|phase| *phase == MidnightSubmissionPhase::Broadcasting)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MidnightSubmissionReconciliation {
+    Included { block_hash: [u8; 32] },
+    Rejected,
+    Expired,
+    Unresolved,
+}
+
+pub(crate) trait MidnightSubmissionReconciler: Send + Sync {
+    fn reconcile(
+        &self,
+        entry: &StoredSubmissionJournalEntry,
+    ) -> Result<MidnightSubmissionReconciliation, WalletTransactionPortError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct UnavailableMidnightSubmissionReconciler;
+
+impl MidnightSubmissionReconciler for UnavailableMidnightSubmissionReconciler {
+    fn reconcile(
+        &self,
+        _: &StoredSubmissionJournalEntry,
+    ) -> Result<MidnightSubmissionReconciliation, WalletTransactionPortError> {
+        Err(WalletTransactionPortError::Unavailable)
     }
 }
 
@@ -193,11 +293,16 @@ impl MidnightTransactionCompleter for SimulatedMidnightTransactionCompleter {
             }
             thread::sleep(std::time::Duration::from_millis(25));
         }
-        request.begin_broadcast()?;
         let mut encoded = Vec::new();
         midnight_serialize::tagged_serialize(&request.transaction, &mut encoded)
             .map_err(|_| WalletTransactionPortError::InvalidData)?;
         let transaction_hash: [u8; 32] = Sha256::digest(&encoded).into();
+        request.begin_broadcast(
+            1_000_000,
+            transaction_hash,
+            [0; 32],
+            WalletTransferSubmissionMode::Simulated,
+        )?;
         let mut block_digest = Sha256::new();
         block_digest.update(b"oxid:simulated-midnight-block:v1\0");
         block_digest.update(transaction_hash);
@@ -452,6 +557,21 @@ where
             &spendable.account,
             &selected_utxos,
         );
+        if let Some(stored) = self
+            .submission_journal
+            .find_planning_fingerprint(profile_id, &planning_fingerprint)
+            .map_err(map_submission_store_error)?
+        {
+            match stored.state {
+                StoredSubmissionState::Broadcasting | StoredSubmissionState::OutcomeUnknown => {
+                    return Err(WalletTransactionPortError::SubmissionOutcomeUnknown);
+                }
+                StoredSubmissionState::Included => {
+                    return Err(WalletTransactionPortError::DraftConflict);
+                }
+                StoredSubmissionState::Rejected | StoredSubmissionState::Expired => {}
+            }
+        }
         {
             let drafts = self
                 .drafts
@@ -613,8 +733,7 @@ where
     ) -> WalletTransactionPortFuture<'a> {
         Box::pin(async move {
             let key = (profile_id.clone(), request.draft_id.clone());
-            let control = Arc::new(MidnightSubmissionControl::new());
-            let (transaction, account_index, expires_at_seconds) = {
+            let (transaction, account_index, expires_at_seconds, control) = {
                 let mut drafts = self
                     .drafts
                     .lock()
@@ -657,6 +776,17 @@ where
                     .signed_transaction
                     .clone()
                     .ok_or(WalletTransactionPortError::InvalidData)?;
+                let control = Arc::new(MidnightSubmissionControl::new(
+                    MidnightSubmissionAttempt {
+                        profile_id: profile_id.clone(),
+                        network_id: retained.preview.network_id().clone(),
+                        draft_id: request.draft_id.clone(),
+                        planning_fingerprint: retained.planning_fingerprint,
+                        expires_at: retained.preview.expires_at(),
+                        updated_at: request.now,
+                    },
+                    Arc::clone(&self.submission_journal),
+                ));
                 retained.preview = retained
                     .preview
                     .with_state(WalletTransactionDraftState::Submitting);
@@ -666,6 +796,7 @@ where
                     transaction,
                     retained.account.account_index(),
                     retained.preview.expires_at().value() / 1_000,
+                    control,
                 )
             };
 
@@ -676,6 +807,7 @@ where
             let worker_key = key.clone();
             let draft_id = request.draft_id;
             let mut cancel_on_drop = CancelSubmissionOnDrop::new(Arc::clone(&control));
+            let worker_control = Arc::clone(&control);
             let (sender, receiver) = futures::channel::oneshot::channel();
             let spawn = thread::Builder::new()
                 .name("oxid-midnight-submit".to_owned())
@@ -685,14 +817,19 @@ where
                             MidnightCompletionRequest {
                                 transaction: transaction.clone(),
                                 expires_at_seconds,
-                                control: Arc::clone(&control),
+                                control: Arc::clone(&worker_control),
                             },
                             dust_seed,
                         )
                     };
                     let completion = deriver.use_dust_seed(&profile, account_index, &mut operation);
-                    let result =
-                        finish_submission(drafts.as_ref(), &worker_key, draft_id, completion);
+                    let result = finish_submission(
+                        drafts.as_ref(),
+                        &worker_key,
+                        draft_id,
+                        worker_control.as_ref(),
+                        completion,
+                    );
                     let _ = sender.send(result);
                 });
             if spawn.is_err() {
@@ -705,9 +842,16 @@ where
                 return Err(WalletTransactionPortError::Unavailable);
             }
 
-            let result = receiver
-                .await
-                .unwrap_or(Err(WalletTransactionPortError::SubmissionOutcomeUnknown));
+            let result = match receiver.await {
+                Ok(result) => result,
+                Err(_) => {
+                    if control.broadcast_started().unwrap_or(true) {
+                        let _ = control.mark_terminal(StoredSubmissionState::OutcomeUnknown, None);
+                    }
+                    mark_submission_outcome_unknown(self.drafts.as_ref(), &key)?;
+                    Err(WalletTransactionPortError::SubmissionOutcomeUnknown)
+                }
+            };
             cancel_on_drop.disarm();
             result
         })
@@ -751,10 +895,20 @@ where
             .drafts
             .lock()
             .map_err(|_| WalletTransactionPortError::Unavailable)?;
-        let retained = drafts
+        let retained_status = drafts
             .get(&(profile_id.clone(), draft_id.clone()))
-            .ok_or(WalletTransactionPortError::DraftNotFound)?;
-        submission_status(retained)
+            .map(submission_status)
+            .transpose()?;
+        drop(drafts);
+        let stored = self
+            .submission_journal
+            .load(profile_id, draft_id)
+            .map_err(map_submission_store_error)?;
+        match (stored.as_ref(), retained_status) {
+            (Some(entry), _) => status_from_stored(entry),
+            (None, Some(status)) => Ok(status),
+            (None, None) => Err(WalletTransactionPortError::DraftNotFound),
+        }
     }
 
     fn cancel_submission(
@@ -780,7 +934,9 @@ where
             }
             WalletTransactionSubmissionState::CancellationRequested
             | WalletTransactionSubmissionState::Cancelled => {}
-            WalletTransactionSubmissionState::NotStarted => {
+            WalletTransactionSubmissionState::NotStarted
+            | WalletTransactionSubmissionState::Rejected
+            | WalletTransactionSubmissionState::Expired => {
                 return Err(WalletTransactionPortError::SubmissionNotInProgress);
             }
             WalletTransactionSubmissionState::Included
@@ -790,6 +946,67 @@ where
             }
         }
         submission_status(retained)
+    }
+
+    fn submission_history(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<Vec<WalletTransactionSubmissionStatus>, WalletTransactionPortError> {
+        let stored = self
+            .submission_journal
+            .list(profile_id)
+            .map_err(map_submission_store_error)?;
+        let mut statuses = stored
+            .iter()
+            .map(status_from_stored)
+            .collect::<Result<Vec<_>, _>>()?;
+        let drafts = self
+            .drafts
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        for ((stored_profile, draft_id), retained) in drafts.iter() {
+            if stored_profile == profile_id
+                && !statuses.iter().any(|status| status.draft_id() == draft_id)
+            {
+                statuses.push(submission_status(retained)?);
+            }
+        }
+        Ok(statuses)
+    }
+
+    fn reconcile_submission<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        draft_id: &'a WalletTransactionDraftId,
+    ) -> WalletTransactionStatusPortFuture<'a> {
+        Box::pin(async move {
+            let entry = self
+                .submission_journal
+                .load(profile_id, draft_id)
+                .map_err(map_submission_store_error)?
+                .ok_or(WalletTransactionPortError::DraftNotFound)?;
+            let status = status_from_stored(&entry)?;
+            if !status.reconciliation_allowed() {
+                return Ok(status);
+            }
+
+            let reconciler = Arc::clone(&self.submission_reconciler);
+            let journal = Arc::clone(&self.submission_journal);
+            let drafts = Arc::clone(&self.drafts);
+            let (sender, receiver) = futures::channel::oneshot::channel();
+            thread::Builder::new()
+                .name("oxid-midnight-reconcile".to_owned())
+                .spawn(move || {
+                    let result = reconciler.reconcile(&entry).and_then(|outcome| {
+                        persist_reconciliation(journal.as_ref(), drafts.as_ref(), entry, outcome)
+                    });
+                    let _ = sender.send(result);
+                })
+                .map_err(|_| WalletTransactionPortError::Unavailable)?;
+            receiver
+                .await
+                .unwrap_or(Err(WalletTransactionPortError::Unavailable))
+        })
     }
 }
 
@@ -838,10 +1055,123 @@ fn submission_status(
     ))
 }
 
+fn status_from_stored(
+    entry: &StoredSubmissionJournalEntry,
+) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError> {
+    let state = match entry.state {
+        StoredSubmissionState::Broadcasting => WalletTransactionSubmissionState::Broadcasting,
+        StoredSubmissionState::OutcomeUnknown => WalletTransactionSubmissionState::OutcomeUnknown,
+        StoredSubmissionState::Included => WalletTransactionSubmissionState::Included,
+        StoredSubmissionState::Rejected => WalletTransactionSubmissionState::Rejected,
+        StoredSubmissionState::Expired => WalletTransactionSubmissionState::Expired,
+    };
+    let transaction_id = ChainTransactionId::parse(hex::encode(entry.transaction_hash))
+        .map_err(|_| WalletTransactionPortError::InvalidData)?;
+    let fee_asset =
+        midnight_asset("midnight:dust", "DUST", SPECKS_PER_DUST).map_err(map_account_error)?;
+    let fee = AssetBalance::new(fee_asset, entry.fee_specks);
+    let submission = match entry.block_hash {
+        Some(block_hash) if entry.state == StoredSubmissionState::Included => {
+            Some(WalletTransferSubmission::new(
+                entry.draft_id.clone(),
+                transaction_id.clone(),
+                ChainBlockId::parse(hex::encode(block_hash))
+                    .map_err(|_| WalletTransactionPortError::InvalidData)?,
+                fee.clone(),
+                entry.mode,
+            ))
+        }
+        None if entry.state != StoredSubmissionState::Included => None,
+        _ => return Err(WalletTransactionPortError::InvalidData),
+    };
+    Ok(submission.map_or_else(
+        || {
+            WalletTransactionSubmissionStatus::recorded(
+                entry.draft_id.clone(),
+                state,
+                transaction_id,
+                fee,
+                entry.mode,
+            )
+        },
+        |submission| {
+            WalletTransactionSubmissionStatus::new(entry.draft_id.clone(), state, Some(submission))
+        },
+    ))
+}
+
+fn persist_reconciliation(
+    journal: &dyn MidnightSubmissionJournalStore,
+    drafts: &RetainedMidnightDrafts,
+    mut entry: StoredSubmissionJournalEntry,
+    outcome: MidnightSubmissionReconciliation,
+) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError> {
+    match outcome {
+        MidnightSubmissionReconciliation::Included { block_hash } => {
+            entry.state = StoredSubmissionState::Included;
+            entry.block_hash = Some(block_hash);
+        }
+        MidnightSubmissionReconciliation::Rejected => {
+            entry.state = StoredSubmissionState::Rejected;
+            entry.block_hash = None;
+        }
+        MidnightSubmissionReconciliation::Expired => {
+            entry.state = StoredSubmissionState::Expired;
+            entry.block_hash = None;
+        }
+        MidnightSubmissionReconciliation::Unresolved => {
+            entry.state = StoredSubmissionState::OutcomeUnknown;
+            entry.block_hash = None;
+        }
+    }
+    journal.save(&entry).map_err(map_submission_store_error)?;
+    let status = status_from_stored(&entry)?;
+    if let Ok(mut retained) = drafts.lock() {
+        let key = (entry.profile_id.clone(), entry.draft_id.clone());
+        match status.state() {
+            WalletTransactionSubmissionState::Included => {
+                if let (Some(draft), Some(submission)) =
+                    (retained.get_mut(&key), status.submission())
+                {
+                    draft.submission_state = status.state();
+                    draft.submission = Some(submission.clone());
+                    draft.submission_control = None;
+                    draft.preview = draft
+                        .preview
+                        .with_final_fee(submission.fee().clone())
+                        .with_state(WalletTransactionDraftState::Submitted);
+                }
+            }
+            WalletTransactionSubmissionState::Rejected
+            | WalletTransactionSubmissionState::Expired => {
+                retained.remove(&key);
+            }
+            _ => {
+                if let Some(draft) = retained.get_mut(&key) {
+                    draft.submission_state = status.state();
+                    draft.submission = status.submission().cloned();
+                    draft.submission_control = None;
+                }
+            }
+        }
+    }
+    Ok(status)
+}
+
+const fn map_submission_store_error(
+    error: SubmissionJournalStoreError,
+) -> WalletTransactionPortError {
+    match error {
+        SubmissionJournalStoreError::Unavailable => WalletTransactionPortError::Unavailable,
+        SubmissionJournalStoreError::InvalidData => WalletTransactionPortError::InvalidData,
+    }
+}
+
 fn finish_submission(
     drafts: &RetainedMidnightDrafts,
     key: &(WalletProfileId, WalletTransactionDraftId),
     draft_id: WalletTransactionDraftId,
+    control: &MidnightSubmissionControl,
     completion: Result<MidnightCompletionOutcome, WalletTransactionPortError>,
 ) -> Result<SubmittedWalletTransfer, WalletTransactionPortError> {
     let outcome = match completion {
@@ -851,6 +1181,7 @@ fn finish_submission(
             return Err(WalletTransactionPortError::DraftExpired);
         }
         Err(WalletTransactionPortError::SubmissionOutcomeUnknown) => {
+            let _ = control.mark_terminal(StoredSubmissionState::OutcomeUnknown, None);
             mark_submission_outcome_unknown(drafts, key)?;
             return Err(WalletTransactionPortError::SubmissionOutcomeUnknown);
         }
@@ -858,11 +1189,33 @@ fn finish_submission(
             restore_authorized(drafts, key, WalletTransactionSubmissionState::Cancelled)?;
             return Err(WalletTransactionPortError::SubmissionCancelled);
         }
+        Err(WalletTransactionPortError::SubmissionRejected) => {
+            if control.broadcast_started()? {
+                control.mark_terminal(StoredSubmissionState::Rejected, None)?;
+                remove_retained_draft(drafts, key)?;
+            } else {
+                restore_authorized(drafts, key, WalletTransactionSubmissionState::NotStarted)?;
+            }
+            return Err(WalletTransactionPortError::SubmissionRejected);
+        }
         Err(error) => {
+            if control.broadcast_started()? {
+                let _ = control.mark_terminal(StoredSubmissionState::OutcomeUnknown, None);
+                mark_submission_outcome_unknown(drafts, key)?;
+                return Err(WalletTransactionPortError::SubmissionOutcomeUnknown);
+            }
             restore_authorized(drafts, key, WalletTransactionSubmissionState::NotStarted)?;
             return Err(error);
         }
     };
+    if control
+        .mark_terminal(StoredSubmissionState::Included, Some(outcome.block_hash))
+        .is_err()
+    {
+        let _ = control.mark_terminal(StoredSubmissionState::OutcomeUnknown, None);
+        mark_submission_outcome_unknown(drafts, key)?;
+        return Err(WalletTransactionPortError::SubmissionOutcomeUnknown);
+    }
     let fee_asset =
         midnight_asset("midnight:dust", "DUST", SPECKS_PER_DUST).map_err(map_account_error)?;
     let fee = AssetBalance::new(fee_asset, outcome.fee_specks);
@@ -896,6 +1249,19 @@ fn finish_submission(
         preview: retained.preview.clone(),
         submission,
     })
+}
+
+fn remove_retained_draft(
+    drafts: &RetainedMidnightDrafts,
+    key: &(WalletProfileId, WalletTransactionDraftId),
+) -> Result<(), WalletTransactionPortError> {
+    let mut drafts = drafts
+        .lock()
+        .map_err(|_| WalletTransactionPortError::Unavailable)?;
+    drafts
+        .remove(key)
+        .map(|_| ())
+        .ok_or(WalletTransactionPortError::DraftNotFound)
 }
 
 fn restore_authorized(
@@ -1219,6 +1585,43 @@ mod tests {
         }
     }
 
+    struct BroadcastUnknownOutcomeCompleter;
+
+    impl MidnightTransactionCompleter for BroadcastUnknownOutcomeCompleter {
+        fn complete(
+            &self,
+            request: MidnightCompletionRequest,
+            _: &[u8; 32],
+        ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
+            request.begin_broadcast(42, [7; 32], [8; 32], WalletTransferSubmissionMode::Live)?;
+            Err(WalletTransactionPortError::SubmissionOutcomeUnknown)
+        }
+    }
+
+    struct IncludedReconciler;
+
+    impl MidnightSubmissionReconciler for IncludedReconciler {
+        fn reconcile(
+            &self,
+            _: &StoredSubmissionJournalEntry,
+        ) -> Result<MidnightSubmissionReconciliation, WalletTransactionPortError> {
+            Ok(MidnightSubmissionReconciliation::Included {
+                block_hash: [9; 32],
+            })
+        }
+    }
+
+    struct RejectedReconciler;
+
+    impl MidnightSubmissionReconciler for RejectedReconciler {
+        fn reconcile(
+            &self,
+            _: &StoredSubmissionJournalEntry,
+        ) -> Result<MidnightSubmissionReconciliation, WalletTransactionPortError> {
+            Ok(MidnightSubmissionReconciliation::Rejected)
+        }
+    }
+
     struct PanickingCompleter;
 
     impl MidnightTransactionCompleter for PanickingCompleter {
@@ -1239,9 +1642,15 @@ mod tests {
     impl MidnightTransactionCompleter for BlockingCompleter {
         fn complete(
             &self,
-            _: MidnightCompletionRequest,
+            request: MidnightCompletionRequest,
             _: &[u8; 32],
         ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
+            request.begin_broadcast(
+                1,
+                [1; 32],
+                [0; 32],
+                WalletTransferSubmissionMode::Simulated,
+            )?;
             self.started
                 .send(())
                 .map_err(|_| WalletTransactionPortError::Unavailable)?;
@@ -1299,7 +1708,12 @@ mod tests {
             request: MidnightCompletionRequest,
             _: &[u8; 32],
         ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
-            request.begin_broadcast()?;
+            request.begin_broadcast(
+                1,
+                [1; 32],
+                [0; 32],
+                WalletTransferSubmissionMode::Simulated,
+            )?;
             self.started
                 .send(())
                 .map_err(|_| WalletTransactionPortError::Unavailable)?;
@@ -1579,6 +1993,13 @@ mod tests {
         assert_eq!(error, WalletTransactionPortError::SubmissionOutcomeUnknown);
         assert_eq!(
             adapter
+                .submission_status(&profile(), authorized.draft_id())
+                .expect("unknown submission status is readable")
+                .state(),
+            WalletTransactionSubmissionState::OutcomeUnknown
+        );
+        assert_eq!(
+            adapter
                 .get(
                     &profile(),
                     authorized.draft_id(),
@@ -1594,6 +2015,124 @@ mod tests {
     }
 
     #[test]
+    fn durable_unknown_submission_is_restored_reconciled_and_never_duplicated() {
+        let journal: Arc<dyn MidnightSubmissionJournalStore> =
+            Arc::new(crate::submission_journal::MemoryMidnightSubmissionJournalStore::default());
+        let adapter = submittable_adapter(Arc::new(BroadcastUnknownOutcomeCompleter))
+            .with_submission_recovery(Arc::clone(&journal), Arc::new(IncludedReconciler));
+        let authorized = authorize_transfer(&adapter);
+        let draft_id = authorized.draft_id().clone();
+        let error = futures::executor::block_on(adapter.submit(
+            &profile(),
+            SubmitWalletTransferRequest {
+                draft_id: draft_id.clone(),
+                now: UnixTimestampMillis::new(1_000),
+            },
+        ))
+        .expect_err("uncertain broadcast remains unresolved");
+        assert_eq!(error, WalletTransactionPortError::SubmissionOutcomeUnknown);
+        let history = adapter
+            .submission_history(&profile())
+            .expect("journal history is readable");
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history[0].state(),
+            WalletTransactionSubmissionState::OutcomeUnknown
+        );
+        assert_eq!(
+            history[0]
+                .transaction_id()
+                .expect("broadcast hash is public")
+                .as_str(),
+            hex::encode([7; 32])
+        );
+        assert_eq!(
+            history[0]
+                .fee()
+                .expect("broadcast fee is public")
+                .atomic_units(),
+            42
+        );
+        assert!(history[0].reconciliation_allowed());
+
+        let restarted = submittable_adapter(Arc::new(SimulatedMidnightTransactionCompleter))
+            .with_submission_recovery(Arc::clone(&journal), Arc::new(IncludedReconciler));
+        assert_eq!(
+            restarted
+                .submission_status(&profile(), &draft_id)
+                .expect("restart restores public status")
+                .state(),
+            WalletTransactionSubmissionState::OutcomeUnknown
+        );
+        assert_eq!(
+            restarted.prepare(&profile(), request(2_000)),
+            Err(WalletTransactionPortError::SubmissionOutcomeUnknown)
+        );
+
+        let reconciled =
+            futures::executor::block_on(restarted.reconcile_submission(&profile(), &draft_id))
+                .expect("finalized inclusion reconciles");
+        assert_eq!(
+            reconciled.state(),
+            WalletTransactionSubmissionState::Included
+        );
+        assert_eq!(
+            reconciled
+                .submission()
+                .expect("inclusion metadata is public")
+                .transaction_id()
+                .as_str(),
+            hex::encode([7; 32])
+        );
+        assert_eq!(
+            reconciled
+                .submission()
+                .expect("inclusion metadata is public")
+                .block_id()
+                .as_str(),
+            hex::encode([9; 32])
+        );
+        assert_eq!(
+            restarted.prepare(&profile(), request(2_000)),
+            Err(WalletTransactionPortError::DraftConflict)
+        );
+    }
+
+    #[test]
+    fn finalized_rejection_retires_signed_material_and_allows_fresh_planning() {
+        let journal: Arc<dyn MidnightSubmissionJournalStore> =
+            Arc::new(crate::submission_journal::MemoryMidnightSubmissionJournalStore::default());
+        let adapter = submittable_adapter(Arc::new(BroadcastUnknownOutcomeCompleter))
+            .with_submission_recovery(Arc::clone(&journal), Arc::new(RejectedReconciler));
+        let authorized = authorize_transfer(&adapter);
+        let draft_id = authorized.draft_id().clone();
+        let _ = futures::executor::block_on(adapter.submit(
+            &profile(),
+            SubmitWalletTransferRequest {
+                draft_id: draft_id.clone(),
+                now: UnixTimestampMillis::new(1_000),
+            },
+        ));
+
+        let reconciled =
+            futures::executor::block_on(adapter.reconcile_submission(&profile(), &draft_id))
+                .expect("finalized rejection reconciles");
+        assert_eq!(
+            reconciled.state(),
+            WalletTransactionSubmissionState::Rejected
+        );
+        assert!(reconciled.replacement_allowed());
+        assert_eq!(
+            adapter.get(&profile(), &draft_id, UnixTimestampMillis::new(1_000)),
+            Err(WalletTransactionPortError::DraftNotFound)
+        );
+        let replacement = adapter
+            .prepare(&profile(), request(2_000))
+            .expect("fresh planning is allowed after finalized rejection");
+        assert_eq!(replacement.state(), WalletTransactionDraftState::Prepared);
+    }
+
+    #[test]
     fn unexpected_worker_termination_is_an_unknown_non_retryable_outcome() {
         let adapter = submittable_adapter(Arc::new(PanickingCompleter));
         let authorized = authorize_transfer(&adapter);
@@ -1604,6 +2143,13 @@ mod tests {
         let error = futures::executor::block_on(adapter.submit(&profile(), request.clone()))
             .expect_err("worker termination is returned as an unknown outcome");
         assert_eq!(error, WalletTransactionPortError::SubmissionOutcomeUnknown);
+        assert_eq!(
+            adapter
+                .submission_status(&profile(), authorized.draft_id())
+                .expect("terminated worker status is readable")
+                .state(),
+            WalletTransactionSubmissionState::OutcomeUnknown
+        );
         assert_eq!(
             adapter
                 .get(
