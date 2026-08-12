@@ -62,6 +62,7 @@ ADR status and delivery state answer different questions:
 | [0038](0038-protect-and-verify-profile-scoped-credentials.md) Protect and verify profile-scoped credentials | Accepted | §§3–7, 9, 12–13, 16–18 and issue #23 | Protected standalone inventory, strict phase-1 CBOR verification, headless/mobile flow, and restart restoration implemented; native wrapping and protocol ingress pending |
 | [0039](0039-accept-pre-authorized-openid4vci-offers.md) Accept pre-authorized OpenID4VCI offers | Accepted | §§3–7, 9–13, 16–18 and issue #24 | Final-shape embedded standalone offer, consent, DID proof, verified import, headless/mobile flow, and credential restart restoration implemented; production HTTP/discovery and other grant variants pending |
 | [0040](0040-add-consented-standalone-siopv2-authentication.md) Add consented standalone SIOPv2 DID authentication | Accepted | §§3–7, 9–13, 16–18 and issue #25 | Draft-13 request-by-reference login, consent, managed-DID proof, independent verifier, and headless/mobile flow implemented; OpenID4VP presentation and production transport pending |
+| [0041](0041-protect-format-private-credential-material.md) Protect format-private credential material as opaque bytes | Accepted | §§3–7, 10, 12–13, 16–18 and issue #26 | Bounded opaque material, verified-import propagation, and encrypted schema migration implemented; Digital Passport interpretation/disclosure UI pending |
 
 ## Current boundaries
 
@@ -111,4 +112,7 @@ adapter; production transport/discovery and unsupported protocol variants
 remain fail-closed. ADR-0040 separately adds the prototype's self-issued
 login-with-DID behavior as a pinned SIOPv2 draft-13 standalone profile. It does
 not claim OpenID4VP credential presentation: `vp_token`, DCQL, disclosure, and
-live verifier transport remain fail-closed.
+live verifier transport remain fail-closed. ADR-0041 adds an atomic protected
+route for format-private credential material without exposing or interpreting
+claims in core; the Digital Passport adapter and local disclosure preview
+remain later increments of issue #26.

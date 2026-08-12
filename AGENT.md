@@ -371,6 +371,13 @@ ADR-0039 adds the protocol hexagon, final-shape pre-authorized issuance,
 adapter-private protocol secrets, explicit offer consent, and verified import.
 ADR-0040 adds a distinct self-issued-authentication aggregate and a pinned
 SIOPv2 draft-13 standalone adapter without claiming OpenID4VP presentation.
+ADR-0041 adds optional 256 KiB-bounded, debug-redacted format-private material
+to `CredentialRecord`, carries it through verified issuance/import, and stores
+it atomically inside credential-store schema v2. The store reads schema v1 as
+material-absent. Ordinary credential/headless/UI views still expose no private
+bytes or claims. Issue #26 must validate Digital Passport private parts in an
+adapter before using them; never attach synthetic claims that are not bound to
+the credential fixture.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -386,7 +393,7 @@ Current package ownership:
 | `crates/wallet/application` | Incoming use cases and owned outgoing repository ports. |
 | `crates/identity/domain` | Dependency-free Midnight DID, public JWK, document, and resolution invariants. |
 | `crates/identity/application` | Profile-scoped DID resolution, inventory, lifecycle/signing use cases, and owned outgoing ports. |
-| `crates/credential/domain` | Dependency-free credential records, metadata separation, and structured verification invariants. |
+| `crates/credential/domain` | Dependency-free credential records, metadata separation, bounded opaque format-private material, and structured verification invariants. |
 | `crates/credential/application` | Profile-scoped receive/list/get/reverify/delete use cases and repository/inbox/verifier ports. |
 | `crates/protocol/domain` | Dependency-free credential-offer and self-issued-authentication preview/lifecycle invariants. |
 | `crates/protocol/application` | Profile-scoped issuance and self-issued-authentication use cases plus protocol/proof/verified-sink ports. |
@@ -394,7 +401,7 @@ Current package ownership:
 | `crates/adapters/storage-memory` | Development/test implementations of wallet, DID, and credential persistence ports. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/storage-identity-json` | Strict versioned persistence for validated profile-scoped public DID documents only. |
-| `crates/adapters/storage-credential-json` | Development-only authenticated encryption for bounded profile-scoped credential records and original signed bytes. |
+| `crates/adapters/storage-credential-json` | Development-only authenticated encryption for bounded profile-scoped credential records, original signed bytes, and opaque format-private material. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development lifecycle adapters. |

@@ -189,6 +189,10 @@ Midnight credential, and stores it in the protected profile inventory. Grant
 codes, access tokens, nonces, proofs, and original credential bytes never enter
 headless or UI results. The deterministic issuer is in-process and uses only
 loopback identifiers; normal production composition has no issuer transport.
+Format-private credential material has a separate 256 KiB-bounded opaque route
+through verified import and the same encrypted atomic record. It remains absent
+from incoming DTOs and is not interpreted until issue #26 lands its Digital
+Passport adapter.
 
 Standalone composition also accepts exactly one request-by-reference SIOPv2
 draft-13 login profile. It previews the verifier and purpose, requires exact
@@ -392,7 +396,7 @@ just android-smoke
 | `crates/wallet/application` | Use cases and wallet-owned ports. |
 | `crates/identity/domain` | DID document, public JWK, relationship, and resolution invariants. |
 | `crates/identity/application` | Profile-scoped DID use cases and identity-owned ports. |
-| `crates/credential/domain` | Credential records, metadata separation, and structured verification invariants. |
+| `crates/credential/domain` | Credential records, metadata separation, bounded opaque format-private material, and structured verification invariants. |
 | `crates/credential/application` | Profile-scoped credential inventory and verified-import use cases. |
 | `crates/protocol/domain` | Credential-offer and self-issued-authentication preview/lifecycle invariants. |
 | `crates/protocol/application` | Protocol-neutral issuance and DID-authentication use cases and outgoing ports. |

@@ -7,6 +7,7 @@ use std::{collections::BTreeSet, error::Error, fmt};
 use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
 
 pub const MAX_SIGNED_CREDENTIAL_BYTES: usize = 1_048_576;
+pub const MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES: usize = 262_144;
 const MAX_LABEL_CHARACTERS: usize = 128;
 const MAX_DID_CHARACTERS: usize = 8_192;
 
@@ -35,6 +36,40 @@ impl CredentialProfileId {
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+/// Opaque, format-owned material delivered alongside a signed credential.
+///
+/// Examples include commitment openings used by a selectively disclosable
+/// credential. Core code bounds and protects these bytes but never interprets
+/// them. The custom `Debug` implementation deliberately reveals only length.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CredentialPrivateMaterial(Vec<u8>);
+
+impl CredentialPrivateMaterial {
+    pub fn new(bytes: Vec<u8>) -> Result<Self, CredentialDomainError> {
+        if bytes.is_empty() {
+            return Err(CredentialDomainError::EmptyPrivateMaterial);
+        }
+        if bytes.len() > MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES {
+            return Err(CredentialDomainError::PrivateMaterialTooLarge);
+        }
+        Ok(Self(bytes))
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for CredentialPrivateMaterial {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CredentialPrivateMaterial")
+            .field("length", &self.0.len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -308,13 +343,34 @@ impl VerificationReport {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CredentialRecord {
     profile_id: CredentialProfileId,
     id: CredentialId,
     signed_bytes: Vec<u8>,
+    private_material: Option<CredentialPrivateMaterial>,
     metadata: CredentialMetadata,
     verification: VerificationReport,
+}
+
+impl fmt::Debug for CredentialRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CredentialRecord")
+            .field("profile_id", &self.profile_id)
+            .field("id", &self.id)
+            .field("signed_bytes_length", &self.signed_bytes.len())
+            .field(
+                "private_material_length",
+                &self
+                    .private_material
+                    .as_ref()
+                    .map(|material| material.as_bytes().len()),
+            )
+            .field("metadata", &self.metadata)
+            .field("verification", &self.verification)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CredentialRecord {
@@ -322,6 +378,17 @@ impl CredentialRecord {
         profile_id: CredentialProfileId,
         id: CredentialId,
         signed_bytes: Vec<u8>,
+        metadata: CredentialMetadata,
+        verification: VerificationReport,
+    ) -> Result<Self, CredentialDomainError> {
+        Self::new_with_private_material(profile_id, id, signed_bytes, None, metadata, verification)
+    }
+
+    pub fn new_with_private_material(
+        profile_id: CredentialProfileId,
+        id: CredentialId,
+        signed_bytes: Vec<u8>,
+        private_material: Option<CredentialPrivateMaterial>,
         metadata: CredentialMetadata,
         verification: VerificationReport,
     ) -> Result<Self, CredentialDomainError> {
@@ -335,6 +402,7 @@ impl CredentialRecord {
             profile_id,
             id,
             signed_bytes,
+            private_material,
             metadata,
             verification,
         })
@@ -351,6 +419,10 @@ impl CredentialRecord {
     #[must_use]
     pub fn signed_bytes(&self) -> &[u8] {
         &self.signed_bytes
+    }
+    #[must_use]
+    pub fn private_material(&self) -> Option<&CredentialPrivateMaterial> {
+        self.private_material.as_ref()
     }
     #[must_use]
     pub fn metadata(&self) -> &CredentialMetadata {
@@ -387,6 +459,8 @@ pub enum CredentialDomainError {
     InconsistentVerificationOutcome,
     EmptySignedCredential,
     SignedCredentialTooLarge,
+    EmptyPrivateMaterial,
+    PrivateMaterialTooLarge,
     CredentialIdentifierChanged,
 }
 
@@ -409,6 +483,8 @@ impl fmt::Display for CredentialDomainError {
             }
             Self::EmptySignedCredential => "signed credential must not be empty",
             Self::SignedCredentialTooLarge => "signed credential exceeds the size limit",
+            Self::EmptyPrivateMaterial => "credential private material must not be empty",
+            Self::PrivateMaterialTooLarge => "credential private material exceeds the size limit",
             Self::CredentialIdentifierChanged => {
                 "credential identifier changed during verification"
             }
@@ -504,5 +580,46 @@ mod tests {
         .expect("record");
         assert_eq!(record.signed_bytes(), &[0xa1, 0x61, b'a', 0x01]);
         assert_eq!(record.metadata().display_name(), "Identity credential");
+    }
+
+    #[test]
+    fn bounds_and_redacts_format_private_material() {
+        assert_eq!(
+            CredentialPrivateMaterial::new(Vec::new()),
+            Err(CredentialDomainError::EmptyPrivateMaterial)
+        );
+        assert_eq!(
+            CredentialPrivateMaterial::new(vec![0; MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES + 1]),
+            Err(CredentialDomainError::PrivateMaterialTooLarge)
+        );
+        let material = CredentialPrivateMaterial::new(b"claim-secret".to_vec()).expect("material");
+        let debug = format!("{material:?}");
+        assert!(debug.contains("length"));
+        assert!(!debug.contains("claim-secret"));
+
+        let report = VerificationReport::new(
+            VerificationOutcome::Valid,
+            stages(VerificationStageStatus::Passed),
+        )
+        .expect("report");
+        let record = CredentialRecord::new_with_private_material(
+            CredentialProfileId::parse("profile_one").expect("profile"),
+            CredentialId::parse("vc_one").expect("id"),
+            b"signed-secret".to_vec(),
+            Some(material),
+            CredentialMetadata::new(
+                "Identity credential",
+                "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                None,
+                CredentialFormat::MidnightCborPhase1,
+                None,
+            )
+            .expect("metadata"),
+            report,
+        )
+        .expect("record");
+        let debug = format!("{record:?}");
+        assert!(!debug.contains("signed-secret"));
+        assert!(!debug.contains("claim-secret"));
     }
 }

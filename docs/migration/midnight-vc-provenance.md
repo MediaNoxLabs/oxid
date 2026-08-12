@@ -39,7 +39,7 @@ dependency on the three identity repositories.
 
 | Prototype behavior/risk | Oxid decision |
 | --- | --- |
-| Redb records contain plaintext body, proof, and openings | Encrypt the complete strict document with XChaCha20-Poly1305 and keep original bytes private to the repository/use-case boundary. |
+| Redb records contain plaintext body, proof, and openings | Encrypt the complete strict document with XChaCha20-Poly1305; keep original signed bytes and bounded opaque format-private material private to the repository/use-case boundary. |
 | Verification collapses checks into a three-state top-level result | Preserve valid/invalid/error and add seven explicit stage states/reason codes. |
 | Duplicate top-level proof handling is ambiguous | Require exactly one proof member before generic CBOR decoding. |
 | Codec scan and semantic decode can diverge | Bound both, reject indefinite/trailing/deep data, and require a complete exact top-level scan. |
@@ -79,8 +79,10 @@ width. No other item is reordered or re-encoded.
 - The prototype `midnight_compact_vc` digital-passport proof uses a JavaScript
   bridge and Compact verifier artifacts. It is not represented as phase-1 CBOR
   validity and needs its own native proving/verification adapter.
-- Selective-disclosure openings and predicate proofs need an owned disclosure
-  domain and consent flow before storage migration.
+- ADR-0041 provides atomic protected storage for bounded opaque format-private
+  material. Selective-disclosure opening interpretation and predicate proofs
+  still need an owned disclosure domain and consent flow before claims enter an
+  incoming adapter.
 - Live OID4VCI HTTP/discovery, Authorization Code, by-reference offers,
   Transaction Code, batch/deferred issuance, notification, encrypted responses,
   wallet attestation, deep links, and QR scanning remain later protocol slices.

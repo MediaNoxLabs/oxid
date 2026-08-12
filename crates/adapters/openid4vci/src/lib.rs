@@ -11,8 +11,8 @@ use std::{
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature as Ed25519Signature, Verifier as _, VerifyingKey as Ed25519Key};
 use oxid_credential_application::{
-    CredentialOperationError, CredentialRepositoryError, CredentialVerificationError,
-    ImportVerifiedCredentialCommand, ImportVerifiedCredentialUseCase,
+    CredentialOperationError, CredentialPrivateMaterialInput, CredentialRepositoryError,
+    CredentialVerificationError, ImportVerifiedCredentialCommand, ImportVerifiedCredentialUseCase,
 };
 use oxid_identity_application::{
     DidLifecyclePortError, DidOperationConfirmation, DidOperationError, DidRecordQuery,
@@ -271,7 +271,12 @@ impl CredentialIssuanceProtocolPort for StandaloneOid4vciIssuer {
                     "credential": general_purpose::URL_SAFE_NO_PAD.encode(&credential_bytes)
                 }]
             });
-            parse_credential_response(response.to_string().as_bytes()).map(IssuedCredentialBytes)
+            parse_credential_response(response.to_string().as_bytes()).map(|signed_bytes| {
+                IssuedCredentialBytes {
+                    signed_bytes,
+                    private_material: None,
+                }
+            })
         })
     }
 
@@ -1064,10 +1069,16 @@ impl IssuedCredentialSinkPort for VerifiedCredentialSink {
         request: StoreIssuedCredentialRequest,
     ) -> StoreIssuedCredentialFuture<'a> {
         Box::pin(async move {
+            let private_material = request
+                .private_material
+                .map(CredentialPrivateMaterialInput::new)
+                .transpose()
+                .map_err(|_| IssuedCredentialSinkError::InvalidCredential)?;
             self.importer
                 .execute(ImportVerifiedCredentialCommand {
                     profile_id: request.profile_id.as_str().to_owned(),
                     signed_bytes: request.signed_bytes,
+                    private_material,
                 })
                 .await
                 .map(|credential| StoredCredential {
@@ -1336,7 +1347,8 @@ mod tests {
                     .trim(),
             )
             .expect("fixture");
-        assert_eq!(issued.0, expected);
+        assert_eq!(issued.signed_bytes, expected);
+        assert!(issued.private_material.is_none());
     }
 
     #[test]

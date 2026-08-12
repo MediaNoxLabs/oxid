@@ -20,9 +20,9 @@ use chacha20poly1305::{
 };
 use oxid_credential_application::{CredentialRepository, CredentialRepositoryError};
 use oxid_credential_domain::{
-    CredentialFormat, CredentialId, CredentialMetadata, CredentialProfileId, CredentialRecord,
-    VerificationOutcome, VerificationReport, VerificationStage, VerificationStageName,
-    VerificationStageStatus,
+    CredentialFormat, CredentialId, CredentialMetadata, CredentialPrivateMaterial,
+    CredentialProfileId, CredentialRecord, VerificationOutcome, VerificationReport,
+    VerificationStage, VerificationStageName, VerificationStageStatus,
 };
 use oxid_foundation::UnixTimestampMillis;
 use serde::{Deserialize, Serialize};
@@ -32,7 +32,7 @@ const MAGIC: &[u8; 8] = b"OXIDVC01";
 const AAD: &[u8] = b"oxid.credentials.v1";
 const NONCE_BYTES: usize = 24;
 const KEY_BYTES: usize = 32;
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const MAX_RECORDS: usize = 64;
 const MAX_DOCUMENT_BYTES: u64 = 67_174_400;
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -261,6 +261,8 @@ struct StoredRecord {
     profile_id: String,
     credential_id: String,
     signed_bytes_base64: String,
+    #[serde(default)]
+    private_material_base64: Option<String>,
     display_name: String,
     issuer_did: String,
     subject_did: Option<String>,
@@ -287,7 +289,7 @@ impl StoreDocument {
     }
 
     fn to_domain(&self) -> Result<Vec<CredentialRecord>, CredentialRepositoryError> {
-        if self.schema_version != SCHEMA_VERSION || self.records.len() > MAX_RECORDS {
+        if !matches!(self.schema_version, 1 | SCHEMA_VERSION) || self.records.len() > MAX_RECORDS {
             return Err(CredentialRepositoryError::Integrity);
         }
         let records = self
@@ -313,6 +315,9 @@ impl StoredRecord {
             profile_id: record.profile_id().as_str().to_owned(),
             credential_id: record.id().as_str().to_owned(),
             signed_bytes_base64: general_purpose::STANDARD.encode(record.signed_bytes()),
+            private_material_base64: record
+                .private_material()
+                .map(|material| general_purpose::STANDARD.encode(material.as_bytes())),
             display_name: metadata.display_name().to_owned(),
             issuer_did: metadata.issuer_did().to_owned(),
             subject_did: metadata.subject_did().map(str::to_owned),
@@ -340,6 +345,19 @@ impl StoredRecord {
         let signed_bytes = general_purpose::STANDARD
             .decode(&self.signed_bytes_base64)
             .map_err(|_| CredentialRepositoryError::Integrity)?;
+        let private_material = self
+            .private_material_base64
+            .as_deref()
+            .map(|encoded| {
+                general_purpose::STANDARD
+                    .decode(encoded)
+                    .map_err(|_| CredentialRepositoryError::Integrity)
+                    .and_then(|bytes| {
+                        CredentialPrivateMaterial::new(bytes)
+                            .map_err(|_| CredentialRepositoryError::Integrity)
+                    })
+            })
+            .transpose()?;
         let format =
             CredentialFormat::parse(&self.format).ok_or(CredentialRepositoryError::Integrity)?;
         let metadata = CredentialMetadata::new(
@@ -370,10 +388,11 @@ impl StoredRecord {
             stages,
         )
         .map_err(|_| CredentialRepositoryError::Integrity)?;
-        CredentialRecord::new(
+        CredentialRecord::new_with_private_material(
             profile_id,
             credential_id,
             signed_bytes,
+            private_material,
             metadata,
             verification,
         )
@@ -534,10 +553,14 @@ mod tests {
                 .expect("stage")
             })
             .collect();
-        CredentialRecord::new(
+        CredentialRecord::new_with_private_material(
             CredentialProfileId::parse("profile_one").expect("profile"),
             CredentialId::parse("vc_one").expect("id"),
             b"signed-private-credential".to_vec(),
+            Some(
+                CredentialPrivateMaterial::new(b"claim-opening-material".to_vec())
+                    .expect("private material"),
+            ),
             CredentialMetadata::new("Identity credential", "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", None, CredentialFormat::MidnightCborPhase1, Some(UnixTimestampMillis::new(7))).expect("metadata"),
             VerificationReport::new(VerificationOutcome::Valid, stages).expect("report"),
         ).expect("record")
@@ -560,11 +583,31 @@ mod tests {
                 .windows(b"Identity credential".len())
                 .any(|window| window == b"Identity credential")
         );
+        assert!(
+            !envelope
+                .windows(b"claim-opening-material".len())
+                .any(|window| window == b"claim-opening-material")
+        );
         let reopened = EncryptedJsonCredentialRepository::new(&store.path, &store.key);
         let records = reopened
             .list(&CredentialProfileId::parse("profile_one").expect("profile"))
             .expect("list");
         assert_eq!(records, vec![record()]);
+    }
+
+    #[test]
+    fn reads_schema_one_records_as_private_material_absent() {
+        let mut value = serde_json::to_value(StoreDocument::from_domain(&[record()]))
+            .expect("document serializes");
+        value["schemaVersion"] = serde_json::json!(1);
+        value["records"][0]
+            .as_object_mut()
+            .expect("stored record")
+            .remove("privateMaterialBase64");
+        let legacy: StoreDocument = serde_json::from_value(value).expect("legacy document parses");
+        let records = legacy.to_domain().expect("legacy document migrates");
+        assert_eq!(records.len(), 1);
+        assert!(records[0].private_material().is_none());
     }
 
     #[test]

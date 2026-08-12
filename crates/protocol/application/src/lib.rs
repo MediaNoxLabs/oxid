@@ -55,8 +55,24 @@ pub struct ProtocolIssueRequest {
     pub method_id: String,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct IssuedCredentialBytes(pub Vec<u8>);
+#[derive(PartialEq, Eq)]
+pub struct IssuedCredentialBytes {
+    pub signed_bytes: Vec<u8>,
+    pub private_material: Option<Vec<u8>>,
+}
+
+impl fmt::Debug for IssuedCredentialBytes {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IssuedCredentialBytes")
+            .field("signed_bytes_length", &self.signed_bytes.len())
+            .field(
+                "private_material_length",
+                &self.private_material.as_ref().map(Vec::len),
+            )
+            .finish_non_exhaustive()
+    }
+}
 
 pub trait CredentialIssuanceProtocolPort: Send + Sync {
     fn prepare<'a>(&'a self, request: PrepareIssuanceRequest) -> PrepareIssuancePortFuture<'a>;
@@ -77,10 +93,25 @@ pub trait CredentialHolderProofPort: Send + Sync {
     fn create<'a>(&'a self, request: HolderProofRequest) -> HolderProofFuture<'a>;
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct StoreIssuedCredentialRequest {
     pub profile_id: ProtocolProfileId,
     pub signed_bytes: Vec<u8>,
+    pub private_material: Option<Vec<u8>>,
+}
+
+impl fmt::Debug for StoreIssuedCredentialRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StoreIssuedCredentialRequest")
+            .field("profile_id", &self.profile_id)
+            .field("signed_bytes_length", &self.signed_bytes.len())
+            .field(
+                "private_material_length",
+                &self.private_material.as_ref().map(Vec::len),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -456,7 +487,8 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                 .sink
                 .store_verified(StoreIssuedCredentialRequest {
                     profile_id,
-                    signed_bytes: issued.0,
+                    signed_bytes: issued.signed_bytes,
+                    private_material: issued.private_material,
                 })
                 .await
             {
@@ -1073,6 +1105,19 @@ impl SelfIssuedAuthenticationProtocolPort for UnavailableSelfIssuedAuthenticatio
 mod tests {
     use super::*;
 
+    #[test]
+    fn issued_credential_debug_output_redacts_all_bytes() {
+        let issued = IssuedCredentialBytes {
+            signed_bytes: b"signed-credential-secret".to_vec(),
+            private_material: Some(b"opening-secret".to_vec()),
+        };
+        let debug = format!("{issued:?}");
+        assert!(debug.contains("signed_bytes_length"));
+        assert!(debug.contains("private_material_length"));
+        assert!(!debug.contains("signed-credential-secret"));
+        assert!(!debug.contains("opening-secret"));
+    }
+
     struct Protocol;
 
     impl CredentialIssuanceProtocolPort for Protocol {
@@ -1098,7 +1143,10 @@ mod tests {
                 if request.holder_did == "did:midnight:undeployed:reject" {
                     Err(IssuanceProtocolError::InvalidProof)
                 } else {
-                    Ok(IssuedCredentialBytes(vec![1, 2, 3]))
+                    Ok(IssuedCredentialBytes {
+                        signed_bytes: vec![1, 2, 3],
+                        private_material: None,
+                    })
                 }
             })
         }

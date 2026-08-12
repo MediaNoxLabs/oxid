@@ -5,8 +5,8 @@
 use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_credential_domain::{
-    CredentialDomainError, CredentialId, CredentialMetadata, CredentialProfileId, CredentialRecord,
-    VerificationOutcome, VerificationReport,
+    CredentialDomainError, CredentialId, CredentialMetadata, CredentialPrivateMaterial,
+    CredentialProfileId, CredentialRecord, VerificationOutcome, VerificationReport,
 };
 use oxid_foundation::OpaqueIdError;
 
@@ -152,10 +152,55 @@ pub struct DeleteCredentialCommand {
     pub intent: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
+pub struct CredentialPrivateMaterialInput(CredentialPrivateMaterial);
+
+impl CredentialPrivateMaterialInput {
+    pub fn new(bytes: Vec<u8>) -> Result<Self, CredentialDomainError> {
+        CredentialPrivateMaterial::new(bytes).map(Self)
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    fn into_domain(self) -> CredentialPrivateMaterial {
+        self.0
+    }
+}
+
+impl fmt::Debug for CredentialPrivateMaterialInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CredentialPrivateMaterialInput")
+            .field("length", &self.as_bytes().len())
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct ImportVerifiedCredentialCommand {
     pub profile_id: String,
     pub signed_bytes: Vec<u8>,
+    pub private_material: Option<CredentialPrivateMaterialInput>,
+}
+
+impl fmt::Debug for ImportVerifiedCredentialCommand {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportVerifiedCredentialCommand")
+            .field("profile_id", &self.profile_id)
+            .field("signed_bytes_length", &self.signed_bytes.len())
+            .field(
+                "private_material_length",
+                &self
+                    .private_material
+                    .as_ref()
+                    .map(|material| material.as_bytes().len()),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -248,6 +293,7 @@ impl CredentialService {
         &self,
         profile_id: CredentialProfileId,
         bytes: Vec<u8>,
+        private_material: Option<CredentialPrivateMaterial>,
         require_valid: bool,
     ) -> Result<CredentialView, CredentialOperationError> {
         let inspection = self
@@ -258,10 +304,11 @@ impl CredentialService {
         if require_valid && inspection.verification.outcome() != VerificationOutcome::Valid {
             return Err(CredentialOperationError::VerificationNotValid);
         }
-        let record = CredentialRecord::new(
+        let record = CredentialRecord::new_with_private_material(
             profile_id,
             inspection.id,
             bytes,
+            private_material,
             inspection.metadata,
             inspection.verification,
         )
@@ -290,7 +337,7 @@ impl ReceiveCredentialUseCase for CredentialService {
                 .receive()
                 .await
                 .map_err(CredentialOperationError::Ingress)?;
-            self.import(profile_id, bytes, false).await
+            self.import(profile_id, bytes, None, false).await
         })
     }
 }
@@ -299,7 +346,15 @@ impl ImportVerifiedCredentialUseCase for CredentialService {
     fn execute<'a>(&'a self, command: ImportVerifiedCredentialCommand) -> CredentialViewFuture<'a> {
         Box::pin(async move {
             let profile_id = profile(command.profile_id)?;
-            self.import(profile_id, command.signed_bytes, true).await
+            self.import(
+                profile_id,
+                command.signed_bytes,
+                command
+                    .private_material
+                    .map(CredentialPrivateMaterialInput::into_domain),
+                true,
+            )
+            .await
         })
     }
 }
