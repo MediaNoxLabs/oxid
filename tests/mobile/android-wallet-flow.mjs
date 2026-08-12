@@ -128,6 +128,13 @@ try {
     );
     await waitForButton("Resync DUST");
 
+    await clickButton("Sync shielded assets");
+    await waitFor(
+      "document.body.innerText.includes('1 shielded notes') && document.body.innerText.includes('5000000 atomic units')",
+      "exact simulated shielded note and token balance",
+    );
+    await waitForButton("Resync shielded assets");
+
     await clickButton("Show QR");
     await waitFor(
       "Boolean(document.querySelector('.address-qr__frame svg'))",
@@ -158,9 +165,11 @@ try {
       submitted: document.body.innerText.includes("Transfer submitted"),
       simulated: document.body.innerText.includes("Mode: simulated"),
       dustSynced: document.body.innerText.includes("12 DUST"),
+      shieldedSynced: document.body.innerText.includes("1 shielded notes")
+        && document.body.innerText.includes("5000000 atomic units"),
     }))()`);
     const result = { ...publicResult, qrRendered, shieldedAddressRendered };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.qrRendered || !result.shieldedAddressRendered) {
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.qrRendered || !result.shieldedAddressRendered) {
       throw new Error("Android standalone wallet flow did not expose the expected public result");
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);

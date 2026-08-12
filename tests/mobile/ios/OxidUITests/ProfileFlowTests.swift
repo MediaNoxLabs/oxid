@@ -38,6 +38,14 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 5))
         XCTAssertTrue(application.buttons["Resync DUST"].exists)
 
+        let syncShielded = application.buttons["Sync shielded assets"]
+        XCTAssertTrue(syncShielded.waitForExistence(timeout: 5))
+        scrollTo(syncShielded, in: application)
+        syncShielded.tap()
+        XCTAssertTrue(application.staticTexts["1 shielded notes"].waitForExistence(timeout: 5))
+        XCTAssertTrue(application.staticTexts["5000000 atomic units"].waitForExistence(timeout: 5))
+        XCTAssertTrue(application.buttons["Resync shielded assets"].exists)
+
         let showQrButton = application.buttons["Show receive QR"].firstMatch
         XCTAssertTrue(showQrButton.exists)
         scrollTo(showQrButton, in: application)

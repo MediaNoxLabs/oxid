@@ -20,7 +20,7 @@ before migrating later work.
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
-| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded and private DUST checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, canonical shielded event decoding/replay, and staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; shielded checkpoints/session pending |
+| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded and private DUST checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, canonical shielded event decoding/replay/checkpointing, simulated shielded lifecycle, and staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; native live shielded session wiring pending |
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; process-local Ed25519/P-256 plus BIP32/secp256k1-Schnorr conformance implemented; durable recovery and native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
@@ -243,8 +243,11 @@ nullifier spend removal. The following checkpoint increment persists the
 official tagged state and partial cursor behind a bounded, checksummed,
 owner-private, symlink-resistant, atomic binary store scoped by network,
 source/protocol identity, and a one-way fingerprint of both public Zswap keys.
-Live checkpoint/session wiring and public balance presentation remain open in
-#18.
+This increment adds an Oxid-owned status/start/cancel lifecycle with exact
+per-token balances and note/commitment counts. Its deterministic standalone
+controller verifies the protected role-3 child and drives headless plus mobile
+cancellation/resume flows. Native live transport and checkpoint wiring remain
+open in #18.
 
 Shielded Zswap replay/checkpoints, internal/change
 address management, replacement and

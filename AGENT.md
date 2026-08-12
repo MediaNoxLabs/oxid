@@ -150,6 +150,16 @@ The iOS standalone smoke flow exercises `Sync DUST`, the exact `12 DUST`
 fixture result, and the resulting `Resync DUST` action before transfer checks.
 The Android CDP smoke flow asserts the same DUST result and resync transition.
 
+[Issue #18](https://github.com/MediaNoxLabs/oxid/issues/18) and ADR-0033 keep
+shielded Zswap custody, replay, and checkpoints inside the native Midnight
+adapter. Protected role `3/0` derivation exposes only the canonical public
+shielded receive address. The first explicit lifecycle adds
+`wallet.shielded.sync.status`, `wallet.shielded.sync.start`, and
+`wallet.shielded.sync.cancel`, exact decimal-string token balances, and bounded
+owned-note/commitment counts. The deterministic standalone session advances on
+polls for headless and mobile cancellation/resume coverage; native live
+transport/checkpoint wiring is the next issue #18 slice.
+
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
 web --target wasm32-unknown-unknown` currently stops in the pre-existing
@@ -221,6 +231,8 @@ from production wiring and records receive-QR plus transaction-UI boundaries.
 ADR-0030 and ADR-0031 keep public unshielded and private DUST checkpoints in
 separate native adapter stores. ADR-0032 adds the adapter-owned DUST session and
 partial-checkpoint cancellation/resume rule without weakening live-before-spend.
+ADR-0033 keeps Zswap keys/state adapter-private and owns the explicit shielded
+sync lifecycle without exposing ledger or secret types.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -281,6 +293,13 @@ accept a key, path, seed, endpoint, or checkpoint. The deterministic simulator
 advances on status polls so tests can cover fresh, cancelled, resumed, and
 already-current flows without timing races. Native start returns before network
 or ledger work begins; incoming adapters must poll status and may cancel.
+
+The headless shielded surface mirrors that lifecycle at
+`wallet.shielded.sync.status`, `wallet.shielded.sync.start`, and
+`wallet.shielded.sync.cancel`. It never accepts keys, paths, endpoints, seeds,
+or checkpoint data. Exact `u128` balances cross the application/headless
+boundary only as decimal strings, and token types as lowercase 32-byte hex.
+Cached/cancelled/stalled state is display/resume state, never spend authority.
 
 `oxid-app/standalone-development` is the only mobile-development exception: it
 selects the same zero-configuration `compose_headless()` stack explicitly at
@@ -563,6 +582,10 @@ to silence the shell probe.
   network, source/protocol identity, and SHA-256 of both Zswap public keys,
   retain partial cursors, and must stay checksummed, bounded, owner-private,
   symlink-resistant, and atomic.
+- Shielded sync snapshots expose only network/lifecycle/cursors, current-run
+  event count, bounded owned-note/commitment counts, exact public token totals,
+  freshness, and sanitized failures. The standalone simulator must borrow the
+  role-3 child before starting and retain no secret material.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.

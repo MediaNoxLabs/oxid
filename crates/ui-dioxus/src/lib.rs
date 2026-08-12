@@ -7,18 +7,19 @@ use std::{sync::Arc, time::Duration};
 use dioxus::prelude::*;
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
-    CreateWalletProfileCommand, CreateWalletProfileUseCase, DeriveWalletAccountCommand,
-    DeriveWalletAccountUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
-    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase, GetWalletTransferDraftUseCase,
+    CancelWalletShieldedSyncUseCase, CreateWalletProfileCommand, CreateWalletProfileUseCase,
+    DeriveWalletAccountCommand, DeriveWalletAccountUseCase, GetActiveWalletProfileUseCase,
+    GetWalletAccountUseCase, GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     InitializeWalletSecurityUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
     LockWalletUseCase, PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
     SelectWalletNetworkCommand, SelectWalletNetworkUseCase, SelectWalletProfileCommand,
     SelectWalletProfileUseCase, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
-    SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase, WalletAccountQuery, WalletAccountView, WalletDustSyncCommand,
-    WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
-    WalletSecurityStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
-    WalletTransferSubmissionView,
+    StartWalletShieldedSyncUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
+    SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountQuery, WalletAccountView,
+    WalletDustSyncCommand, WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand,
+    WalletProfileView, WalletSecurityStatusView, WalletShieldedSyncCommand, WalletShieldedSyncView,
+    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionView,
 };
 
 const STYLES: &str = include_str!("../assets/styles.css");
@@ -42,6 +43,9 @@ pub struct WalletUiServices {
     get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
     start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
     cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
+    get_wallet_shielded_sync_status: Arc<dyn GetWalletShieldedSyncStatusUseCase>,
+    start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase>,
+    cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase>,
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
@@ -148,6 +152,28 @@ impl WalletDustSyncUiServices {
     }
 }
 
+/// Shielded synchronization use cases consumed by the Assets page.
+pub struct WalletShieldedSyncUiServices {
+    get_wallet_shielded_sync_status: Arc<dyn GetWalletShieldedSyncStatusUseCase>,
+    start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase>,
+    cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase>,
+}
+
+impl WalletShieldedSyncUiServices {
+    #[must_use]
+    pub const fn new(
+        get_wallet_shielded_sync_status: Arc<dyn GetWalletShieldedSyncStatusUseCase>,
+        start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase>,
+        cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase>,
+    ) -> Self {
+        Self {
+            get_wallet_shielded_sync_status,
+            start_wallet_shielded_sync,
+            cancel_wallet_shielded_sync,
+        }
+    }
+}
+
 /// Transaction use cases consumed by the Assets page.
 pub struct WalletTransactionUiServices {
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
@@ -180,6 +206,7 @@ impl WalletUiServices {
         security: WalletSecurityUiServices,
         account: WalletAccountUiServices,
         dust: WalletDustSyncUiServices,
+        shielded: WalletShieldedSyncUiServices,
         transactions: WalletTransactionUiServices,
     ) -> Self {
         Self {
@@ -199,6 +226,9 @@ impl WalletUiServices {
             get_wallet_dust_sync_status: dust.get_wallet_dust_sync_status,
             start_wallet_dust_sync: dust.start_wallet_dust_sync,
             cancel_wallet_dust_sync: dust.cancel_wallet_dust_sync,
+            get_wallet_shielded_sync_status: shielded.get_wallet_shielded_sync_status,
+            start_wallet_shielded_sync: shielded.start_wallet_shielded_sync,
+            cancel_wallet_shielded_sync: shielded.cancel_wallet_shielded_sync,
             prepare_wallet_transfer: transactions.prepare_wallet_transfer,
             authorize_wallet_transfer: transactions.authorize_wallet_transfer,
             submit_wallet_transfer: transactions.submit_wallet_transfer,
@@ -284,6 +314,21 @@ impl WalletUiServices {
     #[must_use]
     pub fn cancel_wallet_dust_sync(&self) -> Arc<dyn CancelWalletDustSyncUseCase> {
         Arc::clone(&self.cancel_wallet_dust_sync)
+    }
+
+    #[must_use]
+    pub fn get_wallet_shielded_sync_status(&self) -> Arc<dyn GetWalletShieldedSyncStatusUseCase> {
+        Arc::clone(&self.get_wallet_shielded_sync_status)
+    }
+
+    #[must_use]
+    pub fn start_wallet_shielded_sync(&self) -> Arc<dyn StartWalletShieldedSyncUseCase> {
+        Arc::clone(&self.start_wallet_shielded_sync)
+    }
+
+    #[must_use]
+    pub fn cancel_wallet_shielded_sync(&self) -> Arc<dyn CancelWalletShieldedSyncUseCase> {
+        Arc::clone(&self.cancel_wallet_shielded_sync)
     }
 
     #[must_use]
@@ -403,6 +448,16 @@ enum DustSyncPaneState {
     Loading,
     Ready {
         status: WalletDustSyncView,
+        operation_error: Option<String>,
+    },
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ShieldedSyncPaneState {
+    Loading,
+    Ready {
+        status: WalletShieldedSyncView,
         operation_error: Option<String>,
     },
     Failed(String),
@@ -1095,6 +1150,11 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                     can_sync: protection_unlocked,
                 }
 
+                ShieldedSyncPane {
+                    profile_id: active_profile.id.clone(),
+                    can_sync: protection_unlocked,
+                }
+
                 div { class: "dashboard-grid",
                     article { class: "surface-card",
                         p { class: "card-eyebrow", "Receive" }
@@ -1380,6 +1440,239 @@ fn dust_status_pill_class(state: &str) -> &'static str {
         "syncing" | "cached" => "status-pill warning",
         _ => "status-pill",
     }
+}
+
+#[component]
+fn ShieldedSyncPane(profile_id: String, can_sync: bool) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| ShieldedSyncPaneState::Loading);
+    let load_services = services.clone();
+    let load_profile = profile_id.clone();
+    use_effect(move || {
+        state.set(load_shielded_sync(&load_services, &load_profile));
+    });
+
+    match state.read().clone() {
+        ShieldedSyncPaneState::Loading => rsx! {
+            article { class: "surface-card wallet-sync-pane", role: "status", aria_busy: "true",
+                p { class: "card-eyebrow", "Shielded index" }
+                h2 { "Loading shielded status…" }
+            }
+        },
+        ShieldedSyncPaneState::Failed(message) => {
+            let retry_services = services.clone();
+            let retry_profile = profile_id.clone();
+            rsx! {
+                article { class: "surface-card wallet-sync-pane", role: "alert",
+                    div { class: "wallet-sync-row__heading",
+                        div {
+                            p { class: "card-eyebrow", "Shielded index" }
+                            h2 { "Status unavailable" }
+                        }
+                        span { class: "status-pill", "Error" }
+                    }
+                    p { "{message}" }
+                    button {
+                        class: "secondary-action",
+                        r#type: "button",
+                        onclick: move |_| {
+                            state.set(load_shielded_sync(&retry_services, &retry_profile));
+                        },
+                        "Retry"
+                    }
+                }
+            }
+        }
+        ShieldedSyncPaneState::Ready {
+            status,
+            operation_error,
+        } => {
+            let syncing = status.state == "syncing";
+            let unavailable = status.state == "unavailable";
+            let progress = shielded_progress_percent(&status);
+            let note = shielded_sync_note(&status);
+            let pill_class = dust_status_pill_class(&status.state);
+            let owned_notes = status
+                .owned_note_count
+                .map_or_else(|| "—".to_owned(), |count| count.to_string());
+            let action_services = services.clone();
+            let action_profile = profile_id.clone();
+            let mut action_state = state;
+            rsx! {
+                article { class: "surface-card wallet-sync-pane",
+                    div { class: "wallet-sync-row__heading",
+                        div {
+                            p { class: "card-eyebrow", "Shielded index" }
+                            h2 { "{owned_notes} shielded notes" }
+                        }
+                        span { class: "{pill_class}", "{dust_sync_state_label(&status.state)}" }
+                    }
+                    p { "{note}" }
+                    if !status.balances.is_empty() {
+                        div { class: "activity-list", aria_label: "Shielded token balances",
+                            for balance in status.balances.iter() {
+                                div { class: "activity-row", key: "{balance.token_type_hex}",
+                                    span { class: "activity-row__mark", aria_hidden: "true", "◈" }
+                                    div {
+                                        strong { "{balance.atomic_units} atomic units" }
+                                        small { title: "{balance.token_type_hex}", "Token {truncate_middle(&balance.token_type_hex, 8, 6)}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(message) = operation_error {
+                        p { class: "wallet-sync-error", role: "alert", "{message}" }
+                    }
+                    if let Some(percent) = progress {
+                        div { class: "wallet-sync-progress", aria_label: "Shielded synchronization progress",
+                            div { class: "wallet-sync-progress__bar", style: "width: {percent}%" }
+                        }
+                    }
+                    button {
+                        class: "secondary-action wallet-sync-action",
+                        r#type: "button",
+                        disabled: unavailable || (!can_sync && !syncing),
+                        onclick: move |_| {
+                            let command = WalletShieldedSyncCommand {
+                                profile_id: action_profile.clone(),
+                            };
+                            let result = if syncing {
+                                action_services.cancel_wallet_shielded_sync().execute(command)
+                            } else {
+                                action_services.start_wallet_shielded_sync().execute(command)
+                            };
+                            match result {
+                                Ok(updated) => {
+                                    let should_poll = updated.state == "syncing";
+                                    action_state.set(ShieldedSyncPaneState::Ready {
+                                        status: updated,
+                                        operation_error: None,
+                                    });
+                                    if should_poll {
+                                        poll_shielded_sync(
+                                            action_services.clone(),
+                                            action_profile.clone(),
+                                            action_state,
+                                        );
+                                    }
+                                }
+                                Err(error) => action_state.set(ShieldedSyncPaneState::Ready {
+                                    status: status.clone(),
+                                    operation_error: Some(error.to_string()),
+                                }),
+                            }
+                        },
+                        if syncing {
+                            "Cancel shielded sync"
+                        } else if !can_sync {
+                            "Unlock wallet to sync shielded assets"
+                        } else if status.state == "never_synced" {
+                            "Sync shielded assets"
+                        } else {
+                            "Resync shielded assets"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn load_shielded_sync(services: &WalletUiServices, profile_id: &str) -> ShieldedSyncPaneState {
+    services
+        .get_wallet_shielded_sync_status()
+        .execute(WalletShieldedSyncCommand {
+            profile_id: profile_id.to_owned(),
+        })
+        .map_or_else(
+            |error| ShieldedSyncPaneState::Failed(error.to_string()),
+            |status| ShieldedSyncPaneState::Ready {
+                status,
+                operation_error: None,
+            },
+        )
+}
+
+fn poll_shielded_sync(
+    services: WalletUiServices,
+    profile_id: String,
+    mut state: Signal<ShieldedSyncPaneState>,
+) {
+    spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            match services
+                .get_wallet_shielded_sync_status()
+                .execute(WalletShieldedSyncCommand {
+                    profile_id: profile_id.clone(),
+                }) {
+                Ok(status) => {
+                    let complete = status.state != "syncing";
+                    state.set(ShieldedSyncPaneState::Ready {
+                        status,
+                        operation_error: None,
+                    });
+                    if complete {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    state.set(ShieldedSyncPaneState::Failed(error.to_string()));
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn shielded_progress_percent(status: &WalletShieldedSyncView) -> Option<u64> {
+    let (current, target) = status.current_cursor.zip(status.target_cursor)?;
+    let completed = u128::from(current).checked_add(1)?;
+    let total = u128::from(target).checked_add(1)?;
+    let percent = completed.checked_mul(100)?.checked_div(total)?.min(100);
+    u64::try_from(percent).ok()
+}
+
+fn shielded_sync_note(status: &WalletShieldedSyncView) -> String {
+    let progress = status
+        .current_cursor
+        .zip(status.target_cursor)
+        .map(|(current, target)| format!("event {current} of {target}"));
+    let detail = match status.state.as_str() {
+        "never_synced" => {
+            "Shielded notes have not been indexed for this protected account.".to_owned()
+        }
+        "syncing" => progress.map_or_else(
+            || "Connecting to the shielded event index…".to_owned(),
+            |progress| {
+                format!(
+                    "Indexing {progress} · {} processed this run.",
+                    status.events_processed
+                )
+            },
+        ),
+        "synced" => progress.map_or_else(
+            || "Shielded notes are synchronized.".to_owned(),
+            |progress| format!("Shielded notes are current at {progress}."),
+        ),
+        "cached" => {
+            "Showing a key-scoped cached shielded checkpoint; live catch-up is still required."
+                .to_owned()
+        }
+        "cancelled" => {
+            "Shielded synchronization was cancelled at a consistent checkpoint and can resume."
+                .to_owned()
+        }
+        "stalled" => {
+            "Shielded synchronization stalled; the last consistent checkpoint is retained."
+                .to_owned()
+        }
+        _ => "Shielded synchronization is not available in this composition.".to_owned(),
+    };
+    status.failure.as_ref().map_or(detail.clone(), |failure| {
+        format!("{detail} ({})", failure.replace('_', " "))
+    })
 }
 
 fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPageState {
@@ -2373,6 +2666,43 @@ mod tests {
         assert!(note.contains("spending remains disabled"));
         assert!(note.contains("transport unavailable"));
         assert_eq!(dust_sync_state_label("stalled"), "Stalled");
+    }
+
+    fn shielded_status(
+        state: &str,
+        current: Option<u64>,
+        target: Option<u64>,
+    ) -> WalletShieldedSyncView {
+        WalletShieldedSyncView {
+            network_id: "undeployed".to_owned(),
+            state: state.to_owned(),
+            current_cursor: current,
+            target_cursor: target,
+            events_processed: 2,
+            owned_note_count: Some(1),
+            commitment_count: Some(3),
+            balances: vec![],
+            updated_at_millis: Some(42),
+            failure: None,
+        }
+    }
+
+    #[test]
+    fn shielded_progress_and_cached_copy_preserve_live_readiness() {
+        assert_eq!(
+            shielded_progress_percent(&shielded_status("syncing", Some(0), Some(2))),
+            Some(33)
+        );
+        assert_eq!(
+            shielded_progress_percent(&shielded_status("synced", Some(2), Some(2))),
+            Some(100)
+        );
+        let mut cached = shielded_status("cached", Some(2), Some(2));
+        cached.failure = Some("transport_unavailable".to_owned());
+        let note = shielded_sync_note(&cached);
+        assert!(note.contains("cached shielded checkpoint"));
+        assert!(note.contains("live catch-up"));
+        assert!(note.contains("transport unavailable"));
     }
 
     #[test]

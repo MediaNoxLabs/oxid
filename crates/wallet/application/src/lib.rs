@@ -11,11 +11,13 @@ use oxid_wallet_domain::{ProfileName, ProfileNameError, WalletProfile, WalletPro
 mod chain;
 mod dust;
 mod security;
+mod shielded;
 mod transaction;
 
 pub use chain::*;
 pub use dust::*;
 pub use security::*;
+pub use shielded::*;
 pub use transaction::*;
 
 /// Input owned by the Create Wallet Profile application boundary.

@@ -761,6 +761,262 @@ impl fmt::Display for WalletDustSyncSnapshotError {
 
 impl Error for WalletDustSyncSnapshotError {}
 
+/// Lifecycle of the key-scoped Midnight shielded event index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletShieldedSyncState {
+    NeverSynced,
+    Syncing,
+    Synced,
+    Cached,
+    Cancelled,
+    Stalled,
+    Unavailable,
+}
+
+/// Sanitized reason why shielded synchronization is not currently live.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletShieldedSyncFailure {
+    ProtectionNotInitialized,
+    ProtectionLocked,
+    UnsupportedNetwork,
+    TransportUnavailable,
+    TimedOut,
+    InvalidChainState,
+    StorageUnavailable,
+}
+
+/// Exact public balance for one shielded token identifier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletShieldedTokenBalance {
+    token_type_hex: String,
+    atomic_units: u128,
+}
+
+impl WalletShieldedTokenBalance {
+    pub fn new(
+        token_type_hex: impl Into<String>,
+        atomic_units: u128,
+    ) -> Result<Self, WalletShieldedSyncSnapshotError> {
+        let token_type_hex = token_type_hex.into();
+        if token_type_hex.len() != 64
+            || !token_type_hex
+                .bytes()
+                .all(|value| value.is_ascii_digit() || (b'a'..=b'f').contains(&value))
+        {
+            return Err(WalletShieldedSyncSnapshotError::InvalidTokenType);
+        }
+        Ok(Self {
+            token_type_hex,
+            atomic_units,
+        })
+    }
+
+    #[must_use]
+    pub fn token_type_hex(&self) -> &str {
+        &self.token_type_hex
+    }
+
+    #[must_use]
+    pub const fn atomic_units(&self) -> u128 {
+        self.atomic_units
+    }
+}
+
+/// Oxid-owned safe projection of one profile's shielded synchronization state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletShieldedSyncSnapshot {
+    network_id: ChainNetworkId,
+    state: WalletShieldedSyncState,
+    current_cursor: Option<u64>,
+    target_cursor: Option<u64>,
+    events_processed: u64,
+    owned_note_count: Option<u64>,
+    commitment_count: Option<u64>,
+    balances: Vec<WalletShieldedTokenBalance>,
+    updated_at: Option<UnixTimestampMillis>,
+    failure: Option<WalletShieldedSyncFailure>,
+}
+
+impl WalletShieldedSyncSnapshot {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        network_id: ChainNetworkId,
+        state: WalletShieldedSyncState,
+        current_cursor: Option<u64>,
+        target_cursor: Option<u64>,
+        events_processed: u64,
+        owned_note_count: Option<u64>,
+        commitment_count: Option<u64>,
+        balances: Vec<WalletShieldedTokenBalance>,
+        updated_at: Option<UnixTimestampMillis>,
+        failure: Option<WalletShieldedSyncFailure>,
+    ) -> Result<Self, WalletShieldedSyncSnapshotError> {
+        if current_cursor.is_some() != target_cursor.is_some()
+            || current_cursor
+                .zip(target_cursor)
+                .is_some_and(|(current, target)| current > target)
+        {
+            return Err(WalletShieldedSyncSnapshotError::InvalidCursorRange);
+        }
+        if owned_note_count.is_some() != commitment_count.is_some()
+            || owned_note_count
+                .zip(commitment_count)
+                .is_some_and(|(owned, commitments)| owned > commitments)
+        {
+            return Err(WalletShieldedSyncSnapshotError::InvalidStateProjection);
+        }
+        if state == WalletShieldedSyncState::Synced
+            && (current_cursor
+                .zip(target_cursor)
+                .is_none_or(|(current, target)| current != target)
+                || owned_note_count.is_none()
+                || updated_at.is_none())
+        {
+            return Err(WalletShieldedSyncSnapshotError::IncompleteSynchronizedState);
+        }
+        if matches!(
+            state,
+            WalletShieldedSyncState::NeverSynced | WalletShieldedSyncState::Unavailable
+        ) && (current_cursor.is_some() || owned_note_count.is_some() || !balances.is_empty())
+        {
+            return Err(WalletShieldedSyncSnapshotError::UnexpectedIndexedState);
+        }
+        let mut token_types = std::collections::BTreeSet::new();
+        if balances
+            .iter()
+            .any(|balance| !token_types.insert(balance.token_type_hex()))
+        {
+            return Err(WalletShieldedSyncSnapshotError::DuplicateTokenType);
+        }
+
+        Ok(Self {
+            network_id,
+            state,
+            current_cursor,
+            target_cursor,
+            events_processed,
+            owned_note_count,
+            commitment_count,
+            balances,
+            updated_at,
+            failure,
+        })
+    }
+
+    #[must_use]
+    pub fn never_synced(network_id: ChainNetworkId) -> Self {
+        Self {
+            network_id,
+            state: WalletShieldedSyncState::NeverSynced,
+            current_cursor: None,
+            target_cursor: None,
+            events_processed: 0,
+            owned_note_count: None,
+            commitment_count: None,
+            balances: Vec::new(),
+            updated_at: None,
+            failure: None,
+        }
+    }
+
+    #[must_use]
+    pub fn unavailable(network_id: ChainNetworkId) -> Self {
+        Self {
+            network_id,
+            state: WalletShieldedSyncState::Unavailable,
+            current_cursor: None,
+            target_cursor: None,
+            events_processed: 0,
+            owned_note_count: None,
+            commitment_count: None,
+            balances: Vec::new(),
+            updated_at: None,
+            failure: Some(WalletShieldedSyncFailure::TransportUnavailable),
+        }
+    }
+
+    #[must_use]
+    pub const fn network_id(&self) -> &ChainNetworkId {
+        &self.network_id
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> WalletShieldedSyncState {
+        self.state
+    }
+
+    #[must_use]
+    pub const fn current_cursor(&self) -> Option<u64> {
+        self.current_cursor
+    }
+
+    #[must_use]
+    pub const fn target_cursor(&self) -> Option<u64> {
+        self.target_cursor
+    }
+
+    #[must_use]
+    pub const fn events_processed(&self) -> u64 {
+        self.events_processed
+    }
+
+    #[must_use]
+    pub const fn owned_note_count(&self) -> Option<u64> {
+        self.owned_note_count
+    }
+
+    #[must_use]
+    pub const fn commitment_count(&self) -> Option<u64> {
+        self.commitment_count
+    }
+
+    #[must_use]
+    pub fn balances(&self) -> &[WalletShieldedTokenBalance] {
+        &self.balances
+    }
+
+    #[must_use]
+    pub const fn updated_at(&self) -> Option<UnixTimestampMillis> {
+        self.updated_at
+    }
+
+    #[must_use]
+    pub const fn failure(&self) -> Option<WalletShieldedSyncFailure> {
+        self.failure
+    }
+}
+
+/// Invalid combinations rejected by the shielded status projection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletShieldedSyncSnapshotError {
+    InvalidCursorRange,
+    InvalidStateProjection,
+    IncompleteSynchronizedState,
+    UnexpectedIndexedState,
+    InvalidTokenType,
+    DuplicateTokenType,
+}
+
+impl fmt::Display for WalletShieldedSyncSnapshotError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::InvalidCursorRange => "shielded synchronization cursors are invalid",
+            Self::InvalidStateProjection => "shielded state counts are inconsistent",
+            Self::IncompleteSynchronizedState => {
+                "synchronized shielded state requires current cursors, counts, and timestamp"
+            }
+            Self::UnexpectedIndexedState => {
+                "unavailable or unsynchronized shielded state cannot contain indexed values"
+            }
+            Self::InvalidTokenType => "shielded token type must be lowercase 32-byte hex",
+            Self::DuplicateTokenType => "shielded token balances must be unique",
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl Error for WalletShieldedSyncSnapshotError {}
+
 /// Safe synchronization metadata surfaced to incoming adapters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletSyncStatus {
@@ -1135,6 +1391,83 @@ mod tests {
         .expect("partial cached state is valid");
         assert_eq!(cached.balance_atomic_units(), Some(u128::MAX));
         assert_eq!(cached.current_cursor(), Some(1));
+    }
+
+    #[test]
+    fn shielded_sync_projection_enforces_exact_token_and_index_invariants() {
+        let network_id = ChainNetworkId::parse("undeployed").expect("network is valid");
+        let token = WalletShieldedTokenBalance::new("ab".repeat(32), u128::MAX)
+            .expect("token fixture is valid");
+
+        assert_eq!(
+            WalletShieldedTokenBalance::new("AB".repeat(32), 1).err(),
+            Some(WalletShieldedSyncSnapshotError::InvalidTokenType)
+        );
+        assert_eq!(
+            WalletShieldedSyncSnapshot::new(
+                network_id.clone(),
+                WalletShieldedSyncState::Syncing,
+                Some(3),
+                Some(2),
+                4,
+                Some(1),
+                Some(1),
+                vec![token.clone()],
+                Some(UnixTimestampMillis::new(42)),
+                None,
+            )
+            .err(),
+            Some(WalletShieldedSyncSnapshotError::InvalidCursorRange)
+        );
+        assert_eq!(
+            WalletShieldedSyncSnapshot::new(
+                network_id.clone(),
+                WalletShieldedSyncState::Syncing,
+                Some(2),
+                Some(3),
+                4,
+                Some(2),
+                Some(1),
+                vec![token.clone()],
+                Some(UnixTimestampMillis::new(42)),
+                None,
+            )
+            .err(),
+            Some(WalletShieldedSyncSnapshotError::InvalidStateProjection)
+        );
+        assert_eq!(
+            WalletShieldedSyncSnapshot::new(
+                network_id.clone(),
+                WalletShieldedSyncState::Synced,
+                Some(2),
+                Some(2),
+                4,
+                Some(1),
+                Some(2),
+                vec![token.clone(), token.clone()],
+                Some(UnixTimestampMillis::new(42)),
+                None,
+            )
+            .err(),
+            Some(WalletShieldedSyncSnapshotError::DuplicateTokenType)
+        );
+
+        let synced = WalletShieldedSyncSnapshot::new(
+            network_id,
+            WalletShieldedSyncState::Synced,
+            Some(2),
+            Some(2),
+            4,
+            Some(1),
+            Some(2),
+            vec![token],
+            Some(UnixTimestampMillis::new(42)),
+            None,
+        )
+        .expect("complete synchronized state is valid");
+        assert_eq!(synced.owned_note_count(), Some(1));
+        assert_eq!(synced.commitment_count(), Some(2));
+        assert_eq!(synced.balances()[0].atomic_units(), u128::MAX);
     }
 
     #[test]

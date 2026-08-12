@@ -52,3 +52,6 @@ once public releases begin.
   collapse, and nullifier spend removal.
 - Checksummed, owner-private, key/network/source-scoped Zswap replay checkpoints
   with partial resume cursors, strict size/record limits, and atomic replacement.
+- Explicit shielded synchronization status/start/cancel use cases with exact
+  per-token balances, a protected standalone session, versioned headless flow,
+  and iOS/Android Assets-page coverage.

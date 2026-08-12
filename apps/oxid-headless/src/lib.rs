@@ -15,9 +15,10 @@ use oxid_wallet_application::{
     WalletAccountView, WalletDustSyncCommand, WalletDustSyncError, WalletDustSyncPortError,
     WalletDustSyncView, WalletKeyError, WalletKeyView, WalletNetworkListView,
     WalletProfileRepositoryError, WalletProfileSecurityCommand, WalletProfileView,
-    WalletSecurityError, WalletSecurityPortError, WalletSecurityStatusView, WalletTransactionError,
-    WalletTransactionPortError, WalletTransferDraftQuery, WalletTransferPreviewView,
-    WalletTransferSubmissionView,
+    WalletSecurityError, WalletSecurityPortError, WalletSecurityStatusView,
+    WalletShieldedSyncCommand, WalletShieldedSyncError, WalletShieldedSyncPortError,
+    WalletShieldedSyncView, WalletTransactionError, WalletTransactionPortError,
+    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionView,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyPurpose, WalletProtectionClass,
@@ -158,6 +159,9 @@ impl HeadlessWallet {
             "wallet.dust.sync.status" => self.dust_sync_status(request),
             "wallet.dust.sync.start" => self.start_dust_sync(request),
             "wallet.dust.sync.cancel" => self.cancel_dust_sync(request),
+            "wallet.shielded.sync.status" => self.shielded_sync_status(request),
+            "wallet.shielded.sync.start" => self.start_shielded_sync(request),
+            "wallet.shielded.sync.cancel" => self.cancel_shielded_sync(request),
             _ => Dispatch::continue_with(Response::error(
                 request.id,
                 "method_not_found",
@@ -706,6 +710,59 @@ impl HeadlessWallet {
                 json!({ "dustSync": dust_sync_value(&status) }),
             )),
             Err(error) => Dispatch::continue_with(dust_sync_error(request.id, error)),
+        }
+    }
+
+    fn shielded_sync_status(&self, request: Request) -> Dispatch {
+        self.shielded_sync_operation(
+            request,
+            "wallet.shielded.sync.status",
+            |application, command| {
+                application
+                    .get_wallet_shielded_sync_status()
+                    .execute(command)
+            },
+        )
+    }
+
+    fn start_shielded_sync(&self, request: Request) -> Dispatch {
+        self.shielded_sync_operation(
+            request,
+            "wallet.shielded.sync.start",
+            |application, command| application.start_wallet_shielded_sync().execute(command),
+        )
+    }
+
+    fn cancel_shielded_sync(&self, request: Request) -> Dispatch {
+        self.shielded_sync_operation(
+            request,
+            "wallet.shielded.sync.cancel",
+            |application, command| application.cancel_wallet_shielded_sync().execute(command),
+        )
+    }
+
+    fn shielded_sync_operation(
+        &self,
+        request: Request,
+        method: &'static str,
+        operation: impl FnOnce(
+            &ApplicationServices,
+            WalletShieldedSyncCommand,
+        ) -> Result<WalletShieldedSyncView, WalletShieldedSyncError>,
+    ) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, method);
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match operation(&self.application, WalletShieldedSyncCommand { profile_id }) {
+            Ok(status) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "shieldedSync": shielded_sync_value(&status) }),
+            )),
+            Err(error) => Dispatch::continue_with(shielded_sync_error(request.id, error)),
         }
     }
 
@@ -1272,6 +1329,24 @@ fn dust_sync_value(status: &WalletDustSyncView) -> Value {
     })
 }
 
+fn shielded_sync_value(status: &WalletShieldedSyncView) -> Value {
+    json!({
+        "networkId": status.network_id,
+        "state": status.state,
+        "currentCursor": status.current_cursor,
+        "targetCursor": status.target_cursor,
+        "eventsProcessed": status.events_processed,
+        "ownedNoteCount": status.owned_note_count,
+        "commitmentCount": status.commitment_count,
+        "balances": status.balances.iter().map(|balance| json!({
+            "tokenType": balance.token_type_hex,
+            "atomicUnits": balance.atomic_units
+        })).collect::<Vec<_>>(),
+        "updatedAtMillis": status.updated_at_millis,
+        "failure": status.failure
+    })
+}
+
 fn transaction_value(transaction: &oxid_wallet_application::WalletTransactionView) -> Value {
     json!({
         "transactionId": transaction.transaction_id,
@@ -1546,6 +1621,48 @@ fn dust_sync_error(id: Option<String>, error: WalletDustSyncError) -> Response {
     }
 }
 
+fn shielded_sync_error(id: Option<String>, error: WalletShieldedSyncError) -> Response {
+    match error {
+        WalletShieldedSyncError::InvalidProfileIdentifier(_) => Response::error(
+            id,
+            "invalid_argument",
+            "active profile identifier is invalid",
+        ),
+        WalletShieldedSyncError::Port(WalletShieldedSyncPortError::Conflict) => Response::error(
+            id,
+            "conflict",
+            "shielded synchronization is already running or cannot be cancelled",
+        ),
+        WalletShieldedSyncError::Port(WalletShieldedSyncPortError::UnsupportedNetwork) => {
+            Response::error(
+                id,
+                "unsupported_network",
+                "selected wallet network does not support shielded synchronization",
+            )
+        }
+        WalletShieldedSyncError::Port(WalletShieldedSyncPortError::ProtectionNotInitialized) => {
+            Response::error(
+                id,
+                "failed_precondition",
+                "wallet protection is not initialized",
+            )
+        }
+        WalletShieldedSyncError::Port(WalletShieldedSyncPortError::ProtectionLocked) => {
+            Response::error(id, "wallet_locked", "wallet is locked")
+        }
+        WalletShieldedSyncError::Port(WalletShieldedSyncPortError::Unavailable) => Response::error(
+            id,
+            "capability_unavailable",
+            "shielded synchronization is unavailable",
+        ),
+        WalletShieldedSyncError::Port(WalletShieldedSyncPortError::InvalidData) => Response::error(
+            id,
+            "chain_state_unavailable",
+            "shielded synchronization state could not be used safely",
+        ),
+    }
+}
+
 fn security_status_value(status: WalletSecurityStatusView) -> Value {
     json!({
         "state": match status.state {
@@ -1681,6 +1798,9 @@ fn invalid_empty_params(id: Option<String>, method: &'static str) -> Dispatch {
         "wallet.dust.sync.status" => "wallet.dust.sync.status does not accept parameters",
         "wallet.dust.sync.start" => "wallet.dust.sync.start does not accept parameters",
         "wallet.dust.sync.cancel" => "wallet.dust.sync.cancel does not accept parameters",
+        "wallet.shielded.sync.status" => "wallet.shielded.sync.status does not accept parameters",
+        "wallet.shielded.sync.start" => "wallet.shielded.sync.start does not accept parameters",
+        "wallet.shielded.sync.cancel" => "wallet.shielded.sync.cancel does not accept parameters",
         _ => "method does not accept parameters",
     };
     Dispatch::continue_with(Response::error(id, "invalid_params", message))
@@ -1824,6 +1944,9 @@ fn capability_manifest() -> Value {
         { "method": "wallet.dust.sync.status", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached", "unavailable"] },
         { "method": "wallet.dust.sync.start", "status": "ready", "mode": "standalone", "execution": "adapter_worker" },
         { "method": "wallet.dust.sync.cancel", "status": "ready", "mode": "standalone", "checkpoint": "resumable" },
+        { "method": "wallet.shielded.sync.status", "status": "ready", "mode": "standalone", "sources": ["simulated", "unavailable"] },
+        { "method": "wallet.shielded.sync.start", "status": "ready", "mode": "standalone", "execution": "adapter_session" },
+        { "method": "wallet.shielded.sync.cancel", "status": "ready", "mode": "standalone", "checkpoint": "session_resumable" },
         { "method": "vault.total_locked", "status": "queued" },
         { "method": "vault.locks.list", "status": "queued" },
         { "method": "vault.credentials.list", "status": "queued" },
@@ -2723,5 +2846,82 @@ mod tests {
             resumed_and_current[4]["result"]["dustSync"]["eventsProcessed"],
             0
         );
+    }
+
+    #[test]
+    fn exposes_exact_resumable_shielded_flow_without_secret_material() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"shielded-create","method":"wallet.profile.create","params":{"displayName":"Shielded flow"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile id is returned");
+        let setup = format!(
+            "{}\n{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "shielded-select",
+                "method": "wallet.profile.select",
+                "params": { "profileId": profile_id }
+            }),
+            r#"{"protocol":"oxid.headless.v1","id":"shielded-init","method":"wallet.security.initialize","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"shielded-derive","method":"wallet.account.derive","params":{"accountIndex":0,"addressIndex":0}}"#,
+        );
+        assert!(
+            execute_with_wallet(&wallet, &setup)
+                .iter()
+                .all(|response| response["ok"] == true)
+        );
+
+        let initial_and_cancelled = execute_with_wallet(
+            &wallet,
+            concat!(
+                r#"{"protocol":"oxid.headless.v1","id":"shielded-initial","method":"wallet.shielded.sync.status","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"shielded-start","method":"wallet.shielded.sync.start","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"shielded-progress","method":"wallet.shielded.sync.status","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"shielded-cancel","method":"wallet.shielded.sync.cancel","params":{}}"#,
+            ),
+        );
+        assert_eq!(
+            initial_and_cancelled[0]["result"]["shieldedSync"]["state"],
+            "never_synced"
+        );
+        assert_eq!(
+            initial_and_cancelled[2]["result"]["shieldedSync"]["commitmentCount"],
+            1
+        );
+        assert_eq!(
+            initial_and_cancelled[3]["result"]["shieldedSync"]["state"],
+            "cancelled"
+        );
+
+        let completed = execute_with_wallet(
+            &wallet,
+            concat!(
+                r#"{"protocol":"oxid.headless.v1","id":"shielded-resume","method":"wallet.shielded.sync.start","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"shielded-progress-2","method":"wallet.shielded.sync.status","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"shielded-complete","method":"wallet.shielded.sync.status","params":{}}"#,
+            ),
+        );
+        let synced = &completed[2]["result"]["shieldedSync"];
+        assert_eq!(synced["state"], "synced");
+        assert_eq!(synced["ownedNoteCount"], 1);
+        assert_eq!(synced["commitmentCount"], 3);
+        assert_eq!(synced["balances"][0]["atomicUnits"], "5000000");
+        assert_eq!(
+            synced["balances"][0]["tokenType"],
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        let encoded = serde_json::to_string(&completed).expect("responses serialize");
+        assert!(!encoded.contains("seed"));
+        assert!(!encoded.contains("private"));
+        assert!(!encoded.contains("mnemonic"));
     }
 }

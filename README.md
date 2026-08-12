@@ -86,7 +86,9 @@ The implemented account methods are `wallet.network.list`,
 `wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
 `wallet.transaction.submit_unshielded`, `wallet.transaction.send_unshielded`,
 `wallet.connect`, `wallet.sync.force`, `wallet.dust.sync.status`,
-`wallet.dust.sync.start`, and `wallet.dust.sync.cancel`.
+`wallet.dust.sync.start`, `wallet.dust.sync.cancel`,
+`wallet.shielded.sync.status`, `wallet.shielded.sync.start`, and
+`wallet.shielded.sync.cancel`.
 With no additional configuration their account data is explicitly `simulated`
 and contacts no node, indexer, or prover. After
 `wallet.security.initialize`, `wallet.account.derive` creates and retains the
