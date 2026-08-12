@@ -4,11 +4,11 @@
 
 use std::sync::Arc;
 
-use oxid_adapter_did_midnight::StandaloneDidResolver;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_did_midnight::{
     HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
 };
+use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
     MidnightAccountCheckpointConfig, MidnightAccountCheckpointConfigError,
@@ -31,11 +31,12 @@ use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_dev::{DevelopmentWalletSecurity, UnavailableWalletSecurity};
 use oxid_adapter_storage_identity_json::JsonDidRecordRepository;
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
-use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;
+use oxid_adapter_storage_memory::{InMemoryDidRecordRepository, InMemoryWalletProfileRepository};
 use oxid_identity_application::{
-    DidRecordRepository, DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase,
-    ListDidRecordsUseCase, ResolveDidUseCase, UnavailableDidRecordRepository,
-    UnavailableDidResolver,
+    CreateDidUseCase, DeactivateDidUseCase, DidLifecyclePort, DidRecordRepository,
+    DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase,
+    ResolveDidUseCase, SignDidPayloadUseCase, UnavailableDidLifecycle,
+    UnavailableDidRecordRepository, UnavailableDidResolver, UpdateDidUseCase,
 };
 use oxid_wallet_application::{
     AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
@@ -92,9 +93,13 @@ pub struct ApplicationServices {
     cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
     list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
     reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
+    create_did: Arc<dyn CreateDidUseCase>,
     resolve_did: Arc<dyn ResolveDidUseCase>,
     list_did_records: Arc<dyn ListDidRecordsUseCase>,
     get_did_record: Arc<dyn GetDidRecordUseCase>,
+    update_did: Arc<dyn UpdateDidUseCase>,
+    deactivate_did: Arc<dyn DeactivateDidUseCase>,
+    sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
     forget_did: Arc<dyn ForgetDidUseCase>,
 }
 
@@ -268,6 +273,11 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn create_did(&self) -> Arc<dyn CreateDidUseCase> {
+        Arc::clone(&self.create_did)
+    }
+
+    #[must_use]
     pub fn list_did_records(&self) -> Arc<dyn ListDidRecordsUseCase> {
         Arc::clone(&self.list_did_records)
     }
@@ -275,6 +285,21 @@ impl ApplicationServices {
     #[must_use]
     pub fn get_did_record(&self) -> Arc<dyn GetDidRecordUseCase> {
         Arc::clone(&self.get_did_record)
+    }
+
+    #[must_use]
+    pub fn update_did(&self) -> Arc<dyn UpdateDidUseCase> {
+        Arc::clone(&self.update_did)
+    }
+
+    #[must_use]
+    pub fn deactivate_did(&self) -> Arc<dyn DeactivateDidUseCase> {
+        Arc::clone(&self.deactivate_did)
+    }
+
+    #[must_use]
+    pub fn sign_did_payload(&self) -> Arc<dyn SignDidPayloadUseCase> {
+        Arc::clone(&self.sign_did_payload)
     }
 
     #[must_use]
@@ -292,6 +317,7 @@ pub fn compose() -> ApplicationServices {
         Arc::new(unavailable_midnight_wallet()),
         Arc::new(UnavailableDidRecordRepository),
         Arc::new(UnavailableDidResolver),
+        Arc::new(UnavailableDidLifecycle),
     )
 }
 
@@ -806,12 +832,14 @@ pub fn compose_in_memory() -> ApplicationServices {
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
+    let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
     compose_with_identity_adapters(
         Arc::new(InMemoryWalletProfileRepository::new()),
         security,
         midnight,
-        Arc::new(UnavailableDidRecordRepository),
-        Arc::new(UnavailableDidResolver),
+        Arc::new(InMemoryDidRecordRepository::new()),
+        Arc::new(StandaloneDidResolver),
+        Arc::new(StandaloneDidLifecycle::new(key_operations)),
     )
 }
 
@@ -831,12 +859,16 @@ where
         + WalletTransactionPort
         + 'static,
 {
+    let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
+    let did_lifecycle: Arc<dyn DidLifecyclePort> =
+        Arc::new(StandaloneDidLifecycle::new(key_operations));
     compose_with_identity_adapters(
         repository,
         security,
         midnight,
         headless_did_repository(),
         headless_did_resolver(),
+        did_lifecycle,
     )
 }
 
@@ -846,6 +878,7 @@ fn compose_with_identity_adapters<R, S, M>(
     midnight: Arc<M>,
     did_repository: Arc<dyn DidRecordRepository>,
     did_resolver: Arc<dyn DidResolutionPort>,
+    did_lifecycle: Arc<dyn DidLifecyclePort>,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository + 'static,
@@ -876,7 +909,11 @@ where
     let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let shielded = Arc::new(WalletShieldedSyncService::new(Arc::clone(&midnight)));
     let transactions = Arc::new(WalletTransactionService::new(midnight, clock));
-    let identity = Arc::new(DidService::from_ports(did_repository, did_resolver));
+    let identity = Arc::new(DidService::from_ports(
+        did_repository,
+        did_resolver,
+        did_lifecycle,
+    ));
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
     let initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase> = protection.clone();
@@ -910,9 +947,13 @@ where
         transactions.clone();
     let reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase> =
         transactions;
+    let create_did: Arc<dyn CreateDidUseCase> = identity.clone();
     let resolve_did: Arc<dyn ResolveDidUseCase> = identity.clone();
     let list_did_records: Arc<dyn ListDidRecordsUseCase> = identity.clone();
     let get_did_record: Arc<dyn GetDidRecordUseCase> = identity.clone();
+    let update_did: Arc<dyn UpdateDidUseCase> = identity.clone();
+    let deactivate_did: Arc<dyn DeactivateDidUseCase> = identity.clone();
+    let sign_did_payload: Arc<dyn SignDidPayloadUseCase> = identity.clone();
     let forget_did: Arc<dyn ForgetDidUseCase> = identity;
 
     ApplicationServices {
@@ -947,9 +988,13 @@ where
         cancel_wallet_transfer_submission,
         list_wallet_transfer_submissions,
         reconcile_wallet_transfer_submission,
+        create_did,
         resolve_did,
         list_did_records,
         get_did_record,
+        update_did,
+        deactivate_did,
+        sign_did_payload,
         forget_did,
     }
 }
@@ -1174,6 +1219,7 @@ mod tests {
             Arc::new(unavailable_midnight_wallet()),
             Arc::new(UnavailableDidRecordRepository),
             Arc::new(UnavailableDidResolver),
+            Arc::new(UnavailableDidLifecycle),
         );
         let status = services
             .get_wallet_security_status()

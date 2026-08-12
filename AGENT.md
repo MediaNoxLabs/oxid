@@ -211,6 +211,21 @@ credentials, lifecycle authorization, and production-native storage remain
 follow-ups. Preserve the immutable conformance sources in
 `docs/migration/midnight-did-provenance.md` when upgrading the contract.
 
+[Issue #22](https://github.com/MediaNoxLabs/oxid/issues/22) and ADR-0037 add the
+development-only standalone `did:midnight` lifecycle without copying the
+prototype's `controllerSkHex` exposure. `identity/application` owns create,
+update, sign, and deactivate ports/use cases; `adapters/did-midnight` delegates
+real Ed25519/P-256 key generation and signing to opaque wallet custody handles.
+It supports aliases, verification-method add/rotate/remove, relationship
+add/remove, service add/update/remove, signing with explicit confirmation, and
+deactivation for `undeployed` DIDs. Every mutation, signing operation, and
+deactivation requires bounded human-readable confirmation. Public documents persist, but custody
+associations are process-local: after restart, records remain inspectable and
+mutation/signing must return `NotManaged`. Normal production composition and
+all non-undeployed/live Compact writes remain fail-closed. The remaining
+Jubjub/Compact proving/submission/finality gap is a later adapter slice, not a
+reason to expose private key material.
+
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
 web --target wasm32-unknown-unknown` currently stops in the pre-existing

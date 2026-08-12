@@ -4,6 +4,8 @@
 
 use std::{collections::BTreeMap, sync::RwLock};
 
+use oxid_identity_application::{DidRecordRepository, DidRecordRepositoryError};
+use oxid_identity_domain::{DidRecord, IdentityProfileId, MidnightDid};
 use oxid_wallet_application::{WalletProfileRepository, WalletProfileRepositoryError};
 use oxid_wallet_domain::{WalletProfile, WalletProfileId};
 
@@ -82,6 +84,75 @@ impl WalletProfileRepository for InMemoryWalletProfileRepository {
             .cloned()
             .map(Some)
             .ok_or(WalletProfileRepositoryError::NotFound)
+    }
+}
+
+/// Process-local public DID record storage for application and protocol tests.
+#[derive(Default)]
+pub struct InMemoryDidRecordRepository {
+    records: RwLock<BTreeMap<(String, String), DidRecord>>,
+}
+
+impl InMemoryDidRecordRepository {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl DidRecordRepository for InMemoryDidRecordRepository {
+    fn upsert(&self, record: DidRecord) -> Result<(), DidRecordRepositoryError> {
+        let key = (
+            record.profile_id().as_str().to_owned(),
+            record.resolution().document().id().as_str().to_owned(),
+        );
+        self.records
+            .write()
+            .map_err(|_| DidRecordRepositoryError::Unavailable)?
+            .insert(key, record);
+        Ok(())
+    }
+
+    fn list(
+        &self,
+        profile_id: &IdentityProfileId,
+    ) -> Result<Vec<DidRecord>, DidRecordRepositoryError> {
+        self.records
+            .read()
+            .map(|records| {
+                records
+                    .iter()
+                    .filter(|((profile, _), _)| profile == profile_id.as_str())
+                    .map(|(_, record)| record.clone())
+                    .collect()
+            })
+            .map_err(|_| DidRecordRepositoryError::Unavailable)
+    }
+
+    fn get(
+        &self,
+        profile_id: &IdentityProfileId,
+        did: &MidnightDid,
+    ) -> Result<DidRecord, DidRecordRepositoryError> {
+        self.records
+            .read()
+            .map_err(|_| DidRecordRepositoryError::Unavailable)?
+            .get(&(profile_id.as_str().to_owned(), did.as_str().to_owned()))
+            .cloned()
+            .ok_or(DidRecordRepositoryError::NotFound)
+    }
+
+    fn remove(
+        &self,
+        profile_id: &IdentityProfileId,
+        did: &MidnightDid,
+    ) -> Result<(), DidRecordRepositoryError> {
+        self.records
+            .write()
+            .map_err(|_| DidRecordRepositoryError::Unavailable)?
+            .remove(&(profile_id.as_str().to_owned(), did.as_str().to_owned()))
+            .map(|_| ())
+            .ok_or(DidRecordRepositoryError::NotFound)
     }
 }
 

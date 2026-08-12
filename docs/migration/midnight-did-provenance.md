@@ -22,11 +22,22 @@ dependency on either DID repository in this slice.
   status;
 - retrieve/list/forget records through the headless wallet;
 - restore the inventory after a real process restart.
+- create an undeployed DID backed by protected Ed25519 authentication and P-256
+  assertion keys;
+- add/remove aliases, add/rotate/remove verification methods, add/remove
+  relationships, and add/update/remove services;
+- authorize every visible mutation, sign bounded payloads, and deactivate a DID
+  through explicit human-readable confirmation;
+- exercise the complete lifecycle through headless and mobile incoming
+  adapters without returning a private key or custody reference.
 
-The prototype's create/update/deactivate operations remain follow-ups because
-they require authorization, custody, Compact transaction, and finality
-boundaries. Credential verification, OID4VCI/OID4VP, identity login, vault
-flows, camera/share/deep links, and recovery remain separate slices.
+The standalone implementation preserves the operation semantics but does not
+claim a ledger deployment. Live create/update/deactivate still require the
+official Compact authorization, proving, submission, and finality boundaries.
+The prototype's Schnorr-Jubjub assertion path is not copied because current
+development custody cannot retain that key without a reviewed algorithm
+adapter. Credential verification, OID4VCI/OID4VP, identity login, vault flows,
+camera/share/deep links, and recovery remain separate slices.
 
 ## Current contract mapping
 
@@ -55,6 +66,9 @@ endpoints remain public bounded data.
 | Cross-profile access | Incoming methods derive profile scope from the active wallet profile and accept no profile parameter. |
 | Persistence tampering | Strict version/unknown-field validation plus full domain reconstruction; bounded symlink-rejecting owner-only atomic store. |
 | Secret leakage | Only public documents/metadata are persisted or projected; routes and remote response bodies are never returned or logged. |
+| Prototype controller-key exposure | `controllerSkHex` is excluded. DID lifecycle receives only opaque protected-key handles, and DID protocol responses never contain them. |
+| Standalone state mistaken for ledger state | Only `undeployed` creation is accepted, sources and version IDs say standalone, and live mutation remains unavailable. |
+| Restart creates false ownership | Public records persist separately; mutation/signing fails `NotManaged` after process-local custody resets. |
 
 ## Standalone fixture
 

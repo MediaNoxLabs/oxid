@@ -58,6 +58,7 @@ ADR status and delivery state answer different questions:
 | [0034](0034-expose-safe-transaction-submission-cancellation.md) Expose transaction submission status and safe cancellation | Accepted | §§7–8, 12–13, 16–18 and issue #19 | Adapter-owned pre-broadcast cancel boundary plus headless/mobile status, cancel, and retry implemented; durable follow-up delivered by ADR-0035 |
 | [0035](0035-persist-and-reconcile-midnight-submissions.md) Persist and reconcile Midnight transaction submissions | Accepted | §§3, 5–8, 12–13, 16–18 and issue #20 | Public persist-before-broadcast journal, restart duplicate prevention, finalized reconciliation, and headless/mobile recovery implemented |
 | [0036](0036-resolve-and-retain-public-midnight-dids.md) Resolve and retain public Midnight DIDs | Accepted | §§3–7, 9–13, 16–18 and issue #21 | Identity hexagon, bounded standalone/live resolution, separate public store, headless inventory, and mobile DIDs page implemented |
+| [0037](0037-manage-standalone-midnight-dids-with-opaque-custody.md) Manage standalone Midnight DIDs | Accepted | §§3–7, 9, 12–13, 16–18 and issue #22 | Protected standalone lifecycle/signing, complete update vocabulary, headless flow, and mobile operation builder implemented; live Compact writes pending |
 
 ## Current boundaries
 
@@ -95,3 +96,6 @@ restart, and permits replacement only after finalized rejection or expiry.
 ADR-0036 begins the peer identity capability with validated public DID
 resolution and profile-scoped inventory while keeping lifecycle mutation,
 credentials, endpoints, and production-native storage outside the slice.
+ADR-0037 adds the full development-only standalone lifecycle through opaque
+custody handles while keeping restored records public-only and live Compact
+mutation fail-closed.

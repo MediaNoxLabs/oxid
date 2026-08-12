@@ -6,9 +6,13 @@ use std::{sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
 use oxid_identity_application::{
-    DidOperationError, DidRecordQuery, DidRecordView, ForgetDidUseCase, ListDidRecordsQuery,
-    ListDidRecordsUseCase, ResolveDidCommand, ResolveDidUseCase,
+    CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
+    DidKeyAlgorithm, DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordView,
+    DidUpdate, ForgetDidUseCase, ListDidRecordsQuery, ListDidRecordsUseCase, ResolveDidCommand,
+    ResolveDidUseCase, SignDidPayloadCommand, SignDidPayloadUseCase, UpdateDidCommand,
+    UpdateDidUseCase,
 };
+use oxid_identity_domain::VerificationRelationship;
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
     CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
@@ -62,28 +66,44 @@ pub struct WalletUiServices {
     cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
     list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
     reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
+    create_did: Arc<dyn CreateDidUseCase>,
     resolve_did: Arc<dyn ResolveDidUseCase>,
     list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    update_did: Arc<dyn UpdateDidUseCase>,
+    deactivate_did: Arc<dyn DeactivateDidUseCase>,
+    sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
     forget_did: Arc<dyn ForgetDidUseCase>,
 }
 
 /// DID inventory and resolution use cases consumed by the DIDs page.
 pub struct DidUiServices {
+    create_did: Arc<dyn CreateDidUseCase>,
     resolve_did: Arc<dyn ResolveDidUseCase>,
     list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    update_did: Arc<dyn UpdateDidUseCase>,
+    deactivate_did: Arc<dyn DeactivateDidUseCase>,
+    sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
     forget_did: Arc<dyn ForgetDidUseCase>,
 }
 
 impl DidUiServices {
     #[must_use]
     pub const fn new(
+        create_did: Arc<dyn CreateDidUseCase>,
         resolve_did: Arc<dyn ResolveDidUseCase>,
         list_did_records: Arc<dyn ListDidRecordsUseCase>,
+        update_did: Arc<dyn UpdateDidUseCase>,
+        deactivate_did: Arc<dyn DeactivateDidUseCase>,
+        sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
         forget_did: Arc<dyn ForgetDidUseCase>,
     ) -> Self {
         Self {
+            create_did,
             resolve_did,
             list_did_records,
+            update_did,
+            deactivate_did,
+            sign_did_payload,
             forget_did,
         }
     }
@@ -306,8 +326,12 @@ impl WalletUiServices {
             cancel_wallet_transfer_submission: transactions.cancel_wallet_transfer_submission,
             list_wallet_transfer_submissions: transactions.list_wallet_transfer_submissions,
             reconcile_wallet_transfer_submission: transactions.reconcile_wallet_transfer_submission,
+            create_did: dids.create_did,
             resolve_did: dids.resolve_did,
             list_did_records: dids.list_did_records,
+            update_did: dids.update_did,
+            deactivate_did: dids.deactivate_did,
+            sign_did_payload: dids.sign_did_payload,
             forget_did: dids.forget_did,
         }
     }
@@ -461,8 +485,28 @@ impl WalletUiServices {
     }
 
     #[must_use]
+    pub fn create_did(&self) -> Arc<dyn CreateDidUseCase> {
+        Arc::clone(&self.create_did)
+    }
+
+    #[must_use]
     pub fn list_did_records(&self) -> Arc<dyn ListDidRecordsUseCase> {
         Arc::clone(&self.list_did_records)
+    }
+
+    #[must_use]
+    pub fn update_did(&self) -> Arc<dyn UpdateDidUseCase> {
+        Arc::clone(&self.update_did)
+    }
+
+    #[must_use]
+    pub fn deactivate_did(&self) -> Arc<dyn DeactivateDidUseCase> {
+        Arc::clone(&self.deactivate_did)
+    }
+
+    #[must_use]
+    pub fn sign_did_payload(&self) -> Arc<dyn SignDidPayloadUseCase> {
+        Arc::clone(&self.sign_did_payload)
     }
 
     #[must_use]
@@ -2717,6 +2761,253 @@ fn did_operation_message(error: DidOperationError) -> String {
     error.to_string()
 }
 
+fn did_confirmation(title: &str, summary: &str, confirmed: bool) -> DidOperationConfirmation {
+    DidOperationConfirmation {
+        title: title.to_owned(),
+        summary: summary.to_owned(),
+        confirmed,
+    }
+}
+
+#[component]
+fn ManagedDidControls(
+    profile_id: String,
+    record: DidRecordView,
+    on_record: EventHandler<Result<DidRecordView, String>>,
+) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut operation = use_signal(|| "add_alias".to_owned());
+    let mut identifier = use_signal(String::new);
+    let mut value = use_signal(String::new);
+    let mut endpoint = use_signal(String::new);
+    let mut algorithm = use_signal(|| "ed25519".to_owned());
+    let mut relationship = use_signal(|| "assertionMethod".to_owned());
+    let mut confirmed = use_signal(|| false);
+    let mut working = use_signal(|| false);
+    let mut outcome = use_signal(|| None::<String>);
+    let did = record.document.id.clone();
+    let is_deactivated = record.document_metadata.deactivated == Some(true);
+    let operation_name = operation.read().clone();
+    let is_service = matches!(operation_name.as_str(), "add_service" | "update_service");
+    let needs_identifier = matches!(
+        operation_name.as_str(),
+        "add_method"
+            | "update_method"
+            | "remove_method"
+            | "add_relationship"
+            | "remove_relationship"
+            | "add_service"
+            | "update_service"
+            | "remove_service"
+            | "sign"
+    );
+    let needs_value = matches!(
+        operation_name.as_str(),
+        "add_alias" | "remove_alias" | "sign" | "add_service" | "update_service"
+    );
+    let needs_algorithm = matches!(operation_name.as_str(), "add_method" | "update_method");
+    let needs_relationship = matches!(
+        operation_name.as_str(),
+        "add_relationship" | "remove_relationship"
+    );
+    let needs_confirmation = true;
+
+    rsx! {
+        details { class: "did-manager",
+            summary { "Manage this DID" }
+            p { class: "form-hint", "Standalone operations use protected, process-local keys. Public DID records persist; development key custody does not survive an app restart." }
+            label { r#for: "did-operation-{did}", "Operation" }
+            select {
+                id: "did-operation-{did}",
+                value: "{operation}",
+                disabled: working() || is_deactivated,
+                onchange: move |event| {
+                    operation.set(event.value());
+                    outcome.set(None);
+                    confirmed.set(false);
+                },
+                option { value: "add_alias", "Add also-known-as" }
+                option { value: "remove_alias", "Remove also-known-as" }
+                option { value: "add_method", "Add verification method" }
+                option { value: "update_method", "Rotate verification method" }
+                option { value: "remove_method", "Remove verification method" }
+                option { value: "add_relationship", "Add verification relationship" }
+                option { value: "remove_relationship", "Remove verification relationship" }
+                option { value: "add_service", "Add service" }
+                option { value: "update_service", "Update service" }
+                option { value: "remove_service", "Remove service" }
+                option { value: "sign", "Sign payload" }
+                option { value: "deactivate", "Deactivate DID" }
+            }
+            if needs_identifier {
+                label { r#for: "did-entry-{did}",
+                    if is_service { "Service fragment" } else if operation_name == "sign" { "Verification method" } else { "Method fragment" }
+                }
+                input {
+                    id: "did-entry-{did}", r#type: "text", maxlength: 2048,
+                    autocomplete: "off", spellcheck: false,
+                    placeholder: if is_service { "#messages" } else { "#auth-1" },
+                    value: "{identifier}",
+                    oninput: move |event| identifier.set(event.value()),
+                }
+            }
+            if needs_algorithm {
+                label { r#for: "did-algorithm-{did}", "Protected key algorithm" }
+                select {
+                    id: "did-algorithm-{did}", value: "{algorithm}",
+                    onchange: move |event| algorithm.set(event.value()),
+                    option { value: "ed25519", "Ed25519" }
+                    option { value: "p256", "P-256" }
+                }
+            }
+            if needs_relationship {
+                label { r#for: "did-relationship-{did}", "Relationship" }
+                select {
+                    id: "did-relationship-{did}", value: "{relationship}",
+                    onchange: move |event| relationship.set(event.value()),
+                    option { value: "authentication", "Authentication" }
+                    option { value: "assertionMethod", "Assertion method" }
+                    option { value: "capabilityInvocation", "Capability invocation" }
+                    option { value: "capabilityDelegation", "Capability delegation" }
+                }
+            }
+            if is_service {
+                label { r#for: "did-service-type-{did}", "Service type" }
+                input {
+                    id: "did-service-type-{did}", r#type: "text", maxlength: 128,
+                    placeholder: "DIDCommMessaging", value: "{value}",
+                    oninput: move |event| value.set(event.value()),
+                }
+                label { r#for: "did-endpoint-{did}", "Service endpoint" }
+                input {
+                    id: "did-endpoint-{did}", r#type: "url", maxlength: 2048,
+                    placeholder: "https://example.test/messages", value: "{endpoint}",
+                    oninput: move |event| endpoint.set(event.value()),
+                }
+            } else if needs_value {
+                label { r#for: "did-value-{did}",
+                    if operation_name == "sign" { "Payload" } else { "URI" }
+                }
+                input {
+                    id: "did-value-{did}", r#type: "text", maxlength: 8192,
+                    autocomplete: "off", spellcheck: false,
+                    placeholder: if operation_name == "sign" { "Verifier challenge" } else { "https://example.test/alice" },
+                    value: "{value}",
+                    oninput: move |event| value.set(event.value()),
+                }
+            }
+            if needs_confirmation {
+                label { class: "confirmation-row",
+                    input {
+                        r#type: "checkbox", checked: confirmed(),
+                        onchange: move |event| confirmed.set(event.checked()),
+                    }
+                    if operation_name == "deactivate" {
+                        "I understand this DID cannot be used after deactivation"
+                    } else if operation_name == "sign" {
+                        "Authorize signing this visible payload with the selected DID method"
+                    } else {
+                        "Authorize this visible change to the managed DID document"
+                    }
+                }
+            }
+            button {
+                class: if operation_name == "deactivate" { "danger-action" } else { "secondary-action" },
+                r#type: "button",
+                disabled: working() || is_deactivated || (needs_confirmation && !confirmed()),
+                onclick: move |_| {
+                    working.set(true);
+                    outcome.set(None);
+                    let operation_name = operation.read().clone();
+                    let method_or_service = identifier.read().trim().to_owned();
+                    let input_value = value.read().trim().to_owned();
+                    let endpoint_value = endpoint.read().trim().to_owned();
+                    let key_algorithm = if algorithm.read().as_str() == "p256" {
+                        DidKeyAlgorithm::P256
+                    } else {
+                        DidKeyAlgorithm::Ed25519
+                    };
+                    let relationship = VerificationRelationship::parse(relationship.read().as_str())
+                        .unwrap_or(VerificationRelationship::AssertionMethod);
+                    let result = match operation_name.as_str() {
+                        "sign" => services.sign_did_payload().execute(SignDidPayloadCommand {
+                            profile_id: profile_id.clone(),
+                            did: did.clone(),
+                            method_id: method_or_service,
+                            payload: input_value.into_bytes(),
+                            confirmation: did_confirmation(
+                                "Sign identity challenge",
+                                "Authorize the visible payload with this DID verification method",
+                                confirmed(),
+                            ),
+                        }).map(|signature| {
+                            outcome.set(Some(format!(
+                                "Signed {} bytes with {} using {}.",
+                                signature.signature_bytes.len(), signature.method_id, signature.algorithm
+                            )));
+                            None
+                        }),
+                        "deactivate" => services.deactivate_did().execute(DeactivateDidCommand {
+                            profile_id: profile_id.clone(),
+                            did: did.clone(),
+                            confirmation: did_confirmation(
+                                "Deactivate DID",
+                                "Permanently disable further operations for this DID",
+                                confirmed(),
+                            ),
+                        }).map(Some),
+                        _ => {
+                            let update = match operation_name.as_str() {
+                                "add_alias" => DidUpdate::AddAlsoKnownAs { value: input_value },
+                                "remove_alias" => DidUpdate::RemoveAlsoKnownAs { value: input_value },
+                                "add_method" => DidUpdate::AddVerificationMethod { fragment: method_or_service, algorithm: key_algorithm },
+                                "update_method" => DidUpdate::UpdateVerificationMethod { method_id: method_or_service, algorithm: key_algorithm },
+                                "remove_method" => DidUpdate::RemoveVerificationMethod { method_id: method_or_service },
+                                "add_relationship" => DidUpdate::AddVerificationRelationship { relationship, method_id: method_or_service },
+                                "remove_relationship" => DidUpdate::RemoveVerificationRelationship { relationship, method_id: method_or_service },
+                                "add_service" => DidUpdate::AddService { id: method_or_service, service_type: input_value, endpoint: endpoint_value },
+                                "update_service" => DidUpdate::UpdateService { id: method_or_service, service_type: input_value, endpoint: endpoint_value },
+                                "remove_service" => DidUpdate::RemoveService { id: method_or_service },
+                                _ => DidUpdate::AddAlsoKnownAs { value: input_value },
+                            };
+                            services.update_did().execute(UpdateDidCommand {
+                                profile_id: profile_id.clone(),
+                                did: did.clone(),
+                                operation: update,
+                                confirmation: did_confirmation(
+                                    "Update DID document",
+                                    "Authorize the selected visible change to this managed DID",
+                                    confirmed(),
+                                ),
+                            }).map(Some)
+                        }
+                    };
+                    working.set(false);
+                    match result {
+                        Ok(Some(updated)) => {
+                            outcome.set(Some("DID document updated.".to_owned()));
+                            on_record.call(Ok(updated));
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            let message = did_operation_message(error);
+                            outcome.set(Some(message.clone()));
+                            on_record.call(Err(message));
+                        }
+                    }
+                },
+                if working() { "Working…" } else if operation_name == "sign" { "Sign payload" } else if operation_name == "deactivate" { "Deactivate DID" } else { "Apply DID update" }
+            }
+            if is_deactivated {
+                p { class: "form-hint", "This DID is deactivated. Mutable and signing operations are disabled." }
+            }
+            if let Some(message) = outcome() {
+                p { class: "form-hint", role: "status", "{message}" }
+            }
+        }
+    }
+}
+
 #[component]
 fn DidsPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -2768,7 +3059,35 @@ fn DidsPage(active_profile: WalletProfileView) -> Element {
                 section { class: "page-heading",
                     p { class: "eyebrow", "Decentralized identity" }
                     h1 { "Your DIDs" }
-                    p { "Resolve standards-shaped did:midnight documents and retain their public methods and services under the active profile." }
+                    p { "Create, resolve, update, sign with, and deactivate standards-shaped did:midnight documents under the active profile." }
+                }
+                article { class: "surface-card did-resolver-card",
+                    p { class: "card-eyebrow", "Managed identity" }
+                    h2 { "Create a standalone DID" }
+                    p { class: "form-hint", "Creates protected Ed25519 authentication and P-256 assertion keys. Only the public DID document is persisted." }
+                    button {
+                        class: "primary-action", r#type: "button", disabled: resolving,
+                        onclick: move |_| {
+                            state.set(DidPageState::Ready { records: records.clone(), resolving: true, operation_error: None });
+                            match services.create_did().execute(CreateDidCommand {
+                                profile_id: profile_id.clone(),
+                                network: "undeployed".to_owned(),
+                            }) {
+                                Ok(record) => {
+                                    let mut updated = records.clone();
+                                    updated.retain(|existing| existing.document.id != record.document.id);
+                                    updated.push(record);
+                                    updated.sort_by(|left, right| left.document.id.cmp(&right.document.id));
+                                    state.set(DidPageState::Ready { records: updated, resolving: false, operation_error: None });
+                                }
+                                Err(error) => state.set(DidPageState::Ready {
+                                    records: records.clone(), resolving: false,
+                                    operation_error: Some(did_operation_message(error)),
+                                }),
+                            }
+                        },
+                        if resolving { "Working…" } else { "Create standalone DID" }
+                    }
                 }
                 article { class: "surface-card did-resolver-card",
                     p { class: "card-eyebrow", "Resolve a DID" }
@@ -2846,6 +3165,28 @@ fn DidsPage(active_profile: WalletProfileView) -> Element {
                                                     li { key: "{method.id}",
                                                         strong { "{method.public_key_jwk.curve}" }
                                                         code { title: "{method.id}", "{truncate_middle(&method.id, 16, 8)}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        {
+                                            let managed_did = did.clone();
+                                            let retained = records.clone();
+                                            rsx! {
+                                                ManagedDidControls {
+                                                    profile_id: profile_id.clone(),
+                                                    record: record.clone(),
+                                                    on_record: move |result: Result<DidRecordView, String>| {
+                                                        match result {
+                                                            Ok(updated) => {
+                                                                let mut next = retained.clone();
+                                                                next.retain(|entry| entry.document.id != managed_did);
+                                                                next.push(updated);
+                                                                next.sort_by(|left, right| left.document.id.cmp(&right.document.id));
+                                                                state.set(DidPageState::Ready { records: next, resolving: false, operation_error: None });
+                                                            }
+                                                            Err(message) => state.set(DidPageState::Ready { records: retained.clone(), resolving: false, operation_error: Some(message) }),
+                                                        }
                                                     }
                                                 }
                                             }

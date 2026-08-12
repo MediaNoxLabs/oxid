@@ -12,6 +12,7 @@ publish = false
 futures.workspace = true
 oxid-composition.workspace = true
 oxid-identity-application.workspace = true
+oxid-identity-domain.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
 serde.workspace = true

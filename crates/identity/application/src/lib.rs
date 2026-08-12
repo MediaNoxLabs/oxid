@@ -9,6 +9,10 @@ use oxid_identity_domain::{
     DidDocument, DidRecord, DidResolution, IdentityProfileId, MidnightDid, MidnightDidError,
 };
 
+mod lifecycle;
+
+pub use lifecycle::*;
+
 pub type DidResolutionPortFuture<'a> =
     Pin<Box<dyn Future<Output = Result<DidResolution, DidResolutionPortError>> + Send + 'a>>;
 
@@ -125,6 +129,12 @@ pub enum DidOperationError {
     InvalidDid(MidnightDidError),
     Resolution(DidResolutionPortError),
     Persistence(DidRecordRepositoryError),
+    Lifecycle(DidLifecyclePortError),
+    InvalidNetwork,
+    EmptyPayload,
+    PayloadTooLarge,
+    ConfirmationRequired,
+    InvalidConfirmation,
     SubjectMismatch,
 }
 
@@ -135,6 +145,14 @@ impl fmt::Display for DidOperationError {
             Self::InvalidDid(error) => error.fmt(formatter),
             Self::Resolution(error) => error.fmt(formatter),
             Self::Persistence(error) => error.fmt(formatter),
+            Self::Lifecycle(error) => error.fmt(formatter),
+            Self::InvalidNetwork => formatter.write_str("Midnight DID network is unsupported"),
+            Self::EmptyPayload => formatter.write_str("DID signing payload must not be empty"),
+            Self::PayloadTooLarge => {
+                formatter.write_str("DID signing payload exceeds the application limit")
+            }
+            Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
+            Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
             Self::SubjectMismatch => {
                 formatter.write_str("resolved DID document subject does not match the request")
             }
@@ -287,6 +305,7 @@ impl From<&DidResolution> for DidRecordView {
 pub struct DidService {
     repository: Arc<dyn DidRecordRepository>,
     resolver: Arc<dyn DidResolutionPort>,
+    lifecycle: Arc<dyn DidLifecyclePort>,
 }
 
 impl DidService {
@@ -299,6 +318,7 @@ impl DidService {
         Self {
             repository,
             resolver,
+            lifecycle: Arc::new(UnavailableDidLifecycle),
         }
     }
 
@@ -306,10 +326,12 @@ impl DidService {
     pub const fn from_ports(
         repository: Arc<dyn DidRecordRepository>,
         resolver: Arc<dyn DidResolutionPort>,
+        lifecycle: Arc<dyn DidLifecyclePort>,
     ) -> Self {
         Self {
             repository,
             resolver,
+            lifecycle,
         }
     }
 }
@@ -512,6 +534,68 @@ mod tests {
         }
     }
 
+    struct FixedLifecycle;
+    impl DidLifecyclePort for FixedLifecycle {
+        fn create(
+            &self,
+            _: &IdentityProfileId,
+            network: oxid_identity_domain::MidnightNetwork,
+        ) -> Result<DidResolution, DidLifecyclePortError> {
+            if network == oxid_identity_domain::MidnightNetwork::Undeployed {
+                Ok(resolution())
+            } else {
+                Err(DidLifecyclePortError::UnsupportedNetwork)
+            }
+        }
+
+        fn update(
+            &self,
+            _: &IdentityProfileId,
+            current: &DidResolution,
+            _: DidUpdate,
+        ) -> Result<DidResolution, DidLifecyclePortError> {
+            Ok(current.clone())
+        }
+
+        fn deactivate(
+            &self,
+            _: &IdentityProfileId,
+            current: &DidResolution,
+        ) -> Result<DidResolution, DidLifecyclePortError> {
+            Ok(DidResolution::new(
+                current.document().clone(),
+                DidDocumentMetadata {
+                    deactivated: Some(true),
+                    ..current.document_metadata().clone()
+                },
+                current.resolution_metadata().clone(),
+                DidResolutionSource::Standalone,
+            ))
+        }
+
+        fn sign(
+            &self,
+            _: &IdentityProfileId,
+            _: &DidResolution,
+            method_id: &str,
+            _: &[u8],
+        ) -> Result<DidLifecycleSignature, DidLifecyclePortError> {
+            Ok(DidLifecycleSignature {
+                method_id: method_id.to_owned(),
+                algorithm: DidKeyAlgorithm::Ed25519,
+                signature_bytes: vec![7; 64],
+            })
+        }
+    }
+
+    fn confirmation(confirmed: bool) -> DidOperationConfirmation {
+        DidOperationConfirmation {
+            title: "Authorize DID operation".to_owned(),
+            summary: "Exercise the application lifecycle boundary".to_owned(),
+            confirmed,
+        }
+    }
+
     #[test]
     fn resolves_persists_lists_gets_and_forgets_by_profile() {
         let service = DidService::new(
@@ -558,6 +642,91 @@ mod tests {
             },
         )
         .expect("forget");
+    }
+
+    #[test]
+    fn creates_updates_signs_and_deactivates_with_confirmation() {
+        let service = DidService::from_ports(
+            Arc::new(MemoryRepository::default()),
+            Arc::new(FixedResolver),
+            Arc::new(FixedLifecycle),
+        );
+        let created = CreateDidUseCase::execute(
+            &service,
+            CreateDidCommand {
+                profile_id: "profile_test".to_owned(),
+                network: "undeployed".to_owned(),
+            },
+        )
+        .expect("create");
+        assert_eq!(created.document.id, DID);
+
+        let denied = UpdateDidUseCase::execute(
+            &service,
+            UpdateDidCommand {
+                profile_id: "profile_test".to_owned(),
+                did: DID.to_owned(),
+                operation: DidUpdate::AddAlsoKnownAs {
+                    value: "https://example.test/denied".to_owned(),
+                },
+                confirmation: confirmation(false),
+            },
+        );
+        assert_eq!(denied, Err(DidOperationError::ConfirmationRequired));
+
+        UpdateDidUseCase::execute(
+            &service,
+            UpdateDidCommand {
+                profile_id: "profile_test".to_owned(),
+                did: DID.to_owned(),
+                operation: DidUpdate::AddAlsoKnownAs {
+                    value: "https://example.test/accepted".to_owned(),
+                },
+                confirmation: confirmation(true),
+            },
+        )
+        .expect("update");
+
+        assert_eq!(
+            SignDidPayloadUseCase::execute(
+                &service,
+                SignDidPayloadCommand {
+                    profile_id: "profile_test".to_owned(),
+                    did: DID.to_owned(),
+                    method_id: "#auth-1".to_owned(),
+                    payload: b"challenge".to_vec(),
+                    confirmation: confirmation(true),
+                }
+            )
+            .expect("sign")
+            .signature_bytes
+            .len(),
+            64
+        );
+        assert_eq!(
+            SignDidPayloadUseCase::execute(
+                &service,
+                SignDidPayloadCommand {
+                    profile_id: "profile_test".to_owned(),
+                    did: DID.to_owned(),
+                    method_id: "#auth-1".to_owned(),
+                    payload: Vec::new(),
+                    confirmation: confirmation(true),
+                }
+            ),
+            Err(DidOperationError::EmptyPayload)
+        );
+
+        let deactivated = DeactivateDidUseCase::execute(
+            &service,
+            DeactivateDidCommand {
+                profile_id: "profile_test".to_owned(),
+                did: DID.to_owned(),
+                confirmation: confirmation(true),
+            },
+        )
+        .expect("deactivate");
+        assert_eq!(deactivated.document_metadata.deactivated, Some(true));
     }
 
     mod futures_for_test {

@@ -5354,11 +5354,17 @@ name = "oxid-adapter-did-midnight"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "oxid-adapter-platform-system",
+ "oxid-adapter-storage-dev",
  "oxid-identity-application",
  "oxid-identity-domain",
+ "oxid-wallet-application",
+ "oxid-wallet-domain",
+ "p256",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "webpki-root-certs 1.0.9",
 ]
@@ -5450,6 +5456,8 @@ name = "oxid-adapter-storage-memory"
 version = "0.1.0"
 dependencies = [
  "oxid-foundation",
+ "oxid-identity-application",
+ "oxid-identity-domain",
  "oxid-wallet-application",
  "oxid-wallet-domain",
 ]
@@ -5489,6 +5497,7 @@ dependencies = [
  "futures",
  "oxid-composition",
  "oxid-identity-application",
+ "oxid-identity-domain",
  "oxid-wallet-application",
  "oxid-wallet-domain",
  "serde",
@@ -5525,6 +5534,7 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "oxid-identity-application",
+ "oxid-identity-domain",
  "oxid-wallet-application",
  "qrcode",
  "tokio",

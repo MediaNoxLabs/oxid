@@ -594,6 +594,65 @@ select:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
+.did-manager {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface-4);
+}
+
+.did-manager[open] summary {
+  margin-bottom: 0.25rem;
+}
+
+.did-manager summary {
+  color: var(--cyan);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.did-manager label:not(.confirmation-row) {
+  color: var(--text-soft);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.did-manager input:not([type="checkbox"]),
+.did-manager select {
+  width: 100%;
+  min-height: 2.8rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.75rem;
+  background: var(--surface-1);
+  color: var(--text);
+}
+
+.confirmation-row {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.danger-action {
+  min-height: 3.2rem;
+  padding: 0 1rem;
+  border: 1px solid rgb(255 92 138 / 42%);
+  border-radius: 1rem;
+  background: rgb(255 92 138 / 10%);
+  color: var(--error);
+  font-weight: 800;
+}
+
+.danger-action:disabled {
+  opacity: 0.45;
+}
+
 .diagnostic-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

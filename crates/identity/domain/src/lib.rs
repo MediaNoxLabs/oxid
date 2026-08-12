@@ -50,7 +50,9 @@ impl MidnightNetwork {
         }
     }
 
-    fn parse(value: &str) -> Option<Self> {
+    /// Parses the network component used by a `did:midnight` identifier.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "undeployed" => Some(Self::Undeployed),
             "devnet" => Some(Self::Devnet),
@@ -396,6 +398,18 @@ impl VerificationRelationship {
             Self::KeyAgreement => "keyAgreement",
             Self::CapabilityInvocation => "capabilityInvocation",
             Self::CapabilityDelegation => "capabilityDelegation",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "authentication" => Some(Self::Authentication),
+            "assertionMethod" => Some(Self::AssertionMethod),
+            "keyAgreement" => Some(Self::KeyAgreement),
+            "capabilityInvocation" => Some(Self::CapabilityInvocation),
+            "capabilityDelegation" => Some(Self::CapabilityDelegation),
+            _ => None,
         }
     }
 }

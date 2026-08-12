@@ -12,6 +12,7 @@ publish = false
 dioxus = { workspace = true, features = ["minimal"] }
 oxid-wallet-application.workspace = true
 oxid-identity-application.workspace = true
+oxid-identity-domain.workspace = true
 qrcode.workspace = true
 tokio.workspace = true
 

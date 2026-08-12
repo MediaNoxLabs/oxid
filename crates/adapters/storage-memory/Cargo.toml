@@ -9,6 +9,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+oxid-identity-application.workspace = true
+oxid-identity-domain.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
 

@@ -100,8 +100,17 @@ final class ProfileFlowTests: XCTestCase {
         let dids = application.buttons["DIDs"]
         XCTAssertTrue(dids.waitForExistence(timeout: 5))
         dids.tap()
+        let createDid = application.buttons["Create standalone DID"]
+        XCTAssertTrue(createDid.waitForExistence(timeout: 5))
+        createDid.tap()
+        XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            application.descendants(matching: .any)["Manage this DID"]
+                .waitForExistence(timeout: 5)
+        )
         let resolveDid = application.buttons["Resolve and save"]
         XCTAssertTrue(resolveDid.waitForExistence(timeout: 5))
+        scrollTo(resolveDid, in: application)
         resolveDid.tap()
         XCTAssertTrue(application.staticTexts["standalone-fixture-v1"].waitForExistence(timeout: 10))
 
@@ -112,6 +121,7 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(application.staticTexts["Transfer included"].waitForExistence(timeout: 15))
         dids.tap()
         XCTAssertTrue(application.staticTexts["standalone-fixture-v1"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 10))
         XCTAssertTrue(application.buttons["Assets"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
     }

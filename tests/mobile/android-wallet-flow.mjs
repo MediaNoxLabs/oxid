@@ -71,7 +71,10 @@ async function waitForButton(label) {
 }
 
 async function clickButton(label) {
-  await waitForButton(label);
+  await waitFor(
+    `(() => { const element = ${buttonExpression(label)}; return Boolean(element && !element.disabled); })()`,
+    `enabled button ${label}`,
+  );
   const clicked = await evaluate(`(() => {
     const element = ${buttonExpression(label)};
     if (!element || element.disabled) return false;
@@ -86,8 +89,8 @@ async function clickButton(label) {
 async function clickButtonByLabel(label) {
   const selector = `button[aria-label=${JSON.stringify(label)}]`;
   await waitFor(
-    `Boolean(document.querySelector(${JSON.stringify(selector)}))`,
-    `button labelled ${label}`,
+    `(() => { const element = document.querySelector(${JSON.stringify(selector)}); return Boolean(element && !element.disabled); })()`,
+    `enabled button labelled ${label}`,
   );
   const clicked = await evaluate(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
@@ -173,6 +176,64 @@ try {
         && document.body.innerText.includes("5000000 atomic units"),
     }))()`);
     await clickButton("DIDs");
+    await waitForButton("Create standalone DID");
+    await clickButton("Create standalone DID");
+    await waitFor(
+      "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
+      "created managed standalone DID",
+    );
+    await evaluate(`(() => {
+      const manager = document.querySelector('.did-manager');
+      if (!manager) return false;
+      manager.open = true;
+      const input = manager.querySelector('input[type="text"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      setter.call(input, "https://example.test/android-wallet");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const confirmation = manager.querySelector('input[type="checkbox"]');
+      confirmation.click();
+      return confirmation.checked;
+    })()`);
+    await waitFor(
+      `(() => {
+        const apply = Array.from(document.querySelectorAll('.did-manager button'))
+          .find((button) => button.textContent.trim() === 'Apply DID update');
+        return Boolean(apply && !apply.disabled);
+      })()`,
+      "enabled managed DID update",
+    );
+    await clickButton("Apply DID update");
+    await waitFor(
+      "document.body.innerText.includes('standalone-2')",
+      "managed DID update",
+    );
+    await evaluate(`(() => {
+      const manager = document.querySelector('.did-manager');
+      if (!manager) return false;
+      manager.open = true;
+      const select = manager.querySelector('select');
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
+      setter.call(select, "deactivate");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    })()`);
+    await waitFor(
+      "Boolean(document.querySelector('.did-manager input[type=checkbox]'))",
+      "DID deactivation confirmation",
+    );
+    await evaluate(`(() => {
+      const checkbox = document.querySelector('.did-manager input[type=checkbox]');
+      checkbox.click();
+      return checkbox.checked;
+    })()`);
+    await clickButton("Deactivate DID");
+    await waitFor(
+      "document.body.innerText.includes('Deactivated')",
+      "deactivated managed DID",
+    );
+    const didManaged = await evaluate(
+      "document.body.innerText.includes('Deactivated') && document.body.innerText.includes('Manage this DID')",
+    );
     await waitForButton("Resolve and save");
     await clickButton("Resolve and save");
     await waitFor(
@@ -182,8 +243,8 @@ try {
     const didResolved = await evaluate(
       "document.body.innerText.includes('standalone-fixture-v1')",
     );
-    const result = { ...walletResult, didResolved, qrRendered, shieldedAddressRendered };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.didResolved || !result.qrRendered || !result.shieldedAddressRendered) {
+    const result = { ...walletResult, didManaged, didResolved, qrRendered, shieldedAddressRendered };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.didManaged || !result.didResolved || !result.qrRendered || !result.shieldedAddressRendered) {
       throw new Error("Android standalone wallet flow did not expose the expected public result");
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -204,8 +265,11 @@ try {
     const didRestored = await evaluate(
       "document.body.innerText.includes('standalone-fixture-v1')",
     );
-    const restored = { ...walletRestored, didRestored };
-    if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored || !restored.didRestored) {
+    const managedDidRestored = await evaluate(
+      "document.body.innerText.includes('standalone-3') && document.body.innerText.includes('Deactivated')",
+    );
+    const restored = { ...walletRestored, didRestored, managedDidRestored };
+    if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored || !restored.didRestored || !restored.managedDidRestored) {
       throw new Error("Android restart did not restore public profile and submission metadata");
     }
     process.stdout.write(`${JSON.stringify(restored)}\n`);

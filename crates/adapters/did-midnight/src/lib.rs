@@ -7,6 +7,10 @@ use std::collections::BTreeMap;
 use oxid_identity_application::{
     DidResolutionPort, DidResolutionPortError, DidResolutionPortFuture,
 };
+
+mod lifecycle;
+
+pub use lifecycle::StandaloneDidLifecycle;
 use oxid_identity_domain::{
     DID_CONTEXT, DidDocument, DidDocumentMetadata, DidDocumentParts, DidResolution,
     DidResolutionMetadata, DidResolutionSource, JWK_CONTEXT, JwkCurve, JwkKeyType, MidnightDid,

@@ -42,6 +42,7 @@ check_workspace_dependencies() {
       .packages[]
       | select(.name == $package)
       | .dependencies[]
+      | select(.kind != "dev")
       | select(.path != null)
       | .name
     ' "$metadata_file" | sort -u
@@ -77,7 +78,8 @@ check_workspace_dependencies oxid-wallet-application \
 check_workspace_dependencies oxid-identity-application \
   oxid-foundation oxid-identity-domain
 check_workspace_dependencies oxid-adapter-storage-memory \
-  oxid-foundation oxid-wallet-application oxid-wallet-domain
+  oxid-foundation oxid-identity-application oxid-identity-domain \
+  oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-dev \
   oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-json \
@@ -87,10 +89,11 @@ check_workspace_dependencies oxid-adapter-platform-system \
 check_workspace_dependencies oxid-adapter-midnight \
   oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-did-midnight \
-  oxid-identity-application oxid-identity-domain
+  oxid-identity-application oxid-identity-domain oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-identity-json \
   oxid-identity-application oxid-identity-domain
-check_workspace_dependencies oxid-ui-dioxus oxid-identity-application oxid-wallet-application
+check_workspace_dependencies oxid-ui-dioxus \
+  oxid-identity-application oxid-identity-domain oxid-wallet-application
 check_workspace_dependencies oxid-composition \
   oxid-adapter-did-midnight oxid-adapter-platform-system oxid-adapter-storage-json \
   oxid-adapter-storage-identity-json \
@@ -98,7 +101,8 @@ check_workspace_dependencies oxid-composition \
   oxid-identity-application oxid-wallet-application
 check_workspace_dependencies oxid-app oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
-  oxid-composition oxid-identity-application oxid-wallet-application oxid-wallet-domain
+  oxid-composition oxid-identity-application oxid-identity-domain \
+  oxid-wallet-application oxid-wallet-domain
 
 unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' || true)"
 if [ "$unsafe_sources" != "crates/adapters/storage-json/src/lib.rs" ]; then

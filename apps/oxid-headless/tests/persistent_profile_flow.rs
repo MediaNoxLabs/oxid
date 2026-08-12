@@ -600,6 +600,93 @@ fn executable_restores_profile_scoped_did_inventory_in_a_new_process() {
 }
 
 #[test]
+fn executable_restores_managed_did_as_public_but_not_owned_after_restart() {
+    let store = TestStore::new();
+    let mut first_process = ProcessHarness::spawn(&store.path);
+    let created = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "managed-create-profile",
+        "method": "wallet.profile.create", "params": { "displayName": "Managed DID" }
+    }));
+    let profile_id = created["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile id")
+        .to_owned();
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1", "id": "managed-select",
+            "method": "wallet.profile.select", "params": { "profileId": profile_id }
+        }))["ok"],
+        true
+    );
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1", "id": "managed-security",
+            "method": "wallet.security.initialize", "params": {}
+        }))["ok"],
+        true
+    );
+    let created_did = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "managed-did-create",
+        "method": "did.create", "params": {}
+    }));
+    assert_eq!(created_did["ok"], true);
+    let did = created_did["result"]["didRecord"]["document"]["id"]
+        .as_str()
+        .expect("created did")
+        .to_owned();
+    let updated = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "managed-did-update",
+        "method": "did.update", "params": {
+            "operation": "addAlsoKnownAs",
+            "did": did,
+            "value": "https://example.test/managed",
+            "confirmation": {
+                "title": "Update DID document",
+                "summary": "Authorize the visible alias change",
+                "confirmed": true
+            }
+        }
+    }));
+    assert_eq!(updated["ok"], true);
+    assert_eq!(
+        updated["result"]["didRecord"]["documentMetadata"]["versionId"],
+        "standalone-2"
+    );
+    assert!(!updated.to_string().contains("key_"));
+    first_process.quit();
+
+    let mut second_process = ProcessHarness::spawn(&store.path);
+    let restored = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "managed-did-get",
+        "method": "did.get", "params": { "did": did }
+    }));
+    assert_eq!(restored["result"]["didRecord"]["source"], "stored");
+    assert_eq!(
+        restored["result"]["didRecord"]["document"]["alsoKnownAs"][0],
+        "https://example.test/managed"
+    );
+    let unmanaged = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "managed-did-update-after-restart",
+        "method": "did.update", "params": {
+            "operation": "removeAlsoKnownAs",
+            "did": did,
+            "value": "https://example.test/managed",
+            "confirmation": {
+                "title": "Update DID document",
+                "summary": "Authorize the visible alias change",
+                "confirmed": true
+            }
+        }
+    }));
+    assert_eq!(unmanaged["error"]["code"], "failed_precondition");
+    assert_eq!(
+        unmanaged["error"]["message"],
+        "DID is not managed by the current protected session"
+    );
+    second_process.quit();
+}
+
+#[test]
 fn executable_restores_public_submission_status_in_a_new_process() {
     let store = TestStore::new();
     let journal_path = store.root.join("private/submission-journal.json");

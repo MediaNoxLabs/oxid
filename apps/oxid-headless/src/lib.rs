@@ -7,9 +7,12 @@ use std::{error::Error, fmt, io, io::BufRead, io::Write, thread, time::Duration}
 
 use oxid_composition::ApplicationServices;
 use oxid_identity_application::{
-    DidOperationError, DidRecordQuery, DidRecordRepositoryError, DidRecordView,
-    DidResolutionPortError, ListDidRecordsQuery, ResolveDidCommand,
+    CreateDidCommand, DeactivateDidCommand, DidKeyAlgorithm, DidLifecyclePortError,
+    DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordRepositoryError,
+    DidRecordView, DidResolutionPortError, DidUpdate, ListDidRecordsQuery, ResolveDidCommand,
+    SignDidPayloadCommand, UpdateDidCommand,
 };
+use oxid_identity_domain::VerificationRelationship;
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, CreateWalletProfileCommand, CreateWalletProfileError,
     DeleteWalletKeyCommand, DeriveWalletAccountCommand, DerivedWalletAccountView,
@@ -173,9 +176,13 @@ impl HeadlessWallet {
             "wallet.shielded.sync.status" => self.shielded_sync_status(request),
             "wallet.shielded.sync.start" => self.start_shielded_sync(request),
             "wallet.shielded.sync.cancel" => self.cancel_shielded_sync(request),
+            "did.create" => self.create_did(request),
             "did.resolve" => self.resolve_did(request),
             "did.list" => self.list_dids(request),
             "did.get" => self.get_did(request),
+            "did.update" => self.update_did(request),
+            "did.sign" => self.sign_did(request),
+            "did.deactivate" => self.deactivate_did(request),
             "did.forget" => self.forget_did(request),
             _ => Dispatch::continue_with(Response::error(
                 request.id,
@@ -244,6 +251,150 @@ impl HeadlessWallet {
                 did: params.did,
             },
         )) {
+            Ok(record) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "didRecord": did_record_value(&record) }),
+            )),
+            Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+        }
+    }
+
+    fn create_did(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<CreateDidParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "did.create accepts only an optional network string",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self.application.create_did().execute(CreateDidCommand {
+            profile_id,
+            network: params.network,
+        }) {
+            Ok(record) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "didRecord": did_record_value(&record) }),
+            )),
+            Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+        }
+    }
+
+    fn update_did(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<DidUpdateParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "did.update requires a supported operation and its exact fields",
+                ));
+            }
+        };
+        let (did, operation, confirmation) = match did_update(params) {
+            Some(value) => value,
+            None => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "DID update algorithm or relationship is unsupported",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self.application.update_did().execute(UpdateDidCommand {
+            profile_id,
+            did,
+            operation,
+            confirmation,
+        }) {
+            Ok(record) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "didRecord": did_record_value(&record) }),
+            )),
+            Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+        }
+    }
+
+    fn sign_did(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<SignDidParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "did.sign requires did, methodId, payloadHex, and confirmation",
+                ));
+            }
+        };
+        let payload = match decode_hex(&params.payload_hex) {
+            Some(payload) => payload,
+            None => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "payloadHex must be bounded even-length hexadecimal",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .sign_did_payload()
+            .execute(SignDidPayloadCommand {
+                profile_id,
+                did: params.did,
+                method_id: params.method_id,
+                payload,
+                confirmation: params.confirmation.into(),
+            }) {
+            Ok(signature) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "methodId": signature.method_id,
+                    "algorithm": signature.algorithm,
+                    "signatureHex": encode_hex(&signature.signature_bytes),
+                }),
+            )),
+            Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+        }
+    }
+
+    fn deactivate_did(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<DeactivateDidParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "did.deactivate requires did and confirmation",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .deactivate_did()
+            .execute(DeactivateDidCommand {
+                profile_id,
+                did: params.did,
+                confirmation: params.confirmation.into(),
+            }) {
             Ok(record) => Dispatch::continue_with(Response::success(
                 request.id,
                 json!({ "didRecord": did_record_value(&record) }),
@@ -1391,6 +1542,16 @@ impl From<ConfirmationParams> for SensitiveOperationConfirmation {
     }
 }
 
+impl From<ConfirmationParams> for DidOperationConfirmation {
+    fn from(value: ConfirmationParams) -> Self {
+        Self {
+            title: value.title,
+            summary: value.summary,
+            confirmed: value.confirmed,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SignParams {
@@ -1412,6 +1573,229 @@ struct DeleteKeyParams {
 #[serde(deny_unknown_fields)]
 struct DidParams {
     did: String,
+}
+
+fn undeployed_network() -> String {
+    "undeployed".to_owned()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateDidParams {
+    #[serde(default = "undeployed_network")]
+    network: String,
+}
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "operation",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum DidUpdateParams {
+    AddAlsoKnownAs {
+        did: String,
+        value: String,
+        confirmation: ConfirmationParams,
+    },
+    RemoveAlsoKnownAs {
+        did: String,
+        value: String,
+        confirmation: ConfirmationParams,
+    },
+    AddVerificationMethod {
+        did: String,
+        fragment: String,
+        algorithm: String,
+        confirmation: ConfirmationParams,
+    },
+    UpdateVerificationMethod {
+        did: String,
+        method_id: String,
+        algorithm: String,
+        confirmation: ConfirmationParams,
+    },
+    RemoveVerificationMethod {
+        did: String,
+        method_id: String,
+        confirmation: ConfirmationParams,
+    },
+    AddVerificationRelationship {
+        did: String,
+        relationship: String,
+        method_id: String,
+        confirmation: ConfirmationParams,
+    },
+    RemoveVerificationRelationship {
+        did: String,
+        relationship: String,
+        method_id: String,
+        confirmation: ConfirmationParams,
+    },
+    AddService {
+        did: String,
+        id: String,
+        service_type: String,
+        endpoint: String,
+        confirmation: ConfirmationParams,
+    },
+    UpdateService {
+        did: String,
+        id: String,
+        service_type: String,
+        endpoint: String,
+        confirmation: ConfirmationParams,
+    },
+    RemoveService {
+        did: String,
+        id: String,
+        confirmation: ConfirmationParams,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SignDidParams {
+    did: String,
+    method_id: String,
+    payload_hex: String,
+    confirmation: ConfirmationParams,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeactivateDidParams {
+    did: String,
+    confirmation: ConfirmationParams,
+}
+
+fn did_update(params: DidUpdateParams) -> Option<(String, DidUpdate, DidOperationConfirmation)> {
+    let value = match params {
+        DidUpdateParams::AddAlsoKnownAs {
+            did,
+            value,
+            confirmation,
+        } => (
+            did,
+            DidUpdate::AddAlsoKnownAs { value },
+            confirmation.into(),
+        ),
+        DidUpdateParams::RemoveAlsoKnownAs {
+            did,
+            value,
+            confirmation,
+        } => (
+            did,
+            DidUpdate::RemoveAlsoKnownAs { value },
+            confirmation.into(),
+        ),
+        DidUpdateParams::AddVerificationMethod {
+            did,
+            fragment,
+            algorithm,
+            confirmation,
+        } => (
+            did,
+            DidUpdate::AddVerificationMethod {
+                fragment,
+                algorithm: did_key_algorithm(&algorithm)?,
+            },
+            confirmation.into(),
+        ),
+        DidUpdateParams::UpdateVerificationMethod {
+            did,
+            method_id,
+            algorithm,
+            confirmation,
+        } => (
+            did,
+            DidUpdate::UpdateVerificationMethod {
+                method_id,
+                algorithm: did_key_algorithm(&algorithm)?,
+            },
+            confirmation.into(),
+        ),
+        DidUpdateParams::RemoveVerificationMethod {
+            did,
+            method_id,
+            confirmation,
+        } => (
+            did,
+            DidUpdate::RemoveVerificationMethod { method_id },
+            confirmation.into(),
+        ),
+        DidUpdateParams::AddVerificationRelationship {
+            did,
+            relationship,
+            method_id,
+            confirmation,
+        } => (
+            did,
+            DidUpdate::AddVerificationRelationship {
+                relationship: VerificationRelationship::parse(&relationship)?,
+                method_id,
+            },
+            confirmation.into(),
+        ),
+        DidUpdateParams::RemoveVerificationRelationship {
+            did,
+            relationship,
+            method_id,
+            confirmation,
+        } => (
+            did,
+            DidUpdate::RemoveVerificationRelationship {
+                relationship: VerificationRelationship::parse(&relationship)?,
+                method_id,
+            },
+            confirmation.into(),
+        ),
+        DidUpdateParams::AddService {
+            did,
+            id,
+            service_type,
+            endpoint,
+            confirmation,
+        } => (
+            did,
+            DidUpdate::AddService {
+                id,
+                service_type,
+                endpoint,
+            },
+            confirmation.into(),
+        ),
+        DidUpdateParams::UpdateService {
+            did,
+            id,
+            service_type,
+            endpoint,
+            confirmation,
+        } => (
+            did,
+            DidUpdate::UpdateService {
+                id,
+                service_type,
+                endpoint,
+            },
+            confirmation.into(),
+        ),
+        DidUpdateParams::RemoveService {
+            did,
+            id,
+            confirmation,
+        } => (did, DidUpdate::RemoveService { id }, confirmation.into()),
+    };
+    Some(value)
+}
+
+fn did_key_algorithm(value: &str) -> Option<DidKeyAlgorithm> {
+    match value {
+        "ed25519" => Some(DidKeyAlgorithm::Ed25519),
+        "p256" => Some(DidKeyAlgorithm::P256),
+        _ => None,
+    }
 }
 
 #[derive(Serialize)]
@@ -1807,6 +2191,62 @@ fn did_error(id: Option<String>, error: DidOperationError) -> Response {
             "invalid_response",
             "resolved DID document does not match the requested subject",
         ),
+        DidOperationError::InvalidNetwork => Response::error(
+            id,
+            "unsupported_network",
+            "Midnight DID network is unsupported",
+        ),
+        DidOperationError::EmptyPayload | DidOperationError::PayloadTooLarge => {
+            Response::error(id, "invalid_argument", "DID signing payload is invalid")
+        }
+        DidOperationError::ConfirmationRequired | DidOperationError::InvalidConfirmation => {
+            Response::error(
+                id,
+                "confirmation_required",
+                "valid explicit confirmation is required",
+            )
+        }
+        DidOperationError::Lifecycle(error) => match error {
+            DidLifecyclePortError::Unavailable | DidLifecyclePortError::ProtectionUnavailable => {
+                Response::error(
+                    id,
+                    "capability_unavailable",
+                    "DID lifecycle capability is unavailable",
+                )
+            }
+            DidLifecyclePortError::UnsupportedNetwork => Response::error(
+                id,
+                "unsupported_network",
+                "DID network does not support standalone lifecycle operations",
+            ),
+            DidLifecyclePortError::UnsupportedAlgorithm => Response::error(
+                id,
+                "unsupported_algorithm",
+                "DID key algorithm is unsupported",
+            ),
+            DidLifecyclePortError::NotManaged => Response::error(
+                id,
+                "failed_precondition",
+                "DID is not managed by the current protected session",
+            ),
+            DidLifecyclePortError::NotFound => {
+                Response::error(id, "not_found", "DID document entry was not found")
+            }
+            DidLifecyclePortError::Conflict => Response::error(
+                id,
+                "conflict",
+                "DID document update conflicts with current state",
+            ),
+            DidLifecyclePortError::Deactivated => {
+                Response::error(id, "failed_precondition", "DID is deactivated")
+            }
+            DidLifecyclePortError::Locked => {
+                Response::error(id, "wallet_locked", "wallet is locked")
+            }
+            DidLifecyclePortError::InvalidOperation => {
+                Response::error(id, "invalid_argument", "DID lifecycle operation is invalid")
+            }
+        },
         DidOperationError::Resolution(error) => match error {
             DidResolutionPortError::Unavailable => Response::error(
                 id,
@@ -2428,13 +2868,14 @@ fn capability_manifest() -> Value {
         { "method": "identity.login", "status": "queued" },
         { "method": "credential.request", "status": "queued" },
         { "method": "credential.verify", "status": "queued" },
-        { "method": "did.create", "status": "queued" },
+        { "method": "did.create", "status": "ready", "mode": "development_only", "networks": ["undeployed"], "initialMethods": ["ed25519", "p256"] },
         { "method": "did.resolve", "status": "ready", "mode": "standalone", "sources": ["standalone", "live"] },
         { "method": "did.list", "status": "ready", "mode": "standalone", "scope": "active_profile" },
         { "method": "did.get", "status": "ready", "mode": "standalone", "scope": "active_profile" },
         { "method": "did.forget", "status": "ready", "mode": "standalone", "scope": "active_profile" },
-        { "method": "did.update", "status": "queued" },
-        { "method": "did.deactivate", "status": "queued" },
+        { "method": "did.update", "status": "ready", "mode": "development_only", "operations": ["addAlsoKnownAs", "removeAlsoKnownAs", "addVerificationMethod", "updateVerificationMethod", "removeVerificationMethod", "addVerificationRelationship", "removeVerificationRelationship", "addService", "updateService", "removeService"], "confirmationRequired": true },
+        { "method": "did.sign", "status": "ready", "mode": "development_only", "algorithms": ["ed25519", "p256"], "confirmationRequired": true },
+        { "method": "did.deactivate", "status": "ready", "mode": "development_only", "confirmationRequired": true },
         { "method": "diagnostics.snapshot", "status": "queued" }
     ])
 }
@@ -2772,6 +3213,238 @@ mod tests {
         assert_eq!(cleaned[1]["error"]["code"], "confirmation_required");
         assert_eq!(cleaned[2]["result"]["deleted"], true);
         assert_eq!(cleaned[3]["result"]["keys"], json!([]));
+    }
+
+    #[test]
+    fn exercises_the_complete_standalone_did_lifecycle_without_key_handles() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let setup = execute_with_wallet(
+            &wallet,
+            concat!(
+                r#"{"protocol":"oxid.headless.v1","id":"did-profile","method":"wallet.profile.create","params":{"displayName":"DID flow"}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"did-select","method":"wallet.profile.select","params":{"profileId":"profile_missing"}}"#,
+            ),
+        );
+        let profile_id = setup[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile id");
+        let initialize = format!(
+            "{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "did-select-real",
+                "method": "wallet.profile.select",
+                "params": { "profileId": profile_id },
+            }),
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "did-security",
+                "method": "wallet.security.initialize",
+                "params": {},
+            }),
+        );
+        let initialized = execute_with_wallet(&wallet, &initialize);
+        assert_eq!(initialized[0]["ok"], true);
+        assert_eq!(initialized[1]["result"]["security"]["state"], "unlocked");
+
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"did-create","method":"did.create","params":{}}"#,
+        );
+        assert_eq!(created[0]["ok"], true, "unexpected response: {created:?}");
+        let did = created[0]["result"]["didRecord"]["document"]["id"]
+            .as_str()
+            .expect("created DID")
+            .to_owned();
+        assert_eq!(
+            created[0]["result"]["didRecord"]["document"]["verificationMethods"]
+                .as_array()
+                .expect("methods")
+                .len(),
+            2
+        );
+        assert!(!created[0].to_string().contains("key_"));
+
+        let unconfirmed = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "did-update-unconfirmed",
+                "method": "did.update",
+                "params": {
+                    "operation": "addAlsoKnownAs",
+                    "did": did,
+                    "value": "https://example.test/denied",
+                    "confirmation": {
+                        "title": "Update DID document",
+                        "summary": "This update was not authorized",
+                        "confirmed": false,
+                    },
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(unconfirmed[0]["error"]["code"], "confirmation_required");
+
+        let locked = execute_with_wallet(
+            &wallet,
+            &format!(
+                "{}\n{}",
+                json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "id": "did-lock",
+                    "method": "wallet.security.lock",
+                    "params": {},
+                }),
+                json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "id": "did-sign-locked",
+                    "method": "did.sign",
+                    "params": {
+                        "did": did,
+                        "methodId": "#auth-1",
+                        "payloadHex": "01",
+                        "confirmation": {
+                            "title": "Sign identity challenge",
+                            "summary": "This operation must fail while custody is locked",
+                            "confirmed": true,
+                        },
+                    },
+                }),
+            ),
+        );
+        assert_eq!(locked[1]["error"]["code"], "wallet_locked");
+        let unlocked = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"did-unlock","method":"wallet.security.unlock","params":{}}"#,
+        );
+        assert_eq!(unlocked[0]["result"]["security"]["state"], "unlocked");
+
+        let operations = [
+            json!({ "operation": "addAlsoKnownAs", "did": did, "value": "https://example.test/alice" }),
+            json!({ "operation": "addVerificationMethod", "did": did, "fragment": "recovery-1", "algorithm": "ed25519" }),
+            json!({ "operation": "updateVerificationMethod", "did": did, "methodId": "#recovery-1", "algorithm": "p256" }),
+            json!({ "operation": "addVerificationRelationship", "did": did, "relationship": "assertionMethod", "methodId": "#recovery-1" }),
+            json!({ "operation": "addService", "did": did, "id": "#messages", "serviceType": "MessagingService", "endpoint": "https://example.test/messages" }),
+            json!({ "operation": "updateService", "did": did, "id": "#messages", "serviceType": "DIDCommMessaging", "endpoint": "https://example.test/didcomm" }),
+        ];
+        for (index, mut params) in operations.into_iter().enumerate() {
+            params["confirmation"] = json!({
+                "title": "Update DID document",
+                "summary": "Authorize this visible standalone DID change",
+                "confirmed": true,
+            });
+            let response = execute_with_wallet(
+                &wallet,
+                &json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "id": format!("did-update-{index}"),
+                    "method": "did.update",
+                    "params": params,
+                })
+                .to_string(),
+            );
+            assert_eq!(response[0]["ok"], true, "unexpected response: {response:?}");
+            assert!(!response[0].to_string().contains("key_"));
+        }
+
+        let signed = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "did-sign",
+                "method": "did.sign",
+                "params": {
+                    "did": did,
+                    "methodId": "#auth-1",
+                    "payloadHex": "6368616c6c656e6765",
+                    "confirmation": {
+                        "title": "Sign identity challenge",
+                        "summary": "Authorize the verifier challenge for this DID",
+                        "confirmed": true,
+                    },
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(signed[0]["result"]["algorithm"], "ed25519");
+        assert_eq!(
+            signed[0]["result"]["signatureHex"]
+                .as_str()
+                .expect("signature")
+                .len(),
+            128
+        );
+        assert!(!signed[0].to_string().contains("key_"));
+
+        let removals = [
+            json!({ "operation": "removeVerificationRelationship", "did": did, "relationship": "assertionMethod", "methodId": "#recovery-1" }),
+            json!({ "operation": "removeVerificationMethod", "did": did, "methodId": "#recovery-1" }),
+            json!({ "operation": "removeService", "did": did, "id": "#messages" }),
+            json!({ "operation": "removeAlsoKnownAs", "did": did, "value": "https://example.test/alice" }),
+        ];
+        for (index, mut params) in removals.into_iter().enumerate() {
+            params["confirmation"] = json!({
+                "title": "Update DID document",
+                "summary": "Authorize this visible standalone DID change",
+                "confirmed": true,
+            });
+            let response = execute_with_wallet(
+                &wallet,
+                &json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "id": format!("did-remove-{index}"),
+                    "method": "did.update",
+                    "params": params,
+                })
+                .to_string(),
+            );
+            assert_eq!(response[0]["ok"], true, "unexpected response: {response:?}");
+        }
+
+        let deactivated = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "did-deactivate",
+                "method": "did.deactivate",
+                "params": {
+                    "did": did,
+                    "confirmation": {
+                        "title": "Deactivate DID",
+                        "summary": "Permanently disable standalone DID operations",
+                        "confirmed": true,
+                    },
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            deactivated[0]["result"]["didRecord"]["documentMetadata"]["deactivated"],
+            true
+        );
+
+        let denied = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "did-sign-deactivated",
+                "method": "did.sign",
+                "params": {
+                    "did": did,
+                    "methodId": "#auth-1",
+                    "payloadHex": "01",
+                    "confirmation": {
+                        "title": "Sign after deactivation",
+                        "summary": "This operation must fail closed",
+                        "confirmed": true,
+                    },
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(denied[0]["error"]["code"], "failed_precondition");
     }
 
     #[test]
