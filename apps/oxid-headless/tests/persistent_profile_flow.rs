@@ -48,7 +48,8 @@ impl ProcessHarness {
             .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
             .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
             .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
-            .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH");
+            .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
+            .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH");
         for (key, value) in environment {
             command.env(key, value);
         }
@@ -99,9 +100,29 @@ impl ProcessHarness {
     }
 }
 
+fn wait_for_shielded_sync(process: &mut ProcessHarness, prefix: &str) -> Value {
+    for attempt in 0..200 {
+        let response = process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": format!("{prefix}-{attempt}"),
+            "method": "wallet.shielded.sync.status",
+            "params": {}
+        }));
+        let state = response["result"]["shieldedSync"]["state"]
+            .as_str()
+            .expect("shielded status should have a state");
+        if !matches!(state, "syncing" | "cached") {
+            return response;
+        }
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("shielded worker did not reach a terminal state");
+}
+
 const LIVE_ADDRESS: &str =
     "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
 const NIGHT_TOKEN_TYPE: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+const FOREIGN_ZSWAP_OUTPUT: &str = "6d69646e696768743a6576656e745b76395d3a0400a90200000000000000000000000000000000000000000000000000000000000000000000000001c4ef4c0723d6e09b1cac903d1a717274bd2c0633cb9c3cf69047ce5655dc2be9017fe874ddd951049b65bb24127764920e85d04bd1ff724d390d4022b83a6157ed0000000000000000000000000000000000000000000000000000000000000000140019d316b8bc931a9fb308370cc43c6bf7fed9e484a5a7e961ec4b68fd9524e6020100";
 
 // The upstream handshake callback fixes a large HTTP response as its error
 // type; this test must use that signature to negotiate the GraphQL subprotocol.
@@ -267,6 +288,119 @@ fn spawn_indexer_fixture(
     (endpoint, handle)
 }
 
+// The upstream handshake callback fixes a large HTTP response as its error
+// type; this test must use that signature to negotiate the GraphQL subprotocol.
+#[allow(clippy::result_large_err)]
+fn spawn_shielded_indexer_fixture() -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .expect("shielded fixture listener should bind");
+    listener
+        .set_nonblocking(true)
+        .expect("shielded fixture listener should become nonblocking");
+    let port = listener
+        .local_addr()
+        .expect("shielded fixture address should be available")
+        .port();
+    let endpoint = format!("ws://127.0.0.1:{port}/api/v4/graphql/ws");
+    let handle = thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("shielded fixture runtime should build");
+        runtime.block_on(async move {
+            let listener =
+                tokio::net::TcpListener::from_std(listener).expect("listener should convert");
+            for expected_start in [0, 1] {
+                let (stream, _) = listener
+                    .accept()
+                    .await
+                    .expect("shielded fixture should accept client");
+                let callback = |request: &Request, mut response: Response| {
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get("Sec-WebSocket-Protocol")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("graphql-transport-ws")
+                    );
+                    response.headers_mut().insert(
+                        "Sec-WebSocket-Protocol",
+                        HeaderValue::from_static("graphql-transport-ws"),
+                    );
+                    Ok(response)
+                };
+                let mut socket = accept_hdr_async(stream, callback)
+                    .await
+                    .expect("shielded fixture handshake should succeed");
+                let _ = socket
+                    .next()
+                    .await
+                    .expect("connection init should arrive")
+                    .expect("connection init should be readable");
+                socket
+                    .send(Message::Text(
+                        json!({ "type": "connection_ack" }).to_string().into(),
+                    ))
+                    .await
+                    .expect("ack should send");
+                let subscribe = socket
+                    .next()
+                    .await
+                    .expect("subscribe should arrive")
+                    .expect("subscribe should be readable");
+                let subscribe: Value = serde_json::from_str(
+                    subscribe
+                        .into_text()
+                        .expect("subscribe should be text")
+                        .as_str(),
+                )
+                .expect("subscribe should be JSON");
+                assert_eq!(subscribe["payload"]["variables"]["id"], expected_start);
+                assert!(
+                    subscribe["payload"]["query"]
+                        .as_str()
+                        .is_some_and(|query| query.contains("zswapLedgerEvents"))
+                );
+                if expected_start == 0 {
+                    socket
+                        .send(Message::Text(
+                            json!({
+                                "type": "next",
+                                "id": "oxid-shielded",
+                                "payload": {
+                                    "data": {
+                                        "zswapLedgerEvents": {
+                                            "__typename": "ZswapOutput",
+                                            "id": 0,
+                                            "maxId": 0,
+                                            "raw": FOREIGN_ZSWAP_OUTPUT
+                                        }
+                                    }
+                                }
+                            })
+                            .to_string()
+                            .into(),
+                        ))
+                        .await
+                        .expect("shielded event should send");
+                } else {
+                    socket
+                        .send(Message::Text(
+                            json!({ "type": "complete", "id": "oxid-shielded" })
+                                .to_string()
+                                .into(),
+                        ))
+                        .await
+                        .expect("shielded completion should send");
+                }
+                let _ = socket.next().await;
+            }
+        });
+    });
+    (endpoint, handle)
+}
+
 async fn send_fixture_event<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>, data: Value)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -404,6 +538,7 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
         .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
         .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
         .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
+        .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
         .output()
         .expect("headless wallet should report startup failure");
 
@@ -414,31 +549,44 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
 }
 
 #[test]
-fn executable_accepts_dust_checkpoints_only_for_the_complete_standalone_stack() {
+fn executable_accepts_private_checkpoints_only_for_supported_live_stacks() {
     let store = TestStore::new();
     let dust_path = store.root.join("private/dust-checkpoints.bin");
     let dust_path = dust_path
         .to_str()
         .expect("fixture checkpoint path is Unicode");
-    let output = Command::new(env!("CARGO_BIN_EXE_oxid-headless"))
-        .env("OXID_PROFILE_STORE_PATH", &store.path)
-        .env("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH", dust_path)
-        .env_remove("OXID_MIDNIGHT_NETWORK_ID")
-        .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
-        .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
-        .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
-        .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
-        .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
-        .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
-        .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
-        .output()
-        .expect("headless wallet reports an incomplete standalone boundary");
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8(output.stderr)
-            .expect("startup error is UTF-8")
-            .contains("requires the read-only indexer values")
-    );
+    let shielded_path = store.root.join("private/shielded-checkpoints.bin");
+    let shielded_path = shielded_path
+        .to_str()
+        .expect("fixture checkpoint path is Unicode");
+    for (variable, path) in [
+        ("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH", dust_path),
+        ("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH", shielded_path),
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        command
+            .env("OXID_PROFILE_STORE_PATH", &store.path)
+            .env_remove("OXID_MIDNIGHT_NETWORK_ID")
+            .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
+            .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
+            .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
+            .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
+            .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
+            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+            .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
+            .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
+            .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
+            .env(variable, path);
+        let output = command
+            .output()
+            .expect("headless wallet reports an incomplete live boundary");
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8(output.stderr)
+                .expect("startup error is UTF-8")
+                .contains("requires the read-only indexer values")
+        );
+    }
 
     let process = ProcessHarness::spawn_with_environment(
         &store.path,
@@ -456,8 +604,138 @@ fn executable_accepts_dust_checkpoints_only_for_the_complete_standalone_stack() 
             ("OXID_MIDNIGHT_PROOF_SERVER_URL", "http://127.0.0.1:16300"),
             ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
             ("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH", dust_path),
+            ("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH", shielded_path),
         ],
     );
+    process.quit();
+
+    let process = ProcessHarness::spawn_with_environment(
+        &store.path,
+        &[
+            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            (
+                "OXID_MIDNIGHT_INDEXER_WS_URL",
+                "ws://127.0.0.1:18088/api/v1/graphql/ws",
+            ),
+            ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
+            ("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH", shielded_path),
+        ],
+    );
+    process.quit();
+}
+
+#[test]
+fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
+    let store = TestStore::new();
+    let private_directory = store.root.join("private");
+    fs::create_dir_all(&private_directory).expect("private fixture directory is created");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::set_permissions(&private_directory, fs::Permissions::from_mode(0o700))
+            .expect("private fixture directory permissions are restricted");
+    }
+    let shielded_path = private_directory.join("shielded-checkpoints.bin");
+    fs::write(&shielded_path, b"corrupt-shielded-checkpoint")
+        .expect("corrupt fixture checkpoint is written");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::set_permissions(&shielded_path, fs::Permissions::from_mode(0o600))
+            .expect("private fixture checkpoint permissions are restricted");
+    }
+    let shielded_path_text = shielded_path
+        .to_str()
+        .expect("fixture checkpoint path is Unicode");
+    let (endpoint, server) = spawn_shielded_indexer_fixture();
+    let mut process = ProcessHarness::spawn_with_environment(
+        &store.path,
+        &[
+            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_INDEXER_WS_URL", &endpoint),
+            ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
+            ("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH", shielded_path_text),
+        ],
+    );
+    let created = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "shielded-live-create",
+        "method": "wallet.profile.create",
+        "params": { "displayName": "Live shielded flow" }
+    }));
+    let profile_id = created["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile has an identifier");
+    assert_eq!(
+        process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "shielded-live-select",
+            "method": "wallet.profile.select",
+            "params": { "profileId": profile_id }
+        }))["ok"],
+        true
+    );
+    assert_eq!(
+        process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "shielded-live-initialize",
+            "method": "wallet.security.initialize",
+            "params": {}
+        }))["result"]["security"]["state"],
+        "unlocked"
+    );
+
+    assert_eq!(
+        process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "shielded-live-start",
+            "method": "wallet.shielded.sync.start",
+            "params": {}
+        }))["result"]["shieldedSync"]["state"],
+        "syncing"
+    );
+    let rebuilt = wait_for_shielded_sync(&mut process, "shielded-live-rebuild");
+    let rebuilt = &rebuilt["result"]["shieldedSync"];
+    assert_eq!(rebuilt["state"], "synced");
+    assert_eq!(rebuilt["currentCursor"], 0);
+    assert_eq!(rebuilt["targetCursor"], 0);
+    assert_eq!(rebuilt["eventsProcessed"], 1);
+    assert_eq!(rebuilt["ownedNoteCount"], 0);
+    assert_eq!(rebuilt["commitmentCount"], 1);
+    assert_eq!(rebuilt["balances"], json!([]));
+    assert!(
+        fs::metadata(&shielded_path)
+            .expect("replacement checkpoint exists")
+            .len()
+            > b"corrupt-shielded-checkpoint".len() as u64
+    );
+
+    assert_eq!(
+        process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "shielded-live-resume",
+            "method": "wallet.shielded.sync.start",
+            "params": {}
+        }))["result"]["shieldedSync"]["state"],
+        "syncing"
+    );
+    let refreshed = wait_for_shielded_sync(&mut process, "shielded-live-current");
+    let refreshed = &refreshed["result"]["shieldedSync"];
+    assert_eq!(refreshed["state"], "synced");
+    assert_eq!(refreshed["currentCursor"], 0);
+    assert_eq!(refreshed["targetCursor"], 0);
+    assert_eq!(refreshed["eventsProcessed"], 0);
+    assert_eq!(refreshed["ownedNoteCount"], 0);
+    assert_eq!(refreshed["commitmentCount"], 1);
+    assert_eq!(refreshed["failure"], Value::Null);
+    let encoded = serde_json::to_string(refreshed).expect("shielded response serializes");
+    assert!(!encoded.contains(shielded_path_text));
+    assert!(!encoded.contains(FOREIGN_ZSWAP_OUTPUT));
+    assert!(!encoded.contains("seed"));
+
+    server.join().expect("shielded fixture exits");
     process.quit();
 }
 

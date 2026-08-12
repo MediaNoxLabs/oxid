@@ -3,21 +3,38 @@
 //! Off-renderer, profile-scoped shielded synchronization controllers.
 
 use std::{
+    cell::Cell,
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
 };
 
+use midnight_zswap::keys::{SecretKeys as ZswapSecretKeys, Seed as ZswapSeed};
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
     WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent, WalletSecurityPortError,
     WalletShieldedSyncPortError,
 };
 use oxid_wallet_domain::{
-    ChainNetworkId, WalletProfileId, WalletShieldedSyncSnapshot, WalletShieldedSyncState,
-    WalletShieldedTokenBalance,
+    ChainNetworkId, WalletProfileId, WalletShieldedSyncFailure, WalletShieldedSyncSnapshot,
+    WalletShieldedSyncState, WalletShieldedTokenBalance,
 };
 
-use crate::{BIP44_PURPOSE, MIDNIGHT_COIN_TYPE, ZSWAP_INDEX, ZSWAP_ROLE};
+use crate::{
+    BIP44_PURPOSE, MIDNIGHT_COIN_TYPE, ZSWAP_INDEX, ZSWAP_ROLE,
+    indexer::MidnightIndexerConfig,
+    shielded::project_zswap_state,
+    shielded_checkpoint::{
+        MidnightShieldedCheckpointStore, ShieldedCheckpointStoreError, StoredShieldedCheckpoint,
+    },
+    shielded_transport::{
+        ShieldedSyncProgress, ShieldedTransportError, source_fingerprint,
+        synchronize_shielded_with_control,
+    },
+};
 
 const SIMULATED_TARGET_CURSOR: u64 = 2;
 const SIMULATED_TOKEN_TYPE: &str =
@@ -219,6 +236,543 @@ where
     }
 }
 
+struct LiveSession {
+    snapshot: WalletShieldedSyncSnapshot,
+    cancellation: Arc<AtomicBool>,
+    running: bool,
+}
+
+/// Native live controller. Transport, replay, and private checkpoint I/O run
+/// only on a dedicated worker thread.
+pub(crate) struct LiveMidnightShieldedSyncController<C, K> {
+    config: MidnightIndexerConfig,
+    checkpoints: Arc<dyn MidnightShieldedCheckpointStore>,
+    clock: Arc<C>,
+    keys: Arc<K>,
+    sessions: Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+}
+
+impl<C, K> LiveMidnightShieldedSyncController<C, K> {
+    pub(crate) fn new(
+        config: MidnightIndexerConfig,
+        checkpoints: Arc<dyn MidnightShieldedCheckpointStore>,
+        clock: Arc<C>,
+        keys: Arc<K>,
+    ) -> Self {
+        Self {
+            config,
+            checkpoints,
+            clock,
+            keys,
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+impl<C, K> MidnightShieldedSyncController for LiveMidnightShieldedSyncController<C, K>
+where
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + 'static,
+{
+    fn status(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &ChainNetworkId,
+    ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        self.sessions
+            .lock()
+            .map_err(|_| WalletShieldedSyncPortError::Unavailable)?
+            .get(&(profile_id.clone(), network_id.clone()))
+            .map(|session| session.snapshot.clone())
+            .map_or_else(
+                || Ok(WalletShieldedSyncSnapshot::never_synced(network_id.clone())),
+                Ok,
+            )
+    }
+
+    fn start(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &ChainNetworkId,
+        account_index: u32,
+    ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        if network_id != self.config.network_id() {
+            return Err(WalletShieldedSyncPortError::UnsupportedNetwork);
+        }
+        let key = (profile_id.clone(), network_id.clone());
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let started = {
+            let mut sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| WalletShieldedSyncPortError::Unavailable)?;
+            if sessions.get(&key).is_some_and(|session| session.running) {
+                return Err(WalletShieldedSyncPortError::Conflict);
+            }
+            let previous = sessions
+                .get(&key)
+                .map(|session| session.snapshot.clone())
+                .unwrap_or_else(|| WalletShieldedSyncSnapshot::never_synced(network_id.clone()));
+            let started = snapshot(
+                network_id.clone(),
+                WalletShieldedSyncState::Syncing,
+                previous.current_cursor(),
+                previous.target_cursor(),
+                0,
+                previous.owned_note_count(),
+                previous.commitment_count(),
+                previous.balances().to_vec(),
+                previous.updated_at(),
+            )?;
+            sessions.insert(
+                key.clone(),
+                LiveSession {
+                    snapshot: started.clone(),
+                    cancellation: Arc::clone(&cancellation),
+                    running: true,
+                },
+            );
+            started
+        };
+
+        let config = self.config.clone();
+        let checkpoints = Arc::clone(&self.checkpoints);
+        let clock = Arc::clone(&self.clock);
+        let keys = Arc::clone(&self.keys);
+        let sessions = Arc::clone(&self.sessions);
+        let profile = profile_id.clone();
+        let network = network_id.clone();
+        let worker_cancellation = Arc::clone(&cancellation);
+        let spawn = thread::Builder::new()
+            .name("oxid-midnight-shielded-sync".to_owned())
+            .spawn(move || {
+                run_live_sync(
+                    &config,
+                    checkpoints.as_ref(),
+                    clock.as_ref(),
+                    keys.as_ref(),
+                    &sessions,
+                    &profile,
+                    &network,
+                    account_index,
+                    &worker_cancellation,
+                );
+            });
+        if spawn.is_err() {
+            finish_with_failure(
+                &self.sessions,
+                &key,
+                &cancellation,
+                WalletShieldedSyncFailure::TransportUnavailable,
+            );
+            return Err(WalletShieldedSyncPortError::Unavailable);
+        }
+        Ok(started)
+    }
+
+    fn cancel(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &ChainNetworkId,
+    ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        let key = (profile_id.clone(), network_id.clone());
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| WalletShieldedSyncPortError::Unavailable)?;
+        let session = sessions
+            .get_mut(&key)
+            .ok_or(WalletShieldedSyncPortError::Conflict)?;
+        if !session.running {
+            return Err(WalletShieldedSyncPortError::Conflict);
+        }
+        session.cancellation.store(true, Ordering::Release);
+        session.snapshot = snapshot(
+            network_id.clone(),
+            WalletShieldedSyncState::Cancelled,
+            session.snapshot.current_cursor(),
+            session.snapshot.target_cursor(),
+            session.snapshot.events_processed(),
+            session.snapshot.owned_note_count(),
+            session.snapshot.commitment_count(),
+            session.snapshot.balances().to_vec(),
+            session.snapshot.updated_at(),
+        )?;
+        Ok(session.snapshot.clone())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_live_sync<C, K>(
+    config: &MidnightIndexerConfig,
+    checkpoints: &dyn MidnightShieldedCheckpointStore,
+    clock: &C,
+    keys: &K,
+    sessions: &Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+    profile_id: &WalletProfileId,
+    network_id: &ChainNetworkId,
+    account_index: u32,
+    cancellation: &Arc<AtomicBool>,
+) where
+    C: ClockPort,
+    K: WalletDerivedSecretUsePort,
+{
+    let key = (profile_id.clone(), network_id.clone());
+    let path = match shielded_path(account_index) {
+        Ok(path) => path,
+        Err(_) => {
+            finish_with_failure(
+                sessions,
+                &key,
+                cancellation,
+                WalletShieldedSyncFailure::InvalidChainState,
+            );
+            return;
+        }
+    };
+    let mut sync_result = None;
+    let security_result = keys.use_derived_secret(profile_id, &path, &mut |seed| {
+        sync_result = Some(sync_live_with_seed(
+            config,
+            checkpoints,
+            clock,
+            sessions,
+            &key,
+            cancellation,
+            seed,
+        ));
+        Ok(())
+    });
+    let result = match security_result {
+        Ok(()) => sync_result.unwrap_or(Err(ShieldedTransportError::InvalidData)),
+        Err(error) => {
+            finish_with_failure(sessions, &key, cancellation, security_failure(error));
+            return;
+        }
+    };
+    match result {
+        Ok(snapshot) => finish_with_snapshot(sessions, &key, cancellation, snapshot),
+        Err(ShieldedTransportError::Cancelled) => {
+            finish_cancelled(sessions, &key, cancellation);
+        }
+        Err(error) => finish_with_failure(sessions, &key, cancellation, sync_failure(error)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sync_live_with_seed<C>(
+    config: &MidnightIndexerConfig,
+    checkpoints: &dyn MidnightShieldedCheckpointStore,
+    clock: &C,
+    sessions: &Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+    key: &(WalletProfileId, ChainNetworkId),
+    cancellation: &Arc<AtomicBool>,
+    seed: &[u8; 32],
+) -> Result<WalletShieldedSyncSnapshot, ShieldedTransportError>
+where
+    C: ClockPort,
+{
+    if cancellation.load(Ordering::Acquire) {
+        return Err(ShieldedTransportError::Cancelled);
+    }
+    let zswap_keys = ZswapSecretKeys::from(ZswapSeed::from(*seed));
+    let source = source_fingerprint(config.websocket_url());
+    let latest = match checkpoints.load(&key.1, &zswap_keys, &source) {
+        Ok(checkpoint) => checkpoint,
+        Err(ShieldedCheckpointStoreError::InvalidData) => None,
+        Err(ShieldedCheckpointStoreError::Unavailable) => {
+            return Err(ShieldedTransportError::Storage);
+        }
+    };
+    if let Some(checkpoint) = latest.as_ref() {
+        let cached = progress_snapshot(
+            &key.1,
+            WalletShieldedSyncState::Cached,
+            checkpoint.current_cursor,
+            checkpoint.target_cursor,
+            0,
+            &checkpoint.state,
+            checkpoint.updated_at,
+        )?;
+        update_running_snapshot(sessions, key, cancellation, cached)?;
+    }
+    if cancellation.load(Ordering::Acquire) {
+        return Err(ShieldedTransportError::Cancelled);
+    }
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| ShieldedTransportError::Unavailable)?;
+    runtime.block_on(async {
+        let emitted_progress = Cell::new(false);
+        let first = {
+            let mut observe = |progress: &ShieldedSyncProgress| {
+                emitted_progress.set(true);
+                observe_progress(
+                    checkpoints,
+                    clock,
+                    sessions,
+                    key,
+                    cancellation,
+                    &zswap_keys,
+                    &source,
+                    progress,
+                )
+            };
+            synchronize_shielded_with_control(
+                config.websocket_url(),
+                &zswap_keys,
+                latest.clone(),
+                cancellation,
+                &mut observe,
+            )
+            .await
+        };
+        let synchronized = match first {
+            Err(ShieldedTransportError::InvalidData)
+                if latest.is_some() && !emitted_progress.get() =>
+            {
+                let mut observe = |progress: &ShieldedSyncProgress| {
+                    observe_progress(
+                        checkpoints,
+                        clock,
+                        sessions,
+                        key,
+                        cancellation,
+                        &zswap_keys,
+                        &source,
+                        progress,
+                    )
+                };
+                synchronize_shielded_with_control(
+                    config.websocket_url(),
+                    &zswap_keys,
+                    None,
+                    cancellation,
+                    &mut observe,
+                )
+                .await?
+            }
+            Ok(synchronized) => synchronized,
+            Err(error) => return Err(error),
+        };
+        if cancellation.load(Ordering::Acquire) {
+            return Err(ShieldedTransportError::Cancelled);
+        }
+        let updated_at = clock
+            .now()
+            .map_err(|_| ShieldedTransportError::Unavailable)?;
+        progress_snapshot(
+            &key.1,
+            WalletShieldedSyncState::Synced,
+            synchronized.current_cursor,
+            synchronized.target_cursor,
+            u64::try_from(synchronized.events_processed)
+                .map_err(|_| ShieldedTransportError::InvalidData)?,
+            &synchronized.state,
+            updated_at,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn observe_progress<C>(
+    checkpoints: &dyn MidnightShieldedCheckpointStore,
+    clock: &C,
+    sessions: &Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+    key: &(WalletProfileId, ChainNetworkId),
+    cancellation: &Arc<AtomicBool>,
+    zswap_keys: &ZswapSecretKeys,
+    source: &[u8; 32],
+    progress: &ShieldedSyncProgress,
+) -> Result<(), ShieldedTransportError>
+where
+    C: ClockPort,
+{
+    if cancellation.load(Ordering::Acquire) {
+        return Err(ShieldedTransportError::Cancelled);
+    }
+    let updated_at = clock
+        .now()
+        .map_err(|_| ShieldedTransportError::Unavailable)?;
+    checkpoints
+        .save(
+            &key.1,
+            zswap_keys,
+            source,
+            &StoredShieldedCheckpoint {
+                current_cursor: progress.current_cursor,
+                target_cursor: progress.target_cursor,
+                updated_at,
+                state: progress.state.clone(),
+            },
+        )
+        .map_err(|_| ShieldedTransportError::Storage)?;
+    let status = progress_snapshot(
+        &key.1,
+        WalletShieldedSyncState::Syncing,
+        progress.current_cursor,
+        progress.target_cursor,
+        u64::try_from(progress.events_processed)
+            .map_err(|_| ShieldedTransportError::InvalidData)?,
+        &progress.state,
+        updated_at,
+    )?;
+    update_running_snapshot(sessions, key, cancellation, status)
+}
+
+fn update_running_snapshot(
+    sessions: &Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+    key: &(WalletProfileId, ChainNetworkId),
+    cancellation: &Arc<AtomicBool>,
+    snapshot: WalletShieldedSyncSnapshot,
+) -> Result<(), ShieldedTransportError> {
+    let mut sessions = sessions
+        .lock()
+        .map_err(|_| ShieldedTransportError::Unavailable)?;
+    let session = sessions
+        .get_mut(key)
+        .ok_or(ShieldedTransportError::Unavailable)?;
+    if !Arc::ptr_eq(&session.cancellation, cancellation) {
+        return Err(ShieldedTransportError::InvalidData);
+    }
+    if cancellation.load(Ordering::Acquire) {
+        return Err(ShieldedTransportError::Cancelled);
+    }
+    session.snapshot = snapshot;
+    Ok(())
+}
+
+fn finish_with_snapshot(
+    sessions: &Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+    key: &(WalletProfileId, ChainNetworkId),
+    cancellation: &Arc<AtomicBool>,
+    snapshot: WalletShieldedSyncSnapshot,
+) {
+    if let Ok(mut sessions) = sessions.lock()
+        && let Some(session) = sessions.get_mut(key)
+        && Arc::ptr_eq(&session.cancellation, cancellation)
+    {
+        if cancellation.load(Ordering::Acquire) {
+            if let Ok(cancelled) = cancelled_snapshot(key, session) {
+                session.snapshot = cancelled;
+            }
+        } else {
+            session.snapshot = snapshot;
+        }
+        session.running = false;
+    }
+}
+
+fn finish_cancelled(
+    sessions: &Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+    key: &(WalletProfileId, ChainNetworkId),
+    cancellation: &Arc<AtomicBool>,
+) {
+    if let Ok(mut sessions) = sessions.lock()
+        && let Some(session) = sessions.get_mut(key)
+        && Arc::ptr_eq(&session.cancellation, cancellation)
+    {
+        if let Ok(cancelled) = cancelled_snapshot(key, session) {
+            session.snapshot = cancelled;
+        }
+        session.running = false;
+    }
+}
+
+fn finish_with_failure(
+    sessions: &Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+    key: &(WalletProfileId, ChainNetworkId),
+    cancellation: &Arc<AtomicBool>,
+    failure: WalletShieldedSyncFailure,
+) {
+    if let Ok(mut sessions) = sessions.lock()
+        && let Some(session) = sessions.get_mut(key)
+        && Arc::ptr_eq(&session.cancellation, cancellation)
+    {
+        if cancellation.load(Ordering::Acquire) {
+            if let Ok(cancelled) = cancelled_snapshot(key, session) {
+                session.snapshot = cancelled;
+            }
+            session.running = false;
+            return;
+        }
+        let state = match (
+            session.snapshot.current_cursor(),
+            session.snapshot.target_cursor(),
+        ) {
+            (Some(current), Some(target)) if current == target => WalletShieldedSyncState::Cached,
+            _ => WalletShieldedSyncState::Stalled,
+        };
+        if let Ok(failed) = snapshot_with_failure(
+            key.1.clone(),
+            state,
+            session.snapshot.current_cursor(),
+            session.snapshot.target_cursor(),
+            session.snapshot.events_processed(),
+            session.snapshot.owned_note_count(),
+            session.snapshot.commitment_count(),
+            session.snapshot.balances().to_vec(),
+            session.snapshot.updated_at(),
+            Some(failure),
+        ) {
+            session.snapshot = failed;
+        }
+        session.running = false;
+    }
+}
+
+fn cancelled_snapshot(
+    key: &(WalletProfileId, ChainNetworkId),
+    session: &LiveSession,
+) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+    snapshot(
+        key.1.clone(),
+        WalletShieldedSyncState::Cancelled,
+        session.snapshot.current_cursor(),
+        session.snapshot.target_cursor(),
+        session.snapshot.events_processed(),
+        session.snapshot.owned_note_count(),
+        session.snapshot.commitment_count(),
+        session.snapshot.balances().to_vec(),
+        session.snapshot.updated_at(),
+    )
+}
+
+fn progress_snapshot(
+    network_id: &ChainNetworkId,
+    state: WalletShieldedSyncState,
+    current_cursor: u64,
+    target_cursor: u64,
+    events_processed: u64,
+    zswap_state: &midnight_zswap::local::State<midnight_storage::DefaultDB>,
+    updated_at: oxid_foundation::UnixTimestampMillis,
+) -> Result<WalletShieldedSyncSnapshot, ShieldedTransportError> {
+    let projection =
+        project_zswap_state(zswap_state).map_err(|_| ShieldedTransportError::InvalidData)?;
+    let balances = projection
+        .balances
+        .into_iter()
+        .map(|balance| {
+            WalletShieldedTokenBalance::new(balance.token_type_hex, balance.atomic_units)
+                .map_err(|_| ShieldedTransportError::InvalidData)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    snapshot(
+        network_id.clone(),
+        state,
+        Some(current_cursor),
+        Some(target_cursor),
+        events_processed,
+        Some(projection.owned_note_count),
+        Some(projection.commitment_count),
+        balances,
+        Some(updated_at),
+    )
+    .map_err(map_port_error)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn snapshot(
     network_id: ChainNetworkId,
@@ -231,7 +785,7 @@ fn snapshot(
     balances: Vec<WalletShieldedTokenBalance>,
     updated_at: Option<oxid_foundation::UnixTimestampMillis>,
 ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
-    WalletShieldedSyncSnapshot::new(
+    snapshot_with_failure(
         network_id,
         state,
         current_cursor,
@@ -242,6 +796,33 @@ fn snapshot(
         balances,
         updated_at,
         None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn snapshot_with_failure(
+    network_id: ChainNetworkId,
+    state: WalletShieldedSyncState,
+    current_cursor: Option<u64>,
+    target_cursor: Option<u64>,
+    events_processed: u64,
+    owned_note_count: Option<u64>,
+    commitment_count: Option<u64>,
+    balances: Vec<WalletShieldedTokenBalance>,
+    updated_at: Option<oxid_foundation::UnixTimestampMillis>,
+    failure: Option<WalletShieldedSyncFailure>,
+) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+    WalletShieldedSyncSnapshot::new(
+        network_id,
+        state,
+        current_cursor,
+        target_cursor,
+        events_processed,
+        owned_note_count,
+        commitment_count,
+        balances,
+        updated_at,
+        failure,
     )
     .map_err(|_| WalletShieldedSyncPortError::InvalidData)
 }
@@ -292,10 +873,58 @@ const fn map_security_error(error: WalletSecurityPortError) -> WalletShieldedSyn
     }
 }
 
+const fn security_failure(error: WalletSecurityPortError) -> WalletShieldedSyncFailure {
+    match error {
+        WalletSecurityPortError::NotInitialized => {
+            WalletShieldedSyncFailure::ProtectionNotInitialized
+        }
+        WalletSecurityPortError::Locked => WalletShieldedSyncFailure::ProtectionLocked,
+        WalletSecurityPortError::Unavailable => WalletShieldedSyncFailure::TransportUnavailable,
+        WalletSecurityPortError::AlreadyInitialized
+        | WalletSecurityPortError::NotFound
+        | WalletSecurityPortError::Conflict
+        | WalletSecurityPortError::UnsupportedAlgorithm
+        | WalletSecurityPortError::AuthorizationDenied
+        | WalletSecurityPortError::InvalidOperation => WalletShieldedSyncFailure::InvalidChainState,
+    }
+}
+
+const fn sync_failure(error: ShieldedTransportError) -> WalletShieldedSyncFailure {
+    match error {
+        ShieldedTransportError::Timeout => WalletShieldedSyncFailure::TimedOut,
+        ShieldedTransportError::Unavailable => WalletShieldedSyncFailure::TransportUnavailable,
+        ShieldedTransportError::Storage => WalletShieldedSyncFailure::StorageUnavailable,
+        ShieldedTransportError::Cancelled => WalletShieldedSyncFailure::TransportUnavailable,
+        ShieldedTransportError::InvalidData => WalletShieldedSyncFailure::InvalidChainState,
+    }
+}
+
+const fn map_port_error(error: WalletShieldedSyncPortError) -> ShieldedTransportError {
+    match error {
+        WalletShieldedSyncPortError::Unavailable => ShieldedTransportError::Unavailable,
+        WalletShieldedSyncPortError::Conflict
+        | WalletShieldedSyncPortError::UnsupportedNetwork
+        | WalletShieldedSyncPortError::ProtectionNotInitialized
+        | WalletShieldedSyncPortError::ProtectionLocked
+        | WalletShieldedSyncPortError::InvalidData => ShieldedTransportError::InvalidData,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::{net::TcpListener, sync::atomic::AtomicUsize, thread, time::Duration};
+
+    use futures::{SinkExt as _, StreamExt as _};
     use oxid_foundation::UnixTimestampMillis;
     use oxid_platform_ports::PlatformError;
+    use serde_json::{Value, json};
+    use tokio_tungstenite::{
+        accept_hdr_async,
+        tungstenite::{
+            Message,
+            handshake::server::{Request, Response},
+        },
+    };
 
     use super::*;
 
@@ -333,12 +962,114 @@ mod tests {
         }
     }
 
+    struct MemoryCheckpointStore {
+        checkpoint: Mutex<Option<StoredShieldedCheckpoint>>,
+        saves: AtomicUsize,
+    }
+
+    impl MidnightShieldedCheckpointStore for MemoryCheckpointStore {
+        fn load(
+            &self,
+            _: &ChainNetworkId,
+            _: &ZswapSecretKeys,
+            _: &[u8; 32],
+        ) -> Result<Option<StoredShieldedCheckpoint>, ShieldedCheckpointStoreError> {
+            self.checkpoint
+                .lock()
+                .map_err(|_| ShieldedCheckpointStoreError::Unavailable)
+                .map(|checkpoint| checkpoint.clone())
+        }
+
+        fn save(
+            &self,
+            _: &ChainNetworkId,
+            _: &ZswapSecretKeys,
+            _: &[u8; 32],
+            checkpoint: &StoredShieldedCheckpoint,
+        ) -> Result<(), ShieldedCheckpointStoreError> {
+            *self
+                .checkpoint
+                .lock()
+                .map_err(|_| ShieldedCheckpointStoreError::Unavailable)? = Some(checkpoint.clone());
+            self.saves.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
     fn profile() -> WalletProfileId {
         WalletProfileId::parse("profile_test").expect("profile is valid")
     }
 
     fn network() -> ChainNetworkId {
         ChainNetworkId::parse("undeployed").expect("network is valid")
+    }
+
+    // Tungstenite fixes the handshake callback's error to a large HTTP response.
+    #[allow(clippy::result_large_err)]
+    fn current_checkpoint_server() -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback binds");
+        listener
+            .set_nonblocking(true)
+            .expect("listener becomes nonblocking");
+        let address = listener.local_addr().expect("address exists");
+        let handle = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime builds");
+            runtime.block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener)
+                    .expect("Tokio listener accepts the socket");
+                let (stream, _) = listener.accept().await.expect("client connects");
+                let mut socket =
+                    accept_hdr_async(stream, |request: &Request, mut response: Response| {
+                        assert_eq!(
+                            request
+                                .headers()
+                                .get("Sec-WebSocket-Protocol")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("graphql-transport-ws")
+                        );
+                        response.headers_mut().insert(
+                            "Sec-WebSocket-Protocol",
+                            "graphql-transport-ws".parse().expect("header is valid"),
+                        );
+                        Ok(response)
+                    })
+                    .await
+                    .expect("WebSocket accepts");
+                let _ = socket
+                    .next()
+                    .await
+                    .expect("init exists")
+                    .expect("init reads");
+                socket
+                    .send(Message::Text(
+                        json!({ "type": "connection_ack" }).to_string().into(),
+                    ))
+                    .await
+                    .expect("ack sends");
+                let subscribe = socket
+                    .next()
+                    .await
+                    .expect("subscribe exists")
+                    .expect("subscribe reads");
+                let subscribe: Value =
+                    serde_json::from_str(subscribe.into_text().expect("text").as_str())
+                        .expect("subscribe JSON");
+                assert_eq!(subscribe["payload"]["variables"]["id"], 1);
+                socket
+                    .send(Message::Text(
+                        json!({ "type": "complete", "id": "oxid-shielded" })
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .expect("completion sends");
+                let _ = socket.next().await;
+            });
+        });
+        (format!("ws://{address}/api/v1/graphql/ws"), handle)
     }
 
     #[test]
@@ -377,5 +1108,57 @@ mod tests {
             complete.balances()[0].atomic_units(),
             SIMULATED_BALANCE_ATOMIC_UNITS
         );
+    }
+
+    #[test]
+    fn live_worker_refreshes_a_current_checkpoint_and_publishes_synced_state() {
+        const ADDRESS: &str =
+            "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+        let (endpoint, server) = current_checkpoint_server();
+        let config = MidnightIndexerConfig::new("devnet", endpoint, ADDRESS)
+            .expect("live fixture config is valid");
+        let network = config.network_id().clone();
+        let checkpoints = Arc::new(MemoryCheckpointStore {
+            checkpoint: Mutex::new(Some(StoredShieldedCheckpoint {
+                current_cursor: 0,
+                target_cursor: 0,
+                updated_at: UnixTimestampMillis::new(1_699_999_999_000),
+                state: midnight_zswap::local::State::new(),
+            })),
+            saves: AtomicUsize::new(0),
+        });
+        let checkpoint_adapter: Arc<dyn MidnightShieldedCheckpointStore> = checkpoints.clone();
+        let sync = LiveMidnightShieldedSyncController::new(
+            config,
+            checkpoint_adapter,
+            Arc::new(FixedClock),
+            Arc::new(AvailableKeys(7)),
+        );
+
+        assert_eq!(
+            sync.start(&profile(), &network, 7)
+                .expect("worker starts")
+                .state(),
+            WalletShieldedSyncState::Syncing
+        );
+        let mut final_status = None;
+        for _ in 0..100 {
+            let status = sync.status(&profile(), &network).expect("status reads");
+            if status.state() != WalletShieldedSyncState::Syncing
+                && status.state() != WalletShieldedSyncState::Cached
+            {
+                final_status = Some(status);
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        server.join().expect("server exits");
+        let final_status = final_status.expect("worker reaches a terminal state");
+        assert_eq!(final_status.state(), WalletShieldedSyncState::Synced);
+        assert_eq!(final_status.current_cursor(), Some(0));
+        assert_eq!(final_status.target_cursor(), Some(0));
+        assert_eq!(final_status.events_processed(), 0);
+        assert_eq!(final_status.owned_note_count(), Some(0));
+        assert_eq!(checkpoints.saves.load(Ordering::Relaxed), 1);
     }
 }

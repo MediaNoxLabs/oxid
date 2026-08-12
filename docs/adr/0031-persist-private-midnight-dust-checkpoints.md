@@ -4,7 +4,7 @@
 - Date: 2026-08-12
 - Source: Blueprint §§3, 5–8, 12–13, 17–18 and [issue #16](https://github.com/MediaNoxLabs/oxid/issues/16)
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/dust/syncer.rs`
-- Implementation state: Adapter implementation and standalone/headless wiring in this change; shielded Zswap persistence and durable production custody remain pending
+- Implementation state: Adapter implementation and standalone/headless wiring complete; shielded Zswap persistence is implemented separately under ADR-0033 and durable production custody remains pending
 - Amended by: ADR-0032 permits bounded partial checkpoints for explicit cancellable synchronization
 
 ## Context

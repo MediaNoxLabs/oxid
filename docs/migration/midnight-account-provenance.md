@@ -229,8 +229,8 @@ dependency review.
 - internal NIGHT/change roles beyond external receive derivation, exported
   Zswap/DUST keys, and metadata keys;
 - committed local, tailnet, pre-production, node, indexer, or prover endpoints;
-- continuous background subscriptions, shielded state/checkpoints, and retained raw DUST
-  event history;
+- continuous background subscriptions and retained raw DUST/Zswap event
+  history;
 - replacement, fee preview/estimation, UTXO reservation, durable submission
   reconciliation, or durable draft queues;
 - generated proof artifacts, native projects, JavaScript bridges, QR scanning,
@@ -244,6 +244,7 @@ development derivation/BIP340 signing by opaque reference. Full standalone
 configuration additionally proves and submits canonical unshielded NIGHT
 intents through either private local proving or an explicit development proof
 server. Explicit complete-standalone mode may persist key-scoped DUST state.
-Protected development accounts expose a canonical shielded receive address,
-but no mode yet exposes shielded balances/spending or provides durable recovery
-or production custody.
+Either explicit live mode may persist key-scoped official Zswap state and
+expose only bounded shielded balance/note projections. Protected development
+accounts expose a canonical shielded receive address, but no mode yet supports
+shielded spending, durable recovery, or production custody.

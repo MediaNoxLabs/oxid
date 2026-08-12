@@ -2703,6 +2703,14 @@ mod tests {
         assert!(note.contains("cached shielded checkpoint"));
         assert!(note.contains("live catch-up"));
         assert!(note.contains("transport unavailable"));
+        assert!(
+            shielded_sync_note(&shielded_status("cancelled", Some(1), Some(2)))
+                .contains("consistent checkpoint")
+        );
+        assert!(
+            shielded_sync_note(&shielded_status("stalled", Some(1), Some(2)))
+                .contains("last consistent checkpoint")
+        );
     }
 
     #[test]

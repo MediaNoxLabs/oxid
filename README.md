@@ -16,9 +16,10 @@ than layers bolted onto one chain-specific frontend.
 > exercises Midnight network, canonical unshielded and shielded receive
 > addresses, exact-balance, sync, history, and
 > staged unshielded NIGHT submission without secret input. Native headless runs
-> can instead opt into either a real standalone-indexer read source or the
-> complete DUST/local-prover/node submission path using explicit public startup
-> configuration; remote proving remains an explicit development option. The
+> can instead opt into a real standalone-indexer source for public-account and
+> shielded Zswap synchronization, or the complete DUST/local-prover/node
+> submission path using explicit public startup configuration; remote proving
+> remains an explicit development option. The
 > Assets page consumes the same account and transaction use cases. The
 > repository simulator/emulator launchers explicitly select process-local
 > development custody so receive QR plus prepare/review/authorize/submit can be
@@ -131,7 +132,9 @@ only part of the configuration fails startup. A successful refresh reports
 `live`; subsequent in-process reads report `cached`. The configured address is
 an initial watch-only fallback; deriving an account binds subsequent sync to
 the derived public address. This read-only live mode does not import recovery
-material, sync shielded/DUST state, prove, or submit transactions.
+material, sync DUST state, prove, or submit transactions. It can run the
+explicit protected shielded sync lifecycle; without a checkpoint path that
+state lasts only for the process.
 
 To restore public unshielded balances/history after restart and resume from the
 next indexer cursor, optionally provide an absolute app-private file path:
@@ -189,6 +192,25 @@ catch-up before cached state may be used for balancing. Wrong-scope or changed
 parameters cause a clean replay, an incompatible delta retries once from zero,
 and transport failure fails the submission closed. The DUST checkpoint path is
 invalid with simulation or the read-only live-indexer configuration.
+
+Either live indexer mode can persist protected shielded replay state when an
+absolute app-private file path is supplied:
+
+```bash
+export OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH='<absolute-app-private-shielded-checkpoint-file>'
+cargo run -p oxid-headless
+```
+
+The native worker borrows the role-3 Zswap child only inside custody, resumes
+`zswapLedgerEvents` at the next cursor, folds bounded batches through the
+official local state machine, and atomically saves each consistent batch. The
+checksummed v1 binary store is bounded to four key/network/source-scoped
+records, 32 MiB per tagged state, and 128 MiB total. It contains no seed,
+secret scalar, endpoint, profile metadata, proof, or witness. Cached,
+cancelled, or stalled projections are display/resume state only. Invalid state
+is ignored and rebuilt from zero; an incompatible delta retries once from
+zero. Development roots remain ephemeral, so useful cross-process resume
+awaits durable native custody of the same root.
 
 An opt-in headless proving harness constructs one synthetic DUST spend, proves
 and seals it locally, and checks tagged-codec interoperability without node

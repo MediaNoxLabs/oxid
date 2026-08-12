@@ -13,13 +13,13 @@ mod indexer;
 #[cfg(not(target_arch = "wasm32"))]
 mod local_proving;
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(dead_code, reason = "wired into the shielded sync controller next")]
 mod shielded;
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(dead_code, reason = "wired into the shielded sync controller next")]
 mod shielded_checkpoint;
 #[cfg(not(target_arch = "wasm32"))]
 mod shielded_sync;
+#[cfg(not(target_arch = "wasm32"))]
+mod shielded_transport;
 #[cfg(not(target_arch = "wasm32"))]
 mod submission;
 #[cfg(not(target_arch = "wasm32"))]
@@ -33,6 +33,7 @@ pub use dust_checkpoint::{MidnightDustCheckpointConfig, MidnightDustCheckpointCo
 pub use indexer::{
     LiveMidnightAccountSource, MidnightIndexerConfig, MidnightIndexerConfigError,
     live_midnight_wallet, live_midnight_wallet_with_checkpoints, protected_live_midnight_wallet,
+    protected_live_midnight_wallet_with_checkpoint_options,
     protected_live_midnight_wallet_with_checkpoints,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -490,7 +491,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn with_shielded_sync(
+    pub(crate) fn with_shielded_sync(
         mut self,
         shielded_sync: Arc<dyn shielded_sync::MidnightShieldedSyncController>,
     ) -> Self {
@@ -1006,6 +1007,8 @@ where
         Arc::clone(&clock),
         Arc::clone(&keys),
     ));
+    let shielded_sync =
+        live_shielded_controller(indexer.clone(), Arc::clone(&clock), Arc::clone(&keys));
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         LiveMidnightAccountSource::new(indexer, Arc::clone(&clock)),
         default_network,
@@ -1015,6 +1018,7 @@ where
         )),
     )
     .with_dust_sync(dust_sync)
+    .with_shielded_sync(shielded_sync)
 }
 
 /// Development-only standalone adapter with durable public account checkpoints.
@@ -1039,6 +1043,8 @@ where
         Arc::clone(&clock),
         Arc::clone(&keys),
     ));
+    let shielded_sync =
+        live_shielded_controller(indexer.clone(), Arc::clone(&clock), Arc::clone(&keys));
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         LiveMidnightAccountSource::new_with_checkpoints(indexer, checkpoints, Arc::clone(&clock)),
         default_network,
@@ -1048,6 +1054,7 @@ where
         )),
     )
     .with_dust_sync(dust_sync)
+    .with_shielded_sync(shielded_sync)
 }
 
 /// Development-only standalone adapter with key-scoped private DUST checkpoints.
@@ -1074,6 +1081,8 @@ where
         Arc::clone(&clock),
         Arc::clone(&keys),
     ));
+    let shielded_sync =
+        live_shielded_controller(indexer.clone(), Arc::clone(&clock), Arc::clone(&keys));
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         LiveMidnightAccountSource::new(indexer, Arc::clone(&clock)),
         default_network,
@@ -1085,6 +1094,7 @@ where
         ),
     )
     .with_dust_sync(dust_sync)
+    .with_shielded_sync(shielded_sync)
 }
 
 /// Development-only standalone adapter with public account and private DUST checkpoints.
@@ -1112,6 +1122,8 @@ where
         Arc::clone(&clock),
         Arc::clone(&keys),
     ));
+    let shielded_sync =
+        live_shielded_controller(indexer.clone(), Arc::clone(&clock), Arc::clone(&keys));
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         LiveMidnightAccountSource::new_with_checkpoints(
             indexer,
@@ -1127,6 +1139,97 @@ where
         ),
     )
     .with_dust_sync(dust_sync)
+    .with_shielded_sync(shielded_sync)
+}
+
+/// Wires any reviewed combination of standalone account, DUST, and shielded
+/// checkpoint stores without changing the public application boundary.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn protected_standalone_midnight_wallet_with_checkpoint_options<C, K>(
+    config: MidnightStandaloneConfig,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    dust_checkpoints: Option<MidnightDustCheckpointConfig>,
+    shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+    clock: Arc<C>,
+    keys: Arc<K>,
+) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort + 'static,
+{
+    let indexer = config.indexer().clone();
+    let default_network = indexer.network_id().clone();
+    let source = account_checkpoints.map_or_else(
+        || LiveMidnightAccountSource::new(indexer.clone(), Arc::clone(&clock)),
+        |checkpoints| {
+            LiveMidnightAccountSource::new_with_checkpoints(
+                indexer.clone(),
+                checkpoints,
+                Arc::clone(&clock),
+            )
+        },
+    );
+    let dust_store: Arc<dyn dust_checkpoint::MidnightDustCheckpointStore> = dust_checkpoints
+        .map_or_else(
+            || Arc::new(dust_checkpoint::UnavailableMidnightDustCheckpointStore) as Arc<_>,
+            |checkpoints| {
+                Arc::new(dust_checkpoint::BinaryMidnightDustCheckpointStore::new(
+                    checkpoints,
+                )) as Arc<_>
+            },
+        );
+    let shielded_store: Arc<dyn shielded_checkpoint::MidnightShieldedCheckpointStore> =
+        shielded_checkpoints.map_or_else(
+            || Arc::new(shielded_checkpoint::UnavailableMidnightShieldedCheckpointStore) as Arc<_>,
+            |checkpoints| {
+                Arc::new(
+                    shielded_checkpoint::BinaryMidnightShieldedCheckpointStore::new(checkpoints),
+                ) as Arc<_>
+            },
+        );
+    let dust_sync = Arc::new(dust_sync::LiveMidnightDustSyncController::new(
+        config.clone(),
+        Arc::clone(&dust_store),
+        Arc::clone(&clock),
+        Arc::clone(&keys),
+    ));
+    let shielded_sync = Arc::new(shielded_sync::LiveMidnightShieldedSyncController::new(
+        indexer,
+        shielded_store,
+        Arc::clone(&clock),
+        Arc::clone(&keys),
+    ));
+    MidnightWalletAdapter::with_default_network_deriver_and_completer(
+        source,
+        default_network,
+        ProtectedMidnightAccountDeriver::new(keys),
+        Arc::new(
+            submission::LiveMidnightTransactionCompleter::new_with_dust_store(
+                config, dust_store, clock,
+            ),
+        ),
+    )
+    .with_dust_sync(dust_sync)
+    .with_shielded_sync(shielded_sync)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn live_shielded_controller<C, K>(
+    indexer: MidnightIndexerConfig,
+    clock: Arc<C>,
+    keys: Arc<K>,
+) -> Arc<dyn shielded_sync::MidnightShieldedSyncController>
+where
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + 'static,
+{
+    Arc::new(shielded_sync::LiveMidnightShieldedSyncController::new(
+        indexer,
+        Arc::new(shielded_checkpoint::UnavailableMidnightShieldedCheckpointStore),
+        clock,
+        keys,
+    ))
 }
 
 const fn map_account_to_dust_error(error: WalletAccountPortError) -> WalletDustSyncPortError {

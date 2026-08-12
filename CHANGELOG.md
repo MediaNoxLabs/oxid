@@ -55,3 +55,6 @@ once public releases begin.
 - Explicit shielded synchronization status/start/cancel use cases with exact
   per-token balances, a protected standalone session, versioned headless flow,
   and iOS/Android Assets-page coverage.
+- Bounded native `zswapLedgerEvents` synchronization on an off-renderer worker,
+  with optional durable shielded checkpoint wiring for read-only and complete
+  standalone headless configurations.

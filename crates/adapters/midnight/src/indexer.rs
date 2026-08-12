@@ -17,8 +17,8 @@ use futures::{SinkExt, StreamExt, channel::oneshot, future::BoxFuture};
 use oxid_foundation::UnixTimestampMillis;
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
-    WalletAccountPortError, WalletAccountPortFuture, WalletKeyDerivationPort,
-    WalletTransactionPortError,
+    WalletAccountPortError, WalletAccountPortFuture, WalletDerivedSecretUsePort,
+    WalletKeyDerivationPort, WalletTransactionPortError,
 };
 use oxid_wallet_domain::{
     AssetBalance, AssetBalanceChange, AssetSymbol, BalanceChangeDirection, ChainAccountId,
@@ -44,6 +44,11 @@ use super::{
         UnavailableMidnightAccountCheckpointStore,
     },
     decimal_places, midnight_asset, network_by_id,
+    shielded_checkpoint::{
+        BinaryMidnightShieldedCheckpointStore, MidnightShieldedCheckpointConfig,
+        MidnightShieldedCheckpointStore, UnavailableMidnightShieldedCheckpointStore,
+    },
+    shielded_sync::LiveMidnightShieldedSyncController,
     transaction::{MidnightSpendableAccount, MidnightSpendableUtxo, MidnightTransactionSource},
 };
 
@@ -180,16 +185,23 @@ pub fn protected_live_midnight_wallet<C, K>(
     keys: std::sync::Arc<K>,
 ) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
 where
-    C: ClockPort,
-    K: WalletKeyDerivationPort,
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + 'static,
 {
     let default_network = config.network_id.clone();
+    let shielded_sync = std::sync::Arc::new(LiveMidnightShieldedSyncController::new(
+        config.clone(),
+        std::sync::Arc::new(UnavailableMidnightShieldedCheckpointStore),
+        std::sync::Arc::clone(&clock),
+        std::sync::Arc::clone(&keys),
+    ));
     let source = LiveMidnightAccountSource::new(config, clock);
     MidnightWalletAdapter::with_default_network_and_deriver(
         source,
         default_network,
         ProtectedMidnightAccountDeriver::new(keys),
     )
+    .with_shielded_sync(shielded_sync)
 }
 
 /// Builds protected live sync with durable public account checkpoints.
@@ -200,16 +212,69 @@ pub fn protected_live_midnight_wallet_with_checkpoints<C, K>(
     keys: std::sync::Arc<K>,
 ) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
 where
-    C: ClockPort,
-    K: WalletKeyDerivationPort,
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + 'static,
 {
     let default_network = config.network_id.clone();
+    let shielded_sync = std::sync::Arc::new(LiveMidnightShieldedSyncController::new(
+        config.clone(),
+        std::sync::Arc::new(UnavailableMidnightShieldedCheckpointStore),
+        std::sync::Arc::clone(&clock),
+        std::sync::Arc::clone(&keys),
+    ));
     let source = LiveMidnightAccountSource::new_with_checkpoints(config, checkpoints, clock);
     MidnightWalletAdapter::with_default_network_and_deriver(
         source,
         default_network,
         ProtectedMidnightAccountDeriver::new(keys),
     )
+    .with_shielded_sync(shielded_sync)
+}
+
+/// Builds protected live sync with independently optional public-account and
+/// private shielded checkpoint stores.
+pub fn protected_live_midnight_wallet_with_checkpoint_options<C, K>(
+    config: MidnightIndexerConfig,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+    clock: std::sync::Arc<C>,
+    keys: std::sync::Arc<K>,
+) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + 'static,
+{
+    let default_network = config.network_id.clone();
+    let source = account_checkpoints.map_or_else(
+        || LiveMidnightAccountSource::new(config.clone(), std::sync::Arc::clone(&clock)),
+        |checkpoints| {
+            LiveMidnightAccountSource::new_with_checkpoints(
+                config.clone(),
+                checkpoints,
+                std::sync::Arc::clone(&clock),
+            )
+        },
+    );
+    let shielded_store: std::sync::Arc<dyn MidnightShieldedCheckpointStore> = shielded_checkpoints
+        .map_or_else(
+            || std::sync::Arc::new(UnavailableMidnightShieldedCheckpointStore) as std::sync::Arc<_>,
+            |checkpoints| {
+                std::sync::Arc::new(BinaryMidnightShieldedCheckpointStore::new(checkpoints))
+                    as std::sync::Arc<_>
+            },
+        );
+    let shielded_sync = std::sync::Arc::new(LiveMidnightShieldedSyncController::new(
+        config,
+        shielded_store,
+        clock,
+        std::sync::Arc::clone(&keys),
+    ));
+    MidnightWalletAdapter::with_default_network_and_deriver(
+        source,
+        default_network,
+        ProtectedMidnightAccountDeriver::new(keys),
+    )
+    .with_shielded_sync(shielded_sync)
 }
 
 /// Live unshielded account source backed by a replaceable indexer transport.

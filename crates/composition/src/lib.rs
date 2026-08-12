@@ -9,9 +9,12 @@ use oxid_adapter_midnight::{
     MidnightAccountCheckpointConfig, MidnightAccountCheckpointConfigError,
     MidnightDustCheckpointConfig, MidnightDustCheckpointConfigError, MidnightIndexerConfig,
     MidnightIndexerConfigError, MidnightLocalProvingConfig, MidnightLocalProvingConfigError,
+    MidnightShieldedCheckpointConfig, MidnightShieldedCheckpointConfigError,
     MidnightStandaloneConfig, MidnightStandaloneConfigError, protected_live_midnight_wallet,
+    protected_live_midnight_wallet_with_checkpoint_options,
     protected_live_midnight_wallet_with_checkpoints, protected_standalone_midnight_wallet,
     protected_standalone_midnight_wallet_with_all_checkpoints,
+    protected_standalone_midnight_wallet_with_checkpoint_options,
     protected_standalone_midnight_wallet_with_checkpoints,
     protected_standalone_midnight_wallet_with_dust_checkpoints,
 };
@@ -263,6 +266,9 @@ pub const MIDNIGHT_ACCOUNT_CHECKPOINT_PATH_ENV: &str = "OXID_MIDNIGHT_ACCOUNT_CH
 /// Environment variable holding the app-private key-scoped DUST checkpoint file.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MIDNIGHT_DUST_CHECKPOINT_PATH_ENV: &str = "OXID_MIDNIGHT_DUST_CHECKPOINT_PATH";
+/// Environment variable holding the app-private key-scoped shielded checkpoint file.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MIDNIGHT_SHIELDED_CHECKPOINT_PATH_ENV: &str = "OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH";
 
 /// Safe startup failures for optional standalone-indexer composition.
 #[cfg(not(target_arch = "wasm32"))]
@@ -275,6 +281,7 @@ pub enum HeadlessCompositionError {
     InvalidMidnightStandaloneConfiguration(MidnightStandaloneConfigError),
     InvalidMidnightAccountCheckpointConfiguration(MidnightAccountCheckpointConfigError),
     InvalidMidnightDustCheckpointConfiguration(MidnightDustCheckpointConfigError),
+    InvalidMidnightShieldedCheckpointConfiguration(MidnightShieldedCheckpointConfigError),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -294,6 +301,9 @@ impl std::fmt::Display for HeadlessCompositionError {
                 return error.fmt(formatter);
             }
             Self::InvalidMidnightDustCheckpointConfiguration(error) => return error.fmt(formatter),
+            Self::InvalidMidnightShieldedCheckpointConfiguration(error) => {
+                return error.fmt(formatter);
+            }
         };
         formatter.write_str(message)
     }
@@ -325,40 +335,92 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
         .map(MidnightDustCheckpointConfig::new)
         .transpose()
         .map_err(HeadlessCompositionError::InvalidMidnightDustCheckpointConfiguration)?;
-    match (
-        parse_optional_midnight_config(values)?,
-        checkpoints,
-        dust_checkpoints,
-    ) {
-        (Some(HeadlessMidnightConfig::Indexer(config)), Some(checkpoints), None) => {
-            Ok(compose_headless_live_with_checkpoints(config, checkpoints))
+    let shielded_checkpoints = read_optional_environment(MIDNIGHT_SHIELDED_CHECKPOINT_PATH_ENV)?
+        .map(MidnightShieldedCheckpointConfig::new)
+        .transpose()
+        .map_err(HeadlessCompositionError::InvalidMidnightShieldedCheckpointConfiguration)?;
+    match parse_optional_midnight_config(values)? {
+        Some(HeadlessMidnightConfig::Indexer(config)) if dust_checkpoints.is_none() => {
+            Ok(compose_headless_live_with_checkpoint_options(
+                config,
+                checkpoints,
+                shielded_checkpoints,
+            ))
         }
-        (Some(HeadlessMidnightConfig::Standalone(config)), Some(checkpoints), None) => Ok(
-            compose_headless_standalone_with_checkpoints(config, checkpoints),
-        ),
-        (Some(HeadlessMidnightConfig::Standalone(config)), None, Some(dust_checkpoints)) => Ok(
-            compose_headless_standalone_with_dust_checkpoints(config, dust_checkpoints),
-        ),
-        (
-            Some(HeadlessMidnightConfig::Standalone(config)),
-            Some(account_checkpoints),
-            Some(dust_checkpoints),
-        ) => Ok(compose_headless_standalone_with_all_checkpoints(
-            config,
-            account_checkpoints,
-            dust_checkpoints,
-        )),
-        (Some(HeadlessMidnightConfig::Indexer(config)), None, None) => {
-            Ok(compose_headless_live(config))
+        Some(HeadlessMidnightConfig::Standalone(config)) => {
+            Ok(compose_headless_standalone_with_checkpoint_options(
+                config,
+                checkpoints,
+                dust_checkpoints,
+                shielded_checkpoints,
+            ))
         }
-        (Some(HeadlessMidnightConfig::Standalone(config)), None, None) => {
-            Ok(compose_headless_standalone(config))
+        Some(HeadlessMidnightConfig::Indexer(_)) | None
+            if checkpoints.is_some()
+                || dust_checkpoints.is_some()
+                || shielded_checkpoints.is_some() =>
+        {
+            Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
         }
-        (None, None, None) => Ok(compose_headless()),
-        (Some(HeadlessMidnightConfig::Indexer(_)), _, Some(_)) | (None, _, _) => {
+        None => Ok(compose_headless()),
+        Some(HeadlessMidnightConfig::Indexer(_)) => {
             Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
         }
     }
+}
+
+/// Wires optional public-account and private shielded checkpoints to a live indexer.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn compose_headless_live_with_checkpoint_options(
+    config: MidnightIndexerConfig,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+) -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let midnight = Arc::new(protected_live_midnight_wallet_with_checkpoint_options(
+        config,
+        account_checkpoints,
+        shielded_checkpoints,
+        Arc::clone(&clock),
+        Arc::clone(&security),
+    ));
+    compose_with_adapters(
+        Arc::new(JsonWalletProfileRepository::at_default_location()),
+        security,
+        midnight,
+    )
+}
+
+/// Wires any reviewed combination of standalone checkpoint stores.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn compose_headless_standalone_with_checkpoint_options(
+    config: MidnightStandaloneConfig,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    dust_checkpoints: Option<MidnightDustCheckpointConfig>,
+    shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+) -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let midnight = Arc::new(
+        protected_standalone_midnight_wallet_with_checkpoint_options(
+            config,
+            account_checkpoints,
+            dust_checkpoints,
+            shielded_checkpoints,
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        ),
+    );
+    compose_with_adapters(
+        Arc::new(JsonWalletProfileRepository::at_default_location()),
+        security,
+        midnight,
+    )
 }
 
 /// Wires persistent public profiles and development custody to an explicitly
@@ -792,14 +854,29 @@ mod tests {
             std::env::temp_dir().join("oxid-composition-dust-checkpoints.bin"),
         )
         .expect("DUST checkpoint fixture is valid");
+        let shielded_checkpoint = MidnightShieldedCheckpointConfig::new(
+            std::env::temp_dir().join("oxid-composition-shielded-checkpoints.bin"),
+        )
+        .expect("shielded checkpoint fixture is valid");
+        drop(compose_headless_live_with_checkpoint_options(
+            remote.indexer().clone(),
+            Some(checkpoint.clone()),
+            Some(shielded_checkpoint.clone()),
+        ));
         drop(compose_headless_standalone_with_dust_checkpoints(
             remote.clone(),
             dust_checkpoint.clone(),
         ));
         drop(compose_headless_standalone_with_all_checkpoints(
+            remote.clone(),
+            checkpoint.clone(),
+            dust_checkpoint.clone(),
+        ));
+        drop(compose_headless_standalone_with_checkpoint_options(
             remote,
-            checkpoint,
-            dust_checkpoint,
+            Some(checkpoint),
+            Some(dust_checkpoint),
+            Some(shielded_checkpoint),
         ));
 
         let local_proving = MidnightLocalProvingConfig::new(

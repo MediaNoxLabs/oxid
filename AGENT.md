@@ -157,8 +157,11 @@ shielded receive address. The first explicit lifecycle adds
 `wallet.shielded.sync.status`, `wallet.shielded.sync.start`, and
 `wallet.shielded.sync.cancel`, exact decimal-string token balances, and bounded
 owned-note/commitment counts. The deterministic standalone session advances on
-polls for headless and mobile cancellation/resume coverage; native live
-transport/checkpoint wiring is the next issue #18 slice.
+polls for headless and mobile cancellation/resume coverage. Explicit live
+headless configurations run a bounded native `zswapLedgerEvents` worker,
+checkpoint every consistent official-state batch, resume at `cursor + 1`, and
+retry an incompatible cached delta once from zero. Production composition
+remains fail-closed pending durable native custody and endpoint discovery.
 
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
@@ -228,11 +231,12 @@ development/headless use. ADR-0028 makes private local proving the production
 direction and records its cache, cancellation, interoperability, and mobile
 resource bounds. ADR-0029 separates simulator/emulator standalone wallet flows
 from production wiring and records receive-QR plus transaction-UI boundaries.
-ADR-0030 and ADR-0031 keep public unshielded and private DUST checkpoints in
-separate native adapter stores. ADR-0032 adds the adapter-owned DUST session and
-partial-checkpoint cancellation/resume rule without weakening live-before-spend.
-ADR-0033 keeps Zswap keys/state adapter-private and owns the explicit shielded
-sync lifecycle without exposing ledger or secret types.
+ADR-0030, ADR-0031, and ADR-0033 keep public unshielded, private DUST, and
+private shielded checkpoints in separate native adapter stores. ADR-0032 adds
+the adapter-owned DUST session and partial-checkpoint cancellation/resume rule
+without weakening live-before-spend. ADR-0033 keeps Zswap keys/state
+adapter-private and owns the explicit shielded sync lifecycle and worker
+without exposing ledger or secret types.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -300,6 +304,10 @@ The headless shielded surface mirrors that lifecycle at
 or checkpoint data. Exact `u128` balances cross the application/headless
 boundary only as decimal strings, and token types as lowercase 32-byte hex.
 Cached/cancelled/stalled state is display/resume state, never spend authority.
+Native start returns before the bounded worker borrows the role-3 child and
+connects. `OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH` optionally enables the
+owner-private store only when the rest of a read-only or complete live
+configuration is present; it is invalid with simulation or by itself.
 
 `oxid-app/standalone-development` is the only mobile-development exception: it
 selects the same zero-configuration `compose_headless()` stack explicitly at
@@ -370,15 +378,17 @@ decimal `u128` decoding, address ownership, and checked aggregation. The
 `wasm32` graph intentionally excludes this native transport; browser WebSockets
 require a separate reviewed adapter.
 
-Public unshielded and private DUST checkpoint persistence belong inside that
-native Midnight adapter, not `wallet-domain`, `wallet-application`, or the
-public profile repository. Keep their formats separate. Preserve
+Public unshielded, private DUST, and private shielded checkpoint persistence
+belong inside that native Midnight adapter, not `wallet-domain`,
+`wallet-application`, or the public profile repository. Keep their formats
+separate. Preserve
 schema/count/size/scope/cursor/parameter validation, direct-target symlink
 rejection, owner-only permissions, same-directory atomic replacement, and
 safe disk semantics. Transaction catch-up treats checkpoint writes as
-best-effort; explicit DUST sync surfaces a storage failure and retains the last
-consistent checkpoint. Shielded Zswap uses a different official state
-machine and remains separate checkpoint work.
+best-effort; explicit DUST and shielded sync surface storage failures and retain
+the last consistent checkpoint. Zswap uses its official local state machine
+and may retry an incompatible cached delta from zero only before publishing
+new progress.
 
 Standalone completion has separate bounded HTTP indexer replay, local or remote
 proof, and node-WebSocket paths. It rejects stale or malformed chain-tip parameters,
@@ -571,8 +581,8 @@ to silence the shell probe.
   JSON, serialize its secret key, or bypass the live-before-spend catch-up.
 - Shielded account derivation uses Wallet SDK role `3/0`. Only the canonical
   64-byte coin/encryption public-key address payload may leave the Midnight
-  adapter. Zswap secret keys, nullifiers, Merkle paths, witnesses, and future
-  tagged local state remain adapter-private under ADR-0033; any checkpoint must
+  adapter. Zswap secret keys, nullifiers, Merkle paths, witnesses, and tagged
+  local state remain adapter-private under ADR-0033; every checkpoint must
   be separately key/network scoped and owner-private.
 - Shielded indexer replay decodes only bounded tagged `ZswapInput` and
   `ZswapOutput` events, enforces exact `mt_index == first_free`, recomputes owned
@@ -584,8 +594,11 @@ to silence the shell probe.
   symlink-resistant, and atomic.
 - Shielded sync snapshots expose only network/lifecycle/cursors, current-run
   event count, bounded owned-note/commitment counts, exact public token totals,
-  freshness, and sanitized failures. The standalone simulator must borrow the
-  role-3 child before starting and retain no secret material.
+  freshness, and sanitized failures. The standalone simulator and native worker
+  must borrow the role-3 child before starting and retain no secret material.
+  Preserve native connect/ack/idle/total timeouts, WebSocket message/frame
+  bounds, linear cursor and non-regressing target checks, 256-event/4 MiB
+  replay batches, and one-million-event/512 MiB run limits.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.

@@ -6,7 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/shielded`, `address.rs`, and the Dioxus receive/assets surfaces
 - Canonical sources: `midnight-ledger` commit `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, `midnight-wallet` commit `25d0c3857fc0e20435e06a9225bd8709ecce1115`, and `midnight-indexer` commit `82759bf186184684f13a9ffa97b58b7b7684f47c`
 - Amends: ADR-0015, ADR-0017, ADR-0024, ADR-0029, and ADR-0030
-- Implementation state: protected role-3 derivation, official shielded address-vector conformance, bounded tagged-event decoding, canonical adapter-private replay, owner-private checkpoint store, Oxid-owned sync lifecycle, deterministic standalone/headless session, and mobile status/balance presentation implemented; native live checkpoint/session wiring remains in issue #18
+- Implementation state: protected role-3 derivation, official shielded address-vector conformance, bounded tagged-event decoding, canonical adapter-private replay, owner-private checkpoint store, Oxid-owned sync lifecycle, deterministic standalone/mobile session, native live worker/checkpoint wiring, and headless/mobile status/balance presentation implemented; shielded spending and production custody remain separate work
 
 ## Context
 
@@ -63,6 +63,16 @@ replaced, and resumable at the next cursor. Cached state is display/replay
 input, not proof of spend readiness. Native work runs off the renderer and is
 cancellable only at consistent checkpoint boundaries. Production composition
 remains fail-closed until approved custody and endpoint configuration exist.
+
+Explicit native live composition uses the pinned indexer's
+`zswapLedgerEvents` GraphQL subscription over `graphql-transport-ws`. It
+requires a linear cursor, non-regressing target, bounded tagged events, bounded
+replay batches, and finite connection/ack/idle/total limits. A worker saves
+each consistent official-state batch and publishes only its Oxid projection.
+Resume starts at `current_cursor + 1`; an incompatible cached delta may retry
+once from zero only before new progress has been published. Cancellation is
+cooperative at consistent boundaries. The checkpoint path is optional and is
+accepted only alongside a complete live indexer configuration.
 
 ## Consequences
 

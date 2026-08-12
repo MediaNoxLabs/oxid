@@ -29,6 +29,7 @@ const MAX_RAW_EVENT_BYTES: usize = 64 * 1024;
 pub(crate) struct DecodedZswapEvent {
     pub(crate) cursor: u64,
     pub(crate) target_cursor: u64,
+    pub(crate) raw_bytes: usize,
     pub(crate) event: Event<DefaultDB>,
 }
 
@@ -98,6 +99,7 @@ pub(crate) fn decode_zswap_event(data: &Value) -> Result<DecodedZswapEvent, Shie
     Ok(DecodedZswapEvent {
         cursor,
         target_cursor,
+        raw_bytes: bytes.len(),
         event,
     })
 }
@@ -255,11 +257,12 @@ mod tests {
                 "__typename": "ZswapOutput",
                 "id": 4,
                 "maxId": 9,
-                "raw": format!("0x{}", hex::encode(bytes))
+                "raw": format!("0x{}", hex::encode(&bytes))
             }
         }))
         .expect("official event decodes");
         assert_eq!((decoded.cursor, decoded.target_cursor), (4, 9));
+        assert_eq!(decoded.raw_bytes, bytes.len());
         assert!(matches!(
             decoded.event.content,
             EventDetails::ZswapOutput { .. }
