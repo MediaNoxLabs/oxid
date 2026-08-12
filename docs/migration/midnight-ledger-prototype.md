@@ -20,7 +20,7 @@ before migrating later work.
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
-| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded and private DUST checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, and canonical staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; shielded Zswap replay pending |
+| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded and private DUST checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, canonical shielded event decoding/replay, and staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; shielded checkpoints/session pending |
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; process-local Ed25519/P-256 plus BIP32/secp256k1-Schnorr conformance implemented; durable recovery and native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
@@ -235,8 +235,12 @@ derivation now borrows the Wallet SDK role-3 child, builds official Zswap public
 keys, and exposes the canonical network-specific shielded Bech32m address next
 to the primary unshielded address. Headless responses and the Dioxus receive
 list/QR use the same safe application projection. The seed, decryption key, and
-nullifier material remain adapter-private. Canonical event replay, bounded
-checkpoints, explicit sync sessions, and balances remain open in #18.
+nullifier material remain adapter-private. This replay increment adds a bounded
+decoder for the official tagged `zswapLedgerEvents` payload and folds it into
+the official local state with exact Merkle indices, local ownership plus
+commitment verification, foreign-branch collapse, batch rehashing, and
+nullifier spend removal. Bounded checkpoints, explicit sync sessions, and
+public balance presentation remain open in #18.
 
 Shielded Zswap replay/checkpoints, internal/change
 address management, replacement and

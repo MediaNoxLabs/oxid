@@ -6,7 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/shielded`, `address.rs`, and the Dioxus receive/assets surfaces
 - Canonical sources: `midnight-ledger` commit `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, `midnight-wallet` commit `25d0c3857fc0e20435e06a9225bd8709ecce1115`, and `midnight-indexer` commit `82759bf186184684f13a9ffa97b58b7b7684f47c`
 - Amends: ADR-0015, ADR-0017, ADR-0024, ADR-0029, and ADR-0030
-- Implementation state: protected role-3 derivation, official shielded address-vector conformance, safe account/headless projection, and mobile QR presentation implemented; canonical event replay, checkpointing, and explicit shielded sync sessions remain in issue #18
+- Implementation state: protected role-3 derivation, official shielded address-vector conformance, bounded tagged-event decoding, canonical adapter-private replay, safe account/headless projection, and mobile QR presentation implemented; checkpointing and explicit shielded sync sessions remain in issue #18
 
 ## Context
 
@@ -38,8 +38,8 @@ its exact QR payload. They do not receive Zswap keys or ledger state.
 `oxid.headless.v1` adds `wallet.address.shielded` while retaining
 `wallet.address.list` and the primary `receiveAddress` field for compatibility.
 
-The remaining issue #18 implementation will keep the official
-`zswap::local::State<DefaultDB>` adapter-private. Every output commitment must
+The replay core keeps the official `zswap::local::State<DefaultDB>`
+adapter-private. Every output commitment must
 be inserted at its exact Merkle index; an output is owned only after local
 decryption and commitment recomputation; foreign branches are collapsed; and
 spends remove notes by nullifier. Oxid-owned projections may contain only
@@ -62,6 +62,8 @@ remains fail-closed until approved custody and endpoint configuration exist.
   immutable ledger revision already selected by ADR-0015.
 - Existing unshielded preparation keeps using the primary receive address, so
   adding shielded presentation does not change transaction-recipient policy.
+- Bounded indexer envelopes are cross-checked against their tagged official
+  event variant before replay, and malformed/non-linear streams fail closed.
 - Future shielded spending can reuse the official retained state without
   making its nullifiers, Merkle paths, or witnesses public application data.
 - Browser-only builds retain the existing reduced account surface because the

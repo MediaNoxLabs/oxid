@@ -13,6 +13,9 @@ mod indexer;
 #[cfg(not(target_arch = "wasm32"))]
 mod local_proving;
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code, reason = "wired into the shielded sync controller next")]
+mod shielded;
+#[cfg(not(target_arch = "wasm32"))]
 mod submission;
 #[cfg(not(target_arch = "wasm32"))]
 mod transaction;

@@ -47,3 +47,6 @@ once public releases begin.
 - Protected canonical Midnight shielded receive-address derivation, public
   headless projection, and Dioxus/iOS/Android receive rendering without
   exposing Zswap private material.
+- Bounded official `zswapLedgerEvents` decoding and adapter-private canonical
+  replay with exact Merkle ordering, verified ownership, foreign-branch
+  collapse, and nullifier spend removal.

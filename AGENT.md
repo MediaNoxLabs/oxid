@@ -555,6 +555,10 @@ to silence the shell probe.
   adapter. Zswap secret keys, nullifiers, Merkle paths, witnesses, and future
   tagged local state remain adapter-private under ADR-0033; any checkpoint must
   be separately key/network scoped and owner-private.
+- Shielded indexer replay decodes only bounded tagged `ZswapInput` and
+  `ZswapOutput` events, enforces exact `mt_index == first_free`, recomputes owned
+  commitments after local key matching/decryption, collapses foreign branches,
+  rehashes at batch boundaries, and removes owned/pending spends by nullifier.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.
