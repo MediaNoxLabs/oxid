@@ -279,6 +279,7 @@ pub struct DidRecordView {
     pub document_metadata: DidDocumentMetadataView,
     pub content_type: Option<String>,
     pub source: String,
+    pub managed_method_ids: Vec<String>,
 }
 
 impl From<&DidResolution> for DidRecordView {
@@ -298,6 +299,7 @@ impl From<&DidResolution> for DidRecordView {
             },
             content_type: resolution.resolution_metadata().content_type.clone(),
             source: resolution.source().as_str().to_owned(),
+            managed_method_ids: Vec::new(),
         }
     }
 }
@@ -306,6 +308,19 @@ pub struct DidService {
     repository: Arc<dyn DidRecordRepository>,
     resolver: Arc<dyn DidResolutionPort>,
     lifecycle: Arc<dyn DidLifecyclePort>,
+}
+
+fn record_view(
+    service: &DidService,
+    profile_id: &IdentityProfileId,
+    resolution: &DidResolution,
+) -> DidRecordView {
+    let mut view = DidRecordView::from(resolution);
+    view.managed_method_ids = service
+        .lifecycle
+        .managed_method_ids(profile_id, resolution)
+        .unwrap_or_default();
+    view
 }
 
 impl DidService {
@@ -358,9 +373,9 @@ impl ResolveDidUseCase for DidService {
                 return Err(DidOperationError::SubjectMismatch);
             }
             self.repository
-                .upsert(DidRecord::new(profile_id, resolution.clone()))
+                .upsert(DidRecord::new(profile_id.clone(), resolution.clone()))
                 .map_err(DidOperationError::Persistence)?;
-            Ok(DidRecordView::from(&resolution))
+            Ok(record_view(self, &profile_id, &resolution))
         })
     }
 }
@@ -380,7 +395,7 @@ impl ListDidRecordsUseCase for DidService {
         });
         Ok(records
             .iter()
-            .map(|record| DidRecordView::from(record.resolution()))
+            .map(|record| record_view(self, &profile_id, record.resolution()))
             .collect())
     }
 }
@@ -393,7 +408,7 @@ impl GetDidRecordUseCase for DidService {
             .repository
             .get(&profile_id, &did)
             .map_err(DidOperationError::Persistence)?;
-        Ok(DidRecordView::from(record.resolution()))
+        Ok(record_view(self, &profile_id, record.resolution()))
     }
 }
 

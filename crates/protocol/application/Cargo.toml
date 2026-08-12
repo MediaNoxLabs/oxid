@@ -1,0 +1,16 @@
+[package]
+name = "oxid-protocol-application"
+description = "Credential protocol use cases and ports for Oxid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+oxid-foundation.workspace = true
+oxid-protocol-domain.workspace = true
+
+[lints]
+workspace = true

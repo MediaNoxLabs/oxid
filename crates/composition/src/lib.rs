@@ -27,6 +27,16 @@ use oxid_adapter_midnight::{
     protected_standalone_midnight_wallet_with_dust_checkpoints,
 };
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
+use oxid_adapter_openid4vci::{
+    DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
+};
+
+/// Returns the public embedded offer for the deterministic standalone issuer.
+/// Production composition keeps the issuer port unavailable.
+#[must_use]
+pub fn standalone_oid4vci_offer() -> String {
+    oxid_adapter_openid4vci::standalone_credential_offer()
+}
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_credential_json::EncryptedJsonCredentialRepository;
 use oxid_adapter_storage_dev::{DevelopmentWalletSecurity, UnavailableWalletSecurity};
@@ -38,15 +48,21 @@ use oxid_adapter_storage_memory::{
 use oxid_adapter_vc_midnight::{MidnightCborCredentialVerifier, StandaloneCredentialInbox};
 use oxid_credential_application::{
     CredentialInboxPort, CredentialRepository, CredentialService, CredentialVerificationPort,
-    DeleteCredentialUseCase, GetCredentialUseCase, ListCredentialsUseCase,
-    ReceiveCredentialUseCase, ReverifyCredentialUseCase, UnavailableCredentialInbox,
-    UnavailableCredentialRepository, UnavailableCredentialVerifier,
+    DeleteCredentialUseCase, GetCredentialUseCase, ImportVerifiedCredentialUseCase,
+    ListCredentialsUseCase, ReceiveCredentialUseCase, ReverifyCredentialUseCase,
+    UnavailableCredentialInbox, UnavailableCredentialRepository, UnavailableCredentialVerifier,
 };
 use oxid_identity_application::{
     CreateDidUseCase, DeactivateDidUseCase, DidLifecyclePort, DidRecordRepository,
     DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase,
     ResolveDidUseCase, SignDidPayloadUseCase, UnavailableDidLifecycle,
     UnavailableDidRecordRepository, UnavailableDidResolver, UpdateDidUseCase,
+};
+use oxid_protocol_application::{
+    AcceptCredentialIssuanceUseCase, CredentialIssuanceProtocolPort, CredentialIssuanceService,
+    GetCredentialIssuanceUseCase, IssuedCredentialSinkPort, ListCredentialIssuancesUseCase,
+    PrepareCredentialIssuanceUseCase, RefuseCredentialIssuanceUseCase,
+    UnavailableCredentialIssuanceProtocol, UnavailableIssuedCredentialSink,
 };
 use oxid_wallet_application::{
     AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
@@ -116,6 +132,17 @@ pub struct ApplicationServices {
     get_credential: Arc<dyn GetCredentialUseCase>,
     reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
     delete_credential: Arc<dyn DeleteCredentialUseCase>,
+    prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
+    accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
+    refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+    get_credential_issuance: Arc<dyn GetCredentialIssuanceUseCase>,
+    list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+}
+
+#[derive(Clone, Copy)]
+enum CredentialIssuanceComposition {
+    Unavailable,
+    Standalone,
 }
 
 struct IdentityAdapters {
@@ -125,6 +152,7 @@ struct IdentityAdapters {
     credential_repository: Arc<dyn CredentialRepository>,
     credential_inbox: Arc<dyn CredentialInboxPort>,
     credential_verifier: Arc<dyn CredentialVerificationPort>,
+    credential_issuance: CredentialIssuanceComposition,
 }
 
 impl ApplicationServices {
@@ -355,6 +383,31 @@ impl ApplicationServices {
     pub fn delete_credential(&self) -> Arc<dyn DeleteCredentialUseCase> {
         Arc::clone(&self.delete_credential)
     }
+
+    #[must_use]
+    pub fn prepare_credential_issuance(&self) -> Arc<dyn PrepareCredentialIssuanceUseCase> {
+        Arc::clone(&self.prepare_credential_issuance)
+    }
+
+    #[must_use]
+    pub fn accept_credential_issuance(&self) -> Arc<dyn AcceptCredentialIssuanceUseCase> {
+        Arc::clone(&self.accept_credential_issuance)
+    }
+
+    #[must_use]
+    pub fn refuse_credential_issuance(&self) -> Arc<dyn RefuseCredentialIssuanceUseCase> {
+        Arc::clone(&self.refuse_credential_issuance)
+    }
+
+    #[must_use]
+    pub fn get_credential_issuance(&self) -> Arc<dyn GetCredentialIssuanceUseCase> {
+        Arc::clone(&self.get_credential_issuance)
+    }
+
+    #[must_use]
+    pub fn list_credential_issuances(&self) -> Arc<dyn ListCredentialIssuancesUseCase> {
+        Arc::clone(&self.list_credential_issuances)
+    }
 }
 
 /// Wires the application with persistent public-profile metadata storage.
@@ -371,6 +424,7 @@ pub fn compose() -> ApplicationServices {
             credential_repository: Arc::new(UnavailableCredentialRepository),
             credential_inbox: Arc::new(UnavailableCredentialInbox),
             credential_verifier: Arc::new(UnavailableCredentialVerifier),
+            credential_issuance: CredentialIssuanceComposition::Unavailable,
         },
     )
 }
@@ -915,6 +969,7 @@ pub fn compose_in_memory() -> ApplicationServices {
             credential_verifier: Arc::new(MidnightCborCredentialVerifier::new(Arc::new(
                 StandaloneDidResolver,
             ))),
+            credential_issuance: CredentialIssuanceComposition::Standalone,
         },
     )
 }
@@ -953,6 +1008,7 @@ where
             credential_repository: headless_credential_repository(),
             credential_inbox: Arc::new(StandaloneCredentialInbox),
             credential_verifier: verifier,
+            credential_issuance: CredentialIssuanceComposition::Standalone,
         },
     )
 }
@@ -981,6 +1037,7 @@ where
         credential_repository,
         credential_inbox,
         credential_verifier,
+        credential_issuance,
     } = identity_adapters;
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
@@ -999,7 +1056,7 @@ where
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
     let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let shielded = Arc::new(WalletShieldedSyncService::new(Arc::clone(&midnight)));
-    let transactions = Arc::new(WalletTransactionService::new(midnight, clock));
+    let transactions = Arc::new(WalletTransactionService::new(midnight, Arc::clone(&clock)));
     let identity = Arc::new(DidService::from_ports(
         did_repository,
         did_resolver,
@@ -1009,6 +1066,33 @@ where
         credential_repository,
         credential_inbox,
         credential_verifier,
+    ));
+    let (issuance_protocol, issuance_sink): (
+        Arc<dyn CredentialIssuanceProtocolPort>,
+        Arc<dyn IssuedCredentialSinkPort>,
+    ) = match credential_issuance {
+        CredentialIssuanceComposition::Unavailable => (
+            Arc::new(UnavailableCredentialIssuanceProtocol),
+            Arc::new(UnavailableIssuedCredentialSink),
+        ),
+        CredentialIssuanceComposition::Standalone => {
+            let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
+            let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+            let proof = Arc::new(DidCredentialHolderProof::new(
+                Arc::clone(&get_did),
+                sign_did,
+                clock.clone(),
+            ));
+            let importer: Arc<dyn ImportVerifiedCredentialUseCase> = credentials.clone();
+            (
+                Arc::new(StandaloneOid4vciIssuer::new(proof, get_did, clock)),
+                Arc::new(VerifiedCredentialSink::new(importer)),
+            )
+        }
+    };
+    let issuance = Arc::new(CredentialIssuanceService::new(
+        issuance_protocol,
+        issuance_sink,
     ));
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
@@ -1056,6 +1140,11 @@ where
     let get_credential: Arc<dyn GetCredentialUseCase> = credentials.clone();
     let reverify_credential: Arc<dyn ReverifyCredentialUseCase> = credentials.clone();
     let delete_credential: Arc<dyn DeleteCredentialUseCase> = credentials;
+    let prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase> = issuance.clone();
+    let accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase> = issuance.clone();
+    let refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase> = issuance.clone();
+    let get_credential_issuance: Arc<dyn GetCredentialIssuanceUseCase> = issuance.clone();
+    let list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase> = issuance;
 
     ApplicationServices {
         create_wallet_profile,
@@ -1102,6 +1191,11 @@ where
         get_credential,
         reverify_credential,
         delete_credential,
+        prepare_credential_issuance,
+        accept_credential_issuance,
+        refuse_credential_issuance,
+        get_credential_issuance,
+        list_credential_issuances,
     }
 }
 
@@ -1368,6 +1462,7 @@ mod tests {
                 credential_repository: Arc::new(UnavailableCredentialRepository),
                 credential_inbox: Arc::new(UnavailableCredentialInbox),
                 credential_verifier: Arc::new(UnavailableCredentialVerifier),
+                credential_issuance: CredentialIssuanceComposition::Unavailable,
             },
         );
         let status = services

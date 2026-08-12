@@ -14,12 +14,14 @@ oxid-composition.workspace = true
 oxid-credential-application.workspace = true
 oxid-identity-application.workspace = true
 oxid-identity-domain.workspace = true
+oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+oxid-adapter-openid4vci.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 

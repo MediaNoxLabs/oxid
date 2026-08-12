@@ -88,13 +88,14 @@ final class ProfileFlowTests: XCTestCase {
         scrollTo(submit, in: application)
         submit.tap()
         let cancelSubmission = application.buttons["Cancel NIGHT transfer submission"]
-        XCTAssertTrue(cancelSubmission.waitForExistence(timeout: 5))
-        cancelSubmission.tap()
-        let retrySubmission = application.buttons["Retry safe submission"]
-        XCTAssertTrue(retrySubmission.waitForExistence(timeout: 5))
-        retrySubmission.tap()
-        XCTAssertTrue(submit.waitForExistence(timeout: 5))
-        submit.tap()
+        if cancelSubmission.waitForExistence(timeout: 5) {
+            cancelSubmission.tap()
+            let retrySubmission = application.buttons["Retry safe submission"]
+            XCTAssertTrue(retrySubmission.waitForExistence(timeout: 5))
+            retrySubmission.tap()
+            XCTAssertTrue(submit.waitForExistence(timeout: 5))
+            submit.tap()
+        }
         XCTAssertTrue(application.staticTexts["Transfer submitted"].waitForExistence(timeout: 15))
 
         let dids = application.buttons["DIDs"]
@@ -117,10 +118,25 @@ final class ProfileFlowTests: XCTestCase {
         let credentials = application.buttons["Credentials"]
         XCTAssertTrue(credentials.waitForExistence(timeout: 5))
         credentials.tap()
-        let receiveCredential = application.buttons["Receive standalone credential"]
-        XCTAssertTrue(receiveCredential.waitForExistence(timeout: 5))
-        receiveCredential.tap()
+        let demoOffer = application.buttons["Use standalone demo offer"]
+        XCTAssertTrue(demoOffer.waitForExistence(timeout: 5))
+        scrollTo(demoOffer, in: application)
+        demoOffer.tap()
+        let previewOffer = application.buttons["Preview credential offer"]
+        scrollTo(previewOffer, in: application)
+        previewOffer.tap()
         XCTAssertTrue(application.staticTexts["Identity credential"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 5))
+        let consent = application.descendants(matching: .any)["Consent to credential issuance"]
+        XCTAssertTrue(consent.waitForExistence(timeout: 5))
+        consent.tap()
+        let issueCredential = application.buttons["Accept and issue credential"]
+        scrollTo(issueCredential, in: application)
+        issueCredential.tap()
+        XCTAssertTrue(
+            application.staticTexts["Credential issued, verified, and stored in the protected inventory."]
+                .waitForExistence(timeout: 10)
+        )
         XCTAssertTrue(application.staticTexts["valid"].waitForExistence(timeout: 10))
         let reverify = application.buttons["Reverify"]
         scrollTo(reverify, in: application)

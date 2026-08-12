@@ -5,6 +5,7 @@ members = [
   "apps/oxid-headless",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
+  "crates/adapters/openid4vci",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
   "crates/adapters/storage-credential-json",
@@ -19,6 +20,8 @@ members = [
   "crates/identity/application",
   "crates/identity/domain",
   "crates/platform/ports",
+  "crates/protocol/application",
+  "crates/protocol/domain",
   "crates/ui-dioxus",
   "crates/wallet/application",
   "crates/wallet/domain",
@@ -28,6 +31,7 @@ default-members = [
   "apps/oxid-headless",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
+  "crates/adapters/openid4vci",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
   "crates/adapters/storage-credential-json",
@@ -42,6 +46,8 @@ default-members = [
   "crates/identity/application",
   "crates/identity/domain",
   "crates/platform/ports",
+  "crates/protocol/application",
+  "crates/protocol/domain",
   "crates/ui-dioxus",
   "crates/wallet/application",
   "crates/wallet/domain",
@@ -91,10 +97,12 @@ reqwest = { version = "=0.13.4", default-features = false, features = ["json", "
 subxt = { version = "=0.44.3" }
 tokio = { version = "=1.53.1", default-features = false, features = ["net", "rt", "time"] }
 tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+url = { version = "=2.5.8" }
 webpki-root-certs = "=1.0.9"
 zeroize = { version = "=1.9.0" }
 
 oxid-adapter-midnight = { version = "=0.1.0", path = "crates/adapters/midnight" }
+oxid-adapter-openid4vci = { version = "=0.1.0", path = "crates/adapters/openid4vci" }
 oxid-adapter-vc-midnight = { version = "=0.1.0", path = "crates/adapters/vc-midnight" }
 oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-midnight" }
 oxid-adapter-storage-credential-json = { version = "=0.1.0", path = "crates/adapters/storage-credential-json" }
@@ -110,6 +118,8 @@ oxid-foundation = { version = "=0.1.0", path = "crates/foundation" }
 oxid-identity-application = { version = "=0.1.0", path = "crates/identity/application" }
 oxid-identity-domain = { version = "=0.1.0", path = "crates/identity/domain" }
 oxid-platform-ports = { version = "=0.1.0", path = "crates/platform/ports" }
+oxid-protocol-application = { version = "=0.1.0", path = "crates/protocol/application" }
+oxid-protocol-domain = { version = "=0.1.0", path = "crates/protocol/domain" }
 oxid-ui-dioxus = { version = "=0.1.0", path = "crates/ui-dioxus" }
 oxid-wallet-application = { version = "=0.1.0", path = "crates/wallet/application" }
 oxid-wallet-domain = { version = "=0.1.0", path = "crates/wallet/domain" }

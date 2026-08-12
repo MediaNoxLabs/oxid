@@ -5449,6 +5449,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-adapter-openid4vci"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "oxid-adapter-did-midnight",
+ "oxid-adapter-platform-system",
+ "oxid-adapter-storage-dev",
+ "oxid-adapter-storage-memory",
+ "oxid-credential-application",
+ "oxid-credential-domain",
+ "oxid-identity-application",
+ "oxid-identity-domain",
+ "oxid-platform-ports",
+ "oxid-protocol-application",
+ "oxid-protocol-domain",
+ "oxid-wallet-application",
+ "oxid-wallet-domain",
+ "p256",
+ "serde",
+ "serde_json",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "oxid-adapter-platform-system"
 version = "0.1.0"
 dependencies = [
@@ -5558,6 +5584,7 @@ version = "0.1.0"
 dependencies = [
  "oxid-adapter-did-midnight",
  "oxid-adapter-midnight",
+ "oxid-adapter-openid4vci",
  "oxid-adapter-platform-system",
  "oxid-adapter-storage-credential-json",
  "oxid-adapter-storage-dev",
@@ -5567,6 +5594,7 @@ dependencies = [
  "oxid-adapter-vc-midnight",
  "oxid-credential-application",
  "oxid-identity-application",
+ "oxid-protocol-application",
  "oxid-wallet-application",
 ]
 
@@ -5594,10 +5622,12 @@ name = "oxid-headless"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "oxid-adapter-openid4vci",
  "oxid-composition",
  "oxid-credential-application",
  "oxid-identity-application",
  "oxid-identity-domain",
+ "oxid-protocol-application",
  "oxid-wallet-application",
  "oxid-wallet-domain",
  "serde",
@@ -5629,6 +5659,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-protocol-application"
+version = "0.1.0"
+dependencies = [
+ "oxid-foundation",
+ "oxid-protocol-domain",
+]
+
+[[package]]
+name = "oxid-protocol-domain"
+version = "0.1.0"
+dependencies = [
+ "oxid-foundation",
+]
+
+[[package]]
 name = "oxid-ui-dioxus"
 version = "0.1.0"
 dependencies = [
@@ -5636,6 +5681,7 @@ dependencies = [
  "oxid-credential-application",
  "oxid-identity-application",
  "oxid-identity-domain",
+ "oxid-protocol-application",
  "oxid-wallet-application",
  "qrcode",
  "tokio",

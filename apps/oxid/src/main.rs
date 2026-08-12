@@ -7,6 +7,10 @@ fn main() {
     let application = oxid_composition::compose_headless();
     #[cfg(not(feature = "standalone-development"))]
     let application = oxid_composition::compose();
+    #[cfg(feature = "standalone-development")]
+    let standalone_credential_offer = Some(oxid_composition::standalone_oid4vci_offer());
+    #[cfg(not(feature = "standalone-development"))]
+    let standalone_credential_offer = None;
     let ui = oxid_ui_dioxus::WalletUiServices::new(
         oxid_ui_dioxus::WalletProfileUiServices::new(
             application.create_wallet_profile(),
@@ -65,6 +69,12 @@ fn main() {
                 application.get_credential(),
                 application.reverify_credential(),
                 application.delete_credential(),
+                oxid_ui_dioxus::CredentialIssuanceUiServices::new(
+                    application.prepare_credential_issuance(),
+                    application.accept_credential_issuance(),
+                    application.refuse_credential_issuance(),
+                    standalone_credential_offer,
+                ),
             ),
         ),
     );

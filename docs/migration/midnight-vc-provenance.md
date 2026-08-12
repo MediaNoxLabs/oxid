@@ -10,6 +10,7 @@ This slice was reconciled on 2026-08-13 against:
 | `midnightntwrk/midnight-did`, `main` | `6016f094f16228d008cc35c40eb2aa1bc1f7b01e` | DID/JWK verification-method and `assertionMethod` vocabulary |
 | `midnightntwrk/midnight-did-resolver`, `main` | `70bec499287e31736f0775ad8e210bc59799749b` | resolved public DID document contract |
 | `midnightntwrk/midnight-verifiable-credentials`, `develop` | `39b1354212620b396e914b29603e6a38f2656546` | separation of schema, claims, disclosure, capabilities, artifacts/codecs, and untrusted display metadata |
+| OpenID Foundation | OpenID4VCI 1.0 Final, 2025-09-16 | normative offer, metadata, nonce, proof, request, response, security, and privacy behavior |
 
 No source file is copied. Oxid reimplements the observed behavior with owned
 domain/application types and controlled-edge adapters. There is no Cargo or npm
@@ -27,6 +28,8 @@ dependency on the three identity repositories.
 - distinguish valid, invalid, and operational-error outcomes;
 - list, inspect, reverify, delete, and restore credentials through headless and
   Dioxus incoming adapters.
+- preview and explicitly accept a pre-authorized credential offer, construct a
+  DID-bound proof, and import the verified issued credential.
 
 ## Deliberate 110% hardening
 
@@ -39,6 +42,10 @@ dependency on the three identity repositories.
 | Resolver/key mismatch can be obscured | Require subject equality, controller equality, exact method identity, and assertion authorization. |
 | UI can drift toward displaying arbitrary claim values | Expose only bounded normalized metadata and stable verification codes; never project body, signature, openings, or claims. |
 | Store deletion is a direct CRUD operation | Require explicit confirmation and exact deletion intent at the application boundary. |
+| Prototype OID4VCI module follows pre-final request/response shapes | Reconcile against 1.0 Final: split issuer/OAuth metadata, use a separate nonce endpoint, `proofs` request object, and `credentials` response array. |
+| Protocol flow can expose grant codes, tokens, nonce, proof, or issuer bodies to UI state | Keep all ephemeral protocol material in the outgoing adapter and expose only bounded preview/state/credential identifiers. |
+| Issuance can proceed as soon as an offer is parsed | Require an untrusted-offer preview plus exact explicit consent and an active profile-scoped DID authentication method. |
+| Successful HTTP-style response can be stored directly | Require ADR-0038 verification outcome `valid` before protected persistence. |
 
 The standalone fixture contains only public conformance material. Its issuer
 secret was generated outside the repository and discarded. The revised DID
@@ -68,8 +75,11 @@ width. No other item is reordered or re-encoded.
   validity and needs its own native proving/verification adapter.
 - Selective-disclosure openings and predicate proofs need an owned disclosure
   domain and consent flow before storage migration.
-- OID4VCI issuance, OID4VP/SIOP presentation, deep links, QR scanning, and
-  browser/native bridge transport remain M4 protocol adapters.
+- Live OID4VCI HTTP/discovery, Authorization Code, by-reference offers,
+  Transaction Code, batch/deferred issuance, notification, encrypted responses,
+  wallet attestation, deep links, and QR scanning remain later protocol slices.
+- OID4VP/SIOP presentation and browser/native bridge transport remain later
+  protocol adapters.
 - Status/revocation, temporal policy, schema validation, and issuer trust remain
   visible `not_checked` stages rather than fabricated success.
 - Jubjub verification remains queued pending a reviewed current implementation.
@@ -89,3 +99,6 @@ width. No other item is reordered or re-encoded.
 | CBOR parser exhaustion | 1 MiB credential bound, depth 32, definite lengths, checked offsets, exact end-of-input. |
 | Signature confusion | Standard-base64 proof signature, base64url JWK coordinates, curve-specific key construction, assertion relationship, and controller checks. |
 | Cryptographic validity mistaken for trust | Temporal/status/schema/trust are explicit `not_checked` stages. |
+| Malicious credential offer or metadata | Strict duplicate-rejecting bounded JSON; exact embedded-offer parameter; issuer/authorization metadata separation; HTTPS-only production endpoint policy; explicit loopback exception only for standalone. |
+| Pre-authorized code replay or disclosure | Single-use adapter session; code/token/nonce never cross the protocol port or incoming DTO and are zeroized when retained. |
+| Holder-key substitution | Active profile scope, non-deactivated managed DID, exact controller, authentication relationship, DID URL `kid`, supported curve, issuer audience, and nonce-bound typed JWS. |

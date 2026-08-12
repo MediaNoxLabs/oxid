@@ -21,7 +21,8 @@ use oxid_identity_domain::{JwkCurve, MidnightDid, VerificationRelationship};
 use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256Key};
 use sha2::{Digest as _, Sha256};
 
-pub const STANDALONE_CREDENTIAL_B64: &str = "pmJpZHgjdXJuOnV1aWQ6b3hpZC1zdGFuZGFsb25lLWNyZWRlbnRpYWxkdHlwZYJ0VmVyaWZpYWJsZUNyZWRlbnRpYWxySWRlbnRpdHlDcmVkZW50aWFsZmlzc3VlcnhYZGlkOm1pZG5pZ2h0OnVuZGVwbG95ZWQ6MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZmxpc3N1YW5jZURhdGUbAAABi8/laABxY3JlZGVudGlhbFN1YmplY3SiYmlkeFhkaWQ6bWlkbmlnaHQ6dW5kZXBsb3llZDowMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmaWdpdmVuTmFtZWNBZGFlcHJvb2aicnZlcmlmaWNhdGlvbk1ldGhvZHhpZGlkOm1pZG5pZ2h0OnVuZGVwbG95ZWQ6MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZiNhdXRoZW50aWNhdGlvbi0xaXNpZ25hdHVyZXhYK2k3aFpGN0pkNmhqa2FYTXN6NTZWaG1YZVdZU3BrcFp5N0ZPR3VFc0VCb2dJbGI1VnBPdWlxc1BvMHRJY054NmhreWViSk9MbldiUlVFNmVhT3VDREE9PQ==";
+pub const STANDALONE_CREDENTIAL_B64: &str =
+    include_str!("../../../../fixtures/credentials/standalone-midnight-phase1.b64");
 
 /// Deterministic, public, non-secret credential ingress used only by the
 /// standalone development composition and conformance harness.
@@ -32,7 +33,7 @@ impl CredentialInboxPort for StandaloneCredentialInbox {
     fn receive<'a>(&'a self) -> CredentialBytesFuture<'a> {
         Box::pin(async {
             general_purpose::STANDARD
-                .decode(STANDALONE_CREDENTIAL_B64)
+                .decode(STANDALONE_CREDENTIAL_B64.trim())
                 .map_err(|_| CredentialIngressError::Rejected)
         })
     }
@@ -650,7 +651,7 @@ mod tests {
     #[test]
     fn verifies_the_public_standalone_fixture_and_rejects_tampering() {
         let bytes = general_purpose::STANDARD
-            .decode(STANDALONE_CREDENTIAL_B64)
+            .decode(STANDALONE_CREDENTIAL_B64.trim())
             .expect("fixture");
         let verifier = MidnightCborCredentialVerifier::new(Arc::new(FixtureResolver(
             VerificationRelationship::AssertionMethod,
@@ -682,7 +683,7 @@ mod tests {
     #[test]
     fn rejects_a_key_that_is_not_assertion_authorized() {
         let bytes = general_purpose::STANDARD
-            .decode(STANDALONE_CREDENTIAL_B64)
+            .decode(STANDALONE_CREDENTIAL_B64.trim())
             .expect("fixture");
         let verifier = MidnightCborCredentialVerifier::new(Arc::new(FixtureResolver(
             VerificationRelationship::Authentication,

@@ -145,6 +145,18 @@ pub trait SignDidPayloadUseCase: Send + Sync {
 /// Mutable DID boundary. A live adapter may prove and submit Compact calls;
 /// the standalone adapter performs the same state transitions in process.
 pub trait DidLifecyclePort: Send + Sync {
+    /// Returns the verification methods whose private keys are available to
+    /// this lifecycle adapter in the current process. Persisted or resolved
+    /// public documents must not be presented as locally controlled merely
+    /// because they contain an authentication relationship.
+    fn managed_method_ids(
+        &self,
+        _profile_id: &IdentityProfileId,
+        _current: &DidResolution,
+    ) -> Result<Vec<String>, DidLifecyclePortError> {
+        Ok(Vec::new())
+    }
+
     fn create(
         &self,
         profile_id: &IdentityProfileId,
@@ -279,9 +291,9 @@ fn persist(
 ) -> Result<DidRecordView, DidOperationError> {
     service
         .repository
-        .upsert(DidRecord::new(profile_id, resolution.clone()))
+        .upsert(DidRecord::new(profile_id.clone(), resolution.clone()))
         .map_err(DidOperationError::Persistence)?;
-    Ok(DidRecordView::from(&resolution))
+    Ok(super::record_view(service, &profile_id, &resolution))
 }
 
 fn current(

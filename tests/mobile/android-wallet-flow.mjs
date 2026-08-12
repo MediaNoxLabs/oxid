@@ -207,6 +207,36 @@ try {
       "document.body.innerText.includes('standalone-2')",
       "managed DID update",
     );
+    await clickButton("Credentials");
+    await waitForButton("Use standalone demo offer");
+    await clickButton("Use standalone demo offer");
+    await clickButton("Preview credential offer");
+    await waitFor(
+      "document.body.innerText.includes('Credential offer preview') && document.body.innerText.includes('Identity credential')",
+      "OID4VCI credential offer preview",
+    );
+    await evaluate(`(() => {
+      const consent = document.querySelector('#credential-issuance-consent');
+      if (!consent) return false;
+      consent.click();
+      return consent.checked;
+    })()`);
+    await clickButton("Accept and issue credential");
+    await waitFor(
+      "document.body.innerText.includes('Credential issued, verified, and stored in the protected inventory.') && document.body.innerText.includes('valid')",
+      "issued and verified OID4VCI credential",
+    );
+    await clickButton("Reverify");
+    await waitForButton("Reverify");
+    const credentialVerified = await evaluate(
+      "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid')",
+    );
+
+    await clickButton("DIDs");
+    await waitFor(
+      "document.body.innerText.includes('standalone-2')",
+      "managed DID before deactivation",
+    );
     await evaluate(`(() => {
       const manager = document.querySelector('.did-manager');
       if (!manager) return false;
@@ -244,16 +274,9 @@ try {
       "document.body.innerText.includes('standalone-fixture-v2')",
     );
     await clickButton("Credentials");
-    await waitForButton("Receive standalone credential");
-    await clickButton("Receive standalone credential");
     await waitFor(
       "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
-      "verified standalone credential",
-    );
-    await clickButton("Reverify");
-    await waitForButton("Reverify");
-    const credentialVerified = await evaluate(
-      "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid')",
+      "verified issued credential",
     );
     const result = { ...walletResult, credentialVerified, didManaged, didResolved, qrRendered, shieldedAddressRendered };
     if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.credentialVerified || !result.didManaged || !result.didResolved || !result.qrRendered || !result.shieldedAddressRendered) {

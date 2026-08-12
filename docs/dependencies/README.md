@@ -19,6 +19,7 @@ Current reviews and source policies:
 - [chacha20poly1305 0.11](chacha20poly1305-0.11.md)
 - [RustCrypto development signing stack](rustcrypto-development-signing.md)
 - [Serde and serde_json](serde-json.md)
+- [url 2.5](url-2.5.md)
 - [Tokio and tokio-tungstenite](tokio-tungstenite-0.30.md)
 - [Midnight Git sources](midnight-git-sources.md)
 - [Midnight ledger transaction packages](midnight-ledger-8.2.md)

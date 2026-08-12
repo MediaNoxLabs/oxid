@@ -6,7 +6,7 @@ use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_credential_domain::{
     CredentialDomainError, CredentialId, CredentialMetadata, CredentialProfileId, CredentialRecord,
-    VerificationReport,
+    VerificationOutcome, VerificationReport,
 };
 use oxid_foundation::OpaqueIdError;
 
@@ -82,6 +82,7 @@ pub enum CredentialOperationError {
     Persistence(CredentialRepositoryError),
     ConfirmationRequired,
     InvalidConfirmation,
+    VerificationNotValid,
 }
 
 impl fmt::Display for CredentialOperationError {
@@ -96,6 +97,9 @@ impl fmt::Display for CredentialOperationError {
             Self::Persistence(error) => error.fmt(formatter),
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
+            Self::VerificationNotValid => {
+                formatter.write_str("credential verification did not produce a valid outcome")
+            }
         }
     }
 }
@@ -149,6 +153,12 @@ pub struct DeleteCredentialCommand {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportVerifiedCredentialCommand {
+    pub profile_id: String,
+    pub signed_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerificationStageView {
     pub name: String,
     pub status: String,
@@ -195,6 +205,9 @@ impl From<&CredentialRecord> for CredentialView {
 pub trait ReceiveCredentialUseCase: Send + Sync {
     fn execute<'a>(&'a self, query: CredentialProfileQuery) -> CredentialViewFuture<'a>;
 }
+pub trait ImportVerifiedCredentialUseCase: Send + Sync {
+    fn execute<'a>(&'a self, command: ImportVerifiedCredentialCommand) -> CredentialViewFuture<'a>;
+}
 pub trait ListCredentialsUseCase: Send + Sync {
     fn execute(
         &self,
@@ -230,6 +243,34 @@ impl CredentialService {
             verifier,
         }
     }
+
+    async fn import(
+        &self,
+        profile_id: CredentialProfileId,
+        bytes: Vec<u8>,
+        require_valid: bool,
+    ) -> Result<CredentialView, CredentialOperationError> {
+        let inspection = self
+            .verifier
+            .inspect(&bytes)
+            .await
+            .map_err(CredentialOperationError::Verification)?;
+        if require_valid && inspection.verification.outcome() != VerificationOutcome::Valid {
+            return Err(CredentialOperationError::VerificationNotValid);
+        }
+        let record = CredentialRecord::new(
+            profile_id,
+            inspection.id,
+            bytes,
+            inspection.metadata,
+            inspection.verification,
+        )
+        .map_err(CredentialOperationError::Domain)?;
+        self.repository
+            .upsert(record.clone())
+            .map_err(CredentialOperationError::Persistence)?;
+        Ok(CredentialView::from(&record))
+    }
 }
 
 fn profile(value: String) -> Result<CredentialProfileId, CredentialOperationError> {
@@ -249,23 +290,16 @@ impl ReceiveCredentialUseCase for CredentialService {
                 .receive()
                 .await
                 .map_err(CredentialOperationError::Ingress)?;
-            let inspection = self
-                .verifier
-                .inspect(&bytes)
-                .await
-                .map_err(CredentialOperationError::Verification)?;
-            let record = CredentialRecord::new(
-                profile_id,
-                inspection.id,
-                bytes,
-                inspection.metadata,
-                inspection.verification,
-            )
-            .map_err(CredentialOperationError::Domain)?;
-            self.repository
-                .upsert(record.clone())
-                .map_err(CredentialOperationError::Persistence)?;
-            Ok(CredentialView::from(&record))
+            self.import(profile_id, bytes, false).await
+        })
+    }
+}
+
+impl ImportVerifiedCredentialUseCase for CredentialService {
+    fn execute<'a>(&'a self, command: ImportVerifiedCredentialCommand) -> CredentialViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = profile(command.profile_id)?;
+            self.import(profile_id, command.signed_bytes, true).await
         })
     }
 }

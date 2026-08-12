@@ -18,16 +18,20 @@ than layers bolted onto one chain-specific frontend.
 > staged unshielded NIGHT submission, durable public submission recovery, and
 > finalized-chain reconciliation without secret input. The first peer identity
 > slice resolves current `did:midnight` public documents into a profile-scoped
-> inventory through standalone or explicitly configured native adapters. Native headless runs
+> inventory through standalone or explicitly configured native adapters. A
+> deterministic OpenID4VCI 1.0 Final adapter now exercises embedded-offer
+> preview, explicit consent, DID-bound proof, strict verification, and protected
+> credential storage end to end. Native headless runs
 > can instead opt into a real standalone-indexer source for public-account and
 > shielded Zswap synchronization, or the complete DUST/local-prover/node
 > submission path using explicit public startup configuration; remote proving
 > remains an explicit development option. The
-> Assets and DIDs pages consume the same application use cases. The
+> Assets, DIDs, and Credentials pages consume the same application use cases. The
 > repository simulator/emulator launchers explicitly select process-local
 > development custody so receive QR plus prepare/review/authorize/submit can be
 > exercised end to end; normal production composition remains fail-closed. The remaining shell destinations deliberately label unconnected
-> capabilities; Oxid is not ready to hold real assets or identity credentials.
+> capabilities; Oxid is not ready to custody real assets, production identity
+> keys, or externally issued credentials.
 
 ## Architecture
 
@@ -47,6 +51,9 @@ apps/oxid-headless ---------------------+--> wallet-application --> wallet-domai
                     +--> identity-application --> identity-domain
                     |         ^                       ^
                     |         +-- DID resolver / public DID JSON adapters
+                    +--> protocol-application --> protocol-domain
+                    |         ^
+                    |         +-- OpenID4VCI / verified credential adapters
                     +--> platform-system
 ```
 
@@ -99,8 +106,14 @@ The implemented account methods are `wallet.network.list`,
 `wallet.dust.sync.start`, `wallet.dust.sync.cancel`,
 `wallet.shielded.sync.status`, `wallet.shielded.sync.start`, and
 `wallet.shielded.sync.cancel`. The implemented identity methods are
-`did.resolve`, `did.list`, `did.get`, and `did.forget`; their profile scope is
-always taken from the active wallet profile rather than caller parameters.
+`did.create`, `did.resolve`, `did.list`, `did.get`, `did.update`, `did.sign`,
+`did.deactivate`, and `did.forget`. Credential inventory methods are
+`credential.receive`, `credential.list`, `credential.get`,
+`credential.reverify`, and `credential.delete`. Standalone issuance adds
+`credential.issuance.prepare`, `credential.issuance.accept`,
+`credential.issuance.refuse`, `credential.issuance.get`, and
+`credential.issuance.list`; their profile scope is always taken from the
+active wallet profile rather than caller parameters.
 With no additional configuration their account data is explicitly `simulated`
 and contacts no node, indexer, or prover. After
 `wallet.security.initialize`, `wallet.account.derive` creates and retains the
@@ -158,6 +171,15 @@ versioned public DID store is changed. That store contains no private JWK,
 credential, claim, token, route, or recovery material. Normal production
 composition leaves both identity ports unavailable; this is not DID lifecycle
 mutation or production identity custody.
+
+Standalone composition accepts exactly one embedded, pre-authorized-code
+OpenID4VCI 1.0 Final offer without Transaction Code. It previews issuer and
+credential display metadata before explicit consent, signs a nonce-bound JWT
+through an active managed DID authentication method, verifies the issued
+Midnight credential, and stores it in the protected profile inventory. Grant
+codes, access tokens, nonces, proofs, and original credential bytes never enter
+headless or UI results. The deterministic issuer is in-process and uses only
+loopback identifiers; normal production composition has no issuer transport.
 
 For a native standalone-indexer run, set all three public values before starting
 the headless binary:
@@ -330,8 +352,9 @@ when automatic selection is not appropriate.
 The focused wallet smoke tests reset Oxid's app data on their selected
 simulator/emulator, create the default profile, activate the protected
 development account, render receive QR, complete a staged simulated transfer,
-resolve the standalone DID, restart the process, and assert public-profile,
-submission, and DID-inventory restoration:
+create and resolve standalone DIDs, preview and accept an OpenID4VCI offer,
+restart the process, and assert public-profile, submission, DID-inventory, and
+encrypted credential restoration:
 
 ```bash
 just ios-smoke
@@ -349,6 +372,10 @@ just android-smoke
 | `crates/wallet/application` | Use cases and wallet-owned ports. |
 | `crates/identity/domain` | DID document, public JWK, relationship, and resolution invariants. |
 | `crates/identity/application` | Profile-scoped DID use cases and identity-owned ports. |
+| `crates/credential/domain` | Credential records, metadata separation, and structured verification invariants. |
+| `crates/credential/application` | Profile-scoped credential inventory and verified-import use cases. |
+| `crates/protocol/domain` | Credential offer preview and issuance lifecycle invariants. |
+| `crates/protocol/application` | Protocol-neutral issuance use cases and outgoing ports. |
 | `crates/platform/ports` | Time and randomness capability ports. |
 | `crates/adapters` | Replaceable outgoing implementations. |
 | `crates/ui-dioxus` | Incoming Dioxus UI adapter. |
@@ -381,8 +408,10 @@ packages. The selected baseline, dependency reviews, and source policy are recor
 
 The JSON repository is durable only for public profile metadata; it is not a
 secret store. The software signing and HD-derivation adapter is process-local development/test
-infrastructure and production composition does not select it. Never use this
-milestone to custody assets or credentials. See
+infrastructure and production composition does not select it. The encrypted
+credential repository and standalone issuer are development conformance
+boundaries, not production custody or trust. Never use this milestone to
+custody real assets or externally issued credentials. See
 [SECURITY.md](SECURITY.md) for reporting and the current threat boundaries.
 
 ## Contributing

@@ -17,6 +17,11 @@ use oxid_identity_application::{
     SignDidPayloadCommand, UpdateDidCommand,
 };
 use oxid_identity_domain::VerificationRelationship;
+use oxid_protocol_application::{
+    AcceptCredentialIssuanceCommand, CredentialIssuanceError, CredentialIssuanceProfileQuery,
+    CredentialIssuanceQuery, CredentialIssuanceView, PrepareCredentialIssuanceCommand,
+    RefuseCredentialIssuanceCommand,
+};
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, CreateWalletProfileCommand, CreateWalletProfileError,
     DeleteWalletKeyCommand, DeriveWalletAccountCommand, DerivedWalletAccountView,
@@ -193,6 +198,11 @@ impl HeadlessWallet {
             "credential.get" => self.get_credential(request),
             "credential.reverify" | "credential.verify" => self.reverify_credential(request),
             "credential.delete" => self.delete_credential(request),
+            "credential.issuance.prepare" => self.prepare_credential_issuance(request),
+            "credential.issuance.accept" => self.accept_credential_issuance(request),
+            "credential.issuance.refuse" => self.refuse_credential_issuance(request),
+            "credential.issuance.get" => self.get_credential_issuance(request),
+            "credential.issuance.list" => self.list_credential_issuances(request),
             _ => Dispatch::continue_with(Response::error(
                 request.id,
                 "method_not_found",
@@ -1584,6 +1594,150 @@ impl HeadlessWallet {
         }
     }
 
+    fn prepare_credential_issuance(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<PrepareCredentialIssuanceParams>(request.params)
+        {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.issuance.prepare requires only a string offer field",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match futures::executor::block_on(self.application.prepare_credential_issuance().execute(
+            PrepareCredentialIssuanceCommand {
+                profile_id,
+                offer: params.offer,
+            },
+        )) {
+            Ok(issuance) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "issuance": credential_issuance_value(&issuance) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_issuance_error(request.id, error)),
+        }
+    }
+
+    fn accept_credential_issuance(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<AcceptCredentialIssuanceParams>(request.params)
+        {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.issuance.accept requires issuanceId, holderDid, methodId, confirmed, and intent fields",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match futures::executor::block_on(self.application.accept_credential_issuance().execute(
+            AcceptCredentialIssuanceCommand {
+                profile_id,
+                issuance_id: params.issuance_id,
+                holder_did: params.holder_did,
+                method_id: params.method_id,
+                confirmed: params.confirmed,
+                intent: params.intent,
+            },
+        )) {
+            Ok(issuance) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "issuance": credential_issuance_value(&issuance) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_issuance_error(request.id, error)),
+        }
+    }
+
+    fn refuse_credential_issuance(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<CredentialIssuanceParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.issuance.refuse requires only a string issuanceId field",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self.application.refuse_credential_issuance().execute(
+            RefuseCredentialIssuanceCommand {
+                profile_id,
+                issuance_id: params.issuance_id,
+            },
+        ) {
+            Ok(issuance) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "issuance": credential_issuance_value(&issuance) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_issuance_error(request.id, error)),
+        }
+    }
+
+    fn get_credential_issuance(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<CredentialIssuanceParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.issuance.get requires only a string issuanceId field",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .get_credential_issuance()
+            .execute(CredentialIssuanceQuery {
+                profile_id,
+                issuance_id: params.issuance_id,
+            }) {
+            Ok(issuance) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "issuance": credential_issuance_value(&issuance) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_issuance_error(request.id, error)),
+        }
+    }
+
+    fn list_credential_issuances(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "credential.issuance.list");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .list_credential_issuances()
+            .execute(CredentialIssuanceProfileQuery { profile_id })
+        {
+            Ok(issuances) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "issuances": issuances.iter().map(credential_issuance_value).collect::<Vec<_>>() }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_issuance_error(request.id, error)),
+        }
+    }
+
     fn active_profile_id(&self, id: Option<String>) -> Result<String, Response> {
         match self.application.get_active_wallet_profile().execute() {
             Ok(Some(profile)) => Ok(profile.id),
@@ -1731,6 +1885,28 @@ struct CredentialParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DeleteCredentialParams {
     credential_id: String,
+    confirmed: bool,
+    intent: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrepareCredentialIssuanceParams {
+    offer: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CredentialIssuanceParams {
+    issuance_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AcceptCredentialIssuanceParams {
+    issuance_id: String,
+    holder_did: String,
+    method_id: String,
     confirmed: bool,
     intent: String,
 }
@@ -2356,6 +2532,56 @@ fn credential_value(credential: &CredentialView) -> Value {
     })
 }
 
+fn credential_issuance_value(issuance: &CredentialIssuanceView) -> Value {
+    json!({
+        "id": issuance.id,
+        "issuer": issuance.issuer,
+        "configurationIds": issuance.configuration_ids,
+        "displayNames": issuance.display_names,
+        "state": issuance.state,
+        "credentialId": issuance.credential_id,
+        "failureCode": issuance.failure_code,
+    })
+}
+
+fn credential_issuance_error(id: Option<String>, error: CredentialIssuanceError) -> Response {
+    let (code, message) = match error {
+        CredentialIssuanceError::InvalidProfileIdentifier(_)
+        | CredentialIssuanceError::InvalidIssuanceIdentifier(_)
+        | CredentialIssuanceError::InvalidOffer
+        | CredentialIssuanceError::InvalidHolder => (
+            "invalid_argument",
+            "credential issuance request contains invalid input",
+        ),
+        CredentialIssuanceError::ConfirmationRequired
+        | CredentialIssuanceError::InvalidConfirmation => (
+            "confirmation_required",
+            "valid explicit credential issuance consent is required",
+        ),
+        CredentialIssuanceError::NotFound => (
+            "not_found",
+            "credential issuance session was not found for the active profile",
+        ),
+        CredentialIssuanceError::InvalidState => (
+            "failed_precondition",
+            "credential issuance session is not awaiting this operation",
+        ),
+        CredentialIssuanceError::Protocol(protocol) => (
+            protocol.code(),
+            "credential issuer protocol rejected or could not complete the request",
+        ),
+        CredentialIssuanceError::Sink(_) => (
+            "credential_store_failed",
+            "issued credential could not be verified and stored",
+        ),
+        CredentialIssuanceError::Unavailable => (
+            "capability_unavailable",
+            "credential issuance capability is unavailable",
+        ),
+    };
+    Response::error(id, code, message)
+}
+
 fn credential_error(id: Option<String>, error: CredentialOperationError) -> Response {
     match error {
         CredentialOperationError::InvalidProfileIdentifier(_)
@@ -2370,6 +2596,11 @@ fn credential_error(id: Option<String>, error: CredentialOperationError) -> Resp
             id,
             "confirmation_required",
             "valid explicit credential deletion confirmation is required",
+        ),
+        CredentialOperationError::VerificationNotValid => Response::error(
+            id,
+            "credential_verification_failed",
+            "credential verification did not produce a valid outcome",
         ),
         CredentialOperationError::Ingress(_) => Response::error(
             id,
@@ -3108,6 +3339,11 @@ fn capability_manifest() -> Value {
         { "method": "credential.reverify", "status": "ready", "mode": "standalone", "stages": ["structural", "issuer", "proof", "temporal", "status", "schema", "trust"] },
         { "method": "credential.verify", "status": "ready", "mode": "standalone", "aliasFor": "credential.reverify" },
         { "method": "credential.delete", "status": "ready", "mode": "standalone", "confirmationRequired": true },
+        { "method": "credential.issuance.prepare", "status": "ready", "mode": "standalone", "standard": "OpenID4VCI 1.0 Final", "offerMode": "embedded" },
+        { "method": "credential.issuance.accept", "status": "ready", "mode": "standalone", "grant": "pre-authorized_code", "confirmationRequired": true, "proof": "jwt" },
+        { "method": "credential.issuance.refuse", "status": "ready", "mode": "standalone" },
+        { "method": "credential.issuance.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
+        { "method": "credential.issuance.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
         { "method": "did.create", "status": "ready", "mode": "development_only", "networks": ["undeployed"], "initialMethods": ["ed25519", "p256"] },
         { "method": "did.resolve", "status": "ready", "mode": "standalone", "sources": ["standalone", "live"] },
         { "method": "did.list", "status": "ready", "mode": "standalone", "scope": "active_profile" },
@@ -3152,6 +3388,7 @@ impl Error for HeadlessIoError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxid_adapter_openid4vci::standalone_credential_offer;
 
     fn execute(input: &str) -> Vec<Value> {
         let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
@@ -3267,6 +3504,103 @@ mod tests {
         );
         assert_eq!(responses[2]["error"]["code"], "confirmation_required");
         assert_eq!(responses[3]["result"]["deleted"], true);
+    }
+
+    #[test]
+    fn issues_and_stores_a_verified_credential_through_the_headless_flow() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"issuance-profile","method":"wallet.profile.create","params":{"displayName":"Issuance flow"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile identifier");
+        let initialization = format!(
+            "{}\n{}",
+            json!({"protocol": PROTOCOL_VERSION, "id": "issuance-select", "method": "wallet.profile.select", "params": {"profileId": profile_id}}),
+            json!({"protocol": PROTOCOL_VERSION, "id": "issuance-security", "method": "wallet.security.initialize", "params": {}}),
+        );
+        let initialized = execute_with_wallet(&wallet, &initialization);
+        assert_eq!(initialized[0]["ok"], true);
+        assert_eq!(initialized[1]["ok"], true);
+
+        let created_did = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"issuance-did","method":"did.create","params":{}}"#,
+        );
+        let record = &created_did[0]["result"]["didRecord"]["document"];
+        let did = record["id"].as_str().expect("holder DID");
+        let method_id = record["relationships"]
+            .as_array()
+            .expect("relationships")
+            .iter()
+            .find(|relationship| relationship["relationship"] == "authentication")
+            .and_then(|relationship| relationship["methodIds"][0].as_str())
+            .expect("authentication method");
+
+        let prepared = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "issuance-prepare",
+                "method": "credential.issuance.prepare",
+                "params": {"offer": standalone_credential_offer()},
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            prepared[0]["result"]["issuance"]["state"],
+            "awaiting_consent"
+        );
+        assert!(prepared[0].to_string().contains("Identity credential"));
+        assert!(!prepared[0].to_string().contains("pre-authorized"));
+        let issuance_id = prepared[0]["result"]["issuance"]["id"]
+            .as_str()
+            .expect("issuance identifier");
+
+        let denied = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "issuance-denied",
+                "method": "credential.issuance.accept",
+                "params": {"issuanceId": issuance_id, "holderDid": did, "methodId": method_id, "confirmed": false, "intent": "ACCEPT_CREDENTIAL_ISSUANCE"},
+            })
+            .to_string(),
+        );
+        assert_eq!(denied[0]["error"]["code"], "confirmation_required");
+
+        let accepted = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "issuance-accept",
+                "method": "credential.issuance.accept",
+                "params": {"issuanceId": issuance_id, "holderDid": did, "methodId": method_id, "confirmed": true, "intent": "ACCEPT_CREDENTIAL_ISSUANCE"},
+            })
+            .to_string(),
+        );
+        assert_eq!(accepted[0]["result"]["issuance"]["state"], "succeeded");
+        assert!(accepted[0]["result"]["issuance"]["credentialId"].is_string());
+        assert!(!accepted[0].to_string().contains("credential_offer"));
+
+        let inventories = execute_with_wallet(
+            &wallet,
+            &format!(
+                "{}\n{}",
+                json!({"protocol": PROTOCOL_VERSION, "id": "issuance-list", "method": "credential.issuance.list", "params": {}}),
+                json!({"protocol": PROTOCOL_VERSION, "id": "issued-credentials", "method": "credential.list", "params": {}}),
+            ),
+        );
+        assert_eq!(
+            inventories[0]["result"]["issuances"][0]["state"],
+            "succeeded"
+        );
+        assert_eq!(
+            inventories[1]["result"]["credentials"][0]["verification"]["outcome"],
+            "valid"
+        );
     }
 
     #[test]

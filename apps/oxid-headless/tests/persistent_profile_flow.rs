@@ -13,6 +13,7 @@ use std::{
 };
 
 use futures::{SinkExt as _, StreamExt as _};
+use oxid_adapter_openid4vci::standalone_credential_offer;
 use serde_json::{Value, json};
 use tokio_tungstenite::{
     accept_hdr_async,
@@ -554,19 +555,53 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         }))["ok"],
         true
     );
-    let received = first_process.request(json!({
-        "protocol": "oxid.headless.v1", "id": "credential-receive",
-        "method": "credential.receive", "params": {}
-    }));
     assert_eq!(
-        received["result"]["credential"]["verification"]["outcome"],
-        "valid"
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1", "id": "credential-security",
+            "method": "wallet.security.initialize", "params": {}
+        }))["ok"],
+        true
     );
-    let credential_id = received["result"]["credential"]["id"]
+    let did_record = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-holder-did",
+        "method": "did.create", "params": {}
+    }));
+    let document = &did_record["result"]["didRecord"]["document"];
+    let holder_did = document["id"].as_str().expect("holder DID");
+    let method_id = document["relationships"]
+        .as_array()
+        .expect("DID relationships")
+        .iter()
+        .find(|relationship| relationship["relationship"] == "authentication")
+        .and_then(|relationship| relationship["methodIds"][0].as_str())
+        .expect("authentication method");
+    let prepared = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-offer",
+        "method": "credential.issuance.prepare",
+        "params": { "offer": standalone_credential_offer() }
+    }));
+    assert_eq!(prepared["result"]["issuance"]["state"], "awaiting_consent");
+    let issuance_id = prepared["result"]["issuance"]["id"]
+        .as_str()
+        .expect("issuance id");
+    let issued = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-accept",
+        "method": "credential.issuance.accept",
+        "params": {
+            "issuanceId": issuance_id,
+            "holderDid": holder_did,
+            "methodId": method_id,
+            "confirmed": true,
+            "intent": "ACCEPT_CREDENTIAL_ISSUANCE"
+        }
+    }));
+    assert_eq!(issued["result"]["issuance"]["state"], "succeeded");
+    let credential_id = issued["result"]["issuance"]["credentialId"]
         .as_str()
         .expect("credential id")
         .to_owned();
-    assert!(!received.to_string().contains("signedBytes"));
+    assert!(!issued.to_string().contains("pre-authorized"));
+    assert!(!issued.to_string().contains("signedBytes"));
     first_process.quit();
 
     let encrypted_path = store.root.join("private/credentials.enc");

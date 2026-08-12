@@ -97,6 +97,21 @@ impl StandaloneDidLifecycle {
 }
 
 impl DidLifecyclePort for StandaloneDidLifecycle {
+    fn managed_method_ids(
+        &self,
+        profile_id: &IdentityProfileId,
+        current: &DidResolution,
+    ) -> Result<Vec<String>, DidLifecyclePortError> {
+        Ok(self
+            .managed()?
+            .get(&(
+                profile_id.as_str().to_owned(),
+                current.document().id().as_str().to_owned(),
+            ))
+            .map(|managed| managed.methods.keys().cloned().collect())
+            .unwrap_or_default())
+    }
+
     fn create(
         &self,
         profile_id: &IdentityProfileId,
@@ -676,6 +691,13 @@ mod tests {
             .expect("create");
         let did = resolution.document().id().clone();
         assert_eq!(resolution.document().verification_methods().len(), 2);
+        assert_eq!(
+            lifecycle
+                .managed_method_ids(&profile, &resolution)
+                .expect("managed methods")
+                .len(),
+            2
+        );
         assert_eq!(
             resolution.document_metadata().version_id.as_deref(),
             Some("standalone-1")

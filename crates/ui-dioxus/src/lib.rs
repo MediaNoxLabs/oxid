@@ -18,6 +18,11 @@ use oxid_identity_application::{
     UpdateDidUseCase,
 };
 use oxid_identity_domain::VerificationRelationship;
+use oxid_protocol_application::{
+    AcceptCredentialIssuanceCommand, AcceptCredentialIssuanceUseCase, CredentialIssuanceError,
+    CredentialIssuanceView, PrepareCredentialIssuanceCommand, PrepareCredentialIssuanceUseCase,
+    RefuseCredentialIssuanceCommand, RefuseCredentialIssuanceUseCase,
+};
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
     CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
@@ -83,6 +88,10 @@ pub struct WalletUiServices {
     get_credential: Arc<dyn GetCredentialUseCase>,
     reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
     delete_credential: Arc<dyn DeleteCredentialUseCase>,
+    prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
+    accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
+    refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+    standalone_credential_offer: Option<String>,
 }
 
 /// DID inventory and resolution use cases consumed by the DIDs page.
@@ -103,16 +112,46 @@ pub struct CredentialUiServices {
     get_credential: Arc<dyn GetCredentialUseCase>,
     reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
     delete_credential: Arc<dyn DeleteCredentialUseCase>,
+    prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
+    accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
+    refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+    standalone_credential_offer: Option<String>,
+}
+
+/// Consent-driven credential issuance capabilities consumed by the Credentials page.
+pub struct CredentialIssuanceUiServices {
+    prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
+    accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
+    refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+    standalone_credential_offer: Option<String>,
+}
+
+impl CredentialIssuanceUiServices {
+    #[must_use]
+    pub fn new(
+        prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
+        accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
+        refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+        standalone_credential_offer: Option<String>,
+    ) -> Self {
+        Self {
+            prepare_credential_issuance,
+            accept_credential_issuance,
+            refuse_credential_issuance,
+            standalone_credential_offer,
+        }
+    }
 }
 
 impl CredentialUiServices {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         receive_credential: Arc<dyn ReceiveCredentialUseCase>,
         list_credentials: Arc<dyn ListCredentialsUseCase>,
         get_credential: Arc<dyn GetCredentialUseCase>,
         reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
         delete_credential: Arc<dyn DeleteCredentialUseCase>,
+        issuance: CredentialIssuanceUiServices,
     ) -> Self {
         Self {
             receive_credential,
@@ -120,6 +159,10 @@ impl CredentialUiServices {
             get_credential,
             reverify_credential,
             delete_credential,
+            prepare_credential_issuance: issuance.prepare_credential_issuance,
+            accept_credential_issuance: issuance.accept_credential_issuance,
+            refuse_credential_issuance: issuance.refuse_credential_issuance,
+            standalone_credential_offer: issuance.standalone_credential_offer,
         }
     }
 }
@@ -391,6 +434,10 @@ impl WalletUiServices {
             get_credential: credentials.get_credential,
             reverify_credential: credentials.reverify_credential,
             delete_credential: credentials.delete_credential,
+            prepare_credential_issuance: credentials.prepare_credential_issuance,
+            accept_credential_issuance: credentials.accept_credential_issuance,
+            refuse_credential_issuance: credentials.refuse_credential_issuance,
+            standalone_credential_offer: credentials.standalone_credential_offer,
         }
     }
 
@@ -595,6 +642,26 @@ impl WalletUiServices {
     #[must_use]
     pub fn delete_credential(&self) -> Arc<dyn DeleteCredentialUseCase> {
         Arc::clone(&self.delete_credential)
+    }
+
+    #[must_use]
+    pub fn prepare_credential_issuance(&self) -> Arc<dyn PrepareCredentialIssuanceUseCase> {
+        Arc::clone(&self.prepare_credential_issuance)
+    }
+
+    #[must_use]
+    pub fn accept_credential_issuance(&self) -> Arc<dyn AcceptCredentialIssuanceUseCase> {
+        Arc::clone(&self.accept_credential_issuance)
+    }
+
+    #[must_use]
+    pub fn refuse_credential_issuance(&self) -> Arc<dyn RefuseCredentialIssuanceUseCase> {
+        Arc::clone(&self.refuse_credential_issuance)
+    }
+
+    #[must_use]
+    pub fn standalone_credential_offer(&self) -> Option<String> {
+        self.standalone_credential_offer.clone()
     }
 }
 
@@ -3319,6 +3386,10 @@ fn credential_operation_message(error: CredentialOperationError) -> String {
     error.to_string()
 }
 
+fn credential_issuance_message(error: CredentialIssuanceError) -> String {
+    error.to_string()
+}
+
 enum CredentialChange {
     Updated(CredentialView),
     Deleted(String),
@@ -3445,6 +3516,11 @@ fn CredentialRecordCard(
 fn CredentialsPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| CredentialPageState::Loading);
+    let mut offer_input = use_signal(String::new);
+    let mut prepared_issuance = use_signal(|| None::<CredentialIssuanceView>);
+    let mut issuance_consent = use_signal(|| false);
+    let mut issuance_busy = use_signal(|| false);
+    let mut issuance_notice = use_signal(|| None::<String>);
     let profile_id = active_profile.id.clone();
     let load_services = services.clone();
     let load_profile = profile_id.clone();
@@ -3483,11 +3559,179 @@ fn CredentialsPage(active_profile: WalletProfileView) -> Element {
             let receive_service = services.receive_credential();
             let receive_profile = profile_id.clone();
             let retained = credentials.clone();
+            let demo_offer = services.standalone_credential_offer();
             rsx! {
                 section { class: "page-heading",
                     p { class: "eyebrow", "Identity centre" }
                     h1 { "Credentials" }
                     p { "Protected original bytes, searchable metadata, and explicit verification stages under the active profile." }
+                }
+                article { class: "surface-card credential-receive-card",
+                    p { class: "card-eyebrow", "OpenID4VCI 1.0 Final" }
+                    h2 { "Accept a credential offer" }
+                    p { class: "form-hint", "Preview an embedded offer before consent. The pre-authorized code, access token, nonce, and signed proof remain inside the protocol adapter." }
+                    label { r#for: "credential-offer", "Credential offer URI" }
+                    textarea {
+                        id: "credential-offer",
+                        maxlength: 32768,
+                        rows: 4,
+                        autocomplete: "off",
+                        spellcheck: false,
+                        value: "{offer_input}",
+                        oninput: move |event| offer_input.set(event.value()),
+                    }
+                    if let Some(offer) = demo_offer {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            disabled: issuance_busy(),
+                            onclick: move |_| {
+                                offer_input.set(offer.clone());
+                                prepared_issuance.set(None);
+                                issuance_consent.set(false);
+                                issuance_notice.set(Some("Standalone credential offer loaded. Preview it before accepting.".to_owned()));
+                            },
+                            "Use standalone demo offer"
+                        }
+                    }
+                    button {
+                        class: "primary-action",
+                        r#type: "button",
+                        disabled: issuance_busy() || offer_input.read().trim().is_empty(),
+                        onclick: {
+                            let service = services.prepare_credential_issuance();
+                            let profile_id = profile_id.clone();
+                            move |_| {
+                                let service = service.clone();
+                                let profile_id = profile_id.clone();
+                                let offer = offer_input.read().trim().to_owned();
+                                issuance_busy.set(true);
+                                issuance_notice.set(None);
+                                spawn(async move {
+                                    match service.execute(PrepareCredentialIssuanceCommand { profile_id, offer }).await {
+                                        Ok(preview) => {
+                                            prepared_issuance.set(Some(preview));
+                                            issuance_consent.set(false);
+                                            issuance_notice.set(Some("Offer preview ready. Review the issuer and requested credential before consenting.".to_owned()));
+                                        }
+                                        Err(error) => {
+                                            prepared_issuance.set(None);
+                                            issuance_notice.set(Some(credential_issuance_message(error)));
+                                        }
+                                    }
+                                    issuance_busy.set(false);
+                                });
+                            }
+                        },
+                        if issuance_busy() { "Checking offer…" } else { "Preview credential offer" }
+                    }
+                    if let Some(preview) = prepared_issuance.read().clone() {
+                        div { class: "credential-offer-preview",
+                            h3 { "Credential offer preview" }
+                            dl { class: "credential-record__facts",
+                                div { dt { "Issuer" } dd { title: "{preview.issuer}", "{preview.issuer}" } }
+                                div { dt { "Credential" } dd { {preview.display_names.join(", ")} } }
+                                div { dt { "State" } dd { {preview.state.replace('_', " ")} } }
+                            }
+                            if preview.state == "awaiting_consent" {
+                                label { class: "confirmation-check",
+                                    input {
+                                        id: "credential-issuance-consent",
+                                        r#type: "checkbox",
+                                        aria_label: "Consent to credential issuance",
+                                        checked: issuance_consent(),
+                                        onchange: move |event| issuance_consent.set(event.checked()),
+                                    }
+                                    span { "I reviewed this issuer and consent to receive the credential using my active DID." }
+                                }
+                                div { class: "action-row",
+                                    button {
+                                        class: "primary-action",
+                                        r#type: "button",
+                                        disabled: issuance_busy() || !issuance_consent(),
+                                        onclick: {
+                                            let services = services.clone();
+                                            let profile_id = profile_id.clone();
+                                            let issuance_id = preview.id.clone();
+                                            move |_| {
+                                                let records = match services.list_did_records().execute(ListDidRecordsQuery { profile_id: profile_id.clone() }) {
+                                                    Ok(records) => records,
+                                                    Err(error) => {
+                                                        issuance_notice.set(Some(did_operation_message(error)));
+                                                        return;
+                                                    }
+                                                };
+                                                let selection = records.iter()
+                                                    .filter(|record| record.document_metadata.deactivated != Some(true))
+                                                    .find_map(|record| {
+                                                        record.document.relationships.iter()
+                                                            .find(|relationship| relationship.relationship == "authentication")
+                                                            .and_then(|relationship| relationship.method_ids.iter()
+                                                                .find(|method_id| record.managed_method_ids.contains(method_id)))
+                                                            .map(|method| (record.document.id.clone(), method.clone()))
+                                                    });
+                                                let Some((holder_did, method_id)) = selection else {
+                                                    issuance_notice.set(Some("Create an active managed DID before accepting this credential offer.".to_owned()));
+                                                    return;
+                                                };
+                                                let service = services.accept_credential_issuance();
+                                                let refresh_services = services.clone();
+                                                let refresh_profile = profile_id.clone();
+                                                let execute_profile = profile_id.clone();
+                                                let execute_issuance_id = issuance_id.clone();
+                                                issuance_busy.set(true);
+                                                issuance_notice.set(None);
+                                                spawn(async move {
+                                                    match service.execute(AcceptCredentialIssuanceCommand {
+                                                        profile_id: execute_profile,
+                                                        issuance_id: execute_issuance_id,
+                                                        holder_did,
+                                                        method_id,
+                                                        confirmed: true,
+                                                        intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
+                                                    }).await {
+                                                        Ok(result) => {
+                                                            prepared_issuance.set(Some(result));
+                                                            issuance_notice.set(Some("Credential issued, verified, and stored in the protected inventory.".to_owned()));
+                                                            state.set(load_credential_page(&refresh_services, &refresh_profile));
+                                                        }
+                                                        Err(error) => issuance_notice.set(Some(credential_issuance_message(error))),
+                                                    }
+                                                    issuance_busy.set(false);
+                                                });
+                                            }
+                                        },
+                                        if issuance_busy() { "Issuing credential…" } else { "Accept and issue credential" }
+                                    }
+                                    button {
+                                        class: "secondary-action",
+                                        r#type: "button",
+                                        disabled: issuance_busy(),
+                                        onclick: {
+                                            let service = services.refuse_credential_issuance();
+                                            let profile_id = profile_id.clone();
+                                            let issuance_id = preview.id.clone();
+                                            move |_| match service.execute(RefuseCredentialIssuanceCommand {
+                                                profile_id: profile_id.clone(),
+                                                issuance_id: issuance_id.clone(),
+                                            }) {
+                                                Ok(result) => {
+                                                    prepared_issuance.set(Some(result));
+                                                    issuance_consent.set(false);
+                                                    issuance_notice.set(Some("Credential offer refused; ephemeral protocol secrets were discarded.".to_owned()));
+                                                }
+                                                Err(error) => issuance_notice.set(Some(credential_issuance_message(error))),
+                                            }
+                                        },
+                                        "Refuse offer"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(message) = issuance_notice.read().as_deref() {
+                        p { class: "form-hint", role: "status", "{message}" }
+                    }
                 }
                 article { class: "surface-card credential-receive-card",
                     p { class: "card-eyebrow", "Standalone credential inbox" }
@@ -3566,6 +3810,7 @@ fn CredentialsPage(active_profile: WalletProfileView) -> Element {
 #[component]
 fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let credential_protocol_ready = services.standalone_credential_offer().is_some();
     let mut account_state = use_signal(|| AccountPageState::Loading);
     let profile_id = active_profile.id.clone();
     use_effect(move || account_state.set(load_account_page(&services, &profile_id)));
@@ -3622,7 +3867,11 @@ fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
             CapabilityStatus { name: "Transaction completion", state: completion_state, ready: midnight_ready }
             CapabilityStatus { name: "Local proof provider", state: "Not connected".to_owned(), ready: false }
             CapabilityStatus { name: "DID adapter", state: "Not connected".to_owned(), ready: false }
-            CapabilityStatus { name: "Credential protocols", state: "Not connected".to_owned(), ready: false }
+            CapabilityStatus {
+                name: "Credential protocols",
+                state: if credential_protocol_ready { "OpenID4VCI 1.0 · standalone".to_owned() } else { "Not connected".to_owned() },
+                ready: credential_protocol_ready,
+            }
         }
     }
 }
