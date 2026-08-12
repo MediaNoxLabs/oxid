@@ -1,4 +1,4 @@
-# Midnight ledger transaction dependency review
+# Midnight ledger and cryptography dependency review
 
 - Project: [midnight-ledger](https://github.com/midnightntwrk/midnight-ledger)
 - Selected revision: `d9414884db9da9e9b1f6f3a7f742d79a5732f817`
@@ -16,7 +16,10 @@
 - Security/audit evidence: no independent Oxid audit. Canonical structures and
   BIP340 verification are isolated inside the outgoing adapter. Inputs are
   bounded and typed, external errors are not surfaced raw, and key use remains
-  behind an opaque custody port. The graph's unmaintained `bincode 2.0.1`
+  behind an opaque custody port. ADR-0042 additionally uses only the base and
+  transient cryptography packages' persistent commitment/hash primitives in
+  the Digital Passport outgoing adapter; exact reference vectors and tamper
+  tests guard that mapping. The graph's unmaintained `bincode 2.0.1`
   advisory is explicitly bounded and tracked in issue #10; see
   `docs/security/advisory-exceptions.md`. The transitive published proof graph
   and transport/runtime dependencies are reviewed separately in
@@ -32,14 +35,19 @@
 - Reason selected: issues #9/#11 need the exact `Intent`, `UnshieldedOffer`,
   UTXO, DUST, fee, proof, runtime-cost, user-address, BIP340, and transaction
   types used by the reviewed prototype. Reimplementing their serialization or
-  fee/proof rules would risk consensus incompatibility.
+  fee/proof rules would risk consensus incompatibility. Issue #26 likewise
+  needs the official `persistentCommit`/`persistentHash` representation used by
+  the reference Digital Passport package; reimplementing it would risk binding
+  private claims to a different hash contract.
 - Alternatives considered: copying prototype code, recreating the transaction
   format, waiting for crates.io publication, or importing the aggregate wallet
   runtime. These either lose provenance/compatibility, block current parity, or
   cross Oxid's adapter boundary.
 - Cost: even with ledger defaults disabled, upstream unconditional dependencies
   include substantial transaction/proof-related code. Keep the dependency
-  native-only and do not use it for constants or read models.
-- Exit strategy: replace or upgrade only behind `WalletTransactionPort`, after
-  canonical conformance, source policy, mobile compilation, and headless flow
-  tests pass at the new source.
+  inside outgoing adapters, keep transaction/proving portions native-only, and
+  do not use ledger types for core constants or read models.
+- Exit strategy: replace or upgrade only behind `WalletTransactionPort` or
+  `CredentialDisclosurePort`, after canonical/reference-vector conformance,
+  source policy, mobile compilation, and headless flow tests pass at the new
+  source.

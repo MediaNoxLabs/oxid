@@ -143,7 +143,7 @@ final class ProfileFlowTests: XCTestCase {
         let previewOffer = application.buttons["Preview credential offer"]
         scrollTo(previewOffer, in: application)
         previewOffer.tap()
-        XCTAssertTrue(application.staticTexts["Identity credential"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["Digital Passport"].waitForExistence(timeout: 10))
         XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 5))
         let consent = application.descendants(matching: .any)["Consent to credential issuance"]
         XCTAssertTrue(consent.waitForExistence(timeout: 5))
@@ -156,6 +156,33 @@ final class ProfileFlowTests: XCTestCase {
                 .waitForExistence(timeout: 10)
         )
         XCTAssertTrue(application.staticTexts["valid"].waitForExistence(timeout: 10))
+        XCTAssertFalse(application.staticTexts["Alice"].exists)
+        XCTAssertFalse(application.staticTexts["Example"].exists)
+        let revealFirst = application.buttons["Reveal First name locally"]
+        XCTAssertTrue(revealFirst.waitForExistence(timeout: 10))
+        scrollTo(revealFirst, in: application)
+        revealFirst.tap()
+        XCTAssertTrue(application.staticTexts["Alice"].waitForExistence(timeout: 5))
+        let hideFirst = application.buttons["Hide First name"]
+        XCTAssertTrue(hideFirst.waitForExistence(timeout: 5))
+        hideFirst.tap()
+        XCTAssertFalse(application.staticTexts["Alice"].exists)
+        let revealLast = application.buttons["Reveal Last name locally"]
+        scrollTo(revealLast, in: application)
+        revealLast.tap()
+        XCTAssertTrue(application.staticTexts["Example"].waitForExistence(timeout: 5))
+        let hideLast = application.buttons["Hide Last name"]
+        XCTAssertTrue(hideLast.waitForExistence(timeout: 5))
+        hideLast.tap()
+        XCTAssertFalse(application.staticTexts["Example"].exists)
+        XCTAssertTrue(application.textFields["Age threshold"].exists)
+        let previewDisclosure = application.buttons["Preview disclosure plan"]
+        scrollTo(previewDisclosure, in: application)
+        previewDisclosure.tap()
+        XCTAssertTrue(
+            application.staticTexts["local preview ready · local preview only · no presentation generated"]
+                .waitForExistence(timeout: 5)
+        )
         let reverify = application.buttons["Reverify"]
         scrollTo(reverify, in: application)
         reverify.tap()
@@ -170,7 +197,11 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(application.staticTexts["standalone-fixture-v2"].waitForExistence(timeout: 10))
         XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 10))
         credentials.tap()
-        XCTAssertTrue(application.staticTexts["Identity credential"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["Digital Passport"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.buttons["Reveal First name locally"].waitForExistence(timeout: 5))
+        XCTAssertTrue(application.buttons["Preview disclosure plan"].exists)
+        XCTAssertFalse(application.staticTexts["Alice"].exists)
+        XCTAssertFalse(application.staticTexts["Example"].exists)
         XCTAssertTrue(application.buttons["Reverify"].waitForExistence(timeout: 5))
         XCTAssertTrue(application.buttons["Assets"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)

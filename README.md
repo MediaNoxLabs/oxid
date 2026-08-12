@@ -24,7 +24,11 @@ than layers bolted onto one chain-specific frontend.
 > credential storage end to end. A separate deterministic SIOPv2 draft-13
 > adapter previews a standalone verifier request, requires explicit consent,
 > and independently verifies a single-use self-issued DID login without
-> exposing the ID Token. Native headless runs
+> exposing the ID Token. The standalone issuer now delivers a signed Digital
+> Passport with five commitment-bound protected claims; headless can inspect a
+> claim-free disclosure plan, while Dioxus explicitly reveals/hides first and
+> last name locally and plans an age predicate without claiming a presentation
+> or proof. Native headless runs
 > can instead opt into a real standalone-indexer source for public-account and
 > shielded Zswap synchronization, or the complete DUST/local-prover/node
 > submission path using explicit public startup configuration; remote proving
@@ -54,6 +58,9 @@ apps/oxid-headless ---------------------+--> wallet-application --> wallet-domai
                     +--> identity-application --> identity-domain
                     |         ^                       ^
                     |         +-- DID resolver / public DID JSON adapters
+                    +--> credential-application --> credential-domain
+                    |         ^
+                    |         +-- Midnight verifier/disclosure / encrypted storage adapters
                     +--> protocol-application --> protocol-domain
                     |         ^
                     |         +-- OpenID4VCI / SIOPv2 / verified credential adapters
@@ -112,7 +119,10 @@ The implemented account methods are `wallet.network.list`,
 `did.create`, `did.resolve`, `did.list`, `did.get`, `did.update`, `did.sign`,
 `did.deactivate`, and `did.forget`. Credential inventory methods are
 `credential.receive`, `credential.list`, `credential.get`,
-`credential.reverify`, and `credential.delete`. Standalone issuance adds
+`credential.reverify`, `credential.delete`,
+`credential.disclosure.candidates`, and `credential.disclosure.preview`.
+Disclosure responses contain labels, paths, privacy tiers, and the selected
+plan only—never claim values, openings, or presentation secrets. Standalone issuance adds
 `credential.issuance.prepare`, `credential.issuance.accept`,
 `credential.issuance.refuse`, `credential.issuance.get`, and
 `credential.issuance.list`; their profile scope is always taken from the
@@ -191,8 +201,13 @@ headless or UI results. The deterministic issuer is in-process and uses only
 loopback identifiers; normal production composition has no issuer transport.
 Format-private credential material has a separate 256 KiB-bounded opaque route
 through verified import and the same encrypted atomic record. It remains absent
-from incoming DTOs and is not interpreted until issue #26 lands its Digital
-Passport adapter.
+from ordinary incoming DTOs. The Digital Passport adapter interprets it only
+after recomputing all five official Midnight commitments and the signed claim
+root. Headless exposes safe candidate/plan metadata but no reveal operation.
+The Dioxus card permits explicit device-local first/last reveal and age
+threshold planning, clearly states that nothing is sent, and generates no
+presentation. OpenID4VP/DCQL, selective-disclosure and predicate proofs, and
+live verifier transport remain unavailable.
 
 Standalone composition also accepts exactly one request-by-reference SIOPv2
 draft-13 login profile. It previews the verifier and purpose, requires exact
@@ -396,8 +411,8 @@ just android-smoke
 | `crates/wallet/application` | Use cases and wallet-owned ports. |
 | `crates/identity/domain` | DID document, public JWK, relationship, and resolution invariants. |
 | `crates/identity/application` | Profile-scoped DID use cases and identity-owned ports. |
-| `crates/credential/domain` | Credential records, metadata separation, bounded opaque format-private material, and structured verification invariants. |
-| `crates/credential/application` | Profile-scoped credential inventory and verified-import use cases. |
+| `crates/credential/domain` | Credential records, metadata separation, bounded opaque format-private material, schema-neutral disclosure candidates, and structured verification invariants. |
+| `crates/credential/application` | Profile-scoped credential inventory, verified import, disclosure inventory/plan, and targeted local-reveal use cases. |
 | `crates/protocol/domain` | Credential-offer and self-issued-authentication preview/lifecycle invariants. |
 | `crates/protocol/application` | Protocol-neutral issuance and DID-authentication use cases and outgoing ports. |
 | `crates/platform/ports` | Time and randomness capability ports. |
@@ -427,6 +442,10 @@ The Midnight read model uses owned types, while its native canonical transaction
 and local-proving adapter consumes full-revision-pinned official ledger
 packages. The selected baseline, dependency reviews, and source policy are recorded in
 [docs/dependencies/midnight-git-sources.md](docs/dependencies/midnight-git-sources.md).
+The credential migration and exact Digital Passport safety boundary are
+recorded in
+[docs/migration/midnight-vc-provenance.md](docs/migration/midnight-vc-provenance.md)
+and [ADR-0042](docs/adr/0042-bind-digital-passport-disclosure-to-signed-commitments.md).
 
 ## Security
 
@@ -434,7 +453,8 @@ The JSON repository is durable only for public profile metadata; it is not a
 secret store. The software signing and HD-derivation adapter is process-local development/test
 infrastructure and production composition does not select it. The encrypted
 credential repository and standalone issuer are development conformance
-boundaries, not production custody or trust. Never use this milestone to
+boundaries, not production custody or trust. Local disclosure preview does not
+create a verifier presentation or prove a predicate. Never use this milestone to
 custody real assets or externally issued credentials. See
 [SECURITY.md](SECURITY.md) for reporting and the current threat boundaries.
 

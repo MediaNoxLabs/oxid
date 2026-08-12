@@ -10,6 +10,9 @@ pub const MAX_SIGNED_CREDENTIAL_BYTES: usize = 1_048_576;
 pub const MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES: usize = 262_144;
 const MAX_LABEL_CHARACTERS: usize = 128;
 const MAX_DID_CHARACTERS: usize = 8_192;
+const MAX_SCHEMA_IDENTIFIER_CHARACTERS: usize = 256;
+const MAX_CLAIM_PATH_CHARACTERS: usize = 512;
+const MAX_DISCLOSURE_CANDIDATES: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CredentialId(OpaqueId);
@@ -70,6 +73,110 @@ impl fmt::Debug for CredentialPrivateMaterial {
             .debug_struct("CredentialPrivateMaterial")
             .field("length", &self.0.len())
             .finish_non_exhaustive()
+    }
+}
+
+/// Privacy behavior supported by one credential claim.
+///
+/// These are schema-neutral wallet concepts. Format adapters translate their
+/// own claim declarations into this deliberately small vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialClaimPrivacy {
+    SelectiveDisclosure,
+    PredicateOnly,
+}
+
+impl CredentialClaimPrivacy {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SelectiveDisclosure => "selective_disclosure",
+            Self::PredicateOnly => "predicate_only",
+        }
+    }
+}
+
+/// Public metadata for one claim that can participate in a local disclosure
+/// preview. It intentionally carries neither the claim value nor its opening.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialDisclosureCandidate {
+    path: String,
+    label: String,
+    privacy: CredentialClaimPrivacy,
+}
+
+impl CredentialDisclosureCandidate {
+    pub fn new(
+        path: impl Into<String>,
+        label: impl Into<String>,
+        privacy: CredentialClaimPrivacy,
+    ) -> Result<Self, CredentialDomainError> {
+        let path = path.into();
+        validate_claim_path(&path)?;
+        let label = label.into();
+        validate_text(&label, MAX_LABEL_CHARACTERS)?;
+        Ok(Self {
+            path,
+            label,
+            privacy,
+        })
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    #[must_use]
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    #[must_use]
+    pub const fn privacy(&self) -> CredentialClaimPrivacy {
+        self.privacy
+    }
+}
+
+/// Format-independent, claim-value-free description of the local disclosure
+/// controls available for a credential.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialDisclosureManifest {
+    schema_id: String,
+    candidates: Vec<CredentialDisclosureCandidate>,
+}
+
+impl CredentialDisclosureManifest {
+    pub fn new(
+        schema_id: impl Into<String>,
+        candidates: Vec<CredentialDisclosureCandidate>,
+    ) -> Result<Self, CredentialDomainError> {
+        let schema_id = schema_id.into();
+        validate_text(&schema_id, MAX_SCHEMA_IDENTIFIER_CHARACTERS)?;
+        if candidates.is_empty() || candidates.len() > MAX_DISCLOSURE_CANDIDATES {
+            return Err(CredentialDomainError::InvalidDisclosureManifest);
+        }
+        let paths = candidates
+            .iter()
+            .map(CredentialDisclosureCandidate::path)
+            .collect::<BTreeSet<_>>();
+        if paths.len() != candidates.len() {
+            return Err(CredentialDomainError::InvalidDisclosureManifest);
+        }
+        Ok(Self {
+            schema_id,
+            candidates,
+        })
+    }
+
+    #[must_use]
+    pub fn schema_id(&self) -> &str {
+        &self.schema_id
+    }
+
+    #[must_use]
+    pub fn candidates(&self) -> &[CredentialDisclosureCandidate] {
+        &self.candidates
     }
 }
 
@@ -461,6 +568,8 @@ pub enum CredentialDomainError {
     SignedCredentialTooLarge,
     EmptyPrivateMaterial,
     PrivateMaterialTooLarge,
+    InvalidClaimPath,
+    InvalidDisclosureManifest,
     CredentialIdentifierChanged,
 }
 
@@ -485,11 +594,28 @@ impl fmt::Display for CredentialDomainError {
             Self::SignedCredentialTooLarge => "signed credential exceeds the size limit",
             Self::EmptyPrivateMaterial => "credential private material must not be empty",
             Self::PrivateMaterialTooLarge => "credential private material exceeds the size limit",
+            Self::InvalidClaimPath => "credential disclosure claim path is invalid",
+            Self::InvalidDisclosureManifest => "credential disclosure manifest is invalid",
             Self::CredentialIdentifierChanged => {
                 "credential identifier changed during verification"
             }
         })
     }
+}
+
+fn validate_claim_path(value: &str) -> Result<(), CredentialDomainError> {
+    if value.len() < 2
+        || value.len() > MAX_CLAIM_PATH_CHARACTERS
+        || !value.starts_with('/')
+        || value.ends_with('/')
+        || value.contains("//")
+        || value.chars().any(|character| {
+            character.is_control() || matches!(character, '<' | '>' | '\u{202a}'..='\u{202e}')
+        })
+    {
+        return Err(CredentialDomainError::InvalidClaimPath);
+    }
+    Ok(())
 }
 
 impl Error for CredentialDomainError {}
@@ -621,5 +747,43 @@ mod tests {
         let debug = format!("{record:?}");
         assert!(!debug.contains("signed-secret"));
         assert!(!debug.contains("claim-secret"));
+    }
+
+    #[test]
+    fn disclosure_manifest_is_public_metadata_with_unique_paths() {
+        let first = CredentialDisclosureCandidate::new(
+            "/credentialSubject/firstName",
+            "First name",
+            CredentialClaimPrivacy::SelectiveDisclosure,
+        )
+        .expect("candidate");
+        let date_of_birth = CredentialDisclosureCandidate::new(
+            "/credentialSubject/dateOfBirth",
+            "Age over threshold",
+            CredentialClaimPrivacy::PredicateOnly,
+        )
+        .expect("candidate");
+        let manifest = CredentialDisclosureManifest::new(
+            "digital-passport:v1",
+            vec![first.clone(), date_of_birth],
+        )
+        .expect("manifest");
+        assert_eq!(manifest.schema_id(), "digital-passport:v1");
+        assert_eq!(
+            manifest.candidates()[0].privacy().as_str(),
+            "selective_disclosure"
+        );
+        assert_eq!(
+            CredentialDisclosureManifest::new("digital-passport:v1", vec![first.clone(), first]),
+            Err(CredentialDomainError::InvalidDisclosureManifest)
+        );
+        assert_eq!(
+            CredentialDisclosureCandidate::new(
+                "credentialSubject/firstName",
+                "First name",
+                CredentialClaimPrivacy::SelectiveDisclosure
+            ),
+            Err(CredentialDomainError::InvalidClaimPath)
+        );
     }
 }

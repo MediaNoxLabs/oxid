@@ -11,8 +11,9 @@ use std::{
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature as Ed25519Signature, Verifier as _, VerifyingKey as Ed25519Key};
 use oxid_credential_application::{
-    CredentialOperationError, CredentialPrivateMaterialInput, CredentialRepositoryError,
-    CredentialVerificationError, ImportVerifiedCredentialCommand, ImportVerifiedCredentialUseCase,
+    CredentialDisclosurePortError, CredentialOperationError, CredentialPrivateMaterialInput,
+    CredentialRepositoryError, CredentialVerificationError, ImportVerifiedCredentialCommand,
+    ImportVerifiedCredentialUseCase,
 };
 use oxid_identity_application::{
     DidLifecyclePortError, DidOperationConfirmation, DidOperationError, DidRecordQuery,
@@ -35,7 +36,7 @@ use zeroize::Zeroizing;
 
 pub const STANDALONE_CREDENTIAL_ISSUER: &str = "http://127.0.0.1:32191/issuer";
 pub const STANDALONE_AUTHORIZATION_SERVER: &str = "http://127.0.0.1:32191/auth";
-pub const STANDALONE_CONFIGURATION_ID: &str = "oxid_midnight_identity";
+pub const STANDALONE_CONFIGURATION_ID: &str = "oxid_digital_passport";
 const STANDALONE_PRE_AUTHORIZED_CODE: &str = "oxid-standalone-pre-authorized";
 const PRE_AUTHORIZED_GRANT: &str = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 const MAX_JSON_DEPTH: usize = 16;
@@ -80,6 +81,8 @@ pub struct StandaloneOid4vciIssuer {
     clock: Arc<dyn ClockPort>,
     sessions: Mutex<BTreeMap<String, PreparedSecret>>,
     next_id: std::sync::atomic::AtomicU64,
+    signed_credential: Vec<u8>,
+    private_material: Option<Vec<u8>>,
 }
 
 impl StandaloneOid4vciIssuer {
@@ -89,12 +92,34 @@ impl StandaloneOid4vciIssuer {
         get_did: Arc<dyn GetDidRecordUseCase>,
         clock: Arc<dyn ClockPort>,
     ) -> Self {
+        let signed_credential = general_purpose::STANDARD
+            .decode(
+                include_str!("../../../../fixtures/credentials/standalone-midnight-phase1.b64")
+                    .trim(),
+            )
+            .expect("checked-in standalone credential fixture must be valid base64");
+        Self::with_credential_fixture(proof, get_did, clock, signed_credential, None)
+    }
+
+    /// Builds the standalone protocol around a composition-provided public
+    /// signed fixture and optional protected format material. Keeping fixture
+    /// selection in composition avoids an adapter-to-adapter dependency.
+    #[must_use]
+    pub fn with_credential_fixture(
+        proof: Arc<dyn CredentialHolderProofPort>,
+        get_did: Arc<dyn GetDidRecordUseCase>,
+        clock: Arc<dyn ClockPort>,
+        signed_credential: Vec<u8>,
+        private_material: Option<Vec<u8>>,
+    ) -> Self {
         Self {
             proof,
             get_did,
             clock,
             sessions: Mutex::new(BTreeMap::new()),
             next_id: std::sync::atomic::AtomicU64::new(1),
+            signed_credential,
+            private_material,
         }
     }
 
@@ -260,21 +285,18 @@ impl CredentialIssuanceProtocolPort for StandaloneOid4vciIssuer {
             if access_token.is_empty() || secret.configuration_id != STANDALONE_CONFIGURATION_ID {
                 return Err(IssuanceProtocolError::IssuerRejected);
             }
-            let credential_bytes = general_purpose::STANDARD
-                .decode(
-                    include_str!("../../../../fixtures/credentials/standalone-midnight-phase1.b64")
-                        .trim(),
-                )
-                .map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?;
+            if self.signed_credential.is_empty() {
+                return Err(IssuanceProtocolError::InvalidCredentialResponse);
+            }
             let response = json!({
                 "credentials": [{
-                    "credential": general_purpose::URL_SAFE_NO_PAD.encode(&credential_bytes)
+                    "credential": general_purpose::URL_SAFE_NO_PAD.encode(&self.signed_credential)
                 }]
             });
             parse_credential_response(response.to_string().as_bytes()).map(|signed_bytes| {
                 IssuedCredentialBytes {
                     signed_bytes,
-                    private_material: None,
+                    private_material: self.private_material.clone(),
                 }
             })
         })
@@ -388,10 +410,10 @@ fn standalone_issuer_metadata() -> Result<IssuerMetadata, IssuanceProtocolError>
         "credential_endpoint":"http://127.0.0.1:32191/issuer/credential",
         "nonce_endpoint":"http://127.0.0.1:32191/issuer/nonce",
         "credential_configurations_supported":{
-            "oxid_midnight_identity":{
+            "oxid_digital_passport":{
                 "format":"midnight_cbor_phase1",
                 "proof_types_supported":{"jwt":{"proof_signing_alg_values_supported":["EdDSA","ES256"]}},
-                "credential_metadata":{"display":[{"name":"Identity credential"}]}
+                "credential_metadata":{"display":[{"name":"Digital Passport"}]}
             }
         }
     }"#;
@@ -1096,6 +1118,10 @@ fn map_import_error(error: CredentialOperationError) -> IssuedCredentialSinkErro
         }
         CredentialOperationError::Verification(CredentialVerificationError::InvalidCredential)
         | CredentialOperationError::Verification(CredentialVerificationError::UnsupportedFormat)
+        | CredentialOperationError::Disclosure(
+            CredentialDisclosurePortError::InvalidPrivateMaterial
+            | CredentialDisclosurePortError::UnsupportedCredential,
+        )
         | CredentialOperationError::Domain(_) => IssuedCredentialSinkError::InvalidCredential,
         CredentialOperationError::Persistence(CredentialRepositoryError::Unavailable) => {
             IssuedCredentialSinkError::Unavailable
@@ -1226,7 +1252,7 @@ mod tests {
 
     #[test]
     fn duplicate_members_by_reference_and_transaction_codes_fail_closed() {
-        let duplicate = r#"{"credential_issuer":"http://127.0.0.1:32191/issuer","credential_issuer":"https://attacker.example","credential_configuration_ids":["oxid_midnight_identity"],"grants":{"urn:ietf:params:oauth:grant-type:pre-authorized_code":{"pre-authorized_code":"code"}}}"#;
+        let duplicate = r#"{"credential_issuer":"http://127.0.0.1:32191/issuer","credential_issuer":"https://attacker.example","credential_configuration_ids":["oxid_digital_passport"],"grants":{"urn:ietf:params:oauth:grant-type:pre-authorized_code":{"pre-authorized_code":"code"}}}"#;
         let mut url = Url::parse("openid-credential-offer://").expect("valid URL");
         url.query_pairs_mut()
             .append_pair("credential_offer", duplicate);

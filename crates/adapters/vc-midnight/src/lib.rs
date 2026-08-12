@@ -21,6 +21,15 @@ use oxid_identity_domain::{JwkCurve, MidnightDid, VerificationRelationship};
 use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256Key};
 use sha2::{Digest as _, Sha256};
 
+mod digital_passport;
+
+pub use digital_passport::{
+    CLAIM_DATE_OF_BIRTH, CLAIM_DOCUMENT_NUMBER, CLAIM_FIRST_NAME, CLAIM_ISSUING_STATE,
+    CLAIM_LAST_NAME, DigitalPassportCommitments, DigitalPassportDisclosureAdapter, PACKAGE_ID,
+    SCHEMA_ID, STANDALONE_DIGITAL_PASSPORT_CREDENTIAL_B64, standalone_commitments,
+    standalone_credential, standalone_private_material,
+};
+
 pub const STANDALONE_CREDENTIAL_B64: &str =
     include_str!("../../../../fixtures/credentials/standalone-midnight-phase1.b64");
 
@@ -397,11 +406,11 @@ fn credential_display_name(map: &[(Value, Value)]) -> Result<String, CredentialV
         .filter_map(Value::as_text)
         .find(|value| *value != "VerifiableCredential")
         .unwrap_or("Verifiable credential");
-    if value == "IdentityCredential" {
-        Ok("Identity credential".to_owned())
-    } else {
-        Ok(value.to_owned())
-    }
+    Ok(match value {
+        "IdentityCredential" => "Identity credential".to_owned(),
+        "DigitalPassportCredential" => "Digital Passport".to_owned(),
+        value => value.to_owned(),
+    })
 }
 
 struct ScannedCredential {

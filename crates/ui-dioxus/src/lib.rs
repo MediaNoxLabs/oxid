@@ -6,9 +6,12 @@ use std::{sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
 use oxid_credential_application::{
-    CredentialOperationError, CredentialProfileQuery, CredentialQuery, CredentialView,
-    DeleteCredentialCommand, DeleteCredentialUseCase, GetCredentialUseCase, ListCredentialsUseCase,
-    ReceiveCredentialUseCase, ReverifyCredentialUseCase,
+    CredentialDisclosureQuery, CredentialDisclosureView, CredentialOperationError,
+    CredentialPredicateInput, CredentialProfileQuery, CredentialQuery, CredentialView,
+    DeleteCredentialCommand, DeleteCredentialUseCase, GetCredentialDisclosureUseCase,
+    GetCredentialUseCase, ListCredentialsUseCase, PreviewCredentialDisclosureCommand,
+    PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase, RevealCredentialClaimCommand,
+    RevealCredentialClaimUseCase, ReverifyCredentialUseCase,
 };
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
@@ -93,6 +96,9 @@ pub struct WalletUiServices {
     get_credential: Arc<dyn GetCredentialUseCase>,
     reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
     delete_credential: Arc<dyn DeleteCredentialUseCase>,
+    get_credential_disclosure: Arc<dyn GetCredentialDisclosureUseCase>,
+    preview_credential_disclosure: Arc<dyn PreviewCredentialDisclosureUseCase>,
+    reveal_credential_claim: Arc<dyn RevealCredentialClaimUseCase>,
     prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
@@ -121,6 +127,9 @@ pub struct CredentialUiServices {
     get_credential: Arc<dyn GetCredentialUseCase>,
     reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
     delete_credential: Arc<dyn DeleteCredentialUseCase>,
+    get_credential_disclosure: Arc<dyn GetCredentialDisclosureUseCase>,
+    preview_credential_disclosure: Arc<dyn PreviewCredentialDisclosureUseCase>,
+    reveal_credential_claim: Arc<dyn RevealCredentialClaimUseCase>,
     prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
@@ -133,6 +142,28 @@ pub struct CredentialIssuanceUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     standalone_credential_offer: Option<String>,
+}
+
+/// Targeted protected-claim controls consumed only by schema-aware cards.
+pub struct CredentialDisclosureUiServices {
+    get: Arc<dyn GetCredentialDisclosureUseCase>,
+    preview: Arc<dyn PreviewCredentialDisclosureUseCase>,
+    reveal_local: Arc<dyn RevealCredentialClaimUseCase>,
+}
+
+impl CredentialDisclosureUiServices {
+    #[must_use]
+    pub fn new(
+        get: Arc<dyn GetCredentialDisclosureUseCase>,
+        preview: Arc<dyn PreviewCredentialDisclosureUseCase>,
+        reveal_local: Arc<dyn RevealCredentialClaimUseCase>,
+    ) -> Self {
+        Self {
+            get,
+            preview,
+            reveal_local,
+        }
+    }
 }
 
 /// Consent-driven self-issued DID authentication capabilities consumed by the DIDs page.
@@ -186,6 +217,7 @@ impl CredentialUiServices {
         reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
         delete_credential: Arc<dyn DeleteCredentialUseCase>,
         issuance: CredentialIssuanceUiServices,
+        disclosure: CredentialDisclosureUiServices,
     ) -> Self {
         Self {
             receive_credential,
@@ -193,6 +225,9 @@ impl CredentialUiServices {
             get_credential,
             reverify_credential,
             delete_credential,
+            get_credential_disclosure: disclosure.get,
+            preview_credential_disclosure: disclosure.preview,
+            reveal_credential_claim: disclosure.reveal_local,
             prepare_credential_issuance: issuance.prepare_credential_issuance,
             accept_credential_issuance: issuance.accept_credential_issuance,
             refuse_credential_issuance: issuance.refuse_credential_issuance,
@@ -478,6 +513,9 @@ impl WalletUiServices {
             get_credential: credentials.get_credential,
             reverify_credential: credentials.reverify_credential,
             delete_credential: credentials.delete_credential,
+            get_credential_disclosure: credentials.get_credential_disclosure,
+            preview_credential_disclosure: credentials.preview_credential_disclosure,
+            reveal_credential_claim: credentials.reveal_credential_claim,
             prepare_credential_issuance: credentials.prepare_credential_issuance,
             accept_credential_issuance: credentials.accept_credential_issuance,
             refuse_credential_issuance: credentials.refuse_credential_issuance,
@@ -690,6 +728,21 @@ impl WalletUiServices {
     #[must_use]
     pub fn delete_credential(&self) -> Arc<dyn DeleteCredentialUseCase> {
         Arc::clone(&self.delete_credential)
+    }
+
+    #[must_use]
+    pub fn get_credential_disclosure(&self) -> Arc<dyn GetCredentialDisclosureUseCase> {
+        Arc::clone(&self.get_credential_disclosure)
+    }
+
+    #[must_use]
+    pub fn preview_credential_disclosure(&self) -> Arc<dyn PreviewCredentialDisclosureUseCase> {
+        Arc::clone(&self.preview_credential_disclosure)
+    }
+
+    #[must_use]
+    pub fn reveal_credential_claim(&self) -> Arc<dyn RevealCredentialClaimUseCase> {
+        Arc::clone(&self.reveal_credential_claim)
     }
 
     #[must_use]
@@ -3652,6 +3705,214 @@ enum CredentialChange {
     Failed(String),
 }
 
+const PASSPORT_FIRST_NAME: &str = "/credentialSubject/firstName";
+const PASSPORT_LAST_NAME: &str = "/credentialSubject/lastName";
+const PASSPORT_DATE_OF_BIRTH: &str = "/credentialSubject/dateOfBirth";
+
+#[component]
+fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut disclosure_state = use_signal(|| None::<Result<CredentialDisclosureView, String>>);
+    let mut revealed_first = use_signal(|| None::<String>);
+    let mut revealed_last = use_signal(|| None::<String>);
+    let mut age_threshold = use_signal(|| 18_u8);
+    let mut plan_notice = use_signal(|| None::<String>);
+    let load_service = services.get_credential_disclosure();
+    let load_profile = profile_id.clone();
+    let load_credential = credential_id.clone();
+    use_effect(move || {
+        disclosure_state.set(Some(
+            load_service
+                .execute(CredentialDisclosureQuery {
+                    profile_id: load_profile.clone(),
+                    credential_id: load_credential.clone(),
+                })
+                .map_err(credential_operation_message),
+        ));
+    });
+
+    match disclosure_state.read().clone() {
+        None => rsx! {
+            section { class: "passport-claims", aria_label: "Digital Passport protected claims",
+                p { class: "form-hint", "Validating protected claim commitments…" }
+            }
+        },
+        Some(Err(message)) => rsx! {
+            section { class: "passport-claims", aria_label: "Digital Passport protected claims",
+                p { class: "field-error", role: "alert", "Protected claims unavailable: {message}" }
+            }
+        },
+        Some(Ok(disclosure)) => {
+            let first = disclosure
+                .candidates
+                .iter()
+                .find(|candidate| candidate.claim_path == PASSPORT_FIRST_NAME)
+                .cloned();
+            let last = disclosure
+                .candidates
+                .iter()
+                .find(|candidate| candidate.claim_path == PASSPORT_LAST_NAME)
+                .cloned();
+            let date_of_birth = disclosure
+                .candidates
+                .iter()
+                .find(|candidate| candidate.claim_path == PASSPORT_DATE_OF_BIRTH)
+                .cloned();
+            let first_service = services.reveal_credential_claim();
+            let last_service = services.reveal_credential_claim();
+            let preview_service = services.preview_credential_disclosure();
+            let first_profile = profile_id.clone();
+            let first_credential = credential_id.clone();
+            let last_profile = profile_id.clone();
+            let last_credential = credential_id.clone();
+            let preview_profile = profile_id;
+            let preview_credential = credential_id;
+            rsx! {
+                section { class: "passport-claims", aria_label: "Digital Passport protected claims",
+                    div { class: "passport-claims__heading",
+                        div {
+                            p { class: "card-eyebrow", "{disclosure.schema_id}" }
+                            h3 { "Available proofs" }
+                        }
+                        span { class: "status-pill", "Holder controlled" }
+                    }
+                    p { class: "form-hint",
+                        "Reveal is local to this screen. Preview builds no verifier presentation and sends nothing."
+                    }
+                    if let Some(candidate) = first {
+                        article { class: "passport-claim",
+                            div {
+                                span { class: "passport-claim__tier", "{candidate.privacy_tier}" }
+                                h4 { "{candidate.label}" }
+                                if let Some(value) = revealed_first.read().as_deref() {
+                                    p { class: "passport-claim__value", "{value}" }
+                                } else {
+                                    p { "Encrypted until locally revealed." }
+                                }
+                            }
+                            button {
+                                class: "secondary-action", r#type: "button",
+                                aria_label: if revealed_first.read().is_some() { "Hide First name" } else { "Reveal First name locally" },
+                                onclick: move |_| {
+                                    if revealed_first.read().is_some() {
+                                        revealed_first.set(None);
+                                    } else {
+                                        match first_service.execute(RevealCredentialClaimCommand {
+                                            profile_id: first_profile.clone(),
+                                            credential_id: first_credential.clone(),
+                                            claim_path: PASSPORT_FIRST_NAME.to_owned(),
+                                        }) {
+                                            Ok(claim) => {
+                                                revealed_first.set(Some(claim.value().to_owned()));
+                                                plan_notice.set(Some("First name revealed only on this device screen.".to_owned()));
+                                            }
+                                            Err(error) => plan_notice.set(Some(credential_operation_message(error))),
+                                        }
+                                    }
+                                },
+                                if revealed_first.read().is_some() { "Hide" } else { "Reveal locally" }
+                            }
+                        }
+                    }
+                    if let Some(candidate) = last {
+                        article { class: "passport-claim",
+                            div {
+                                span { class: "passport-claim__tier", "{candidate.privacy_tier}" }
+                                h4 { "{candidate.label}" }
+                                if let Some(value) = revealed_last.read().as_deref() {
+                                    p { class: "passport-claim__value", "{value}" }
+                                } else {
+                                    p { "Encrypted until locally revealed." }
+                                }
+                            }
+                            button {
+                                class: "secondary-action", r#type: "button",
+                                aria_label: if revealed_last.read().is_some() { "Hide Last name" } else { "Reveal Last name locally" },
+                                onclick: move |_| {
+                                    if revealed_last.read().is_some() {
+                                        revealed_last.set(None);
+                                    } else {
+                                        match last_service.execute(RevealCredentialClaimCommand {
+                                            profile_id: last_profile.clone(),
+                                            credential_id: last_credential.clone(),
+                                            claim_path: PASSPORT_LAST_NAME.to_owned(),
+                                        }) {
+                                            Ok(claim) => {
+                                                revealed_last.set(Some(claim.value().to_owned()));
+                                                plan_notice.set(Some("Last name revealed only on this device screen.".to_owned()));
+                                            }
+                                            Err(error) => plan_notice.set(Some(credential_operation_message(error))),
+                                        }
+                                    }
+                                },
+                                if revealed_last.read().is_some() { "Hide" } else { "Reveal locally" }
+                            }
+                        }
+                    }
+                    if let Some(candidate) = date_of_birth {
+                        article { class: "passport-claim predicate",
+                            div {
+                                span { class: "passport-claim__tier predicate", "{candidate.privacy_tier}" }
+                                h4 { "Date of birth" }
+                                p { "Never reveals the date. Plans only an age-over-threshold predicate." }
+                            }
+                            label { class: "passport-threshold",
+                                span { "Age over" }
+                                input {
+                                    r#type: "number", min: "1", max: "120", inputmode: "numeric",
+                                    aria_label: "Age threshold",
+                                    value: "{age_threshold}",
+                                    oninput: move |event| {
+                                        if let Ok(value) = event.value().parse::<u8>()
+                                            && (1..=120).contains(&value)
+                                        {
+                                            age_threshold.set(value);
+                                            plan_notice.set(None);
+                                        }
+                                    },
+                                }
+                            }
+                        }
+                    }
+                    button {
+                        class: "primary-action", r#type: "button",
+                        onclick: move |_| {
+                            let mut reveal_claim_paths = Vec::new();
+                            if revealed_first.read().is_some() {
+                                reveal_claim_paths.push(PASSPORT_FIRST_NAME.to_owned());
+                            }
+                            if revealed_last.read().is_some() {
+                                reveal_claim_paths.push(PASSPORT_LAST_NAME.to_owned());
+                            }
+                            let result = preview_service.execute(PreviewCredentialDisclosureCommand {
+                                profile_id: preview_profile.clone(),
+                                credential_id: preview_credential.clone(),
+                                reveal_claim_paths,
+                                predicates: vec![CredentialPredicateInput {
+                                    claim_path: PASSPORT_DATE_OF_BIRTH.to_owned(),
+                                    kind: "age_over".to_owned(),
+                                    threshold: age_threshold(),
+                                }],
+                            });
+                            plan_notice.set(Some(match result {
+                                Ok(plan) => format!(
+                                    "{} · local preview only · no presentation generated",
+                                    plan.outcome.replace('_', " ")
+                                ),
+                                Err(error) => credential_operation_message(error),
+                            }));
+                        },
+                        "Preview disclosure plan"
+                    }
+                    if let Some(message) = plan_notice.read().as_deref() {
+                        p { class: "form-hint", role: "status", "{message}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[component]
 fn CredentialRecordCard(
     profile_id: String,
@@ -3667,7 +3928,7 @@ fn CredentialRecordCard(
     let verify_services = services.clone();
     let delete_services = services;
     let verify_profile = profile_id.clone();
-    let delete_profile = profile_id;
+    let delete_profile = profile_id.clone();
     let issuer = truncate_middle(&credential.issuer_did, 20, 12);
     let outcome = credential.verification_outcome.clone();
     let status_class = if outcome == "valid" {
@@ -3700,6 +3961,12 @@ fn CredentialRecordCard(
                         "Not supplied"
                     }
                 } }
+            }
+            if credential.display_name == "Digital Passport" {
+                DigitalPassportClaims {
+                    profile_id: profile_id.clone(),
+                    credential_id: identifier.clone(),
+                }
             }
             ul { class: "credential-stage-list", aria_label: "Verification stages",
                 for stage in credential.verification_stages.clone() {

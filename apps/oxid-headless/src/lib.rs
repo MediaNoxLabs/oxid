@@ -7,8 +7,11 @@ use std::{error::Error, fmt, io, io::BufRead, io::Write, thread, time::Duration}
 
 use oxid_composition::ApplicationServices;
 use oxid_credential_application::{
-    CredentialOperationError, CredentialProfileQuery, CredentialQuery, CredentialRepositoryError,
+    CredentialDisclosurePlanView, CredentialDisclosurePortError, CredentialDisclosureQuery,
+    CredentialDisclosureView, CredentialOperationError, CredentialPredicateInput,
+    CredentialProfileQuery, CredentialQuery, CredentialRepositoryError,
     CredentialVerificationError, CredentialView, DeleteCredentialCommand,
+    PreviewCredentialDisclosureCommand,
 };
 use oxid_identity_application::{
     CreateDidCommand, DeactivateDidCommand, DidKeyAlgorithm, DidLifecyclePortError,
@@ -202,6 +205,8 @@ impl HeadlessWallet {
             "credential.get" => self.get_credential(request),
             "credential.reverify" | "credential.verify" => self.reverify_credential(request),
             "credential.delete" => self.delete_credential(request),
+            "credential.disclosure.candidates" => self.credential_disclosure_candidates(request),
+            "credential.disclosure.preview" => self.preview_credential_disclosure(request),
             "credential.issuance.prepare" => self.prepare_credential_issuance(request),
             "credential.issuance.accept" => self.accept_credential_issuance(request),
             "credential.issuance.refuse" => self.refuse_credential_issuance(request),
@@ -1605,6 +1610,75 @@ impl HeadlessWallet {
         }
     }
 
+    fn credential_disclosure_candidates(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<CredentialParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.disclosure.candidates requires only a string credentialId field",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .get_credential_disclosure()
+            .execute(CredentialDisclosureQuery {
+                profile_id,
+                credential_id: params.credential_id,
+            }) {
+            Ok(disclosure) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "disclosure": credential_disclosure_value(&disclosure) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_error(request.id, error)),
+        }
+    }
+
+    fn preview_credential_disclosure(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<DisclosurePreviewParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.disclosure.preview requires credentialId, revealClaimPaths, and predicates fields",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self.application.preview_credential_disclosure().execute(
+            PreviewCredentialDisclosureCommand {
+                profile_id,
+                credential_id: params.credential_id,
+                reveal_claim_paths: params.reveal_claim_paths,
+                predicates: params
+                    .predicates
+                    .into_iter()
+                    .map(|predicate| CredentialPredicateInput {
+                        claim_path: predicate.claim_path,
+                        kind: predicate.kind,
+                        threshold: predicate.threshold,
+                    })
+                    .collect(),
+            },
+        ) {
+            Ok(plan) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "plan": credential_disclosure_plan_value(&plan) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_error(request.id, error)),
+        }
+    }
+
     fn prepare_credential_issuance(&self, request: Request) -> Dispatch {
         let params = match serde_json::from_value::<PrepareCredentialIssuanceParams>(request.params)
         {
@@ -2059,6 +2133,22 @@ struct DeleteCredentialParams {
     credential_id: String,
     confirmed: bool,
     intent: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DisclosurePreviewParams {
+    credential_id: String,
+    reveal_claim_paths: Vec<String>,
+    predicates: Vec<DisclosurePredicateParams>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DisclosurePredicateParams {
+    claim_path: String,
+    kind: String,
+    threshold: u8,
 }
 
 #[derive(Deserialize)]
@@ -2726,6 +2816,38 @@ fn credential_value(credential: &CredentialView) -> Value {
     })
 }
 
+fn credential_disclosure_value(disclosure: &CredentialDisclosureView) -> Value {
+    json!({
+        "credentialId": disclosure.credential_id,
+        "schemaId": disclosure.schema_id,
+        "candidates": disclosure.candidates.iter().map(|candidate| json!({
+            "claimPath": candidate.claim_path,
+            "label": candidate.label,
+            "privacyTier": candidate.privacy_tier,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn credential_disclosure_plan_value(plan: &CredentialDisclosurePlanView) -> Value {
+    json!({
+        "credentialId": plan.credential_id,
+        "schemaId": plan.schema_id,
+        "reveals": plan.reveals.iter().map(|candidate| json!({
+            "claimPath": candidate.claim_path,
+            "label": candidate.label,
+            "privacyTier": candidate.privacy_tier,
+        })).collect::<Vec<_>>(),
+        "predicates": plan.predicates.iter().map(|predicate| json!({
+            "claimPath": predicate.claim_path,
+            "label": predicate.label,
+            "kind": predicate.kind,
+            "threshold": predicate.threshold,
+        })).collect::<Vec<_>>(),
+        "outcome": plan.outcome,
+        "presentationGenerated": plan.presentation_generated,
+    })
+}
+
 fn credential_issuance_value(issuance: &CredentialIssuanceView) -> Value {
     json!({
         "id": issuance.id,
@@ -2861,6 +2983,34 @@ fn credential_error(id: Option<String>, error: CredentialOperationError) -> Resp
                 id,
                 "invalid_credential",
                 "credential structure or proof encoding is invalid",
+            ),
+        },
+        CredentialOperationError::Disclosure(error) => match error {
+            CredentialDisclosurePortError::Unavailable => Response::error(
+                id,
+                "capability_unavailable",
+                "credential disclosure capability is unavailable",
+            ),
+            CredentialDisclosurePortError::UnsupportedCredential => Response::error(
+                id,
+                "unsupported_format",
+                "credential schema does not support disclosure preview",
+            ),
+            CredentialDisclosurePortError::MissingPrivateMaterial => Response::error(
+                id,
+                "failed_precondition",
+                "credential has no protected claim material",
+            ),
+            CredentialDisclosurePortError::InvalidPrivateMaterial => Response::error(
+                id,
+                "invalid_credential",
+                "credential protected claim material is invalid",
+            ),
+            CredentialDisclosurePortError::ClaimNotFound
+            | CredentialDisclosurePortError::ClaimNotRevealable => Response::error(
+                id,
+                "invalid_argument",
+                "credential disclosure selection is invalid",
             ),
         },
         CredentialOperationError::Persistence(error) => match error {
@@ -3585,6 +3735,8 @@ fn capability_manifest() -> Value {
         { "method": "credential.reverify", "status": "ready", "mode": "standalone", "stages": ["structural", "issuer", "proof", "temporal", "status", "schema", "trust"] },
         { "method": "credential.verify", "status": "ready", "mode": "standalone", "aliasFor": "credential.reverify" },
         { "method": "credential.delete", "status": "ready", "mode": "standalone", "confirmationRequired": true },
+        { "method": "credential.disclosure.candidates", "status": "ready", "mode": "standalone", "claimValuesExposed": false },
+        { "method": "credential.disclosure.preview", "status": "ready", "mode": "standalone", "generatesPresentation": false, "claimValuesExposed": false },
         { "method": "credential.issuance.prepare", "status": "ready", "mode": "standalone", "standard": "OpenID4VCI 1.0 Final", "offerMode": "embedded" },
         { "method": "credential.issuance.accept", "status": "ready", "mode": "standalone", "grant": "pre-authorized_code", "confirmationRequired": true, "proof": "jwt" },
         { "method": "credential.issuance.refuse", "status": "ready", "mode": "standalone" },
@@ -3704,6 +3856,12 @@ mod tests {
             capability["method"] == "credential.reverify" && capability["status"] == "ready"
         }));
         assert!(methods.iter().any(|capability| {
+            capability["method"] == "credential.disclosure.preview"
+                && capability["status"] == "ready"
+                && capability["generatesPresentation"] == false
+                && capability["claimValuesExposed"] == false
+        }));
+        assert!(methods.iter().any(|capability| {
             capability["method"] == "identity.login"
                 && capability["status"] == "ready"
                 && capability["aliasFor"] == "identity.authentication.prepare"
@@ -3805,7 +3963,7 @@ mod tests {
             prepared[0]["result"]["issuance"]["state"],
             "awaiting_consent"
         );
-        assert!(prepared[0].to_string().contains("Identity credential"));
+        assert!(prepared[0].to_string().contains("Digital Passport"));
         assert!(!prepared[0].to_string().contains("pre-authorized"));
         let issuance_id = prepared[0]["result"]["issuance"]["id"]
             .as_str()
@@ -3834,7 +3992,10 @@ mod tests {
             .to_string(),
         );
         assert_eq!(accepted[0]["result"]["issuance"]["state"], "succeeded");
-        assert!(accepted[0]["result"]["issuance"]["credentialId"].is_string());
+        let credential_id = accepted[0]["result"]["issuance"]["credentialId"]
+            .as_str()
+            .expect("credential identifier")
+            .to_owned();
         assert!(!accepted[0].to_string().contains("credential_offer"));
 
         let inventories = execute_with_wallet(
@@ -3853,6 +4014,76 @@ mod tests {
             inventories[1]["result"]["credentials"][0]["verification"]["outcome"],
             "valid"
         );
+
+        let other_profile = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"issuance-other-profile","method":"wallet.profile.create","params":{"displayName":"Other holder"}}"#,
+        );
+        let other_profile_id = other_profile[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("other profile identifier");
+        let select_other = json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "issuance-select-other",
+            "method": "wallet.profile.select",
+            "params": {"profileId": other_profile_id},
+        })
+        .to_string();
+        assert_eq!(execute_with_wallet(&wallet, &select_other)[0]["ok"], true);
+        let isolated = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "disclosure-other-profile",
+                "method": "credential.disclosure.candidates",
+                "params": {"credentialId": credential_id.clone()},
+            })
+            .to_string(),
+        );
+        assert_eq!(isolated[0]["error"]["code"], "not_found");
+        let select_owner = json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "issuance-select-owner",
+            "method": "wallet.profile.select",
+            "params": {"profileId": profile_id},
+        })
+        .to_string();
+        assert_eq!(execute_with_wallet(&wallet, &select_owner)[0]["ok"], true);
+
+        let disclosure = execute_with_wallet(
+            &wallet,
+            &format!(
+                "{}\n{}",
+                json!({"protocol": PROTOCOL_VERSION, "id": "disclosure-candidates", "method": "credential.disclosure.candidates", "params": {"credentialId": credential_id.clone()}}),
+                json!({"protocol": PROTOCOL_VERSION, "id": "disclosure-preview", "method": "credential.disclosure.preview", "params": {
+                    "credentialId": credential_id,
+                    "revealClaimPaths": ["/credentialSubject/firstName", "/credentialSubject/lastName"],
+                    "predicates": [{"claimPath": "/credentialSubject/dateOfBirth", "kind": "age_over", "threshold": 18}]
+                }}),
+            ),
+        );
+        assert_eq!(
+            disclosure[0]["result"]["disclosure"]["schemaId"],
+            "digital-passport:v1"
+        );
+        assert_eq!(
+            disclosure[0]["result"]["disclosure"]["candidates"]
+                .as_array()
+                .map(Vec::len),
+            Some(5)
+        );
+        assert_eq!(
+            disclosure[1]["result"]["plan"]["outcome"],
+            "local_preview_ready"
+        );
+        assert_eq!(
+            disclosure[1]["result"]["plan"]["presentationGenerated"],
+            false
+        );
+        let disclosure_json = serde_json::to_string(&disclosure).expect("serialize responses");
+        assert!(!disclosure_json.contains("Alice"));
+        assert!(!disclosure_json.contains("Example"));
+        assert!(!disclosure_json.contains("AB1234567"));
     }
 
     #[test]

@@ -232,7 +232,7 @@ try {
     await clickButton("Use standalone demo offer");
     await clickButton("Preview credential offer");
     await waitFor(
-      "document.body.innerText.includes('Credential offer preview') && document.body.innerText.includes('Identity credential')",
+      "document.body.innerText.includes('Credential offer preview') && document.body.innerText.includes('Digital Passport')",
       "OID4VCI credential offer preview",
     );
     await evaluate(`(() => {
@@ -246,10 +246,44 @@ try {
       "document.body.innerText.includes('Credential issued, verified, and stored in the protected inventory.') && document.body.innerText.includes('valid')",
       "issued and verified OID4VCI credential",
     );
+    const claimsHiddenByDefault = await evaluate(
+      "Boolean(document.querySelector('.passport-claims')) && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
+    );
+    await clickButtonByLabel("Reveal First name locally");
+    await waitFor(
+      "document.body.innerText.includes('Alice')",
+      "explicit local first-name reveal",
+    );
+    await clickButtonByLabel("Hide First name");
+    await waitFor(
+      "!document.body.innerText.includes('Alice')",
+      "hidden local first-name value",
+    );
+    await clickButtonByLabel("Reveal Last name locally");
+    await waitFor(
+      "document.body.innerText.includes('Example')",
+      "explicit local last-name reveal",
+    );
+    await clickButtonByLabel("Hide Last name");
+    await waitFor(
+      "!document.body.innerText.includes('Example')",
+      "hidden local last-name value",
+    );
+    const thresholdAvailable = await evaluate(
+      "Boolean(document.querySelector('input[aria-label=\"Age threshold\"]'))",
+    );
+    await clickButton("Preview disclosure plan");
+    await waitFor(
+      "document.body.innerText.includes('local preview ready · local preview only · no presentation generated')",
+      "claim-free local disclosure preview",
+    );
+    const disclosurePreviewed = await evaluate(
+      "document.body.innerText.includes('local preview ready · local preview only · no presentation generated')",
+    );
     await clickButton("Reverify");
     await waitForButton("Reverify");
     const credentialVerified = await evaluate(
-      "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid')",
+      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid')",
     );
 
     await clickButton("DIDs");
@@ -295,12 +329,12 @@ try {
     );
     await clickButton("Credentials");
     await waitFor(
-      "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
+      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, credentialVerified, didAuthenticated, didManaged, didResolved, qrRendered, shieldedAddressRendered };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.qrRendered || !result.shieldedAddressRendered) {
-      throw new Error("Android standalone wallet flow did not expose the expected public result");
+    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, qrRendered, shieldedAddressRendered, thresholdAvailable };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable) {
+      throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } else {
@@ -325,12 +359,17 @@ try {
     );
     await clickButton("Credentials");
     await waitFor(
-      "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid')",
+      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && Boolean(document.querySelector('.passport-claims')) && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
       "restored credential inventory",
     );
     await waitForButton("Reverify");
+    await clickButton("Preview disclosure plan");
+    await waitFor(
+      "document.body.innerText.includes('local preview ready · local preview only · no presentation generated')",
+      "restored protected disclosure preview",
+    );
     const credentialRestored = await evaluate(
-      "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid')",
+      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
     );
     const restored = { ...walletRestored, credentialRestored, didRestored, managedDidRestored };
     if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored || !restored.credentialRestored || !restored.didRestored || !restored.managedDidRestored) {

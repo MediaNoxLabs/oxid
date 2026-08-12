@@ -5,7 +5,7 @@
 - Source: Blueprint §§3–7, 10, 12–13, 16–18 and [issue #26](https://github.com/MediaNoxLabs/oxid/issues/26)
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/vc_store/` and `wallet-core/src/oid4vci_client/credential/digital_passport.rs`
 - Amends: ADR-0003, ADR-0007, ADR-0009, ADR-0011, ADR-0013, ADR-0017, ADR-0020, ADR-0021, ADR-0023, ADR-0038, and ADR-0039
-- Implementation state: opaque bounded private material, issuance/import propagation, and encrypted-store schema migration implemented; Digital Passport interpretation, disclosure preview, and UI remain later increments of issue #26
+- Implementation state: opaque bounded private material, issuance/import propagation, and encrypted-store schema migration implemented; Digital Passport interpretation, disclosure preview, and UI are delivered by ADR-0042
 
 ## Context
 
@@ -40,12 +40,12 @@ credential. It can read version 1 documents as records with no private
 material, so existing development wallets remain usable. Authentication,
 base64, size, or domain validation failure remains an integrity error.
 
-A later issue #26 increment will add a Digital Passport adapter that validates
-and interprets its exact private-part encoding, exposes only schema-neutral
-claim candidates through focused use cases, and permits local reveal only from
-an explicit UI action. This ADR does not authorize returning claim values over
-the headless protocol. OpenID4VP request handling, verifier disclosure consent,
-and proof generation remain a separate presentation slice.
+ADR-0042 adds the Digital Passport adapter that validates and interprets its
+exact private-part encoding, exposes only schema-neutral claim candidates
+through focused use cases, and permits local reveal only from an explicit UI
+action. This ADR does not authorize returning claim values over the headless
+protocol. OpenID4VP request handling, verifier disclosure consent, and proof
+generation remain a separate presentation slice.
 
 ## Consequences
 

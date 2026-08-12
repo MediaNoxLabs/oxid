@@ -1,6 +1,6 @@
 # Midnight Git source policy
 
-- Status: source policy enforced; canonical transaction and standalone submission packages selected by issues #9/#11
+- Status: source policy enforced; canonical transaction, standalone submission, and Digital Passport commitment packages selected by issues #9/#11/#26
 - Reviewed: 2026-08-12
 - Repositories: `midnightntwrk/midnight-ledger`, `midnightntwrk/midnight-zk`
 - ADR: [ADR-0015](../adr/0015-midnight-library-selection.md)
@@ -25,6 +25,10 @@ and revision with default features disabled.
 Issue #18 adds `midnight-zswap 8.2.0-rc.1` as a direct native-only dependency
 from the same immutable revision for canonical public-key derivation and the
 adapter-private shielded state machine.
+Issue #26 reuses `midnight-base-crypto` and `midnight-transient-crypto` from the
+same immutable revision inside `adapters/vc-midnight` to reproduce the
+reference Digital Passport `persistentCommit` and `persistentHash` contract.
+It adds no path dependency, repository, revision, or proof-system package.
 The feature resolves published `midnight-proofs`, `midnight-circuits`, and
 `midnight-zk-stdlib` releases transitively. There is no direct `midnight-zk`
 dependency because the compatible proof crates are already selected by the

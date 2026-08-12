@@ -602,6 +602,22 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         .to_owned();
     assert!(!issued.to_string().contains("pre-authorized"));
     assert!(!issued.to_string().contains("signedBytes"));
+    let disclosure = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-disclosure",
+        "method": "credential.disclosure.candidates",
+        "params": { "credentialId": credential_id.clone() }
+    }));
+    assert_eq!(
+        disclosure["result"]["disclosure"]["schemaId"],
+        "digital-passport:v1"
+    );
+    assert_eq!(
+        disclosure["result"]["disclosure"]["candidates"]
+            .as_array()
+            .map(Vec::len),
+        Some(5)
+    );
+    assert!(!disclosure.to_string().contains("Alice"));
     first_process.quit();
 
     let encrypted_path = store.root.join("private/credentials.enc");
@@ -610,9 +626,16 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
     assert!(encrypted.starts_with(b"OXIDVC01"));
     assert!(
         !encrypted
-            .windows(b"Identity credential".len())
-            .any(|window| window == b"Identity credential")
+            .windows(b"Digital Passport".len())
+            .any(|window| window == b"Digital Passport")
     );
+    for secret in [b"Alice".as_slice(), b"Example", b"AB1234567"] {
+        assert!(
+            !encrypted
+                .windows(secret.len())
+                .any(|window| window == secret)
+        );
+    }
     assert_eq!(
         fs::read(&key_path).expect("development wrapping key").len(),
         32
@@ -628,6 +651,27 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         listed["result"]["credentials"][0]["verification"]["outcome"],
         "valid"
     );
+    let restored_disclosure = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-disclosure-restored",
+        "method": "credential.disclosure.preview",
+        "params": {
+            "credentialId": credential_id,
+            "revealClaimPaths": ["/credentialSubject/firstName"],
+            "predicates": [{
+                "claimPath": "/credentialSubject/dateOfBirth",
+                "kind": "age_over",
+                "threshold": 21
+            }]
+        }
+    }));
+    assert_eq!(
+        restored_disclosure["result"]["plan"]["outcome"],
+        "local_preview_ready"
+    );
+    assert_eq!(
+        restored_disclosure["result"]["plan"]["presentationGenerated"],
+        false
+    );
     let reverified = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-reverify-restored",
         "method": "credential.reverify", "params": { "credentialId": credential_id }
@@ -636,7 +680,36 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         reverified["result"]["credential"]["verification"]["outcome"],
         "valid"
     );
+    let deleted = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-delete-restored",
+        "method": "credential.delete",
+        "params": {
+            "credentialId": credential_id.clone(),
+            "confirmed": true,
+            "intent": "DELETE_CREDENTIAL"
+        }
+    }));
+    assert_eq!(deleted["result"]["deleted"], true);
+    let removed_disclosure = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-disclosure-deleted",
+        "method": "credential.disclosure.candidates",
+        "params": { "credentialId": credential_id }
+    }));
+    assert_eq!(removed_disclosure["error"]["code"], "not_found");
     second_process.quit();
+
+    let mut third_process = ProcessHarness::spawn(&store.path);
+    let removed_after_restart = third_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-list-after-delete",
+        "method": "credential.list", "params": {}
+    }));
+    assert!(
+        removed_after_restart["result"]["credentials"]
+            .as_array()
+            .expect("credentials")
+            .is_empty()
+    );
+    third_process.quit();
 }
 
 #[test]

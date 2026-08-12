@@ -36,8 +36,11 @@ presentation shell is the first post-M0 slice. Its deferred destinations are
 status surfaces, not claims of working custody or identity capabilities. The
 DIDs, protected credential inventory, embedded pre-authorized OpenID4VCI
 issuance, and consented self-issued DID authentication are now functional in
-standalone development; vault, live protocol transport, OpenID4VP credential
-presentation, and disclosure behavior remain deferred.
+standalone development. Digital Passport private parts are commitment-bound and
+encrypted; safe headless disclosure planning plus explicit local Dioxus
+first/last reveal and age-threshold planning are functional. Vault, live
+protocol transport, OpenID4VP verifier presentation, and disclosure/predicate
+proof generation remain deferred.
 
 ADR-0017 is accepted. The first M1 security slice separates protection/session
 state from key operations, secret blobs, and native user authorization. The
@@ -282,6 +285,23 @@ unavailable. Sessions deliberately reset on restart; no authentication artifact
 is persisted. Live verifier transport, signed request objects, native ingress,
 and Final OpenID4VP presentation remain later reviewed slices.
 
+[Issue #26](https://github.com/MediaNoxLabs/oxid/issues/26), ADR-0041, and
+ADR-0042 migrate the Digital Passport behavior actually implemented by the
+prototype. `CredentialRecord` atomically owns an optional 256 KiB-bounded,
+debug-redacted private-material envelope. `adapters/vc-midnight` alone knows its
+five-field CBOR mapping and must recompute the official Midnight
+`persistentCommit` values and signed domain-separated claim root before
+candidates, preview, or local reveal. Credential domain/application own only
+schema-neutral privacy tiers, paths, labels, candidate/plan views, and
+profile-scoped use cases. Headless exposes
+`credential.disclosure.candidates|preview` and never claim values. Dioxus
+reveals/hides first and last name only in component-local state and plans a
+date-of-birth age threshold; it must state that no verifier presentation or
+proof was generated. The deterministic standalone issuer supplies all five
+values/openings and a matching public signed fixture. Normal `compose()` stays
+unavailable. Do not add a headless reveal method or describe local preview as
+OpenID4VP/selective-disclosure/predicate proof.
+
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
 web --target wasm32-unknown-unknown` currently stops in the pre-existing
@@ -375,9 +395,12 @@ ADR-0041 adds optional 256 KiB-bounded, debug-redacted format-private material
 to `CredentialRecord`, carries it through verified issuance/import, and stores
 it atomically inside credential-store schema v2. The store reads schema v1 as
 material-absent. Ordinary credential/headless/UI views still expose no private
-bytes or claims. Issue #26 must validate Digital Passport private parts in an
-adapter before using them; never attach synthetic claims that are not bound to
-the credential fixture.
+bytes or claims. ADR-0042 adds schema-neutral disclosure inventory/planning and
+an exact Digital Passport adapter. It recomputes all five official Midnight
+commitments and the signed root before any interpretation, keeps value reveal
+local to Dioxus, and returns claim-free headless plans with
+`presentationGenerated: false`. Never attach synthetic claims that are not
+bound to the signed credential fixture.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -393,8 +416,8 @@ Current package ownership:
 | `crates/wallet/application` | Incoming use cases and owned outgoing repository ports. |
 | `crates/identity/domain` | Dependency-free Midnight DID, public JWK, document, and resolution invariants. |
 | `crates/identity/application` | Profile-scoped DID resolution, inventory, lifecycle/signing use cases, and owned outgoing ports. |
-| `crates/credential/domain` | Dependency-free credential records, metadata separation, bounded opaque format-private material, and structured verification invariants. |
-| `crates/credential/application` | Profile-scoped receive/list/get/reverify/delete use cases and repository/inbox/verifier ports. |
+| `crates/credential/domain` | Dependency-free credential records, metadata separation, bounded opaque format-private material, schema-neutral disclosure candidates, and structured verification invariants. |
+| `crates/credential/application` | Profile-scoped receive/list/get/reverify/delete plus disclosure inventory/plan/local-reveal use cases and repository/inbox/verifier/disclosure ports. |
 | `crates/protocol/domain` | Dependency-free credential-offer and self-issued-authentication preview/lifecycle invariants. |
 | `crates/protocol/application` | Profile-scoped issuance and self-issued-authentication use cases plus protocol/proof/verified-sink ports. |
 | `crates/platform/ports` | Clock and randomness capabilities used by applications. |
@@ -405,7 +428,7 @@ Current package ownership:
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development lifecycle adapters. |
-| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR credential verification and public standalone credential ingress. |
+| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification plus exact commitment-bound Digital Passport private-part interpretation and public standalone fixtures. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
@@ -466,10 +489,14 @@ configuration fails startup. The key file is a temporary development wrapping
 boundary and must never be described as platform-backed or recoverable. Normal
 `compose()` wires unavailable credential ports. The headless surface is
 `credential.receive`, `credential.list`, `credential.get`,
-`credential.reverify`, and confirmation-gated `credential.delete`;
+`credential.reverify`, confirmation-gated `credential.delete`,
+`credential.disclosure.candidates`, and `credential.disclosure.preview`;
 `credential.request` and `credential.verify` remain prototype aliases. These
 methods derive profile scope from the active profile and never return signed
-bytes, proofs, openings, or claim values.
+bytes, proofs, openings, or claim values. Disclosure output is limited to
+schema, labels, paths, privacy tiers, selections, threshold, outcome, and the
+fact that no presentation was generated. There is deliberately no headless
+local-reveal operation.
 
 The headless DUST surface is `wallet.dust.sync.status`,
 `wallet.dust.sync.start`, and `wallet.dust.sync.cancel`. These commands never
@@ -678,8 +705,9 @@ Gradle/Xcode output remains under ignored `target/` paths.
 `tests/mobile/ios/project.yml`, resets only the installed Oxid simulator data,
 and verifies profile creation, development account activation, receive QR,
 staged simulated transfer, OpenID4VCI offer preview/consent/issuance, protected
-credential verification/restore, consented self-issued DID authentication, and
-profile restore through visible UI elements.
+Digital Passport verification/restore, hidden-by-default first/last values,
+explicit local reveal/hide, age-predicate preview, consented self-issued DID
+authentication, and profile restore through visible UI elements.
 `just android-smoke` resets only Oxid's Android app data, drives the equivalent
 development flow, validates the durable public JSON document plus authenticated
 credential envelope/key shape, and verifies restart. Both now assert that the

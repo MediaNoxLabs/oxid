@@ -79,6 +79,11 @@ fn main() {
                     application.refuse_credential_issuance(),
                     standalone_credential_offer,
                 ),
+                oxid_ui_dioxus::CredentialDisclosureUiServices::new(
+                    application.get_credential_disclosure(),
+                    application.preview_credential_disclosure(),
+                    application.reveal_credential_claim(),
+                ),
             ),
             oxid_ui_dioxus::SelfIssuedAuthenticationUiServices::new(
                 application.prepare_self_issued_authentication(),

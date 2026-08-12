@@ -5584,6 +5584,8 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "hex",
+ "midnight-base-crypto",
+ "midnight-transient-crypto",
  "oxid-credential-application",
  "oxid-credential-domain",
  "oxid-foundation",

@@ -688,6 +688,80 @@ textarea:focus-visible {
   gap: 0.75rem;
 }
 
+.passport-claims {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid rgb(151 113 255 / 28%);
+  border-radius: 1rem;
+  background: linear-gradient(145deg, rgb(151 113 255 / 8%), rgb(56 213 255 / 4%));
+}
+
+.passport-claims__heading,
+.passport-claim {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.passport-claims__heading h3,
+.passport-claim h4 {
+  margin: 0.15rem 0 0;
+  color: var(--text-strong);
+}
+
+.passport-claim {
+  padding: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  background: var(--surface-4);
+}
+
+.passport-claim p {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.passport-claim__tier {
+  color: var(--cyan);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.passport-claim__tier.predicate {
+  color: var(--purple);
+}
+
+.passport-claim .passport-claim__value {
+  color: var(--text-strong);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.passport-threshold {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--text-soft);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.passport-threshold input {
+  width: 4.25rem;
+  min-height: 2.35rem;
+  padding: 0.45rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.7rem;
+  background: rgb(7 11 20 / 70%);
+  color: var(--text-strong);
+  text-align: center;
+}
+
 .credential-receive-card textarea {
   width: 100%;
   min-height: 7rem;
@@ -1411,6 +1485,16 @@ input:focus-visible {
 
   .credential-record__facts {
     grid-template-columns: 1fr;
+  }
+
+  .passport-claims__heading,
+  .passport-claim {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .passport-threshold {
+    justify-content: space-between;
   }
 
   .secondary-action {

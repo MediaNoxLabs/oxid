@@ -5,8 +5,9 @@
 use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_credential_domain::{
-    CredentialDomainError, CredentialId, CredentialMetadata, CredentialPrivateMaterial,
-    CredentialProfileId, CredentialRecord, VerificationOutcome, VerificationReport,
+    CredentialClaimPrivacy, CredentialDisclosureManifest, CredentialDomainError, CredentialId,
+    CredentialMetadata, CredentialPrivateMaterial, CredentialProfileId, CredentialRecord,
+    VerificationOutcome, VerificationReport,
 };
 use oxid_foundation::OpaqueIdError;
 
@@ -24,6 +25,24 @@ pub trait CredentialInboxPort: Send + Sync {
 
 pub trait CredentialVerificationPort: Send + Sync {
     fn inspect<'a>(&'a self, signed_bytes: &'a [u8]) -> CredentialInspectionFuture<'a>;
+}
+
+/// Schema adapter for protected claims. Implementations must validate that
+/// private material opens commitments covered by the signed credential before
+/// returning public candidates or a targeted local value.
+pub trait CredentialDisclosurePort: Send + Sync {
+    fn inspect(
+        &self,
+        signed_bytes: &[u8],
+        private_material: &[u8],
+    ) -> Result<CredentialDisclosureManifest, CredentialDisclosurePortError>;
+
+    fn reveal_local(
+        &self,
+        signed_bytes: &[u8],
+        private_material: &[u8],
+        claim_path: &str,
+    ) -> Result<CredentialLocalClaim, CredentialDisclosurePortError>;
 }
 
 pub trait CredentialRepository: Send + Sync {
@@ -72,6 +91,16 @@ pub enum CredentialRepositoryError {
     Unavailable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialDisclosurePortError {
+    Unavailable,
+    UnsupportedCredential,
+    MissingPrivateMaterial,
+    InvalidPrivateMaterial,
+    ClaimNotFound,
+    ClaimNotRevealable,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CredentialOperationError {
     InvalidProfileIdentifier(OpaqueIdError),
@@ -79,6 +108,7 @@ pub enum CredentialOperationError {
     Domain(CredentialDomainError),
     Ingress(CredentialIngressError),
     Verification(CredentialVerificationError),
+    Disclosure(CredentialDisclosurePortError),
     Persistence(CredentialRepositoryError),
     ConfirmationRequired,
     InvalidConfirmation,
@@ -94,6 +124,7 @@ impl fmt::Display for CredentialOperationError {
             Self::Domain(error) => error.fmt(formatter),
             Self::Ingress(error) => error.fmt(formatter),
             Self::Verification(error) => error.fmt(formatter),
+            Self::Disclosure(error) => error.fmt(formatter),
             Self::Persistence(error) => error.fmt(formatter),
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
@@ -132,6 +163,14 @@ display_error!(CredentialRepositoryError,
     Integrity => "credential storage failed integrity validation",
     Unavailable => "credential storage is unavailable",
 );
+display_error!(CredentialDisclosurePortError,
+    Unavailable => "credential disclosure capability is unavailable",
+    UnsupportedCredential => "credential schema does not support disclosure preview",
+    MissingPrivateMaterial => "credential has no protected claim material",
+    InvalidPrivateMaterial => "credential protected claim material is invalid",
+    ClaimNotFound => "credential claim was not found",
+    ClaimNotRevealable => "credential claim cannot be revealed locally",
+);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CredentialQuery {
@@ -150,6 +189,34 @@ pub struct DeleteCredentialCommand {
     pub credential_id: String,
     pub confirmed: bool,
     pub intent: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialDisclosureQuery {
+    pub profile_id: String,
+    pub credential_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialPredicateInput {
+    pub claim_path: String,
+    pub kind: String,
+    pub threshold: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreviewCredentialDisclosureCommand {
+    pub profile_id: String,
+    pub credential_id: String,
+    pub reveal_claim_paths: Vec<String>,
+    pub predicates: Vec<CredentialPredicateInput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RevealCredentialClaimCommand {
+    pub profile_id: String,
+    pub credential_id: String,
+    pub claim_path: String,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -222,6 +289,86 @@ pub struct CredentialView {
     pub verification_stages: Vec<VerificationStageView>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialDisclosureCandidateView {
+    pub claim_path: String,
+    pub label: String,
+    pub privacy_tier: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialDisclosureView {
+    pub credential_id: String,
+    pub schema_id: String,
+    pub candidates: Vec<CredentialDisclosureCandidateView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialPredicateView {
+    pub claim_path: String,
+    pub label: String,
+    pub kind: String,
+    pub threshold: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialDisclosurePlanView {
+    pub credential_id: String,
+    pub schema_id: String,
+    pub reveals: Vec<CredentialDisclosureCandidateView>,
+    pub predicates: Vec<CredentialPredicateView>,
+    pub outcome: String,
+    pub presentation_generated: bool,
+}
+
+/// A value exposed only through the explicit local-reveal use case. Custom
+/// diagnostics prevent UI state and error reports from printing the value.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CredentialLocalClaim {
+    claim_path: String,
+    value: String,
+}
+
+impl CredentialLocalClaim {
+    pub fn new(
+        claim_path: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<Self, CredentialDisclosurePortError> {
+        let claim_path = claim_path.into();
+        let value = value.into();
+        if claim_path.is_empty()
+            || value.is_empty()
+            || value.chars().count() > 256
+            || value.chars().any(|character| {
+                character.is_control() || matches!(character, '<' | '>' | '\u{202a}'..='\u{202e}')
+            })
+        {
+            return Err(CredentialDisclosurePortError::InvalidPrivateMaterial);
+        }
+        Ok(Self { claim_path, value })
+    }
+
+    #[must_use]
+    pub fn claim_path(&self) -> &str {
+        &self.claim_path
+    }
+
+    #[must_use]
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+impl fmt::Debug for CredentialLocalClaim {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CredentialLocalClaim")
+            .field("claim_path", &self.claim_path)
+            .field("value_length", &self.value.chars().count())
+            .finish_non_exhaustive()
+    }
+}
+
 impl From<&CredentialRecord> for CredentialView {
     fn from(record: &CredentialRecord) -> Self {
         let metadata = record.metadata();
@@ -268,11 +415,30 @@ pub trait ReverifyCredentialUseCase: Send + Sync {
 pub trait DeleteCredentialUseCase: Send + Sync {
     fn execute(&self, command: DeleteCredentialCommand) -> Result<(), CredentialOperationError>;
 }
+pub trait GetCredentialDisclosureUseCase: Send + Sync {
+    fn execute(
+        &self,
+        query: CredentialDisclosureQuery,
+    ) -> Result<CredentialDisclosureView, CredentialOperationError>;
+}
+pub trait PreviewCredentialDisclosureUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: PreviewCredentialDisclosureCommand,
+    ) -> Result<CredentialDisclosurePlanView, CredentialOperationError>;
+}
+pub trait RevealCredentialClaimUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: RevealCredentialClaimCommand,
+    ) -> Result<CredentialLocalClaim, CredentialOperationError>;
+}
 
 pub struct CredentialService {
     repository: Arc<dyn CredentialRepository>,
     inbox: Arc<dyn CredentialInboxPort>,
     verifier: Arc<dyn CredentialVerificationPort>,
+    disclosure: Arc<dyn CredentialDisclosurePort>,
 }
 
 impl CredentialService {
@@ -281,11 +447,13 @@ impl CredentialService {
         repository: Arc<dyn CredentialRepository>,
         inbox: Arc<dyn CredentialInboxPort>,
         verifier: Arc<dyn CredentialVerificationPort>,
+        disclosure: Arc<dyn CredentialDisclosurePort>,
     ) -> Self {
         Self {
             repository,
             inbox,
             verifier,
+            disclosure,
         }
     }
 
@@ -304,6 +472,11 @@ impl CredentialService {
         if require_valid && inspection.verification.outcome() != VerificationOutcome::Valid {
             return Err(CredentialOperationError::VerificationNotValid);
         }
+        if let Some(material) = private_material.as_ref() {
+            self.disclosure
+                .inspect(&bytes, material.as_bytes())
+                .map_err(CredentialOperationError::Disclosure)?;
+        }
         let record = CredentialRecord::new_with_private_material(
             profile_id,
             inspection.id,
@@ -318,6 +491,46 @@ impl CredentialService {
             .map_err(CredentialOperationError::Persistence)?;
         Ok(CredentialView::from(&record))
     }
+}
+
+fn disclosure_candidate_view(
+    candidate: &oxid_credential_domain::CredentialDisclosureCandidate,
+) -> CredentialDisclosureCandidateView {
+    CredentialDisclosureCandidateView {
+        claim_path: candidate.path().to_owned(),
+        label: candidate.label().to_owned(),
+        privacy_tier: candidate.privacy().as_str().to_owned(),
+    }
+}
+
+fn disclosure_record(
+    repository: &dyn CredentialRepository,
+    query: CredentialDisclosureQuery,
+) -> Result<CredentialRecord, CredentialOperationError> {
+    let profile_id = profile(query.profile_id)?;
+    let credential_id = credential_id(query.credential_id)?;
+    let record = repository
+        .get(&profile_id, &credential_id)
+        .map_err(CredentialOperationError::Persistence)?;
+    if record.verification().outcome() != VerificationOutcome::Valid {
+        return Err(CredentialOperationError::VerificationNotValid);
+    }
+    Ok(record)
+}
+
+fn inspect_disclosure(
+    disclosure: &dyn CredentialDisclosurePort,
+    record: &CredentialRecord,
+) -> Result<CredentialDisclosureManifest, CredentialOperationError> {
+    let private_material =
+        record
+            .private_material()
+            .ok_or(CredentialOperationError::Disclosure(
+                CredentialDisclosurePortError::MissingPrivateMaterial,
+            ))?;
+    disclosure
+        .inspect(record.signed_bytes(), private_material.as_bytes())
+        .map_err(CredentialOperationError::Disclosure)
 }
 
 fn profile(value: String) -> Result<CredentialProfileId, CredentialOperationError> {
@@ -400,6 +613,11 @@ impl ReverifyCredentialUseCase for CredentialService {
                 .inspect(record.signed_bytes())
                 .await
                 .map_err(CredentialOperationError::Verification)?;
+            if let Some(material) = record.private_material() {
+                self.disclosure
+                    .inspect(record.signed_bytes(), material.as_bytes())
+                    .map_err(CredentialOperationError::Disclosure)?;
+            }
             record
                 .replace_inspection(inspection.id, inspection.metadata, inspection.verification)
                 .map_err(CredentialOperationError::Domain)?;
@@ -427,6 +645,135 @@ impl DeleteCredentialUseCase for CredentialService {
     }
 }
 
+impl GetCredentialDisclosureUseCase for CredentialService {
+    fn execute(
+        &self,
+        query: CredentialDisclosureQuery,
+    ) -> Result<CredentialDisclosureView, CredentialOperationError> {
+        let record = disclosure_record(self.repository.as_ref(), query)?;
+        let manifest = inspect_disclosure(self.disclosure.as_ref(), &record)?;
+        Ok(CredentialDisclosureView {
+            credential_id: record.id().as_str().to_owned(),
+            schema_id: manifest.schema_id().to_owned(),
+            candidates: manifest
+                .candidates()
+                .iter()
+                .map(disclosure_candidate_view)
+                .collect(),
+        })
+    }
+}
+
+impl PreviewCredentialDisclosureUseCase for CredentialService {
+    fn execute(
+        &self,
+        command: PreviewCredentialDisclosureCommand,
+    ) -> Result<CredentialDisclosurePlanView, CredentialOperationError> {
+        if command.reveal_claim_paths.len() > 64 || command.predicates.len() > 64 {
+            return Err(CredentialOperationError::Disclosure(
+                CredentialDisclosurePortError::ClaimNotFound,
+            ));
+        }
+        let record = disclosure_record(
+            self.repository.as_ref(),
+            CredentialDisclosureQuery {
+                profile_id: command.profile_id,
+                credential_id: command.credential_id,
+            },
+        )?;
+        let manifest = inspect_disclosure(self.disclosure.as_ref(), &record)?;
+        let mut unique = std::collections::BTreeSet::new();
+        let reveals = command
+            .reveal_claim_paths
+            .iter()
+            .map(|path| {
+                if !unique.insert(path.as_str()) {
+                    return Err(CredentialDisclosurePortError::ClaimNotFound);
+                }
+                let candidate = manifest
+                    .candidates()
+                    .iter()
+                    .find(|candidate| candidate.path() == path)
+                    .ok_or(CredentialDisclosurePortError::ClaimNotFound)?;
+                if candidate.privacy() != CredentialClaimPrivacy::SelectiveDisclosure {
+                    return Err(CredentialDisclosurePortError::ClaimNotRevealable);
+                }
+                Ok(disclosure_candidate_view(candidate))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(CredentialOperationError::Disclosure)?;
+        let predicates = command
+            .predicates
+            .iter()
+            .map(|predicate| {
+                if predicate.kind != "age_over"
+                    || !(1..=120).contains(&predicate.threshold)
+                    || !unique.insert(predicate.claim_path.as_str())
+                {
+                    return Err(CredentialDisclosurePortError::ClaimNotFound);
+                }
+                let candidate = manifest
+                    .candidates()
+                    .iter()
+                    .find(|candidate| candidate.path() == predicate.claim_path)
+                    .ok_or(CredentialDisclosurePortError::ClaimNotFound)?;
+                if candidate.privacy() != CredentialClaimPrivacy::PredicateOnly {
+                    return Err(CredentialDisclosurePortError::ClaimNotRevealable);
+                }
+                Ok(CredentialPredicateView {
+                    claim_path: candidate.path().to_owned(),
+                    label: candidate.label().to_owned(),
+                    kind: predicate.kind.clone(),
+                    threshold: predicate.threshold,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(CredentialOperationError::Disclosure)?;
+        if reveals.is_empty() && predicates.is_empty() {
+            return Err(CredentialOperationError::Disclosure(
+                CredentialDisclosurePortError::ClaimNotFound,
+            ));
+        }
+        Ok(CredentialDisclosurePlanView {
+            credential_id: record.id().as_str().to_owned(),
+            schema_id: manifest.schema_id().to_owned(),
+            reveals,
+            predicates,
+            outcome: "local_preview_ready".to_owned(),
+            presentation_generated: false,
+        })
+    }
+}
+
+impl RevealCredentialClaimUseCase for CredentialService {
+    fn execute(
+        &self,
+        command: RevealCredentialClaimCommand,
+    ) -> Result<CredentialLocalClaim, CredentialOperationError> {
+        let claim_path = command.claim_path;
+        let record = disclosure_record(
+            self.repository.as_ref(),
+            CredentialDisclosureQuery {
+                profile_id: command.profile_id,
+                credential_id: command.credential_id,
+            },
+        )?;
+        let private_material =
+            record
+                .private_material()
+                .ok_or(CredentialOperationError::Disclosure(
+                    CredentialDisclosurePortError::MissingPrivateMaterial,
+                ))?;
+        self.disclosure
+            .reveal_local(
+                record.signed_bytes(),
+                private_material.as_bytes(),
+                &claim_path,
+            )
+            .map_err(CredentialOperationError::Disclosure)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UnavailableCredentialInbox;
 impl CredentialInboxPort for UnavailableCredentialInbox {
@@ -440,6 +787,27 @@ pub struct UnavailableCredentialVerifier;
 impl CredentialVerificationPort for UnavailableCredentialVerifier {
     fn inspect<'a>(&'a self, _: &'a [u8]) -> CredentialInspectionFuture<'a> {
         Box::pin(async { Err(CredentialVerificationError::Unavailable) })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableCredentialDisclosure;
+impl CredentialDisclosurePort for UnavailableCredentialDisclosure {
+    fn inspect(
+        &self,
+        _: &[u8],
+        _: &[u8],
+    ) -> Result<CredentialDisclosureManifest, CredentialDisclosurePortError> {
+        Err(CredentialDisclosurePortError::Unavailable)
+    }
+
+    fn reveal_local(
+        &self,
+        _: &[u8],
+        _: &[u8],
+        _: &str,
+    ) -> Result<CredentialLocalClaim, CredentialDisclosurePortError> {
+        Err(CredentialDisclosurePortError::Unavailable)
     }
 }
 
@@ -559,12 +927,60 @@ mod tests {
         }
     }
 
+    struct Disclosure;
+    impl CredentialDisclosurePort for Disclosure {
+        fn inspect(
+            &self,
+            signed_bytes: &[u8],
+            private_material: &[u8],
+        ) -> Result<CredentialDisclosureManifest, CredentialDisclosurePortError> {
+            if signed_bytes != [1, 2, 3] || private_material != [9] {
+                return Err(CredentialDisclosurePortError::InvalidPrivateMaterial);
+            }
+            CredentialDisclosureManifest::new(
+                "fixture:v1",
+                vec![
+                    oxid_credential_domain::CredentialDisclosureCandidate::new(
+                        "/credentialSubject/firstName",
+                        "First name",
+                        CredentialClaimPrivacy::SelectiveDisclosure,
+                    )
+                    .expect("first-name candidate"),
+                    oxid_credential_domain::CredentialDisclosureCandidate::new(
+                        "/credentialSubject/dateOfBirth",
+                        "Age over threshold",
+                        CredentialClaimPrivacy::PredicateOnly,
+                    )
+                    .expect("date-of-birth candidate"),
+                ],
+            )
+            .map_err(|_| CredentialDisclosurePortError::InvalidPrivateMaterial)
+        }
+
+        fn reveal_local(
+            &self,
+            signed_bytes: &[u8],
+            private_material: &[u8],
+            claim_path: &str,
+        ) -> Result<CredentialLocalClaim, CredentialDisclosurePortError> {
+            self.inspect(signed_bytes, private_material)?;
+            match claim_path {
+                "/credentialSubject/firstName" => CredentialLocalClaim::new(claim_path, "Alice"),
+                "/credentialSubject/dateOfBirth" => {
+                    Err(CredentialDisclosurePortError::ClaimNotRevealable)
+                }
+                _ => Err(CredentialDisclosurePortError::ClaimNotFound),
+            }
+        }
+    }
+
     #[test]
     fn receives_lists_and_requires_delete_confirmation() {
         let service = CredentialService::from_ports(
             Arc::new(Memory::default()),
             Arc::new(Inbox),
             Arc::new(Verifier),
+            Arc::new(UnavailableCredentialDisclosure),
         );
         let profile = CredentialProfileQuery {
             profile_id: "profile_one".to_owned(),
@@ -589,6 +1005,143 @@ mod tests {
                 }
             ),
             Err(CredentialOperationError::ConfirmationRequired)
+        );
+    }
+
+    #[test]
+    fn validates_profile_scoped_disclosure_plans_and_targeted_local_reveal() {
+        let repository = Arc::new(Memory::default());
+        let service = CredentialService::from_ports(
+            repository,
+            Arc::new(Inbox),
+            Arc::new(Verifier),
+            Arc::new(Disclosure),
+        );
+        let imported = poll(ImportVerifiedCredentialUseCase::execute(
+            &service,
+            ImportVerifiedCredentialCommand {
+                profile_id: "profile_one".to_owned(),
+                signed_bytes: vec![1, 2, 3],
+                private_material: Some(
+                    CredentialPrivateMaterialInput::new(vec![9]).expect("private material"),
+                ),
+            },
+        ))
+        .expect("verified import");
+
+        let disclosure = GetCredentialDisclosureUseCase::execute(
+            &service,
+            CredentialDisclosureQuery {
+                profile_id: "profile_one".to_owned(),
+                credential_id: imported.id.clone(),
+            },
+        )
+        .expect("candidate inventory");
+        assert_eq!(disclosure.schema_id, "fixture:v1");
+        assert_eq!(disclosure.candidates.len(), 2);
+
+        let plan = PreviewCredentialDisclosureUseCase::execute(
+            &service,
+            PreviewCredentialDisclosureCommand {
+                profile_id: "profile_one".to_owned(),
+                credential_id: imported.id.clone(),
+                reveal_claim_paths: vec!["/credentialSubject/firstName".to_owned()],
+                predicates: vec![CredentialPredicateInput {
+                    claim_path: "/credentialSubject/dateOfBirth".to_owned(),
+                    kind: "age_over".to_owned(),
+                    threshold: 21,
+                }],
+            },
+        )
+        .expect("local preview");
+        assert_eq!(plan.outcome, "local_preview_ready");
+        assert!(!plan.presentation_generated);
+        assert_eq!(plan.reveals.len(), 1);
+        assert_eq!(plan.predicates.len(), 1);
+
+        let local = RevealCredentialClaimUseCase::execute(
+            &service,
+            RevealCredentialClaimCommand {
+                profile_id: "profile_one".to_owned(),
+                credential_id: imported.id.clone(),
+                claim_path: "/credentialSubject/firstName".to_owned(),
+            },
+        )
+        .expect("explicit local reveal");
+        assert_eq!(local.value(), "Alice");
+
+        assert_eq!(
+            GetCredentialDisclosureUseCase::execute(
+                &service,
+                CredentialDisclosureQuery {
+                    profile_id: "profile_two".to_owned(),
+                    credential_id: imported.id.clone(),
+                },
+            ),
+            Err(CredentialOperationError::Persistence(
+                CredentialRepositoryError::NotFound
+            ))
+        );
+        assert_eq!(
+            PreviewCredentialDisclosureUseCase::execute(
+                &service,
+                PreviewCredentialDisclosureCommand {
+                    profile_id: "profile_one".to_owned(),
+                    credential_id: imported.id.clone(),
+                    reveal_claim_paths: vec![
+                        "/credentialSubject/firstName".to_owned(),
+                        "/credentialSubject/firstName".to_owned(),
+                    ],
+                    predicates: Vec::new(),
+                },
+            ),
+            Err(CredentialOperationError::Disclosure(
+                CredentialDisclosurePortError::ClaimNotFound
+            ))
+        );
+        assert_eq!(
+            RevealCredentialClaimUseCase::execute(
+                &service,
+                RevealCredentialClaimCommand {
+                    profile_id: "profile_one".to_owned(),
+                    credential_id: imported.id.clone(),
+                    claim_path: "/credentialSubject/dateOfBirth".to_owned(),
+                },
+            ),
+            Err(CredentialOperationError::Disclosure(
+                CredentialDisclosurePortError::ClaimNotRevealable
+            ))
+        );
+
+        poll(ReverifyCredentialUseCase::execute(
+            &service,
+            CredentialQuery {
+                profile_id: "profile_one".to_owned(),
+                credential_id: imported.id.clone(),
+            },
+        ))
+        .expect("reverify protected record");
+        DeleteCredentialUseCase::execute(
+            &service,
+            DeleteCredentialCommand {
+                profile_id: "profile_one".to_owned(),
+                credential_id: imported.id.clone(),
+                confirmed: true,
+                intent: "DELETE_CREDENTIAL".to_owned(),
+            },
+        )
+        .expect("delete protected record");
+        assert_eq!(
+            GetCredentialDisclosureUseCase::execute(
+                &service,
+                CredentialDisclosureQuery {
+                    profile_id: "profile_one".to_owned(),
+                    credential_id: imported.id,
+                },
+            ),
+            Err(CredentialOperationError::Persistence(
+                CredentialRepositoryError::NotFound
+            ))
         );
     }
 

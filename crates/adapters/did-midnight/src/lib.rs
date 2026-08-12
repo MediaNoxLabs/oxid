@@ -21,6 +21,8 @@ use serde_json::{Map, Value, json};
 
 pub const STANDALONE_FIXTURE_DID: &str =
     "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+pub const STANDALONE_PASSPORT_ISSUER_DID: &str =
+    "did:midnight:undeployed:1111111111111111111111111111111111111111111111111111111111111111";
 const MAX_RESPONSE_BYTES: usize = 512 * 1_024;
 const MAX_JSON_DEPTH: usize = 16;
 const MAX_METADATA_TEXT: usize = 2_048;
@@ -32,29 +34,44 @@ pub struct StandaloneDidResolver;
 
 impl DidResolutionPort for StandaloneDidResolver {
     fn resolve<'a>(&'a self, did: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
-        let result = if did.as_str() == STANDALONE_FIXTURE_DID {
-            standalone_resolution()
-        } else {
-            Err(DidResolutionPortError::NotFound)
+        let result = match did.as_str() {
+            STANDALONE_FIXTURE_DID => standalone_resolution_for(
+                STANDALONE_FIXTURE_DID,
+                "#authentication-1",
+                "4A3l3ITUWOFUgNTdtN9BS3HEIpnEhewcfd_rEb3iSEo",
+            ),
+            STANDALONE_PASSPORT_ISSUER_DID => standalone_resolution_for(
+                STANDALONE_PASSPORT_ISSUER_DID,
+                "#assertion-1",
+                "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+            ),
+            _ => Err(DidResolutionPortError::NotFound),
         };
         Box::pin(async move { result })
     }
 }
 
+#[cfg(test)]
 fn standalone_resolution() -> Result<DidResolution, DidResolutionPortError> {
-    let did = MidnightDid::parse(STANDALONE_FIXTURE_DID)
-        .map_err(|_| DidResolutionPortError::InvalidResponse)?;
+    standalone_resolution_for(
+        STANDALONE_FIXTURE_DID,
+        "#authentication-1",
+        "4A3l3ITUWOFUgNTdtN9BS3HEIpnEhewcfd_rEb3iSEo",
+    )
+}
+
+fn standalone_resolution_for(
+    did_value: &str,
+    signing_fragment: &str,
+    public_key: &str,
+) -> Result<DidResolution, DidResolutionPortError> {
+    let did = MidnightDid::parse(did_value).map_err(|_| DidResolutionPortError::InvalidResponse)?;
     let signing = VerificationMethod::new(
         &did,
-        "#authentication-1",
+        signing_fragment,
         did.clone(),
-        PublicJwk::new(
-            JwkKeyType::Okp,
-            JwkCurve::Ed25519,
-            "4A3l3ITUWOFUgNTdtN9BS3HEIpnEhewcfd_rEb3iSEo",
-            None,
-        )
-        .map_err(|_| DidResolutionPortError::InvalidResponse)?,
+        PublicJwk::new(JwkKeyType::Okp, JwkCurve::Ed25519, public_key, None)
+            .map_err(|_| DidResolutionPortError::InvalidResponse)?,
     )
     .map_err(|_| DidResolutionPortError::InvalidResponse)?;
     let agreement = VerificationMethod::new(
@@ -84,11 +101,11 @@ fn standalone_resolution() -> Result<DidResolution, DidResolutionPortError> {
         relationships: vec![
             VerificationRelationshipEntry::new(
                 VerificationRelationship::Authentication,
-                vec!["#authentication-1".to_owned()],
+                vec![signing_fragment.to_owned()],
             ),
             VerificationRelationshipEntry::new(
                 VerificationRelationship::AssertionMethod,
-                vec!["#authentication-1".to_owned()],
+                vec![signing_fragment.to_owned()],
             ),
             VerificationRelationshipEntry::new(
                 VerificationRelationship::KeyAgreement,

@@ -53,12 +53,17 @@ use oxid_adapter_storage_json::JsonWalletProfileRepository;
 use oxid_adapter_storage_memory::{
     InMemoryCredentialRepository, InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
 };
-use oxid_adapter_vc_midnight::{MidnightCborCredentialVerifier, StandaloneCredentialInbox};
+use oxid_adapter_vc_midnight::{
+    DigitalPassportDisclosureAdapter, MidnightCborCredentialVerifier, StandaloneCredentialInbox,
+    standalone_credential, standalone_private_material,
+};
 use oxid_credential_application::{
-    CredentialInboxPort, CredentialRepository, CredentialService, CredentialVerificationPort,
-    DeleteCredentialUseCase, GetCredentialUseCase, ImportVerifiedCredentialUseCase,
-    ListCredentialsUseCase, ReceiveCredentialUseCase, ReverifyCredentialUseCase,
-    UnavailableCredentialInbox, UnavailableCredentialRepository, UnavailableCredentialVerifier,
+    CredentialDisclosurePort, CredentialInboxPort, CredentialRepository, CredentialService,
+    CredentialVerificationPort, DeleteCredentialUseCase, GetCredentialDisclosureUseCase,
+    GetCredentialUseCase, ImportVerifiedCredentialUseCase, ListCredentialsUseCase,
+    PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase, RevealCredentialClaimUseCase,
+    ReverifyCredentialUseCase, UnavailableCredentialDisclosure, UnavailableCredentialInbox,
+    UnavailableCredentialRepository, UnavailableCredentialVerifier,
 };
 use oxid_identity_application::{
     CreateDidUseCase, DeactivateDidUseCase, DidLifecyclePort, DidRecordRepository,
@@ -144,6 +149,9 @@ pub struct ApplicationServices {
     get_credential: Arc<dyn GetCredentialUseCase>,
     reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
     delete_credential: Arc<dyn DeleteCredentialUseCase>,
+    get_credential_disclosure: Arc<dyn GetCredentialDisclosureUseCase>,
+    preview_credential_disclosure: Arc<dyn PreviewCredentialDisclosureUseCase>,
+    reveal_credential_claim: Arc<dyn RevealCredentialClaimUseCase>,
     prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
@@ -175,6 +183,7 @@ struct IdentityAdapters {
     credential_repository: Arc<dyn CredentialRepository>,
     credential_inbox: Arc<dyn CredentialInboxPort>,
     credential_verifier: Arc<dyn CredentialVerificationPort>,
+    credential_disclosure: Arc<dyn CredentialDisclosurePort>,
     credential_issuance: CredentialIssuanceComposition,
     self_issued_authentication: SelfIssuedAuthenticationComposition,
 }
@@ -409,6 +418,21 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn get_credential_disclosure(&self) -> Arc<dyn GetCredentialDisclosureUseCase> {
+        Arc::clone(&self.get_credential_disclosure)
+    }
+
+    #[must_use]
+    pub fn preview_credential_disclosure(&self) -> Arc<dyn PreviewCredentialDisclosureUseCase> {
+        Arc::clone(&self.preview_credential_disclosure)
+    }
+
+    #[must_use]
+    pub fn reveal_credential_claim(&self) -> Arc<dyn RevealCredentialClaimUseCase> {
+        Arc::clone(&self.reveal_credential_claim)
+    }
+
+    #[must_use]
     pub fn prepare_credential_issuance(&self) -> Arc<dyn PrepareCredentialIssuanceUseCase> {
         Arc::clone(&self.prepare_credential_issuance)
     }
@@ -481,6 +505,7 @@ pub fn compose() -> ApplicationServices {
             credential_repository: Arc::new(UnavailableCredentialRepository),
             credential_inbox: Arc::new(UnavailableCredentialInbox),
             credential_verifier: Arc::new(UnavailableCredentialVerifier),
+            credential_disclosure: Arc::new(UnavailableCredentialDisclosure),
             credential_issuance: CredentialIssuanceComposition::Unavailable,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
         },
@@ -1027,6 +1052,7 @@ pub fn compose_in_memory() -> ApplicationServices {
             credential_verifier: Arc::new(MidnightCborCredentialVerifier::new(Arc::new(
                 StandaloneDidResolver,
             ))),
+            credential_disclosure: Arc::new(DigitalPassportDisclosureAdapter),
             credential_issuance: CredentialIssuanceComposition::Standalone,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
         },
@@ -1067,6 +1093,7 @@ where
             credential_repository: headless_credential_repository(),
             credential_inbox: Arc::new(StandaloneCredentialInbox),
             credential_verifier: verifier,
+            credential_disclosure: Arc::new(DigitalPassportDisclosureAdapter),
             credential_issuance: CredentialIssuanceComposition::Standalone,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
         },
@@ -1097,6 +1124,7 @@ where
         credential_repository,
         credential_inbox,
         credential_verifier,
+        credential_disclosure,
         credential_issuance,
         self_issued_authentication,
     } = identity_adapters;
@@ -1127,6 +1155,7 @@ where
         credential_repository,
         credential_inbox,
         credential_verifier,
+        credential_disclosure,
     ));
     let (issuance_protocol, issuance_sink): (
         Arc<dyn CredentialIssuanceProtocolPort>,
@@ -1146,7 +1175,13 @@ where
             ));
             let importer: Arc<dyn ImportVerifiedCredentialUseCase> = credentials.clone();
             (
-                Arc::new(StandaloneOid4vciIssuer::new(proof, get_did, clock.clone())),
+                Arc::new(StandaloneOid4vciIssuer::with_credential_fixture(
+                    proof,
+                    get_did,
+                    clock.clone(),
+                    standalone_credential(),
+                    Some(standalone_private_material()),
+                )),
                 Arc::new(VerifiedCredentialSink::new(importer)),
             )
         }
@@ -1217,7 +1252,11 @@ where
     let list_credentials: Arc<dyn ListCredentialsUseCase> = credentials.clone();
     let get_credential: Arc<dyn GetCredentialUseCase> = credentials.clone();
     let reverify_credential: Arc<dyn ReverifyCredentialUseCase> = credentials.clone();
-    let delete_credential: Arc<dyn DeleteCredentialUseCase> = credentials;
+    let delete_credential: Arc<dyn DeleteCredentialUseCase> = credentials.clone();
+    let get_credential_disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
+    let preview_credential_disclosure: Arc<dyn PreviewCredentialDisclosureUseCase> =
+        credentials.clone();
+    let reveal_credential_claim: Arc<dyn RevealCredentialClaimUseCase> = credentials;
     let prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase> = issuance.clone();
     let accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase> = issuance.clone();
     let refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase> = issuance.clone();
@@ -1279,6 +1318,9 @@ where
         get_credential,
         reverify_credential,
         delete_credential,
+        get_credential_disclosure,
+        preview_credential_disclosure,
+        reveal_credential_claim,
         prepare_credential_issuance,
         accept_credential_issuance,
         refuse_credential_issuance,
@@ -1565,6 +1607,7 @@ mod tests {
                 credential_repository: Arc::new(UnavailableCredentialRepository),
                 credential_inbox: Arc::new(UnavailableCredentialInbox),
                 credential_verifier: Arc::new(UnavailableCredentialVerifier),
+                credential_disclosure: Arc::new(UnavailableCredentialDisclosure),
                 credential_issuance: CredentialIssuanceComposition::Unavailable,
                 self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
             },

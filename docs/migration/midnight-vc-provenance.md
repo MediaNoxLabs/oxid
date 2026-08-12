@@ -34,6 +34,9 @@ dependency on the three identity repositories.
 - preview and explicitly accept a standalone self-issued login request, prove
   control of a managed DID, and let the verifier independently validate it
   without disclosing a credential.
+- retain all five Digital Passport value/opening pairs in the protected
+  credential record, validate them against issuer-signed commitments, and
+  expose local first/last reveal plus age-threshold planning.
 
 ## Deliberate 110% hardening
 
@@ -52,6 +55,8 @@ dependency on the three identity repositories.
 | Successful HTTP-style response can be stored directly | Require ADR-0038 verification outcome `valid` before protected persistence. |
 | Prototype names self-issued `id_token` login as OID4VP | Implement it as a pinned SIOPv2 draft-13 authentication capability; reserve OpenID4VP Final for `vp_token`/DCQL credential presentation. |
 | Login proof can leak through UI state or be replayed | Keep nonce, state, signing input, and ID Token adapter-private; consume the verifier session before independent signature/claim verification. |
+| Private values can be attached to an unrelated signed credential | Parse exact bounded private parts and recompute each official Midnight `persistentCommit` plus the signed domain-separated claim root before candidates or local values are available. |
+| Disclosure planning can be mistaken for verifier proof | Headless returns claim-free candidates/plans only; Dioxus labels reveal as local and reports `presentationGenerated: false`; no OpenID4VP or Compact proof is constructed. |
 
 The standalone fixture contains only public conformance material. Its issuer
 secret was generated outside the repository and discarded. The revised DID
@@ -74,15 +79,39 @@ The signature input is the original outer map with the complete encoded proof
 key/value pair removed and the map count decremented using the original header
 width. No other item is reordered or re-encoded.
 
+## Digital Passport protected-material contract
+
+The adapter accepts Digital Passport interpretation only for a verified
+phase-1 credential whose type includes `DigitalPassportCredential` and whose
+`credentialSubject.digitalPassport` contains the exact reviewed package ID,
+schema ID, five 32-byte claim commitments, and 32-byte claim root. The private
+CBOR envelope contains exactly the corresponding five padded values and five
+32-byte openings. Input is bounded to 256 KiB, depth limited, duplicate and
+unknown fields are rejected, and trailing bytes are forbidden.
+
+Rust recomputation matches the immutable reference package's cross-language
+vectors for first name, last name, date of birth, document number, issuing
+state, and root. The adapter uses `midnight-base-crypto` and
+`midnight-transient-crypto` from the same full-revision-pinned official ledger
+source already selected by ADR-0015; no unpublished path or floating branch is
+introduced.
+
+The domain/application vocabulary remains schema neutral: selective-disclosure
+or predicate-only privacy, bounded paths/labels, candidate inventory, and a
+local plan. The standalone fixture has all five candidates. Dioxus mirrors the
+prototype's visible first/last reveal and date-of-birth age-threshold control;
+document number and issuing state remain available to future reviewed consent
+surfaces without widening the current UI. Headless never reveals a value.
+
 ## Explicit exclusions and follow-ups
 
-- The prototype `midnight_compact_vc` digital-passport proof uses a JavaScript
-  bridge and Compact verifier artifacts. It is not represented as phase-1 CBOR
-  validity and needs its own native proving/verification adapter.
-- ADR-0041 provides atomic protected storage for bounded opaque format-private
-  material. Selective-disclosure opening interpretation and predicate proofs
-  still need an owned disclosure domain and consent flow before claims enter an
-  incoming adapter.
+- The prototype `midnight_compact_vc` digital-passport presentation proof uses
+  a JavaScript bridge and Compact verifier artifacts. Oxid validates the stored
+  openings against signed commitments but does not represent that as a verifier
+  proof; native proving/verification remains a separate adapter.
+- ADR-0041 provides atomic protected storage and ADR-0042 provides local
+  interpretation and claim-free planning. OpenID4VP request matching, consent,
+  presentation construction, transport, and proof verification remain absent.
 - Live OID4VCI HTTP/discovery, Authorization Code, by-reference offers,
   Transaction Code, batch/deferred issuance, notification, encrypted responses,
   wallet attestation, deep links, and QR scanning remain later protocol slices.
@@ -98,8 +127,9 @@ width. No other item is reordered or re-encoded.
 
 | Risk | Boundary |
 | --- | --- |
-| Claim disclosure through protocol/UI/logs | Incoming views include metadata and stage codes only; original bytes remain repository-private; errors are sanitized. |
+| Claim disclosure through protocol/UI/logs | Ordinary views include metadata and stage codes only; headless candidates/plans have no values; targeted Dioxus local reveal is never logged or returned by headless; errors are sanitized. |
 | Cross-profile access | Incoming adapters derive profile scope from the active profile and accept no profile parameter. |
+| Private material tampering or substitution | Exact codec plus recomputed commitments and signed root fail closed before candidate inventory, preview, or local reveal. |
 | Ciphertext substitution/tampering | XChaCha20-Poly1305 authentication with fixed schema-associated data fails closed. |
 | Nonce reuse | A fresh 192-bit OS-random nonce is generated for every whole-document write. |
 | Weak key custody claim | Separate 256-bit owner-private key is labeled development-only; normal composition is unavailable. |
