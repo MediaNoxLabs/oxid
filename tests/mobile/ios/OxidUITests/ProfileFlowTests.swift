@@ -8,7 +8,15 @@ final class ProfileFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testCreatesAndRestoresActiveProfile() throws {
+    private func scrollTo(_ element: XCUIElement, in application: XCUIApplication) {
+        for _ in 0..<10 where !element.isHittable {
+            application.swipeUp()
+        }
+        XCTAssertTrue(element.isHittable)
+    }
+
+    @MainActor
+    func testCreatesProfileAndCompletesStandaloneWalletFlow() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         application.launch()
 
@@ -16,12 +24,48 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(createButton.waitForExistence(timeout: 15))
         createButton.tap()
 
+        let activateButton = application.buttons["Activate protected Midnight account"]
+        XCTAssertTrue(activateButton.waitForExistence(timeout: 15))
+        activateButton.tap()
+
+        let useReceiveAddress = application.buttons["Use my receive address"]
+        XCTAssertTrue(useReceiveAddress.waitForExistence(timeout: 15))
+
+        let showQrButton = application.buttons["Show receive QR"].firstMatch
+        XCTAssertTrue(showQrButton.exists)
+        scrollTo(showQrButton, in: application)
+        showQrButton.tap()
+        XCTAssertTrue(
+            application.images["QR code for Unshielded receive address"]
+                .waitForExistence(timeout: 5)
+        )
+        application.buttons["Hide receive QR"].firstMatch.tap()
+
+        scrollTo(useReceiveAddress, in: application)
+        useReceiveAddress.tap()
+        let amount = application.textFields["Amount in NIGHT"]
+        XCTAssertTrue(amount.exists)
+        scrollTo(amount, in: application)
+        amount.tap()
+        amount.typeText("1.5")
+        let review = application.buttons["Review transfer"]
+        scrollTo(review, in: application)
+        review.tap()
+
+        let authorize = application.buttons["Authorize reviewed NIGHT transfer"]
+        XCTAssertTrue(authorize.waitForExistence(timeout: 10))
+        scrollTo(authorize, in: application)
+        authorize.tap()
+        let submit = application.buttons["Prove and submit NIGHT transfer"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 10))
+        scrollTo(submit, in: application)
+        submit.tap()
+        XCTAssertTrue(application.staticTexts["Transfer submitted"].waitForExistence(timeout: 15))
+
         application.terminate()
         application.launch()
 
-        let unavailableAccount = application.buttons["Midnight account unavailable"]
-        XCTAssertTrue(unavailableAccount.waitForExistence(timeout: 15))
-        XCTAssertFalse(unavailableAccount.isEnabled)
+        XCTAssertTrue(activateButton.waitForExistence(timeout: 15))
         XCTAssertTrue(application.buttons["Assets"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
     }

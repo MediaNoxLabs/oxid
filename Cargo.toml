@@ -61,6 +61,7 @@ midnight-transient-crypto = { version = "=2.1.0", git = "https://github.com/midn
 midnight-zkir = { version = "=2.1.0", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-zkir", default-features = false }
 ndk-context = { version = "=0.1.1" }
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa"] }
+qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151" }
 sha2 = { version = "=0.10.9", default-features = false }

@@ -51,6 +51,8 @@ run_core() {
 run_ui() {
   cargo check -p oxid-ui-dioxus
   cargo check -p oxid-app
+  cargo check -p oxid-app --no-default-features --features mobile
+  cargo check -p oxid-app --no-default-features --features mobile,standalone-development
 }
 
 run_headless() {

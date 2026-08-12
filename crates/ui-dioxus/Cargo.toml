@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 dioxus = { workspace = true, features = ["minimal"] }
 oxid-wallet-application.workspace = true
+qrcode.workspace = true
 
 [lints]
 workspace = true

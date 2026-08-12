@@ -102,6 +102,15 @@ harness runs on macOS, iOS simulator, and Android emulator. Remote proving is
 still an explicit development mode. Production/mobile composition remains
 fail-closed until native custody and production chain access are reviewed.
 
+[Issue #14](https://github.com/MediaNoxLabs/oxid/issues/14) and ADR-0029 expose
+the protected external account, receive QR, and staged unshielded transfer
+journey through Dioxus. Repository iOS/Android launch scripts select the
+explicit `oxid-app/standalone-development` feature, which reuses persistent
+public profiles plus process-local development custody and deterministic
+simulated completion. A default app build still calls `compose()` and remains
+fail-closed. Restarting the development app intentionally loses its protected
+root and retained drafts; reactivate the account before another flow.
+
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
 web --target wasm32-unknown-unknown` currently stops in the pre-existing
@@ -168,7 +177,9 @@ transaction authorization before proving/submission. ADR-0027 defines and
 implements standalone DUST synchronization, proving, and node submission for
 development/headless use. ADR-0028 makes private local proving the production
 direction and records its cache, cancellation, interoperability, and mobile
-resource bounds. ADR-0017 records the accepted platform-custody split.
+resource bounds. ADR-0029 separates simulator/emulator standalone wallet flows
+from production wiring and records receive-QR plus transaction-UI boundaries.
+ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
 binding but does not mean the capability is implemented. Proposed ADRs are
@@ -187,7 +198,7 @@ Current package ownership:
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, and standalone DUST/proving/submission completion. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
-| `crates/ui-dioxus` | Dioxus incoming adapter and presentation state. |
+| `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, and public receive-QR rendering. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
 | `apps/oxid` | Executable shell and platform launch point. |
 | `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |
@@ -221,6 +232,11 @@ protected-key methods accept only public labels,
 algorithms, purposes, bounded payloads, opaque references, and explicit
 human-readable confirmations. Passphrases, seeds, recovery phrases, and raw
 private keys are rejected by strict parameter decoding.
+
+`oxid-app/standalone-development` is the only mobile-development exception: it
+selects the same zero-configuration `compose_headless()` stack explicitly at
+compile time. Repository simulator/emulator scripts enable it; default
+desktop/mobile/web builds do not. It is for flow testing only, never real funds.
 
 The development root and every derived child remain inside `storage-dev`.
 `wallet.account.derive` exposes only bounded public indices, the selected
@@ -267,6 +283,12 @@ secp256k1 stack. The path and cross-language fixture are recorded in
 `docs/dependencies/rustcrypto-midnight-hd-derivation.md`. The official address
 JSON treats its seed as an already-derived scalar, so it is a codec fixture,
 not an HD root-to-child fixture.
+
+Receive QR rendering pins pure-Rust `qrcode` 0.14.1 in `ui-dioxus`, with
+default features disabled and only SVG enabled. It receives already-validated
+public address strings and has no core, camera, clipboard, file, network, or
+JavaScript role. The dependency review is
+`docs/dependencies/qrcode-0.14.md`.
 
 The live indexer route is implemented with native-only Tokio 1.53.1 and
 tokio-tungstenite 0.30.0 using Rustls 0.23.43 with the explicit Ring provider
@@ -364,11 +386,13 @@ Gradle/Xcode output remains under ignored `target/` paths.
 
 `just ios-smoke` generates an ignored XCUITest project from
 `tests/mobile/ios/project.yml`, resets only the installed Oxid simulator data,
-and verifies create/select/restart/restore through visible UI elements. `just
-android-smoke` resets only Oxid's Android app data, drives the first-run action
-with keyboard focus events, validates the durable JSON document in the app
-sandbox, and verifies restart. Both commands are destructive to the selected
-simulator's Oxid test profile state.
+and verifies profile creation, development account activation, receive QR,
+staged simulated transfer, and profile restore through visible UI elements.
+`just android-smoke` resets only Oxid's Android app data, drives the equivalent
+development flow, validates the durable public JSON document, and verifies
+restart. Both commands are destructive to the selected simulator's Oxid test
+profile state; protected development roots and transaction drafts are
+process-local and are expected to disappear on restart.
 
 Android processes do not reliably provide `HOME`, so `directories` cannot
 resolve the intended durable location there. The JSON adapter deliberately uses

@@ -109,7 +109,7 @@ PATH="$rust_toolchain_bin:$android_sdk/platform-tools:/usr/bin:$PATH" \
     --android \
     --package oxid-app \
     --no-default-features \
-    --features mobile \
+    --features mobile,standalone-development \
     --target "$rust_target" \
     --locked
 

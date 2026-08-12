@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-for command_name in jq; do
+for command_name in curl jq node rg; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command '$command_name' is missing." >&2
     exit 1
@@ -22,6 +22,8 @@ if [ -z "$android_sdk" ] || [ ! -x "$android_sdk/platform-tools/adb" ]; then
   exit 1
 fi
 adb_command="$android_sdk/platform-tools/adb"
+devtools_port=9223
+trap '"$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true' EXIT
 
 device="${OXID_ANDROID_DEVICE:-}"
 if [ -z "$device" ]; then
@@ -45,11 +47,47 @@ echo "Resetting Oxid application data on Android device $device for the smoke fl
   -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
 sleep 2
 
-# The first two focus advances select the profile input and primary action.
-# This remains independent of screen size and emulator orientation.
-"$adb_command" -s "$device" shell input keyevent KEYCODE_TAB
-"$adb_command" -s "$device" shell input keyevent KEYCODE_TAB
-"$adb_command" -s "$device" shell input keyevent KEYCODE_DPAD_CENTER
+run_webview_wallet_flow() {
+  local mode="$1"
+  local process_id=""
+  local websocket_url=""
+  local page_list=""
+  local socket_list=""
+
+  for _attempt in $(seq 1 30); do
+    process_id="$($adb_command -s "$device" shell pidof io.medianox.oxid | tr -d '\r')"
+    socket_list="$($adb_command -s "$device" shell cat /proc/net/unix 2>/dev/null || true)"
+    if [ -n "$process_id" ] && rg -q "@webview_devtools_remote_${process_id}$" <<<"$socket_list"; then
+      break
+    fi
+    sleep 1
+  done
+  if [ -z "$process_id" ]; then
+    echo "Oxid WebView process did not become available on Android device '$device'." >&2
+    exit 1
+  fi
+
+  "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+  "$adb_command" -s "$device" forward \
+    "tcp:$devtools_port" "localabstract:webview_devtools_remote_$process_id" >/dev/null
+  for _attempt in $(seq 1 30); do
+    page_list="$(curl --noproxy '*' --fail --silent "http://127.0.0.1:$devtools_port/json" || true)"
+    websocket_url="$(jq -r 'first(.[] | select(.type == "page")) | .webSocketDebuggerUrl // empty' <<<"$page_list")"
+    if [ -n "$websocket_url" ]; then
+      break
+    fi
+    sleep 1
+  done
+  if [ -z "$websocket_url" ]; then
+    echo "Oxid Android WebView did not expose a debuggable page." >&2
+    exit 1
+  fi
+
+  node "$repository_root/tests/mobile/android-wallet-flow.mjs" "$websocket_url" "$mode"
+  "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null
+}
+
+run_webview_wallet_flow flow
 
 profile_document=""
 for _attempt in $(seq 1 15); do
@@ -76,6 +114,7 @@ active_profile_id="$(jq -r '.activeProfileId' <<<"$profile_document")"
 "$adb_command" -s "$device" shell am start \
   -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
 sleep 2
+run_webview_wallet_flow restored
 
 restored_document="$($adb_command -s "$device" shell run-as io.medianox.oxid \
   cat files/oxid/wallet-profiles.json)"
@@ -88,4 +127,4 @@ if [ -z "$($adb_command -s "$device" shell pidof io.medianox.oxid | tr -d '\r')"
   exit 1
 fi
 
-echo "Android profile create/select/restore smoke flow passed on $device."
+echo "Android protected account, receive QR, transfer, and profile-restore smoke flow passed on $device."

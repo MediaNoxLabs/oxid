@@ -6,12 +6,17 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use oxid_wallet_application::{
-    CreateWalletProfileCommand, CreateWalletProfileUseCase, GetActiveWalletProfileUseCase,
-    GetWalletAccountUseCase, GetWalletSecurityStatusUseCase, ListWalletNetworksUseCase,
-    ListWalletProfilesUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
-    SelectWalletProfileCommand, SelectWalletProfileUseCase, SyncWalletAccountUseCase,
-    WalletAccountQuery, WalletAccountView, WalletNetworkListView, WalletProfileSecurityCommand,
-    WalletProfileView, WalletSecurityStatusView,
+    AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CreateWalletProfileCommand,
+    CreateWalletProfileUseCase, DeriveWalletAccountCommand, DeriveWalletAccountUseCase,
+    GetActiveWalletProfileUseCase, GetWalletAccountUseCase, GetWalletSecurityStatusUseCase,
+    GetWalletTransferDraftUseCase, InitializeWalletSecurityUseCase, ListWalletNetworksUseCase,
+    ListWalletProfilesUseCase, LockWalletUseCase, PrepareWalletTransferCommand,
+    PrepareWalletTransferUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
+    SelectWalletProfileCommand, SelectWalletProfileUseCase, SensitiveOperationConfirmation,
+    SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountQuery, WalletAccountView, WalletNetworkListView,
+    WalletProfileSecurityCommand, WalletProfileView, WalletSecurityStatusView,
+    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionView,
 };
 
 const STYLES: &str = include_str!("../assets/styles.css");
@@ -24,19 +29,26 @@ pub struct WalletUiServices {
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
     get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
     get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
+    initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
+    unlock_wallet: Arc<dyn UnlockWalletUseCase>,
+    lock_wallet: Arc<dyn LockWalletUseCase>,
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
     select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
+    derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
+    authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
+    submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
+    get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
 }
 
-/// Profile and protection use cases consumed by the wallet shell.
+/// Public profile lifecycle use cases consumed by the wallet shell.
 pub struct WalletProfileUiServices {
     create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
     get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
-    get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
 }
 
 impl WalletProfileUiServices {
@@ -46,14 +58,37 @@ impl WalletProfileUiServices {
         list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
         select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
         get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
-        get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
     ) -> Self {
         Self {
             create_wallet_profile,
             list_wallet_profiles,
             select_wallet_profile,
             get_active_wallet_profile,
+        }
+    }
+}
+
+/// Wallet protection use cases consumed by account and settings views.
+pub struct WalletSecurityUiServices {
+    get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
+    initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
+    unlock_wallet: Arc<dyn UnlockWalletUseCase>,
+    lock_wallet: Arc<dyn LockWalletUseCase>,
+}
+
+impl WalletSecurityUiServices {
+    #[must_use]
+    pub const fn new(
+        get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
+        initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
+        unlock_wallet: Arc<dyn UnlockWalletUseCase>,
+        lock_wallet: Arc<dyn LockWalletUseCase>,
+    ) -> Self {
+        Self {
             get_wallet_security_status,
+            initialize_wallet_security,
+            unlock_wallet,
+            lock_wallet,
         }
     }
 }
@@ -62,6 +97,7 @@ impl WalletProfileUiServices {
 pub struct WalletAccountUiServices {
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
     select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
+    derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
 }
@@ -71,31 +107,71 @@ impl WalletAccountUiServices {
     pub const fn new(
         list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
         select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
+        derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
         get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
         sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
     ) -> Self {
         Self {
             list_wallet_networks,
             select_wallet_network,
+            derive_wallet_account,
             get_wallet_account,
             sync_wallet_account,
         }
     }
 }
 
+/// Transaction use cases consumed by the Assets page.
+pub struct WalletTransactionUiServices {
+    prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
+    authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
+    submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
+    get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
+}
+
+impl WalletTransactionUiServices {
+    #[must_use]
+    pub const fn new(
+        prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
+        authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
+        submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
+        get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
+    ) -> Self {
+        Self {
+            prepare_wallet_transfer,
+            authorize_wallet_transfer,
+            submit_wallet_transfer,
+            get_wallet_transfer_draft,
+        }
+    }
+}
+
 impl WalletUiServices {
     #[must_use]
-    pub fn new(profiles: WalletProfileUiServices, account: WalletAccountUiServices) -> Self {
+    pub fn new(
+        profiles: WalletProfileUiServices,
+        security: WalletSecurityUiServices,
+        account: WalletAccountUiServices,
+        transactions: WalletTransactionUiServices,
+    ) -> Self {
         Self {
             create_wallet_profile: profiles.create_wallet_profile,
             list_wallet_profiles: profiles.list_wallet_profiles,
             select_wallet_profile: profiles.select_wallet_profile,
             get_active_wallet_profile: profiles.get_active_wallet_profile,
-            get_wallet_security_status: profiles.get_wallet_security_status,
+            get_wallet_security_status: security.get_wallet_security_status,
+            initialize_wallet_security: security.initialize_wallet_security,
+            unlock_wallet: security.unlock_wallet,
+            lock_wallet: security.lock_wallet,
             list_wallet_networks: account.list_wallet_networks,
             select_wallet_network: account.select_wallet_network,
+            derive_wallet_account: account.derive_wallet_account,
             get_wallet_account: account.get_wallet_account,
             sync_wallet_account: account.sync_wallet_account,
+            prepare_wallet_transfer: transactions.prepare_wallet_transfer,
+            authorize_wallet_transfer: transactions.authorize_wallet_transfer,
+            submit_wallet_transfer: transactions.submit_wallet_transfer,
+            get_wallet_transfer_draft: transactions.get_wallet_transfer_draft,
         }
     }
 
@@ -125,6 +201,21 @@ impl WalletUiServices {
     }
 
     #[must_use]
+    pub fn initialize_wallet_security(&self) -> Arc<dyn InitializeWalletSecurityUseCase> {
+        Arc::clone(&self.initialize_wallet_security)
+    }
+
+    #[must_use]
+    pub fn unlock_wallet(&self) -> Arc<dyn UnlockWalletUseCase> {
+        Arc::clone(&self.unlock_wallet)
+    }
+
+    #[must_use]
+    pub fn lock_wallet(&self) -> Arc<dyn LockWalletUseCase> {
+        Arc::clone(&self.lock_wallet)
+    }
+
+    #[must_use]
     pub fn list_wallet_networks(&self) -> Arc<dyn ListWalletNetworksUseCase> {
         Arc::clone(&self.list_wallet_networks)
     }
@@ -135,6 +226,11 @@ impl WalletUiServices {
     }
 
     #[must_use]
+    pub fn derive_wallet_account(&self) -> Arc<dyn DeriveWalletAccountUseCase> {
+        Arc::clone(&self.derive_wallet_account)
+    }
+
+    #[must_use]
     pub fn get_wallet_account(&self) -> Arc<dyn GetWalletAccountUseCase> {
         Arc::clone(&self.get_wallet_account)
     }
@@ -142,6 +238,26 @@ impl WalletUiServices {
     #[must_use]
     pub fn sync_wallet_account(&self) -> Arc<dyn SyncWalletAccountUseCase> {
         Arc::clone(&self.sync_wallet_account)
+    }
+
+    #[must_use]
+    pub fn prepare_wallet_transfer(&self) -> Arc<dyn PrepareWalletTransferUseCase> {
+        Arc::clone(&self.prepare_wallet_transfer)
+    }
+
+    #[must_use]
+    pub fn authorize_wallet_transfer(&self) -> Arc<dyn AuthorizeWalletTransferUseCase> {
+        Arc::clone(&self.authorize_wallet_transfer)
+    }
+
+    #[must_use]
+    pub fn submit_wallet_transfer(&self) -> Arc<dyn SubmitWalletTransferUseCase> {
+        Arc::clone(&self.submit_wallet_transfer)
+    }
+
+    #[must_use]
+    pub fn get_wallet_transfer_draft(&self) -> Arc<dyn GetWalletTransferDraftUseCase> {
+        Arc::clone(&self.get_wallet_transfer_draft)
     }
 }
 
@@ -222,9 +338,39 @@ enum AccountPageState {
     Ready {
         networks: WalletNetworkListView,
         account: Box<WalletAccountView>,
-        syncing: bool,
+        security: WalletSecurityStatusView,
+        busy: Option<AccountOperation>,
     },
     Failed(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AccountOperation {
+    Initializing,
+    Unlocking,
+    Deriving,
+    Syncing,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TransferPanelState {
+    Editing,
+    Prepared(Box<WalletTransferPreviewView>),
+    Authorized(Box<WalletTransferPreviewView>),
+    Submitting(Box<WalletTransferPreviewView>),
+    Submitted(Box<WalletTransferSubmissionView>),
+    Failed {
+        message: String,
+        retained: Option<Box<WalletTransferPreviewView>>,
+        recovery: TransferRecovery,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TransferRecovery {
+    Edit,
+    RetryAuthorized,
+    ReconcileUnknown,
 }
 
 /// Oxid's Dioxus incoming adapter and mobile-first application shell.
@@ -357,7 +503,7 @@ pub fn App() -> Element {
                             empty_body: "The encrypted store, verification pipeline, OID4VCI, OID4VP, SIOP, and consent flows are not connected yet.",
                         }
                     },
-                    Destination::Diagnostics => rsx! { DiagnosticsPage {} },
+                    Destination::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
                     Destination::Settings => rsx! {
                         SettingsPage {
                             active_profile: active_profile.clone(),
@@ -683,7 +829,8 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
         AccountPageState::Ready {
             networks,
             account,
-            syncing,
+            security,
+            busy,
         } => {
             let night = balance_for(&account, "NIGHT")
                 .map(|balance| format_atomic_units(&balance.atomic_units, balance.decimals))
@@ -692,9 +839,13 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                 .map(|balance| format_atomic_units(&balance.atomic_units, balance.decimals))
                 .unwrap_or_else(|| "—".to_owned());
             let unavailable = account.source == "unavailable";
-            let account_hint = account_hint(&account, syncing);
+            let is_busy = busy.is_some();
+            let account_hint = account_hint(&account, busy);
             let source_label = account_source_label(&account.source);
-            let sync_label = if syncing {
+            let protected_account = has_protected_account(&account);
+            let protection_available = security.is_available();
+            let protection_unlocked = security.state_name() == "Unlocked";
+            let sync_label = if busy == Some(AccountOperation::Syncing) {
                 "Syncing Midnight account…"
             } else if unavailable {
                 "Midnight account unavailable"
@@ -711,7 +862,13 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
             let sync_profile_id = active_profile.id.clone();
             let sync_networks = networks.clone();
             let sync_account = account.clone();
+            let sync_security = security;
             let mut sync_state = state;
+            let activate_services = services.clone();
+            let activate_profile_id = active_profile.id.clone();
+            let activate_networks = networks.clone();
+            let activate_account = account.clone();
+            let mut activate_state = state;
 
             rsx! {
                 section { class: "wallet-hero",
@@ -750,7 +907,7 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                     span { "Midnight network" }
                     select {
                         value: "{selected_network_id}",
-                        disabled: syncing,
+                        disabled: is_busy,
                         onchange: move |event| {
                             let network_id = event.value();
                             let result = select_services
@@ -771,7 +928,8 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                                 Ok((networks, account)) => select_state.set(AccountPageState::Ready {
                                     networks,
                                     account: Box::new(account),
-                                    syncing: false,
+                                    security,
+                                    busy: None,
                                 }),
                                 Err(error) => select_state.set(AccountPageState::Failed(error.to_string())),
                             }
@@ -787,15 +945,76 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                     }
                 }
 
+                if protection_available && (!protection_unlocked || !protected_account) {
+                    article { class: "surface-card development-card",
+                        p { class: "card-eyebrow", "Standalone development" }
+                        h2 {
+                            if security.state_name() == "Uninitialized" {
+                                "Activate protected test account"
+                            } else if security.state_name() == "Locked" {
+                                "Unlock protected test account"
+                            } else {
+                                "Derive protected NIGHT account"
+                            }
+                        }
+                        p { "This opt-in simulator/emulator mode uses process-local development custody. It is not durable production key protection." }
+                        button {
+                            class: "primary-action",
+                            r#type: "button",
+                            disabled: is_busy,
+                            aria_label: "Activate protected Midnight account",
+                            onclick: move |_| {
+                                activate_state.set(AccountPageState::Ready {
+                                    networks: activate_networks.clone(),
+                                    account: activate_account.clone(),
+                                    security,
+                                    busy: Some(account_activation_operation(security)),
+                                });
+                                match activate_protected_account(
+                                    &activate_services,
+                                    &activate_profile_id,
+                                    security,
+                                ) {
+                                    Ok(updated_security) => {
+                                        let service = activate_services.sync_wallet_account();
+                                        let profile_id = activate_profile_id.clone();
+                                        let networks = activate_networks.clone();
+                                        activate_state.set(AccountPageState::Ready {
+                                            networks: networks.clone(),
+                                            account: activate_account.clone(),
+                                            security: updated_security,
+                                            busy: Some(AccountOperation::Syncing),
+                                        });
+                                        spawn(async move {
+                                            match service.execute(WalletAccountQuery { profile_id }).await {
+                                                Ok(account) => activate_state.set(AccountPageState::Ready {
+                                                    networks,
+                                                    account: Box::new(account),
+                                                    security: updated_security,
+                                                    busy: None,
+                                                }),
+                                                Err(error) => activate_state.set(AccountPageState::Failed(error.to_string())),
+                                            }
+                                        });
+                                    }
+                                    Err(error) => activate_state.set(AccountPageState::Failed(error)),
+                                }
+                            },
+                            if is_busy { "Activating…" } else { "Activate development wallet" }
+                        }
+                    }
+                }
+
                 button {
-                    class: "primary-action",
+                    class: if protected_account { "secondary-action account-sync-action" } else { "primary-action" },
                     r#type: "button",
-                    disabled: syncing || unavailable,
+                    disabled: is_busy || unavailable,
                     onclick: move |_| {
                         sync_state.set(AccountPageState::Ready {
                             networks: sync_networks.clone(),
                             account: sync_account.clone(),
-                            syncing: true,
+                            security: sync_security,
+                            busy: Some(AccountOperation::Syncing),
                         });
                         let service = sync_services.sync_wallet_account();
                         let profile_id = sync_profile_id.clone();
@@ -805,7 +1024,8 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                                 Ok(account) => sync_state.set(AccountPageState::Ready {
                                     networks,
                                     account: Box::new(account),
-                                    syncing: false,
+                                    security: sync_security,
+                                    busy: None,
                                 }),
                                 Err(error) => sync_state.set(AccountPageState::Failed(error.to_string())),
                             }
@@ -822,15 +1042,13 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                             p { "Protected Midnight account derivation is not connected in this composition." }
                         } else {
                             for address in account.addresses.iter() {
-                                div { class: "address-row", key: "{address.kind}",
-                                    div {
-                                        strong { "{address_kind_label(&address.kind)}" }
-                                        small { "{address_purpose(&address.kind)}" }
-                                    }
-                                    code { title: "{address.value}", "{truncate_middle(&address.value, 18, 8)}" }
+                                ReceiveAddress {
+                                    key: "{address.kind}",
+                                    kind: address.kind.clone(),
+                                    value: address.value.clone(),
                                 }
                             }
-                            p { "QR and native copy/share actions remain a platform-adapter follow-up." }
+                            p { "Each QR encodes exactly the public address shown. Native copy/share remains a platform-adapter follow-up." }
                         }
                     }
                     article { class: "surface-card",
@@ -854,6 +1072,13 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                         }
                     }
                 }
+
+                if protected_account && protection_unlocked && account.sync.state == "synced" {
+                    SendTransferPanel {
+                        profile_id: active_profile.id.clone(),
+                        receive_address: account.addresses[0].value.clone(),
+                    }
+                }
             }
         }
     }
@@ -863,22 +1088,461 @@ fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPa
     let query = WalletAccountQuery {
         profile_id: profile_id.to_owned(),
     };
-    let result = services
-        .list_wallet_networks()
-        .execute(query.clone())
-        .and_then(|networks| {
-            services
-                .get_wallet_account()
-                .execute(query)
-                .map(|account| (networks, account))
-        });
-    match result {
-        Ok((networks, account)) => AccountPageState::Ready {
-            networks,
-            account: Box::new(account),
-            syncing: false,
+    let networks = match services.list_wallet_networks().execute(query.clone()) {
+        Ok(networks) => networks,
+        Err(error) => return AccountPageState::Failed(error.to_string()),
+    };
+    let account = match services.get_wallet_account().execute(query) {
+        Ok(account) => account,
+        Err(error) => return AccountPageState::Failed(error.to_string()),
+    };
+    let security =
+        match services
+            .get_wallet_security_status()
+            .execute(WalletProfileSecurityCommand {
+                profile_id: profile_id.to_owned(),
+            }) {
+            Ok(security) => security,
+            Err(error) => return AccountPageState::Failed(error.to_string()),
+        };
+    AccountPageState::Ready {
+        networks,
+        account: Box::new(account),
+        security,
+        busy: None,
+    }
+}
+
+fn activate_protected_account(
+    services: &WalletUiServices,
+    profile_id: &str,
+    current: WalletSecurityStatusView,
+) -> Result<WalletSecurityStatusView, String> {
+    let command = || WalletProfileSecurityCommand {
+        profile_id: profile_id.to_owned(),
+    };
+    let security = match current.state_name() {
+        "Uninitialized" => services
+            .initialize_wallet_security()
+            .execute(command())
+            .map_err(|error| error.to_string())?,
+        "Locked" => services
+            .unlock_wallet()
+            .execute(command())
+            .map_err(|error| error.to_string())?,
+        "Unlocked" => current,
+        _ => return Err("wallet protection is unavailable".to_owned()),
+    };
+    services
+        .derive_wallet_account()
+        .execute(DeriveWalletAccountCommand {
+            profile_id: profile_id.to_owned(),
+            account_index: 0,
+            address_index: 0,
+        })
+        .map_err(|error| error.to_string())?;
+    Ok(security)
+}
+
+fn account_activation_operation(status: WalletSecurityStatusView) -> AccountOperation {
+    match status.state_name() {
+        "Uninitialized" => AccountOperation::Initializing,
+        "Locked" => AccountOperation::Unlocking,
+        _ => AccountOperation::Deriving,
+    }
+}
+
+fn has_protected_account(account: &WalletAccountView) -> bool {
+    account
+        .account_id
+        .as_deref()
+        .is_some_and(|account_id| account_id.starts_with("midnight_account_"))
+        && account.addresses.len() == 1
+        && account.addresses[0].kind == "unshielded"
+}
+
+#[component]
+fn ReceiveAddress(kind: String, value: String) -> Element {
+    let mut qr_open = use_signal(|| false);
+    let qr = render_qr_svg(&value);
+    rsx! {
+        div { class: "address-row",
+            div {
+                strong { "{address_kind_label(&kind)}" }
+                small { "{address_purpose(&kind)}" }
+            }
+            code { title: "{value}", "{truncate_middle(&value, 18, 8)}" }
+            button {
+                class: "address-qr-toggle",
+                r#type: "button",
+                aria_label: if *qr_open.read() { "Hide receive QR" } else { "Show receive QR" },
+                aria_expanded: if *qr_open.read() { "true" } else { "false" },
+                onclick: move |_| {
+                    let next = !*qr_open.read();
+                    qr_open.set(next);
+                },
+                if *qr_open.read() { "Hide QR" } else { "Show QR" }
+            }
+        }
+        if *qr_open.read() {
+            div { class: "address-qr", role: "img", aria_label: "QR code for {address_kind_label(&kind)} receive address",
+                if let Some(svg) = qr {
+                    div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
+                    p { "Scan to receive at the public address shown above." }
+                } else {
+                    p { role: "alert", "This address could not be encoded as a QR code." }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut panel = use_signal(|| TransferPanelState::Editing);
+    let mut recipient = use_signal(String::new);
+    let mut amount = use_signal(String::new);
+
+    match panel.read().clone() {
+        TransferPanelState::Editing => {
+            let can_review =
+                !recipient.read().trim().is_empty() && !amount.read().trim().is_empty();
+            rsx! {
+                article { class: "surface-card transfer-card",
+                    p { class: "card-eyebrow", "Send" }
+                    h2 { "Send unshielded NIGHT" }
+                    p { "The recipient and exact amount are validated before an explicit review and authorization step." }
+                    label { r#for: "transfer-recipient", "Recipient address" }
+                    input {
+                        id: "transfer-recipient",
+                        r#type: "text",
+                        aria_label: "Recipient address",
+                        maxlength: 512,
+                        autocomplete: "off",
+                        value: "{recipient}",
+                        oninput: move |event| recipient.set(event.value()),
+                    }
+                    button {
+                        class: "inline-action",
+                        r#type: "button",
+                        onclick: move |_| recipient.set(receive_address.clone()),
+                        "Use my receive address"
+                    }
+                    label { r#for: "transfer-amount", "Amount (NIGHT)" }
+                    input {
+                        id: "transfer-amount",
+                        r#type: "text",
+                        aria_label: "Amount in NIGHT",
+                        inputmode: "decimal",
+                        maxlength: 48,
+                        autocomplete: "off",
+                        placeholder: "1.5",
+                        value: "{amount}",
+                        oninput: move |event| amount.set(event.value()),
+                    }
+                    button {
+                        class: "primary-action",
+                        r#type: "button",
+                        disabled: !can_review,
+                        onclick: move |_| {
+                            match night_display_to_atomic_units(&amount.read()) {
+                                Ok(amount_atomic_units) => {
+                                    match services.prepare_wallet_transfer().execute(
+                                        PrepareWalletTransferCommand {
+                                            profile_id: profile_id.clone(),
+                                            recipient_address: recipient.read().trim().to_owned(),
+                                            amount_atomic_units,
+                                        },
+                                    ) {
+                                        Ok(preview) => panel.set(TransferPanelState::Prepared(Box::new(preview))),
+                                        Err(error) => panel.set(TransferPanelState::Failed {
+                                            message: error.to_string(),
+                                            retained: None,
+                                            recovery: TransferRecovery::Edit,
+                                        }),
+                                    }
+                                }
+                                Err(error) => panel.set(TransferPanelState::Failed {
+                                    message: error.to_owned(),
+                                    retained: None,
+                                    recovery: TransferRecovery::Edit,
+                                }),
+                            }
+                        },
+                        "Review transfer"
+                    }
+                }
+            }
+        }
+        TransferPanelState::Prepared(preview) => {
+            let amount_label = format_transfer_asset(&preview.amount);
+            let change_label = format_transfer_asset(&preview.change);
+            let recipient_label = truncate_middle(&preview.recipient_address, 18, 8);
+            let confirmation = authorize_transfer_confirmation(&preview);
+            let draft_id = preview.draft_id.clone();
+            let challenge = preview.authorization_challenge.clone();
+            rsx! {
+                article { class: "surface-card transfer-card review-card", aria_label: "Review NIGHT transfer" ,
+                    p { class: "card-eyebrow", "Review" }
+                    h2 { "Confirm transfer details" }
+                    dl { class: "preview-list",
+                        div { dt { "Send" } dd { "{amount_label}" } }
+                        div { dt { "Recipient" } dd { title: "{preview.recipient_address}", "{recipient_label}" } }
+                        div { dt { "Network" } dd { "{preview.network_id}" } }
+                        div { dt { "Change" } dd { "{change_label}" } }
+                        div { dt { "Inputs" } dd { "{preview.input_count}" } }
+                        div { dt { "DUST fee" } dd { "Calculated during proving" } }
+                    }
+                    p { class: "consent-copy", "Authorizing signs only this reviewed transfer. Proving and submission remain a separate action." }
+                    div { class: "transfer-actions",
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            onclick: move |_| panel.set(TransferPanelState::Editing),
+                            "Edit"
+                        }
+                        button {
+                            class: "primary-action",
+                            r#type: "button",
+                            aria_label: "Authorize reviewed NIGHT transfer",
+                            onclick: move |_| {
+                                match services.authorize_wallet_transfer().execute(
+                                    AuthorizeWalletTransferCommand {
+                                        profile_id: profile_id.clone(),
+                                        draft_id: draft_id.clone(),
+                                        authorization_challenge: challenge.clone(),
+                                        confirmation: confirmation.clone(),
+                                    },
+                                ) {
+                                    Ok(authorized) => panel.set(TransferPanelState::Authorized(Box::new(authorized))),
+                                    Err(error) => panel.set(TransferPanelState::Failed {
+                                        message: error.to_string(),
+                                        retained: Some(preview.clone()),
+                                        recovery: TransferRecovery::Edit,
+                                    }),
+                                }
+                            },
+                            "Authorize transfer"
+                        }
+                    }
+                }
+            }
+        }
+        TransferPanelState::Authorized(preview) => {
+            let amount_label = format_transfer_asset(&preview.amount);
+            let confirmation = submit_transfer_confirmation(&preview);
+            let draft_id = preview.draft_id.clone();
+            let submitting_preview = preview.clone();
+            rsx! {
+                article { class: "surface-card transfer-card review-card", aria_label: "Authorized NIGHT transfer",
+                    p { class: "card-eyebrow", "Authorized" }
+                    h2 { "{amount_label} is ready" }
+                    p { "The protected signature is retained inside the Midnight adapter. Continue to prove, balance the DUST fee, and submit." }
+                    button {
+                        class: "primary-action",
+                        r#type: "button",
+                        aria_label: "Prove and submit NIGHT transfer",
+                        onclick: move |_| {
+                            panel.set(TransferPanelState::Submitting(submitting_preview.clone()));
+                            let service = services.submit_wallet_transfer();
+                            let drafts = services.get_wallet_transfer_draft();
+                            let profile_id = profile_id.clone();
+                            let draft_id = draft_id.clone();
+                            let confirmation = confirmation.clone();
+                            spawn(async move {
+                                match service.execute(SubmitWalletTransferCommand {
+                                    profile_id: profile_id.clone(),
+                                    draft_id: draft_id.clone(),
+                                    confirmation,
+                                }).await {
+                                    Ok(submitted) => panel.set(TransferPanelState::Submitted(Box::new(submitted))),
+                                    Err(error) => {
+                                        let retained = drafts.execute(WalletTransferDraftQuery {
+                                            profile_id,
+                                            draft_id,
+                                        }).ok().map(Box::new);
+                                        let recovery = post_submission_recovery(
+                                            retained.as_deref().map(|preview| preview.state.as_str()),
+                                        );
+                                        panel.set(TransferPanelState::Failed {
+                                            message: error.to_string(),
+                                            retained,
+                                            recovery,
+                                        });
+                                    }
+                                }
+                            });
+                        },
+                        "Prove and submit"
+                    }
+                }
+            }
+        }
+        TransferPanelState::Submitting(preview) => rsx! {
+            article { class: "surface-card transfer-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                div {
+                    p { class: "card-eyebrow", "Submitting" }
+                    h2 { "Proving {format_transfer_asset(&preview.amount)}" }
+                    p { "The worker is balancing the DUST fee, proving locally, and waiting for a public inclusion result." }
+                }
+            }
         },
-        Err(error) => AccountPageState::Failed(error.to_string()),
+        TransferPanelState::Submitted(submission) => rsx! {
+            article { class: "surface-card transfer-card submitted-card", role: "status", aria_live: "polite",
+                p { class: "card-eyebrow", "Included" }
+                h2 { "Transfer submitted" }
+                p { "Mode: {submission.mode}. Final DUST fee: {format_transfer_asset(&submission.fee)}." }
+                dl { class: "preview-list",
+                    div { dt { "Transaction" } dd { title: "{submission.transaction_id}", "{truncate_middle(&submission.transaction_id, 16, 8)}" } }
+                    div { dt { "Block" } dd { title: "{submission.block_id}", "{truncate_middle(&submission.block_id, 16, 8)}" } }
+                }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    onclick: move |_| {
+                        recipient.set(String::new());
+                        amount.set(String::new());
+                        panel.set(TransferPanelState::Editing);
+                    },
+                    "Send another"
+                }
+            }
+        },
+        TransferPanelState::Failed {
+            message,
+            retained,
+            recovery,
+        } => {
+            let retryable = recovery == TransferRecovery::RetryAuthorized;
+            let outcome_unknown = recovery == TransferRecovery::ReconcileUnknown;
+            let retry_preview = retained.clone();
+            rsx! {
+            article { class: "surface-card transfer-card", role: "alert",
+                p { class: "card-eyebrow", "Transfer not completed" }
+                h2 {
+                    if outcome_unknown {
+                        "Submission outcome needs reconciliation"
+                    } else if retryable {
+                        "Authorized transfer can be retried safely"
+                    } else {
+                        "Check the transfer and try again"
+                    }
+                }
+                p { "{message}" }
+                if outcome_unknown {
+                    p { "Oxid will not create or submit a replacement while broadcast may have occurred." }
+                } else if retryable {
+                    button {
+                        class: "secondary-action",
+                        r#type: "button",
+                        onclick: move |_| {
+                            if let Some(preview) = retry_preview.clone() {
+                                panel.set(TransferPanelState::Authorized(preview));
+                            }
+                        },
+                        "Retry safe submission"
+                    }
+                } else {
+                    button {
+                        class: "secondary-action",
+                        r#type: "button",
+                        onclick: move |_| panel.set(TransferPanelState::Editing),
+                        "Back to transfer"
+                    }
+                }
+            }
+            }
+        }
+    }
+}
+
+fn post_submission_recovery(retained_state: Option<&str>) -> TransferRecovery {
+    match retained_state {
+        Some("authorized") => TransferRecovery::RetryAuthorized,
+        _ => TransferRecovery::ReconcileUnknown,
+    }
+}
+
+fn render_qr_svg(value: &str) -> Option<String> {
+    use qrcode::{QrCode, render::svg};
+
+    QrCode::new(value.as_bytes()).ok().map(|code| {
+        code.render::<svg::Color<'_>>()
+            .min_dimensions(220, 220)
+            .max_dimensions(280, 280)
+            .quiet_zone(true)
+            .dark_color(svg::Color("#07111f"))
+            .light_color(svg::Color("#ffffff"))
+            .build()
+    })
+}
+
+fn night_display_to_atomic_units(value: &str) -> Result<String, &'static str> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("enter a NIGHT amount");
+    }
+    let mut parts = value.split('.');
+    let whole = parts.next().unwrap_or_default();
+    let fraction = parts.next();
+    if parts.next().is_some()
+        || whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || fraction.is_some_and(|part| !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err("NIGHT amount must be a positive decimal number");
+    }
+    let fraction = fraction.unwrap_or_default();
+    if fraction.len() > 6 {
+        return Err("NIGHT supports at most 6 decimal places");
+    }
+    let padded_fraction = format!("{fraction:0<6}");
+    let atomic = format!("{whole}{padded_fraction}")
+        .parse::<u128>()
+        .map_err(|_| "NIGHT amount is too large")?;
+    if atomic == 0 {
+        return Err("NIGHT amount must be greater than zero");
+    }
+    Ok(atomic.to_string())
+}
+
+fn format_transfer_asset(asset: &oxid_wallet_application::WalletTransferAssetView) -> String {
+    format!(
+        "{} {}",
+        format_atomic_units(&asset.atomic_units, asset.decimals),
+        asset.symbol
+    )
+}
+
+fn authorize_transfer_confirmation(
+    preview: &WalletTransferPreviewView,
+) -> SensitiveOperationConfirmation {
+    SensitiveOperationConfirmation {
+        title: "Authorize NIGHT transfer".to_owned(),
+        summary: format!(
+            "Send {} to {} on {}; DUST fee balancing and proving remain pending",
+            format_transfer_asset(&preview.amount),
+            truncate_middle(&preview.recipient_address, 18, 8),
+            preview.network_id,
+        ),
+        confirmed: true,
+    }
+}
+
+fn submit_transfer_confirmation(
+    preview: &WalletTransferPreviewView,
+) -> SensitiveOperationConfirmation {
+    SensitiveOperationConfirmation {
+        title: "Prove and submit NIGHT transfer".to_owned(),
+        summary: format!(
+            "Prove and submit {} to {} on {}",
+            format_transfer_asset(&preview.amount),
+            truncate_middle(&preview.recipient_address, 18, 8),
+            preview.network_id,
+        ),
+        confirmed: true,
     }
 }
 
@@ -925,9 +1589,14 @@ fn format_atomic_units(atomic_units: &str, decimals: u8) -> String {
     }
 }
 
-fn account_hint(account: &WalletAccountView, syncing: bool) -> &'static str {
-    if syncing {
-        "Synchronizing account state from the configured source…"
+fn account_hint(account: &WalletAccountView, busy: Option<AccountOperation>) -> &'static str {
+    if let Some(operation) = busy {
+        match operation {
+            AccountOperation::Initializing => "Initializing development wallet protection…",
+            AccountOperation::Unlocking => "Unlocking the protected wallet session…",
+            AccountOperation::Deriving => "Deriving the public Midnight account…",
+            AccountOperation::Syncing => "Synchronizing account state from the configured source…",
+        }
     } else {
         match account.source.as_str() {
             "unavailable" => {
@@ -1036,7 +1705,50 @@ fn DeferredPage(
 }
 
 #[component]
-fn DiagnosticsPage() -> Element {
+fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut account_state = use_signal(|| AccountPageState::Loading);
+    let profile_id = active_profile.id.clone();
+    use_effect(move || account_state.set(load_account_page(&services, &profile_id)));
+
+    let (protection_state, protection_ready, midnight_state, midnight_ready, completion_state) =
+        match account_state.read().clone() {
+            AccountPageState::Loading => (
+                "Loading".to_owned(),
+                false,
+                "Loading".to_owned(),
+                false,
+                "Loading".to_owned(),
+            ),
+            AccountPageState::Failed(_) => (
+                "Status unavailable".to_owned(),
+                false,
+                "Status unavailable".to_owned(),
+                false,
+                "Status unavailable".to_owned(),
+            ),
+            AccountPageState::Ready {
+                account, security, ..
+            } => {
+                let protection_ready = security.is_available();
+                let midnight_ready = account.source != "unavailable";
+                (
+                    format!("{} · {}", security.state_name(), security.protection_name()),
+                    protection_ready,
+                    format!(
+                        "{} · {}",
+                        account_source_label(&account.source),
+                        sync_status_label(&account.sync.state)
+                    ),
+                    midnight_ready,
+                    if account.source == "simulated" {
+                        "Deterministic simulation".to_owned()
+                    } else {
+                        "Not connected".to_owned()
+                    },
+                )
+            }
+        };
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Capability status" }
@@ -1044,19 +1756,20 @@ fn DiagnosticsPage() -> Element {
             p { "This view reports only capabilities that are actually composed into the current application." }
         }
         div { class: "diagnostic-grid",
-            CapabilityStatus { name: "Profile lifecycle", state: "Create · list · select · restore", ready: true }
-            CapabilityStatus { name: "Profile metadata store", state: "Persistent · public metadata only", ready: true }
-            CapabilityStatus { name: "Protected secret store", state: "Not connected", ready: false }
-            CapabilityStatus { name: "Midnight ledger", state: "Not connected", ready: false }
-            CapabilityStatus { name: "Proof provider", state: "Not connected", ready: false }
-            CapabilityStatus { name: "DID adapter", state: "Not connected", ready: false }
-            CapabilityStatus { name: "Credential protocols", state: "Not connected", ready: false }
+            CapabilityStatus { name: "Profile lifecycle", state: "Create · list · select · restore".to_owned(), ready: true }
+            CapabilityStatus { name: "Profile metadata store", state: "Persistent · public metadata only".to_owned(), ready: true }
+            CapabilityStatus { name: "Protected secret store", state: protection_state, ready: protection_ready }
+            CapabilityStatus { name: "Midnight account", state: midnight_state, ready: midnight_ready }
+            CapabilityStatus { name: "Transaction completion", state: completion_state, ready: midnight_ready }
+            CapabilityStatus { name: "Local proof provider", state: "Not connected".to_owned(), ready: false }
+            CapabilityStatus { name: "DID adapter", state: "Not connected".to_owned(), ready: false }
+            CapabilityStatus { name: "Credential protocols", state: "Not connected".to_owned(), ready: false }
         }
     }
 }
 
 #[component]
-fn CapabilityStatus(name: &'static str, state: &'static str, ready: bool) -> Element {
+fn CapabilityStatus(name: &'static str, state: String, ready: bool) -> Element {
     rsx! {
         article { class: "capability-row",
             span { class: if ready { "capability-dot ready" } else { "capability-dot queued" } }
@@ -1076,9 +1789,10 @@ fn SettingsPage(
     let services = consume_context::<WalletUiServices>();
     let mut security = use_signal(|| SecurityCapabilityState::Loading);
     let profile_id = active_profile.id.clone();
+    let services_for_load = services.clone();
     use_effect(move || {
         security.set(
-            services
+            services_for_load
                 .get_wallet_security_status()
                 .execute(WalletProfileSecurityCommand {
                     profile_id: profile_id.clone(),
@@ -1104,6 +1818,9 @@ fn SettingsPage(
             let available = status.is_available();
             let state = status.state_name();
             let protection = status.protection_name();
+            let profile_id = active_profile.id.clone();
+            let security_services = services.clone();
+            let mut security_state = security;
             rsx! {
                 article { class: "settings-card surface-card",
                     div {
@@ -1120,6 +1837,31 @@ fn SettingsPage(
                     span {
                         class: if available { "status-pill success" } else { "status-pill" },
                         if available { "Available" } else { "Fail closed" }
+                    }
+                    if available {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            aria_label: "{security_action_label(status)}",
+                            onclick: move |_| {
+                                let command = WalletProfileSecurityCommand {
+                                    profile_id: profile_id.clone(),
+                                };
+                                let result = match status.state_name() {
+                                    "Uninitialized" => security_services
+                                        .initialize_wallet_security()
+                                        .execute(command),
+                                    "Locked" => security_services.unlock_wallet().execute(command),
+                                    "Unlocked" => security_services.lock_wallet().execute(command),
+                                    _ => return,
+                                };
+                                security_state.set(result.map_or_else(
+                                    |error| SecurityCapabilityState::Failed(error.to_string()),
+                                    SecurityCapabilityState::Ready,
+                                ));
+                            },
+                            "{security_action_label(status)}"
+                        }
                     }
                 }
             }
@@ -1160,10 +1902,19 @@ fn SettingsPage(
             div {
                 p { class: "card-eyebrow", "Privacy" }
                 h2 { "Local-first · telemetry off" }
-                p { "No chain, DID, credential, analytics, or remote-storage adapter is active in this slice." }
+                p { "No analytics or remote-storage adapter is active. Development simulation is local and production chain/identity adapters remain explicit capabilities." }
             }
             span { class: "status-pill success", "Enforced" }
         }
+    }
+}
+
+fn security_action_label(status: WalletSecurityStatusView) -> &'static str {
+    match status.state_name() {
+        "Uninitialized" => "Initialize wallet",
+        "Locked" => "Unlock wallet",
+        "Unlocked" => "Lock wallet",
+        _ => "Unavailable",
     }
 }
 
@@ -1277,6 +2028,61 @@ mod tests {
         assert_eq!(format_atomic_units("1", 6), "0.000001");
         assert_eq!(format_atomic_units("000000", 6), "0");
         assert_eq!(format_atomic_units("not-a-number", 6), "—");
+    }
+
+    #[test]
+    fn night_input_is_converted_to_exact_atomic_units() {
+        assert_eq!(night_display_to_atomic_units("1"), Ok("1000000".to_owned()));
+        assert_eq!(
+            night_display_to_atomic_units("1.5"),
+            Ok("1500000".to_owned())
+        );
+        assert_eq!(
+            night_display_to_atomic_units("0.000001"),
+            Ok("1".to_owned())
+        );
+        assert_eq!(
+            night_display_to_atomic_units("0"),
+            Err("NIGHT amount must be greater than zero")
+        );
+        assert_eq!(
+            night_display_to_atomic_units("1.0000001"),
+            Err("NIGHT supports at most 6 decimal places")
+        );
+        assert!(night_display_to_atomic_units("-1").is_err());
+        assert!(night_display_to_atomic_units("1.2.3").is_err());
+    }
+
+    #[test]
+    fn receive_qr_is_deterministic_and_address_specific() {
+        let first = render_qr_svg("mn_addr_undeployed1first").expect("address fits a QR code");
+        let repeated = render_qr_svg("mn_addr_undeployed1first").expect("address fits a QR code");
+        let second = render_qr_svg("mn_addr_undeployed1second").expect("address fits a QR code");
+
+        assert_eq!(first, repeated);
+        assert_ne!(first, second);
+        assert!(first.starts_with("<?xml"));
+        assert!(first.contains("<svg"));
+    }
+
+    #[test]
+    fn post_submission_recovery_never_blindly_retries_an_unknown_submission() {
+        assert_eq!(
+            post_submission_recovery(Some("authorized")),
+            TransferRecovery::RetryAuthorized
+        );
+        assert_eq!(
+            post_submission_recovery(Some("submitting")),
+            TransferRecovery::ReconcileUnknown
+        );
+        assert_eq!(
+            post_submission_recovery(Some("expired")),
+            TransferRecovery::ReconcileUnknown
+        );
+        assert_eq!(
+            post_submission_recovery(None),
+            TransferRecovery::ReconcileUnknown
+        );
     }
 
     #[test]

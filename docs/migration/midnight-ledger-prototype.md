@@ -26,11 +26,11 @@ before migrating later work.
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification | credential domain/store/verification ports and adapters | Deferred to M3/M5 |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
-| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle and account-aware Assets page reimplemented; remaining capability pages and native bridges deferred |
+| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, protected development activation, and staged transfer UI reimplemented; remaining capability pages and native bridges deferred |
 | `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, protected key/account flows, simulated/live reads, and staged canonical transfer submission implemented; SSI flows queued |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness implemented and measured on iOS/Android; generated artifacts remain uncommitted |
-| Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch through repository scripts; native bridges remain deferred |
+| Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch the explicit standalone-development composition through repository scripts; native camera/copy/share/custody bridges remain deferred |
 
 ## M0 migration decisions
 
@@ -187,10 +187,22 @@ fixtures or the live source's configured watch-only fallback for that profile.
 The real headless executable covers initialize/derive/repeat/sign/sync without
 accepting or returning secret material.
 
+[Issue #14](https://github.com/MediaNoxLabs/oxid/issues/14) and ADR-0029 connect
+the same application services to Dioxus through an explicit
+`standalone-development` app feature. The repository mobile launchers select
+that feature for simulator/emulator flow testing; ordinary app builds keep
+production composition unavailable. The Assets page can initialize or unlock
+the ephemeral development wallet, derive the public external account, sync,
+render a deterministic Rust/SVG receive QR, prepare and review exact NIGHT,
+authorize the retained draft, and complete a simulated submission. No
+prototype wallet facade, seed/key DTO, WebView JavaScript bundle, native
+generated project, or live endpoint is copied.
+
 Persisted cursors, shielded/DUST checkpoints and additional key roles,
 internal/change address management, replacement and
-durable confirmation tracking, QR/copy/share bridges, production endpoint
-discovery, recovery, and native custody remain separate follow-ups.
+durable confirmation tracking, camera/copy/share bridges, explicit mobile
+submission cancellation, production endpoint discovery, recovery, and native
+custody remain separate follow-ups.
 
 ## Gate for each later slice
 

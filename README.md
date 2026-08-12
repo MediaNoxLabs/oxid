@@ -18,8 +18,10 @@ than layers bolted onto one chain-specific frontend.
 > can instead opt into either a real standalone-indexer read source or the
 > complete DUST/local-prover/node submission path using explicit public startup
 > configuration; remote proving remains an explicit development option. The
-> Assets page consumes the same account read use cases while production mobile
-> custody and chain access remain fail-closed. The remaining shell destinations deliberately label unconnected
+> The Assets page consumes the same account and transaction use cases. The
+> repository simulator/emulator launchers explicitly select process-local
+> development custody so receive QR plus prepare/review/authorize/submit can be
+> exercised end to end; normal production composition remains fail-closed. The remaining shell destinations deliberately label unconnected
 > capabilities; Oxid is not ready to hold real assets or identity credentials.
 
 ## Architecture
@@ -180,6 +182,13 @@ iPhone simulator with:
 just ios-run
 ```
 
+The repository iOS and Android launch scripts explicitly enable
+`oxid-app/standalone-development`. This composes the same deterministic
+development wallet as the headless harness: public profiles persist, protected
+roots and drafts are process-local, no chain service is contacted, and the UI
+labels simulated results. A normal `cargo run -p oxid-app` does not enable this
+feature and stays fail-closed.
+
 Set `OXID_IOS_DEVICE` to a simulator UDID to select a particular device. The
 script obtains the pinned Dioxus CLI from the locked Nix flake but deliberately
 uses the host Xcode and Rustup toolchain for Apple SDK discovery. Generated
@@ -196,9 +205,10 @@ just android-run
 Set `OXID_ANDROID_DEVICE` to an adb serial or `OXID_ANDROID_AVD` to an AVD name
 when automatic selection is not appropriate.
 
-The focused profile smoke tests reset Oxid's app data on their selected
-simulator/emulator, create and select the default profile, restart the process,
-and assert restoration:
+The focused wallet smoke tests reset Oxid's app data on their selected
+simulator/emulator, create the default profile, activate the protected
+development account, render receive QR, complete a staged simulated transfer,
+restart the process, and assert public-profile restoration:
 
 ```bash
 just ios-smoke

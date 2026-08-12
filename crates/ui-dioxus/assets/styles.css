@@ -404,6 +404,11 @@ select:focus-visible {
   color: var(--cyan);
 }
 
+.account-sync-action {
+  width: 100%;
+  margin-top: 1rem;
+}
+
 .dashboard-grid,
 .diagnostic-grid {
   display: grid;
@@ -613,6 +618,162 @@ select:focus-visible {
   background: rgb(56 213 255 / 9%);
   color: var(--cyan);
   font-weight: 850;
+}
+
+.development-card,
+.transfer-card {
+  margin-top: 1rem;
+}
+
+.development-card {
+  border-color: rgb(251 191 36 / 26%);
+  background:
+    linear-gradient(145deg, rgb(251 191 36 / 8%), transparent 48%),
+    var(--surface-2);
+}
+
+.address-row {
+  flex-wrap: wrap;
+}
+
+.address-qr-toggle {
+  min-height: 2.4rem;
+  padding: 0 0.75rem;
+  border: 1px solid rgb(56 213 255 / 28%);
+  border-radius: 0.7rem;
+  background: rgb(56 213 255 / 8%);
+  color: var(--cyan);
+  font-size: 0.7rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.address-qr {
+  display: grid;
+  justify-items: center;
+  gap: 0.65rem;
+  padding: 1rem 0 0.45rem;
+  text-align: center;
+}
+
+.address-qr__frame {
+  overflow: hidden;
+  width: min(17.5rem, 100%);
+  padding: 0.65rem;
+  border-radius: 1rem;
+  background: #fff;
+}
+
+.address-qr__frame svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.address-qr p {
+  max-width: 34ch;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.transfer-card > p:not(.card-eyebrow) {
+  margin: 0.55rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.transfer-card label {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 1rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.transfer-card input {
+  width: 100%;
+  min-height: 3.15rem;
+  padding: 0 0.9rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.85rem;
+  outline: 0;
+  background: rgb(7 11 20 / 70%);
+  color: var(--text-strong);
+}
+
+.transfer-card input:focus-visible {
+  border-color: var(--cyan);
+}
+
+.inline-action {
+  justify-self: start;
+  margin-top: 0.5rem;
+  padding: 0.35rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--cyan);
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.preview-list {
+  display: grid;
+  gap: 0;
+  margin: 1rem 0;
+}
+
+.preview-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.preview-list dt {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.preview-list dd {
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-strong);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.75rem;
+  text-align: right;
+  text-overflow: ellipsis;
+}
+
+.consent-copy {
+  padding: 0.8rem;
+  border-left: 2px solid var(--cyan);
+  background: rgb(56 213 255 / 6%);
+}
+
+.transfer-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 0.65fr) minmax(0, 1.35fr);
+  gap: 0.65rem;
+}
+
+.transfer-actions .primary-action {
+  margin-top: 0;
+}
+
+.submitting-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.submitted-card {
+  border-color: rgb(70 243 181 / 28%);
 }
 
 .profile-heading {

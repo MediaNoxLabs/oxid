@@ -53,7 +53,7 @@ PATH="$rust_toolchain_bin:/usr/bin:$PATH" \
     --ios \
     --package oxid-app \
     --no-default-features \
-    --features mobile \
+    --features mobile,standalone-development \
     --target "$rust_target" \
     --locked
 
