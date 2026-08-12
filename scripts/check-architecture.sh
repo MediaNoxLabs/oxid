@@ -107,11 +107,15 @@ check_workspace_dependencies oxid-adapter-vc-midnight \
 check_workspace_dependencies oxid-adapter-openid4vci \
   oxid-credential-application oxid-identity-application oxid-platform-ports \
   oxid-protocol-application oxid-protocol-domain
+check_workspace_dependencies oxid-adapter-siopv2 \
+  oxid-identity-application oxid-platform-ports \
+  oxid-protocol-application oxid-protocol-domain
 check_workspace_dependencies oxid-ui-dioxus \
   oxid-credential-application oxid-identity-application oxid-identity-domain \
   oxid-protocol-application oxid-wallet-application
 check_workspace_dependencies oxid-composition \
-  oxid-adapter-did-midnight oxid-adapter-openid4vci oxid-adapter-platform-system \
+  oxid-adapter-did-midnight oxid-adapter-openid4vci oxid-adapter-siopv2 \
+  oxid-adapter-platform-system \
   oxid-adapter-storage-credential-json oxid-adapter-storage-json \
   oxid-adapter-storage-identity-json oxid-adapter-vc-midnight \
   oxid-adapter-storage-memory oxid-adapter-storage-dev oxid-adapter-midnight \

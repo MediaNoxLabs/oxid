@@ -21,7 +21,10 @@ than layers bolted onto one chain-specific frontend.
 > inventory through standalone or explicitly configured native adapters. A
 > deterministic OpenID4VCI 1.0 Final adapter now exercises embedded-offer
 > preview, explicit consent, DID-bound proof, strict verification, and protected
-> credential storage end to end. Native headless runs
+> credential storage end to end. A separate deterministic SIOPv2 draft-13
+> adapter previews a standalone verifier request, requires explicit consent,
+> and independently verifies a single-use self-issued DID login without
+> exposing the ID Token. Native headless runs
 > can instead opt into a real standalone-indexer source for public-account and
 > shielded Zswap synchronization, or the complete DUST/local-prover/node
 > submission path using explicit public startup configuration; remote proving
@@ -53,7 +56,7 @@ apps/oxid-headless ---------------------+--> wallet-application --> wallet-domai
                     |         +-- DID resolver / public DID JSON adapters
                     +--> protocol-application --> protocol-domain
                     |         ^
-                    |         +-- OpenID4VCI / verified credential adapters
+                    |         +-- OpenID4VCI / SIOPv2 / verified credential adapters
                     +--> platform-system
 ```
 
@@ -114,6 +117,12 @@ The implemented account methods are `wallet.network.list`,
 `credential.issuance.refuse`, `credential.issuance.get`, and
 `credential.issuance.list`; their profile scope is always taken from the
 active wallet profile rather than caller parameters.
+Standalone self-issued login adds `identity.authentication.prepare`,
+`identity.authentication.accept`, `identity.authentication.refuse`,
+`identity.authentication.get`, and `identity.authentication.list`. Results are
+metadata-only and never contain a nonce, state, signing input, or ID Token.
+The prototype-oriented `identity.login` name is a prepare-only compatibility
+alias so explicit consent cannot be bypassed.
 With no additional configuration their account data is explicitly `simulated`
 and contacts no node, indexer, or prover. After
 `wallet.security.initialize`, `wallet.account.derive` creates and retains the
@@ -180,6 +189,16 @@ Midnight credential, and stores it in the protected profile inventory. Grant
 codes, access tokens, nonces, proofs, and original credential bytes never enter
 headless or UI results. The deterministic issuer is in-process and uses only
 loopback identifiers; normal production composition has no issuer transport.
+
+Standalone composition also accepts exactly one request-by-reference SIOPv2
+draft-13 login profile. It previews the verifier and purpose, requires exact
+explicit consent, creates an EdDSA or ES256 self-issued ID Token through an
+active managed DID authentication method, and has the in-process verifier
+independently resolve and verify it once. The request object is deterministic
+and unsigned because no network transport is involved. This is DID
+authentication, not OpenID4VP credential presentation; `vp_token`, DCQL,
+selective disclosure, native ingress, and live verifier transport remain
+unavailable. Normal production composition has no SIOP adapter.
 
 For a native standalone-indexer run, set all three public values before starting
 the headless binary:
@@ -353,6 +372,7 @@ The focused wallet smoke tests reset Oxid's app data on their selected
 simulator/emulator, create the default profile, activate the protected
 development account, render receive QR, complete a staged simulated transfer,
 create and resolve standalone DIDs, preview and accept an OpenID4VCI offer,
+complete a consented self-issued DID login,
 restart the process, and assert public-profile, submission, DID-inventory, and
 encrypted credential restoration:
 
@@ -374,8 +394,8 @@ just android-smoke
 | `crates/identity/application` | Profile-scoped DID use cases and identity-owned ports. |
 | `crates/credential/domain` | Credential records, metadata separation, and structured verification invariants. |
 | `crates/credential/application` | Profile-scoped credential inventory and verified-import use cases. |
-| `crates/protocol/domain` | Credential offer preview and issuance lifecycle invariants. |
-| `crates/protocol/application` | Protocol-neutral issuance use cases and outgoing ports. |
+| `crates/protocol/domain` | Credential-offer and self-issued-authentication preview/lifecycle invariants. |
+| `crates/protocol/application` | Protocol-neutral issuance and DID-authentication use cases and outgoing ports. |
 | `crates/platform/ports` | Time and randomness capability ports. |
 | `crates/adapters` | Replaceable outgoing implementations. |
 | `crates/ui-dioxus` | Incoming Dioxus UI adapter. |

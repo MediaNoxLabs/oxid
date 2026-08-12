@@ -5484,6 +5484,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-adapter-siopv2"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "oxid-adapter-did-midnight",
+ "oxid-adapter-platform-system",
+ "oxid-adapter-storage-dev",
+ "oxid-adapter-storage-memory",
+ "oxid-identity-application",
+ "oxid-identity-domain",
+ "oxid-platform-ports",
+ "oxid-protocol-application",
+ "oxid-protocol-domain",
+ "oxid-wallet-application",
+ "oxid-wallet-domain",
+ "p256",
+ "serde",
+ "serde_json",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "oxid-adapter-storage-credential-json"
 version = "0.1.0"
 dependencies = [
@@ -5586,6 +5610,7 @@ dependencies = [
  "oxid-adapter-midnight",
  "oxid-adapter-openid4vci",
  "oxid-adapter-platform-system",
+ "oxid-adapter-siopv2",
  "oxid-adapter-storage-credential-json",
  "oxid-adapter-storage-dev",
  "oxid-adapter-storage-identity-json",
@@ -5623,6 +5648,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "oxid-adapter-openid4vci",
+ "oxid-adapter-siopv2",
  "oxid-composition",
  "oxid-credential-application",
  "oxid-identity-application",

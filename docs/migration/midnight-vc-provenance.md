@@ -11,6 +11,7 @@ This slice was reconciled on 2026-08-13 against:
 | `midnightntwrk/midnight-did-resolver`, `main` | `70bec499287e31736f0775ad8e210bc59799749b` | resolved public DID document contract |
 | `midnightntwrk/midnight-verifiable-credentials`, `develop` | `39b1354212620b396e914b29603e6a38f2656546` | separation of schema, claims, disclosure, capabilities, artifacts/codecs, and untrusted display metadata |
 | OpenID Foundation | OpenID4VCI 1.0 Final, 2025-09-16 | normative offer, metadata, nonce, proof, request, response, security, and privacy behavior |
+| OpenID Foundation | SIOPv2 draft 13 and OpenID4VP 1.0 Final | self-issued DID authentication boundary and explicit separation from credential presentation |
 
 No source file is copied. Oxid reimplements the observed behavior with owned
 domain/application types and controlled-edge adapters. There is no Cargo or npm
@@ -30,6 +31,9 @@ dependency on the three identity repositories.
   Dioxus incoming adapters.
 - preview and explicitly accept a pre-authorized credential offer, construct a
   DID-bound proof, and import the verified issued credential.
+- preview and explicitly accept a standalone self-issued login request, prove
+  control of a managed DID, and let the verifier independently validate it
+  without disclosing a credential.
 
 ## Deliberate 110% hardening
 
@@ -46,6 +50,8 @@ dependency on the three identity repositories.
 | Protocol flow can expose grant codes, tokens, nonce, proof, or issuer bodies to UI state | Keep all ephemeral protocol material in the outgoing adapter and expose only bounded preview/state/credential identifiers. |
 | Issuance can proceed as soon as an offer is parsed | Require an untrusted-offer preview plus exact explicit consent and an active profile-scoped DID authentication method. |
 | Successful HTTP-style response can be stored directly | Require ADR-0038 verification outcome `valid` before protected persistence. |
+| Prototype names self-issued `id_token` login as OID4VP | Implement it as a pinned SIOPv2 draft-13 authentication capability; reserve OpenID4VP Final for `vp_token`/DCQL credential presentation. |
+| Login proof can leak through UI state or be replayed | Keep nonce, state, signing input, and ID Token adapter-private; consume the verifier session before independent signature/claim verification. |
 
 The standalone fixture contains only public conformance material. Its issuer
 secret was generated outside the repository and discarded. The revised DID
@@ -78,8 +84,8 @@ width. No other item is reordered or re-encoded.
 - Live OID4VCI HTTP/discovery, Authorization Code, by-reference offers,
   Transaction Code, batch/deferred issuance, notification, encrypted responses,
   wallet attestation, deep links, and QR scanning remain later protocol slices.
-- OID4VP/SIOP presentation and browser/native bridge transport remain later
-  protocol adapters.
+- OpenID4VP Final credential presentation, selective disclosure, live SIOP
+  verifier transport, and browser/native bridge ingress remain later adapters.
 - Status/revocation, temporal policy, schema validation, and issuer trust remain
   visible `not_checked` stages rather than fabricated success.
 - Jubjub verification remains queued pending a reviewed current implementation.
@@ -102,3 +108,4 @@ width. No other item is reordered or re-encoded.
 | Malicious credential offer or metadata | Strict duplicate-rejecting bounded JSON; exact embedded-offer parameter; issuer/authorization metadata separation; HTTPS-only production endpoint policy; explicit loopback exception only for standalone. |
 | Pre-authorized code replay or disclosure | Single-use adapter session; code/token/nonce never cross the protocol port or incoming DTO and are zeroized when retained. |
 | Holder-key substitution | Active profile scope, non-deactivated managed DID, exact controller, authentication relationship, DID URL `kid`, supported curve, issuer audience, and nonce-bound typed JWS. |
+| Self-issued login replay or verifier substitution | Exact loopback standalone verifier/request/response endpoints, short-lived nonce/state session consumed before verification, audience/issuer/subject checks, and independent DID-signature verification. |

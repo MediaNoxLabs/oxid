@@ -11,6 +11,10 @@ fn main() {
     let standalone_credential_offer = Some(oxid_composition::standalone_oid4vci_offer());
     #[cfg(not(feature = "standalone-development"))]
     let standalone_credential_offer = None;
+    #[cfg(feature = "standalone-development")]
+    let standalone_self_issued_request = Some(oxid_composition::standalone_siopv2_request());
+    #[cfg(not(feature = "standalone-development"))]
+    let standalone_self_issued_request = None;
     let ui = oxid_ui_dioxus::WalletUiServices::new(
         oxid_ui_dioxus::WalletProfileUiServices::new(
             application.create_wallet_profile(),
@@ -75,6 +79,12 @@ fn main() {
                     application.refuse_credential_issuance(),
                     standalone_credential_offer,
                 ),
+            ),
+            oxid_ui_dioxus::SelfIssuedAuthenticationUiServices::new(
+                application.prepare_self_issued_authentication(),
+                application.accept_self_issued_authentication(),
+                application.refuse_self_issued_authentication(),
+                standalone_self_issued_request,
             ),
         ),
     );

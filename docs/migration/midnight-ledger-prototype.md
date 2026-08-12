@@ -23,12 +23,12 @@ before migrating later work.
 | `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded plus private DUST/Zswap checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, native shielded replay lifecycle, and staged unshielded transfer through DUST proof, safe pre-broadcast cancellation, and node inclusion implemented for development/headless; shielded spending and durable production custody pending |
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; process-local Ed25519/P-256 plus BIP32/secp256k1-Schnorr conformance implemented; durable recovery and native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | `identity/domain`, `identity/application`, `adapters/did-midnight`, separate public record storage | Current 0.5.0-shaped resolution, profile inventory/persistence, and standalone create/update/deactivate/signing implemented by issues #21–22 and ADR-0036/0037; live Compact writes pending |
-| `wallet-core/oid4vp_client` | SIOP/OID4VP presentation response flows | presentation application plus protocol adapters | Deferred to a later protocol slice |
+| `wallet-core/oid4vp_client` | Self-issued DID authentication mislabeled alongside OID4VP presentation | `protocol/domain`, `protocol/application`, `adapters/siopv2`; later presentation domain/adapter | SIOPv2 draft-13 standalone login implemented by issue #25/ADR-0040; Final OpenID4VP credential presentation remains deferred |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification | `credential/domain`, `credential/application`, `adapters/vc-midnight`, protected credential storage | Profile-scoped protected inventory, strict phase-1 CBOR Ed25519/P-256 verification, headless/mobile lifecycle, and restart restoration implemented by issue #23/ADR-0038; openings, Compact passport proofs, status/schema/trust policy, and native wrapping pending |
 | `wallet-core/oid4vci_client` and `oid4vci_issuance_e2e` | Pre-authorized offer, token/nonce, holder proof, credential request/store flow | `protocol/domain`, `protocol/application`, `adapters/openid4vci`, existing DID custody and verified credential sink | OpenID4VCI 1.0 Final embedded-offer standalone flow implemented by issue #24/ADR-0039; production transport/discovery and additional grant/response variants pending |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
-| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, protected development activation, staged transfer, DID lifecycle, protected credential inventory/verification, and standalone offer preview/consent/issuance UI reimplemented; vault, presentation, passport, and native bridges deferred |
-| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, protected key/account flows, simulated/live reads, staged canonical transfer submission/status/cancellation, profile-scoped DID lifecycle, metadata-only credential inventory, and pre-authorized issuance implemented; vault and presentation flows queued |
+| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, protected development activation, staged transfer, DID lifecycle, protected credential inventory/verification, standalone issuance, and consented self-issued DID authentication UI reimplemented; vault, credential presentation, passport, and native bridges deferred |
+| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, protected key/account flows, simulated/live reads, staged canonical transfer submission/status/cancellation, profile-scoped DID lifecycle, metadata-only credential inventory, pre-authorized issuance, and self-issued DID authentication implemented; vault and credential-presentation flows queued |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness implemented and measured on iOS/Android; generated artifacts remain uncommitted |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch the explicit standalone-development composition through repository scripts; native camera/copy/share/custody bridges remain deferred |
@@ -283,8 +283,19 @@ proofs inside the adapter boundary; headless and Dioxus expose none of them.
 Normal composition remains unavailable, and live HTTP/discovery plus every
 non-reviewed flow variant are separate follow-ups.
 
+[Issue #25](https://github.com/MediaNoxLabs/oxid/issues/25) and ADR-0040 split
+the prototype's implemented login behavior from the unimplemented credential
+presentation modes that shared its `oid4vp_client` name. A protocol-neutral
+self-issued-authentication aggregate owns bounded preview, exact consent, and
+metadata-only state. `adapters/siopv2` strictly accepts one deterministic
+request-by-reference SIOPv2 draft-13 profile, creates an EdDSA or ES256 ID Token
+through opaque DID custody, and has the in-process verifier independently
+resolve and verify it once. Headless and Dioxus expose verifier, purpose, and
+outcome but never nonce, state, signing input, or token. Final OpenID4VP
+`vp_token`/DCQL presentation remains a distinct follow-up.
+
 Shielded spending, internal/change address management, replacement handling,
-live DID writes, presentation and selective disclosure, camera/copy/share
+live DID writes, OpenID4VP presentation and selective disclosure, camera/copy/share
 bridges, production endpoint discovery, durable recovery, and native custody
 remain separate follow-ups.
 

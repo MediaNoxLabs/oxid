@@ -207,6 +207,26 @@ try {
       "document.body.innerText.includes('standalone-2')",
       "managed DID update",
     );
+    await clickButton("Use standalone login request");
+    await clickButton("Preview login request");
+    await waitFor(
+      "document.body.innerText.includes('DID authentication preview') && document.body.innerText.includes('Authenticate with the selected DID.')",
+      "SIOPv2 DID authentication preview",
+    );
+    await evaluate(`(() => {
+      const consent = document.querySelector('#self-issued-authentication-consent');
+      if (!consent) return false;
+      consent.click();
+      return consent.checked;
+    })()`);
+    await clickButton("Authenticate with DID");
+    await waitFor(
+      "document.body.innerText.includes('DID authentication succeeded and the standalone verifier independently validated the proof.')",
+      "verified SIOPv2 DID authentication",
+    );
+    const didAuthenticated = await evaluate(
+      "document.body.innerText.includes('DID authentication succeeded and the standalone verifier independently validated the proof.')",
+    );
     await clickButton("Credentials");
     await waitForButton("Use standalone demo offer");
     await clickButton("Use standalone demo offer");
@@ -278,8 +298,8 @@ try {
       "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, credentialVerified, didManaged, didResolved, qrRendered, shieldedAddressRendered };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.credentialVerified || !result.didManaged || !result.didResolved || !result.qrRendered || !result.shieldedAddressRendered) {
+    const result = { ...walletResult, credentialVerified, didAuthenticated, didManaged, didResolved, qrRendered, shieldedAddressRendered };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.qrRendered || !result.shieldedAddressRendered) {
       throw new Error("Android standalone wallet flow did not expose the expected public result");
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);

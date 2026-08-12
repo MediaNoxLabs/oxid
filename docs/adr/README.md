@@ -31,7 +31,7 @@ ADR status and delivery state answer different questions:
 | [0007](0007-identity-is-a-peer-capability.md) Identity as a peer capability | Accepted | §§1, 4–6 | DID lifecycle and protected credential inventory delivered by ADR-0036–0038 |
 | [0008](0008-did-methods-as-capability-negotiated-adapters.md) DID adapters | Accepted | §§7, 9 | Resolution plus standalone lifecycle delivered by ADR-0036/0037; live Compact writes pending |
 | [0009](0009-separate-credential-models-from-serializations.md) Credential model separation | Accepted | §10 | Owned credential core and Midnight CBOR edge adapter delivered by ADR-0038 |
-| [0010](0010-oidc-and-didcomm-as-protocol-adapters.md) Protocol adapters | Accepted | §§7, 11 | Standalone OID4VCI pre-authorized issuance delivered by ADR-0039; live OID4VCI, OID4VP/SIOP, and DIDComm pending |
+| [0010](0010-oidc-and-didcomm-as-protocol-adapters.md) Protocol adapters | Accepted | §§7, 11 | Standalone OID4VCI issuance and SIOPv2 DID authentication delivered by ADR-0039/0040; live transport, OpenID4VP presentation, and DIDComm pending |
 | [0011](0011-secure-key-operations-behind-ports.md) Protected key operations | Accepted | §§3, 7, 12–13 | Opaque generation, HD derivation, and signing implemented in development; native adapters pending |
 | [0012](0012-mobile-first-target-priority.md) Mobile-first targets | Accepted | §§1, 4, 12–13, 16 | Features compile; native hosts deferred |
 | [0013](0013-local-first-and-telemetry-off.md) Local-first, telemetry-off | Accepted | §§4–5, 12–13 | Enforced for M0 |
@@ -61,6 +61,7 @@ ADR status and delivery state answer different questions:
 | [0037](0037-manage-standalone-midnight-dids-with-opaque-custody.md) Manage standalone Midnight DIDs | Accepted | §§3–7, 9, 12–13, 16–18 and issue #22 | Protected standalone lifecycle/signing, complete update vocabulary, headless flow, and mobile operation builder implemented; live Compact writes pending |
 | [0038](0038-protect-and-verify-profile-scoped-credentials.md) Protect and verify profile-scoped credentials | Accepted | §§3–7, 9, 12–13, 16–18 and issue #23 | Protected standalone inventory, strict phase-1 CBOR verification, headless/mobile flow, and restart restoration implemented; native wrapping and protocol ingress pending |
 | [0039](0039-accept-pre-authorized-openid4vci-offers.md) Accept pre-authorized OpenID4VCI offers | Accepted | §§3–7, 9–13, 16–18 and issue #24 | Final-shape embedded standalone offer, consent, DID proof, verified import, headless/mobile flow, and credential restart restoration implemented; production HTTP/discovery and other grant variants pending |
+| [0040](0040-add-consented-standalone-siopv2-authentication.md) Add consented standalone SIOPv2 DID authentication | Accepted | §§3–7, 9–13, 16–18 and issue #25 | Draft-13 request-by-reference login, consent, managed-DID proof, independent verifier, and headless/mobile flow implemented; OpenID4VP presentation and production transport pending |
 
 ## Current boundaries
 
@@ -107,4 +108,7 @@ authenticated standalone persistence while keeping production native wrapping
 fail-closed. ADR-0039 adds a protocol-neutral issuance hexagon and exact
 OpenID4VCI 1.0 Final pre-authorized subset through an in-process deterministic
 adapter; production transport/discovery and unsupported protocol variants
-remain fail-closed.
+remain fail-closed. ADR-0040 separately adds the prototype's self-issued
+login-with-DID behavior as a pinned SIOPv2 draft-13 standalone profile. It does
+not claim OpenID4VP credential presentation: `vp_token`, DCQL, disclosure, and
+live verifier transport remain fail-closed.

@@ -18,9 +18,13 @@ use oxid_identity_application::{
 };
 use oxid_identity_domain::VerificationRelationship;
 use oxid_protocol_application::{
-    AcceptCredentialIssuanceCommand, CredentialIssuanceError, CredentialIssuanceProfileQuery,
-    CredentialIssuanceQuery, CredentialIssuanceView, PrepareCredentialIssuanceCommand,
-    RefuseCredentialIssuanceCommand,
+    AcceptCredentialIssuanceCommand, AcceptSelfIssuedAuthenticationCommand,
+    CredentialIssuanceError, CredentialIssuanceProfileQuery, CredentialIssuanceQuery,
+    CredentialIssuanceView, PrepareCredentialIssuanceCommand,
+    PrepareSelfIssuedAuthenticationCommand, RefuseCredentialIssuanceCommand,
+    RefuseSelfIssuedAuthenticationCommand, SelfIssuedAuthenticationError,
+    SelfIssuedAuthenticationProfileQuery, SelfIssuedAuthenticationQuery,
+    SelfIssuedAuthenticationView,
 };
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, CreateWalletProfileCommand, CreateWalletProfileError,
@@ -203,6 +207,13 @@ impl HeadlessWallet {
             "credential.issuance.refuse" => self.refuse_credential_issuance(request),
             "credential.issuance.get" => self.get_credential_issuance(request),
             "credential.issuance.list" => self.list_credential_issuances(request),
+            "identity.login" | "identity.authentication.prepare" => {
+                self.prepare_self_issued_authentication(request)
+            }
+            "identity.authentication.accept" => self.accept_self_issued_authentication(request),
+            "identity.authentication.refuse" => self.refuse_self_issued_authentication(request),
+            "identity.authentication.get" => self.get_self_issued_authentication(request),
+            "identity.authentication.list" => self.list_self_issued_authentications(request),
             _ => Dispatch::continue_with(Response::error(
                 request.id,
                 "method_not_found",
@@ -1738,6 +1749,167 @@ impl HeadlessWallet {
         }
     }
 
+    fn prepare_self_issued_authentication(&self, request: Request) -> Dispatch {
+        let params =
+            match serde_json::from_value::<PrepareSelfIssuedAuthenticationParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => {
+                    return Dispatch::continue_with(Response::error(
+                        request.id,
+                        "invalid_params",
+                        "identity.authentication.prepare requires only a string request field",
+                    ));
+                }
+            };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match futures::executor::block_on(
+            self.application
+                .prepare_self_issued_authentication()
+                .execute(PrepareSelfIssuedAuthenticationCommand {
+                    profile_id,
+                    request: params.request,
+                }),
+        ) {
+            Ok(authentication) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "authentication": self_issued_authentication_value(&authentication) }),
+            )),
+            Err(error) => {
+                Dispatch::continue_with(self_issued_authentication_error(request.id, error))
+            }
+        }
+    }
+
+    fn accept_self_issued_authentication(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<AcceptSelfIssuedAuthenticationParams>(
+            request.params,
+        ) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "identity.authentication.accept requires authenticationId, holderDid, methodId, confirmed, and intent fields",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match futures::executor::block_on(
+            self.application
+                .accept_self_issued_authentication()
+                .execute(AcceptSelfIssuedAuthenticationCommand {
+                    profile_id,
+                    authentication_id: params.authentication_id,
+                    holder_did: params.holder_did,
+                    method_id: params.method_id,
+                    confirmed: params.confirmed,
+                    intent: params.intent,
+                }),
+        ) {
+            Ok(authentication) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "authentication": self_issued_authentication_value(&authentication) }),
+            )),
+            Err(error) => {
+                Dispatch::continue_with(self_issued_authentication_error(request.id, error))
+            }
+        }
+    }
+
+    fn refuse_self_issued_authentication(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<SelfIssuedAuthenticationParams>(request.params)
+        {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "identity.authentication.refuse requires only a string authenticationId field",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .refuse_self_issued_authentication()
+            .execute(RefuseSelfIssuedAuthenticationCommand {
+                profile_id,
+                authentication_id: params.authentication_id,
+            }) {
+            Ok(authentication) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "authentication": self_issued_authentication_value(&authentication) }),
+            )),
+            Err(error) => {
+                Dispatch::continue_with(self_issued_authentication_error(request.id, error))
+            }
+        }
+    }
+
+    fn get_self_issued_authentication(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<SelfIssuedAuthenticationParams>(request.params)
+        {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "identity.authentication.get requires only a string authenticationId field",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self.application.get_self_issued_authentication().execute(
+            SelfIssuedAuthenticationQuery {
+                profile_id,
+                authentication_id: params.authentication_id,
+            },
+        ) {
+            Ok(authentication) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "authentication": self_issued_authentication_value(&authentication) }),
+            )),
+            Err(error) => {
+                Dispatch::continue_with(self_issued_authentication_error(request.id, error))
+            }
+        }
+    }
+
+    fn list_self_issued_authentications(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "identity.authentication.list");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .list_self_issued_authentications()
+            .execute(SelfIssuedAuthenticationProfileQuery { profile_id })
+        {
+            Ok(authentications) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "authentications": authentications.iter().map(self_issued_authentication_value).collect::<Vec<_>>() }),
+            )),
+            Err(error) => {
+                Dispatch::continue_with(self_issued_authentication_error(request.id, error))
+            }
+        }
+    }
+
     fn active_profile_id(&self, id: Option<String>) -> Result<String, Response> {
         match self.application.get_active_wallet_profile().execute() {
             Ok(Some(profile)) => Ok(profile.id),
@@ -1905,6 +2077,28 @@ struct CredentialIssuanceParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AcceptCredentialIssuanceParams {
     issuance_id: String,
+    holder_did: String,
+    method_id: String,
+    confirmed: bool,
+    intent: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrepareSelfIssuedAuthenticationParams {
+    request: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SelfIssuedAuthenticationParams {
+    authentication_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AcceptSelfIssuedAuthenticationParams {
+    authentication_id: String,
     holder_did: String,
     method_id: String,
     confirmed: bool,
@@ -2577,6 +2771,53 @@ fn credential_issuance_error(id: Option<String>, error: CredentialIssuanceError)
         CredentialIssuanceError::Unavailable => (
             "capability_unavailable",
             "credential issuance capability is unavailable",
+        ),
+    };
+    Response::error(id, code, message)
+}
+
+fn self_issued_authentication_value(authentication: &SelfIssuedAuthenticationView) -> Value {
+    json!({
+        "id": authentication.id,
+        "verifier": authentication.verifier,
+        "purpose": authentication.purpose,
+        "state": authentication.state,
+        "failureCode": authentication.failure_code,
+    })
+}
+
+fn self_issued_authentication_error(
+    id: Option<String>,
+    error: SelfIssuedAuthenticationError,
+) -> Response {
+    let (code, message) = match error {
+        SelfIssuedAuthenticationError::InvalidProfileIdentifier(_)
+        | SelfIssuedAuthenticationError::InvalidAuthenticationIdentifier(_)
+        | SelfIssuedAuthenticationError::InvalidRequest
+        | SelfIssuedAuthenticationError::InvalidHolder => (
+            "invalid_argument",
+            "self-issued authentication request contains invalid input",
+        ),
+        SelfIssuedAuthenticationError::ConfirmationRequired
+        | SelfIssuedAuthenticationError::InvalidConfirmation => (
+            "confirmation_required",
+            "valid explicit DID authentication consent is required",
+        ),
+        SelfIssuedAuthenticationError::NotFound => (
+            "not_found",
+            "self-issued authentication session was not found for the active profile",
+        ),
+        SelfIssuedAuthenticationError::InvalidState => (
+            "failed_precondition",
+            "self-issued authentication session is not awaiting this operation",
+        ),
+        SelfIssuedAuthenticationError::Protocol(protocol) => (
+            protocol.code(),
+            "self-issued authentication protocol rejected or could not complete the request",
+        ),
+        SelfIssuedAuthenticationError::Unavailable => (
+            "capability_unavailable",
+            "self-issued authentication capability is unavailable",
         ),
     };
     Response::error(id, code, message)
@@ -3331,7 +3572,12 @@ fn capability_manifest() -> Value {
         { "method": "vault.lock.create", "status": "queued" },
         { "method": "vault.deposit", "status": "queued" },
         { "method": "vault.claim", "status": "queued" },
-        { "method": "identity.login", "status": "queued" },
+        { "method": "identity.login", "status": "ready", "mode": "standalone", "aliasFor": "identity.authentication.prepare" },
+        { "method": "identity.authentication.prepare", "status": "ready", "mode": "standalone", "standard": "SIOPv2 draft 13", "requestMode": "by_reference", "responseMode": "direct_post", "responseType": "id_token", "secretsExposed": false },
+        { "method": "identity.authentication.accept", "status": "ready", "mode": "standalone", "confirmationRequired": true, "algorithms": ["EdDSA", "ES256"], "secretsExposed": false },
+        { "method": "identity.authentication.refuse", "status": "ready", "mode": "standalone" },
+        { "method": "identity.authentication.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
+        { "method": "identity.authentication.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
         { "method": "credential.receive", "status": "ready", "mode": "standalone", "source": "public_fixture" },
         { "method": "credential.request", "status": "ready", "mode": "standalone", "aliasFor": "credential.receive" },
         { "method": "credential.list", "status": "ready", "mode": "standalone", "scope": "active_profile" },
@@ -3389,6 +3635,7 @@ impl Error for HeadlessIoError {
 mod tests {
     use super::*;
     use oxid_adapter_openid4vci::standalone_credential_offer;
+    use oxid_adapter_siopv2::standalone_self_issued_request;
 
     fn execute(input: &str) -> Vec<Value> {
         let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
@@ -3455,6 +3702,11 @@ mod tests {
         }));
         assert!(methods.iter().any(|capability| {
             capability["method"] == "credential.reverify" && capability["status"] == "ready"
+        }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "identity.login"
+                && capability["status"] == "ready"
+                && capability["aliasFor"] == "identity.authentication.prepare"
         }));
     }
 
@@ -3601,6 +3853,112 @@ mod tests {
             inventories[1]["result"]["credentials"][0]["verification"]["outcome"],
             "valid"
         );
+    }
+
+    #[test]
+    fn authenticates_a_managed_did_once_without_exposing_protocol_secrets() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"authentication-profile","method":"wallet.profile.create","params":{"displayName":"Authentication flow"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile identifier");
+        let initialized = execute_with_wallet(
+            &wallet,
+            &format!(
+                "{}\n{}",
+                json!({"protocol": PROTOCOL_VERSION, "id": "authentication-select", "method": "wallet.profile.select", "params": {"profileId": profile_id}}),
+                json!({"protocol": PROTOCOL_VERSION, "id": "authentication-security", "method": "wallet.security.initialize", "params": {}}),
+            ),
+        );
+        assert_eq!(initialized[0]["ok"], true);
+        assert_eq!(initialized[1]["ok"], true);
+
+        let created_did = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"authentication-did","method":"did.create","params":{}}"#,
+        );
+        let record = &created_did[0]["result"]["didRecord"]["document"];
+        let did = record["id"].as_str().expect("holder DID");
+        let method_id = record["relationships"]
+            .as_array()
+            .expect("relationships")
+            .iter()
+            .find(|relationship| relationship["relationship"] == "authentication")
+            .and_then(|relationship| relationship["methodIds"][0].as_str())
+            .expect("authentication method");
+
+        let prepared = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "authentication-prepare",
+                "method": "identity.authentication.prepare",
+                "params": {"request": standalone_self_issued_request()},
+            })
+            .to_string(),
+        );
+        let preview = &prepared[0]["result"]["authentication"];
+        assert_eq!(preview["state"], "awaiting_consent");
+        assert!(preview["verifier"].as_str().is_some());
+        assert!(preview["purpose"].as_str().is_some());
+        assert!(!prepared[0].to_string().contains("nonce"));
+        assert!(!prepared[0].to_string().contains("id_token"));
+        let authentication_id = preview["id"].as_str().expect("authentication identifier");
+
+        let denied = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "authentication-denied",
+                "method": "identity.authentication.accept",
+                "params": {"authenticationId": authentication_id, "holderDid": did, "methodId": method_id, "confirmed": false, "intent": "ACCEPT_SELF_ISSUED_AUTHENTICATION"},
+            })
+            .to_string(),
+        );
+        assert_eq!(denied[0]["error"]["code"], "confirmation_required");
+
+        let accepted = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "authentication-accept",
+                "method": "identity.authentication.accept",
+                "params": {"authenticationId": authentication_id, "holderDid": did, "methodId": method_id, "confirmed": true, "intent": "ACCEPT_SELF_ISSUED_AUTHENTICATION"},
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            accepted[0]["result"]["authentication"]["state"],
+            "succeeded"
+        );
+        assert!(!accepted[0].to_string().contains("nonce"));
+        assert!(!accepted[0].to_string().contains("id_token"));
+
+        let replay = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "authentication-replay",
+                "method": "identity.authentication.accept",
+                "params": {"authenticationId": authentication_id, "holderDid": did, "methodId": method_id, "confirmed": true, "intent": "ACCEPT_SELF_ISSUED_AUTHENTICATION"},
+            })
+            .to_string(),
+        );
+        assert_eq!(replay[0]["error"]["code"], "failed_precondition");
+
+        let inventory = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"authentication-list","method":"identity.authentication.list","params":{}}"#,
+        );
+        assert_eq!(
+            inventory[0]["result"]["authentications"][0]["state"],
+            "succeeded"
+        );
+        assert!(!inventory[0].to_string().contains("nonce"));
+        assert!(!inventory[0].to_string().contains("id_token"));
     }
 
     #[test]

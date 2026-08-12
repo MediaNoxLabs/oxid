@@ -19,9 +19,14 @@ use oxid_identity_application::{
 };
 use oxid_identity_domain::VerificationRelationship;
 use oxid_protocol_application::{
-    AcceptCredentialIssuanceCommand, AcceptCredentialIssuanceUseCase, CredentialIssuanceError,
-    CredentialIssuanceView, PrepareCredentialIssuanceCommand, PrepareCredentialIssuanceUseCase,
-    RefuseCredentialIssuanceCommand, RefuseCredentialIssuanceUseCase,
+    AcceptCredentialIssuanceCommand, AcceptCredentialIssuanceUseCase,
+    AcceptSelfIssuedAuthenticationCommand, AcceptSelfIssuedAuthenticationUseCase,
+    CredentialIssuanceError, CredentialIssuanceView, PrepareCredentialIssuanceCommand,
+    PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationCommand,
+    PrepareSelfIssuedAuthenticationUseCase, RefuseCredentialIssuanceCommand,
+    RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationCommand,
+    RefuseSelfIssuedAuthenticationUseCase, SelfIssuedAuthenticationError,
+    SelfIssuedAuthenticationView,
 };
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
@@ -92,6 +97,10 @@ pub struct WalletUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     standalone_credential_offer: Option<String>,
+    prepare_self_issued_authentication: Arc<dyn PrepareSelfIssuedAuthenticationUseCase>,
+    accept_self_issued_authentication: Arc<dyn AcceptSelfIssuedAuthenticationUseCase>,
+    refuse_self_issued_authentication: Arc<dyn RefuseSelfIssuedAuthenticationUseCase>,
+    standalone_self_issued_request: Option<String>,
 }
 
 /// DID inventory and resolution use cases consumed by the DIDs page.
@@ -124,6 +133,31 @@ pub struct CredentialIssuanceUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     standalone_credential_offer: Option<String>,
+}
+
+/// Consent-driven self-issued DID authentication capabilities consumed by the DIDs page.
+pub struct SelfIssuedAuthenticationUiServices {
+    prepare: Arc<dyn PrepareSelfIssuedAuthenticationUseCase>,
+    accept: Arc<dyn AcceptSelfIssuedAuthenticationUseCase>,
+    refuse: Arc<dyn RefuseSelfIssuedAuthenticationUseCase>,
+    standalone_request: Option<String>,
+}
+
+impl SelfIssuedAuthenticationUiServices {
+    #[must_use]
+    pub fn new(
+        prepare: Arc<dyn PrepareSelfIssuedAuthenticationUseCase>,
+        accept: Arc<dyn AcceptSelfIssuedAuthenticationUseCase>,
+        refuse: Arc<dyn RefuseSelfIssuedAuthenticationUseCase>,
+        standalone_request: Option<String>,
+    ) -> Self {
+        Self {
+            prepare,
+            accept,
+            refuse,
+            standalone_request,
+        }
+    }
 }
 
 impl CredentialIssuanceUiServices {
@@ -171,12 +205,21 @@ impl CredentialUiServices {
 pub struct IdentityUiServices {
     dids: DidUiServices,
     credentials: CredentialUiServices,
+    authentication: SelfIssuedAuthenticationUiServices,
 }
 
 impl IdentityUiServices {
     #[must_use]
-    pub const fn new(dids: DidUiServices, credentials: CredentialUiServices) -> Self {
-        Self { dids, credentials }
+    pub const fn new(
+        dids: DidUiServices,
+        credentials: CredentialUiServices,
+        authentication: SelfIssuedAuthenticationUiServices,
+    ) -> Self {
+        Self {
+            dids,
+            credentials,
+            authentication,
+        }
     }
 }
 
@@ -393,6 +436,7 @@ impl WalletUiServices {
     ) -> Self {
         let dids = identity.dids;
         let credentials = identity.credentials;
+        let authentication = identity.authentication;
         Self {
             create_wallet_profile: profiles.create_wallet_profile,
             list_wallet_profiles: profiles.list_wallet_profiles,
@@ -438,6 +482,10 @@ impl WalletUiServices {
             accept_credential_issuance: credentials.accept_credential_issuance,
             refuse_credential_issuance: credentials.refuse_credential_issuance,
             standalone_credential_offer: credentials.standalone_credential_offer,
+            prepare_self_issued_authentication: authentication.prepare,
+            accept_self_issued_authentication: authentication.accept,
+            refuse_self_issued_authentication: authentication.refuse,
+            standalone_self_issued_request: authentication.standalone_request,
         }
     }
 
@@ -662,6 +710,32 @@ impl WalletUiServices {
     #[must_use]
     pub fn standalone_credential_offer(&self) -> Option<String> {
         self.standalone_credential_offer.clone()
+    }
+
+    #[must_use]
+    pub fn prepare_self_issued_authentication(
+        &self,
+    ) -> Arc<dyn PrepareSelfIssuedAuthenticationUseCase> {
+        Arc::clone(&self.prepare_self_issued_authentication)
+    }
+
+    #[must_use]
+    pub fn accept_self_issued_authentication(
+        &self,
+    ) -> Arc<dyn AcceptSelfIssuedAuthenticationUseCase> {
+        Arc::clone(&self.accept_self_issued_authentication)
+    }
+
+    #[must_use]
+    pub fn refuse_self_issued_authentication(
+        &self,
+    ) -> Arc<dyn RefuseSelfIssuedAuthenticationUseCase> {
+        Arc::clone(&self.refuse_self_issued_authentication)
+    }
+
+    #[must_use]
+    pub fn standalone_self_issued_request(&self) -> Option<String> {
+        self.standalone_self_issued_request.clone()
     }
 }
 
@@ -2914,6 +2988,30 @@ fn did_operation_message(error: DidOperationError) -> String {
     error.to_string()
 }
 
+fn self_issued_authentication_message(error: SelfIssuedAuthenticationError) -> String {
+    error.to_string()
+}
+
+fn active_managed_authentication_method(records: &[DidRecordView]) -> Option<(String, String)> {
+    records
+        .iter()
+        .filter(|record| record.document_metadata.deactivated != Some(true))
+        .find_map(|record| {
+            record
+                .document
+                .relationships
+                .iter()
+                .find(|relationship| relationship.relationship == "authentication")
+                .and_then(|relationship| {
+                    relationship
+                        .method_ids
+                        .iter()
+                        .find(|method_id| record.managed_method_ids.contains(method_id))
+                })
+                .map(|method_id| (record.document.id.clone(), method_id.clone()))
+        })
+}
+
 fn did_confirmation(title: &str, summary: &str, confirmed: bool) -> DidOperationConfirmation {
     DidOperationConfirmation {
         title: title.to_owned(),
@@ -3166,6 +3264,11 @@ fn DidsPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| DidPageState::Loading);
     let mut did_input = use_signal(|| STANDALONE_DID_FIXTURE.to_owned());
+    let mut authentication_input = use_signal(String::new);
+    let mut prepared_authentication = use_signal(|| None::<SelfIssuedAuthenticationView>);
+    let mut authentication_consent = use_signal(|| false);
+    let mut authentication_busy = use_signal(|| false);
+    let mut authentication_notice = use_signal(|| None::<String>);
     let profile_id = active_profile.id.clone();
     let load_services = services.clone();
     let load_profile = profile_id.clone();
@@ -3208,6 +3311,10 @@ fn DidsPage(active_profile: WalletProfileView) -> Element {
             let resolve_services = services.clone();
             let resolve_profile = profile_id.clone();
             let retained_records = records.clone();
+            let create_services = services.clone();
+            let create_profile = profile_id.clone();
+            let create_records = records.clone();
+            let standalone_authentication_request = services.standalone_self_issued_request();
             rsx! {
                 section { class: "page-heading",
                     p { class: "eyebrow", "Decentralized identity" }
@@ -3221,25 +3328,174 @@ fn DidsPage(active_profile: WalletProfileView) -> Element {
                     button {
                         class: "primary-action", r#type: "button", disabled: resolving,
                         onclick: move |_| {
-                            state.set(DidPageState::Ready { records: records.clone(), resolving: true, operation_error: None });
-                            match services.create_did().execute(CreateDidCommand {
-                                profile_id: profile_id.clone(),
+                            state.set(DidPageState::Ready { records: create_records.clone(), resolving: true, operation_error: None });
+                            match create_services.create_did().execute(CreateDidCommand {
+                                profile_id: create_profile.clone(),
                                 network: "undeployed".to_owned(),
                             }) {
                                 Ok(record) => {
-                                    let mut updated = records.clone();
+                                    let mut updated = create_records.clone();
                                     updated.retain(|existing| existing.document.id != record.document.id);
                                     updated.push(record);
                                     updated.sort_by(|left, right| left.document.id.cmp(&right.document.id));
                                     state.set(DidPageState::Ready { records: updated, resolving: false, operation_error: None });
                                 }
                                 Err(error) => state.set(DidPageState::Ready {
-                                    records: records.clone(), resolving: false,
+                                    records: create_records.clone(), resolving: false,
                                     operation_error: Some(did_operation_message(error)),
                                 }),
                             }
                         },
                         if resolving { "Working…" } else { "Create standalone DID" }
+                    }
+                }
+                article { class: "surface-card did-resolver-card",
+                    p { class: "card-eyebrow", "SIOPv2 draft 13 · standalone" }
+                    h2 { "Authenticate with a DID" }
+                    p { class: "form-hint", "Preview the verifier and purpose before consent. This flow proves control of a managed DID; it does not disclose a credential. Nonce, state, and the signed ID token remain inside the protocol adapter." }
+                    label { r#for: "self-issued-authentication-request", "Authentication request URI" }
+                    textarea {
+                        id: "self-issued-authentication-request",
+                        maxlength: 32768,
+                        rows: 4,
+                        autocomplete: "off",
+                        spellcheck: false,
+                        value: "{authentication_input}",
+                        oninput: move |event| authentication_input.set(event.value()),
+                    }
+                    if let Some(request) = standalone_authentication_request {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            disabled: authentication_busy(),
+                            onclick: move |_| {
+                                authentication_input.set(request.clone());
+                                prepared_authentication.set(None);
+                                authentication_consent.set(false);
+                                authentication_notice.set(Some("Standalone login request loaded. Preview it before authenticating.".to_owned()));
+                            },
+                            "Use standalone login request"
+                        }
+                    }
+                    button {
+                        class: "primary-action",
+                        r#type: "button",
+                        disabled: authentication_busy() || authentication_input.read().trim().is_empty(),
+                        onclick: {
+                            let service = services.prepare_self_issued_authentication();
+                            let profile_id = profile_id.clone();
+                            move |_| {
+                                let service = service.clone();
+                                let profile_id = profile_id.clone();
+                                let request = authentication_input.read().trim().to_owned();
+                                authentication_busy.set(true);
+                                authentication_notice.set(None);
+                                spawn(async move {
+                                    match service.execute(PrepareSelfIssuedAuthenticationCommand { profile_id, request }).await {
+                                        Ok(preview) => {
+                                            prepared_authentication.set(Some(preview));
+                                            authentication_consent.set(false);
+                                            authentication_notice.set(Some("Login preview ready. Review the verifier and purpose before consenting.".to_owned()));
+                                        }
+                                        Err(error) => {
+                                            prepared_authentication.set(None);
+                                            authentication_notice.set(Some(self_issued_authentication_message(error)));
+                                        }
+                                    }
+                                    authentication_busy.set(false);
+                                });
+                            }
+                        },
+                        if authentication_busy() { "Checking request…" } else { "Preview login request" }
+                    }
+                    if let Some(preview) = prepared_authentication.read().clone() {
+                        div { class: "credential-offer-preview",
+                            h3 { "DID authentication preview" }
+                            dl { class: "did-record__facts",
+                                div { dt { "Verifier" } dd { title: "{preview.verifier}", "{preview.verifier}" } }
+                                div { dt { "Purpose" } dd { "{preview.purpose}" } }
+                                div { dt { "State" } dd { {preview.state.replace('_', " ")} } }
+                            }
+                            if preview.state == "awaiting_consent" {
+                                label { class: "confirmation-check",
+                                    input {
+                                        id: "self-issued-authentication-consent",
+                                        r#type: "checkbox",
+                                        aria_label: "Consent to DID authentication",
+                                        checked: authentication_consent(),
+                                        onchange: move |event| authentication_consent.set(event.checked()),
+                                    }
+                                    span { "I reviewed this verifier and consent to authenticate with my active managed DID." }
+                                }
+                                div { class: "action-row",
+                                    button {
+                                        class: "primary-action",
+                                        r#type: "button",
+                                        disabled: authentication_busy() || !authentication_consent(),
+                                        onclick: {
+                                            let service = services.accept_self_issued_authentication();
+                                            let profile_id = profile_id.clone();
+                                            let authentication_id = preview.id.clone();
+                                            let records = records.clone();
+                                            move |_| {
+                                                let Some((holder_did, method_id)) = active_managed_authentication_method(&records) else {
+                                                    authentication_notice.set(Some("Create an active managed DID before authenticating.".to_owned()));
+                                                    return;
+                                                };
+                                                let service = service.clone();
+                                                let profile_id = profile_id.clone();
+                                                let authentication_id = authentication_id.clone();
+                                                authentication_busy.set(true);
+                                                authentication_notice.set(None);
+                                                spawn(async move {
+                                                    match service.execute(AcceptSelfIssuedAuthenticationCommand {
+                                                        profile_id,
+                                                        authentication_id,
+                                                        holder_did,
+                                                        method_id,
+                                                        confirmed: true,
+                                                        intent: "ACCEPT_SELF_ISSUED_AUTHENTICATION".to_owned(),
+                                                    }).await {
+                                                        Ok(result) => {
+                                                            prepared_authentication.set(Some(result));
+                                                            authentication_notice.set(Some("DID authentication succeeded and the standalone verifier independently validated the proof.".to_owned()));
+                                                        }
+                                                        Err(error) => authentication_notice.set(Some(self_issued_authentication_message(error))),
+                                                    }
+                                                    authentication_busy.set(false);
+                                                });
+                                            }
+                                        },
+                                        if authentication_busy() { "Authenticating…" } else { "Authenticate with DID" }
+                                    }
+                                    button {
+                                        class: "secondary-action",
+                                        r#type: "button",
+                                        disabled: authentication_busy(),
+                                        onclick: {
+                                            let service = services.refuse_self_issued_authentication();
+                                            let profile_id = profile_id.clone();
+                                            let authentication_id = preview.id.clone();
+                                            move |_| match service.execute(RefuseSelfIssuedAuthenticationCommand {
+                                                profile_id: profile_id.clone(),
+                                                authentication_id: authentication_id.clone(),
+                                            }) {
+                                                Ok(result) => {
+                                                    prepared_authentication.set(Some(result));
+                                                    authentication_consent.set(false);
+                                                    authentication_notice.set(Some("Login request refused; ephemeral protocol secrets were discarded.".to_owned()));
+                                                }
+                                                Err(error) => authentication_notice.set(Some(self_issued_authentication_message(error))),
+                                            }
+                                        },
+                                        "Refuse login"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(message) = authentication_notice.read().as_deref() {
+                        p { class: "form-hint", role: "status", "{message}" }
                     }
                 }
                 article { class: "surface-card did-resolver-card",

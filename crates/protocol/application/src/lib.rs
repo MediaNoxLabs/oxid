@@ -14,9 +14,11 @@ use std::{
 use oxid_foundation::OpaqueIdError;
 use oxid_protocol_domain::{
     CredentialIssuanceId, CredentialIssuanceState, CredentialOfferPreview, ProtocolProfileId,
+    SelfIssuedAuthenticationId, SelfIssuedAuthenticationPreview, SelfIssuedAuthenticationState,
 };
 
 pub const MAX_CREDENTIAL_OFFER_BYTES: usize = 32 * 1_024;
+pub const MAX_SELF_ISSUED_REQUEST_BYTES: usize = 32 * 1_024;
 const MAX_DID_CHARACTERS: usize = 8_192;
 const MAX_METHOD_CHARACTERS: usize = 8_192;
 
@@ -577,6 +579,496 @@ impl IssuedCredentialSinkPort for UnavailableIssuedCredentialSink {
     }
 }
 
+pub type PrepareSelfIssuedAuthenticationPortFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<PreparedSelfIssuedAuthentication, SelfIssuedProtocolError>>
+            + Send
+            + 'a,
+    >,
+>;
+pub type AuthenticateSelfIssuedPortFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), SelfIssuedProtocolError>> + Send + 'a>>;
+pub type SelfIssuedProofFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<String, SelfIssuedProofError>> + Send + 'a>>;
+pub type SelfIssuedAuthenticationViewFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<SelfIssuedAuthenticationView, SelfIssuedAuthenticationError>>
+            + Send
+            + 'a,
+    >,
+>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrepareSelfIssuedAuthenticationRequest {
+    pub profile_id: ProtocolProfileId,
+    pub request: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedSelfIssuedAuthentication {
+    pub id: SelfIssuedAuthenticationId,
+    pub preview: SelfIssuedAuthenticationPreview,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProtocolSelfIssuedAuthenticationRequest {
+    pub profile_id: ProtocolProfileId,
+    pub authentication_id: SelfIssuedAuthenticationId,
+    pub holder_did: String,
+    pub method_id: String,
+}
+
+pub trait SelfIssuedAuthenticationProtocolPort: Send + Sync {
+    fn prepare<'a>(
+        &'a self,
+        request: PrepareSelfIssuedAuthenticationRequest,
+    ) -> PrepareSelfIssuedAuthenticationPortFuture<'a>;
+
+    fn authenticate<'a>(
+        &'a self,
+        request: ProtocolSelfIssuedAuthenticationRequest,
+    ) -> AuthenticateSelfIssuedPortFuture<'a>;
+
+    fn discard(
+        &self,
+        authentication_id: &SelfIssuedAuthenticationId,
+    ) -> Result<(), SelfIssuedProtocolError>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelfIssuedProofRequest {
+    pub profile_id: ProtocolProfileId,
+    pub holder_did: String,
+    pub method_id: String,
+    pub audience: String,
+    pub nonce: String,
+    pub issued_at_seconds: u64,
+    pub expires_at_seconds: u64,
+}
+
+pub trait SelfIssuedIdentityProofPort: Send + Sync {
+    fn create<'a>(&'a self, request: SelfIssuedProofRequest) -> SelfIssuedProofFuture<'a>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelfIssuedProtocolError {
+    Unavailable,
+    InvalidRequest,
+    UnsupportedRequest,
+    InvalidVerifier,
+    RequestExpired,
+    InvalidProof,
+    VerifierRejected,
+    ProtectionUnavailable,
+    WalletLocked,
+}
+
+impl SelfIssuedProtocolError {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Unavailable => "protocol_unavailable",
+            Self::InvalidRequest => "invalid_request",
+            Self::UnsupportedRequest => "unsupported_request",
+            Self::InvalidVerifier => "invalid_verifier",
+            Self::RequestExpired => "request_expired",
+            Self::InvalidProof => "invalid_proof",
+            Self::VerifierRejected => "verifier_rejected",
+            Self::ProtectionUnavailable => "protection_unavailable",
+            Self::WalletLocked => "wallet_locked",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelfIssuedProofError {
+    Unavailable,
+    DidNotFound,
+    MethodNotFound,
+    MethodNotAuthorized,
+    UnsupportedAlgorithm,
+    WalletLocked,
+    Rejected,
+}
+
+display_code_error!(SelfIssuedProtocolError, SelfIssuedProtocolError::code);
+
+impl fmt::Display for SelfIssuedProofError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unavailable => "self-issued proof is unavailable",
+            Self::DidNotFound => "self-issued subject DID was not found",
+            Self::MethodNotFound => "self-issued authentication method was not found",
+            Self::MethodNotAuthorized => "self-issued method is not authorized for authentication",
+            Self::UnsupportedAlgorithm => "self-issued proof algorithm is unsupported",
+            Self::WalletLocked => "wallet must be unlocked for self-issued authentication",
+            Self::Rejected => "self-issued proof was rejected",
+        })
+    }
+}
+
+impl Error for SelfIssuedProofError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrepareSelfIssuedAuthenticationCommand {
+    pub profile_id: String,
+    pub request: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AcceptSelfIssuedAuthenticationCommand {
+    pub profile_id: String,
+    pub authentication_id: String,
+    pub holder_did: String,
+    pub method_id: String,
+    pub confirmed: bool,
+    pub intent: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefuseSelfIssuedAuthenticationCommand {
+    pub profile_id: String,
+    pub authentication_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelfIssuedAuthenticationQuery {
+    pub profile_id: String,
+    pub authentication_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelfIssuedAuthenticationProfileQuery {
+    pub profile_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelfIssuedAuthenticationView {
+    pub id: String,
+    pub verifier: String,
+    pub purpose: String,
+    pub state: String,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct SelfIssuedSession {
+    profile_id: ProtocolProfileId,
+    preview: SelfIssuedAuthenticationPreview,
+    state: SelfIssuedAuthenticationState,
+    failure_code: Option<String>,
+}
+
+impl SelfIssuedSession {
+    fn view(&self, id: &SelfIssuedAuthenticationId) -> SelfIssuedAuthenticationView {
+        SelfIssuedAuthenticationView {
+            id: id.as_str().to_owned(),
+            verifier: self.preview.verifier().to_owned(),
+            purpose: self.preview.purpose().to_owned(),
+            state: self.state.as_str().to_owned(),
+            failure_code: self.failure_code.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelfIssuedAuthenticationError {
+    InvalidProfileIdentifier(OpaqueIdError),
+    InvalidAuthenticationIdentifier(OpaqueIdError),
+    InvalidRequest,
+    InvalidHolder,
+    ConfirmationRequired,
+    InvalidConfirmation,
+    NotFound,
+    InvalidState,
+    Protocol(SelfIssuedProtocolError),
+    Unavailable,
+}
+
+impl fmt::Display for SelfIssuedAuthenticationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidProfileIdentifier(error)
+            | Self::InvalidAuthenticationIdentifier(error) => error.fmt(formatter),
+            Self::InvalidRequest => formatter.write_str("self-issued request input is invalid"),
+            Self::InvalidHolder => formatter.write_str("self-issued holder selection is invalid"),
+            Self::ConfirmationRequired => {
+                formatter.write_str("self-issued authentication requires explicit consent")
+            }
+            Self::InvalidConfirmation => {
+                formatter.write_str("self-issued authentication consent intent is invalid")
+            }
+            Self::NotFound => formatter.write_str("self-issued authentication was not found"),
+            Self::InvalidState => {
+                formatter.write_str("self-issued authentication state is invalid")
+            }
+            Self::Protocol(error) => error.fmt(formatter),
+            Self::Unavailable => {
+                formatter.write_str("self-issued authentication state is unavailable")
+            }
+        }
+    }
+}
+
+impl Error for SelfIssuedAuthenticationError {}
+
+pub trait PrepareSelfIssuedAuthenticationUseCase: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        command: PrepareSelfIssuedAuthenticationCommand,
+    ) -> SelfIssuedAuthenticationViewFuture<'a>;
+}
+
+pub trait AcceptSelfIssuedAuthenticationUseCase: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        command: AcceptSelfIssuedAuthenticationCommand,
+    ) -> SelfIssuedAuthenticationViewFuture<'a>;
+}
+
+pub trait RefuseSelfIssuedAuthenticationUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: RefuseSelfIssuedAuthenticationCommand,
+    ) -> Result<SelfIssuedAuthenticationView, SelfIssuedAuthenticationError>;
+}
+
+pub trait GetSelfIssuedAuthenticationUseCase: Send + Sync {
+    fn execute(
+        &self,
+        query: SelfIssuedAuthenticationQuery,
+    ) -> Result<SelfIssuedAuthenticationView, SelfIssuedAuthenticationError>;
+}
+
+pub trait ListSelfIssuedAuthenticationsUseCase: Send + Sync {
+    fn execute(
+        &self,
+        query: SelfIssuedAuthenticationProfileQuery,
+    ) -> Result<Vec<SelfIssuedAuthenticationView>, SelfIssuedAuthenticationError>;
+}
+
+pub struct SelfIssuedAuthenticationService {
+    protocol: Arc<dyn SelfIssuedAuthenticationProtocolPort>,
+    sessions: Mutex<BTreeMap<SelfIssuedAuthenticationId, SelfIssuedSession>>,
+}
+
+impl SelfIssuedAuthenticationService {
+    #[must_use]
+    pub fn new(protocol: Arc<dyn SelfIssuedAuthenticationProtocolPort>) -> Self {
+        Self {
+            protocol,
+            sessions: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn sessions(
+        &self,
+    ) -> Result<
+        MutexGuard<'_, BTreeMap<SelfIssuedAuthenticationId, SelfIssuedSession>>,
+        SelfIssuedAuthenticationError,
+    > {
+        self.sessions
+            .lock()
+            .map_err(|_| SelfIssuedAuthenticationError::Unavailable)
+    }
+
+    fn fail(&self, id: &SelfIssuedAuthenticationId, code: &str) {
+        if let Ok(mut sessions) = self.sessions.lock()
+            && let Some(session) = sessions.get_mut(id)
+        {
+            session.state = SelfIssuedAuthenticationState::Failed;
+            session.failure_code = Some(code.to_owned());
+        }
+    }
+}
+
+fn authentication_profile(
+    value: String,
+) -> Result<ProtocolProfileId, SelfIssuedAuthenticationError> {
+    ProtocolProfileId::parse(value).map_err(SelfIssuedAuthenticationError::InvalidProfileIdentifier)
+}
+
+fn authentication_id(
+    value: String,
+) -> Result<SelfIssuedAuthenticationId, SelfIssuedAuthenticationError> {
+    SelfIssuedAuthenticationId::parse(value)
+        .map_err(SelfIssuedAuthenticationError::InvalidAuthenticationIdentifier)
+}
+
+impl PrepareSelfIssuedAuthenticationUseCase for SelfIssuedAuthenticationService {
+    fn execute<'a>(
+        &'a self,
+        command: PrepareSelfIssuedAuthenticationCommand,
+    ) -> SelfIssuedAuthenticationViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = authentication_profile(command.profile_id)?;
+            if command.request.is_empty() || command.request.len() > MAX_SELF_ISSUED_REQUEST_BYTES {
+                return Err(SelfIssuedAuthenticationError::InvalidRequest);
+            }
+            let prepared = self
+                .protocol
+                .prepare(PrepareSelfIssuedAuthenticationRequest {
+                    profile_id: profile_id.clone(),
+                    request: command.request,
+                })
+                .await
+                .map_err(SelfIssuedAuthenticationError::Protocol)?;
+            let session = SelfIssuedSession {
+                profile_id,
+                preview: prepared.preview,
+                state: SelfIssuedAuthenticationState::AwaitingConsent,
+                failure_code: None,
+            };
+            let view = session.view(&prepared.id);
+            if self.sessions()?.insert(prepared.id, session).is_some() {
+                return Err(SelfIssuedAuthenticationError::InvalidState);
+            }
+            Ok(view)
+        })
+    }
+}
+
+impl AcceptSelfIssuedAuthenticationUseCase for SelfIssuedAuthenticationService {
+    fn execute<'a>(
+        &'a self,
+        command: AcceptSelfIssuedAuthenticationCommand,
+    ) -> SelfIssuedAuthenticationViewFuture<'a> {
+        Box::pin(async move {
+            if !command.confirmed {
+                return Err(SelfIssuedAuthenticationError::ConfirmationRequired);
+            }
+            if command.intent != "ACCEPT_SELF_ISSUED_AUTHENTICATION" {
+                return Err(SelfIssuedAuthenticationError::InvalidConfirmation);
+            }
+            if !valid_holder_text(&command.holder_did, MAX_DID_CHARACTERS)
+                || !valid_holder_text(&command.method_id, MAX_METHOD_CHARACTERS)
+            {
+                return Err(SelfIssuedAuthenticationError::InvalidHolder);
+            }
+            let profile_id = authentication_profile(command.profile_id)?;
+            let authentication_id = authentication_id(command.authentication_id)?;
+            {
+                let mut sessions = self.sessions()?;
+                let session = sessions
+                    .get_mut(&authentication_id)
+                    .ok_or(SelfIssuedAuthenticationError::NotFound)?;
+                if session.profile_id != profile_id {
+                    return Err(SelfIssuedAuthenticationError::NotFound);
+                }
+                if session.state != SelfIssuedAuthenticationState::AwaitingConsent {
+                    return Err(SelfIssuedAuthenticationError::InvalidState);
+                }
+                session.state = SelfIssuedAuthenticationState::Authenticating;
+            }
+            if let Err(error) = self
+                .protocol
+                .authenticate(ProtocolSelfIssuedAuthenticationRequest {
+                    profile_id,
+                    authentication_id: authentication_id.clone(),
+                    holder_did: command.holder_did,
+                    method_id: command.method_id,
+                })
+                .await
+            {
+                self.fail(&authentication_id, error.code());
+                return Err(SelfIssuedAuthenticationError::Protocol(error));
+            }
+            let mut sessions = self.sessions()?;
+            let session = sessions
+                .get_mut(&authentication_id)
+                .ok_or(SelfIssuedAuthenticationError::NotFound)?;
+            session.state = SelfIssuedAuthenticationState::Succeeded;
+            session.failure_code = None;
+            Ok(session.view(&authentication_id))
+        })
+    }
+}
+
+impl RefuseSelfIssuedAuthenticationUseCase for SelfIssuedAuthenticationService {
+    fn execute(
+        &self,
+        command: RefuseSelfIssuedAuthenticationCommand,
+    ) -> Result<SelfIssuedAuthenticationView, SelfIssuedAuthenticationError> {
+        let profile_id = authentication_profile(command.profile_id)?;
+        let authentication_id = authentication_id(command.authentication_id)?;
+        {
+            let sessions = self.sessions()?;
+            let session = sessions
+                .get(&authentication_id)
+                .ok_or(SelfIssuedAuthenticationError::NotFound)?;
+            if session.profile_id != profile_id {
+                return Err(SelfIssuedAuthenticationError::NotFound);
+            }
+            if session.state != SelfIssuedAuthenticationState::AwaitingConsent {
+                return Err(SelfIssuedAuthenticationError::InvalidState);
+            }
+        }
+        self.protocol
+            .discard(&authentication_id)
+            .map_err(SelfIssuedAuthenticationError::Protocol)?;
+        let mut sessions = self.sessions()?;
+        let session = sessions
+            .get_mut(&authentication_id)
+            .ok_or(SelfIssuedAuthenticationError::NotFound)?;
+        session.state = SelfIssuedAuthenticationState::Refused;
+        Ok(session.view(&authentication_id))
+    }
+}
+
+impl GetSelfIssuedAuthenticationUseCase for SelfIssuedAuthenticationService {
+    fn execute(
+        &self,
+        query: SelfIssuedAuthenticationQuery,
+    ) -> Result<SelfIssuedAuthenticationView, SelfIssuedAuthenticationError> {
+        let profile_id = authentication_profile(query.profile_id)?;
+        let authentication_id = authentication_id(query.authentication_id)?;
+        let sessions = self.sessions()?;
+        let session = sessions
+            .get(&authentication_id)
+            .filter(|session| session.profile_id == profile_id)
+            .ok_or(SelfIssuedAuthenticationError::NotFound)?;
+        Ok(session.view(&authentication_id))
+    }
+}
+
+impl ListSelfIssuedAuthenticationsUseCase for SelfIssuedAuthenticationService {
+    fn execute(
+        &self,
+        query: SelfIssuedAuthenticationProfileQuery,
+    ) -> Result<Vec<SelfIssuedAuthenticationView>, SelfIssuedAuthenticationError> {
+        let profile_id = authentication_profile(query.profile_id)?;
+        Ok(self
+            .sessions()?
+            .iter()
+            .filter(|(_, session)| session.profile_id == profile_id)
+            .map(|(id, session)| session.view(id))
+            .collect())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableSelfIssuedAuthenticationProtocol;
+
+impl SelfIssuedAuthenticationProtocolPort for UnavailableSelfIssuedAuthenticationProtocol {
+    fn prepare<'a>(
+        &'a self,
+        _: PrepareSelfIssuedAuthenticationRequest,
+    ) -> PrepareSelfIssuedAuthenticationPortFuture<'a> {
+        Box::pin(async { Err(SelfIssuedProtocolError::Unavailable) })
+    }
+
+    fn authenticate<'a>(
+        &'a self,
+        _: ProtocolSelfIssuedAuthenticationRequest,
+    ) -> AuthenticateSelfIssuedPortFuture<'a> {
+        Box::pin(async { Err(SelfIssuedProtocolError::Unavailable) })
+    }
+
+    fn discard(&self, _: &SelfIssuedAuthenticationId) -> Result<(), SelfIssuedProtocolError> {
+        Err(SelfIssuedProtocolError::Unavailable)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,6 +1229,138 @@ mod tests {
                 }
             ),
             Err(CredentialIssuanceError::InvalidState)
+        );
+    }
+
+    struct AuthenticationProtocol;
+
+    impl SelfIssuedAuthenticationProtocolPort for AuthenticationProtocol {
+        fn prepare<'a>(
+            &'a self,
+            request: PrepareSelfIssuedAuthenticationRequest,
+        ) -> PrepareSelfIssuedAuthenticationPortFuture<'a> {
+            Box::pin(async move {
+                if request.request == "reject" {
+                    return Err(SelfIssuedProtocolError::InvalidRequest);
+                }
+                Ok(PreparedSelfIssuedAuthentication {
+                    id: SelfIssuedAuthenticationId::parse("authentication_1")
+                        .expect("valid fixture id"),
+                    preview: SelfIssuedAuthenticationPreview::new(
+                        "https://verifier.example",
+                        "Authenticate with the selected DID.",
+                    )
+                    .expect("valid preview"),
+                })
+            })
+        }
+
+        fn authenticate<'a>(
+            &'a self,
+            request: ProtocolSelfIssuedAuthenticationRequest,
+        ) -> AuthenticateSelfIssuedPortFuture<'a> {
+            Box::pin(async move {
+                if request.holder_did == "did:midnight:undeployed:reject" {
+                    Err(SelfIssuedProtocolError::InvalidProof)
+                } else {
+                    Ok(())
+                }
+            })
+        }
+
+        fn discard(&self, _: &SelfIssuedAuthenticationId) -> Result<(), SelfIssuedProtocolError> {
+            Ok(())
+        }
+    }
+
+    fn authentication_service() -> SelfIssuedAuthenticationService {
+        SelfIssuedAuthenticationService::new(Arc::new(AuthenticationProtocol))
+    }
+
+    fn prepare_authentication(
+        service: &SelfIssuedAuthenticationService,
+    ) -> SelfIssuedAuthenticationView {
+        futures_lite(PrepareSelfIssuedAuthenticationUseCase::execute(
+            service,
+            PrepareSelfIssuedAuthenticationCommand {
+                profile_id: "profile_1".to_owned(),
+                request: "request".to_owned(),
+            },
+        ))
+        .expect("prepare should succeed")
+    }
+
+    #[test]
+    fn self_issued_authentication_requires_exact_consent_and_profile_scope() {
+        let service = authentication_service();
+        let prepared = prepare_authentication(&service);
+        assert_eq!(prepared.state, "awaiting_consent");
+        let denied = futures_lite(AcceptSelfIssuedAuthenticationUseCase::execute(
+            &service,
+            AcceptSelfIssuedAuthenticationCommand {
+                profile_id: "profile_1".to_owned(),
+                authentication_id: prepared.id.clone(),
+                holder_did: "did:midnight:undeployed:holder".to_owned(),
+                method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
+                confirmed: false,
+                intent: "ACCEPT_SELF_ISSUED_AUTHENTICATION".to_owned(),
+            },
+        ));
+        assert_eq!(
+            denied,
+            Err(SelfIssuedAuthenticationError::ConfirmationRequired)
+        );
+        assert_eq!(
+            GetSelfIssuedAuthenticationUseCase::execute(
+                &service,
+                SelfIssuedAuthenticationQuery {
+                    profile_id: "profile_2".to_owned(),
+                    authentication_id: prepared.id,
+                }
+            ),
+            Err(SelfIssuedAuthenticationError::NotFound)
+        );
+    }
+
+    #[test]
+    fn self_issued_authentication_succeeds_and_refusal_is_terminal() {
+        let service = authentication_service();
+        let prepared = prepare_authentication(&service);
+        let authenticated = futures_lite(AcceptSelfIssuedAuthenticationUseCase::execute(
+            &service,
+            AcceptSelfIssuedAuthenticationCommand {
+                profile_id: "profile_1".to_owned(),
+                authentication_id: prepared.id,
+                holder_did: "did:midnight:undeployed:holder".to_owned(),
+                method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
+                confirmed: true,
+                intent: "ACCEPT_SELF_ISSUED_AUTHENTICATION".to_owned(),
+            },
+        ))
+        .expect("authentication should succeed");
+        assert_eq!(authenticated.state, "succeeded");
+        assert!(authenticated.failure_code.is_none());
+
+        let refusal_service = authentication_service();
+        let second = prepare_authentication(&refusal_service);
+        let refused = RefuseSelfIssuedAuthenticationUseCase::execute(
+            &refusal_service,
+            RefuseSelfIssuedAuthenticationCommand {
+                profile_id: "profile_1".to_owned(),
+                authentication_id: second.id.clone(),
+            },
+        )
+        .expect("refusal should succeed");
+        assert_eq!(refused.state, "refused");
+        assert_eq!(
+            RefuseSelfIssuedAuthenticationUseCase::execute(
+                &refusal_service,
+                RefuseSelfIssuedAuthenticationCommand {
+                    profile_id: "profile_1".to_owned(),
+                    authentication_id: second.id,
+                }
+            ),
+            Err(SelfIssuedAuthenticationError::InvalidState)
         );
     }
 }

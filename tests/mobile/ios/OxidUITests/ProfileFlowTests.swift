@@ -109,6 +109,24 @@ final class ProfileFlowTests: XCTestCase {
             application.descendants(matching: .any)["Manage this DID"]
                 .waitForExistence(timeout: 5)
         )
+        let demoLogin = application.buttons["Use standalone login request"]
+        XCTAssertTrue(demoLogin.waitForExistence(timeout: 5))
+        scrollTo(demoLogin, in: application)
+        demoLogin.tap()
+        let previewLogin = application.buttons["Preview login request"]
+        scrollTo(previewLogin, in: application)
+        previewLogin.tap()
+        XCTAssertTrue(application.staticTexts["DID authentication preview"].waitForExistence(timeout: 10))
+        let loginConsent = application.descendants(matching: .any)["Consent to DID authentication"]
+        XCTAssertTrue(loginConsent.waitForExistence(timeout: 5))
+        loginConsent.tap()
+        let authenticate = application.buttons["Authenticate with DID"]
+        scrollTo(authenticate, in: application)
+        authenticate.tap()
+        XCTAssertTrue(
+            application.staticTexts["DID authentication succeeded and the standalone verifier independently validated the proof."]
+                .waitForExistence(timeout: 10)
+        )
         let resolveDid = application.buttons["Resolve and save"]
         XCTAssertTrue(resolveDid.waitForExistence(timeout: 5))
         scrollTo(resolveDid, in: application)

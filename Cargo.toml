@@ -6,6 +6,7 @@ members = [
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
   "crates/adapters/openid4vci",
+  "crates/adapters/siopv2",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
   "crates/adapters/storage-credential-json",
@@ -32,6 +33,7 @@ default-members = [
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
   "crates/adapters/openid4vci",
+  "crates/adapters/siopv2",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
   "crates/adapters/storage-credential-json",
@@ -103,6 +105,7 @@ zeroize = { version = "=1.9.0" }
 
 oxid-adapter-midnight = { version = "=0.1.0", path = "crates/adapters/midnight" }
 oxid-adapter-openid4vci = { version = "=0.1.0", path = "crates/adapters/openid4vci" }
+oxid-adapter-siopv2 = { version = "=0.1.0", path = "crates/adapters/siopv2" }
 oxid-adapter-vc-midnight = { version = "=0.1.0", path = "crates/adapters/vc-midnight" }
 oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-midnight" }
 oxid-adapter-storage-credential-json = { version = "=0.1.0", path = "crates/adapters/storage-credential-json" }

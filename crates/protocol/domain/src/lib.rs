@@ -9,6 +9,8 @@ use oxid_foundation::{OpaqueId, OpaqueIdError};
 const MAX_ISSUER_CHARACTERS: usize = 2_048;
 const MAX_CONFIGURATION_CHARACTERS: usize = 256;
 const MAX_CONFIGURATION_COUNT: usize = 16;
+const MAX_VERIFIER_CHARACTERS: usize = 2_048;
+const MAX_PURPOSE_CHARACTERS: usize = 512;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CredentialIssuanceId(OpaqueId);
@@ -35,6 +37,71 @@ impl ProtocolProfileId {
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SelfIssuedAuthenticationId(OpaqueId);
+
+impl SelfIssuedAuthenticationId {
+    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
+        OpaqueId::parse(value).map(Self)
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelfIssuedAuthenticationPreview {
+    verifier: String,
+    purpose: String,
+}
+
+impl SelfIssuedAuthenticationPreview {
+    pub fn new(
+        verifier: impl Into<String>,
+        purpose: impl Into<String>,
+    ) -> Result<Self, ProtocolDomainError> {
+        let verifier = verifier.into();
+        let purpose = purpose.into();
+        validate_text(&verifier, MAX_VERIFIER_CHARACTERS)?;
+        validate_text(&purpose, MAX_PURPOSE_CHARACTERS)?;
+        Ok(Self { verifier, purpose })
+    }
+
+    #[must_use]
+    pub fn verifier(&self) -> &str {
+        &self.verifier
+    }
+
+    #[must_use]
+    pub fn purpose(&self) -> &str {
+        &self.purpose
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelfIssuedAuthenticationState {
+    AwaitingConsent,
+    Authenticating,
+    Succeeded,
+    Refused,
+    Failed,
+}
+
+impl SelfIssuedAuthenticationState {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AwaitingConsent => "awaiting_consent",
+            Self::Authenticating => "authenticating",
+            Self::Succeeded => "succeeded",
+            Self::Refused => "refused",
+            Self::Failed => "failed",
+        }
     }
 }
 
@@ -177,5 +244,23 @@ mod tests {
             "awaiting_consent"
         );
         assert_eq!(CredentialIssuanceState::Succeeded.as_str(), "succeeded");
+    }
+
+    #[test]
+    fn authentication_preview_and_states_are_bounded() {
+        let preview = SelfIssuedAuthenticationPreview::new(
+            "https://verifier.example",
+            "Authenticate with the selected DID.",
+        )
+        .expect("preview should be valid");
+        assert_eq!(preview.verifier(), "https://verifier.example");
+        assert_eq!(
+            SelfIssuedAuthenticationState::AwaitingConsent.as_str(),
+            "awaiting_consent"
+        );
+        assert_eq!(
+            SelfIssuedAuthenticationPreview::new("verifier", "\n"),
+            Err(ProtocolDomainError::EmptyText)
+        );
     }
 }

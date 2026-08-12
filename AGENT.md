@@ -34,9 +34,10 @@ The ordered public backlog is
 bounded slices and never turn parity work into a bulk source copy. The wallet
 presentation shell is the first post-M0 slice. Its deferred destinations are
 status surfaces, not claims of working custody or identity capabilities. The
-DIDs, protected credential inventory, and embedded pre-authorized OpenID4VCI
-issuance are now functional in standalone development; vault, live issuer
-transport, presentation, and disclosure behavior remain deferred.
+DIDs, protected credential inventory, embedded pre-authorized OpenID4VCI
+issuance, and consented self-issued DID authentication are now functional in
+standalone development; vault, live protocol transport, OpenID4VP credential
+presentation, and disclosure behavior remain deferred.
 
 ADR-0017 is accepted. The first M1 security slice separates protection/session
 state from key operations, secret blobs, and native user authorization. The
@@ -239,7 +240,7 @@ XChaCha20-Poly1305. Its separate owner-private key file is development-only,
 not native custody. Standalone headless and mobile flows receive, list,
 reverify, confirmation-delete, and restore the public fixture without exposing
 the signed body. Normal `compose()` remains unavailable pending native
-Keychain/Keystore wrapping. Live OID4VCI transport, OID4VP/SIOP, disclosure
+Keychain/Keystore wrapping. Live OID4VCI transport, OpenID4VP, disclosure
 openings, status/schema/trust policy, Compact passport proofs, and Jubjub remain
 later slices.
 
@@ -255,7 +256,7 @@ tokens, nonces, proofs, signing input, and credential bytes never enter incoming
 DTOs. Plain HTTP is loopback-only in this standalone adapter; production
 endpoint policy is HTTPS-only and normal `compose()` wires unavailable protocol
 ports. Live HTTP/discovery, Authorization Code, by-reference offers,
-Transaction Code, batch/deferred issuance, OID4VP/SIOP, deep links, and scanning
+Transaction Code, batch/deferred issuance, OpenID4VP, deep links, and scanning
 remain separate slices.
 The standalone issuer must independently resolve the selected public DID
 method and verify the Ed25519/P-256 proof JWS, nonce, anonymous-flow `iss`
@@ -265,6 +266,21 @@ not sufficient.
 persisted ownership. Credential issuance must select an active authentication
 method from this set; never infer control merely because a resolved or restored
 public DID document contains an authentication relationship.
+
+[Issue #25](https://github.com/MediaNoxLabs/oxid/issues/25) and ADR-0040 migrate
+the prototype's actual `oid4vp_client` behavior as a separate SIOPv2 draft-13
+self-issued-authentication capability. It is not credential presentation: this
+slice supports only `response_type=id_token` with `direct_post`; `vp_token`,
+DCQL, presentation definitions, and selective disclosure are rejected. The
+standalone adapter resolves one exact loopback request-by-reference invocation,
+keeps nonce/state/token private, signs through an active current-process managed
+DID authentication method, consumes the verifier session once, and independently
+resolves and verifies EdDSA/ES256 signature and claims. Headless methods are
+`identity.authentication.prepare|accept|refuse|get|list`; Dioxus provides a
+verifier/purpose preview and exact checkbox consent. Normal `compose()` remains
+unavailable. Sessions deliberately reset on restart; no authentication artifact
+is persisted. Live verifier transport, signed request objects, native ingress,
+and Final OpenID4VP presentation remain later reviewed slices.
 
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
@@ -353,6 +369,8 @@ custody. ADR-0038 adds the credential hexagon, protected original-byte store,
 structured verification pipeline, and strict Midnight phase-1 CBOR verifier.
 ADR-0039 adds the protocol hexagon, final-shape pre-authorized issuance,
 adapter-private protocol secrets, explicit offer consent, and verified import.
+ADR-0040 adds a distinct self-issued-authentication aggregate and a pinned
+SIOPv2 draft-13 standalone adapter without claiming OpenID4VP presentation.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -370,8 +388,8 @@ Current package ownership:
 | `crates/identity/application` | Profile-scoped DID resolution, inventory, lifecycle/signing use cases, and owned outgoing ports. |
 | `crates/credential/domain` | Dependency-free credential records, metadata separation, and structured verification invariants. |
 | `crates/credential/application` | Profile-scoped receive/list/get/reverify/delete use cases and repository/inbox/verifier ports. |
-| `crates/protocol/domain` | Dependency-free credential-offer preview and issuance lifecycle invariants. |
-| `crates/protocol/application` | Profile-scoped prepare/accept/refuse/get/list use cases plus protocol/proof/verified-sink ports. |
+| `crates/protocol/domain` | Dependency-free credential-offer and self-issued-authentication preview/lifecycle invariants. |
+| `crates/protocol/application` | Profile-scoped issuance and self-issued-authentication use cases plus protocol/proof/verified-sink ports. |
 | `crates/platform/ports` | Clock and randomness capabilities used by applications. |
 | `crates/adapters/storage-memory` | Development/test implementations of wallet, DID, and credential persistence ports. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
@@ -382,6 +400,7 @@ Current package ownership:
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development lifecycle adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR credential verification and public standalone credential ingress. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, in-process standalone issuer, DID proof bridge, and verified credential sink. |
+| `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, and public receive-QR rendering. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -652,8 +671,8 @@ Gradle/Xcode output remains under ignored `target/` paths.
 `tests/mobile/ios/project.yml`, resets only the installed Oxid simulator data,
 and verifies profile creation, development account activation, receive QR,
 staged simulated transfer, OpenID4VCI offer preview/consent/issuance, protected
-credential verification/restore, and profile restore through visible UI
-elements.
+credential verification/restore, consented self-issued DID authentication, and
+profile restore through visible UI elements.
 `just android-smoke` resets only Oxid's Android app data, drives the equivalent
 development flow, validates the durable public JSON document plus authenticated
 credential envelope/key shape, and verifies restart. Both now assert that the

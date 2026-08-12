@@ -30,12 +30,20 @@ use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_mid
 use oxid_adapter_openid4vci::{
     DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
 };
+use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
 
 /// Returns the public embedded offer for the deterministic standalone issuer.
 /// Production composition keeps the issuer port unavailable.
 #[must_use]
 pub fn standalone_oid4vci_offer() -> String {
     oxid_adapter_openid4vci::standalone_credential_offer()
+}
+
+/// Returns the public request-by-reference URI for the deterministic
+/// standalone self-issued verifier. Production composition keeps it unavailable.
+#[must_use]
+pub fn standalone_siopv2_request() -> String {
+    oxid_adapter_siopv2::standalone_self_issued_request()
 }
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_credential_json::EncryptedJsonCredentialRepository;
@@ -59,10 +67,14 @@ use oxid_identity_application::{
     UnavailableDidRecordRepository, UnavailableDidResolver, UpdateDidUseCase,
 };
 use oxid_protocol_application::{
-    AcceptCredentialIssuanceUseCase, CredentialIssuanceProtocolPort, CredentialIssuanceService,
-    GetCredentialIssuanceUseCase, IssuedCredentialSinkPort, ListCredentialIssuancesUseCase,
-    PrepareCredentialIssuanceUseCase, RefuseCredentialIssuanceUseCase,
-    UnavailableCredentialIssuanceProtocol, UnavailableIssuedCredentialSink,
+    AcceptCredentialIssuanceUseCase, AcceptSelfIssuedAuthenticationUseCase,
+    CredentialIssuanceProtocolPort, CredentialIssuanceService, GetCredentialIssuanceUseCase,
+    GetSelfIssuedAuthenticationUseCase, IssuedCredentialSinkPort, ListCredentialIssuancesUseCase,
+    ListSelfIssuedAuthenticationsUseCase, PrepareCredentialIssuanceUseCase,
+    PrepareSelfIssuedAuthenticationUseCase, RefuseCredentialIssuanceUseCase,
+    RefuseSelfIssuedAuthenticationUseCase, SelfIssuedAuthenticationProtocolPort,
+    SelfIssuedAuthenticationService, UnavailableCredentialIssuanceProtocol,
+    UnavailableIssuedCredentialSink, UnavailableSelfIssuedAuthenticationProtocol,
 };
 use oxid_wallet_application::{
     AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
@@ -137,10 +149,21 @@ pub struct ApplicationServices {
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     get_credential_issuance: Arc<dyn GetCredentialIssuanceUseCase>,
     list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    prepare_self_issued_authentication: Arc<dyn PrepareSelfIssuedAuthenticationUseCase>,
+    accept_self_issued_authentication: Arc<dyn AcceptSelfIssuedAuthenticationUseCase>,
+    refuse_self_issued_authentication: Arc<dyn RefuseSelfIssuedAuthenticationUseCase>,
+    get_self_issued_authentication: Arc<dyn GetSelfIssuedAuthenticationUseCase>,
+    list_self_issued_authentications: Arc<dyn ListSelfIssuedAuthenticationsUseCase>,
 }
 
 #[derive(Clone, Copy)]
 enum CredentialIssuanceComposition {
+    Unavailable,
+    Standalone,
+}
+
+#[derive(Clone, Copy)]
+enum SelfIssuedAuthenticationComposition {
     Unavailable,
     Standalone,
 }
@@ -153,6 +176,7 @@ struct IdentityAdapters {
     credential_inbox: Arc<dyn CredentialInboxPort>,
     credential_verifier: Arc<dyn CredentialVerificationPort>,
     credential_issuance: CredentialIssuanceComposition,
+    self_issued_authentication: SelfIssuedAuthenticationComposition,
 }
 
 impl ApplicationServices {
@@ -408,6 +432,39 @@ impl ApplicationServices {
     pub fn list_credential_issuances(&self) -> Arc<dyn ListCredentialIssuancesUseCase> {
         Arc::clone(&self.list_credential_issuances)
     }
+
+    #[must_use]
+    pub fn prepare_self_issued_authentication(
+        &self,
+    ) -> Arc<dyn PrepareSelfIssuedAuthenticationUseCase> {
+        Arc::clone(&self.prepare_self_issued_authentication)
+    }
+
+    #[must_use]
+    pub fn accept_self_issued_authentication(
+        &self,
+    ) -> Arc<dyn AcceptSelfIssuedAuthenticationUseCase> {
+        Arc::clone(&self.accept_self_issued_authentication)
+    }
+
+    #[must_use]
+    pub fn refuse_self_issued_authentication(
+        &self,
+    ) -> Arc<dyn RefuseSelfIssuedAuthenticationUseCase> {
+        Arc::clone(&self.refuse_self_issued_authentication)
+    }
+
+    #[must_use]
+    pub fn get_self_issued_authentication(&self) -> Arc<dyn GetSelfIssuedAuthenticationUseCase> {
+        Arc::clone(&self.get_self_issued_authentication)
+    }
+
+    #[must_use]
+    pub fn list_self_issued_authentications(
+        &self,
+    ) -> Arc<dyn ListSelfIssuedAuthenticationsUseCase> {
+        Arc::clone(&self.list_self_issued_authentications)
+    }
 }
 
 /// Wires the application with persistent public-profile metadata storage.
@@ -425,6 +482,7 @@ pub fn compose() -> ApplicationServices {
             credential_inbox: Arc::new(UnavailableCredentialInbox),
             credential_verifier: Arc::new(UnavailableCredentialVerifier),
             credential_issuance: CredentialIssuanceComposition::Unavailable,
+            self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
         },
     )
 }
@@ -970,6 +1028,7 @@ pub fn compose_in_memory() -> ApplicationServices {
                 StandaloneDidResolver,
             ))),
             credential_issuance: CredentialIssuanceComposition::Standalone,
+            self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
         },
     )
 }
@@ -1009,6 +1068,7 @@ where
             credential_inbox: Arc::new(StandaloneCredentialInbox),
             credential_verifier: verifier,
             credential_issuance: CredentialIssuanceComposition::Standalone,
+            self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
         },
     )
 }
@@ -1038,6 +1098,7 @@ where
         credential_inbox,
         credential_verifier,
         credential_issuance,
+        self_issued_authentication,
     } = identity_adapters;
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
@@ -1085,7 +1146,7 @@ where
             ));
             let importer: Arc<dyn ImportVerifiedCredentialUseCase> = credentials.clone();
             (
-                Arc::new(StandaloneOid4vciIssuer::new(proof, get_did, clock)),
+                Arc::new(StandaloneOid4vciIssuer::new(proof, get_did, clock.clone())),
                 Arc::new(VerifiedCredentialSink::new(importer)),
             )
         }
@@ -1094,6 +1155,23 @@ where
         issuance_protocol,
         issuance_sink,
     ));
+    let self_issued_protocol: Arc<dyn SelfIssuedAuthenticationProtocolPort> =
+        match self_issued_authentication {
+            SelfIssuedAuthenticationComposition::Unavailable => {
+                Arc::new(UnavailableSelfIssuedAuthenticationProtocol)
+            }
+            SelfIssuedAuthenticationComposition::Standalone => {
+                let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
+                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+                let proof = Arc::new(DidSelfIssuedIdentityProof::new(
+                    Arc::clone(&get_did),
+                    sign_did,
+                ));
+                Arc::new(StandaloneSiopV2Verifier::new(proof, get_did, clock))
+            }
+        };
+    let self_issued_authentication =
+        Arc::new(SelfIssuedAuthenticationService::new(self_issued_protocol));
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
     let initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase> = protection.clone();
@@ -1145,6 +1223,16 @@ where
     let refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase> = issuance.clone();
     let get_credential_issuance: Arc<dyn GetCredentialIssuanceUseCase> = issuance.clone();
     let list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase> = issuance;
+    let prepare_self_issued_authentication: Arc<dyn PrepareSelfIssuedAuthenticationUseCase> =
+        self_issued_authentication.clone();
+    let accept_self_issued_authentication: Arc<dyn AcceptSelfIssuedAuthenticationUseCase> =
+        self_issued_authentication.clone();
+    let refuse_self_issued_authentication: Arc<dyn RefuseSelfIssuedAuthenticationUseCase> =
+        self_issued_authentication.clone();
+    let get_self_issued_authentication: Arc<dyn GetSelfIssuedAuthenticationUseCase> =
+        self_issued_authentication.clone();
+    let list_self_issued_authentications: Arc<dyn ListSelfIssuedAuthenticationsUseCase> =
+        self_issued_authentication;
 
     ApplicationServices {
         create_wallet_profile,
@@ -1196,6 +1284,11 @@ where
         refuse_credential_issuance,
         get_credential_issuance,
         list_credential_issuances,
+        prepare_self_issued_authentication,
+        accept_self_issued_authentication,
+        refuse_self_issued_authentication,
+        get_self_issued_authentication,
+        list_self_issued_authentications,
     }
 }
 
@@ -1339,6 +1432,16 @@ mod tests {
         drop(services.get_credential());
         drop(services.reverify_credential());
         drop(services.delete_credential());
+        drop(services.prepare_credential_issuance());
+        drop(services.accept_credential_issuance());
+        drop(services.refuse_credential_issuance());
+        drop(services.get_credential_issuance());
+        drop(services.list_credential_issuances());
+        drop(services.prepare_self_issued_authentication());
+        drop(services.accept_self_issued_authentication());
+        drop(services.refuse_self_issued_authentication());
+        drop(services.get_self_issued_authentication());
+        drop(services.list_self_issued_authentications());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1463,6 +1566,7 @@ mod tests {
                 credential_inbox: Arc::new(UnavailableCredentialInbox),
                 credential_verifier: Arc::new(UnavailableCredentialVerifier),
                 credential_issuance: CredentialIssuanceComposition::Unavailable,
+                self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
             },
         );
         let status = services

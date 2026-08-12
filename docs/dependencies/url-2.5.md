@@ -11,14 +11,16 @@
   platform networking API
 - Cryptography: none
 - API stability: stable WHATWG URL parsing and percent-encoded query-pair APIs
-- Reason selected: parse the custom `openid-credential-offer` URI, decode its
-  embedded offer parameter, and validate endpoint scheme/host/userinfo/fragment
-  structure without handwritten URI parsing
+- Reason selected: parse custom `openid-credential-offer` and standalone
+  `openid4vp` invocation URIs, decode bounded query parameters, and validate
+  endpoint scheme/host/userinfo/fragment structure without handwritten URI
+  parsing
 - Alternatives considered: `http::Uri`, manual splitting, and a full OIDC SDK.
   `http::Uri` does not model custom-scheme query handling, manual parsing is
   security-sensitive, and a full SDK is disproportionate for the reviewed
   standalone subset.
-- Adapter boundary: direct dependency of `crates/adapters/openid4vci` only;
-  protocol domain/application and incoming adapters remain URL-type-free
-- Exit strategy: replace URI parsing inside the OID4VCI adapter while
+- Adapter boundary: direct dependency of `crates/adapters/openid4vci` and
+  `crates/adapters/siopv2` only; protocol domain/application and incoming
+  adapters remain URL-type-free
+- Exit strategy: replace URI parsing inside the protocol adapters while
   preserving the owned protocol ports and application commands

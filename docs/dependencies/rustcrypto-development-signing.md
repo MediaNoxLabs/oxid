@@ -20,7 +20,8 @@
   mobile target compilation is a required gate
 - WASM/web: no production web custody is authorized by this review
 - Cryptography: deterministic Ed25519 signatures and RFC 6979 P-256 ECDSA
-  signatures, plus public-key verification of DID-bound OpenID4VCI proof JWTs;
+  signatures, plus public-key verification of DID-bound OpenID4VCI proof JWTs
+  and SIOPv2 self-issued ID Tokens;
   only high-level signing and verification APIs are enabled. Hazardous, private
   key import, PKCS#8, PEM, batch, ECDH, and legacy-compatibility features are
   not enabled.
@@ -35,9 +36,10 @@
   ring (different algorithm/API coverage), Askar (broader encrypted-store/KMS
   responsibility), and native platform APIs (required for production but not
   available in a host-independent headless test)
-- Adapter boundary: `crates/adapters/storage-dev` owns development signing and
-  `crates/adapters/openid4vci` owns issuer-side public proof verification;
-  domain/application crates do not depend on cryptography libraries
+- Adapter boundary: `crates/adapters/storage-dev` owns development signing;
+  `crates/adapters/openid4vci` and `crates/adapters/siopv2` own independent
+  verifier-side public proof verification; domain/application crates do not
+  depend on cryptography libraries
 - Deployment restriction: process-local, non-persistent,
   `development_only`; `oxid_composition::compose()` uses the fail-closed
   unavailable adapter instead
