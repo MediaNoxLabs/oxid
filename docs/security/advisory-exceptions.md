@@ -6,9 +6,9 @@
   any release described as production-capable; the Midnight exception is also
   reviewed on every Midnight dependency update
 - Scope: development-stage Dioxus shell and native Midnight adapter. The
-  transaction path can balance DUST, prove through an explicitly configured
-  proof server, and submit in development/headless mode, but cannot claim
-  production custody or private local mobile proving.
+  transaction path can balance DUST, prove locally or through an explicitly
+  configured development proof server, and submit in development/headless
+  mode, but cannot claim production custody.
 
 `scripts/check-advisories.sh` denies all Cargo audit warnings except the exact
 IDs below. These are transitive dependencies of Dioxus 0.7.10 and its desktop

@@ -1336,6 +1336,11 @@ fn transaction_port_error(id: Option<String>, error: WalletTransactionPortError)
             "conflict",
             "transaction submission is already in progress",
         ),
+        WalletTransactionPortError::SubmissionCancelled => Response::error(
+            id,
+            "submission_cancelled",
+            "transaction submission was cancelled before broadcast",
+        ),
         WalletTransactionPortError::AuthorizationChallengeMismatch => Response::error(
             id,
             "authorization_mismatch",

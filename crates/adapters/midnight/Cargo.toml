@@ -8,6 +8,14 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+proving-bench = []
+
+[[example]]
+name = "local-proving"
+required-features = ["proving-bench"]
+
 [dependencies]
 bech32.workspace = true
 hex.workspace = true
@@ -29,6 +37,7 @@ midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-transient-crypto.workspace = true
+midnight-zkir.workspace = true
 rand.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 rustls.workspace = true

@@ -3,9 +3,8 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Blueprint source: Sections 8 and 17
-- Implementation state: Binding for M2; account read model implemented by #6,
-  native standalone-indexer sync by #7, protected external NIGHT account
-  derivation/binding by #8, and canonical transfer authorization by #9
+- Implementation state: Binding for M2; account reads, protected derivation,
+  canonical submission, and measured native local DUST proving are implemented
 
 ## Context
 
@@ -49,6 +48,11 @@ Unpublished Cargo packages must use the official HTTPS Git source and a full
 acceptable pin. Use the smallest feature set for each adapter. In particular,
 do not add `midnight-zk`, `midnight-zkir`, or proving features to account-read
 adapters that do not prove or verify transactions.
+
+ADR-0028 selects `midnight-zkir 2.1.0` from the same official ledger Git
+revision for the native local-proving adapter. The published proof-system crates
+remain transitively selected by that immutable graph; Oxid does not add a second
+direct `midnight-zk` source for the same implementation.
 
 Treat the official Wallet SDK as the behavioral reference for network IDs,
 HD roles, Bech32m address formats, synchronization state, transaction history,
@@ -117,9 +121,9 @@ ledger types does not imply acceptable proving latency or memory use.
   native headless runs. Shielded and DUST synchronization remain incremental;
   every headless adapter identifies live, cached, or simulated data truthfully.
 - The development headless composition can derive and bind external NIGHT
-  accounts, build/review canonical unshielded intents, and authorize them by
-  opaque reference. It does not balance DUST, prove, serialize for submission,
-  submit, or create a production custody claim.
+  accounts and complete canonical submissions with either explicit private
+  local proving or an explicit development proof server. It does not create a
+  production custody claim.
 - A source revision update requires dependency review, conformance tests,
   mobile builds, and an update to the recorded compatibility baseline.
 - If maintained Rust wallet packages are published later, a follow-up ADR may

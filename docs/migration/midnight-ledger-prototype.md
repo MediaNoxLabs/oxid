@@ -28,8 +28,8 @@ before migrating later work.
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
 | `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle and account-aware Assets page reimplemented; remaining capability pages and native bridges deferred |
 | `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, protected key/account flows, simulated/live reads, and staged canonical transfer submission implemented; SSI flows queued |
-| `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Protocol-compatible remote DUST proving implemented for standalone development; private local mobile proving tracked in issue #12 |
-| benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated benchmarks/fixtures only when an adapter needs them | Not product code |
+| `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
+| benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness implemented and measured on iOS/Android; generated artifacts remain uncommitted |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch through repository scripts; native bridges remain deferred |
 
 ## M0 migration decisions
@@ -157,13 +157,21 @@ outside that slice.
 [Issue #11](https://github.com/MediaNoxLabs/oxid/issues/11) and ADR-0027 add the
 next stage. The native adapter borrows only the canonical DUST child for one
 worker, replays bounded DUST events, uses live chain parameters/time, converges
-canonical DUST fees, proves through the configured proof server, seals and
+canonical DUST fees, proves locally or through the configured development proof server, seals and
 tagged-serializes internally, submits the unsigned Midnight runtime call, and
 returns public inclusion identifiers. Simulation exercises the same state,
 confirmation, failure-restoration, worker-owned cancellation, and idempotency
 contract without a network. An ambiguous node outcome remains `submitting` and
-blocks a blind duplicate. Remote proving is development-only; private local
-mobile proving remains issue #12.
+blocks a blind duplicate. Remote proving is development-only.
+
+[Issue #12](https://github.com/MediaNoxLabs/oxid/issues/12) and ADR-0028 add the
+private path. The same completion adapter can prove DUST spends on-device using
+the official full-revision-pinned ZKIR provider and an authenticated app-private
+cache. Local proofs are serialized on the existing worker and cancellation is
+checked at every safe pre-broadcast boundary. A feature-gated fixture proves,
+seals, and tagged-codec round-trips a real synthetic DUST spend; release runs on
+arm64 iOS and Android simulators record k=13, 5,646 rows, proof/transaction
+sizes, latency, and peak RSS without committing proving artifacts.
 
 Issue #7 adds the next bounded account slice: native headless startup can opt
 into a real v4 standalone-indexer WebSocket route and public unshielded address.
@@ -180,7 +188,7 @@ The real headless executable covers initialize/derive/repeat/sign/sync without
 accepting or returning secret material.
 
 Persisted cursors, shielded/DUST checkpoints and additional key roles,
-internal/change address management, local mobile proving, replacement and
+internal/change address management, replacement and
 durable confirmation tracking, QR/copy/share bridges, production endpoint
 discovery, recovery, and native custody remain separate follow-ups.
 

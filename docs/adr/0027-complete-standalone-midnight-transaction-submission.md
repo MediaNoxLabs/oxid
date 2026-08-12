@@ -4,7 +4,7 @@
 - Date: 2026-08-12
 - Source: Blueprint §§3, 7–8, 12–13 and [issue #11](https://github.com/MediaNoxLabs/oxid/issues/11)
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`
-- Implementation state: Implemented for native development/headless composition; production mobile composition remains fail-closed
+- Implementation state: Implemented for native development/headless composition; ADR-0028 adds local proving while production custody remains fail-closed
 
 ## Context
 
@@ -86,11 +86,9 @@ incoming/UI thread. The headless protocol exposes the same staged flow and
 labels deterministic conformance outcomes as simulated. It never emits DUST
 keys, proof inputs, signatures, or transaction bytes.
 
-Local in-process proving is deferred to
-[issue #12](https://github.com/MediaNoxLabs/oxid/issues/12). No production or
-privacy-preserving proving claim is made until that issue selects a compatible
-immutable proof source, measures mobile resources, and passes iOS/Android
-interoperability tests.
+ADR-0028 supersedes this record's local-proving deferral. Remote proving remains
+the explicit development alternative; private local proving is now implemented
+and measured without changing the node-outcome rules in this record.
 
 ## Consequences
 

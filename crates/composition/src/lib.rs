@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
-    MidnightIndexerConfig, MidnightIndexerConfigError, MidnightStandaloneConfig,
-    MidnightStandaloneConfigError, protected_live_midnight_wallet,
-    protected_standalone_midnight_wallet,
+    MidnightIndexerConfig, MidnightIndexerConfigError, MidnightLocalProvingConfig,
+    MidnightLocalProvingConfigError, MidnightStandaloneConfig, MidnightStandaloneConfigError,
+    protected_live_midnight_wallet, protected_standalone_midnight_wallet,
 };
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
@@ -209,6 +209,9 @@ pub const MIDNIGHT_NODE_WS_URL_ENV: &str = "OXID_MIDNIGHT_NODE_WS_URL";
 /// Environment variable holding the standalone Midnight proof-server base route.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MIDNIGHT_PROOF_SERVER_URL_ENV: &str = "OXID_MIDNIGHT_PROOF_SERVER_URL";
+/// Environment variable holding the app-private authenticated proving cache.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MIDNIGHT_PROVING_CACHE_DIR_ENV: &str = "OXID_MIDNIGHT_PROVING_CACHE_DIR";
 
 /// Safe startup failures for optional standalone-indexer composition.
 #[cfg(not(target_arch = "wasm32"))]
@@ -217,6 +220,7 @@ pub enum HeadlessCompositionError {
     IncompleteMidnightIndexerConfiguration,
     NonUnicodeMidnightIndexerConfiguration,
     InvalidMidnightIndexerConfiguration(MidnightIndexerConfigError),
+    InvalidMidnightLocalProvingConfiguration(MidnightLocalProvingConfigError),
     InvalidMidnightStandaloneConfiguration(MidnightStandaloneConfigError),
 }
 
@@ -225,12 +229,13 @@ impl std::fmt::Display for HeadlessCompositionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let message = match self {
             Self::IncompleteMidnightIndexerConfiguration => {
-                "Midnight live mode requires either network, indexer WebSocket, and unshielded address, or those values plus every standalone submission endpoint"
+                "Midnight live mode requires the read-only indexer values or every submission route plus exactly one local-cache or remote-prover setting"
             }
             Self::NonUnicodeMidnightIndexerConfiguration => {
                 "Midnight live-mode configuration must be valid Unicode"
             }
             Self::InvalidMidnightIndexerConfiguration(error) => return error.fmt(formatter),
+            Self::InvalidMidnightLocalProvingConfiguration(error) => return error.fmt(formatter),
             Self::InvalidMidnightStandaloneConfiguration(error) => return error.fmt(formatter),
         };
         formatter.write_str(message)
@@ -242,7 +247,7 @@ impl std::error::Error for HeadlessCompositionError {}
 
 /// Selects deterministic simulation when no live variables are present, a
 /// read-only indexer when the three read values are present, or complete
-/// standalone submission when all six public values are valid.
+/// standalone submission when every route and exactly one proving mode are valid.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn compose_headless_from_environment() -> Result<ApplicationServices, HeadlessCompositionError>
 {
@@ -253,6 +258,7 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
         read_optional_environment(MIDNIGHT_NODE_WS_URL_ENV)?,
         read_optional_environment(MIDNIGHT_PROOF_SERVER_URL_ENV)?,
         read_optional_environment(MIDNIGHT_UNSHIELDED_ADDRESS_ENV)?,
+        read_optional_environment(MIDNIGHT_PROVING_CACHE_DIR_ENV)?,
     ];
     match parse_optional_midnight_config(values)? {
         Some(HeadlessMidnightConfig::Indexer(config)) => Ok(compose_headless_live(config)),
@@ -319,7 +325,7 @@ enum HeadlessMidnightConfig {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn parse_optional_midnight_config(
-    values: [Option<String>; 6],
+    values: [Option<String>; 7],
 ) -> Result<Option<HeadlessMidnightConfig>, HeadlessCompositionError> {
     let [
         network_id,
@@ -328,6 +334,7 @@ fn parse_optional_midnight_config(
         node_ws,
         proof_server,
         address,
+        proving_cache,
     ] = values;
     match (
         network_id,
@@ -336,9 +343,10 @@ fn parse_optional_midnight_config(
         node_ws,
         proof_server,
         address,
+        proving_cache,
     ) {
-        (None, None, None, None, None, None) => Ok(None),
-        (Some(network), Some(indexer_ws), None, None, None, Some(address)) => {
+        (None, None, None, None, None, None, None) => Ok(None),
+        (Some(network), Some(indexer_ws), None, None, None, Some(address), None) => {
             MidnightIndexerConfig::new(network, indexer_ws, address)
                 .map(HeadlessMidnightConfig::Indexer)
                 .map(Some)
@@ -351,6 +359,7 @@ fn parse_optional_midnight_config(
             Some(node_ws),
             Some(proof_server),
             Some(address),
+            None,
         ) => MidnightStandaloneConfig::new(
             network,
             indexer_ws,
@@ -362,6 +371,29 @@ fn parse_optional_midnight_config(
         .map(HeadlessMidnightConfig::Standalone)
         .map(Some)
         .map_err(HeadlessCompositionError::InvalidMidnightStandaloneConfiguration),
+        (
+            Some(network),
+            Some(indexer_ws),
+            Some(indexer_http),
+            Some(node_ws),
+            None,
+            Some(address),
+            Some(proving_cache),
+        ) => {
+            let local_proving = MidnightLocalProvingConfig::new(proving_cache)
+                .map_err(HeadlessCompositionError::InvalidMidnightLocalProvingConfiguration)?;
+            MidnightStandaloneConfig::new_private(
+                network,
+                indexer_ws,
+                indexer_http,
+                node_ws,
+                local_proving,
+                address,
+            )
+            .map(HeadlessMidnightConfig::Standalone)
+            .map(Some)
+            .map_err(HeadlessCompositionError::InvalidMidnightStandaloneConfiguration)
+        }
         _ => Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration),
     }
 }
@@ -486,6 +518,73 @@ mod tests {
     }
 
     #[test]
+    fn composition_exposes_every_application_capability() {
+        let services = compose_in_memory();
+
+        drop(services.create_wallet_profile());
+        drop(services.list_wallet_profiles());
+        drop(services.select_wallet_profile());
+        drop(services.get_active_wallet_profile());
+        drop(services.get_wallet_security_status());
+        drop(services.initialize_wallet_security());
+        drop(services.unlock_wallet());
+        drop(services.lock_wallet());
+        drop(services.generate_wallet_key());
+        drop(services.list_wallet_keys());
+        drop(services.sign_wallet_data());
+        drop(services.delete_wallet_key());
+        drop(services.list_wallet_networks());
+        drop(services.select_wallet_network());
+        drop(services.derive_wallet_account());
+        drop(services.get_wallet_account());
+        drop(services.sync_wallet_account());
+        drop(services.prepare_wallet_transfer());
+        drop(services.authorize_wallet_transfer());
+        drop(services.submit_wallet_transfer());
+        drop(services.get_wallet_transfer_draft());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn explicit_live_compositions_are_constructible_without_network_io() {
+        const ADDRESS: &str =
+            "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+        let indexer =
+            MidnightIndexerConfig::new("devnet", "ws://127.0.0.1:8088/api/v1/graphql/ws", ADDRESS)
+                .expect("indexer fixture is valid");
+        drop(compose_headless_live(indexer));
+
+        let remote = MidnightStandaloneConfig::new(
+            "devnet",
+            "ws://127.0.0.1:8088/api/v1/graphql/ws",
+            "http://127.0.0.1:8088/api/v1/graphql",
+            "ws://127.0.0.1:9944",
+            "http://127.0.0.1:6300",
+            ADDRESS,
+        )
+        .expect("remote standalone fixture is valid");
+        drop(compose_headless_standalone(remote));
+
+        let local_proving = MidnightLocalProvingConfig::new(
+            std::env::temp_dir().join("oxid-composition-local-proving"),
+        )
+        .expect("local proving fixture is valid");
+        let private = MidnightStandaloneConfig::new_private(
+            "devnet",
+            "ws://127.0.0.1:8088/api/v1/graphql/ws",
+            "http://127.0.0.1:8088/api/v1/graphql",
+            "ws://127.0.0.1:9944",
+            local_proving,
+            ADDRESS,
+        )
+        .expect("private standalone fixture is valid");
+        drop(compose_headless_standalone(private));
+
+        drop(compose());
+        drop(compose_headless());
+    }
+
+    #[test]
     fn in_memory_composition_exposes_only_development_protection() {
         let services = compose_in_memory();
         let command = WalletProfileSecurityCommand {
@@ -542,7 +641,7 @@ mod tests {
         const ADDRESS: &str =
             "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
         assert!(matches!(
-            parse_optional_midnight_config([None, None, None, None, None, None]),
+            parse_optional_midnight_config([None, None, None, None, None, None, None]),
             Ok(None)
         ));
         assert!(matches!(
@@ -553,6 +652,7 @@ mod tests {
                 None,
                 None,
                 Some(ADDRESS.to_owned()),
+                None,
             ]),
             Ok(Some(HeadlessMidnightConfig::Indexer(_)))
         ));
@@ -564,6 +664,20 @@ mod tests {
                 Some("ws://127.0.0.1:9944".to_owned()),
                 Some("http://127.0.0.1:6300".to_owned()),
                 Some(ADDRESS.to_owned()),
+                None,
+            ]),
+            Ok(Some(HeadlessMidnightConfig::Standalone(_)))
+        ));
+        let local_cache = std::env::temp_dir().join("oxid-composition-proving-cache");
+        assert!(matches!(
+            parse_optional_midnight_config([
+                Some("devnet".to_owned()),
+                Some("ws://127.0.0.1:8088/api/v1/graphql/ws".to_owned()),
+                Some("http://127.0.0.1:8088/api/v1/graphql".to_owned()),
+                Some("ws://127.0.0.1:9944".to_owned()),
+                None,
+                Some(ADDRESS.to_owned()),
+                Some(local_cache.to_string_lossy().into_owned()),
             ]),
             Ok(Some(HeadlessMidnightConfig::Standalone(_)))
         ));
@@ -575,6 +689,20 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+            ])
+            .err(),
+            Some(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
+        );
+        assert_eq!(
+            parse_optional_midnight_config([
+                Some("devnet".to_owned()),
+                Some("ws://127.0.0.1:8088/api/v1/graphql/ws".to_owned()),
+                Some("http://127.0.0.1:8088/api/v1/graphql".to_owned()),
+                Some("ws://127.0.0.1:9944".to_owned()),
+                Some("http://127.0.0.1:6300".to_owned()),
+                Some(ADDRESS.to_owned()),
+                Some(local_cache.to_string_lossy().into_owned()),
             ])
             .err(),
             Some(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)

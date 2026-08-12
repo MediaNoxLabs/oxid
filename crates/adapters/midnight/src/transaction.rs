@@ -4,7 +4,10 @@ use std::{
     collections::HashMap as StdHashMap,
     io::Cursor,
     ops::Deref,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
 };
 
@@ -58,6 +61,13 @@ const DUST_INDEX: u32 = 0;
 pub(crate) struct MidnightCompletionRequest {
     pub(crate) transaction: LedgerTransaction,
     pub(crate) expires_at_seconds: u64,
+    cancellation: Arc<AtomicBool>,
+}
+
+impl MidnightCompletionRequest {
+    pub(crate) fn cancellation_token(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancellation)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -572,6 +582,8 @@ where
             let drafts = Arc::clone(&self.drafts);
             let worker_key = key.clone();
             let draft_id = request.draft_id;
+            let cancellation = Arc::new(AtomicBool::new(false));
+            let mut cancel_on_drop = CancelSubmissionOnDrop::new(Arc::clone(&cancellation));
             let (sender, receiver) = futures::channel::oneshot::channel();
             let spawn = thread::Builder::new()
                 .name("oxid-midnight-submit".to_owned())
@@ -581,6 +593,7 @@ where
                             MidnightCompletionRequest {
                                 transaction: transaction.clone(),
                                 expires_at_seconds,
+                                cancellation: Arc::clone(&cancellation),
                             },
                             dust_seed,
                         )
@@ -591,13 +604,16 @@ where
                     let _ = sender.send(result);
                 });
             if spawn.is_err() {
+                cancel_on_drop.disarm();
                 restore_authorized(self.drafts.as_ref(), &key)?;
                 return Err(WalletTransactionPortError::Unavailable);
             }
 
-            receiver
+            let result = receiver
                 .await
-                .unwrap_or(Err(WalletTransactionPortError::SubmissionOutcomeUnknown))
+                .unwrap_or(Err(WalletTransactionPortError::SubmissionOutcomeUnknown));
+            cancel_on_drop.disarm();
+            result
         })
     }
 
@@ -628,6 +644,32 @@ where
             retained.signed_transaction = None;
         }
         Ok(retained.preview.clone())
+    }
+}
+
+struct CancelSubmissionOnDrop {
+    cancellation: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl CancelSubmissionOnDrop {
+    fn new(cancellation: Arc<AtomicBool>) -> Self {
+        Self {
+            cancellation,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CancelSubmissionOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            self.cancellation.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -1027,6 +1069,31 @@ mod tests {
         }
     }
 
+    struct CancellationAwareCompleter {
+        started: mpsc::SyncSender<()>,
+    }
+
+    impl MidnightTransactionCompleter for CancellationAwareCompleter {
+        fn complete(
+            &self,
+            request: MidnightCompletionRequest,
+            _: &[u8; 32],
+        ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
+            self.started
+                .send(())
+                .map_err(|_| WalletTransactionPortError::Unavailable)?;
+            let cancellation = request.cancellation_token();
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while !cancellation.load(Ordering::Acquire) {
+                if Instant::now() >= deadline {
+                    return Err(WalletTransactionPortError::Unavailable);
+                }
+                std::thread::yield_now();
+            }
+            Err(WalletTransactionPortError::SubmissionCancelled)
+        }
+    }
+
     impl MidnightTransactionSource for FixedSpendableSource {
         fn spendable_account(
             &self,
@@ -1382,6 +1449,50 @@ mod tests {
             assert!(
                 Instant::now() < deadline,
                 "submission worker did not publish its final state"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn cancellation_aware_completion_restores_the_authorized_draft() {
+        let (started_sender, started_receiver) = mpsc::sync_channel(1);
+        let adapter = submittable_adapter(Arc::new(CancellationAwareCompleter {
+            started: started_sender,
+        }));
+        let authorized = authorize_transfer(&adapter);
+        let profile = profile();
+        let mut future = adapter.submit(
+            &profile,
+            SubmitWalletTransferRequest {
+                draft_id: authorized.draft_id().clone(),
+                now: UnixTimestampMillis::new(1_000),
+            },
+        );
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(future.as_mut().poll(&mut context), Poll::Pending));
+        started_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("completion worker starts");
+        drop(future);
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let state = adapter
+                .get(
+                    &profile,
+                    authorized.draft_id(),
+                    UnixTimestampMillis::new(1_000),
+                )
+                .expect("cancelled draft remains readable")
+                .state();
+            if state == WalletTransactionDraftState::Authorized {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "cancelled worker did not restore the authorized state"
             );
             std::thread::yield_now();
         }

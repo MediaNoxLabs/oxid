@@ -2,7 +2,15 @@
 
 //! Bounded standalone completion of an authorized Midnight transfer.
 
-use std::{fmt, net::IpAddr, sync::Arc, time::Duration};
+use std::{
+    fmt,
+    net::IpAddr,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use futures::{SinkExt, StreamExt};
 use midnight_base_crypto::{schnorr::Signature, time::Timestamp};
@@ -39,7 +47,7 @@ use tokio_tungstenite::{
 };
 
 use crate::{
-    MidnightIndexerConfig, MidnightIndexerConfigError,
+    MidnightIndexerConfig, MidnightIndexerConfigError, MidnightLocalProvingConfig, local_proving,
     transaction::{
         MidnightCompletionOutcome, MidnightCompletionRequest, MidnightTransactionCompleter,
     },
@@ -75,7 +83,16 @@ pub struct MidnightStandaloneConfig {
     indexer: MidnightIndexerConfig,
     indexer_http_url: String,
     node_websocket_url: String,
-    proof_server_url: String,
+    proving: MidnightProvingMode,
+}
+
+/// Selected proof boundary for an explicitly configured standalone wallet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MidnightProvingMode {
+    /// Keep proof witnesses on-device and use an authenticated bounded cache.
+    Local(MidnightLocalProvingConfig),
+    /// Development-only remote proof service using loopback HTTP or HTTPS.
+    Remote { proof_server_url: String },
 }
 
 impl MidnightStandaloneConfig {
@@ -102,7 +119,32 @@ impl MidnightStandaloneConfig {
             indexer,
             indexer_http_url,
             node_websocket_url,
-            proof_server_url,
+            proving: MidnightProvingMode::Remote { proof_server_url },
+        })
+    }
+
+    /// Builds a standalone configuration that keeps proof witnesses on-device.
+    pub fn new_private(
+        network_id: impl Into<String>,
+        indexer_websocket_url: impl AsRef<str>,
+        indexer_http_url: impl AsRef<str>,
+        node_websocket_url: impl AsRef<str>,
+        local_proving: MidnightLocalProvingConfig,
+        unshielded_address: impl AsRef<str>,
+    ) -> Result<Self, MidnightStandaloneConfigError> {
+        let indexer =
+            MidnightIndexerConfig::new(network_id, indexer_websocket_url, unshielded_address)
+                .map_err(MidnightStandaloneConfigError::Indexer)?;
+        let indexer_http_url = validate_http_url(indexer_http_url.as_ref(), false)
+            .map_err(|_| MidnightStandaloneConfigError::InvalidIndexerHttpEndpoint)?;
+        let node_websocket_url =
+            super::indexer::validate_websocket_url(node_websocket_url.as_ref())
+                .map_err(|_| MidnightStandaloneConfigError::InvalidNodeEndpoint)?;
+        Ok(Self {
+            indexer,
+            indexer_http_url,
+            node_websocket_url,
+            proving: MidnightProvingMode::Local(local_proving),
         })
     }
 
@@ -122,8 +164,8 @@ impl MidnightStandaloneConfig {
     }
 
     #[must_use]
-    pub fn proof_server_url(&self) -> &str {
-        &self.proof_server_url
+    pub const fn proving(&self) -> &MidnightProvingMode {
+        &self.proving
     }
 }
 
@@ -158,11 +200,15 @@ impl std::error::Error for MidnightStandaloneConfigError {}
 #[derive(Clone)]
 pub(crate) struct LiveMidnightTransactionCompleter {
     config: MidnightStandaloneConfig,
+    local_proving_gate: Arc<Mutex<()>>,
 }
 
 impl LiveMidnightTransactionCompleter {
-    pub(crate) const fn new(config: MidnightStandaloneConfig) -> Self {
-        Self { config }
+    pub(crate) fn new(config: MidnightStandaloneConfig) -> Self {
+        Self {
+            config,
+            local_proving_gate: Arc::new(Mutex::new(())),
+        }
     }
 }
 
@@ -172,6 +218,16 @@ impl MidnightTransactionCompleter for LiveMidnightTransactionCompleter {
         request: MidnightCompletionRequest,
         dust_seed: &[u8; 32],
     ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
+        let _local_proving_permit =
+            if matches!(self.config.proving(), MidnightProvingMode::Local(_)) {
+                Some(
+                    self.local_proving_gate
+                        .lock()
+                        .map_err(|_| WalletTransactionPortError::Unavailable)?,
+                )
+            } else {
+                None
+            };
         let dust_key = DustSecretKey::derive_secret_key(dust_seed);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -186,13 +242,17 @@ async fn complete_live(
     request: MidnightCompletionRequest,
     dust_key: &DustSecretKey,
 ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
+    let cancellation = request.cancellation_token();
+    ensure_submission_active(&cancellation)?;
     let chain_tip = fetch_chain_tip(config.indexer_http_url()).await?;
+    ensure_submission_active(&cancellation)?;
     let mut dust_state = synchronize_dust(
         config.indexer.websocket_url(),
         dust_key,
         chain_tip.parameters.dust,
     )
     .await?;
+    ensure_submission_active(&cancellation)?;
     if dust_state.params != chain_tip.parameters.dust {
         return Err(WalletTransactionPortError::InvalidChainState);
     }
@@ -214,7 +274,18 @@ async fn complete_live(
         ttl,
         config.indexer.network_id().as_str(),
     )?;
-    let sealed = prove_via_http(balanced, config.proof_server_url()).await?;
+    let sealed = match config.proving() {
+        MidnightProvingMode::Local(local_config) => {
+            let outcome =
+                local_proving::prove_transaction(balanced, local_config, &cancellation).await?;
+            let _metrics = outcome.metrics;
+            outcome.transaction
+        }
+        MidnightProvingMode::Remote { proof_server_url } => {
+            prove_via_http(balanced, proof_server_url).await?
+        }
+    };
+    ensure_submission_active(&cancellation)?;
     let sealed_fee = sealed
         .fees(&chain_tip.parameters, false)
         .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
@@ -227,6 +298,7 @@ async fn complete_live(
     if transaction_bytes.len() > MAX_TRANSACTION_BYTES {
         return Err(WalletTransactionPortError::InvalidData);
     }
+    ensure_submission_active(&cancellation)?;
     let (transaction_hash, block_hash) =
         submit_unsigned(config.node_websocket_url(), transaction_bytes).await?;
     Ok(MidnightCompletionOutcome {
@@ -235,6 +307,14 @@ async fn complete_live(
         block_hash,
         mode: WalletTransferSubmissionMode::Live,
     })
+}
+
+fn ensure_submission_active(cancellation: &AtomicBool) -> Result<(), WalletTransactionPortError> {
+    if cancellation.load(Ordering::Acquire) {
+        Err(WalletTransactionPortError::SubmissionCancelled)
+    } else {
+        Ok(())
+    }
 }
 
 struct ChainTip {
@@ -1017,7 +1097,11 @@ mod tests {
             "http://127.0.0.1:8088/api/v1/graphql"
         );
         assert_eq!(value.node_websocket_url(), "ws://127.0.0.1:9944");
-        assert_eq!(value.proof_server_url(), "http://127.0.0.1:6300/");
+        assert!(matches!(
+            value.proving(),
+            MidnightProvingMode::Remote { proof_server_url }
+                if proof_server_url == "http://127.0.0.1:6300/"
+        ));
     }
 
     #[test]

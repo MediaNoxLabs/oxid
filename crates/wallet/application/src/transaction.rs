@@ -32,6 +32,7 @@ pub enum WalletTransactionPortError {
     DraftExpired,
     DraftConflict,
     SubmissionInProgress,
+    SubmissionCancelled,
     AuthorizationChallengeMismatch,
     InsufficientDust,
     InvalidChainState,
@@ -58,6 +59,7 @@ impl fmt::Display for WalletTransactionPortError {
             Self::DraftExpired => "transaction draft has expired",
             Self::DraftConflict => "transaction draft conflicts with current wallet state",
             Self::SubmissionInProgress => "transaction submission is already in progress",
+            Self::SubmissionCancelled => "transaction submission was cancelled before broadcast",
             Self::AuthorizationChallengeMismatch => {
                 "transaction authorization does not match the prepared preview"
             }
@@ -670,6 +672,104 @@ mod tests {
             title: "Authorize NIGHT transfer".to_owned(),
             summary: "Send 1 NIGHT on Standalone; DUST fee balancing remains pending".to_owned(),
             confirmed,
+        }
+    }
+
+    #[test]
+    fn transaction_port_failures_have_stable_safe_messages() {
+        let cases = [
+            (
+                WalletTransactionPortError::Unavailable,
+                "wallet transaction capability is unavailable",
+            ),
+            (
+                WalletTransactionPortError::ProtectionNotInitialized,
+                "wallet protection is not initialized",
+            ),
+            (
+                WalletTransactionPortError::ProtectionLocked,
+                "wallet is locked",
+            ),
+            (
+                WalletTransactionPortError::AccountNotDerived,
+                "a protected wallet account must be derived first",
+            ),
+            (
+                WalletTransactionPortError::AccountNotSynchronized,
+                "wallet account must be synchronized first",
+            ),
+            (
+                WalletTransactionPortError::UnsupportedNetwork,
+                "wallet network is not supported",
+            ),
+            (
+                WalletTransactionPortError::InvalidRecipient,
+                "transaction recipient is invalid",
+            ),
+            (
+                WalletTransactionPortError::RecipientNetworkMismatch,
+                "transaction recipient belongs to another network",
+            ),
+            (
+                WalletTransactionPortError::InsufficientFunds,
+                "wallet has insufficient funds",
+            ),
+            (
+                WalletTransactionPortError::DraftNotFound,
+                "transaction draft was not found",
+            ),
+            (
+                WalletTransactionPortError::DraftExpired,
+                "transaction draft has expired",
+            ),
+            (
+                WalletTransactionPortError::DraftConflict,
+                "transaction draft conflicts with current wallet state",
+            ),
+            (
+                WalletTransactionPortError::SubmissionInProgress,
+                "transaction submission is already in progress",
+            ),
+            (
+                WalletTransactionPortError::SubmissionCancelled,
+                "transaction submission was cancelled before broadcast",
+            ),
+            (
+                WalletTransactionPortError::AuthorizationChallengeMismatch,
+                "transaction authorization does not match the prepared preview",
+            ),
+            (
+                WalletTransactionPortError::InsufficientDust,
+                "wallet has insufficient DUST for the transaction fee",
+            ),
+            (
+                WalletTransactionPortError::InvalidChainState,
+                "Midnight chain state is invalid or unavailable",
+            ),
+            (
+                WalletTransactionPortError::ProvingFailed,
+                "transaction proving failed",
+            ),
+            (
+                WalletTransactionPortError::SubmissionRejected,
+                "Midnight rejected the transaction submission",
+            ),
+            (
+                WalletTransactionPortError::SubmissionOutcomeUnknown,
+                "Midnight transaction submission outcome is not yet known",
+            ),
+            (
+                WalletTransactionPortError::Timeout,
+                "transaction operation timed out",
+            ),
+            (
+                WalletTransactionPortError::InvalidData,
+                "transaction adapter returned invalid data",
+            ),
+        ];
+
+        for (error, message) in cases {
+            assert_eq!(error.to_string(), message);
         }
     }
 

@@ -45,7 +45,8 @@ impl ProcessHarness {
             .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
             .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
             .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
-            .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL");
+            .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
+            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR");
         for (key, value) in environment {
             command.env(key, value);
         }
@@ -374,12 +375,13 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
         .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
         .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
         .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
+        .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
         .output()
         .expect("headless wallet should report startup failure");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
-    assert!(stderr.contains("requires either network, indexer WebSocket"));
+    assert!(stderr.contains("requires the read-only indexer values"));
     assert!(!stderr.contains(LIVE_ADDRESS));
 }
 

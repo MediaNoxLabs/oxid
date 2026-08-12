@@ -16,10 +16,10 @@ than layers bolted onto one chain-specific frontend.
 > exercises Midnight network, derived address, exact-balance, sync, history, and
 > staged unshielded NIGHT submission without secret input. Native headless runs
 > can instead opt into either a real standalone-indexer read source or the
-> complete DUST/proof-server/node submission path using explicit public startup
-> configuration. The Assets page consumes the same account read use cases while
-> production mobile custody, private local proving, and chain access remain
-> fail-closed. The remaining shell destinations deliberately label unconnected
+> complete DUST/local-prover/node submission path using explicit public startup
+> configuration; remote proving remains an explicit development option. The
+> Assets page consumes the same account read use cases while production mobile
+> custody and chain access remain fail-closed. The remaining shell destinations deliberately label unconnected
 > capabilities; Oxid is not ready to hold real assets or identity credentials.
 
 ## Architecture
@@ -97,8 +97,8 @@ opaque development key reference, submit it, and query draft state. The
 zero-configuration harness completes submission deterministically and labels
 the outcome `simulated`; it covers state/error/idempotency flows without
 contacting a node or prover. Live standalone mode synchronizes the DUST child,
-balances canonical fees, delegates DUST proofs to the configured proof server,
-submits `Midnight.send_mn_transaction` unsigned, and returns only successful
+balances canonical fees, proves DUST spends locally when configured with an
+app-private cache, submits `Midnight.send_mn_transaction` unsigned, and returns only successful
 public transaction/block identifiers. No method returns signing payloads,
 signatures, proof witnesses, derived secrets, or serialized transactions.
 If transport is lost after node submission, the adapter reports
@@ -123,21 +123,42 @@ an initial watch-only fallback; deriving an account binds subsequent sync to
 the derived public address. This read-only live mode does not import recovery
 material, sync shielded/DUST state, prove, or submit transactions.
 
-To enable the complete development-only standalone submission path, supply the
-same three values plus all submission endpoints:
+To enable the complete private standalone submission path, supply the same
+three values plus the indexer/node routes and an absolute app-private cache:
 
 ```bash
 export OXID_MIDNIGHT_INDEXER_HTTP_URL='<graphql-http-url>'
 export OXID_MIDNIGHT_NODE_WS_URL='<node-websocket-url>'
+export OXID_MIDNIGHT_PROVING_CACHE_DIR='<absolute-app-private-cache-path>'
+cargo run -p oxid-headless
+```
+
+The local cache accepts only hash-pinned official DUST artifacts, is bounded to
+8 MiB, and never stores witnesses. To use the remote development alternative,
+unset the cache variable and set the proof-server route instead:
+
+```bash
+unset OXID_MIDNIGHT_PROVING_CACHE_DIR
 export OXID_MIDNIGHT_PROOF_SERVER_URL='<proof-server-base-url>'
 cargo run -p oxid-headless
 ```
 
-All six values must be present together. Proof-server HTTP is accepted only on
-loopback; remote proving requires HTTPS. The proof server receives private
-witness material, so this is a standalone development adapter, not the
-production privacy design. The root is process-local and ephemeral; fund and
-exercise a newly derived address in the same run.
+The five common route/address values and exactly one proving mode must be
+present together. Proof-server HTTP is accepted only on loopback; remote
+proving requires HTTPS. The proof server receives private witness material, so
+that mode is development-only. The root is process-local and ephemeral; fund
+and exercise a newly derived address in the same run.
+
+An opt-in headless proving harness constructs one synthetic DUST spend, proves
+and seals it locally, and checks tagged-codec interoperability without node
+submission. It emits bounded first/warm JSON measurements and commits no proof
+artifacts:
+
+```bash
+export OXID_MIDNIGHT_PROVING_CACHE_DIR='<absolute-app-private-cache-path>'
+cargo run --release -p oxid-adapter-midnight \
+  --features proving-bench --example local-proving
+```
 
 Common commands are also exposed through `just`:
 
@@ -217,9 +238,8 @@ public-metadata persistence. Custody and protected secrets remain explicitly
 outside that record.
 
 The Midnight read model uses owned types, while its native canonical transaction
-adapter consumes full-revision-pinned official ledger packages. Proving remains
-a separate future adapter. The selected baseline, dependency review, and source
-policy are recorded in
+and local-proving adapter consumes full-revision-pinned official ledger
+packages. The selected baseline, dependency reviews, and source policy are recorded in
 [docs/dependencies/midnight-git-sources.md](docs/dependencies/midnight-git-sources.md).
 
 ## Security

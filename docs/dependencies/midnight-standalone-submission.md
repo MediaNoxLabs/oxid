@@ -13,10 +13,9 @@
 - `midnight-ledger 8.2.0-rc.1` now enables its `proving` feature. That feature
   resolves the published crates `midnight-proofs 0.7.3`,
   `midnight-circuits 6.3.0`, and `midnight-zk-stdlib 1.3.0` transitively. Oxid
-  does not declare a direct `midnight-zk` Git dependency and does not pretend
-  those registry packages are the immutable source selected for a future local
-  prover. A direct proof-system dependency must still use the full official Git
-  revision required by the source policy.
+  does not declare a direct `midnight-zk` Git dependency. ADR-0028's local
+  provider uses `midnight-zkir` from the full official ledger Git revision;
+  that separate dependency is reviewed in `midnight-local-proving.md`.
 - `reqwest 0.13.4` provides bounded HTTP transport for chain-tip and proof
   requests. Defaults are disabled; JSON, streaming bodies, and Rustls are the
   selected capabilities.
@@ -60,8 +59,9 @@ RustSec exceptions and removal gates are documented in
 - Transactions are submitted unsigned because the Midnight runtime validates
   this call through its unsigned transaction path. Successful runtime events
   are required before public transaction and block hashes are returned.
-- A remote proof server can observe witnesses. This adapter is not the
-  production privacy boundary; issue #12 tracks local mobile proving.
+- A remote proof server can observe witnesses. ADR-0028 therefore keeps this
+  mode development-only and adds private local proving as the production
+  direction.
 
 ## Target and exit strategy
 
@@ -69,7 +69,7 @@ All new ledger/proof/HTTP/Subxt dependencies are native-target-only in
 `adapters/midnight`; the `wasm32-unknown-unknown` graph stays on Oxid-owned read
 types. Both Apple iOS and Android Tier-1 library builds remain mandatory.
 
-Replace this composition behind `WalletTransactionPort` when native custody,
-durable DUST checkpoints/reorg handling, or local mobile proving lands. Any
-upgrade must re-run source, advisory, license, native mobile, proof-server, and
-node interoperability gates.
+Replace this composition behind `WalletTransactionPort` when native custody or
+durable DUST checkpoints/reorg handling lands. Local proving is reviewed
+separately in `midnight-local-proving.md`. Any upgrade must re-run source,
+advisory, license, native mobile, proof, and node interoperability gates.

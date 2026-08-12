@@ -49,7 +49,7 @@ sleep 2
 # This remains independent of screen size and emulator orientation.
 "$adb_command" -s "$device" shell input keyevent KEYCODE_TAB
 "$adb_command" -s "$device" shell input keyevent KEYCODE_TAB
-"$adb_command" -s "$device" shell input keyevent KEYCODE_ENTER
+"$adb_command" -s "$device" shell input keyevent KEYCODE_DPAD_CENTER
 
 profile_document=""
 for _attempt in $(seq 1 15); do

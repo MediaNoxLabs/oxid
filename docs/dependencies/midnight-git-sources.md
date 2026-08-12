@@ -20,10 +20,12 @@ types. Those packages are now direct Git dependencies at the selected revision
 and are present in `Cargo.lock`; the target-specific dependency section keeps
 them out of `wasm32`. Issue #11 enables the ledger's `proving` feature for DUST
 spends and adds `midnight-onchain-runtime` from the same immutable Git revision.
+Issue #12 adds `midnight-zkir 2.1.0` directly from that same official Git source
+and revision with default features disabled.
 The feature resolves published `midnight-proofs`, `midnight-circuits`, and
-`midnight-zk-stdlib` releases transitively. There is still no direct
-`midnight-zk` dependency; a future local prover must make and review that source
-selection explicitly.
+`midnight-zk-stdlib` releases transitively. There is no direct `midnight-zk`
+dependency because the compatible proof crates are already selected by the
+immutable ledger/ZKIR graph.
 
 The reviewed prototype at commit
 `074b1a4bccbfee1740ee188374b606a022ecef42` used paths relative to the
@@ -39,6 +41,7 @@ immutable Git commit:
 
 ```toml
 midnight-ledger = { git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", default-features = false }
+midnight-zkir = { git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", default-features = false }
 midnight-proofs = { git = "https://github.com/midnightntwrk/midnight-zk.git", rev = "cd2c27b2659de157409a9b96dba0dbaf1218f00b" }
 ```
 
@@ -56,11 +59,12 @@ reviewed branches resolved to:
   `cd2c27b2659de157409a9b96dba0dbaf1218f00b`.
 
 ADR-0015 selects these as the initial compatibility baseline. The ledger
-revision is selected for canonical transaction authorization and remote DUST
-proof orchestration. The `midnight-zk` revision remains absent because Oxid has
-not added a direct local proof-system dependency. Registry proof crates reached
-through the selected ledger feature are lockfile-pinned transitive inputs, not a
-substitute for that future source decision. Each direct use must still validate
+revision is selected for canonical transaction authorization and both remote
+and local DUST proof orchestration. `midnight-zkir` supplies the local provider
+from that repository. The separate `midnight-zk` revision remains absent
+because the compatible published proof crates are already selected by the
+immutable ledger graph. Registry proof crates reached through the selected
+ledger/ZKIR graph are lockfile-pinned transitive inputs. Each direct use must still validate
 its exact feature set, license graph, security posture, and Tier-1 native target
 builds.
 

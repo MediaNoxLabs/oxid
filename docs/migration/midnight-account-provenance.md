@@ -146,9 +146,11 @@ slice now justifies direct native dependencies on the selected
 resolves the upstream unconditional transaction/proof graph, so the dependency
 is target-gated away from `wasm32` and must pass both native mobile graphs.
 The ledger `proving` feature is enabled for DUST proof orchestration and resolves
-published Midnight proof crates transitively. There is no direct
-`midnight-zk` Git dependency. A private local prover still requires the source,
-resource, and mobile measurements tracked by issue #12.
+published Midnight proof crates transitively. ADR-0028 adds the unpublished
+`midnight-zkir 2.1.0` package from the same full official ledger Git revision;
+there is no local path or direct `midnight-zk` Git dependency. The private
+prover's source, resource bounds, and mobile measurements are recorded in its
+dependency review.
 
 ## Deliberate exclusions
 
@@ -160,8 +162,8 @@ resource, and mobile measurements tracked by issue #12.
 - committed local, tailnet, pre-production, node, indexer, or prover endpoints;
 - persisted unshielded cursors, background subscriptions, chain checkpoints,
   shielded state, DUST generations, and DUST raw-ledger events;
-- local/private proof generation, replacement, fee preview/estimation, UTXO
-  reservation, durable DUST checkpoints, or durable draft queues;
+- replacement, fee preview/estimation, UTXO reservation, durable DUST
+  checkpoints, or durable draft queues;
 - generated proof artifacts, native projects, JavaScript bridges, QR scanning,
   copy/share integration, databases, and captured diagnostics.
 
@@ -171,6 +173,6 @@ claim. Native headless composition selects either the deterministic simulator
 or an explicitly configured public live source and adds process-local
 development derivation/BIP340 signing by opaque reference. Full standalone
 configuration additionally proves and submits canonical unshielded NIGHT
-intents through a remote proof server. No mode provides shielded assets,
-durable DUST generation state, private local proving, durable recovery, or
-production custody.
+intents through either private local proving or an explicit development proof
+server. No mode provides shielded assets, durable DUST generation state,
+durable recovery, or production custody.

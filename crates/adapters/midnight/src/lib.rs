@@ -5,6 +5,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod indexer;
 #[cfg(not(target_arch = "wasm32"))]
+mod local_proving;
+#[cfg(not(target_arch = "wasm32"))]
 mod submission;
 #[cfg(not(target_arch = "wasm32"))]
 mod transaction;
@@ -15,7 +17,15 @@ pub use indexer::{
     live_midnight_wallet, protected_live_midnight_wallet,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use submission::{MidnightStandaloneConfig, MidnightStandaloneConfigError};
+pub use local_proving::{
+    MidnightLocalProvingConfig, MidnightLocalProvingConfigError, MidnightLocalProvingMetrics,
+};
+#[cfg(all(not(target_arch = "wasm32"), feature = "proving-bench"))]
+pub use local_proving::{MidnightLocalProvingFixtureReport, run_local_proving_fixture};
+#[cfg(not(target_arch = "wasm32"))]
+pub use submission::{
+    MidnightProvingMode, MidnightStandaloneConfig, MidnightStandaloneConfigError,
+};
 
 use std::{
     collections::{HashMap, HashSet},

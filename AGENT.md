@@ -82,19 +82,25 @@ previews only. This is the first stage of the transaction flow.
 [Issue #11](https://github.com/MediaNoxLabs/oxid/issues/11) and ADR-0027 complete
 the native development/headless flow. Submission derives the canonical DUST
 child at `m/44'/2400'/account'/2/0`, replays bounded DUST ledger events against
-the indexer's current ledger parameters, obtains a proof from the explicitly
-configured proof service, and submits the unsigned extrinsic to a standalone
+the indexer's current ledger parameters, proves locally or through the explicitly
+configured development proof service, and submits the unsigned extrinsic to a standalone
 node. `wallet.transaction.submit_unshielded` and its prototype-named staged
 `wallet.transaction.send_unshielded` alias expose public outcomes only;
 zero-configuration headless runs use a deterministic simulated completion
 adapter. A retryable failure restores an authorized draft; cancelling the
-caller leaves the worker responsible for the eventual transition so a second
-send cannot race it. An ambiguous post-submit node outcome or unexpected worker
+caller signals cooperative cancellation while leaving the worker responsible
+for the eventual transition so a second send cannot race it. Live completion
+checks cancellation at safe pre-broadcast boundaries and restores `Authorized`;
+it never makes a possibly broadcast transaction retryable. An ambiguous post-submit node outcome or unexpected worker
 termination remains `Submitting` and forbids blind retry until reconciliation
 exists. A submitted draft is idempotent.
-[Issue #12](https://github.com/MediaNoxLabs/oxid/issues/12)
-tracks private local proving. Production/mobile composition remains fail-closed
-until native custody, local proving, and production chain access are reviewed.
+[Issue #12](https://github.com/MediaNoxLabs/oxid/issues/12) and ADR-0028 add
+private local DUST proving through the official pinned ZKIR provider. The cache
+is explicit, app-private, hash-authenticated, symlink-rejecting, and bounded to
+8 MiB; the DUST circuit is k=13 with 5,646 modeled rows. A real proof/seal/codec
+harness runs on macOS, iOS simulator, and Android emulator. Remote proving is
+still an explicit development mode. Production/mobile composition remains
+fail-closed until native custody and production chain access are reviewed.
 
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
@@ -160,7 +166,9 @@ headless adapter and forbids secret-bearing results. ADR-0025 separates durable
 public profile metadata from protected secret storage. ADR-0026 stages Midnight
 transaction authorization before proving/submission. ADR-0027 defines and
 implements standalone DUST synchronization, proving, and node submission for
-development/headless use. ADR-0017 records the accepted platform-custody split.
+development/headless use. ADR-0028 makes private local proving the production
+direction and records its cache, cancellation, interoperability, and mobile
+resource bounds. ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
 binding but does not mean the capability is implemented. Proposed ADRs are
@@ -199,9 +207,12 @@ combines persistent public profiles with the ephemeral development key adapter
 and public simulated Midnight source; `compose_headless_from_environment()`
 selects the zero-configuration simulated path, a read-only live source when the
 three original Midnight variables are present, or full standalone submission
-when all six Midnight variables are present. The additional submission variables
-are `OXID_MIDNIGHT_INDEXER_HTTP_URL`, `OXID_MIDNIGHT_NODE_WS_URL`, and
-`OXID_MIDNIGHT_PROOF_SERVER_URL`; partial groups fail startup. The original
+when the five common route/address variables and exactly one proving mode are
+present. The submission route variables are
+`OXID_MIDNIGHT_INDEXER_HTTP_URL` and `OXID_MIDNIGHT_NODE_WS_URL`. Private local
+proving uses `OXID_MIDNIGHT_PROVING_CACHE_DIR`; the explicit development
+alternative uses `OXID_MIDNIGHT_PROOF_SERVER_URL`. Supplying neither or both
+fails startup. The original
 three are `OXID_MIDNIGHT_NETWORK_ID`, `OXID_MIDNIGHT_INDEXER_WS_URL`, and
 `OXID_MIDNIGHT_UNSHIELDED_ADDRESS`. `compose_in_memory()` uses the development
 adapters for tests. Never change `compose()` to select `storage-dev`, simulation,
@@ -229,8 +240,9 @@ transaction and block identifiers. Never add signing payload, signature,
 transaction bytes, proof witness, seed, or private-key fields to these DTOs.
 Drafts are process-local and profile-scoped; authorization must bind the exact
 public challenge and explicit human-readable confirmation. Retryable worker
-failure restores `Authorized`; cancelling the caller leaves the draft
-`Submitting` until that worker publishes its result. A completed submission is
+failure restores `Authorized`; cancelling the caller signals the worker and
+leaves the draft `Submitting` until that worker publishes its result. A live
+worker cancelled before broadcast restores `Authorized`. A completed submission is
 replayed idempotently without using custody again. A post-submit timeout or
 transport loss remains `Submitting` because its external outcome is unknown;
 never make that state retryable without chain reconciliation.
@@ -240,7 +252,8 @@ The accepted ledger compatibility revision is
 adapter consumes its ledger/base-crypto/coin/serialize/storage/transient
 packages from the official HTTPS Git URL at that full `rev`, with ledger default
 features disabled and its `proving` feature enabled. It also consumes the
-official runtime at the same Git revision. Proving resolves published
+official runtime and `midnight-zkir 2.1.0` at the same Git revision, with ZKIR
+default features disabled. Proving resolves published
 `midnight-proofs 0.7.3`, `midnight-circuits 6.3.0`, and
 `midnight-zk-stdlib 1.3.0` transitively; Oxid has no direct `midnight-zk` Git
 dependency. The upstream unconditional graph is substantial, so keep it
@@ -267,11 +280,13 @@ decimal `u128` decoding, address ownership, and checked aggregation. The
 `wasm32` graph intentionally excludes this native transport; browser WebSockets
 require a separate reviewed adapter.
 
-Standalone completion has separate bounded HTTP indexer replay, proof-service,
-and node-WebSocket paths. It rejects stale or malformed chain-tip parameters,
+Standalone completion has separate bounded HTTP indexer replay, local or remote
+proof, and node-WebSocket paths. It rejects stale or malformed chain-tip parameters,
 replays canonical DUST events with checked decay and ordering, permits plain
 HTTP proof service access only on loopback, and otherwise requires HTTPS. The
-proof witness must never be logged or returned. Node submission waits for a
+local mode authenticates only the pinned k=13 DUST artifacts in an 8 MiB
+app-private cache and serializes proving on the submission worker. The proof
+witness must never be logged or returned. Node submission waits for a
 successful finalized block event and exposes only public hashes. Keep every
 external error and response body behind sanitized adapter errors.
 
