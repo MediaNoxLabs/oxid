@@ -303,12 +303,12 @@ impl<C> LiveMidnightAccountSource<C> {
         profile_id: &WalletProfileId,
         network: &ChainNetwork,
     ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
-        let (account_id, address) = self.active_account(profile_id)?;
+        let (account_id, _, addresses) = self.active_account(profile_id)?;
         Ok(WalletAccountSnapshot::new(
             network.clone(),
             Some(account_id),
             WalletAccountSource::Live,
-            vec![address],
+            addresses,
             Vec::new(),
             WalletSyncStatus::new(WalletSyncState::NeverSynced, None, None, None, None),
             Vec::new(),
@@ -318,7 +318,7 @@ impl<C> LiveMidnightAccountSource<C> {
     fn active_account(
         &self,
         profile_id: &WalletProfileId,
-    ) -> Result<(ChainAccountId, ChainAddress), WalletAccountPortError> {
+    ) -> Result<(ChainAccountId, ChainAddress, Vec<ChainAddress>), WalletAccountPortError> {
         self.derived_accounts
             .lock()
             .map_err(|_| WalletAccountPortError::Unavailable)?
@@ -327,9 +327,19 @@ impl<C> LiveMidnightAccountSource<C> {
                 (
                     derived.account_id().clone(),
                     derived.receive_address().clone(),
+                    derived.addresses().to_vec(),
                 )
             })
-            .map_or_else(|| Ok((account_id(profile_id)?, self.address.clone())), Ok)
+            .map_or_else(
+                || {
+                    Ok((
+                        account_id(profile_id)?,
+                        self.address.clone(),
+                        vec![self.address.clone()],
+                    ))
+                },
+                Ok,
+            )
     }
 
     fn replace_sync_status(
@@ -391,6 +401,7 @@ impl<C> LiveMidnightAccountSource<C> {
         network: &ChainNetwork,
         account_id: ChainAccountId,
         address: ChainAddress,
+        addresses: Vec<ChainAddress>,
     ) -> Result<Option<WalletAccountSnapshot>, WalletAccountPortError> {
         let checkpoint = match self.checkpoints.load(&self.network_id, &address) {
             Ok(Some(checkpoint)) => checkpoint,
@@ -407,7 +418,7 @@ impl<C> LiveMidnightAccountSource<C> {
             network.clone(),
             Some(account_id),
             WalletAccountSource::Cached,
-            vec![address],
+            addresses,
             balances,
             WalletSyncStatus::new(
                 WalletSyncState::Synced,
@@ -470,7 +481,8 @@ where
         network: &ChainNetwork,
     ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
         self.ensure_network(network)?;
-        let (expected_account_id, expected_address) = self.active_account(profile_id)?;
+        let (expected_account_id, expected_address, expected_addresses) =
+            self.active_account(profile_id)?;
         if let Some(snapshot) = self
             .cached
             .lock()
@@ -479,13 +491,19 @@ where
             .cloned()
             .filter(|snapshot| {
                 snapshot.account_id() == Some(&expected_account_id)
-                    && snapshot.addresses() == [expected_address.clone()]
+                    && snapshot.addresses() == expected_addresses
             })
         {
             return Ok(snapshot);
         }
-        self.hydrate_checkpoint(profile_id, network, expected_account_id, expected_address)?
-            .map_or_else(|| self.initial_snapshot(profile_id, network), Ok)
+        self.hydrate_checkpoint(
+            profile_id,
+            network,
+            expected_account_id,
+            expected_address,
+            expected_addresses,
+        )?
+        .map_or_else(|| self.initial_snapshot(profile_id, network), Ok)
     }
 
     fn sync<'a>(
@@ -572,7 +590,7 @@ where
                 network.clone(),
                 previous.account_id().cloned(),
                 WalletAccountSource::Live,
-                vec![address.clone()],
+                previous.addresses().to_vec(),
                 balances,
                 sync,
                 transactions,

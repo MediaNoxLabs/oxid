@@ -48,6 +48,18 @@ final class ProfileFlowTests: XCTestCase {
         )
         application.buttons["Hide receive QR"].firstMatch.tap()
 
+        let showShieldedQrButton = application.buttons
+            .matching(identifier: "Show receive QR")
+            .element(boundBy: 1)
+        XCTAssertTrue(showShieldedQrButton.exists)
+        scrollTo(showShieldedQrButton, in: application)
+        showShieldedQrButton.tap()
+        XCTAssertTrue(
+            application.images["QR code for Shielded receive address"]
+                .waitForExistence(timeout: 5)
+        )
+        application.buttons["Hide receive QR"].firstMatch.tap()
+
         scrollTo(useReceiveAddress, in: application)
         useReceiveAddress.tap()
         let amount = application.textFields["Amount in NIGHT"]

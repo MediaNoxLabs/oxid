@@ -44,6 +44,10 @@ use std::{
 };
 
 use bech32::{Bech32m, Hrp};
+#[cfg(not(target_arch = "wasm32"))]
+use midnight_serialize::Serializable as _;
+#[cfg(not(target_arch = "wasm32"))]
+use midnight_zswap::keys::{SecretKeys as ZswapSecretKeys, Seed as ZswapSeed};
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
     DeriveProtectedKeyRequest, WalletAccountDerivationPort, WalletAccountPortError,
@@ -67,6 +71,8 @@ pub(crate) const MIDNIGHT_COIN_TYPE: u32 = 2400;
 const NIGHT_EXTERNAL_ROLE: u32 = 0;
 pub(crate) const DUST_ROLE: u32 = 2;
 pub(crate) const DUST_INDEX: u32 = 0;
+pub(crate) const ZSWAP_ROLE: u32 = 3;
+pub(crate) const ZSWAP_INDEX: u32 = 0;
 
 // Canonical ledger-8 atomic-unit semantics reviewed at
 // midnight-ledger d9414884db9da9e9b1f6f3a7f742d79a5732f817,
@@ -159,7 +165,7 @@ impl<K> ProtectedMidnightAccountDeriver<K> {
 
 impl<K> MidnightAccountDeriver for ProtectedMidnightAccountDeriver<K>
 where
-    K: WalletKeyDerivationPort + 'static,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + 'static,
 {
     fn derive(
         &self,
@@ -210,10 +216,45 @@ where
             "addr",
             payload.as_slice(),
         )?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let shielded_address = {
+            let zswap_path = WalletHdPath::new(vec![
+                component(BIP44_PURPOSE, true)?,
+                component(MIDNIGHT_COIN_TYPE, true)?,
+                component(account_index, true)?,
+                component(ZSWAP_ROLE, false)?,
+                component(ZSWAP_INDEX, false)?,
+            ])
+            .map_err(|_| WalletAccountPortError::InvalidData)?;
+            let mut derived = None;
+            self.keys
+                .use_derived_secret(profile_id, &zswap_path, &mut |seed| {
+                    let keys = ZswapSecretKeys::from(ZswapSeed::from(*seed));
+                    let mut payload = Vec::with_capacity(64);
+                    keys.coin_public_key()
+                        .serialize(&mut payload)
+                        .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+                    keys.enc_public_key()
+                        .serialize(&mut payload)
+                        .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+                    if payload.len() != 64 {
+                        return Err(WalletSecurityPortError::InvalidOperation);
+                    }
+                    derived = Some(encode_midnight_address(
+                        network.id(),
+                        ChainAddressKind::Shielded,
+                        "shield-addr",
+                        &payload,
+                    ));
+                    Ok(())
+                })
+                .map_err(map_security_error)?;
+            derived.ok_or(WalletAccountPortError::InvalidData)??
+        };
         let account_id =
             ChainAccountId::parse(format!("midnight_account_{account_index}_{address_index}"))
                 .map_err(|_| WalletAccountPortError::InvalidData)?;
-        DerivedChainAccount::new(
+        let derived = DerivedChainAccount::new(
             network.id().clone(),
             account_id,
             account_index,
@@ -222,7 +263,12 @@ where
             descriptor.public_key().clone(),
             descriptor.reference().clone(),
         )
-        .map_err(|_| WalletAccountPortError::InvalidData)
+        .map_err(|_| WalletAccountPortError::InvalidData)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let derived = derived
+            .with_additional_address(shielded_address)
+            .map_err(|_| WalletAccountPortError::InvalidData)?;
+        Ok(derived)
     }
 }
 
@@ -662,10 +708,7 @@ impl<C> SimulatedMidnightAccountSource<C> {
             .get(&(profile_id.clone(), network.id().clone()))
             .cloned();
         let (account_id, addresses) = match derived {
-            Some(derived) => (
-                derived.account_id().clone(),
-                vec![derived.receive_address().clone()],
-            ),
+            Some(derived) => (derived.account_id().clone(), derived.addresses().to_vec()),
             None => (
                 ChainAccountId::parse(profile_id.as_str().to_owned())
                     .map_err(|_| WalletAccountPortError::InvalidData)?,
@@ -1192,6 +1235,26 @@ mod tests {
         }
     }
 
+    impl WalletDerivedSecretUsePort for WalletSdkVectorKeys {
+        fn use_derived_secret(
+            &self,
+            _: &WalletProfileId,
+            path: &WalletHdPath,
+            operation: &mut dyn FnMut(&[u8; 32]) -> Result<(), WalletSecurityPortError>,
+        ) -> Result<(), WalletSecurityPortError> {
+            let path = path
+                .components()
+                .iter()
+                .map(|component| (component.index(), component.hardened()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                path,
+                vec![(44, true), (2400, true), (0, true), (3, false), (0, false)]
+            );
+            operation(&[1_u8; 32])
+        }
+    }
+
     fn profile() -> WalletProfileId {
         WalletProfileId::parse("profile_test").expect("profile id is valid")
     }
@@ -1262,6 +1325,15 @@ mod tests {
         assert_eq!(
             derived.receive_address().value(),
             "mn_addr_devnet13gn5semyxq8w3cd9fv0av5v4crkzcfmt7mlmvh83wwu6gtc8w3sqr2gnec"
+        );
+        assert_eq!(derived.addresses().len(), 2);
+        assert_eq!(derived.addresses()[1].kind(), ChainAddressKind::Shielded);
+        assert_eq!(
+            derived.addresses()[1].value(),
+            concat!(
+                "mn_shield-addr_devnet1p99fzfvf2z2q05zaaqzml8laccfd8uhzm9t2jewxggyr65tj4dp4g",
+                "cfv7e04ka0x7qeajljmln7za5d4edntjxncx4q0uh6gkkj706ggme77n"
+            )
         );
     }
 

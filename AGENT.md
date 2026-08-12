@@ -550,6 +550,11 @@ to silence the shell probe.
 - The separate Midnight DUST checkpoint is privacy-sensitive tagged wallet
   state scoped by a public-key fingerprint. Never put it in the public account
   JSON, serialize its secret key, or bypass the live-before-spend catch-up.
+- Shielded account derivation uses Wallet SDK role `3/0`. Only the canonical
+  64-byte coin/encryption public-key address payload may leave the Midnight
+  adapter. Zswap secret keys, nullifiers, Merkle paths, witnesses, and future
+  tagged local state remain adapter-private under ADR-0033; any checkpoint must
+  be separately key/network scoped and owner-private.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.

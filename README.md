@@ -13,7 +13,8 @@ than layers bolted onto one chain-specific frontend.
 > through Dioxus and the standalone headless harness. A development-only
 > process-local adapter exercises opaque Ed25519/P-256 keys plus protected
 > Midnight HD/BIP340 account derivation headlessly; a deterministic adapter
-> exercises Midnight network, derived address, exact-balance, sync, history, and
+> exercises Midnight network, canonical unshielded and shielded receive
+> addresses, exact-balance, sync, history, and
 > staged unshielded NIGHT submission without secret input. Native headless runs
 > can instead opt into either a real standalone-indexer read source or the
 > complete DUST/local-prover/node submission path using explicit public startup
@@ -80,7 +81,7 @@ platform application-data directory by default; set
 
 The implemented account methods are `wallet.network.list`,
 `wallet.network.select`, `wallet.account.derive`, `wallet.account.get`, `wallet.address.list`,
-`wallet.address.unshielded`, `wallet.balance.snapshot`,
+`wallet.address.unshielded`, `wallet.address.shielded`, `wallet.balance.snapshot`,
 `wallet.transaction.history`, `wallet.transaction.prepare_unshielded`,
 `wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
 `wallet.transaction.submit_unshielded`, `wallet.transaction.send_unshielded`,
@@ -89,10 +90,11 @@ The implemented account methods are `wallet.network.list`,
 With no additional configuration their account data is explicitly `simulated`
 and contacts no node, indexer, or prover. After
 `wallet.security.initialize`, `wallet.account.derive` creates and retains the
-canonical external NIGHT child key inside the process-local development
-adapter, then returns only its public address and opaque transaction-key
-reference. Account and address indices must be below `2^31`; seed, mnemonic,
-private-key, and caller-defined path parameters are rejected.
+canonical external NIGHT child key and role-3 Zswap receive keys inside the
+process-local development adapter, then returns only their public addresses and
+the opaque transaction-key reference. Account and address indices must be below
+`2^31`; seed, mnemonic, private-key, and caller-defined path parameters are
+rejected.
 
 After derivation and sync, the transaction methods prepare an exact native
 NIGHT preview, authorize its retained canonical ledger intent through the

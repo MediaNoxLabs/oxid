@@ -10,7 +10,7 @@ revisions on 2026-08-11 and re-verified on 2026-08-12:
 | Mobile prototype | `midnight-ledger` `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core` and `mobile-bench/dioxus-wallet` | explicit connect/resync, network selection, receive addresses, NIGHT/DUST balances, activity presentation, and separate chain identity/transport concerns |
 | Ledger semantics | `midnight-ledger` `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, `ledger/src/structure.rs` | `STARS_PER_NIGHT = 1_000_000` and `SPECKS_PER_DUST = 1_000_000_000_000_000` |
 | Wallet HD protocol | `midnight-wallet` `25d0c3857fc0e20435e06a9225bd8709ecce1115`, `packages/hd/src/HDWallet.ts`, `packages/hd/test/tests.test.ts`, and locked `@scure/bip32` 2.2.0 | `m/44'/2400'/account'/role/index`, hardened purpose/coin/account, roles, bounds, root clearing, and third-party BIP32 parity |
-| Wallet key/address vectors | same wallet revision, `packages/spec-reference/src/{test-vectors,key-derivation-reference}.ts` and generated address JSON | the vector `seed` is used as the already-derived unshielded scalar; SHA-256 public-key payload and Bech32m codec expectations |
+| Wallet key/address vectors | same wallet revision, `packages/spec-reference/src/{test-vectors,key-derivation-reference}.ts` and `packages/spec-reference/test-vectors/addresses.json` | the vector `seed` is used as already-derived role material; SHA-256 unshielded payload plus 64-byte shielded coin/encryption public-key payload and Bech32m codec expectations |
 | Ledger key/address semantics | `midnight-ledger` `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, `base-crypto/src/{schnorr,hash}.rs` and `coin-structure/src/coin.rs` | BIP340 x-only verifying-key bytes and SHA-256 `UserAddress` construction |
 | Indexer protocol | `midnight-indexer` `82759bf186184684f13a9ffa97b58b7b7684f47c`, `indexer-api/graphql/schema-v4.graphql` | `graphql-transport-ws`, progress-first `unshieldedTransactions`, decimal `u128` values, UTXO create/spend replay, block metadata, transaction status, and DUST fee shapes |
 | Prototype live transport | `midnight-ledger` `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/unshielded/{snapshot,transport}.rs` | bounded connection/ack/idle behavior, progress-first snapshot termination, ping/pong, and address-scoped replay semantics |
@@ -40,6 +40,9 @@ accepts recovery material.
 - external NIGHT derivation -> bounded account/address indices, protected
   `m/44'/2400'/account'/0/index`, opaque BIP340 key reference, x-only public-key
   hash, and network-specific Bech32m address;
+- shielded receive derivation -> protected `m/44'/2400'/account'/3/0`, official
+  Zswap public keys serialized into the Wallet SDK's canonical 64-byte payload,
+  and a distinct network-specific Bech32m address;
 - headless commands and Assets page -> two incoming adapters over the same use
   cases.
 
@@ -101,6 +104,15 @@ and devnet address
 `mn_addr_devnet13gn5semyxq8w3cd9fv0av5v4crkzcfmt7mlmvh83wwu6gtc8w3sqr2gnec`.
 Oxid does not commit or expose the derived scalar; ordinary DTOs and headless
 responses contain only the public address and opaque key reference.
+
+Issue #18 and ADR-0033 extend the same protected account with its public
+shielded receive rail. The Zswap child is borrowed at
+`m/44'/2400'/<account>'/3/0`; official `midnight-zswap` key derivation produces
+the coin and encryption public keys, which are serialized as the Wallet SDK's
+64-byte address payload. The `[0x01; 32]` public conformance seed maps to
+`mn_shield-addr_devnet1p99fzfvf2z2q05zaaqzml8laccfd8uhzm9t2jewxggyr65tj4dp4gcfv7e04ka0x7qeajljmln7za5d4edntjxncx4q0uh6gkkj706ggme77n`.
+Only that address crosses the account/application boundary; the child seed and
+Zswap secret keys are dropped inside custody.
 
 ## Live standalone-indexer mapping
 
@@ -195,7 +207,9 @@ configuration.
 
 ## Dependency decision
 
-The account read model does not consume ledger runtime types. The transaction
+The public account model does not consume ledger runtime types. The native
+Midnight adapter now also uses `midnight-zswap` directly for protected public
+shielded-address derivation and the forthcoming canonical replay engine. The transaction
 slice now justifies direct native dependencies on the selected
 `midnight-ledger` packages with default ledger features disabled. Cargo still
 resolves the upstream unconditional transaction/proof graph, so the dependency
@@ -212,8 +226,8 @@ dependency review.
 - prototype demo, genesis, pre-production, and raw seeds;
 - caller-supplied roots, mnemonics, recovery/import/export, durable software
   roots, or production mobile custody;
-- internal NIGHT/change roles beyond external receive derivation, shielded
-  Zswap keys, exported DUST keys, and metadata keys;
+- internal NIGHT/change roles beyond external receive derivation, exported
+  Zswap/DUST keys, and metadata keys;
 - committed local, tailnet, pre-production, node, indexer, or prover endpoints;
 - continuous background subscriptions, shielded state/checkpoints, and retained raw DUST
   event history;
@@ -229,5 +243,7 @@ or an explicitly configured public live source and adds process-local
 development derivation/BIP340 signing by opaque reference. Full standalone
 configuration additionally proves and submits canonical unshielded NIGHT
 intents through either private local proving or an explicit development proof
-server. Explicit complete-standalone mode may persist key-scoped DUST state;
-no mode provides shielded assets, durable recovery, or production custody.
+server. Explicit complete-standalone mode may persist key-scoped DUST state.
+Protected development accounts expose a canonical shielded receive address,
+but no mode yet exposes shielded balances/spending or provides durable recovery
+or production custody.

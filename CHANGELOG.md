@@ -44,3 +44,6 @@ once public releases begin.
   versioned headless lifecycle, and mobile Assets progress pane, with exact
   atomic balance, cancellation, partial private checkpoints, and cached-state
   fail-closed semantics.
+- Protected canonical Midnight shielded receive-address derivation, public
+  headless projection, and Dioxus/iOS/Android receive rendering without
+  exposing Zswap private material.

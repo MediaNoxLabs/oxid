@@ -137,6 +137,12 @@ try {
       "Boolean(document.querySelector('.address-qr__frame svg'))",
     );
     await clickButton("Hide QR");
+    const shieldedAddressRendered = await evaluate(`(() => {
+      const rows = Array.from(document.querySelectorAll('.address-row'));
+      return rows.some((row) =>
+        row.innerText.includes('Shielded') && row.querySelector('code')?.innerText.startsWith('mn_shield-addr_')
+      );
+    })()`);
 
     await clickButton("Use my receive address");
     await setInput("Amount in NIGHT", "1.5");
@@ -153,8 +159,8 @@ try {
       simulated: document.body.innerText.includes("Mode: simulated"),
       dustSynced: document.body.innerText.includes("12 DUST"),
     }))()`);
-    const result = { ...publicResult, qrRendered };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.qrRendered) {
+    const result = { ...publicResult, qrRendered, shieldedAddressRendered };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.qrRendered || !result.shieldedAddressRendered) {
       throw new Error("Android standalone wallet flow did not expose the expected public result");
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);

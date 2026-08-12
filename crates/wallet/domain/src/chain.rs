@@ -209,6 +209,7 @@ pub struct DerivedChainAccount {
     account_index: u32,
     address_index: u32,
     receive_address: ChainAddress,
+    addresses: Vec<ChainAddress>,
     transaction_public_key: WalletPublicKey,
     transaction_key: WalletKeyReference,
 }
@@ -234,10 +235,29 @@ impl DerivedChainAccount {
             account_id,
             account_index,
             address_index,
+            addresses: vec![receive_address.clone()],
             receive_address,
             transaction_public_key,
             transaction_key,
         })
+    }
+
+    /// Adds a distinct public address derived for the same account.
+    ///
+    /// The primary receive address remains the unshielded transaction address
+    /// for backwards-compatible transaction planning. Incoming adapters can
+    /// use [`Self::addresses`] to present every supported receive rail.
+    pub fn with_additional_address(
+        mut self,
+        address: ChainAddress,
+    ) -> Result<Self, ChainAccountDerivationError> {
+        if self.addresses.iter().any(|existing| {
+            existing.kind() == address.kind() || existing.value() == address.value()
+        }) {
+            return Err(ChainAccountDerivationError::DuplicateAddress);
+        }
+        self.addresses.push(address);
+        Ok(self)
     }
 
     #[must_use]
@@ -266,6 +286,11 @@ impl DerivedChainAccount {
     }
 
     #[must_use]
+    pub fn addresses(&self) -> &[ChainAddress] {
+        &self.addresses
+    }
+
+    #[must_use]
     pub const fn transaction_public_key(&self) -> &WalletPublicKey {
         &self.transaction_public_key
     }
@@ -281,6 +306,7 @@ impl DerivedChainAccount {
 pub enum ChainAccountDerivationError {
     AccountIndexOutOfBounds,
     AddressIndexOutOfBounds,
+    DuplicateAddress,
 }
 
 impl fmt::Display for ChainAccountDerivationError {
@@ -288,6 +314,9 @@ impl fmt::Display for ChainAccountDerivationError {
         let message = match self {
             Self::AccountIndexOutOfBounds => "account index must be less than 2^31",
             Self::AddressIndexOutOfBounds => "address index must be less than 2^31",
+            Self::DuplicateAddress => {
+                "derived account addresses must have distinct kinds and values"
+            }
         };
         formatter.write_str(message)
     }
@@ -1131,6 +1160,45 @@ mod tests {
         assert_eq!(
             make(0, MAX_HD_CHILD_INDEX + 1),
             Err(ChainAccountDerivationError::AddressIndexOutOfBounds)
+        );
+    }
+
+    #[test]
+    fn derived_account_keeps_distinct_public_receive_rails() {
+        let account = DerivedChainAccount::new(
+            network().id().clone(),
+            ChainAccountId::parse("midnight_account_0_0").expect("account id is valid"),
+            0,
+            0,
+            ChainAddress::parse(ChainAddressKind::Unshielded, "mn_addr_undeployed1derived")
+                .expect("address is valid"),
+            WalletPublicKey::new(crate::PublicKeyEncoding::Secp256k1XOnly, vec![7; 32]),
+            WalletKeyReference::parse("key_derived").expect("key reference is valid"),
+        )
+        .expect("primary address is valid")
+        .with_additional_address(
+            ChainAddress::parse(
+                ChainAddressKind::Shielded,
+                "mn_shield-addr_undeployed1derived",
+            )
+            .expect("shielded address is valid"),
+        )
+        .expect("second address kind is distinct");
+
+        assert_eq!(account.addresses().len(), 2);
+        assert_eq!(account.receive_address(), &account.addresses()[0]);
+        assert_eq!(
+            account
+                .clone()
+                .with_additional_address(
+                    ChainAddress::parse(
+                        ChainAddressKind::Shielded,
+                        "mn_shield-addr_undeployed1other",
+                    )
+                    .expect("shielded address is valid"),
+                )
+                .err(),
+            Some(ChainAccountDerivationError::DuplicateAddress)
         );
     }
 }

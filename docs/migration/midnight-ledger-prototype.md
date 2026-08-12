@@ -20,7 +20,7 @@ before migrating later work.
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
-| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded and private DUST checkpoint/resume, protected NIGHT/DUST derivation use, and canonical staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; shielded Zswap pending |
+| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded and private DUST checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, and canonical staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; shielded Zswap replay pending |
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; process-local Ed25519/P-256 plus BIP32/secp256k1-Schnorr conformance implemented; durable recovery and native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
@@ -229,7 +229,16 @@ renders exact progress/balance in both the headless harness and Assets page.
 Cached state remains visibly non-live and cannot independently authorize a
 spend.
 
-Shielded Zswap checkpoints and additional key roles, internal/change
+[Issue #18](https://github.com/MediaNoxLabs/oxid/issues/18) and ADR-0033 begin
+the shielded slice at the custody/public-address boundary. Protected account
+derivation now borrows the Wallet SDK role-3 child, builds official Zswap public
+keys, and exposes the canonical network-specific shielded Bech32m address next
+to the primary unshielded address. Headless responses and the Dioxus receive
+list/QR use the same safe application projection. The seed, decryption key, and
+nullifier material remain adapter-private. Canonical event replay, bounded
+checkpoints, explicit sync sessions, and balances remain open in #18.
+
+Shielded Zswap replay/checkpoints, internal/change
 address management, replacement and
 durable confirmation tracking, camera/copy/share bridges, explicit mobile
 submission cancellation, production endpoint discovery, recovery, and native

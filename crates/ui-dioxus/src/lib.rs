@@ -1455,8 +1455,14 @@ fn has_protected_account(account: &WalletAccountView) -> bool {
         .account_id
         .as_deref()
         .is_some_and(|account_id| account_id.starts_with("midnight_account_"))
-        && account.addresses.len() == 1
-        && account.addresses[0].kind == "unshielded"
+        && account
+            .addresses
+            .iter()
+            .any(|address| address.kind == "unshielded")
+        && account
+            .addresses
+            .iter()
+            .any(|address| address.kind == "shielded")
 }
 
 #[component]

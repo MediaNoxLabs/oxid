@@ -22,6 +22,9 @@ them out of `wasm32`. Issue #11 enables the ledger's `proving` feature for DUST
 spends and adds `midnight-onchain-runtime` from the same immutable Git revision.
 Issue #12 adds `midnight-zkir 2.1.0` directly from that same official Git source
 and revision with default features disabled.
+Issue #18 adds `midnight-zswap 8.2.0-rc.1` as a direct native-only dependency
+from the same immutable revision for canonical public-key derivation and the
+adapter-private shielded state machine.
 The feature resolves published `midnight-proofs`, `midnight-circuits`, and
 `midnight-zk-stdlib` releases transitively. There is no direct `midnight-zk`
 dependency because the compatible proof crates are already selected by the
@@ -42,6 +45,7 @@ immutable Git commit:
 ```toml
 midnight-ledger = { git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", default-features = false }
 midnight-zkir = { git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", default-features = false }
+midnight-zswap = { git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", default-features = false }
 midnight-proofs = { git = "https://github.com/midnightntwrk/midnight-zk.git", rev = "cd2c27b2659de157409a9b96dba0dbaf1218f00b" }
 ```
 

@@ -145,6 +145,7 @@ impl HeadlessWallet {
             "wallet.account.get" => self.get_account(request),
             "wallet.address.list" => self.list_addresses(request),
             "wallet.address.unshielded" => self.unshielded_address(request),
+            "wallet.address.shielded" => self.shielded_address(request),
             "wallet.balance.snapshot" => self.balance_snapshot(request),
             "wallet.transaction.history" => self.transaction_history(request),
             "wallet.transaction.prepare_unshielded" => self.prepare_unshielded(request),
@@ -728,6 +729,16 @@ impl HeadlessWallet {
         })
     }
 
+    fn shielded_address(&self, request: Request) -> Dispatch {
+        self.account_projection(request, "wallet.address.shielded", |account| {
+            json!({
+                "networkId": account.network_id,
+                "source": account.source,
+                "address": account.addresses.iter().find(|address| address.kind == "shielded").map(address_value)
+            })
+        })
+    }
+
     fn balance_snapshot(&self, request: Request) -> Dispatch {
         self.account_projection(request, "wallet.balance.snapshot", |account| {
             json!({
@@ -1214,6 +1225,7 @@ fn derived_account_value(account: &DerivedWalletAccountView) -> Value {
         "accountIndex": account.account_index,
         "addressIndex": account.address_index,
         "receiveAddress": address_value(&account.receive_address),
+        "addresses": account.addresses.iter().map(address_value).collect::<Vec<_>>(),
         "transactionKeyRef": account.transaction_key_reference,
         "custodyMode": "development_only"
     })
@@ -1661,6 +1673,7 @@ fn invalid_empty_params(id: Option<String>, method: &'static str) -> Dispatch {
         "wallet.account.get" => "wallet.account.get does not accept parameters",
         "wallet.address.list" => "wallet.address.list does not accept parameters",
         "wallet.address.unshielded" => "wallet.address.unshielded does not accept parameters",
+        "wallet.address.shielded" => "wallet.address.shielded does not accept parameters",
         "wallet.balance.snapshot" => "wallet.balance.snapshot does not accept parameters",
         "wallet.transaction.history" => "wallet.transaction.history does not accept parameters",
         "wallet.connect" => "wallet.connect does not accept parameters",
@@ -1793,12 +1806,13 @@ fn capability_manifest() -> Value {
         { "method": "wallet.key.delete", "status": "ready", "mode": "development_only" },
         { "method": "wallet.network.list", "status": "ready", "mode": "standalone" },
         { "method": "wallet.network.select", "status": "ready", "mode": "standalone" },
-        { "method": "wallet.account.derive", "status": "ready", "mode": "development_only", "paths": ["midnight-night-external"] },
+        { "method": "wallet.account.derive", "status": "ready", "mode": "development_only", "paths": ["midnight-night-external", "midnight-zswap"] },
         { "method": "wallet.account.get", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
         { "method": "wallet.connect", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
         { "method": "wallet.bootstrap", "status": "queued" },
         { "method": "wallet.address.list", "status": "ready", "mode": "standalone", "sources": ["protected_derivation", "official_public_vectors", "configured_public_address"] },
         { "method": "wallet.address.unshielded", "status": "ready", "mode": "standalone", "sources": ["protected_derivation", "official_public_vectors", "configured_public_address"] },
+        { "method": "wallet.address.shielded", "status": "ready", "mode": "standalone", "sources": ["protected_derivation", "official_public_vectors"] },
         { "method": "wallet.balance.snapshot", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
         { "method": "wallet.transaction.history", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
         { "method": "wallet.transaction.prepare_unshielded", "status": "ready", "mode": "development_only", "submissionReady": false },
@@ -2193,6 +2207,25 @@ mod tests {
             derived["receiveAddress"]["value"]
                 .as_str()
                 .is_some_and(|address| address.starts_with("mn_addr_undeployed1"))
+        );
+        assert_eq!(derived["addresses"].as_array().map(Vec::len), Some(2));
+        assert!(derived["addresses"].as_array().is_some_and(|addresses| {
+            addresses.iter().any(|address| {
+                address["kind"] == "shielded"
+                    && address["value"]
+                        .as_str()
+                        .is_some_and(|value| value.starts_with("mn_shield-addr_undeployed1"))
+            })
+        }));
+        let shielded = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"derive-shielded","method":"wallet.address.shielded","params":{}}"#,
+        );
+        assert_eq!(shielded[0]["result"]["address"]["kind"], "shielded");
+        assert!(
+            shielded[0]["result"]["address"]["value"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("mn_shield-addr_undeployed1"))
         );
         let key_ref = derived["transactionKeyRef"]
             .as_str()

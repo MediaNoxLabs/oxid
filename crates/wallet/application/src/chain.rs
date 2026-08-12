@@ -135,6 +135,7 @@ pub struct DerivedWalletAccountView {
     pub account_index: u32,
     pub address_index: u32,
     pub receive_address: WalletAddressView,
+    pub addresses: Vec<WalletAddressView>,
     pub transaction_key_reference: String,
 }
 
@@ -146,6 +147,7 @@ impl From<&DerivedChainAccount> for DerivedWalletAccountView {
             account_index: account.account_index(),
             address_index: account.address_index(),
             receive_address: address_view(account.receive_address()),
+            addresses: account.addresses().iter().map(address_view).collect(),
             transaction_key_reference: account.transaction_key().as_str().to_owned(),
         }
     }
