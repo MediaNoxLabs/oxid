@@ -200,6 +200,9 @@ own current Midnight DID 0.5.0 syntax/document invariants plus resolve/list/get/
 forget ports. `adapters/did-midnight` provides exactly one successful
 standalone fixture and a native official `POST /resolve` adapter selected only
 by `OXID_MIDNIGHT_DID_RESOLVER_URL`; unknown standalone DIDs are not found.
+The HTTP adapter uses the exact-pinned `webpki-root-certs 1.0.9` public root
+bundle, not ambient platform CA state; local or enterprise roots are therefore
+not trusted implicitly.
 `adapters/storage-identity-json` stores validated public documents separately
 under `OXID_DID_STORE_PATH` or `private/did-records.json` beside the profile
 store. Headless DID params never accept a profile, route, key, or credential.

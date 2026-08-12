@@ -103,7 +103,7 @@ mod http {
     use std::{error::Error, fmt, net::IpAddr, sync::Arc, thread, time::Duration};
 
     use futures::{StreamExt as _, channel::oneshot};
-    use reqwest::{Client, Url, redirect::Policy};
+    use reqwest::{Certificate, Client, Url, redirect::Policy};
 
     use super::*;
 
@@ -176,11 +176,17 @@ mod http {
             let endpoint = base
                 .join("resolve")
                 .map_err(|_| HttpDidResolverConfigError::InvalidUrl)?;
+            let trusted_roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+                .iter()
+                .map(|certificate| Certificate::from_der(certificate.as_ref()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| HttpDidResolverConfigError::ClientUnavailable)?;
             let client = Client::builder()
                 .no_proxy()
                 .redirect(Policy::none())
                 .timeout(REQUEST_TIMEOUT)
                 .user_agent("oxid-identity-wallet/0.1")
+                .tls_certs_only(trusted_roots)
                 .build()
                 .map_err(|_| HttpDidResolverConfigError::ClientUnavailable)?;
             Ok(Self { endpoint, client })

@@ -49,8 +49,9 @@ not-found for every other syntactically valid DID. The native HTTP adapter uses
 the official `POST /resolve` result shape. Its base URL is accepted only through
 `OXID_MIDNIGHT_DID_RESOLVER_URL`, forbids credentials/query/fragment and
 redirects, ignores ambient proxies, requires HTTPS outside loopback, and caps
-time, bytes, JSON depth, and every modeled collection. Remote bodies and routes
-never enter user-facing errors or logs.
+time, bytes, JSON depth, and every modeled collection. The resolver uses an
+exact-pinned WebPKI public root bundle so Nix packages do not depend on ambient
+CA-store state. Remote bodies and routes never enter user-facing errors or logs.
 
 `adapters/storage-identity-json` stores only validated public documents and
 resolution metadata in a separate versioned file. It is capped at 128 records

@@ -16,25 +16,31 @@ The adapter reuses already exact-pinned workspace dependencies:
 
 - `reqwest 0.13.4`, default features disabled, with Rustls, JSON, and streaming
   response bodies;
+- `webpki-root-certs 1.0.9` for a pinned public TLS root bundle, avoiding an
+  ambient operating-system CA-store dependency in Nix-packaged runtimes;
 - `tokio 1.53.1` for the bounded native HTTP worker runtime;
 - `futures 0.3.33` for executor-neutral one-shot completion and streaming;
 - `serde 1.0.229` and `serde_json 1.0.151` for strict external/persistence
   envelopes.
 
 Their license, maintenance, advisory, and target posture is already reviewed by
-the Serde, Tokio/WebSocket, and Midnight standalone submission reviews. This
-slice adds no dependency or cryptographic implementation. Public JWK
+the Serde, Tokio/WebSocket, and Midnight standalone submission reviews. The
+root bundle was already exact-pinned in the lock graph and reviewed under its
+CDLA-Permissive-2.0 data license; this adapter promotes it to a direct
+dependency but adds no new package or cryptographic implementation. Public JWK
 coordinates are syntax/length validated; signing and verification remain
 behind later capability ports.
 
 ## Security and target boundary
 
 The HTTP adapter is native-only. It disables redirects and ambient proxies,
-uses Rustls, requires HTTPS outside loopback, rejects route credentials/query/
-fragment, enforces a 15-second timeout, and streams at most 512 KiB before
-strict parsing. A dedicated thread/runtime keeps transport work off incoming UI
-executors and lets the headless harness use the same future without assuming a
-Tokio caller.
+uses Rustls with the exact-pinned WebPKI public root bundle, requires HTTPS
+outside loopback, rejects route credentials/query/fragment, enforces a
+15-second timeout, and streams at most 512 KiB before strict parsing. Bundled
+roots make Nix runtime trust deterministic and intentionally exclude local or
+enterprise user-installed authorities. A dedicated thread/runtime keeps
+transport work off incoming UI executors and lets the headless harness use the
+same future without assuming a Tokio caller.
 
 `serde_json::Value` exists only in the outgoing adapter and headless projection;
 identity core crates have no external dependencies. Unknown resolver extension
