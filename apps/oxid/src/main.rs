@@ -49,14 +49,23 @@ fn main() {
                 application.reconcile_wallet_transfer_submission(),
             ),
         ),
-        oxid_ui_dioxus::DidUiServices::new(
-            application.create_did(),
-            application.resolve_did(),
-            application.list_did_records(),
-            application.update_did(),
-            application.deactivate_did(),
-            application.sign_did_payload(),
-            application.forget_did(),
+        oxid_ui_dioxus::IdentityUiServices::new(
+            oxid_ui_dioxus::DidUiServices::new(
+                application.create_did(),
+                application.resolve_did(),
+                application.list_did_records(),
+                application.update_did(),
+                application.deactivate_did(),
+                application.sign_did_payload(),
+                application.forget_did(),
+            ),
+            oxid_ui_dioxus::CredentialUiServices::new(
+                application.receive_credential(),
+                application.list_credentials(),
+                application.get_credential(),
+                application.reverify_credential(),
+                application.delete_credential(),
+            ),
         ),
     );
 

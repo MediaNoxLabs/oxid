@@ -34,8 +34,9 @@ The ordered public backlog is
 bounded slices and never turn parity work into a bulk source copy. The wallet
 presentation shell is the first post-M0 slice. Its deferred destinations are
 status surfaces, not claims of working custody or identity capabilities. The
-DIDs destination is now functional in standalone development; credentials and
-vault behavior remain deferred.
+DIDs and protected credential inventory destinations are now functional in
+standalone development; vault and protocol-driven credential behavior remain
+deferred.
 
 ADR-0017 is accepted. The first M1 security slice separates protection/session
 state from key operations, secret blobs, and native user authorization. The
@@ -226,6 +227,21 @@ all non-undeployed/live Compact writes remain fail-closed. The remaining
 Jubjub/Compact proving/submission/finality gap is a later adapter slice, not a
 reason to expose private key material.
 
+[Issue #23](https://github.com/MediaNoxLabs/oxid/issues/23) and ADR-0038 add the
+peer credential foundation. `credential/domain` and
+`credential/application` have no external dependencies and keep original
+signed bytes separate from normalized display/search metadata. Verification is
+always a seven-stage structural/issuer/proof/temporal/status/schema/trust
+report, never a boolean. `adapters/vc-midnight` implements strict phase-1 CBOR
+proof stripping and Ed25519/P-256 issuer assertion verification;
+`adapters/storage-credential-json` encrypts the complete bounded document with
+XChaCha20-Poly1305. Its separate owner-private key file is development-only,
+not native custody. Standalone headless and mobile flows receive, list,
+reverify, confirmation-delete, and restore the public fixture without exposing
+the signed body. Normal `compose()` remains unavailable pending native
+Keychain/Keystore wrapping. OID4VCI/VP/SIOP, disclosure openings, status,
+schema/trust policy, Compact passport proofs, and Jubjub remain later slices.
+
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
 web --target wasm32-unknown-unknown` currently stops in the pre-existing
@@ -254,7 +270,9 @@ The staged component inventory and destination map live in
 `docs/migration/midnight-ledger-prototype.md`. Presentation-specific provenance
 and exclusions live in `docs/migration/ui-shell-provenance.md`. Account-specific
 upstream evidence, vectors, and exclusions live in
-`docs/migration/midnight-account-provenance.md`.
+`docs/migration/midnight-account-provenance.md`. Credential-store and verifier
+evidence, deliberate hardening, and exclusions live in
+`docs/migration/midnight-vc-provenance.md`.
 
 ## Architecture boundaries
 
@@ -306,6 +324,9 @@ ADR-0035 adds the bounded public submission journal, persist-before-broadcast
 rule, restart duplicate prevention, and finalized-chain reconciliation.
 ADR-0036 adds the identity hexagon, current Midnight DID public-document
 validation, bounded resolver adapters, and separate public DID inventory.
+ADR-0037 adds standalone DID lifecycle operations through opaque development
+custody. ADR-0038 adds the credential hexagon, protected original-byte store,
+structured verification pipeline, and strict Midnight phase-1 CBOR verifier.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -320,14 +341,18 @@ Current package ownership:
 | `crates/wallet/domain` | Wallet profile invariants and entities. |
 | `crates/wallet/application` | Incoming use cases and owned outgoing repository ports. |
 | `crates/identity/domain` | Dependency-free Midnight DID, public JWK, document, and resolution invariants. |
-| `crates/identity/application` | Profile-scoped DID resolve/list/get/forget use cases and owned outgoing ports. |
+| `crates/identity/application` | Profile-scoped DID resolution, inventory, lifecycle/signing use cases, and owned outgoing ports. |
+| `crates/credential/domain` | Dependency-free credential records, metadata separation, and structured verification invariants. |
+| `crates/credential/application` | Profile-scoped receive/list/get/reverify/delete use cases and repository/inbox/verifier ports. |
 | `crates/platform/ports` | Clock and randomness capabilities used by applications. |
-| `crates/adapters/storage-memory` | Development/test implementation of wallet persistence. |
+| `crates/adapters/storage-memory` | Development/test implementations of wallet, DID, and credential persistence ports. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/storage-identity-json` | Strict versioned persistence for validated profile-scoped public DID documents only. |
+| `crates/adapters/storage-credential-json` | Development-only authenticated encryption for bounded profile-scoped credential records and original signed bytes. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
-| `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolver adapters. |
+| `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development lifecycle adapters. |
+| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR credential verification and public standalone credential ingress. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, and public receive-QR rendering. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -374,6 +399,22 @@ the public profile file. The headless surface is `did.resolve`, `did.list`,
 `did.get`, and `did.forget`; profile scope always comes from the active profile.
 The standalone fixture is
 `did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`.
+Its `standalone-fixture-v2` Ed25519 method is both authentication- and
+assertion-authorized so the public credential fixture can exercise issuer proof
+verification.
+
+Credential composition is independent of chain mode. Standalone development
+uses `OXID_CREDENTIAL_STORE_PATH` and `OXID_CREDENTIAL_KEY_PATH` only when both
+are set; otherwise it derives `private/credentials.enc` and
+`private/credentials.key` beside the configured profile store. Partial explicit
+configuration fails startup. The key file is a temporary development wrapping
+boundary and must never be described as platform-backed or recoverable. Normal
+`compose()` wires unavailable credential ports. The headless surface is
+`credential.receive`, `credential.list`, `credential.get`,
+`credential.reverify`, and confirmation-gated `credential.delete`;
+`credential.request` and `credential.verify` remain prototype aliases. These
+methods derive profile scope from the active profile and never return signed
+bytes, proofs, openings, or claim values.
 
 The headless DUST surface is `wallet.dust.sync.status`,
 `wallet.dust.sync.start`, and `wallet.dust.sync.cancel`. These commands never
@@ -463,6 +504,11 @@ public address strings and has no core, camera, clipboard, file, network, or
 JavaScript role. The dependency review is
 `docs/dependencies/qrcode-0.14.md`.
 
+Standalone credential persistence pins RustCrypto `chacha20poly1305` 0.11.0
+with XChaCha20-Poly1305 and zeroization support. Cipher, key, nonce, and
+ciphertext types stay private to `storage-credential-json`; the review is
+`docs/dependencies/chacha20poly1305-0.11.md`.
+
 The live indexer route is implemented with native-only Tokio 1.53.1 and
 tokio-tungstenite 0.30.0 using Rustls 0.23.43 with the explicit Ring provider
 and WebPKI roots. It runs on a short-lived worker
@@ -541,10 +587,14 @@ Useful focused commands:
 ```bash
 cargo test -p oxid-wallet-domain
 cargo test -p oxid-wallet-application
+cargo test -p oxid-credential-domain
+cargo test -p oxid-credential-application
 cargo test -p oxid-adapter-storage-memory
+cargo test -p oxid-adapter-storage-credential-json
 cargo test -p oxid-adapter-storage-json
 cargo test -p oxid-adapter-storage-dev
 cargo test -p oxid-adapter-midnight
+cargo test -p oxid-adapter-vc-midnight
 cargo test -p oxid-headless
 cargo check -p oxid-app
 ./run.sh coverage --strict
@@ -572,10 +622,12 @@ Gradle/Xcode output remains under ignored `target/` paths.
 `just ios-smoke` generates an ignored XCUITest project from
 `tests/mobile/ios/project.yml`, resets only the installed Oxid simulator data,
 and verifies profile creation, development account activation, receive QR,
-staged simulated transfer, and profile restore through visible UI elements.
+staged simulated transfer, protected credential receive/verification/restore,
+and profile restore through visible UI elements.
 `just android-smoke` resets only Oxid's Android app data, drives the equivalent
-development flow, validates the durable public JSON document, and verifies
-restart. Both now assert that the included public submission journal survives
+development flow, validates the durable public JSON document plus authenticated
+credential envelope/key shape, and verifies restart. Both now assert that the
+included public submission journal and encrypted credential inventory survive
 while development custody resets. The commands are destructive to the selected
 simulator's Oxid test profile state; protected development roots and
 transaction drafts are process-local and are expected to disappear on restart.

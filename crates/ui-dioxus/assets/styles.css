@@ -594,6 +594,103 @@ select:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
+.credential-receive-card,
+.credential-record {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.credential-inventory {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.credential-record__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.credential-record__heading h2 {
+  margin: 0.2rem 0 0;
+  font-size: 1rem;
+}
+
+.credential-record__facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin: 0;
+}
+
+.credential-record__facts div {
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--surface-4);
+}
+
+.credential-record__facts dt {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.credential-record__facts dd {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-weight: 700;
+}
+
+.credential-stage-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.credential-stage-list li {
+  display: grid;
+  grid-template-columns: minmax(5rem, 1fr) auto;
+  gap: 0.25rem 0.75rem;
+  align-items: baseline;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+  text-transform: capitalize;
+}
+
+.credential-stage-list small {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+}
+
+.stage-passed {
+  color: var(--green);
+}
+
+.stage-failed {
+  color: var(--error);
+}
+
+.stage-pending {
+  color: var(--text-muted);
+}
+
+.credential-actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.credential-delete-confirmation {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
 .did-manager {
   display: grid;
   gap: 0.75rem;
@@ -1257,6 +1354,10 @@ input:focus-visible {
   .profile-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .credential-record__facts {
+    grid-template-columns: 1fr;
   }
 
   .secondary-action {

@@ -28,9 +28,9 @@ ADR status and delivery state answer different questions:
 | [0004](0004-capability-specific-ports.md) Capability-specific ports | Accepted | §§3, 7 | Initial wallet/platform ports implemented |
 | [0005](0005-static-adapter-composition-for-mvp.md) Static adapter composition | Accepted | §§5, 6 | Implemented in `crates/composition` |
 | [0006](0006-rust-first-controlled-edge-fallbacks.md) Rust-first edge policy | Accepted | §§3, 4 | Enforced; no foreign runtime fallback in M0 |
-| [0007](0007-identity-is-a-peer-capability.md) Identity as a peer capability | Accepted | §§1, 4–6 | DID inventory/resolution delivered as the first peer identity slice by ADR-0036 |
-| [0008](0008-did-methods-as-capability-negotiated-adapters.md) DID adapters | Accepted | §§7, 9 | Midnight resolution adapter delivered by ADR-0036; lifecycle mutation queued |
-| [0009](0009-separate-credential-models-from-serializations.md) Credential model separation | Accepted | §10 | Planned for M3–M5 |
+| [0007](0007-identity-is-a-peer-capability.md) Identity as a peer capability | Accepted | §§1, 4–6 | DID lifecycle and protected credential inventory delivered by ADR-0036–0038 |
+| [0008](0008-did-methods-as-capability-negotiated-adapters.md) DID adapters | Accepted | §§7, 9 | Resolution plus standalone lifecycle delivered by ADR-0036/0037; live Compact writes pending |
+| [0009](0009-separate-credential-models-from-serializations.md) Credential model separation | Accepted | §10 | Owned credential core and Midnight CBOR edge adapter delivered by ADR-0038 |
 | [0010](0010-oidc-and-didcomm-as-protocol-adapters.md) Protocol adapters | Accepted | §§7, 11 | Planned for M4/M6 |
 | [0011](0011-secure-key-operations-behind-ports.md) Protected key operations | Accepted | §§3, 7, 12–13 | Opaque generation, HD derivation, and signing implemented in development; native adapters pending |
 | [0012](0012-mobile-first-target-priority.md) Mobile-first targets | Accepted | §§1, 4, 12–13, 16 | Features compile; native hosts deferred |
@@ -59,6 +59,7 @@ ADR status and delivery state answer different questions:
 | [0035](0035-persist-and-reconcile-midnight-submissions.md) Persist and reconcile Midnight transaction submissions | Accepted | §§3, 5–8, 12–13, 16–18 and issue #20 | Public persist-before-broadcast journal, restart duplicate prevention, finalized reconciliation, and headless/mobile recovery implemented |
 | [0036](0036-resolve-and-retain-public-midnight-dids.md) Resolve and retain public Midnight DIDs | Accepted | §§3–7, 9–13, 16–18 and issue #21 | Identity hexagon, bounded standalone/live resolution, separate public store, headless inventory, and mobile DIDs page implemented |
 | [0037](0037-manage-standalone-midnight-dids-with-opaque-custody.md) Manage standalone Midnight DIDs | Accepted | §§3–7, 9, 12–13, 16–18 and issue #22 | Protected standalone lifecycle/signing, complete update vocabulary, headless flow, and mobile operation builder implemented; live Compact writes pending |
+| [0038](0038-protect-and-verify-profile-scoped-credentials.md) Protect and verify profile-scoped credentials | Accepted | §§3–7, 9, 12–13, 16–18 and issue #23 | Protected standalone inventory, strict phase-1 CBOR verification, headless/mobile flow, and restart restoration implemented; native wrapping and protocol ingress pending |
 
 ## Current boundaries
 
@@ -99,3 +100,7 @@ credentials, endpoints, and production-native storage outside the slice.
 ADR-0037 adds the full development-only standalone lifecycle through opaque
 custody handles while keeping restored records public-only and live Compact
 mutation fail-closed.
+ADR-0038 adds a peer credential hexagon, private original-byte boundary,
+structured seven-stage verification, strict Midnight CBOR proof adapter, and
+authenticated standalone persistence while keeping production native wrapping
+and protocol ingress fail-closed.

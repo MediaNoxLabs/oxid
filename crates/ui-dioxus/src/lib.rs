@@ -5,6 +5,11 @@
 use std::{sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
+use oxid_credential_application::{
+    CredentialOperationError, CredentialProfileQuery, CredentialQuery, CredentialView,
+    DeleteCredentialCommand, DeleteCredentialUseCase, GetCredentialUseCase, ListCredentialsUseCase,
+    ReceiveCredentialUseCase, ReverifyCredentialUseCase,
+};
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
     DidKeyAlgorithm, DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordView,
@@ -73,6 +78,11 @@ pub struct WalletUiServices {
     deactivate_did: Arc<dyn DeactivateDidUseCase>,
     sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
     forget_did: Arc<dyn ForgetDidUseCase>,
+    receive_credential: Arc<dyn ReceiveCredentialUseCase>,
+    list_credentials: Arc<dyn ListCredentialsUseCase>,
+    get_credential: Arc<dyn GetCredentialUseCase>,
+    reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
+    delete_credential: Arc<dyn DeleteCredentialUseCase>,
 }
 
 /// DID inventory and resolution use cases consumed by the DIDs page.
@@ -84,6 +94,47 @@ pub struct DidUiServices {
     deactivate_did: Arc<dyn DeactivateDidUseCase>,
     sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
     forget_did: Arc<dyn ForgetDidUseCase>,
+}
+
+/// Credential inventory use cases consumed by the Credentials page.
+pub struct CredentialUiServices {
+    receive_credential: Arc<dyn ReceiveCredentialUseCase>,
+    list_credentials: Arc<dyn ListCredentialsUseCase>,
+    get_credential: Arc<dyn GetCredentialUseCase>,
+    reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
+    delete_credential: Arc<dyn DeleteCredentialUseCase>,
+}
+
+impl CredentialUiServices {
+    #[must_use]
+    pub const fn new(
+        receive_credential: Arc<dyn ReceiveCredentialUseCase>,
+        list_credentials: Arc<dyn ListCredentialsUseCase>,
+        get_credential: Arc<dyn GetCredentialUseCase>,
+        reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
+        delete_credential: Arc<dyn DeleteCredentialUseCase>,
+    ) -> Self {
+        Self {
+            receive_credential,
+            list_credentials,
+            get_credential,
+            reverify_credential,
+            delete_credential,
+        }
+    }
+}
+
+/// Identity-facing UI capabilities kept separate from wallet account services.
+pub struct IdentityUiServices {
+    dids: DidUiServices,
+    credentials: CredentialUiServices,
+}
+
+impl IdentityUiServices {
+    #[must_use]
+    pub const fn new(dids: DidUiServices, credentials: CredentialUiServices) -> Self {
+        Self { dids, credentials }
+    }
 }
 
 impl DidUiServices {
@@ -295,8 +346,10 @@ impl WalletUiServices {
         dust: WalletDustSyncUiServices,
         shielded: WalletShieldedSyncUiServices,
         transactions: WalletTransactionUiServices,
-        dids: DidUiServices,
+        identity: IdentityUiServices,
     ) -> Self {
+        let dids = identity.dids;
+        let credentials = identity.credentials;
         Self {
             create_wallet_profile: profiles.create_wallet_profile,
             list_wallet_profiles: profiles.list_wallet_profiles,
@@ -333,6 +386,11 @@ impl WalletUiServices {
             deactivate_did: dids.deactivate_did,
             sign_did_payload: dids.sign_did_payload,
             forget_did: dids.forget_did,
+            receive_credential: credentials.receive_credential,
+            list_credentials: credentials.list_credentials,
+            get_credential: credentials.get_credential,
+            reverify_credential: credentials.reverify_credential,
+            delete_credential: credentials.delete_credential,
         }
     }
 
@@ -513,6 +571,31 @@ impl WalletUiServices {
     pub fn forget_did(&self) -> Arc<dyn ForgetDidUseCase> {
         Arc::clone(&self.forget_did)
     }
+
+    #[must_use]
+    pub fn receive_credential(&self) -> Arc<dyn ReceiveCredentialUseCase> {
+        Arc::clone(&self.receive_credential)
+    }
+
+    #[must_use]
+    pub fn list_credentials(&self) -> Arc<dyn ListCredentialsUseCase> {
+        Arc::clone(&self.list_credentials)
+    }
+
+    #[must_use]
+    pub fn get_credential(&self) -> Arc<dyn GetCredentialUseCase> {
+        Arc::clone(&self.get_credential)
+    }
+
+    #[must_use]
+    pub fn reverify_credential(&self) -> Arc<dyn ReverifyCredentialUseCase> {
+        Arc::clone(&self.reverify_credential)
+    }
+
+    #[must_use]
+    pub fn delete_credential(&self) -> Arc<dyn DeleteCredentialUseCase> {
+        Arc::clone(&self.delete_credential)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -585,6 +668,17 @@ enum DidPageState {
     Ready {
         records: Vec<DidRecordView>,
         resolving: bool,
+        operation_error: Option<String>,
+    },
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CredentialPageState {
+    Loading,
+    Ready {
+        credentials: Vec<CredentialView>,
+        receiving: bool,
         operation_error: Option<String>,
     },
     Failed(String),
@@ -783,15 +877,7 @@ pub fn App() -> Element {
                 match active {
                     Destination::Assets => rsx! { AssetsPage { active_profile: active_profile.clone() } },
                     Destination::Dids => rsx! { DidsPage { active_profile: active_profile.clone() } },
-                    Destination::Credentials => rsx! {
-                        DeferredPage {
-                            eyebrow: "Identity centre",
-                            title: "Credentials",
-                            description: "Credentials will remain local-first, holder-controlled, and independent from chain account state.",
-                            empty_title: "Credential wallet is queued",
-                            empty_body: "The encrypted store, verification pipeline, OID4VCI, OID4VP, SIOP, and consent flows are not connected yet.",
-                        }
-                    },
+                    Destination::Credentials => rsx! { CredentialsPage { active_profile: active_profile.clone() } },
                     Destination::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
                     Destination::Settings => rsx! {
                         SettingsPage {
@@ -3213,25 +3299,266 @@ fn DidsPage(active_profile: WalletProfileView) -> Element {
     }
 }
 
+fn load_credential_page(services: &WalletUiServices, profile_id: &str) -> CredentialPageState {
+    services
+        .list_credentials()
+        .execute(CredentialProfileQuery {
+            profile_id: profile_id.to_owned(),
+        })
+        .map_or_else(
+            |error| CredentialPageState::Failed(credential_operation_message(error)),
+            |credentials| CredentialPageState::Ready {
+                credentials,
+                receiving: false,
+                operation_error: None,
+            },
+        )
+}
+
+fn credential_operation_message(error: CredentialOperationError) -> String {
+    error.to_string()
+}
+
+enum CredentialChange {
+    Updated(CredentialView),
+    Deleted(String),
+    Failed(String),
+}
+
 #[component]
-fn DeferredPage(
-    eyebrow: &'static str,
-    title: &'static str,
-    description: &'static str,
-    empty_title: &'static str,
-    empty_body: &'static str,
+fn CredentialRecordCard(
+    profile_id: String,
+    credential: CredentialView,
+    on_change: EventHandler<CredentialChange>,
 ) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut working = use_signal(|| false);
+    let mut delete_confirmed = use_signal(|| false);
+    let identifier = credential.id.clone();
+    let verify_id = identifier.clone();
+    let delete_id = identifier.clone();
+    let verify_services = services.clone();
+    let delete_services = services;
+    let verify_profile = profile_id.clone();
+    let delete_profile = profile_id;
+    let issuer = truncate_middle(&credential.issuer_did, 20, 12);
+    let outcome = credential.verification_outcome.clone();
+    let status_class = if outcome == "valid" {
+        "status-pill success"
+    } else {
+        "status-pill warning"
+    };
     rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "{eyebrow}" }
-            h1 { "{title}" }
-            p { "{description}" }
+        article { class: "surface-card credential-record", key: "{identifier}",
+            div { class: "credential-record__heading",
+                div {
+                    p { class: "card-eyebrow", "{credential.format}" }
+                    h2 { "{credential.display_name}" }
+                }
+                span { class: status_class, "{outcome}" }
+            }
+            dl { class: "credential-record__facts",
+                div { dt { "Issuer" } dd { title: "{credential.issuer_did}", "{issuer}" } }
+                div { dt { "Subject" } dd {
+                    if let Some(subject) = credential.subject_did.as_deref() {
+                        "{truncate_middle(subject, 16, 10)}"
+                    } else {
+                        "Not disclosed"
+                    }
+                } }
+                div { dt { "Issued" } dd {
+                    if let Some(timestamp) = credential.issued_at_ms {
+                        "{timestamp} ms"
+                    } else {
+                        "Not supplied"
+                    }
+                } }
+            }
+            ul { class: "credential-stage-list", aria_label: "Verification stages",
+                for stage in credential.verification_stages.clone() {
+                    {
+                        let status_label = stage.status.replace('_', " ");
+                        let reason_label = stage.reason_code.as_deref().map(|reason| reason.replace('_', " "));
+                        rsx! {
+                            li { key: "{stage.name}",
+                                span { "{stage.name}" }
+                                strong { class: if stage.status == "passed" { "stage-passed" } else if stage.status == "failed" { "stage-failed" } else { "stage-pending" },
+                                    "{status_label}"
+                                }
+                                if let Some(reason) = reason_label {
+                                    small { "{reason}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            div { class: "credential-actions",
+                button {
+                    class: "secondary-action", r#type: "button", disabled: working(),
+                    onclick: move |_| {
+                        working.set(true);
+                        let service = verify_services.reverify_credential();
+                        let profile_id = verify_profile.clone();
+                        let credential_id = verify_id.clone();
+                        spawn(async move {
+                            let result = service.execute(CredentialQuery { profile_id, credential_id }).await;
+                            working.set(false);
+                            on_change.call(match result {
+                                Ok(credential) => CredentialChange::Updated(credential),
+                                Err(error) => CredentialChange::Failed(credential_operation_message(error)),
+                            });
+                        });
+                    },
+                    if working() { "Verifying…" } else { "Reverify" }
+                }
+                label { class: "confirmation-row credential-delete-confirmation",
+                    input {
+                        r#type: "checkbox", checked: delete_confirmed(),
+                        onchange: move |event| delete_confirmed.set(event.checked()),
+                    }
+                    "Confirm removal from this profile"
+                }
+                button {
+                    class: "danger-action", r#type: "button",
+                    disabled: working() || !delete_confirmed(),
+                    onclick: move |_| {
+                        let result = delete_services.delete_credential().execute(DeleteCredentialCommand {
+                            profile_id: delete_profile.clone(),
+                            credential_id: delete_id.clone(),
+                            confirmed: delete_confirmed(),
+                            intent: "DELETE_CREDENTIAL".to_owned(),
+                        });
+                        on_change.call(match result {
+                            Ok(()) => CredentialChange::Deleted(delete_id.clone()),
+                            Err(error) => CredentialChange::Failed(credential_operation_message(error)),
+                        });
+                    },
+                    "Delete credential"
+                }
+            }
         }
-        article { class: "empty-state surface-card",
-            span { class: "empty-state__mark", aria_hidden: "true", "◇" }
-            h2 { "{empty_title}" }
-            p { "{empty_body}" }
-            span { class: "status-pill", "Migration queued" }
+    }
+}
+
+#[component]
+fn CredentialsPage(active_profile: WalletProfileView) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| CredentialPageState::Loading);
+    let profile_id = active_profile.id.clone();
+    let load_services = services.clone();
+    let load_profile = profile_id.clone();
+    use_effect(move || state.set(load_credential_page(&load_services, &load_profile)));
+
+    match state.read().clone() {
+        CredentialPageState::Loading => rsx! {
+            section { class: "page-heading",
+                p { class: "eyebrow", "Identity centre" }
+                h1 { "Credentials" }
+                p { "Loading the protected credential inventory for this wallet profile…" }
+            }
+        },
+        CredentialPageState::Failed(message) => rsx! {
+            section { class: "page-heading",
+                p { class: "eyebrow", "Identity centre" }
+                h1 { "Credentials" }
+                p { "Credentials stay local-first, holder-controlled, and separate from chain account state." }
+            }
+            article { class: "empty-state surface-card", role: "alert",
+                span { class: "empty-state__mark", aria_hidden: "true", "◇" }
+                h2 { "Credential capability unavailable" }
+                p { "{message}" }
+                button {
+                    class: "secondary-action", r#type: "button",
+                    onclick: move |_| state.set(load_credential_page(&services, &profile_id)),
+                    "Retry"
+                }
+            }
+        },
+        CredentialPageState::Ready {
+            credentials,
+            receiving,
+            operation_error,
+        } => {
+            let receive_service = services.receive_credential();
+            let receive_profile = profile_id.clone();
+            let retained = credentials.clone();
+            rsx! {
+                section { class: "page-heading",
+                    p { class: "eyebrow", "Identity centre" }
+                    h1 { "Credentials" }
+                    p { "Protected original bytes, searchable metadata, and explicit verification stages under the active profile." }
+                }
+                article { class: "surface-card credential-receive-card",
+                    p { class: "card-eyebrow", "Standalone credential inbox" }
+                    h2 { "Receive the public identity fixture" }
+                    p { class: "form-hint", "Exercises the same storage and cryptographic verification ports as future protocol ingress. It is clearly marked as a standalone development fixture." }
+                    button {
+                        class: "primary-action", r#type: "button", disabled: receiving,
+                        onclick: move |_| {
+                            state.set(CredentialPageState::Ready { credentials: retained.clone(), receiving: true, operation_error: None });
+                            let service = receive_service.clone();
+                            let profile_id = receive_profile.clone();
+                            let mut next = retained.clone();
+                            spawn(async move {
+                                match service.execute(CredentialProfileQuery { profile_id }).await {
+                                    Ok(credential) => {
+                                        next.retain(|existing| existing.id != credential.id);
+                                        next.push(credential);
+                                        next.sort_by(|left, right| left.id.cmp(&right.id));
+                                        state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
+                                    }
+                                    Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)) }),
+                                }
+                            });
+                        },
+                        if receiving { "Receiving and verifying…" } else { "Receive standalone credential" }
+                    }
+                    if let Some(error) = operation_error.as_deref() {
+                        p { class: "field-error", role: "alert", "{error}" }
+                    }
+                }
+                if credentials.is_empty() {
+                    article { class: "empty-state surface-card",
+                        span { class: "empty-state__mark", aria_hidden: "true", "◇" }
+                        h2 { "No credentials yet" }
+                        p { "Receive the standalone fixture to prove protected storage and issuer-proof verification." }
+                        span { class: "status-pill", "Profile scoped" }
+                    }
+                } else {
+                    section { class: "credential-inventory", aria_label: "Saved credentials",
+                        for credential in credentials.clone() {
+                            {
+                                let retained = credentials.clone();
+                                let current_id = credential.id.clone();
+                                rsx! {
+                                    CredentialRecordCard {
+                                        key: "{current_id}",
+                                        profile_id: profile_id.clone(),
+                                        credential,
+                                        on_change: move |change| {
+                                            let mut next = retained.clone();
+                                            match change {
+                                                CredentialChange::Updated(updated) => {
+                                                    next.retain(|entry| entry.id != updated.id);
+                                                    next.push(updated);
+                                                    next.sort_by(|left, right| left.id.cmp(&right.id));
+                                                    state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
+                                                }
+                                                CredentialChange::Deleted(identifier) => {
+                                                    next.retain(|entry| entry.id != identifier);
+                                                    state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
+                                                }
+                                                CredentialChange::Failed(message) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(message) }),
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

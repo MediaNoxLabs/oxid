@@ -1,6 +1,6 @@
 [package]
-name = "oxid-adapter-storage-memory"
-description = "In-memory wallet persistence adapter for Oxid development and tests"
+name = "oxid-adapter-storage-credential-json"
+description = "Development-only encrypted credential persistence adapter for Oxid"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,15 +9,15 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+base64.workspace = true
+chacha20poly1305.workspace = true
+getrandom.workspace = true
 oxid-credential-application.workspace = true
 oxid-credential-domain.workspace = true
-oxid-identity-application.workspace = true
-oxid-identity-domain.workspace = true
-oxid-wallet-application.workspace = true
-oxid-wallet-domain.workspace = true
-
-[dev-dependencies]
 oxid-foundation.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

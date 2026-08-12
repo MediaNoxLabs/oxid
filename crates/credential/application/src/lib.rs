@@ -1,0 +1,514 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#![forbid(unsafe_code)]
+
+use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
+
+use oxid_credential_domain::{
+    CredentialDomainError, CredentialId, CredentialMetadata, CredentialProfileId, CredentialRecord,
+    VerificationReport,
+};
+use oxid_foundation::OpaqueIdError;
+
+pub type CredentialBytesFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<u8>, CredentialIngressError>> + Send + 'a>>;
+pub type CredentialInspectionFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<CredentialInspection, CredentialVerificationError>> + Send + 'a>,
+>;
+pub type CredentialViewFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<CredentialView, CredentialOperationError>> + Send + 'a>>;
+
+pub trait CredentialInboxPort: Send + Sync {
+    fn receive<'a>(&'a self) -> CredentialBytesFuture<'a>;
+}
+
+pub trait CredentialVerificationPort: Send + Sync {
+    fn inspect<'a>(&'a self, signed_bytes: &'a [u8]) -> CredentialInspectionFuture<'a>;
+}
+
+pub trait CredentialRepository: Send + Sync {
+    fn upsert(&self, record: CredentialRecord) -> Result<(), CredentialRepositoryError>;
+    fn list(
+        &self,
+        profile_id: &CredentialProfileId,
+    ) -> Result<Vec<CredentialRecord>, CredentialRepositoryError>;
+    fn get(
+        &self,
+        profile_id: &CredentialProfileId,
+        credential_id: &CredentialId,
+    ) -> Result<CredentialRecord, CredentialRepositoryError>;
+    fn remove(
+        &self,
+        profile_id: &CredentialProfileId,
+        credential_id: &CredentialId,
+    ) -> Result<(), CredentialRepositoryError>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialInspection {
+    pub id: CredentialId,
+    pub metadata: CredentialMetadata,
+    pub verification: VerificationReport,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialIngressError {
+    Unavailable,
+    Rejected,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialVerificationError {
+    Unavailable,
+    UnsupportedFormat,
+    InvalidCredential,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialRepositoryError {
+    NotFound,
+    CapacityExceeded,
+    Integrity,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CredentialOperationError {
+    InvalidProfileIdentifier(OpaqueIdError),
+    InvalidCredentialIdentifier(OpaqueIdError),
+    Domain(CredentialDomainError),
+    Ingress(CredentialIngressError),
+    Verification(CredentialVerificationError),
+    Persistence(CredentialRepositoryError),
+    ConfirmationRequired,
+    InvalidConfirmation,
+}
+
+impl fmt::Display for CredentialOperationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidProfileIdentifier(error) | Self::InvalidCredentialIdentifier(error) => {
+                error.fmt(formatter)
+            }
+            Self::Domain(error) => error.fmt(formatter),
+            Self::Ingress(error) => error.fmt(formatter),
+            Self::Verification(error) => error.fmt(formatter),
+            Self::Persistence(error) => error.fmt(formatter),
+            Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
+            Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
+        }
+    }
+}
+
+impl Error for CredentialOperationError {}
+
+macro_rules! display_error {
+    ($type:ty, $($variant:ident => $message:literal),+ $(,)?) => {
+        impl fmt::Display for $type {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(match self { $(Self::$variant => $message),+ })
+            }
+        }
+        impl Error for $type {}
+    };
+}
+
+display_error!(CredentialIngressError,
+    Unavailable => "credential ingress capability is unavailable",
+    Rejected => "credential ingress was rejected",
+);
+display_error!(CredentialVerificationError,
+    Unavailable => "credential verification capability is unavailable",
+    UnsupportedFormat => "credential format is unsupported",
+    InvalidCredential => "credential could not be inspected",
+);
+display_error!(CredentialRepositoryError,
+    NotFound => "credential was not found",
+    CapacityExceeded => "credential capacity was exceeded",
+    Integrity => "credential storage failed integrity validation",
+    Unavailable => "credential storage is unavailable",
+);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialQuery {
+    pub profile_id: String,
+    pub credential_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialProfileQuery {
+    pub profile_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeleteCredentialCommand {
+    pub profile_id: String,
+    pub credential_id: String,
+    pub confirmed: bool,
+    pub intent: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerificationStageView {
+    pub name: String,
+    pub status: String,
+    pub reason_code: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialView {
+    pub id: String,
+    pub display_name: String,
+    pub issuer_did: String,
+    pub subject_did: Option<String>,
+    pub format: String,
+    pub issued_at_ms: Option<u64>,
+    pub verification_outcome: String,
+    pub verification_stages: Vec<VerificationStageView>,
+}
+
+impl From<&CredentialRecord> for CredentialView {
+    fn from(record: &CredentialRecord) -> Self {
+        let metadata = record.metadata();
+        Self {
+            id: record.id().as_str().to_owned(),
+            display_name: metadata.display_name().to_owned(),
+            issuer_did: metadata.issuer_did().to_owned(),
+            subject_did: metadata.subject_did().map(str::to_owned),
+            format: metadata.format().as_str().to_owned(),
+            issued_at_ms: metadata.issued_at().map(|value| value.value()),
+            verification_outcome: record.verification().outcome().as_str().to_owned(),
+            verification_stages: record
+                .verification()
+                .stages()
+                .iter()
+                .map(|stage| VerificationStageView {
+                    name: stage.name().as_str().to_owned(),
+                    status: stage.status().as_str().to_owned(),
+                    reason_code: stage.reason_code().map(str::to_owned),
+                })
+                .collect(),
+        }
+    }
+}
+
+pub trait ReceiveCredentialUseCase: Send + Sync {
+    fn execute<'a>(&'a self, query: CredentialProfileQuery) -> CredentialViewFuture<'a>;
+}
+pub trait ListCredentialsUseCase: Send + Sync {
+    fn execute(
+        &self,
+        query: CredentialProfileQuery,
+    ) -> Result<Vec<CredentialView>, CredentialOperationError>;
+}
+pub trait GetCredentialUseCase: Send + Sync {
+    fn execute(&self, query: CredentialQuery) -> Result<CredentialView, CredentialOperationError>;
+}
+pub trait ReverifyCredentialUseCase: Send + Sync {
+    fn execute<'a>(&'a self, query: CredentialQuery) -> CredentialViewFuture<'a>;
+}
+pub trait DeleteCredentialUseCase: Send + Sync {
+    fn execute(&self, command: DeleteCredentialCommand) -> Result<(), CredentialOperationError>;
+}
+
+pub struct CredentialService {
+    repository: Arc<dyn CredentialRepository>,
+    inbox: Arc<dyn CredentialInboxPort>,
+    verifier: Arc<dyn CredentialVerificationPort>,
+}
+
+impl CredentialService {
+    #[must_use]
+    pub const fn from_ports(
+        repository: Arc<dyn CredentialRepository>,
+        inbox: Arc<dyn CredentialInboxPort>,
+        verifier: Arc<dyn CredentialVerificationPort>,
+    ) -> Self {
+        Self {
+            repository,
+            inbox,
+            verifier,
+        }
+    }
+}
+
+fn profile(value: String) -> Result<CredentialProfileId, CredentialOperationError> {
+    CredentialProfileId::parse(value).map_err(CredentialOperationError::InvalidProfileIdentifier)
+}
+
+fn credential_id(value: String) -> Result<CredentialId, CredentialOperationError> {
+    CredentialId::parse(value).map_err(CredentialOperationError::InvalidCredentialIdentifier)
+}
+
+impl ReceiveCredentialUseCase for CredentialService {
+    fn execute<'a>(&'a self, query: CredentialProfileQuery) -> CredentialViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = profile(query.profile_id)?;
+            let bytes = self
+                .inbox
+                .receive()
+                .await
+                .map_err(CredentialOperationError::Ingress)?;
+            let inspection = self
+                .verifier
+                .inspect(&bytes)
+                .await
+                .map_err(CredentialOperationError::Verification)?;
+            let record = CredentialRecord::new(
+                profile_id,
+                inspection.id,
+                bytes,
+                inspection.metadata,
+                inspection.verification,
+            )
+            .map_err(CredentialOperationError::Domain)?;
+            self.repository
+                .upsert(record.clone())
+                .map_err(CredentialOperationError::Persistence)?;
+            Ok(CredentialView::from(&record))
+        })
+    }
+}
+
+impl ListCredentialsUseCase for CredentialService {
+    fn execute(
+        &self,
+        query: CredentialProfileQuery,
+    ) -> Result<Vec<CredentialView>, CredentialOperationError> {
+        let profile_id = profile(query.profile_id)?;
+        let mut records = self
+            .repository
+            .list(&profile_id)
+            .map_err(CredentialOperationError::Persistence)?;
+        records.sort_by(|left, right| left.id().cmp(right.id()));
+        Ok(records.iter().map(CredentialView::from).collect())
+    }
+}
+
+impl GetCredentialUseCase for CredentialService {
+    fn execute(&self, query: CredentialQuery) -> Result<CredentialView, CredentialOperationError> {
+        let profile_id = profile(query.profile_id)?;
+        let credential_id = credential_id(query.credential_id)?;
+        let record = self
+            .repository
+            .get(&profile_id, &credential_id)
+            .map_err(CredentialOperationError::Persistence)?;
+        Ok(CredentialView::from(&record))
+    }
+}
+
+impl ReverifyCredentialUseCase for CredentialService {
+    fn execute<'a>(&'a self, query: CredentialQuery) -> CredentialViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = profile(query.profile_id)?;
+            let credential_id = credential_id(query.credential_id)?;
+            let mut record = self
+                .repository
+                .get(&profile_id, &credential_id)
+                .map_err(CredentialOperationError::Persistence)?;
+            let inspection = self
+                .verifier
+                .inspect(record.signed_bytes())
+                .await
+                .map_err(CredentialOperationError::Verification)?;
+            record
+                .replace_inspection(inspection.id, inspection.metadata, inspection.verification)
+                .map_err(CredentialOperationError::Domain)?;
+            self.repository
+                .upsert(record.clone())
+                .map_err(CredentialOperationError::Persistence)?;
+            Ok(CredentialView::from(&record))
+        })
+    }
+}
+
+impl DeleteCredentialUseCase for CredentialService {
+    fn execute(&self, command: DeleteCredentialCommand) -> Result<(), CredentialOperationError> {
+        if !command.confirmed {
+            return Err(CredentialOperationError::ConfirmationRequired);
+        }
+        if command.intent != "DELETE_CREDENTIAL" {
+            return Err(CredentialOperationError::InvalidConfirmation);
+        }
+        let profile_id = profile(command.profile_id)?;
+        let credential_id = credential_id(command.credential_id)?;
+        self.repository
+            .remove(&profile_id, &credential_id)
+            .map_err(CredentialOperationError::Persistence)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableCredentialInbox;
+impl CredentialInboxPort for UnavailableCredentialInbox {
+    fn receive<'a>(&'a self) -> CredentialBytesFuture<'a> {
+        Box::pin(async { Err(CredentialIngressError::Unavailable) })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableCredentialVerifier;
+impl CredentialVerificationPort for UnavailableCredentialVerifier {
+    fn inspect<'a>(&'a self, _: &'a [u8]) -> CredentialInspectionFuture<'a> {
+        Box::pin(async { Err(CredentialVerificationError::Unavailable) })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableCredentialRepository;
+impl CredentialRepository for UnavailableCredentialRepository {
+    fn upsert(&self, _: CredentialRecord) -> Result<(), CredentialRepositoryError> {
+        Err(CredentialRepositoryError::Unavailable)
+    }
+    fn list(
+        &self,
+        _: &CredentialProfileId,
+    ) -> Result<Vec<CredentialRecord>, CredentialRepositoryError> {
+        Err(CredentialRepositoryError::Unavailable)
+    }
+    fn get(
+        &self,
+        _: &CredentialProfileId,
+        _: &CredentialId,
+    ) -> Result<CredentialRecord, CredentialRepositoryError> {
+        Err(CredentialRepositoryError::Unavailable)
+    }
+    fn remove(
+        &self,
+        _: &CredentialProfileId,
+        _: &CredentialId,
+    ) -> Result<(), CredentialRepositoryError> {
+        Err(CredentialRepositoryError::Unavailable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oxid_credential_domain::{
+        CredentialFormat, VerificationOutcome, VerificationStage, VerificationStageName,
+        VerificationStageStatus,
+    };
+    use oxid_foundation::UnixTimestampMillis;
+    use std::sync::RwLock;
+
+    #[derive(Default)]
+    struct Memory(RwLock<Vec<CredentialRecord>>);
+    impl CredentialRepository for Memory {
+        fn upsert(&self, record: CredentialRecord) -> Result<(), CredentialRepositoryError> {
+            let mut records = self
+                .0
+                .write()
+                .map_err(|_| CredentialRepositoryError::Unavailable)?;
+            records
+                .retain(|old| old.profile_id() != record.profile_id() || old.id() != record.id());
+            records.push(record);
+            Ok(())
+        }
+        fn list(
+            &self,
+            profile: &CredentialProfileId,
+        ) -> Result<Vec<CredentialRecord>, CredentialRepositoryError> {
+            Ok(self
+                .0
+                .read()
+                .map_err(|_| CredentialRepositoryError::Unavailable)?
+                .iter()
+                .filter(|record| record.profile_id() == profile)
+                .cloned()
+                .collect())
+        }
+        fn get(
+            &self,
+            profile: &CredentialProfileId,
+            id: &CredentialId,
+        ) -> Result<CredentialRecord, CredentialRepositoryError> {
+            self.list(profile)?
+                .into_iter()
+                .find(|record| record.id() == id)
+                .ok_or(CredentialRepositoryError::NotFound)
+        }
+        fn remove(
+            &self,
+            profile: &CredentialProfileId,
+            id: &CredentialId,
+        ) -> Result<(), CredentialRepositoryError> {
+            let mut records = self
+                .0
+                .write()
+                .map_err(|_| CredentialRepositoryError::Unavailable)?;
+            let before = records.len();
+            records.retain(|record| record.profile_id() != profile || record.id() != id);
+            (records.len() != before)
+                .then_some(())
+                .ok_or(CredentialRepositoryError::NotFound)
+        }
+    }
+    struct Inbox;
+    impl CredentialInboxPort for Inbox {
+        fn receive<'a>(&'a self) -> CredentialBytesFuture<'a> {
+            Box::pin(async { Ok(vec![1, 2, 3]) })
+        }
+    }
+    struct Verifier;
+    impl CredentialVerificationPort for Verifier {
+        fn inspect<'a>(&'a self, _: &'a [u8]) -> CredentialInspectionFuture<'a> {
+            Box::pin(async {
+                let stages = VerificationStageName::ALL
+                    .into_iter()
+                    .map(|name| {
+                        VerificationStage::new(name, VerificationStageStatus::Passed, None)
+                            .expect("stage")
+                    })
+                    .collect();
+                Ok(CredentialInspection {
+                id: CredentialId::parse("vc_fixture").expect("id"),
+                metadata: CredentialMetadata::new("Fixture credential", "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", None, CredentialFormat::MidnightCborPhase1, Some(UnixTimestampMillis::new(7))).expect("metadata"),
+                verification: VerificationReport::new(VerificationOutcome::Valid, stages).expect("report"),
+            })
+            })
+        }
+    }
+
+    #[test]
+    fn receives_lists_and_requires_delete_confirmation() {
+        let service = CredentialService::from_ports(
+            Arc::new(Memory::default()),
+            Arc::new(Inbox),
+            Arc::new(Verifier),
+        );
+        let profile = CredentialProfileQuery {
+            profile_id: "profile_one".to_owned(),
+        };
+        let received =
+            poll(ReceiveCredentialUseCase::execute(&service, profile.clone())).expect("receive");
+        assert_eq!(received.verification_outcome, "valid");
+        assert_eq!(
+            ListCredentialsUseCase::execute(&service, profile)
+                .expect("list")
+                .len(),
+            1
+        );
+        assert_eq!(
+            DeleteCredentialUseCase::execute(
+                &service,
+                DeleteCredentialCommand {
+                    profile_id: "profile_one".to_owned(),
+                    credential_id: received.id,
+                    confirmed: false,
+                    intent: String::new()
+                }
+            ),
+            Err(CredentialOperationError::ConfirmationRequired)
+        );
+    }
+
+    fn poll<T>(mut future: Pin<Box<dyn Future<Output = T> + Send + '_>>) -> T {
+        use std::task::{Context, Poll, Waker};
+        let mut context = Context::from_waker(Waker::noop());
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(value) => value,
+            Poll::Pending => panic!("fixture future must be ready"),
+        }
+    }
+}

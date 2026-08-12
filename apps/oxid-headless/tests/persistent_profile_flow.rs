@@ -57,7 +57,9 @@ impl ProcessHarness {
             .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
-            .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH");
+            .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
+            .env_remove("OXID_CREDENTIAL_STORE_PATH")
+            .env_remove("OXID_CREDENTIAL_KEY_PATH");
         command.env_remove("OXID_MIDNIGHT_DID_RESOLVER_URL");
         for (key, value) in environment {
             command.env(key, value);
@@ -534,6 +536,75 @@ fn executable_restores_profile_selection_in_a_new_process() {
 }
 
 #[test]
+fn executable_restores_encrypted_credentials_in_a_new_process() {
+    let store = TestStore::new();
+    let mut first_process = ProcessHarness::spawn(&store.path);
+    let created = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-create-profile",
+        "method": "wallet.profile.create", "params": { "displayName": "Credential owner" }
+    }));
+    let profile_id = created["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile id")
+        .to_owned();
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1", "id": "credential-select-profile",
+            "method": "wallet.profile.select", "params": { "profileId": profile_id }
+        }))["ok"],
+        true
+    );
+    let received = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-receive",
+        "method": "credential.receive", "params": {}
+    }));
+    assert_eq!(
+        received["result"]["credential"]["verification"]["outcome"],
+        "valid"
+    );
+    let credential_id = received["result"]["credential"]["id"]
+        .as_str()
+        .expect("credential id")
+        .to_owned();
+    assert!(!received.to_string().contains("signedBytes"));
+    first_process.quit();
+
+    let encrypted_path = store.root.join("private/credentials.enc");
+    let key_path = store.root.join("private/credentials.key");
+    let encrypted = fs::read(&encrypted_path).expect("encrypted credential store");
+    assert!(encrypted.starts_with(b"OXIDVC01"));
+    assert!(
+        !encrypted
+            .windows(b"Identity credential".len())
+            .any(|window| window == b"Identity credential")
+    );
+    assert_eq!(
+        fs::read(&key_path).expect("development wrapping key").len(),
+        32
+    );
+
+    let mut second_process = ProcessHarness::spawn(&store.path);
+    let listed = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-list-restored",
+        "method": "credential.list", "params": {}
+    }));
+    assert_eq!(listed["result"]["credentials"][0]["id"], credential_id);
+    assert_eq!(
+        listed["result"]["credentials"][0]["verification"]["outcome"],
+        "valid"
+    );
+    let reverified = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-reverify-restored",
+        "method": "credential.reverify", "params": { "credentialId": credential_id }
+    }));
+    assert_eq!(
+        reverified["result"]["credential"]["verification"]["outcome"],
+        "valid"
+    );
+    second_process.quit();
+}
+
+#[test]
 fn executable_restores_profile_scoped_did_inventory_in_a_new_process() {
     const FIXTURE_DID: &str =
         "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -852,6 +923,30 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
     let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
     assert!(stderr.contains("requires the read-only indexer values"));
     assert!(!stderr.contains(LIVE_ADDRESS));
+}
+
+#[test]
+fn executable_fails_startup_on_partial_credential_configuration_without_echoing_values() {
+    let store = TestStore::new();
+    let private_route = store.root.join("private/do-not-echo-credentials.enc");
+    let output = Command::new(env!("CARGO_BIN_EXE_oxid-headless"))
+        .env("OXID_PROFILE_STORE_PATH", &store.path)
+        .env("OXID_CREDENTIAL_STORE_PATH", &private_route)
+        .env_remove("OXID_CREDENTIAL_KEY_PATH")
+        .env_remove("OXID_MIDNIGHT_NETWORK_ID")
+        .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
+        .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
+        .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
+        .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
+        .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
+        .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+        .output()
+        .expect("headless wallet should report startup failure");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
+    assert!(stderr.contains("credential store and key paths must be configured together"));
+    assert!(!stderr.contains("do-not-echo-credentials"));
 }
 
 #[test]

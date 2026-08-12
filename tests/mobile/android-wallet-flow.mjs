@@ -237,14 +237,26 @@ try {
     await waitForButton("Resolve and save");
     await clickButton("Resolve and save");
     await waitFor(
-      "document.body.innerText.includes('standalone-fixture-v1')",
+      "document.body.innerText.includes('standalone-fixture-v2')",
       "resolved standalone DID",
     );
     const didResolved = await evaluate(
-      "document.body.innerText.includes('standalone-fixture-v1')",
+      "document.body.innerText.includes('standalone-fixture-v2')",
     );
-    const result = { ...walletResult, didManaged, didResolved, qrRendered, shieldedAddressRendered };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.didManaged || !result.didResolved || !result.qrRendered || !result.shieldedAddressRendered) {
+    await clickButton("Credentials");
+    await waitForButton("Receive standalone credential");
+    await clickButton("Receive standalone credential");
+    await waitFor(
+      "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
+      "verified standalone credential",
+    );
+    await clickButton("Reverify");
+    await waitForButton("Reverify");
+    const credentialVerified = await evaluate(
+      "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid')",
+    );
+    const result = { ...walletResult, credentialVerified, didManaged, didResolved, qrRendered, shieldedAddressRendered };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.credentialVerified || !result.didManaged || !result.didResolved || !result.qrRendered || !result.shieldedAddressRendered) {
       throw new Error("Android standalone wallet flow did not expose the expected public result");
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -259,17 +271,26 @@ try {
     }))()`);
     await clickButton("DIDs");
     await waitFor(
-      "document.body.innerText.includes('standalone-fixture-v1')",
+      "document.body.innerText.includes('standalone-fixture-v2')",
       "restored DID inventory",
     );
     const didRestored = await evaluate(
-      "document.body.innerText.includes('standalone-fixture-v1')",
+      "document.body.innerText.includes('standalone-fixture-v2')",
     );
     const managedDidRestored = await evaluate(
       "document.body.innerText.includes('standalone-3') && document.body.innerText.includes('Deactivated')",
     );
-    const restored = { ...walletRestored, didRestored, managedDidRestored };
-    if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored || !restored.didRestored || !restored.managedDidRestored) {
+    await clickButton("Credentials");
+    await waitFor(
+      "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid')",
+      "restored credential inventory",
+    );
+    await waitForButton("Reverify");
+    const credentialRestored = await evaluate(
+      "document.body.innerText.includes('Identity credential') && document.body.innerText.includes('valid')",
+    );
+    const restored = { ...walletRestored, credentialRestored, didRestored, managedDidRestored };
+    if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored || !restored.credentialRestored || !restored.didRestored || !restored.managedDidRestored) {
       throw new Error("Android restart did not restore public profile and submission metadata");
     }
     process.stdout.write(`${JSON.stringify(restored)}\n`);

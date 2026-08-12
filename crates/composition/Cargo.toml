@@ -10,12 +10,15 @@ publish = false
 
 [dependencies]
 oxid-adapter-did-midnight.workspace = true
+oxid-adapter-storage-credential-json.workspace = true
 oxid-adapter-midnight.workspace = true
 oxid-adapter-platform-system.workspace = true
 oxid-adapter-storage-json.workspace = true
 oxid-adapter-storage-memory.workspace = true
 oxid-adapter-storage-dev.workspace = true
 oxid-adapter-storage-identity-json.workspace = true
+oxid-adapter-vc-midnight.workspace = true
+oxid-credential-application.workspace = true
 oxid-identity-application.workspace = true
 oxid-wallet-application.workspace = true
 

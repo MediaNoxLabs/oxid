@@ -112,7 +112,20 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(resolveDid.waitForExistence(timeout: 5))
         scrollTo(resolveDid, in: application)
         resolveDid.tap()
-        XCTAssertTrue(application.staticTexts["standalone-fixture-v1"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["standalone-fixture-v2"].waitForExistence(timeout: 10))
+
+        let credentials = application.buttons["Credentials"]
+        XCTAssertTrue(credentials.waitForExistence(timeout: 5))
+        credentials.tap()
+        let receiveCredential = application.buttons["Receive standalone credential"]
+        XCTAssertTrue(receiveCredential.waitForExistence(timeout: 5))
+        receiveCredential.tap()
+        XCTAssertTrue(application.staticTexts["Identity credential"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["valid"].waitForExistence(timeout: 10))
+        let reverify = application.buttons["Reverify"]
+        scrollTo(reverify, in: application)
+        reverify.tap()
+        XCTAssertTrue(reverify.waitForExistence(timeout: 10))
 
         application.terminate()
         application.launch()
@@ -120,8 +133,11 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(activateButton.waitForExistence(timeout: 15))
         XCTAssertTrue(application.staticTexts["Transfer included"].waitForExistence(timeout: 15))
         dids.tap()
-        XCTAssertTrue(application.staticTexts["standalone-fixture-v1"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["standalone-fixture-v2"].waitForExistence(timeout: 10))
         XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 10))
+        credentials.tap()
+        XCTAssertTrue(application.staticTexts["Identity credential"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.buttons["Reverify"].waitForExistence(timeout: 5))
         XCTAssertTrue(application.buttons["Assets"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
     }

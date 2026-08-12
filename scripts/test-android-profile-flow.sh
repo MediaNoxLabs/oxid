@@ -127,4 +127,13 @@ if [ -z "$($adb_command -s "$device" shell pidof io.medianox.oxid | tr -d '\r')"
   exit 1
 fi
 
-echo "Android protected account, DUST/shielded sync, receive QR, transfer, and profile-restore smoke flow passed on $device."
+credential_header="$($adb_command -s "$device" shell run-as io.medianox.oxid \
+  od -An -tx1 -N8 files/oxid/private/credentials.enc 2>/dev/null | tr -d ' \r\n')"
+credential_key_size="$($adb_command -s "$device" shell run-as io.medianox.oxid \
+  wc -c files/oxid/private/credentials.key 2>/dev/null | awk '{print $1}' | tr -d '\r')"
+if [ "$credential_header" != "4f58494456433031" ] || [ "$credential_key_size" != "32" ]; then
+  echo "Android credential inventory was not restored from the protected standalone store." >&2
+  exit 1
+fi
+
+echo "Android protected account, credential verification/restore, DUST/shielded sync, receive QR, transfer, and profile-restore smoke flow passed on $device."

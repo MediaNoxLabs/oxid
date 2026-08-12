@@ -5,12 +5,16 @@ members = [
   "apps/oxid-headless",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
+  "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
+  "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
   "crates/adapters/storage-memory",
   "crates/adapters/storage-dev",
   "crates/composition",
+  "crates/credential/application",
+  "crates/credential/domain",
   "crates/foundation",
   "crates/identity/application",
   "crates/identity/domain",
@@ -24,12 +28,16 @@ default-members = [
   "apps/oxid-headless",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
+  "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
+  "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
   "crates/adapters/storage-memory",
   "crates/adapters/storage-dev",
   "crates/composition",
+  "crates/credential/application",
+  "crates/credential/domain",
   "crates/foundation",
   "crates/identity/application",
   "crates/identity/domain",
@@ -49,7 +57,10 @@ authors = ["Oxid contributors"]
 
 [workspace.dependencies]
 anyhow = { version = "=1.0.104" }
+base64 = { version = "=0.22.1" }
 bech32 = { version = "=0.11.0" }
+chacha20poly1305 = { version = "=0.11.0", features = ["zeroize"] }
+ciborium = { version = "=0.2.2" }
 bip32 = { version = "=0.5.3", default-features = false, features = ["secp256k1", "std"] }
 dioxus = { version = "=0.7.10", default-features = false }
 directories = { version = "=6.0.0" }
@@ -84,13 +95,17 @@ webpki-root-certs = "=1.0.9"
 zeroize = { version = "=1.9.0" }
 
 oxid-adapter-midnight = { version = "=0.1.0", path = "crates/adapters/midnight" }
+oxid-adapter-vc-midnight = { version = "=0.1.0", path = "crates/adapters/vc-midnight" }
 oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-midnight" }
+oxid-adapter-storage-credential-json = { version = "=0.1.0", path = "crates/adapters/storage-credential-json" }
 oxid-adapter-storage-identity-json = { version = "=0.1.0", path = "crates/adapters/storage-identity-json" }
 oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }
 oxid-adapter-storage-json = { version = "=0.1.0", path = "crates/adapters/storage-json" }
 oxid-adapter-storage-memory = { version = "=0.1.0", path = "crates/adapters/storage-memory" }
 oxid-adapter-storage-dev = { version = "=0.1.0", path = "crates/adapters/storage-dev" }
 oxid-composition = { version = "=0.1.0", path = "crates/composition" }
+oxid-credential-application = { version = "=0.1.0", path = "crates/credential/application" }
+oxid-credential-domain = { version = "=0.1.0", path = "crates/credential/domain" }
 oxid-foundation = { version = "=0.1.0", path = "crates/foundation" }
 oxid-identity-application = { version = "=0.1.0", path = "crates/identity/application" }
 oxid-identity-domain = { version = "=0.1.0", path = "crates/identity/domain" }

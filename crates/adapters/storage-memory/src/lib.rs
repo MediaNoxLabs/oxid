@@ -4,6 +4,8 @@
 
 use std::{collections::BTreeMap, sync::RwLock};
 
+use oxid_credential_application::{CredentialRepository, CredentialRepositoryError};
+use oxid_credential_domain::{CredentialId, CredentialProfileId, CredentialRecord};
 use oxid_identity_application::{DidRecordRepository, DidRecordRepositoryError};
 use oxid_identity_domain::{DidRecord, IdentityProfileId, MidnightDid};
 use oxid_wallet_application::{WalletProfileRepository, WalletProfileRepositoryError};
@@ -153,6 +155,82 @@ impl DidRecordRepository for InMemoryDidRecordRepository {
             .remove(&(profile_id.as_str().to_owned(), did.as_str().to_owned()))
             .map(|_| ())
             .ok_or(DidRecordRepositoryError::NotFound)
+    }
+}
+
+/// Process-local credential storage for application and incoming-adapter tests.
+/// Original signed bytes remain private to the repository boundary.
+#[derive(Default)]
+pub struct InMemoryCredentialRepository {
+    records: RwLock<BTreeMap<(String, String), CredentialRecord>>,
+}
+
+impl InMemoryCredentialRepository {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl CredentialRepository for InMemoryCredentialRepository {
+    fn upsert(&self, record: CredentialRecord) -> Result<(), CredentialRepositoryError> {
+        let key = (
+            record.profile_id().as_str().to_owned(),
+            record.id().as_str().to_owned(),
+        );
+        self.records
+            .write()
+            .map_err(|_| CredentialRepositoryError::Unavailable)?
+            .insert(key, record);
+        Ok(())
+    }
+
+    fn list(
+        &self,
+        profile_id: &CredentialProfileId,
+    ) -> Result<Vec<CredentialRecord>, CredentialRepositoryError> {
+        self.records
+            .read()
+            .map(|records| {
+                records
+                    .iter()
+                    .filter(|((profile, _), _)| profile == profile_id.as_str())
+                    .map(|(_, record)| record.clone())
+                    .collect()
+            })
+            .map_err(|_| CredentialRepositoryError::Unavailable)
+    }
+
+    fn get(
+        &self,
+        profile_id: &CredentialProfileId,
+        credential_id: &CredentialId,
+    ) -> Result<CredentialRecord, CredentialRepositoryError> {
+        self.records
+            .read()
+            .map_err(|_| CredentialRepositoryError::Unavailable)?
+            .get(&(
+                profile_id.as_str().to_owned(),
+                credential_id.as_str().to_owned(),
+            ))
+            .cloned()
+            .ok_or(CredentialRepositoryError::NotFound)
+    }
+
+    fn remove(
+        &self,
+        profile_id: &CredentialProfileId,
+        credential_id: &CredentialId,
+    ) -> Result<(), CredentialRepositoryError> {
+        self.records
+            .write()
+            .map_err(|_| CredentialRepositoryError::Unavailable)?
+            .remove(&(
+                profile_id.as_str().to_owned(),
+                credential_id.as_str().to_owned(),
+            ))
+            .map(|_| ())
+            .ok_or(CredentialRepositoryError::NotFound)
     }
 }
 

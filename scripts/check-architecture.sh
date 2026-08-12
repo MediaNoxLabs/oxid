@@ -72,13 +72,17 @@ check_no_external_dependencies() {
 check_workspace_dependencies oxid-foundation
 check_workspace_dependencies oxid-wallet-domain oxid-foundation
 check_workspace_dependencies oxid-identity-domain oxid-foundation
+check_workspace_dependencies oxid-credential-domain oxid-foundation
 check_workspace_dependencies oxid-platform-ports oxid-foundation
 check_workspace_dependencies oxid-wallet-application \
   oxid-foundation oxid-platform-ports oxid-wallet-domain
 check_workspace_dependencies oxid-identity-application \
   oxid-foundation oxid-identity-domain
+check_workspace_dependencies oxid-credential-application \
+  oxid-credential-domain oxid-foundation
 check_workspace_dependencies oxid-adapter-storage-memory \
-  oxid-foundation oxid-identity-application oxid-identity-domain \
+  oxid-credential-application oxid-credential-domain oxid-foundation \
+  oxid-identity-application oxid-identity-domain \
   oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-dev \
   oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
@@ -92,16 +96,24 @@ check_workspace_dependencies oxid-adapter-did-midnight \
   oxid-identity-application oxid-identity-domain oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-identity-json \
   oxid-identity-application oxid-identity-domain
+check_workspace_dependencies oxid-adapter-storage-credential-json \
+  oxid-credential-application oxid-credential-domain oxid-foundation
+check_workspace_dependencies oxid-adapter-vc-midnight \
+  oxid-credential-application oxid-credential-domain oxid-foundation \
+  oxid-identity-application oxid-identity-domain
 check_workspace_dependencies oxid-ui-dioxus \
-  oxid-identity-application oxid-identity-domain oxid-wallet-application
+  oxid-credential-application oxid-identity-application oxid-identity-domain \
+  oxid-wallet-application
 check_workspace_dependencies oxid-composition \
-  oxid-adapter-did-midnight oxid-adapter-platform-system oxid-adapter-storage-json \
-  oxid-adapter-storage-identity-json \
+  oxid-adapter-did-midnight oxid-adapter-platform-system \
+  oxid-adapter-storage-credential-json oxid-adapter-storage-json \
+  oxid-adapter-storage-identity-json oxid-adapter-vc-midnight \
   oxid-adapter-storage-memory oxid-adapter-storage-dev oxid-adapter-midnight \
-  oxid-identity-application oxid-wallet-application
+  oxid-credential-application oxid-identity-application oxid-wallet-application
 check_workspace_dependencies oxid-app oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
-  oxid-composition oxid-identity-application oxid-identity-domain \
+  oxid-composition oxid-credential-application \
+  oxid-identity-application oxid-identity-domain \
   oxid-wallet-application oxid-wallet-domain
 
 unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' || true)"
@@ -116,8 +128,10 @@ fi
 check_no_external_dependencies oxid-foundation
 check_no_external_dependencies oxid-wallet-domain
 check_no_external_dependencies oxid-identity-domain
+check_no_external_dependencies oxid-credential-domain
 check_no_external_dependencies oxid-platform-ports
 check_no_external_dependencies oxid-wallet-application
 check_no_external_dependencies oxid-identity-application
+check_no_external_dependencies oxid-credential-application
 
 echo "Architecture dependency rules passed."

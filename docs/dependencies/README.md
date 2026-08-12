@@ -16,6 +16,7 @@ Current reviews and source policies:
 - [getrandom 0.3](getrandom-0.3.md)
 - [jni 0.21 and ndk-context 0.1](jni-ndk-context.md)
 - [qrcode 0.14](qrcode-0.14.md)
+- [chacha20poly1305 0.11](chacha20poly1305-0.11.md)
 - [RustCrypto development signing stack](rustcrypto-development-signing.md)
 - [Serde and serde_json](serde-json.md)
 - [Tokio and tokio-tungstenite](tokio-tungstenite-0.30.md)

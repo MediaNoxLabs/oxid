@@ -28,10 +28,20 @@ use oxid_adapter_midnight::{
 };
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
+use oxid_adapter_storage_credential_json::EncryptedJsonCredentialRepository;
 use oxid_adapter_storage_dev::{DevelopmentWalletSecurity, UnavailableWalletSecurity};
 use oxid_adapter_storage_identity_json::JsonDidRecordRepository;
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
-use oxid_adapter_storage_memory::{InMemoryDidRecordRepository, InMemoryWalletProfileRepository};
+use oxid_adapter_storage_memory::{
+    InMemoryCredentialRepository, InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
+};
+use oxid_adapter_vc_midnight::{MidnightCborCredentialVerifier, StandaloneCredentialInbox};
+use oxid_credential_application::{
+    CredentialInboxPort, CredentialRepository, CredentialService, CredentialVerificationPort,
+    DeleteCredentialUseCase, GetCredentialUseCase, ListCredentialsUseCase,
+    ReceiveCredentialUseCase, ReverifyCredentialUseCase, UnavailableCredentialInbox,
+    UnavailableCredentialRepository, UnavailableCredentialVerifier,
+};
 use oxid_identity_application::{
     CreateDidUseCase, DeactivateDidUseCase, DidLifecyclePort, DidRecordRepository,
     DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase,
@@ -101,6 +111,20 @@ pub struct ApplicationServices {
     deactivate_did: Arc<dyn DeactivateDidUseCase>,
     sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
     forget_did: Arc<dyn ForgetDidUseCase>,
+    receive_credential: Arc<dyn ReceiveCredentialUseCase>,
+    list_credentials: Arc<dyn ListCredentialsUseCase>,
+    get_credential: Arc<dyn GetCredentialUseCase>,
+    reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
+    delete_credential: Arc<dyn DeleteCredentialUseCase>,
+}
+
+struct IdentityAdapters {
+    did_repository: Arc<dyn DidRecordRepository>,
+    did_resolver: Arc<dyn DidResolutionPort>,
+    did_lifecycle: Arc<dyn DidLifecyclePort>,
+    credential_repository: Arc<dyn CredentialRepository>,
+    credential_inbox: Arc<dyn CredentialInboxPort>,
+    credential_verifier: Arc<dyn CredentialVerificationPort>,
 }
 
 impl ApplicationServices {
@@ -306,6 +330,31 @@ impl ApplicationServices {
     pub fn forget_did(&self) -> Arc<dyn ForgetDidUseCase> {
         Arc::clone(&self.forget_did)
     }
+
+    #[must_use]
+    pub fn receive_credential(&self) -> Arc<dyn ReceiveCredentialUseCase> {
+        Arc::clone(&self.receive_credential)
+    }
+
+    #[must_use]
+    pub fn list_credentials(&self) -> Arc<dyn ListCredentialsUseCase> {
+        Arc::clone(&self.list_credentials)
+    }
+
+    #[must_use]
+    pub fn get_credential(&self) -> Arc<dyn GetCredentialUseCase> {
+        Arc::clone(&self.get_credential)
+    }
+
+    #[must_use]
+    pub fn reverify_credential(&self) -> Arc<dyn ReverifyCredentialUseCase> {
+        Arc::clone(&self.reverify_credential)
+    }
+
+    #[must_use]
+    pub fn delete_credential(&self) -> Arc<dyn DeleteCredentialUseCase> {
+        Arc::clone(&self.delete_credential)
+    }
 }
 
 /// Wires the application with persistent public-profile metadata storage.
@@ -315,9 +364,14 @@ pub fn compose() -> ApplicationServices {
         Arc::new(JsonWalletProfileRepository::at_default_location()),
         Arc::new(UnavailableWalletSecurity),
         Arc::new(unavailable_midnight_wallet()),
-        Arc::new(UnavailableDidRecordRepository),
-        Arc::new(UnavailableDidResolver),
-        Arc::new(UnavailableDidLifecycle),
+        IdentityAdapters {
+            did_repository: Arc::new(UnavailableDidRecordRepository),
+            did_resolver: Arc::new(UnavailableDidResolver),
+            did_lifecycle: Arc::new(UnavailableDidLifecycle),
+            credential_repository: Arc::new(UnavailableCredentialRepository),
+            credential_inbox: Arc::new(UnavailableCredentialInbox),
+            credential_verifier: Arc::new(UnavailableCredentialVerifier),
+        },
     )
 }
 
@@ -393,6 +447,10 @@ pub const MIDNIGHT_SUBMISSION_JOURNAL_PATH_ENV: &str = "OXID_MIDNIGHT_SUBMISSION
 pub const MIDNIGHT_DID_RESOLVER_URL_ENV: &str = "OXID_MIDNIGHT_DID_RESOLVER_URL";
 /// Environment variable holding the app-private public DID record file.
 pub const DID_STORE_PATH_ENV: &str = "OXID_DID_STORE_PATH";
+/// Environment variable holding the app-private encrypted credential file.
+pub const CREDENTIAL_STORE_PATH_ENV: &str = "OXID_CREDENTIAL_STORE_PATH";
+/// Environment variable holding the development-only credential wrapping key.
+pub const CREDENTIAL_KEY_PATH_ENV: &str = "OXID_CREDENTIAL_KEY_PATH";
 
 /// Safe startup failures for optional standalone-indexer composition.
 #[cfg(not(target_arch = "wasm32"))]
@@ -408,6 +466,7 @@ pub enum HeadlessCompositionError {
     InvalidMidnightShieldedCheckpointConfiguration(MidnightShieldedCheckpointConfigError),
     InvalidMidnightSubmissionJournalConfiguration(MidnightSubmissionJournalConfigError),
     InvalidMidnightDidResolverConfiguration(HttpDidResolverConfigError),
+    IncompleteCredentialStoreConfiguration,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -434,6 +493,9 @@ impl std::fmt::Display for HeadlessCompositionError {
                 return error.fmt(formatter);
             }
             Self::InvalidMidnightDidResolverConfiguration(error) => return error.fmt(formatter),
+            Self::IncompleteCredentialStoreConfiguration => {
+                "credential store and key paths must be configured together"
+            }
         };
         formatter.write_str(message)
     }
@@ -448,6 +510,13 @@ impl std::error::Error for HeadlessCompositionError {}
 #[cfg(not(target_arch = "wasm32"))]
 pub fn compose_headless_from_environment() -> Result<ApplicationServices, HeadlessCompositionError>
 {
+    let credential_paths = (
+        read_optional_environment(CREDENTIAL_STORE_PATH_ENV)?,
+        read_optional_environment(CREDENTIAL_KEY_PATH_ENV)?,
+    );
+    if matches!(credential_paths, (Some(_), None) | (None, Some(_))) {
+        return Err(HeadlessCompositionError::IncompleteCredentialStoreConfiguration);
+    }
     read_optional_environment(MIDNIGHT_DID_RESOLVER_URL_ENV)?
         .map(HttpDidResolverConfig::new)
         .transpose()
@@ -837,9 +906,16 @@ pub fn compose_in_memory() -> ApplicationServices {
         Arc::new(InMemoryWalletProfileRepository::new()),
         security,
         midnight,
-        Arc::new(InMemoryDidRecordRepository::new()),
-        Arc::new(StandaloneDidResolver),
-        Arc::new(StandaloneDidLifecycle::new(key_operations)),
+        IdentityAdapters {
+            did_repository: Arc::new(InMemoryDidRecordRepository::new()),
+            did_resolver: Arc::new(StandaloneDidResolver),
+            did_lifecycle: Arc::new(StandaloneDidLifecycle::new(key_operations)),
+            credential_repository: Arc::new(InMemoryCredentialRepository::new()),
+            credential_inbox: Arc::new(StandaloneCredentialInbox),
+            credential_verifier: Arc::new(MidnightCborCredentialVerifier::new(Arc::new(
+                StandaloneDidResolver,
+            ))),
+        },
     )
 }
 
@@ -862,13 +938,22 @@ where
     let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
     let did_lifecycle: Arc<dyn DidLifecyclePort> =
         Arc::new(StandaloneDidLifecycle::new(key_operations));
+    let did_resolver = headless_did_resolver();
+    let verifier: Arc<dyn CredentialVerificationPort> = Arc::new(
+        MidnightCborCredentialVerifier::new(Arc::clone(&did_resolver)),
+    );
     compose_with_identity_adapters(
         repository,
         security,
         midnight,
-        headless_did_repository(),
-        headless_did_resolver(),
-        did_lifecycle,
+        IdentityAdapters {
+            did_repository: headless_did_repository(),
+            did_resolver,
+            did_lifecycle,
+            credential_repository: headless_credential_repository(),
+            credential_inbox: Arc::new(StandaloneCredentialInbox),
+            credential_verifier: verifier,
+        },
     )
 }
 
@@ -876,9 +961,7 @@ fn compose_with_identity_adapters<R, S, M>(
     repository: Arc<R>,
     security: Arc<S>,
     midnight: Arc<M>,
-    did_repository: Arc<dyn DidRecordRepository>,
-    did_resolver: Arc<dyn DidResolutionPort>,
-    did_lifecycle: Arc<dyn DidLifecyclePort>,
+    identity_adapters: IdentityAdapters,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository + 'static,
@@ -891,6 +974,14 @@ where
         + WalletTransactionPort
         + 'static,
 {
+    let IdentityAdapters {
+        did_repository,
+        did_resolver,
+        did_lifecycle,
+        credential_repository,
+        credential_inbox,
+        credential_verifier,
+    } = identity_adapters;
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let create_wallet_profile = Arc::new(CreateWalletProfileService::new(
@@ -913,6 +1004,11 @@ where
         did_repository,
         did_resolver,
         did_lifecycle,
+    ));
+    let credentials = Arc::new(CredentialService::from_ports(
+        credential_repository,
+        credential_inbox,
+        credential_verifier,
     ));
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
@@ -955,6 +1051,11 @@ where
     let deactivate_did: Arc<dyn DeactivateDidUseCase> = identity.clone();
     let sign_did_payload: Arc<dyn SignDidPayloadUseCase> = identity.clone();
     let forget_did: Arc<dyn ForgetDidUseCase> = identity;
+    let receive_credential: Arc<dyn ReceiveCredentialUseCase> = credentials.clone();
+    let list_credentials: Arc<dyn ListCredentialsUseCase> = credentials.clone();
+    let get_credential: Arc<dyn GetCredentialUseCase> = credentials.clone();
+    let reverify_credential: Arc<dyn ReverifyCredentialUseCase> = credentials.clone();
+    let delete_credential: Arc<dyn DeleteCredentialUseCase> = credentials;
 
     ApplicationServices {
         create_wallet_profile,
@@ -996,7 +1097,42 @@ where
         deactivate_did,
         sign_did_payload,
         forget_did,
+        receive_credential,
+        list_credentials,
+        get_credential,
+        reverify_credential,
+        delete_credential,
     }
+}
+
+fn headless_credential_repository() -> Arc<dyn CredentialRepository> {
+    let configured = (
+        std::env::var_os(CREDENTIAL_STORE_PATH_ENV),
+        std::env::var_os(CREDENTIAL_KEY_PATH_ENV),
+    );
+    let paths = match configured {
+        (Some(path), Some(key)) => Some((
+            std::path::PathBuf::from(path),
+            std::path::PathBuf::from(key),
+        )),
+        (None, None) => JsonWalletProfileRepository::at_default_location()
+            .configured_path()
+            .and_then(std::path::Path::parent)
+            .map(|directory| {
+                (
+                    directory.join("private/credentials.enc"),
+                    directory.join("private/credentials.key"),
+                )
+            }),
+        _ => None,
+    };
+    paths.map_or_else(
+        || Arc::new(UnavailableCredentialRepository) as Arc<dyn CredentialRepository>,
+        |(path, key)| {
+            Arc::new(EncryptedJsonCredentialRepository::new(path, key))
+                as Arc<dyn CredentialRepository>
+        },
+    )
 }
 
 fn headless_did_repository() -> Arc<dyn DidRecordRepository> {
@@ -1033,6 +1169,9 @@ fn headless_did_resolver() -> Arc<dyn DidResolutionPort> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxid_credential_application::{
+        CredentialOperationError, CredentialProfileQuery, CredentialRepositoryError,
+    };
     use oxid_identity_application::{
         DidOperationError, DidRecordRepositoryError, ListDidRecordsQuery,
     };
@@ -1101,6 +1240,11 @@ mod tests {
         drop(services.list_did_records());
         drop(services.get_did_record());
         drop(services.forget_did());
+        drop(services.receive_credential());
+        drop(services.list_credentials());
+        drop(services.get_credential());
+        drop(services.reverify_credential());
+        drop(services.delete_credential());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1217,9 +1361,14 @@ mod tests {
             Arc::new(InMemoryWalletProfileRepository::new()),
             Arc::new(UnavailableWalletSecurity),
             Arc::new(unavailable_midnight_wallet()),
-            Arc::new(UnavailableDidRecordRepository),
-            Arc::new(UnavailableDidResolver),
-            Arc::new(UnavailableDidLifecycle),
+            IdentityAdapters {
+                did_repository: Arc::new(UnavailableDidRecordRepository),
+                did_resolver: Arc::new(UnavailableDidResolver),
+                did_lifecycle: Arc::new(UnavailableDidLifecycle),
+                credential_repository: Arc::new(UnavailableCredentialRepository),
+                credential_inbox: Arc::new(UnavailableCredentialInbox),
+                credential_verifier: Arc::new(UnavailableCredentialVerifier),
+            },
         );
         let status = services
             .get_wallet_security_status()
@@ -1264,6 +1413,14 @@ mod tests {
             }),
             Err(DidOperationError::Persistence(
                 DidRecordRepositoryError::Unavailable
+            ))
+        );
+        assert_eq!(
+            services.list_credentials().execute(CredentialProfileQuery {
+                profile_id: "profile_test".to_owned(),
+            }),
+            Err(CredentialOperationError::Persistence(
+                CredentialRepositoryError::Unavailable
             ))
         );
         assert_eq!(

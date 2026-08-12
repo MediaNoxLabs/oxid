@@ -6,6 +6,10 @@
 use std::{error::Error, fmt, io, io::BufRead, io::Write, thread, time::Duration};
 
 use oxid_composition::ApplicationServices;
+use oxid_credential_application::{
+    CredentialOperationError, CredentialProfileQuery, CredentialQuery, CredentialRepositoryError,
+    CredentialVerificationError, CredentialView, DeleteCredentialCommand,
+};
 use oxid_identity_application::{
     CreateDidCommand, DeactivateDidCommand, DidKeyAlgorithm, DidLifecyclePortError,
     DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordRepositoryError,
@@ -184,6 +188,11 @@ impl HeadlessWallet {
             "did.sign" => self.sign_did(request),
             "did.deactivate" => self.deactivate_did(request),
             "did.forget" => self.forget_did(request),
+            "credential.receive" | "credential.request" => self.receive_credential(request),
+            "credential.list" => self.list_credentials(request),
+            "credential.get" => self.get_credential(request),
+            "credential.reverify" | "credential.verify" => self.reverify_credential(request),
+            "credential.delete" => self.delete_credential(request),
             _ => Dispatch::continue_with(Response::error(
                 request.id,
                 "method_not_found",
@@ -1438,6 +1447,143 @@ impl HeadlessWallet {
         }
     }
 
+    fn receive_credential(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return Dispatch::continue_with(Response::error(
+                request.id,
+                "invalid_params",
+                "credential.receive does not accept parameters",
+            ));
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match futures::executor::block_on(
+            self.application
+                .receive_credential()
+                .execute(CredentialProfileQuery { profile_id }),
+        ) {
+            Ok(credential) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "credential": credential_value(&credential) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_error(request.id, error)),
+        }
+    }
+
+    fn list_credentials(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return Dispatch::continue_with(Response::error(
+                request.id,
+                "invalid_params",
+                "credential.list does not accept parameters",
+            ));
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .list_credentials()
+            .execute(CredentialProfileQuery { profile_id })
+        {
+            Ok(credentials) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "credentials": credentials.iter().map(credential_value).collect::<Vec<_>>() }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_error(request.id, error)),
+        }
+    }
+
+    fn get_credential(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<CredentialParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.get requires only a string credentialId field",
+                ));
+            }
+        };
+        self.credential_query(request.id, params.credential_id, false)
+    }
+
+    fn reverify_credential(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<CredentialParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.reverify requires only a string credentialId field",
+                ));
+            }
+        };
+        self.credential_query(request.id, params.credential_id, true)
+    }
+
+    fn credential_query(
+        &self,
+        id: Option<String>,
+        credential_id: String,
+        reverify: bool,
+    ) -> Dispatch {
+        let profile_id = match self.active_profile_id(id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let query = CredentialQuery {
+            profile_id,
+            credential_id,
+        };
+        let result = if reverify {
+            futures::executor::block_on(self.application.reverify_credential().execute(query))
+        } else {
+            self.application.get_credential().execute(query)
+        };
+        match result {
+            Ok(credential) => Dispatch::continue_with(Response::success(
+                id,
+                json!({ "credential": credential_value(&credential) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_error(id, error)),
+        }
+    }
+
+    fn delete_credential(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<DeleteCredentialParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.delete requires credentialId, confirmed, and intent fields",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .delete_credential()
+            .execute(DeleteCredentialCommand {
+                profile_id,
+                credential_id: params.credential_id,
+                confirmed: params.confirmed,
+                intent: params.intent,
+            }) {
+            Ok(()) => {
+                Dispatch::continue_with(Response::success(request.id, json!({ "deleted": true })))
+            }
+            Err(error) => Dispatch::continue_with(credential_error(request.id, error)),
+        }
+    }
+
     fn active_profile_id(&self, id: Option<String>) -> Result<String, Response> {
         match self.application.get_active_wallet_profile().execute() {
             Ok(Some(profile)) => Ok(profile.id),
@@ -1573,6 +1719,20 @@ struct DeleteKeyParams {
 #[serde(deny_unknown_fields)]
 struct DidParams {
     did: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CredentialParams {
+    credential_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteCredentialParams {
+    credential_id: String,
+    confirmed: bool,
+    intent: String,
 }
 
 fn undeployed_network() -> String {
@@ -2175,6 +2335,81 @@ fn did_record_value(record: &DidRecordView) -> Value {
         "contentType": record.content_type,
         "source": record.source,
     })
+}
+
+fn credential_value(credential: &CredentialView) -> Value {
+    json!({
+        "id": credential.id,
+        "displayName": credential.display_name,
+        "issuerDid": credential.issuer_did,
+        "subjectDid": credential.subject_did,
+        "format": credential.format,
+        "issuedAtMs": credential.issued_at_ms,
+        "verification": {
+            "outcome": credential.verification_outcome,
+            "stages": credential.verification_stages.iter().map(|stage| json!({
+                "name": stage.name,
+                "status": stage.status,
+                "reasonCode": stage.reason_code,
+            })).collect::<Vec<_>>(),
+        },
+    })
+}
+
+fn credential_error(id: Option<String>, error: CredentialOperationError) -> Response {
+    match error {
+        CredentialOperationError::InvalidProfileIdentifier(_)
+        | CredentialOperationError::InvalidCredentialIdentifier(_)
+        | CredentialOperationError::Domain(_) => Response::error(
+            id,
+            "invalid_argument",
+            "credential request contains invalid identifiers or metadata",
+        ),
+        CredentialOperationError::ConfirmationRequired
+        | CredentialOperationError::InvalidConfirmation => Response::error(
+            id,
+            "confirmation_required",
+            "valid explicit credential deletion confirmation is required",
+        ),
+        CredentialOperationError::Ingress(_) => Response::error(
+            id,
+            "capability_unavailable",
+            "credential ingress capability is unavailable",
+        ),
+        CredentialOperationError::Verification(error) => match error {
+            CredentialVerificationError::Unavailable => Response::error(
+                id,
+                "capability_unavailable",
+                "credential verification capability is unavailable",
+            ),
+            CredentialVerificationError::UnsupportedFormat => {
+                Response::error(id, "unsupported_format", "credential format is unsupported")
+            }
+            CredentialVerificationError::InvalidCredential => Response::error(
+                id,
+                "invalid_credential",
+                "credential structure or proof encoding is invalid",
+            ),
+        },
+        CredentialOperationError::Persistence(error) => match error {
+            CredentialRepositoryError::NotFound => {
+                Response::error(id, "not_found", "credential was not found")
+            }
+            CredentialRepositoryError::CapacityExceeded => {
+                Response::error(id, "capacity_exceeded", "credential capacity was exceeded")
+            }
+            CredentialRepositoryError::Integrity => Response::error(
+                id,
+                "integrity_error",
+                "credential storage failed integrity validation",
+            ),
+            CredentialRepositoryError::Unavailable => Response::error(
+                id,
+                "capability_unavailable",
+                "credential storage is unavailable",
+            ),
+        },
+    }
 }
 
 fn did_error(id: Option<String>, error: DidOperationError) -> Response {
@@ -2866,8 +3101,13 @@ fn capability_manifest() -> Value {
         { "method": "vault.deposit", "status": "queued" },
         { "method": "vault.claim", "status": "queued" },
         { "method": "identity.login", "status": "queued" },
-        { "method": "credential.request", "status": "queued" },
-        { "method": "credential.verify", "status": "queued" },
+        { "method": "credential.receive", "status": "ready", "mode": "standalone", "source": "public_fixture" },
+        { "method": "credential.request", "status": "ready", "mode": "standalone", "aliasFor": "credential.receive" },
+        { "method": "credential.list", "status": "ready", "mode": "standalone", "scope": "active_profile" },
+        { "method": "credential.get", "status": "ready", "mode": "standalone", "scope": "active_profile", "rawCredentialExposed": false },
+        { "method": "credential.reverify", "status": "ready", "mode": "standalone", "stages": ["structural", "issuer", "proof", "temporal", "status", "schema", "trust"] },
+        { "method": "credential.verify", "status": "ready", "mode": "standalone", "aliasFor": "credential.reverify" },
+        { "method": "credential.delete", "status": "ready", "mode": "standalone", "confirmationRequired": true },
         { "method": "did.create", "status": "ready", "mode": "development_only", "networks": ["undeployed"], "initialMethods": ["ed25519", "p256"] },
         { "method": "did.resolve", "status": "ready", "mode": "standalone", "sources": ["standalone", "live"] },
         { "method": "did.list", "status": "ready", "mode": "standalone", "scope": "active_profile" },
@@ -2976,6 +3216,57 @@ mod tests {
                 && capability["status"] == "ready"
                 && capability["sources"] == json!(["standalone", "live"])
         }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "credential.reverify" && capability["status"] == "ready"
+        }));
+    }
+
+    #[test]
+    fn receives_reverifies_and_deletes_a_credential_without_exposing_wire_bytes() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"credential-profile","method":"wallet.profile.create","params":{"displayName":"Credential flow"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile");
+        let select = json!({"protocol": PROTOCOL_VERSION, "id": "credential-select", "method": "wallet.profile.select", "params": {"profileId": profile_id}}).to_string();
+        assert_eq!(execute_with_wallet(&wallet, &select)[0]["ok"], true);
+        let received = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"credential-receive","method":"credential.receive","params":{}}"#,
+        );
+        let credential = &received[0]["result"]["credential"];
+        assert_eq!(credential["verification"]["outcome"], "valid");
+        assert_eq!(
+            credential["verification"]["stages"]
+                .as_array()
+                .map(Vec::len),
+            Some(7)
+        );
+        assert!(credential.get("signedBytes").is_none());
+        let credential_id = credential["id"].as_str().expect("credential id");
+        let requests = format!(
+            "{}\n{}\n{}\n{}",
+            json!({"protocol": PROTOCOL_VERSION, "id": "credential-list", "method": "credential.list", "params": {}}),
+            json!({"protocol": PROTOCOL_VERSION, "id": "credential-verify", "method": "credential.reverify", "params": {"credentialId": credential_id}}),
+            json!({"protocol": PROTOCOL_VERSION, "id": "credential-delete-denied", "method": "credential.delete", "params": {"credentialId": credential_id, "confirmed": false, "intent": "DELETE_CREDENTIAL"}}),
+            json!({"protocol": PROTOCOL_VERSION, "id": "credential-delete", "method": "credential.delete", "params": {"credentialId": credential_id, "confirmed": true, "intent": "DELETE_CREDENTIAL"}}),
+        );
+        let responses = execute_with_wallet(&wallet, &requests);
+        assert_eq!(
+            responses[0]["result"]["credentials"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            responses[1]["result"]["credential"]["verification"]["outcome"],
+            "valid"
+        );
+        assert_eq!(responses[2]["error"]["code"], "confirmation_required");
+        assert_eq!(responses[3]["result"]["deleted"], true);
     }
 
     #[test]

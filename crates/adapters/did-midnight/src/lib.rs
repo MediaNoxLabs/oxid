@@ -48,8 +48,13 @@ fn standalone_resolution() -> Result<DidResolution, DidResolutionPortError> {
         &did,
         "#authentication-1",
         did.clone(),
-        PublicJwk::new(JwkKeyType::Okp, JwkCurve::Ed25519, "A".repeat(43), None)
-            .map_err(|_| DidResolutionPortError::InvalidResponse)?,
+        PublicJwk::new(
+            JwkKeyType::Okp,
+            JwkCurve::Ed25519,
+            "4A3l3ITUWOFUgNTdtN9BS3HEIpnEhewcfd_rEb3iSEo",
+            None,
+        )
+        .map_err(|_| DidResolutionPortError::InvalidResponse)?,
     )
     .map_err(|_| DidResolutionPortError::InvalidResponse)?;
     let agreement = VerificationMethod::new(
@@ -82,6 +87,10 @@ fn standalone_resolution() -> Result<DidResolution, DidResolutionPortError> {
                 vec!["#authentication-1".to_owned()],
             ),
             VerificationRelationshipEntry::new(
+                VerificationRelationship::AssertionMethod,
+                vec!["#authentication-1".to_owned()],
+            ),
+            VerificationRelationshipEntry::new(
                 VerificationRelationship::KeyAgreement,
                 vec!["#key-agreement-1".to_owned()],
             ),
@@ -92,7 +101,7 @@ fn standalone_resolution() -> Result<DidResolution, DidResolutionPortError> {
     Ok(DidResolution::new(
         document,
         DidDocumentMetadata {
-            version_id: Some("standalone-fixture-v1".to_owned()),
+            version_id: Some("standalone-fixture-v2".to_owned()),
             ..DidDocumentMetadata::default()
         },
         DidResolutionMetadata {
