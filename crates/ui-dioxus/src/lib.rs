@@ -2,21 +2,23 @@
 
 #![forbid(unsafe_code)]
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
 use oxid_wallet_application::{
-    AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CreateWalletProfileCommand,
-    CreateWalletProfileUseCase, DeriveWalletAccountCommand, DeriveWalletAccountUseCase,
-    GetActiveWalletProfileUseCase, GetWalletAccountUseCase, GetWalletSecurityStatusUseCase,
-    GetWalletTransferDraftUseCase, InitializeWalletSecurityUseCase, ListWalletNetworksUseCase,
-    ListWalletProfilesUseCase, LockWalletUseCase, PrepareWalletTransferCommand,
-    PrepareWalletTransferUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
-    SelectWalletProfileCommand, SelectWalletProfileUseCase, SensitiveOperationConfirmation,
+    AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
+    CreateWalletProfileCommand, CreateWalletProfileUseCase, DeriveWalletAccountCommand,
+    DeriveWalletAccountUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
+    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase, GetWalletTransferDraftUseCase,
+    InitializeWalletSecurityUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
+    LockWalletUseCase, PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
+    SelectWalletNetworkCommand, SelectWalletNetworkUseCase, SelectWalletProfileCommand,
+    SelectWalletProfileUseCase, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
     SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase, WalletAccountQuery, WalletAccountView, WalletNetworkListView,
-    WalletProfileSecurityCommand, WalletProfileView, WalletSecurityStatusView,
-    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionView,
+    UnlockWalletUseCase, WalletAccountQuery, WalletAccountView, WalletDustSyncCommand,
+    WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
+    WalletSecurityStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
+    WalletTransferSubmissionView,
 };
 
 const STYLES: &str = include_str!("../assets/styles.css");
@@ -37,6 +39,9 @@ pub struct WalletUiServices {
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
+    start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
+    cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
@@ -121,6 +126,28 @@ impl WalletAccountUiServices {
     }
 }
 
+/// Key-scoped DUST synchronization use cases consumed by the Assets page.
+pub struct WalletDustSyncUiServices {
+    get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
+    start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
+    cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
+}
+
+impl WalletDustSyncUiServices {
+    #[must_use]
+    pub const fn new(
+        get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
+        start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
+        cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
+    ) -> Self {
+        Self {
+            get_wallet_dust_sync_status,
+            start_wallet_dust_sync,
+            cancel_wallet_dust_sync,
+        }
+    }
+}
+
 /// Transaction use cases consumed by the Assets page.
 pub struct WalletTransactionUiServices {
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
@@ -152,6 +179,7 @@ impl WalletUiServices {
         profiles: WalletProfileUiServices,
         security: WalletSecurityUiServices,
         account: WalletAccountUiServices,
+        dust: WalletDustSyncUiServices,
         transactions: WalletTransactionUiServices,
     ) -> Self {
         Self {
@@ -168,6 +196,9 @@ impl WalletUiServices {
             derive_wallet_account: account.derive_wallet_account,
             get_wallet_account: account.get_wallet_account,
             sync_wallet_account: account.sync_wallet_account,
+            get_wallet_dust_sync_status: dust.get_wallet_dust_sync_status,
+            start_wallet_dust_sync: dust.start_wallet_dust_sync,
+            cancel_wallet_dust_sync: dust.cancel_wallet_dust_sync,
             prepare_wallet_transfer: transactions.prepare_wallet_transfer,
             authorize_wallet_transfer: transactions.authorize_wallet_transfer,
             submit_wallet_transfer: transactions.submit_wallet_transfer,
@@ -238,6 +269,21 @@ impl WalletUiServices {
     #[must_use]
     pub fn sync_wallet_account(&self) -> Arc<dyn SyncWalletAccountUseCase> {
         Arc::clone(&self.sync_wallet_account)
+    }
+
+    #[must_use]
+    pub fn get_wallet_dust_sync_status(&self) -> Arc<dyn GetWalletDustSyncStatusUseCase> {
+        Arc::clone(&self.get_wallet_dust_sync_status)
+    }
+
+    #[must_use]
+    pub fn start_wallet_dust_sync(&self) -> Arc<dyn StartWalletDustSyncUseCase> {
+        Arc::clone(&self.start_wallet_dust_sync)
+    }
+
+    #[must_use]
+    pub fn cancel_wallet_dust_sync(&self) -> Arc<dyn CancelWalletDustSyncUseCase> {
+        Arc::clone(&self.cancel_wallet_dust_sync)
     }
 
     #[must_use]
@@ -350,6 +396,16 @@ enum AccountOperation {
     Unlocking,
     Deriving,
     Syncing,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DustSyncPaneState {
+    Loading,
+    Ready {
+        status: WalletDustSyncView,
+        operation_error: Option<String>,
+    },
+    Failed(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1034,6 +1090,11 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                     "{sync_label}"
                 }
 
+                DustSyncPane {
+                    profile_id: active_profile.id.clone(),
+                    can_sync: protection_unlocked,
+                }
+
                 div { class: "dashboard-grid",
                     article { class: "surface-card",
                         p { class: "card-eyebrow", "Receive" }
@@ -1081,6 +1142,243 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                 }
             }
         }
+    }
+}
+
+#[component]
+fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| DustSyncPaneState::Loading);
+    let load_services = services.clone();
+    let load_profile = profile_id.clone();
+    use_effect(move || {
+        state.set(
+            load_services
+                .get_wallet_dust_sync_status()
+                .execute(WalletDustSyncCommand {
+                    profile_id: load_profile.clone(),
+                })
+                .map_or_else(
+                    |error| DustSyncPaneState::Failed(error.to_string()),
+                    |status| DustSyncPaneState::Ready {
+                        status,
+                        operation_error: None,
+                    },
+                ),
+        );
+    });
+
+    match state.read().clone() {
+        DustSyncPaneState::Loading => rsx! {
+            article { class: "surface-card wallet-sync-pane", role: "status", aria_busy: "true",
+                p { class: "card-eyebrow", "DUST index" }
+                h2 { "Loading DUST status…" }
+            }
+        },
+        DustSyncPaneState::Failed(message) => {
+            let retry_services = services.clone();
+            let retry_profile = profile_id.clone();
+            rsx! {
+                article { class: "surface-card wallet-sync-pane", role: "alert",
+                    div { class: "wallet-sync-row__heading",
+                        div {
+                            p { class: "card-eyebrow", "DUST index" }
+                            h2 { "Status unavailable" }
+                        }
+                        span { class: "status-pill", "Error" }
+                    }
+                    p { "{message}" }
+                    button {
+                        class: "secondary-action",
+                        r#type: "button",
+                        onclick: move |_| {
+                            state.set(
+                                retry_services
+                                    .get_wallet_dust_sync_status()
+                                    .execute(WalletDustSyncCommand {
+                                        profile_id: retry_profile.clone(),
+                                    })
+                                    .map_or_else(
+                                        |error| DustSyncPaneState::Failed(error.to_string()),
+                                        |status| DustSyncPaneState::Ready {
+                                            status,
+                                            operation_error: None,
+                                        },
+                                    ),
+                            );
+                        },
+                        "Retry"
+                    }
+                }
+            }
+        }
+        DustSyncPaneState::Ready {
+            status,
+            operation_error,
+        } => {
+            let syncing = status.state == "syncing";
+            let unavailable = status.state == "unavailable";
+            let progress = dust_progress_percent(&status);
+            let balance = status
+                .balance_atomic_units
+                .as_deref()
+                .map(|value| format_atomic_units(value, 15))
+                .unwrap_or_else(|| "—".to_owned());
+            let note = dust_sync_note(&status);
+            let pill_class = dust_status_pill_class(&status.state);
+            let action_services = services.clone();
+            let action_profile = profile_id.clone();
+            let mut action_state = state;
+            rsx! {
+                article { class: "surface-card wallet-sync-pane",
+                    div { class: "wallet-sync-row__heading",
+                        div {
+                            p { class: "card-eyebrow", "DUST index" }
+                            h2 { "{balance} DUST" }
+                        }
+                        span { class: "{pill_class}", "{dust_sync_state_label(&status.state)}" }
+                    }
+                    p { "{note}" }
+                    if let Some(message) = operation_error {
+                        p { class: "wallet-sync-error", role: "alert", "{message}" }
+                    }
+                    if let Some(percent) = progress {
+                        div { class: "wallet-sync-progress", aria_label: "DUST synchronization progress",
+                            div { class: "wallet-sync-progress__bar", style: "width: {percent}%" }
+                        }
+                    }
+                    button {
+                        class: "secondary-action wallet-sync-action",
+                        r#type: "button",
+                        disabled: unavailable || (!can_sync && !syncing),
+                        onclick: move |_| {
+                            let command = WalletDustSyncCommand {
+                                profile_id: action_profile.clone(),
+                            };
+                            let result = if syncing {
+                                action_services.cancel_wallet_dust_sync().execute(command)
+                            } else {
+                                action_services.start_wallet_dust_sync().execute(command)
+                            };
+                            match result {
+                                Ok(updated) => {
+                                    let should_poll = updated.state == "syncing";
+                                    action_state.set(DustSyncPaneState::Ready {
+                                        status: updated,
+                                        operation_error: None,
+                                    });
+                                    if should_poll {
+                                        poll_dust_sync(
+                                            action_services.clone(),
+                                            action_profile.clone(),
+                                            action_state,
+                                        );
+                                    }
+                                }
+                                Err(error) => action_state.set(DustSyncPaneState::Ready {
+                                    status: status.clone(),
+                                    operation_error: Some(error.to_string()),
+                                }),
+                            }
+                        },
+                        if syncing {
+                            "Cancel DUST sync"
+                        } else if !can_sync {
+                            "Unlock wallet to sync DUST"
+                        } else if status.state == "never_synced" {
+                            "Sync DUST"
+                        } else {
+                            "Resync DUST"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn poll_dust_sync(
+    services: WalletUiServices,
+    profile_id: String,
+    mut state: Signal<DustSyncPaneState>,
+) {
+    spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            match services
+                .get_wallet_dust_sync_status()
+                .execute(WalletDustSyncCommand {
+                    profile_id: profile_id.clone(),
+                }) {
+                Ok(status) => {
+                    let complete = status.state != "syncing";
+                    state.set(DustSyncPaneState::Ready {
+                        status,
+                        operation_error: None,
+                    });
+                    if complete {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    state.set(DustSyncPaneState::Failed(error.to_string()));
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn dust_progress_percent(status: &WalletDustSyncView) -> Option<u64> {
+    let (current, target) = status.current_cursor.zip(status.target_cursor)?;
+    let completed = u128::from(current).checked_add(1)?;
+    let total = u128::from(target).checked_add(1)?;
+    let percent = completed.checked_mul(100)?.checked_div(total)?.min(100);
+    u64::try_from(percent).ok()
+}
+
+fn dust_sync_note(status: &WalletDustSyncView) -> String {
+    let progress = status
+        .current_cursor
+        .zip(status.target_cursor)
+        .map(|(current, target)| format!("event {current} of {target}"));
+    let detail = match status.state.as_str() {
+        "never_synced" => "DUST has not been indexed for this protected account.".to_owned(),
+        "syncing" => progress.map_or_else(
+            || "Connecting to the DUST event index…".to_owned(),
+            |progress| format!("Indexing {progress} · {} processed this run.", status.events_processed),
+        ),
+        "synced" => progress.map_or_else(
+            || "DUST is synchronized.".to_owned(),
+            |progress| format!("DUST is current at {progress}."),
+        ),
+        "cached" => "Showing a resumable cached DUST checkpoint; spending remains disabled until live catch-up.".to_owned(),
+        "cancelled" => "DUST synchronization was cancelled at a consistent checkpoint and can resume.".to_owned(),
+        "stalled" => "DUST synchronization stalled; the last consistent checkpoint is retained.".to_owned(),
+        _ => "DUST synchronization is not available in this composition.".to_owned(),
+    };
+    status.failure.as_ref().map_or(detail.clone(), |failure| {
+        format!("{detail} ({})", failure.replace('_', " "))
+    })
+}
+
+fn dust_sync_state_label(state: &str) -> &'static str {
+    match state {
+        "never_synced" => "Not synced",
+        "syncing" => "Syncing",
+        "synced" => "Synced",
+        "cached" => "Cached",
+        "cancelled" => "Cancelled",
+        "stalled" => "Stalled",
+        _ => "Unavailable",
+    }
+}
+
+fn dust_status_pill_class(state: &str) -> &'static str {
+    match state {
+        "synced" => "status-pill success",
+        "syncing" | "cached" => "status-pill warning",
+        _ => "status-pill",
     }
 }
 
@@ -2028,6 +2326,47 @@ mod tests {
         assert_eq!(format_atomic_units("1", 6), "0.000001");
         assert_eq!(format_atomic_units("000000", 6), "0");
         assert_eq!(format_atomic_units("not-a-number", 6), "—");
+    }
+
+    fn dust_status(state: &str, current: Option<u64>, target: Option<u64>) -> WalletDustSyncView {
+        WalletDustSyncView {
+            network_id: "undeployed".to_owned(),
+            state: state.to_owned(),
+            current_cursor: current,
+            target_cursor: target,
+            events_processed: 2,
+            balance_atomic_units: Some("12000000000000000".to_owned()),
+            updated_at_millis: Some(42),
+            failure: None,
+        }
+    }
+
+    #[test]
+    fn dust_progress_uses_event_indices_without_floating_point() {
+        assert_eq!(
+            dust_progress_percent(&dust_status("syncing", Some(0), Some(2))),
+            Some(33)
+        );
+        assert_eq!(
+            dust_progress_percent(&dust_status("synced", Some(2), Some(2))),
+            Some(100)
+        );
+        assert_eq!(
+            dust_progress_percent(&dust_status("never_synced", None, None)),
+            None
+        );
+    }
+
+    #[test]
+    fn dust_failure_copy_distinguishes_cached_state_from_live_readiness() {
+        let mut cached = dust_status("cached", Some(2), Some(2));
+        cached.failure = Some("transport_unavailable".to_owned());
+
+        let note = dust_sync_note(&cached);
+        assert!(note.contains("cached DUST checkpoint"));
+        assert!(note.contains("spending remains disabled"));
+        assert!(note.contains("transport unavailable"));
+        assert_eq!(dust_sync_state_label("stalled"), "Stalled");
     }
 
     #[test]

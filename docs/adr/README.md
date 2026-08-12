@@ -53,6 +53,7 @@ ADR status and delivery state answer different questions:
 | [0029](0029-expose-standalone-wallet-flows-on-mobile.md) Expose standalone wallet flows on mobile | Accepted | §§3, 6–8, 12–13, 16–18 and issue #14 | Explicit development mobile composition, receive QR, and protected simulated transfer journey implemented; production remains fail-closed |
 | [0030](0030-persist-public-midnight-account-checkpoints.md) Persist public Midnight account checkpoints outside wallet core | Accepted | §§3, 5–8, 12–13, 17–18 and issue #15 | Public unshielded restart/cache/resume implemented; DUST is governed by ADR-0031 and shielded Zswap remains pending |
 | [0031](0031-persist-private-midnight-dust-checkpoints.md) Persist private Midnight DUST checkpoints behind live catch-up | Accepted | §§3, 5–8, 12–13, 17–18 and issue #16 | Scoped DUST resume, bounded incremental replay, and live-before-spend gate implemented; shielded Zswap pending |
+| [0032](0032-expose-resumable-dust-sync-sessions.md) Expose resumable DUST synchronization as an adapter-owned session | Accepted | §§3, 5–8, 12–13, 16–18 and issue #17 | Native worker, partial checkpoints, headless lifecycle, and Assets progress implemented; production custody pending |
 
 ## Current boundaries
 
@@ -78,4 +79,6 @@ production wiring. ADR-0030 keeps public Midnight replay persistence inside the
 native outgoing adapter and requires a successful live catch-up before cached
 UTXOs can become spendable inputs. ADR-0031 applies the same live-before-spend
 rule to key-specific DUST state while using the official tagged ledger state
-behind a distinct private, bounded adapter store.
+behind a distinct private, bounded adapter store. ADR-0032 adds an explicit
+adapter-owned session and permits bounded partial checkpoints without weakening
+that live-before-spend requirement.

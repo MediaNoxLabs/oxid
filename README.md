@@ -84,7 +84,8 @@ The implemented account methods are `wallet.network.list`,
 `wallet.transaction.history`, `wallet.transaction.prepare_unshielded`,
 `wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
 `wallet.transaction.submit_unshielded`, `wallet.transaction.send_unshielded`,
-`wallet.connect`, and `wallet.sync.force`.
+`wallet.connect`, `wallet.sync.force`, `wallet.dust.sync.status`,
+`wallet.dust.sync.start`, and `wallet.dust.sync.cancel`.
 With no additional configuration their account data is explicitly `simulated`
 and contacts no node, indexer, or prover. After
 `wallet.security.initialize`, `wallet.account.derive` creates and retains the
@@ -103,6 +104,9 @@ balances canonical fees, proves DUST spends locally when configured with an
 app-private cache, submits `Midnight.send_mn_transaction` unsigned, and returns only successful
 public transaction/block identifiers. No method returns signing payloads,
 signatures, proof witnesses, derived secrets, or serialized transactions.
+The DUST methods expose only exact atomic balance, bounded cursor progress,
+freshness, and sanitized state. Cached or cancelled checkpoints remain
+resumable but are never labelled live enough to spend.
 If transport is lost after node submission, the adapter reports
 `submission_unknown` and leaves the draft `submitting`; it never risks a blind
 duplicate while the external outcome is ambiguous.

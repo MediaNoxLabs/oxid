@@ -220,6 +220,15 @@ parameters replay cleanly, incompatible deltas retry once from zero, and
 transport failure never authorizes a cached-only spend. Headless composition
 accepts the store only with the complete standalone route set.
 
+[Issue #17](https://github.com/MediaNoxLabs/oxid/issues/17) and ADR-0032 add the
+prototype's explicit DUST sync lifecycle without copying its wallet facade or
+history-sized channel. Oxid exposes owned start/status/cancel use cases,
+executes native transport and official-state folding on an adapter worker,
+persists each bounded completed batch as a resumable partial checkpoint, and
+renders exact progress/balance in both the headless harness and Assets page.
+Cached state remains visibly non-live and cannot independently authorize a
+spend.
+
 Shielded Zswap checkpoints and additional key roles, internal/change
 address management, replacement and
 durable confirmation tracking, camera/copy/share bridges, explicit mobile

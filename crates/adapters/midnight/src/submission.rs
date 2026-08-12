@@ -48,11 +48,9 @@ use tokio_tungstenite::{
 };
 
 use crate::{
-    MidnightDustCheckpointConfig, MidnightIndexerConfig, MidnightIndexerConfigError,
-    MidnightLocalProvingConfig,
+    MidnightIndexerConfig, MidnightIndexerConfigError, MidnightLocalProvingConfig,
     dust_checkpoint::{
-        BinaryMidnightDustCheckpointStore, MidnightDustCheckpointStore, StoredDustCheckpoint,
-        UnavailableMidnightDustCheckpointStore,
+        MidnightDustCheckpointStore, StoredDustCheckpoint, UnavailableMidnightDustCheckpointStore,
     },
     local_proving,
     transaction::{
@@ -224,15 +222,15 @@ impl<C> LiveMidnightTransactionCompleter<C> {
         }
     }
 
-    pub(crate) fn new_with_dust_checkpoints(
+    pub(crate) fn new_with_dust_store(
         config: MidnightStandaloneConfig,
-        checkpoints: MidnightDustCheckpointConfig,
+        dust_checkpoints: Arc<dyn MidnightDustCheckpointStore>,
         clock: Arc<C>,
     ) -> Self {
         Self {
             config,
             local_proving_gate: Arc::new(Mutex::new(())),
-            dust_checkpoints: Arc::new(BinaryMidnightDustCheckpointStore::new(checkpoints)),
+            dust_checkpoints,
             clock,
         }
     }
@@ -295,11 +293,28 @@ where
         )
         .ok()
         .flatten();
-    let synchronized = synchronize_dust_with_fallback(
+    let mut persist_progress = |progress: &DustSyncProgress| {
+        if let Ok(updated_at) = clock.now() {
+            let _ = checkpoints.save(
+                config.indexer.network_id(),
+                &dust_public_key,
+                &StoredDustCheckpoint {
+                    current_cursor: progress.current_cursor,
+                    target_cursor: progress.target_cursor,
+                    updated_at,
+                    state: progress.state.clone(),
+                },
+            );
+        }
+        Ok(())
+    };
+    let synchronized = synchronize_dust_with_control(
         config.indexer.websocket_url(),
         dust_key,
         chain_tip.parameters.dust,
         checkpoint,
+        &cancellation,
+        &mut persist_progress,
     )
     .await?;
     let mut dust_state = synchronized.state;
@@ -372,7 +387,9 @@ where
     })
 }
 
-fn ensure_submission_active(cancellation: &AtomicBool) -> Result<(), WalletTransactionPortError> {
+pub(crate) fn ensure_submission_active(
+    cancellation: &AtomicBool,
+) -> Result<(), WalletTransactionPortError> {
     if cancellation.load(Ordering::Acquire) {
         Err(WalletTransactionPortError::SubmissionCancelled)
     } else {
@@ -380,12 +397,14 @@ fn ensure_submission_active(cancellation: &AtomicBool) -> Result<(), WalletTrans
     }
 }
 
-struct ChainTip {
-    timestamp: Timestamp,
-    parameters: LedgerParameters,
+pub(crate) struct ChainTip {
+    pub(crate) timestamp: Timestamp,
+    pub(crate) parameters: LedgerParameters,
 }
 
-async fn fetch_chain_tip(endpoint: &str) -> Result<ChainTip, WalletTransactionPortError> {
+pub(crate) async fn fetch_chain_tip(
+    endpoint: &str,
+) -> Result<ChainTip, WalletTransactionPortError> {
     ensure_tls_provider()?;
     let client = chain_tip_client()?;
     let request = chain_tip_request(endpoint)?;
@@ -470,12 +489,35 @@ fn decode_chain_tip(root: &Value) -> Result<ChainTip, WalletTransactionPortError
     })
 }
 
+#[cfg(test)]
 async fn synchronize_dust(
     endpoint: &str,
     dust_key: &DustSecretKey,
     parameters: DustParameters,
     checkpoint: Option<StoredDustCheckpoint>,
 ) -> Result<DustSynchronization, WalletTransactionPortError> {
+    let cancellation = AtomicBool::new(false);
+    let mut ignore_progress = |_: &DustSyncProgress| Ok(());
+    synchronize_dust_controlled(
+        endpoint,
+        dust_key,
+        parameters,
+        checkpoint,
+        &cancellation,
+        &mut ignore_progress,
+    )
+    .await
+}
+
+pub(crate) async fn synchronize_dust_controlled(
+    endpoint: &str,
+    dust_key: &DustSecretKey,
+    parameters: DustParameters,
+    checkpoint: Option<StoredDustCheckpoint>,
+    cancellation: &AtomicBool,
+    observe: &mut dyn FnMut(&DustSyncProgress) -> Result<(), WalletTransactionPortError>,
+) -> Result<DustSynchronization, WalletTransactionPortError> {
+    ensure_submission_active(cancellation)?;
     let started_with_checkpoint = checkpoint.is_some();
     let (mut state, starting_cursor, starting_target) = checkpoint.map_or_else(
         || (DustLocalState::new(parameters), None, None),
@@ -549,8 +591,11 @@ async fn synchronize_dust(
         let mut total_bytes = 0_usize;
         let mut batch_bytes = 0_usize;
         let mut event_count = 0_usize;
+        let mut replayed_events = 0_usize;
+        let mut batch_last_id = None;
         let mut saw_event = false;
         loop {
+            ensure_submission_active(cancellation)?;
             let message = match timeout(IDLE_TIMEOUT, socket.next()).await {
                 Ok(Some(message)) => {
                     message.map_err(|_| WalletTransactionPortError::InvalidChainState)?
@@ -601,24 +646,53 @@ async fn synchronize_dust(
                                     .checked_add(decoded.raw_bytes)
                                     .is_none_or(|bytes| bytes > MAX_DUST_REPLAY_BATCH_BYTES)
                             {
+                                ensure_submission_active(cancellation)?;
                                 state = state
                                     .replay_events(dust_key, batch.iter())
                                     .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+                                replayed_events = replayed_events
+                                    .checked_add(batch.len())
+                                    .ok_or(WalletTransactionPortError::InvalidChainState)?;
                                 batch.clear();
                                 batch_bytes = 0;
+                                let current_cursor = batch_last_id
+                                    .ok_or(WalletTransactionPortError::InvalidChainState)?;
+                                let target_cursor = target_id
+                                    .ok_or(WalletTransactionPortError::InvalidChainState)?;
+                                observe(&DustSyncProgress {
+                                    state: state.clone(),
+                                    current_cursor,
+                                    target_cursor,
+                                    events_processed: replayed_events,
+                                })?;
                             }
                             batch_bytes = batch_bytes
                                 .checked_add(decoded.raw_bytes)
                                 .ok_or(WalletTransactionPortError::InvalidChainState)?;
                             batch.push(decoded.event);
+                            batch_last_id = Some(decoded.id);
                             if batch.len() == DUST_REPLAY_BATCH_EVENTS
                                 || decoded.id == decoded.max_id
                             {
+                                ensure_submission_active(cancellation)?;
                                 state = state
                                     .replay_events(dust_key, batch.iter())
                                     .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+                                replayed_events = replayed_events
+                                    .checked_add(batch.len())
+                                    .ok_or(WalletTransactionPortError::InvalidChainState)?;
                                 batch.clear();
                                 batch_bytes = 0;
+                                let current_cursor = batch_last_id
+                                    .ok_or(WalletTransactionPortError::InvalidChainState)?;
+                                let target_cursor = target_id
+                                    .ok_or(WalletTransactionPortError::InvalidChainState)?;
+                                observe(&DustSyncProgress {
+                                    state: state.clone(),
+                                    current_cursor,
+                                    target_cursor,
+                                    events_processed: replayed_events,
+                                })?;
                             }
                             if decoded.id == decoded.max_id {
                                 break;
@@ -651,19 +725,41 @@ async fn synchronize_dust(
             }
         }
         if !batch.is_empty() {
+            ensure_submission_active(cancellation)?;
             state = state
                 .replay_events(dust_key, batch.iter())
                 .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+            replayed_events = replayed_events
+                .checked_add(batch.len())
+                .ok_or(WalletTransactionPortError::InvalidChainState)?;
+            let current_cursor =
+                batch_last_id.ok_or(WalletTransactionPortError::InvalidChainState)?;
+            let target_cursor = target_id.ok_or(WalletTransactionPortError::InvalidChainState)?;
+            observe(&DustSyncProgress {
+                state: state.clone(),
+                current_cursor,
+                target_cursor,
+                events_processed: replayed_events,
+            })?;
         }
         let current_cursor = last_id.ok_or(WalletTransactionPortError::InvalidChainState)?;
         let target_cursor = target_id.ok_or(WalletTransactionPortError::InvalidChainState)?;
         if current_cursor != target_cursor {
             return Err(WalletTransactionPortError::InvalidChainState);
         }
+        if !saw_event {
+            observe(&DustSyncProgress {
+                state: state.clone(),
+                current_cursor,
+                target_cursor,
+                events_processed: 0,
+            })?;
+        }
         Ok::<_, WalletTransactionPortError>(DustSynchronization {
             state,
             current_cursor,
             target_cursor,
+            events_processed: replayed_events,
         })
     })
     .await
@@ -678,25 +774,74 @@ async fn synchronize_dust(
     Ok(synchronization)
 }
 
+#[cfg(test)]
 async fn synchronize_dust_with_fallback(
     endpoint: &str,
     dust_key: &DustSecretKey,
     parameters: DustParameters,
     checkpoint: Option<StoredDustCheckpoint>,
 ) -> Result<DustSynchronization, WalletTransactionPortError> {
+    let cancellation = AtomicBool::new(false);
+    let mut ignore_progress = |_: &DustSyncProgress| Ok(());
+    synchronize_dust_with_control(
+        endpoint,
+        dust_key,
+        parameters,
+        checkpoint,
+        &cancellation,
+        &mut ignore_progress,
+    )
+    .await
+}
+
+pub(crate) async fn synchronize_dust_with_control(
+    endpoint: &str,
+    dust_key: &DustSecretKey,
+    parameters: DustParameters,
+    checkpoint: Option<StoredDustCheckpoint>,
+    cancellation: &AtomicBool,
+    observe: &mut dyn FnMut(&DustSyncProgress) -> Result<(), WalletTransactionPortError>,
+) -> Result<DustSynchronization, WalletTransactionPortError> {
     let had_checkpoint = checkpoint.is_some();
-    match synchronize_dust(endpoint, dust_key, parameters, checkpoint).await {
-        Err(WalletTransactionPortError::InvalidChainState) if had_checkpoint => {
-            synchronize_dust(endpoint, dust_key, parameters, None).await
+    let mut emitted_progress = false;
+    let result = {
+        let mut tracking_observer = |progress: &DustSyncProgress| {
+            emitted_progress = true;
+            observe(progress)
+        };
+        synchronize_dust_controlled(
+            endpoint,
+            dust_key,
+            parameters,
+            checkpoint,
+            cancellation,
+            &mut tracking_observer,
+        )
+        .await
+    };
+    match result {
+        Err(WalletTransactionPortError::InvalidChainState)
+            if had_checkpoint && !emitted_progress =>
+        {
+            synchronize_dust_controlled(endpoint, dust_key, parameters, None, cancellation, observe)
+                .await
         }
         result => result,
     }
 }
 
-struct DustSynchronization {
-    state: DustLocalState<DefaultDB>,
-    current_cursor: u64,
-    target_cursor: u64,
+pub(crate) struct DustSynchronization {
+    pub(crate) state: DustLocalState<DefaultDB>,
+    pub(crate) current_cursor: u64,
+    pub(crate) target_cursor: u64,
+    pub(crate) events_processed: usize,
+}
+
+pub(crate) struct DustSyncProgress {
+    pub(crate) state: DustLocalState<DefaultDB>,
+    pub(crate) current_cursor: u64,
+    pub(crate) target_cursor: u64,
+    pub(crate) events_processed: usize,
 }
 
 struct DecodedDustEvent {
@@ -1691,6 +1836,41 @@ mod tests {
         worker.join().expect("WebSocket worker completes");
         assert_eq!(caught_up.current_cursor, 43);
         assert_eq!(caught_up.target_cursor, 43);
+    }
+
+    #[test]
+    fn controlled_dust_sync_reports_a_consistent_batch_before_cancellation() {
+        let raw = parameter_change_event_hex();
+        let events = (0_u64..=256)
+            .map(|id| (id, 256, raw.clone()))
+            .collect::<Vec<_>>();
+        let (endpoint, worker) = serve_dust_subscriptions(vec![(0, events)]);
+        let dust_key = DustSecretKey::derive_secret_key(&[7; 32]);
+        let cancellation = AtomicBool::new(false);
+        let mut observed = Vec::new();
+        let result = runtime().block_on(synchronize_dust_controlled(
+            &endpoint,
+            &dust_key,
+            INITIAL_PARAMETERS.dust,
+            None,
+            &cancellation,
+            &mut |progress| {
+                observed.push((
+                    progress.current_cursor,
+                    progress.target_cursor,
+                    progress.events_processed,
+                ));
+                cancellation.store(true, Ordering::Release);
+                Ok(())
+            },
+        ));
+        worker.join().expect("WebSocket worker completes");
+
+        assert_eq!(
+            result.err(),
+            Some(WalletTransactionPortError::SubmissionCancelled)
+        );
+        assert_eq!(observed, vec![(255, 256, 256)]);
     }
 
     #[test]

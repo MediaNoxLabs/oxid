@@ -9,10 +9,12 @@ use oxid_platform_ports::{ClockPort, PlatformError, RandomPort};
 use oxid_wallet_domain::{ProfileName, ProfileNameError, WalletProfile, WalletProfileId};
 
 mod chain;
+mod dust;
 mod security;
 mod transaction;
 
 pub use chain::*;
+pub use dust::*;
 pub use security::*;
 pub use transaction::*;
 

@@ -40,3 +40,7 @@ once public releases begin.
   initialize/lock/unlock/generate/list/sign/delete conformance flow.
 - Made the iOS simulator and XCUITest harness select the host Xcode SDK and
   isolate Apple builds from Nix compiler/linker environment variables.
+- Explicit resumable DUST synchronization across the native Midnight worker,
+  versioned headless lifecycle, and mobile Assets progress pane, with exact
+  atomic balance, cancellation, partial private checkpoints, and cached-state
+  fail-closed semantics.

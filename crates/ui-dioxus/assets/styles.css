@@ -409,6 +409,41 @@ select:focus-visible {
   margin-top: 1rem;
 }
 
+.wallet-sync-pane {
+  margin-top: 1rem;
+}
+
+.wallet-sync-row__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.wallet-sync-progress {
+  height: 0.45rem;
+  margin-top: 0.85rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-4);
+}
+
+.wallet-sync-progress__bar {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--gradient-primary);
+  transition: width 180ms ease-out;
+}
+
+.wallet-sync-action {
+  width: 100%;
+  margin-top: 1rem;
+}
+
+.wallet-sync-error {
+  color: var(--error);
+}
+
 .dashboard-grid,
 .diagnostic-grid {
   display: grid;

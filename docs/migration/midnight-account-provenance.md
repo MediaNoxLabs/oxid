@@ -14,6 +14,7 @@ revisions on 2026-08-11 and re-verified on 2026-08-12:
 | Ledger key/address semantics | `midnight-ledger` `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, `base-crypto/src/{schnorr,hash}.rs` and `coin-structure/src/coin.rs` | BIP340 x-only verifying-key bytes and SHA-256 `UserAddress` construction |
 | Indexer protocol | `midnight-indexer` `82759bf186184684f13a9ffa97b58b7b7684f47c`, `indexer-api/graphql/schema-v4.graphql` | `graphql-transport-ws`, progress-first `unshieldedTransactions`, decimal `u128` values, UTXO create/spend replay, block metadata, transaction status, and DUST fee shapes |
 | Prototype live transport | `midnight-ledger` `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/unshielded/{snapshot,transport}.rs` | bounded connection/ack/idle behavior, progress-first snapshot termination, ping/pong, and address-scoped replay semantics |
+| Prototype DUST sync | same prototype revision, `mobile-bench/wallet-core/src/dust/syncer.rs` and `mobile-bench/dioxus-wallet/src/app.rs` (`WalletSyncPane`) | explicit DUST status/progress, next-cursor resume, exact official-state balance, resync control, and a separate NIGHT/DUST presentation lifecycle |
 | Prototype transfer | same prototype revision, `mobile-bench/wallet-core/src/{wallet.rs,unshielded/mod.rs}` | native NIGHT, same-network recipient decoding, descending greedy selection, sorted spends/outputs, change, `0xCAFE` intent segment, one-hour TTL, and BIP340 authorization before DUST/proving/submission |
 | Prototype completion | same prototype revision, `mobile-bench/wallet-core/src/{wallet.rs,dust/snapshot.rs,tx/balance.rs,tx/prove_http.rs,node/client.rs}` | DUST role `2/0`, event replay, live time/parameters, iterative `0xFEED` fee balancing, proof-server wire format, sealing, tagged serialization, and unsigned runtime submission |
 
@@ -30,6 +31,9 @@ accepts recovery material.
 - NIGHT/DUST hero -> exact `u128` atomic values mapped to decimal strings and
   rendered without floating-point arithmetic;
 - connect/resync -> asynchronous `SyncWalletAccountUseCase`;
+- DUST sync/status/cancel -> a focused `WalletDustSyncPort`, adapter-owned
+  worker sessions, Oxid-owned progress/failure projection, and versioned
+  headless plus Dioxus incoming adapters;
 - cursor/tip/account status -> owned `WalletSyncStatus` and truthful source;
 - activity -> owned transaction direction, status, block/time, balance changes,
   and optional fee;
@@ -159,8 +163,8 @@ delta history/balance, and an offline cached/stalled read in a third process.
 the prototype syncer's official tagged-state-plus-offset behavior without its
 network-only cache scope or 524,288-event in-memory channel. An adapter-private
 v1 binary envelope is keyed by network plus SHA-256 of the tagged public DUST
-key and records the live parameter fingerprint, completed current/target
-cursor, update time, and tagged `DustLocalState<DefaultDB>`. It is bounded to
+key and records the live parameter fingerprint, last folded current cursor,
+advertised target, update time, and tagged `DustLocalState<DefaultDB>`. It is bounded to
 four records, 16 MiB per state, and 64 MiB overall and uses owner-private atomic
 replacement. No seed or secret scalar is serialized.
 
@@ -172,6 +176,17 @@ state becomes eligible for balancing only after the live stream reaches its
 advertised target (including an explicit empty completion for an already
 current cursor). Invalid cached delta data gets one fresh replay; timeouts and
 connection failures fail closed and do not cause a second history request.
+
+[Issue #17](https://github.com/MediaNoxLabs/oxid/issues/17) and ADR-0032 expose
+that same fold as an explicit session without moving ledger state into core.
+The application projection carries lifecycle, current/target work, processed
+events, exact atomic DUST, freshness, and a sanitized failure category. Native
+sync runs on a dedicated adapter worker and saves every successfully folded
+bounded batch, so cancellation or restart resumes from the last consistent
+partial cursor. The deterministic headless controller covers fresh, cancelled,
+resumed, and already-current flows; the Assets pane polls the same use cases and
+labels cached or stalled balance as not live enough to spend. Production
+composition remains explicitly unavailable.
 
 The seven catalog IDs are `mainnet`, `preprod`, `preview`, `testnet`, `qanet`,
 `devnet`, and `undeployed`. They carry identity and environment only. Runtime
@@ -200,7 +215,7 @@ dependency review.
 - internal NIGHT/change roles beyond external receive derivation, shielded
   Zswap keys, exported DUST keys, and metadata keys;
 - committed local, tailnet, pre-production, node, indexer, or prover endpoints;
-- background subscriptions, shielded state/checkpoints, and retained raw DUST
+- continuous background subscriptions, shielded state/checkpoints, and retained raw DUST
   event history;
 - replacement, fee preview/estimation, UTXO reservation, durable submission
   reconciliation, or durable draft queues;

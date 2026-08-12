@@ -5,6 +5,7 @@
 - Source: Blueprint §§3, 5–8, 12–13, 17–18 and [issue #16](https://github.com/MediaNoxLabs/oxid/issues/16)
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/dust/syncer.rs`
 - Implementation state: Adapter implementation and standalone/headless wiring in this change; shielded Zswap persistence and durable production custody remain pending
+- Amended by: ADR-0032 permits bounded partial checkpoints for explicit cancellable synchronization
 
 ## Context
 
@@ -35,7 +36,7 @@ validated network identity and a SHA-256 fingerprint of the tagged public DUST
 key. Each record contains:
 
 - a SHA-256 identity of the tagged current DUST parameters;
-- the completed event cursor and advertised target cursor;
+- the last durably folded event cursor and advertised target cursor;
 - a best-effort update timestamp; and
 - the official tagged serialization of `DustLocalState<DefaultDB>`.
 
@@ -50,10 +51,13 @@ replaced after a later successful live replay.
 Every submission first fetches fresh chain parameters. A matching checkpoint
 at cursor `n` seeds the official ledger state machine and subscribes from
 `n + 1`; mismatched network, public-key fingerprint, schema, or parameter
-identity starts from zero. Incoming events are checked for exact contiguous
-IDs and a nondecreasing target, folded into `DustLocalState` in small bounded batches,
-and never accumulated in a history-sized queue. Total event count, event size,
-processed bytes, message size, idle time, and overall catch-up time remain
+identity starts from zero. ADR-0032 additionally permits
+`current_cursor < target_cursor` after a bounded batch so explicit cancellation
+can resume without replaying already folded history. Incoming events are checked
+for exact contiguous IDs and a nondecreasing target, folded into
+`DustLocalState` in small bounded batches, and never accumulated in a
+history-sized queue. Total event count, event size, processed bytes, message
+size, idle time, and overall catch-up time remain
 bounded.
 
 A checkpoint can authorize balancing only after the live subscription proves

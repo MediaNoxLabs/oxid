@@ -547,6 +547,191 @@ pub enum WalletSyncState {
     Unavailable,
 }
 
+/// Lifecycle of the key-scoped Midnight DUST event index.
+///
+/// DUST synchronization is deliberately separate from the public account
+/// snapshot: a cached DUST state is useful for display and resumption, but it
+/// is not evidence that the wallet is current enough to spend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletDustSyncState {
+    NeverSynced,
+    Syncing,
+    Synced,
+    Cached,
+    Cancelled,
+    Stalled,
+    Unavailable,
+}
+
+/// Sanitized reason why a DUST synchronization is not currently live.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletDustSyncFailure {
+    ProtectionNotInitialized,
+    ProtectionLocked,
+    UnsupportedNetwork,
+    TransportUnavailable,
+    TimedOut,
+    InvalidChainState,
+    StorageUnavailable,
+}
+
+/// Oxid-owned projection of one profile's DUST synchronization state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletDustSyncSnapshot {
+    network_id: ChainNetworkId,
+    state: WalletDustSyncState,
+    current_cursor: Option<u64>,
+    target_cursor: Option<u64>,
+    events_processed: u64,
+    balance_atomic_units: Option<u128>,
+    updated_at: Option<UnixTimestampMillis>,
+    failure: Option<WalletDustSyncFailure>,
+}
+
+impl WalletDustSyncSnapshot {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        network_id: ChainNetworkId,
+        state: WalletDustSyncState,
+        current_cursor: Option<u64>,
+        target_cursor: Option<u64>,
+        events_processed: u64,
+        balance_atomic_units: Option<u128>,
+        updated_at: Option<UnixTimestampMillis>,
+        failure: Option<WalletDustSyncFailure>,
+    ) -> Result<Self, WalletDustSyncSnapshotError> {
+        if current_cursor.is_some() != target_cursor.is_some()
+            || current_cursor
+                .zip(target_cursor)
+                .is_some_and(|(current, target)| current > target)
+        {
+            return Err(WalletDustSyncSnapshotError::InvalidCursorRange);
+        }
+        if state == WalletDustSyncState::Synced
+            && (current_cursor
+                .zip(target_cursor)
+                .is_none_or(|(current, target)| current != target)
+                || balance_atomic_units.is_none()
+                || updated_at.is_none())
+        {
+            return Err(WalletDustSyncSnapshotError::IncompleteSynchronizedState);
+        }
+        if matches!(
+            state,
+            WalletDustSyncState::NeverSynced | WalletDustSyncState::Unavailable
+        ) && (current_cursor.is_some()
+            || target_cursor.is_some()
+            || balance_atomic_units.is_some())
+        {
+            return Err(WalletDustSyncSnapshotError::UnexpectedIndexedState);
+        }
+
+        Ok(Self {
+            network_id,
+            state,
+            current_cursor,
+            target_cursor,
+            events_processed,
+            balance_atomic_units,
+            updated_at,
+            failure,
+        })
+    }
+
+    #[must_use]
+    pub fn never_synced(network_id: ChainNetworkId) -> Self {
+        Self {
+            network_id,
+            state: WalletDustSyncState::NeverSynced,
+            current_cursor: None,
+            target_cursor: None,
+            events_processed: 0,
+            balance_atomic_units: None,
+            updated_at: None,
+            failure: None,
+        }
+    }
+
+    #[must_use]
+    pub fn unavailable(network_id: ChainNetworkId) -> Self {
+        Self {
+            network_id,
+            state: WalletDustSyncState::Unavailable,
+            current_cursor: None,
+            target_cursor: None,
+            events_processed: 0,
+            balance_atomic_units: None,
+            updated_at: None,
+            failure: Some(WalletDustSyncFailure::TransportUnavailable),
+        }
+    }
+
+    #[must_use]
+    pub const fn network_id(&self) -> &ChainNetworkId {
+        &self.network_id
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> WalletDustSyncState {
+        self.state
+    }
+
+    #[must_use]
+    pub const fn current_cursor(&self) -> Option<u64> {
+        self.current_cursor
+    }
+
+    #[must_use]
+    pub const fn target_cursor(&self) -> Option<u64> {
+        self.target_cursor
+    }
+
+    #[must_use]
+    pub const fn events_processed(&self) -> u64 {
+        self.events_processed
+    }
+
+    #[must_use]
+    pub const fn balance_atomic_units(&self) -> Option<u128> {
+        self.balance_atomic_units
+    }
+
+    #[must_use]
+    pub const fn updated_at(&self) -> Option<UnixTimestampMillis> {
+        self.updated_at
+    }
+
+    #[must_use]
+    pub const fn failure(&self) -> Option<WalletDustSyncFailure> {
+        self.failure
+    }
+}
+
+/// Invalid combinations rejected by the DUST status projection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletDustSyncSnapshotError {
+    InvalidCursorRange,
+    IncompleteSynchronizedState,
+    UnexpectedIndexedState,
+}
+
+impl fmt::Display for WalletDustSyncSnapshotError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::InvalidCursorRange => "DUST synchronization cursors are invalid",
+            Self::IncompleteSynchronizedState => {
+                "synchronized DUST state requires a current cursor, balance, and timestamp"
+            }
+            Self::UnexpectedIndexedState => {
+                "unavailable or unsynchronized DUST state cannot contain indexed values"
+            }
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl Error for WalletDustSyncSnapshotError {}
+
 /// Safe synchronization metadata surfaced to incoming adapters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletSyncStatus {
@@ -875,6 +1060,52 @@ mod tests {
         assert!(snapshot.addresses().is_empty());
         assert!(snapshot.balances().is_empty());
         assert_eq!(snapshot.sync().state(), WalletSyncState::Unavailable);
+    }
+
+    #[test]
+    fn dust_sync_projection_enforces_cursor_and_live_state_invariants() {
+        let network_id = ChainNetworkId::parse("undeployed").expect("network is valid");
+        assert_eq!(
+            WalletDustSyncSnapshot::new(
+                network_id.clone(),
+                WalletDustSyncState::Syncing,
+                Some(3),
+                Some(2),
+                4,
+                Some(9),
+                Some(UnixTimestampMillis::new(42)),
+                None,
+            )
+            .err(),
+            Some(WalletDustSyncSnapshotError::InvalidCursorRange)
+        );
+        assert_eq!(
+            WalletDustSyncSnapshot::new(
+                network_id.clone(),
+                WalletDustSyncState::Synced,
+                Some(2),
+                Some(2),
+                3,
+                None,
+                Some(UnixTimestampMillis::new(42)),
+                None,
+            )
+            .err(),
+            Some(WalletDustSyncSnapshotError::IncompleteSynchronizedState)
+        );
+        let cached = WalletDustSyncSnapshot::new(
+            network_id,
+            WalletDustSyncState::Cached,
+            Some(1),
+            Some(2),
+            0,
+            Some(u128::MAX),
+            Some(UnixTimestampMillis::new(42)),
+            Some(WalletDustSyncFailure::TransportUnavailable),
+        )
+        .expect("partial cached state is valid");
+        assert_eq!(cached.balance_atomic_units(), Some(u128::MAX));
+        assert_eq!(cached.current_cursor(), Some(1));
     }
 
     #[test]

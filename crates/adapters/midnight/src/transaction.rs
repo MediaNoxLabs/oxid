@@ -43,19 +43,16 @@ use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use crate::{
-    BIP44_PURPOSE, MIDNIGHT_COIN_TYPE, MidnightWalletAdapter, ProtectedMidnightAccountDeriver,
-    SPECKS_PER_DUST, STARS_PER_NIGHT, SimulatedMidnightAccountSource,
-    UnavailableMidnightAccountDeriver, UnavailableMidnightAccountSource, midnight_asset,
-    network_by_id,
+    BIP44_PURPOSE, DUST_INDEX, DUST_ROLE, MIDNIGHT_COIN_TYPE, MidnightWalletAdapter,
+    ProtectedMidnightAccountDeriver, SPECKS_PER_DUST, STARS_PER_NIGHT,
+    SimulatedMidnightAccountSource, UnavailableMidnightAccountDeriver,
+    UnavailableMidnightAccountSource, midnight_asset, network_by_id,
 };
 
 const SEND_UNSHIELDED_SEGMENT: u16 = 0xCAFE;
 
 type LedgerIntent = Intent<Signature, ProofPreimageMarker, PedersenRandomness, DefaultDB>;
 type LedgerTransaction = Transaction<Signature, ProofPreimageMarker, PedersenRandomness, DefaultDB>;
-
-const DUST_ROLE: u32 = 2;
-const DUST_INDEX: u32 = 0;
 
 #[derive(Clone)]
 pub(crate) struct MidnightCompletionRequest {

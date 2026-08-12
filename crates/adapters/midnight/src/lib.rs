@@ -7,6 +7,8 @@ mod checkpoint;
 #[cfg(not(target_arch = "wasm32"))]
 mod dust_checkpoint;
 #[cfg(not(target_arch = "wasm32"))]
+mod dust_sync;
+#[cfg(not(target_arch = "wasm32"))]
 mod indexer;
 #[cfg(not(target_arch = "wasm32"))]
 mod local_proving;
@@ -45,9 +47,9 @@ use bech32::{Bech32m, Hrp};
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
     DeriveProtectedKeyRequest, WalletAccountDerivationPort, WalletAccountPortError,
-    WalletAccountPortFuture, WalletAccountReadPort, WalletDerivedSecretUsePort, WalletHdPath,
-    WalletHdPathComponent, WalletKeyDerivationPort, WalletKeyOperationPort, WalletNetworkPort,
-    WalletSecurityPortError,
+    WalletAccountPortFuture, WalletAccountReadPort, WalletDerivedSecretUsePort, WalletDustSyncPort,
+    WalletDustSyncPortError, WalletHdPath, WalletHdPathComponent, WalletKeyDerivationPort,
+    WalletKeyOperationPort, WalletNetworkPort, WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     AssetBalance, AssetBalanceChange, AssetSymbol, BalanceChangeDirection, ChainAccountId,
@@ -63,6 +65,8 @@ const DEFAULT_NETWORK_ID: &str = "undeployed";
 pub(crate) const BIP44_PURPOSE: u32 = 44;
 pub(crate) const MIDNIGHT_COIN_TYPE: u32 = 2400;
 const NIGHT_EXTERNAL_ROLE: u32 = 0;
+pub(crate) const DUST_ROLE: u32 = 2;
+pub(crate) const DUST_INDEX: u32 = 0;
 
 // Canonical ledger-8 atomic-unit semantics reviewed at
 // midnight-ledger d9414884db9da9e9b1f6f3a7f742d79a5732f817,
@@ -227,9 +231,12 @@ pub struct MidnightWalletAdapter<S, D = UnavailableMidnightAccountDeriver> {
     source: S,
     deriver: D,
     selections: Mutex<HashMap<WalletProfileId, ChainNetworkId>>,
+    account_indices: Mutex<HashMap<(WalletProfileId, ChainNetworkId), u32>>,
     default_network: Option<ChainNetworkId>,
     #[cfg(not(target_arch = "wasm32"))]
     completer: Arc<dyn transaction::MidnightTransactionCompleter>,
+    #[cfg(not(target_arch = "wasm32"))]
+    dust_sync: Arc<dyn dust_sync::MidnightDustSyncController>,
     #[cfg(not(target_arch = "wasm32"))]
     drafts: Arc<
         Mutex<
@@ -251,9 +258,12 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             source,
             deriver: UnavailableMidnightAccountDeriver,
             selections: Mutex::new(HashMap::new()),
+            account_indices: Mutex::new(HashMap::new()),
             default_network: None,
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
+            #[cfg(not(target_arch = "wasm32"))]
+            dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -267,9 +277,12 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             source,
             deriver: UnavailableMidnightAccountDeriver,
             selections: Mutex::new(HashMap::new()),
+            account_indices: Mutex::new(HashMap::new()),
             default_network: Some(default_network),
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
+            #[cfg(not(target_arch = "wasm32"))]
+            dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -283,9 +296,12 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             source,
             deriver,
             selections: Mutex::new(HashMap::new()),
+            account_indices: Mutex::new(HashMap::new()),
             default_network: None,
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
+            #[cfg(not(target_arch = "wasm32"))]
+            dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -301,9 +317,12 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             source,
             deriver,
             selections: Mutex::new(HashMap::new()),
+            account_indices: Mutex::new(HashMap::new()),
             default_network: Some(default_network),
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
+            #[cfg(not(target_arch = "wasm32"))]
+            dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -320,8 +339,10 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             source,
             deriver,
             selections: Mutex::new(HashMap::new()),
+            account_indices: Mutex::new(HashMap::new()),
             default_network: Some(default_network),
             completer,
+            dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -336,8 +357,10 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             source,
             deriver,
             selections: Mutex::new(HashMap::new()),
+            account_indices: Mutex::new(HashMap::new()),
             default_network: None,
             completer,
+            dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
             drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -355,6 +378,99 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             .cloned()
             .or_else(|| self.default_network.clone())
             .map_or_else(|| network_id(DEFAULT_NETWORK_ID), Ok)
+    }
+
+    fn account_index(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &ChainNetworkId,
+    ) -> Result<u32, WalletDustSyncPortError> {
+        self.account_indices
+            .lock()
+            .map_err(|_| WalletDustSyncPortError::Unavailable)
+            .map(|indices| {
+                indices
+                    .get(&(profile_id.clone(), network_id.clone()))
+                    .copied()
+                    .unwrap_or(0)
+            })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn with_dust_sync(mut self, dust_sync: Arc<dyn dust_sync::MidnightDustSyncController>) -> Self {
+        self.dust_sync = dust_sync;
+        self
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<S, D> WalletDustSyncPort for MidnightWalletAdapter<S, D>
+where
+    S: Send + Sync,
+    D: Send + Sync,
+{
+    fn dust_status(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        let network = self
+            .selected(profile_id)
+            .map_err(map_account_to_dust_error)?;
+        self.dust_sync.status(profile_id, &network)
+    }
+
+    fn start_dust_sync(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        let network = self
+            .selected(profile_id)
+            .map_err(map_account_to_dust_error)?;
+        let account_index = self.account_index(profile_id, &network)?;
+        self.dust_sync.start(profile_id, &network, account_index)
+    }
+
+    fn cancel_dust_sync(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        let network = self
+            .selected(profile_id)
+            .map_err(map_account_to_dust_error)?;
+        self.dust_sync.cancel(profile_id, &network)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<S, D> WalletDustSyncPort for MidnightWalletAdapter<S, D>
+where
+    S: Send + Sync,
+    D: Send + Sync,
+{
+    fn dust_status(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        let network = self
+            .selected(profile_id)
+            .map_err(map_account_to_dust_error)?;
+        Ok(oxid_wallet_domain::WalletDustSyncSnapshot::unavailable(
+            network,
+        ))
+    }
+
+    fn start_dust_sync(
+        &self,
+        _: &WalletProfileId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        Err(WalletDustSyncPortError::Unavailable)
+    }
+
+    fn cancel_dust_sync(
+        &self,
+        _: &WalletProfileId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        Err(WalletDustSyncPortError::Unavailable)
     }
 }
 
@@ -483,6 +599,10 @@ where
             .derive(profile_id, &network, account_index, address_index)?;
         self.source
             .bind_derived_account(profile_id, &network, &derived)?;
+        self.account_indices
+            .lock()
+            .map_err(|_| WalletAccountPortError::Unavailable)?
+            .insert((profile_id.clone(), selected), account_index);
         Ok(derived)
     }
 }
@@ -680,14 +800,19 @@ pub fn protected_simulated_midnight_wallet<C, K>(
     keys: Arc<K>,
 ) -> MidnightWalletAdapter<SimulatedMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
 where
-    C: ClockPort,
-    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort + 'static,
 {
+    let dust_sync = Arc::new(dust_sync::SimulatedMidnightDustSyncController::new(
+        Arc::clone(&clock),
+        Arc::clone(&keys),
+    ));
     MidnightWalletAdapter::with_deriver_and_completer(
         SimulatedMidnightAccountSource::new(clock),
         ProtectedMidnightAccountDeriver::new(keys),
         Arc::new(transaction::SimulatedMidnightTransactionCompleter),
     )
+    .with_dust_sync(dust_sync)
 }
 
 /// Development-only live standalone adapter with real DUST proving and node submission.
@@ -700,10 +825,17 @@ pub fn protected_standalone_midnight_wallet<C, K>(
 ) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
 where
     C: ClockPort + 'static,
-    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort + 'static,
 {
     let indexer = config.indexer().clone();
     let default_network = indexer.network_id().clone();
+    let dust_store = Arc::new(dust_checkpoint::UnavailableMidnightDustCheckpointStore);
+    let dust_sync = Arc::new(dust_sync::LiveMidnightDustSyncController::new(
+        config.clone(),
+        dust_store,
+        Arc::clone(&clock),
+        Arc::clone(&keys),
+    ));
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         LiveMidnightAccountSource::new(indexer, Arc::clone(&clock)),
         default_network,
@@ -712,6 +844,7 @@ where
             config, clock,
         )),
     )
+    .with_dust_sync(dust_sync)
 }
 
 /// Development-only standalone adapter with durable public account checkpoints.
@@ -725,10 +858,17 @@ pub fn protected_standalone_midnight_wallet_with_checkpoints<C, K>(
 ) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
 where
     C: ClockPort + 'static,
-    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort + 'static,
 {
     let indexer = config.indexer().clone();
     let default_network = indexer.network_id().clone();
+    let dust_store = Arc::new(dust_checkpoint::UnavailableMidnightDustCheckpointStore);
+    let dust_sync = Arc::new(dust_sync::LiveMidnightDustSyncController::new(
+        config.clone(),
+        dust_store,
+        Arc::clone(&clock),
+        Arc::clone(&keys),
+    ));
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         LiveMidnightAccountSource::new_with_checkpoints(indexer, checkpoints, Arc::clone(&clock)),
         default_network,
@@ -737,6 +877,7 @@ where
             config, clock,
         )),
     )
+    .with_dust_sync(dust_sync)
 }
 
 /// Development-only standalone adapter with key-scoped private DUST checkpoints.
@@ -750,22 +891,30 @@ pub fn protected_standalone_midnight_wallet_with_dust_checkpoints<C, K>(
 ) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
 where
     C: ClockPort + 'static,
-    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort + 'static,
 {
     let indexer = config.indexer().clone();
     let default_network = indexer.network_id().clone();
+    let dust_store: Arc<dyn dust_checkpoint::MidnightDustCheckpointStore> = Arc::new(
+        dust_checkpoint::BinaryMidnightDustCheckpointStore::new(dust_checkpoints),
+    );
+    let dust_sync = Arc::new(dust_sync::LiveMidnightDustSyncController::new(
+        config.clone(),
+        Arc::clone(&dust_store),
+        Arc::clone(&clock),
+        Arc::clone(&keys),
+    ));
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         LiveMidnightAccountSource::new(indexer, Arc::clone(&clock)),
         default_network,
         ProtectedMidnightAccountDeriver::new(keys),
         Arc::new(
-            submission::LiveMidnightTransactionCompleter::new_with_dust_checkpoints(
-                config,
-                dust_checkpoints,
-                clock,
+            submission::LiveMidnightTransactionCompleter::new_with_dust_store(
+                config, dust_store, clock,
             ),
         ),
     )
+    .with_dust_sync(dust_sync)
 }
 
 /// Development-only standalone adapter with public account and private DUST checkpoints.
@@ -780,10 +929,19 @@ pub fn protected_standalone_midnight_wallet_with_all_checkpoints<C, K>(
 ) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
 where
     C: ClockPort + 'static,
-    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort + 'static,
 {
     let indexer = config.indexer().clone();
     let default_network = indexer.network_id().clone();
+    let dust_store: Arc<dyn dust_checkpoint::MidnightDustCheckpointStore> = Arc::new(
+        dust_checkpoint::BinaryMidnightDustCheckpointStore::new(dust_checkpoints),
+    );
+    let dust_sync = Arc::new(dust_sync::LiveMidnightDustSyncController::new(
+        config.clone(),
+        Arc::clone(&dust_store),
+        Arc::clone(&clock),
+        Arc::clone(&keys),
+    ));
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         LiveMidnightAccountSource::new_with_checkpoints(
             indexer,
@@ -793,13 +951,26 @@ where
         default_network,
         ProtectedMidnightAccountDeriver::new(keys),
         Arc::new(
-            submission::LiveMidnightTransactionCompleter::new_with_dust_checkpoints(
-                config,
-                dust_checkpoints,
-                clock,
+            submission::LiveMidnightTransactionCompleter::new_with_dust_store(
+                config, dust_store, clock,
             ),
         ),
     )
+    .with_dust_sync(dust_sync)
+}
+
+const fn map_account_to_dust_error(error: WalletAccountPortError) -> WalletDustSyncPortError {
+    match error {
+        WalletAccountPortError::UnsupportedNetwork => WalletDustSyncPortError::UnsupportedNetwork,
+        WalletAccountPortError::ProtectionNotInitialized => {
+            WalletDustSyncPortError::ProtectionNotInitialized
+        }
+        WalletAccountPortError::ProtectionLocked => WalletDustSyncPortError::ProtectionLocked,
+        WalletAccountPortError::NotFound | WalletAccountPortError::Unavailable => {
+            WalletDustSyncPortError::Unavailable
+        }
+        WalletAccountPortError::InvalidData => WalletDustSyncPortError::InvalidData,
+    }
 }
 
 fn network_catalog() -> Result<Vec<ChainNetwork>, WalletAccountPortError> {

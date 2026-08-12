@@ -5481,6 +5481,7 @@ dependencies = [
  "dioxus",
  "oxid-wallet-application",
  "qrcode",
+ "tokio",
 ]
 
 [[package]]

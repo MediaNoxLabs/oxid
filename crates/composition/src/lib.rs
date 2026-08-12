@@ -21,18 +21,20 @@ use oxid_adapter_storage_dev::{DevelopmentWalletSecurity, UnavailableWalletSecur
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
 use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;
 use oxid_wallet_application::{
-    AuthorizeWalletTransferUseCase, CreateWalletProfileService, CreateWalletProfileUseCase,
-    DeleteWalletKeyUseCase, DeriveWalletAccountUseCase, GenerateWalletKeyUseCase,
-    GetActiveWalletProfileService, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
-    GetWalletSecurityStatusUseCase, GetWalletTransferDraftUseCase, InitializeWalletSecurityUseCase,
-    ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
-    ListWalletProfilesUseCase, LockWalletUseCase, PrepareWalletTransferUseCase,
-    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectWalletProfileUseCase,
-    SignWalletDataUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
+    AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase, CreateWalletProfileService,
+    CreateWalletProfileUseCase, DeleteWalletKeyUseCase, DeriveWalletAccountUseCase,
+    GenerateWalletKeyUseCase, GetActiveWalletProfileService, GetActiveWalletProfileUseCase,
+    GetWalletAccountUseCase, GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    GetWalletTransferDraftUseCase, InitializeWalletSecurityUseCase, ListWalletKeysUseCase,
+    ListWalletNetworksUseCase, ListWalletProfilesService, ListWalletProfilesUseCase,
+    LockWalletUseCase, PrepareWalletTransferUseCase, SelectWalletNetworkUseCase,
+    SelectWalletProfileService, SelectWalletProfileUseCase, SignWalletDataUseCase,
+    StartWalletDustSyncUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
     UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
-    WalletAccountReadPort, WalletAccountService, WalletKeyOperationPort, WalletKeyService,
-    WalletNetworkPort, WalletNetworkService, WalletProfileRepository, WalletProtectionPort,
-    WalletProtectionService, WalletTransactionPort, WalletTransactionService,
+    WalletAccountReadPort, WalletAccountService, WalletDustSyncPort, WalletDustSyncService,
+    WalletKeyOperationPort, WalletKeyService, WalletNetworkPort, WalletNetworkService,
+    WalletProfileRepository, WalletProtectionPort, WalletProtectionService, WalletTransactionPort,
+    WalletTransactionService,
 };
 
 /// Application capabilities shared by every incoming adapter.
@@ -55,6 +57,9 @@ pub struct ApplicationServices {
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
+    start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
+    cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
@@ -145,6 +150,21 @@ impl ApplicationServices {
     #[must_use]
     pub fn sync_wallet_account(&self) -> Arc<dyn SyncWalletAccountUseCase> {
         Arc::clone(&self.sync_wallet_account)
+    }
+
+    #[must_use]
+    pub fn get_wallet_dust_sync_status(&self) -> Arc<dyn GetWalletDustSyncStatusUseCase> {
+        Arc::clone(&self.get_wallet_dust_sync_status)
+    }
+
+    #[must_use]
+    pub fn start_wallet_dust_sync(&self) -> Arc<dyn StartWalletDustSyncUseCase> {
+        Arc::clone(&self.start_wallet_dust_sync)
+    }
+
+    #[must_use]
+    pub fn cancel_wallet_dust_sync(&self) -> Arc<dyn CancelWalletDustSyncUseCase> {
+        Arc::clone(&self.cancel_wallet_dust_sync)
     }
 
     #[must_use]
@@ -574,6 +594,7 @@ where
     M: WalletNetworkPort
         + WalletAccountReadPort
         + WalletAccountDerivationPort
+        + WalletDustSyncPort
         + WalletTransactionPort
         + 'static,
 {
@@ -592,6 +613,7 @@ where
     let networks = Arc::new(WalletNetworkService::new(Arc::clone(&midnight)));
     let account_derivation = Arc::new(WalletAccountDerivationService::new(Arc::clone(&midnight)));
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
+    let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let transactions = Arc::new(WalletTransactionService::new(midnight, clock));
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
@@ -607,6 +629,9 @@ where
     let derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase> = account_derivation;
     let get_wallet_account: Arc<dyn GetWalletAccountUseCase> = accounts.clone();
     let sync_wallet_account: Arc<dyn SyncWalletAccountUseCase> = accounts;
+    let get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase> = dust.clone();
+    let start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase> = dust.clone();
+    let cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase> = dust;
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();
     let authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase> = transactions.clone();
     let submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase> = transactions.clone();
@@ -630,6 +655,9 @@ where
         derive_wallet_account,
         get_wallet_account,
         sync_wallet_account,
+        get_wallet_dust_sync_status,
+        start_wallet_dust_sync,
+        cancel_wallet_dust_sync,
         prepare_wallet_transfer,
         authorize_wallet_transfer,
         submit_wallet_transfer,
@@ -641,7 +669,8 @@ where
 mod tests {
     use super::*;
     use oxid_wallet_application::{
-        CreateWalletProfileCommand, WalletAccountQuery, WalletProfileSecurityCommand,
+        CreateWalletProfileCommand, WalletAccountQuery, WalletDustSyncCommand,
+        WalletProfileSecurityCommand,
     };
 
     #[test]
@@ -686,6 +715,9 @@ mod tests {
         drop(services.derive_wallet_account());
         drop(services.get_wallet_account());
         drop(services.sync_wallet_account());
+        drop(services.get_wallet_dust_sync_status());
+        drop(services.start_wallet_dust_sync());
+        drop(services.cancel_wallet_dust_sync());
         drop(services.prepare_wallet_transfer());
         drop(services.authorize_wallet_transfer());
         drop(services.submit_wallet_transfer());
@@ -805,6 +837,24 @@ mod tests {
                 .expect("unavailable account state is safe")
                 .source,
             "unavailable"
+        );
+        assert_eq!(
+            services
+                .get_wallet_dust_sync_status()
+                .execute(WalletDustSyncCommand {
+                    profile_id: "profile_test".to_owned(),
+                })
+                .expect("unavailable DUST status is safe")
+                .state,
+            "unavailable"
+        );
+        assert!(
+            services
+                .start_wallet_dust_sync()
+                .execute(WalletDustSyncCommand {
+                    profile_id: "profile_test".to_owned(),
+                })
+                .is_err()
         );
     }
 

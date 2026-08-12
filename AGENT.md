@@ -128,13 +128,26 @@ standalone/headless stack through `OXID_MIDNIGHT_DUST_CHECKPOINT_PATH`. Its v1
 binary envelope is bounded to four records, 16 MiB per tagged
 `DustLocalState`, and 64 MiB total; records are scoped by network, SHA-256 of
 the tagged public DUST key, and SHA-256 of live tagged DUST parameters. It
-stores completed current/target cursor and update time but never the seed or
-secret scalar. Resume subscribes from `cursor + 1`, folds at most 256 events or
+stores the last folded current cursor, advertised target, and update time but
+never the seed or secret scalar. Resume subscribes from `cursor + 1`, folds at most 256 events or
 4 MiB per batch, and bounds a run to one million events, 512 MiB, and 30
 minutes. Every spend still fetches live parameters and catches up to the live
 target. Incompatible cached deltas retry once from zero; transport/timeouts
 fail closed. Development roots remain ephemeral, so cross-process reuse awaits
 native durable custody.
+
+[Issue #17](https://github.com/MediaNoxLabs/oxid/issues/17) and ADR-0032 expose
+DUST synchronization through an Oxid-owned status/start/cancel boundary. The
+native Midnight adapter owns a profile/network worker and saves every folded
+bounded batch, so partial checkpoints satisfy `current_cursor <= target_cursor`
+and cancellation resumes from the last consistent offset. Core and incoming
+types contain only lifecycle, cursors, per-run event count, exact atomic DUST,
+freshness, and sanitized failure category. Headless v1 methods are
+`wallet.dust.sync.status`, `wallet.dust.sync.start`, and
+`wallet.dust.sync.cancel`; Dioxus polls the same use cases. Cached, cancelled,
+or stalled DUST is display/resume state only and never live spend authority.
+The iOS standalone smoke flow exercises `Sync DUST`, the exact `12 DUST`
+fixture result, and the resulting `Resync DUST` action before transfer checks.
 
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
@@ -204,6 +217,9 @@ development/headless use. ADR-0028 makes private local proving the production
 direction and records its cache, cancellation, interoperability, and mobile
 resource bounds. ADR-0029 separates simulator/emulator standalone wallet flows
 from production wiring and records receive-QR plus transaction-UI boundaries.
+ADR-0030 and ADR-0031 keep public unshielded and private DUST checkpoints in
+separate native adapter stores. ADR-0032 adds the adapter-owned DUST session and
+partial-checkpoint cancellation/resume rule without weakening live-before-spend.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -257,6 +273,13 @@ protected-key methods accept only public labels,
 algorithms, purposes, bounded payloads, opaque references, and explicit
 human-readable confirmations. Passphrases, seeds, recovery phrases, and raw
 private keys are rejected by strict parameter decoding.
+
+The headless DUST surface is `wallet.dust.sync.status`,
+`wallet.dust.sync.start`, and `wallet.dust.sync.cancel`. These commands never
+accept a key, path, seed, endpoint, or checkpoint. The deterministic simulator
+advances on status polls so tests can cover fresh, cancelled, resumed, and
+already-current flows without timing races. Native start returns before network
+or ledger work begins; incoming adapters must poll status and may cancel.
 
 `oxid-app/standalone-development` is the only mobile-development exception: it
 selects the same zero-configuration `compose_headless()` stack explicitly at
@@ -332,7 +355,9 @@ native Midnight adapter, not `wallet-domain`, `wallet-application`, or the
 public profile repository. Keep their formats separate. Preserve
 schema/count/size/scope/cursor/parameter validation, direct-target symlink
 rejection, owner-only permissions, same-directory atomic replacement, and
-best-effort disk semantics. Shielded Zswap uses a different official state
+safe disk semantics. Transaction catch-up treats checkpoint writes as
+best-effort; explicit DUST sync surfaces a storage failure and retains the last
+consistent checkpoint. Shielded Zswap uses a different official state
 machine and remains separate checkpoint work.
 
 Standalone completion has separate bounded HTTP indexer replay, local or remote

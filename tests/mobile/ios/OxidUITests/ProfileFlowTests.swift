@@ -31,6 +31,13 @@ final class ProfileFlowTests: XCTestCase {
         let useReceiveAddress = application.buttons["Use my receive address"]
         XCTAssertTrue(useReceiveAddress.waitForExistence(timeout: 15))
 
+        let syncDust = application.buttons["Sync DUST"]
+        XCTAssertTrue(syncDust.waitForExistence(timeout: 5))
+        scrollTo(syncDust, in: application)
+        syncDust.tap()
+        XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 5))
+        XCTAssertTrue(application.buttons["Resync DUST"].exists)
+
         let showQrButton = application.buttons["Show receive QR"].firstMatch
         XCTAssertTrue(showQrButton.exists)
         scrollTo(showQrButton, in: application)

@@ -44,3 +44,11 @@ Until each capability slice is composed, its destination renders an explicit
 unavailable/migration state. The existing Create Wallet Profile use case remains
 functional as a temporary profile destination. Its final lifecycle integration
 is tracked by [issue #1](https://github.com/MediaNoxLabs/oxid/issues/1).
+
+[Issue #17](https://github.com/MediaNoxLabs/oxid/issues/17) and ADR-0032 restore
+the useful behavior of the prototype's `WalletSyncPane`: a separate DUST row,
+exact official-state balance, bounded current/target progress, resync, and
+cancellation. Oxid reimplements the component over application use cases and
+polls only an adapter-owned worker status. No ledger event, database, transport,
+or key type enters Dioxus, and cached/stalled state is explicitly distinguished
+from live spend readiness.

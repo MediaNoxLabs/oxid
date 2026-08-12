@@ -77,6 +77,12 @@ pub(crate) struct StoredDustCheckpoint {
 }
 
 pub(crate) trait MidnightDustCheckpointStore: Send + Sync {
+    fn load_latest(
+        &self,
+        network_id: &ChainNetworkId,
+        public_key: &DustPublicKey,
+    ) -> Result<Option<StoredDustCheckpoint>, DustCheckpointStoreError>;
+
     fn load(
         &self,
         network_id: &ChainNetworkId,
@@ -95,6 +101,14 @@ pub(crate) trait MidnightDustCheckpointStore: Send + Sync {
 pub(crate) struct UnavailableMidnightDustCheckpointStore;
 
 impl MidnightDustCheckpointStore for UnavailableMidnightDustCheckpointStore {
+    fn load_latest(
+        &self,
+        _: &ChainNetworkId,
+        _: &DustPublicKey,
+    ) -> Result<Option<StoredDustCheckpoint>, DustCheckpointStoreError> {
+        Ok(None)
+    }
+
     fn load(
         &self,
         _: &ChainNetworkId,
@@ -208,6 +222,31 @@ impl BinaryMidnightDustCheckpointStore {
 }
 
 impl MidnightDustCheckpointStore for BinaryMidnightDustCheckpointStore {
+    fn load_latest(
+        &self,
+        network_id: &ChainNetworkId,
+        public_key: &DustPublicKey,
+    ) -> Result<Option<StoredDustCheckpoint>, DustCheckpointStoreError> {
+        let _guard = self
+            .access
+            .lock()
+            .map_err(|_| DustCheckpointStoreError::Unavailable)?;
+        let public_key_fingerprint = public_key_fingerprint(public_key)?;
+        Ok(self
+            .load_document()?
+            .into_iter()
+            .find(|record| {
+                record.network_id == network_id.as_str()
+                    && record.public_key_fingerprint == public_key_fingerprint
+            })
+            .map(|record| StoredDustCheckpoint {
+                current_cursor: record.current_cursor,
+                target_cursor: record.target_cursor,
+                updated_at: UnixTimestampMillis::new(record.updated_at_millis),
+                state: record.state,
+            }))
+    }
+
     fn load(
         &self,
         network_id: &ChainNetworkId,
@@ -406,7 +445,7 @@ fn validate_records(records: &[DustCheckpointRecord]) -> Result<(), DustCheckpoi
             || crate::network_by_id(&network_id)
                 .map_err(|_| DustCheckpointStoreError::InvalidData)?
                 .is_none()
-            || record.current_cursor != record.target_cursor
+            || record.current_cursor > record.target_cursor
             || !scopes.insert((&record.network_id, record.public_key_fingerprint))
             || parameters_fingerprint(&record.state.params)? != record.parameters_fingerprint
         {
@@ -417,7 +456,7 @@ fn validate_records(records: &[DustCheckpointRecord]) -> Result<(), DustCheckpoi
 }
 
 fn validate_checkpoint(checkpoint: &StoredDustCheckpoint) -> Result<(), DustCheckpointStoreError> {
-    if checkpoint.current_cursor != checkpoint.target_cursor {
+    if checkpoint.current_cursor > checkpoint.target_cursor {
         return Err(DustCheckpointStoreError::InvalidData);
     }
     Ok(())
@@ -664,17 +703,22 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_malformed_and_oversized_checkpoints_are_rejected_or_replaced() {
+    fn partial_malformed_and_oversized_checkpoints_are_resumable_or_replaced() {
         let directory = IsolatedDirectory::new();
         let config = directory.config();
         let store = BinaryMidnightDustCheckpointStore::new(config.clone());
         let mut incomplete = checkpoint(INITIAL_PARAMETERS.dust);
         incomplete.target_cursor = 43;
+        store
+            .save(&network("devnet"), &public_key(7), &incomplete)
+            .expect("partial checkpoint remains resumable");
         assert_eq!(
             store
-                .save(&network("devnet"), &public_key(7), &incomplete)
-                .err(),
-            Some(DustCheckpointStoreError::InvalidData)
+                .load_latest(&network("devnet"), &public_key(7))
+                .expect("latest checkpoint loads")
+                .expect("partial checkpoint exists")
+                .target_cursor,
+            43
         );
 
         fs::write(config.path(), b"not a DUST checkpoint").expect("malformed fixture writes");

@@ -5,7 +5,8 @@
 - Source: Prototype parity epic and [issue #4](https://github.com/MediaNoxLabs/oxid/issues/4)
 - Implementation state: Version 1 transport, profile lifecycle,
   development-only protected-key and Midnight account-derivation flows, live
-  sync, canonical transfer authorization, and shutdown implemented
+  account/DUST sync, canonical transfer authorization, and shutdown implemented
+- Amended by: ADR-0032 adds non-blocking adapter-owned DUST sessions
 
 ## Context
 
@@ -71,9 +72,12 @@ methods. Responses contain a public preview and opaque draft/challenge only.
 They do not expose signing or serialized transaction bytes, and they must keep
 proof/submission readiness false until those separate adapters are composed.
 
-The initial loop is synchronous because the only implemented use case is
-synchronous. An async runtime may be added when a network, proving, or protocol
-adapter needs concurrency; it is not part of the wire contract.
+The request loop stays synchronous and deterministic. Long DUST network/fold
+work is started inside the outgoing adapter and observed through separate v1
+status/start/cancel methods, so the loop never owns a ledger task or exposes a
+transport stream. Other long-running capabilities require their own explicit
+session or async protocol decision; concurrency is not implicit in the wire
+contract.
 
 ## Consequences
 

@@ -12,7 +12,8 @@ use oxid_wallet_application::{
     SelectWalletNetworkCommand, SelectWalletProfileCommand, SelectWalletProfileError,
     SensitiveOperationConfirmation, SensitiveWalletOperationError, SignWalletDataCommand,
     SubmitWalletTransferCommand, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
-    WalletAccountView, WalletKeyError, WalletKeyView, WalletNetworkListView,
+    WalletAccountView, WalletDustSyncCommand, WalletDustSyncError, WalletDustSyncPortError,
+    WalletDustSyncView, WalletKeyError, WalletKeyView, WalletNetworkListView,
     WalletProfileRepositoryError, WalletProfileSecurityCommand, WalletProfileView,
     WalletSecurityError, WalletSecurityPortError, WalletSecurityStatusView, WalletTransactionError,
     WalletTransactionPortError, WalletTransferDraftQuery, WalletTransferPreviewView,
@@ -153,6 +154,9 @@ impl HeadlessWallet {
             }
             "wallet.transaction.draft" => self.transaction_draft(request),
             "wallet.connect" | "wallet.sync.force" => self.sync_account(request),
+            "wallet.dust.sync.status" => self.dust_sync_status(request),
+            "wallet.dust.sync.start" => self.start_dust_sync(request),
+            "wallet.dust.sync.cancel" => self.cancel_dust_sync(request),
             _ => Dispatch::continue_with(Response::error(
                 request.id,
                 "method_not_found",
@@ -654,6 +658,53 @@ impl HeadlessWallet {
                 json!({ "account": account_value(&account) }),
             )),
             Err(error) => Dispatch::continue_with(account_error(request.id, error)),
+        }
+    }
+
+    fn dust_sync_status(&self, request: Request) -> Dispatch {
+        self.dust_sync_operation(
+            request,
+            "wallet.dust.sync.status",
+            |application, command| application.get_wallet_dust_sync_status().execute(command),
+        )
+    }
+
+    fn start_dust_sync(&self, request: Request) -> Dispatch {
+        self.dust_sync_operation(request, "wallet.dust.sync.start", |application, command| {
+            application.start_wallet_dust_sync().execute(command)
+        })
+    }
+
+    fn cancel_dust_sync(&self, request: Request) -> Dispatch {
+        self.dust_sync_operation(
+            request,
+            "wallet.dust.sync.cancel",
+            |application, command| application.cancel_wallet_dust_sync().execute(command),
+        )
+    }
+
+    fn dust_sync_operation(
+        &self,
+        request: Request,
+        method: &'static str,
+        operation: impl FnOnce(
+            &ApplicationServices,
+            WalletDustSyncCommand,
+        ) -> Result<WalletDustSyncView, WalletDustSyncError>,
+    ) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, method);
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match operation(&self.application, WalletDustSyncCommand { profile_id }) {
+            Ok(status) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "dustSync": dust_sync_value(&status) }),
+            )),
+            Err(error) => Dispatch::continue_with(dust_sync_error(request.id, error)),
         }
     }
 
@@ -1191,6 +1242,24 @@ fn sync_value(account: &WalletAccountView) -> Value {
     })
 }
 
+fn dust_sync_value(status: &WalletDustSyncView) -> Value {
+    json!({
+        "networkId": status.network_id,
+        "state": status.state,
+        "currentCursor": status.current_cursor,
+        "targetCursor": status.target_cursor,
+        "eventsProcessed": status.events_processed,
+        "balance": {
+            "assetId": "midnight:dust",
+            "symbol": "DUST",
+            "decimals": 15,
+            "atomicUnits": status.balance_atomic_units
+        },
+        "updatedAtMillis": status.updated_at_millis,
+        "failure": status.failure
+    })
+}
+
 fn transaction_value(transaction: &oxid_wallet_application::WalletTransactionView) -> Value {
     json!({
         "transactionId": transaction.transaction_id,
@@ -1425,6 +1494,46 @@ fn account_error(id: Option<String>, error: WalletAccountError) -> Response {
     }
 }
 
+fn dust_sync_error(id: Option<String>, error: WalletDustSyncError) -> Response {
+    match error {
+        WalletDustSyncError::InvalidProfileIdentifier(_) => Response::error(
+            id,
+            "invalid_argument",
+            "active profile identifier is invalid",
+        ),
+        WalletDustSyncError::Port(WalletDustSyncPortError::Conflict) => Response::error(
+            id,
+            "conflict",
+            "DUST synchronization is already running or cannot be cancelled",
+        ),
+        WalletDustSyncError::Port(WalletDustSyncPortError::UnsupportedNetwork) => Response::error(
+            id,
+            "unsupported_network",
+            "selected wallet network does not support DUST synchronization",
+        ),
+        WalletDustSyncError::Port(WalletDustSyncPortError::ProtectionNotInitialized) => {
+            Response::error(
+                id,
+                "failed_precondition",
+                "wallet protection is not initialized",
+            )
+        }
+        WalletDustSyncError::Port(WalletDustSyncPortError::ProtectionLocked) => {
+            Response::error(id, "wallet_locked", "wallet is locked")
+        }
+        WalletDustSyncError::Port(WalletDustSyncPortError::Unavailable) => Response::error(
+            id,
+            "capability_unavailable",
+            "DUST synchronization is unavailable",
+        ),
+        WalletDustSyncError::Port(WalletDustSyncPortError::InvalidData) => Response::error(
+            id,
+            "chain_state_unavailable",
+            "DUST synchronization state could not be used safely",
+        ),
+    }
+}
+
 fn security_status_value(status: WalletSecurityStatusView) -> Value {
     json!({
         "state": match status.state {
@@ -1556,6 +1665,9 @@ fn invalid_empty_params(id: Option<String>, method: &'static str) -> Dispatch {
         "wallet.transaction.history" => "wallet.transaction.history does not accept parameters",
         "wallet.connect" => "wallet.connect does not accept parameters",
         "wallet.sync.force" => "wallet.sync.force does not accept parameters",
+        "wallet.dust.sync.status" => "wallet.dust.sync.status does not accept parameters",
+        "wallet.dust.sync.start" => "wallet.dust.sync.start does not accept parameters",
+        "wallet.dust.sync.cancel" => "wallet.dust.sync.cancel does not accept parameters",
         _ => "method does not accept parameters",
     };
     Dispatch::continue_with(Response::error(id, "invalid_params", message))
@@ -1695,6 +1807,9 @@ fn capability_manifest() -> Value {
         { "method": "wallet.transaction.submit_unshielded", "status": "ready", "mode": "development_only", "sources": ["simulated", "live"] },
         { "method": "wallet.transaction.send_unshielded", "status": "ready", "mode": "development_only", "aliasFor": "wallet.transaction.submit_unshielded" },
         { "method": "wallet.sync.force", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
+        { "method": "wallet.dust.sync.status", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached", "unavailable"] },
+        { "method": "wallet.dust.sync.start", "status": "ready", "mode": "standalone", "execution": "adapter_worker" },
+        { "method": "wallet.dust.sync.cancel", "status": "ready", "mode": "standalone", "checkpoint": "resumable" },
         { "method": "vault.total_locked", "status": "queued" },
         { "method": "vault.locks.list", "status": "queued" },
         { "method": "vault.credentials.list", "status": "queued" },
@@ -2480,5 +2595,100 @@ mod tests {
         let output = Value::Array(responses).to_string();
         assert!(!output.contains("never-echo-this"));
         assert!(!output.contains("deadbeef-private"));
+    }
+
+    #[test]
+    fn exposes_initial_resumed_current_and_cancelled_dust_flows() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"dust-create","method":"wallet.profile.create","params":{"displayName":"DUST flow"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile id is returned");
+        let setup = format!(
+            "{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "dust-select",
+                "method": "wallet.profile.select",
+                "params": { "profileId": profile_id }
+            }),
+            r#"{"protocol":"oxid.headless.v1","id":"dust-init","method":"wallet.security.initialize","params":{}}"#,
+        );
+        assert!(
+            execute_with_wallet(&wallet, &setup)
+                .iter()
+                .all(|response| response["ok"] == true)
+        );
+
+        let initial_and_cancelled = execute_with_wallet(
+            &wallet,
+            concat!(
+                r#"{"protocol":"oxid.headless.v1","id":"dust-initial","method":"wallet.dust.sync.status","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"dust-start","method":"wallet.dust.sync.start","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"dust-progress","method":"wallet.dust.sync.status","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"dust-cancel","method":"wallet.dust.sync.cancel","params":{}}"#,
+            ),
+        );
+        assert_eq!(
+            initial_and_cancelled[0]["result"]["dustSync"]["state"],
+            "never_synced"
+        );
+        assert_eq!(
+            initial_and_cancelled[1]["result"]["dustSync"]["state"],
+            "syncing"
+        );
+        assert_eq!(
+            initial_and_cancelled[2]["result"]["dustSync"]["currentCursor"],
+            0
+        );
+        assert_eq!(
+            initial_and_cancelled[2]["result"]["dustSync"]["targetCursor"],
+            2
+        );
+        assert_eq!(
+            initial_and_cancelled[3]["result"]["dustSync"]["state"],
+            "cancelled"
+        );
+
+        let resumed_and_current = execute_with_wallet(
+            &wallet,
+            concat!(
+                r#"{"protocol":"oxid.headless.v1","id":"dust-resume","method":"wallet.dust.sync.start","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"dust-resumed-progress","method":"wallet.dust.sync.status","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"dust-complete","method":"wallet.dust.sync.status","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"dust-current-start","method":"wallet.dust.sync.start","params":{}}"#,
+                "\n",
+                r#"{"protocol":"oxid.headless.v1","id":"dust-current","method":"wallet.dust.sync.status","params":{}}"#,
+            ),
+        );
+        assert_eq!(
+            resumed_and_current[0]["result"]["dustSync"]["currentCursor"],
+            0
+        );
+        assert_eq!(
+            resumed_and_current[1]["result"]["dustSync"]["currentCursor"],
+            1
+        );
+        let completed = &resumed_and_current[2]["result"]["dustSync"];
+        assert_eq!(completed["state"], "synced");
+        assert_eq!(completed["currentCursor"], completed["targetCursor"]);
+        assert_eq!(completed["balance"]["atomicUnits"], "12000000000000000");
+        assert_eq!(
+            resumed_and_current[4]["result"]["dustSync"]["state"],
+            "synced"
+        );
+        assert_eq!(
+            resumed_and_current[4]["result"]["dustSync"]["eventsProcessed"],
+            0
+        );
     }
 }
