@@ -6,7 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/shielded`, `address.rs`, and the Dioxus receive/assets surfaces
 - Canonical sources: `midnight-ledger` commit `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, `midnight-wallet` commit `25d0c3857fc0e20435e06a9225bd8709ecce1115`, and `midnight-indexer` commit `82759bf186184684f13a9ffa97b58b7b7684f47c`
 - Amends: ADR-0015, ADR-0017, ADR-0024, ADR-0029, and ADR-0030
-- Implementation state: protected role-3 derivation, official shielded address-vector conformance, bounded tagged-event decoding, canonical adapter-private replay, safe account/headless projection, and mobile QR presentation implemented; checkpointing and explicit shielded sync sessions remain in issue #18
+- Implementation state: protected role-3 derivation, official shielded address-vector conformance, bounded tagged-event decoding, canonical adapter-private replay, owner-private checkpoint store, safe account/headless projection, and mobile QR presentation implemented; live checkpoint wiring and explicit shielded sync sessions remain in issue #18
 
 ## Context
 
@@ -46,7 +46,7 @@ spends remove notes by nullifier. Oxid-owned projections may contain only
 bounded lifecycle/progress metadata, exact per-token balances, owned-note
 count, freshness, and sanitized failures.
 
-Any durable Zswap checkpoint must be a separate versioned binary store scoped
+The durable Zswap checkpoint is a separate versioned binary store scoped
 by network, a one-way public-key fingerprint, source/protocol identity, and
 cursor. It must be owner-private, symlink-resistant, bounded, atomically
 replaced, and resumable at the next cursor. Cached state is display/replay
@@ -64,6 +64,9 @@ remains fail-closed until approved custody and endpoint configuration exist.
   adding shielded presentation does not change transaction-recipient policy.
 - Bounded indexer envelopes are cross-checked against their tagged official
   event variant before replay, and malformed/non-linear streams fail closed.
+- Checkpoint documents are checksummed, size/record bounded, and keyed by the
+  source/protocol identity plus a SHA-256 fingerprint of both Zswap public
+  receive keys; key material itself is never serialized beside the local state.
 - Future shielded spending can reuse the official retained state without
   making its nullifiers, Merkle paths, or witnesses public application data.
 - Browser-only builds retain the existing reduced account surface because the

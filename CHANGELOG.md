@@ -50,3 +50,5 @@ once public releases begin.
 - Bounded official `zswapLedgerEvents` decoding and adapter-private canonical
   replay with exact Merkle ordering, verified ownership, foreign-branch
   collapse, and nullifier spend removal.
+- Checksummed, owner-private, key/network/source-scoped Zswap replay checkpoints
+  with partial resume cursors, strict size/record limits, and atomic replacement.

@@ -239,8 +239,12 @@ nullifier material remain adapter-private. This replay increment adds a bounded
 decoder for the official tagged `zswapLedgerEvents` payload and folds it into
 the official local state with exact Merkle indices, local ownership plus
 commitment verification, foreign-branch collapse, batch rehashing, and
-nullifier spend removal. Bounded checkpoints, explicit sync sessions, and
-public balance presentation remain open in #18.
+nullifier spend removal. The following checkpoint increment persists the
+official tagged state and partial cursor behind a bounded, checksummed,
+owner-private, symlink-resistant, atomic binary store scoped by network,
+source/protocol identity, and a one-way fingerprint of both public Zswap keys.
+Live checkpoint/session wiring and public balance presentation remain open in
+#18.
 
 Shielded Zswap replay/checkpoints, internal/change
 address management, replacement and

@@ -559,6 +559,10 @@ to silence the shell probe.
   `ZswapOutput` events, enforces exact `mt_index == first_free`, recomputes owned
   commitments after local key matching/decryption, collapses foreign branches,
   rehashes at batch boundaries, and removes owned/pending spends by nullifier.
+- Shielded checkpoints use a distinct `OXIDZSWP` binary schema, are scoped by
+  network, source/protocol identity, and SHA-256 of both Zswap public keys,
+  retain partial cursors, and must stay checksummed, bounded, owner-private,
+  symlink-resistant, and atomic.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.

@@ -16,6 +16,9 @@ mod local_proving;
 #[allow(dead_code, reason = "wired into the shielded sync controller next")]
 mod shielded;
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code, reason = "wired into the shielded sync controller next")]
+mod shielded_checkpoint;
+#[cfg(not(target_arch = "wasm32"))]
 mod submission;
 #[cfg(not(target_arch = "wasm32"))]
 mod transaction;
@@ -36,6 +39,10 @@ pub use local_proving::{
 };
 #[cfg(all(not(target_arch = "wasm32"), feature = "proving-bench"))]
 pub use local_proving::{MidnightLocalProvingFixtureReport, run_local_proving_fixture};
+#[cfg(not(target_arch = "wasm32"))]
+pub use shielded_checkpoint::{
+    MidnightShieldedCheckpointConfig, MidnightShieldedCheckpointConfigError,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use submission::{
     MidnightProvingMode, MidnightStandaloneConfig, MidnightStandaloneConfigError,
