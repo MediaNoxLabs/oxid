@@ -27,7 +27,7 @@ use oxid_wallet_domain::{
     WalletProfileId, WalletSyncState, WalletSyncStatus, WalletTransaction,
     WalletTransactionDirection, WalletTransactionStatus,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::time::timeout;
 use tokio_tungstenite::{
@@ -37,7 +37,13 @@ use tokio_tungstenite::{
 
 use super::{
     MidnightAccountSource, MidnightWalletAdapter, ProtectedMidnightAccountDeriver, SPECKS_PER_DUST,
-    STARS_PER_NIGHT, decimal_places, midnight_asset, network_by_id,
+    STARS_PER_NIGHT,
+    checkpoint::{
+        JsonMidnightAccountCheckpointStore, MidnightAccountCheckpointConfig,
+        MidnightAccountCheckpointStore, StoredIndexerCheckpoint,
+        UnavailableMidnightAccountCheckpointStore,
+    },
+    decimal_places, midnight_asset, network_by_id,
     transaction::{MidnightSpendableAccount, MidnightSpendableUtxo, MidnightTransactionSource},
 };
 
@@ -153,6 +159,20 @@ where
     MidnightWalletAdapter::with_default_network(source, default_network)
 }
 
+/// Builds native live sync with durable public account checkpoints.
+pub fn live_midnight_wallet_with_checkpoints<C>(
+    config: MidnightIndexerConfig,
+    checkpoints: MidnightAccountCheckpointConfig,
+    clock: std::sync::Arc<C>,
+) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>>
+where
+    C: ClockPort,
+{
+    let default_network = config.network_id.clone();
+    let source = LiveMidnightAccountSource::new_with_checkpoints(config, checkpoints, clock);
+    MidnightWalletAdapter::with_default_network(source, default_network)
+}
+
 /// Builds live sync with the same protected derivation port used by custody.
 pub fn protected_live_midnight_wallet<C, K>(
     config: MidnightIndexerConfig,
@@ -172,13 +192,35 @@ where
     )
 }
 
+/// Builds protected live sync with durable public account checkpoints.
+pub fn protected_live_midnight_wallet_with_checkpoints<C, K>(
+    config: MidnightIndexerConfig,
+    checkpoints: MidnightAccountCheckpointConfig,
+    clock: std::sync::Arc<C>,
+    keys: std::sync::Arc<K>,
+) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort,
+    K: WalletKeyDerivationPort,
+{
+    let default_network = config.network_id.clone();
+    let source = LiveMidnightAccountSource::new_with_checkpoints(config, checkpoints, clock);
+    MidnightWalletAdapter::with_default_network_and_deriver(
+        source,
+        default_network,
+        ProtectedMidnightAccountDeriver::new(keys),
+    )
+}
+
 /// Live unshielded account source backed by a replaceable indexer transport.
 pub struct LiveMidnightAccountSource<C> {
     network_id: ChainNetworkId,
     address: ChainAddress,
     clock: std::sync::Arc<C>,
     transport: std::sync::Arc<dyn MidnightIndexerTransport>,
+    checkpoints: std::sync::Arc<dyn MidnightAccountCheckpointStore>,
     cached: std::sync::Mutex<HashMap<WalletProfileId, WalletAccountSnapshot>>,
+    indexer_snapshots: std::sync::Mutex<HashMap<WalletProfileId, IndexerSnapshot>>,
     derived_accounts: std::sync::Mutex<HashMap<WalletProfileId, DerivedChainAccount>>,
     spendable_utxos: std::sync::Mutex<HashMap<WalletProfileId, Vec<MidnightSpendableUtxo>>>,
 }
@@ -187,26 +229,62 @@ impl<C> LiveMidnightAccountSource<C> {
     pub(crate) fn new(config: MidnightIndexerConfig, clock: std::sync::Arc<C>) -> Self {
         let transport =
             std::sync::Arc::new(WebSocketMidnightIndexerTransport::new(config.websocket_url));
-        Self::with_transport(
+        Self::with_transport_and_checkpoints(
             config.network_id,
             config.unshielded_address,
             clock,
             transport,
+            std::sync::Arc::new(UnavailableMidnightAccountCheckpointStore),
         )
     }
 
+    pub(crate) fn new_with_checkpoints(
+        config: MidnightIndexerConfig,
+        checkpoints: MidnightAccountCheckpointConfig,
+        clock: std::sync::Arc<C>,
+    ) -> Self {
+        let transport =
+            std::sync::Arc::new(WebSocketMidnightIndexerTransport::new(config.websocket_url));
+        Self::with_transport_and_checkpoints(
+            config.network_id,
+            config.unshielded_address,
+            clock,
+            transport,
+            std::sync::Arc::new(JsonMidnightAccountCheckpointStore::new(checkpoints)),
+        )
+    }
+
+    #[cfg(test)]
     fn with_transport(
         network_id: ChainNetworkId,
         address: ChainAddress,
         clock: std::sync::Arc<C>,
         transport: std::sync::Arc<dyn MidnightIndexerTransport>,
     ) -> Self {
+        Self::with_transport_and_checkpoints(
+            network_id,
+            address,
+            clock,
+            transport,
+            std::sync::Arc::new(UnavailableMidnightAccountCheckpointStore),
+        )
+    }
+
+    fn with_transport_and_checkpoints(
+        network_id: ChainNetworkId,
+        address: ChainAddress,
+        clock: std::sync::Arc<C>,
+        transport: std::sync::Arc<dyn MidnightIndexerTransport>,
+        checkpoints: std::sync::Arc<dyn MidnightAccountCheckpointStore>,
+    ) -> Self {
         Self {
             network_id,
             address,
             clock,
             transport,
+            checkpoints,
             cached: std::sync::Mutex::new(HashMap::new()),
+            indexer_snapshots: std::sync::Mutex::new(HashMap::new()),
             derived_accounts: std::sync::Mutex::new(HashMap::new()),
             spendable_utxos: std::sync::Mutex::new(HashMap::new()),
         }
@@ -306,6 +384,47 @@ impl<C> LiveMidnightAccountSource<C> {
         );
         self.store(profile_id.clone(), stalled)
     }
+
+    fn hydrate_checkpoint(
+        &self,
+        profile_id: &WalletProfileId,
+        network: &ChainNetwork,
+        account_id: ChainAccountId,
+        address: ChainAddress,
+    ) -> Result<Option<WalletAccountSnapshot>, WalletAccountPortError> {
+        let checkpoint = match self.checkpoints.load(&self.network_id, &address) {
+            Ok(Some(checkpoint)) => checkpoint,
+            Ok(None) | Err(_) => return Ok(None),
+        };
+        if checkpoint.snapshot.validate_checkpoint().is_err() {
+            return Ok(None);
+        }
+        let (balances, transactions) = match map_indexer_snapshot(&checkpoint.snapshot) {
+            Ok(mapped) => mapped,
+            Err(_) => return Ok(None),
+        };
+        let snapshot = WalletAccountSnapshot::new(
+            network.clone(),
+            Some(account_id),
+            WalletAccountSource::Cached,
+            vec![address],
+            balances,
+            WalletSyncStatus::new(
+                WalletSyncState::Synced,
+                Some(checkpoint.snapshot.current_cursor),
+                Some(checkpoint.snapshot.target_cursor),
+                checkpoint.snapshot.chain_tip_height,
+                Some(checkpoint.updated_at),
+            ),
+            transactions,
+        );
+        self.indexer_snapshots
+            .lock()
+            .map_err(|_| WalletAccountPortError::Unavailable)?
+            .insert(profile_id.clone(), checkpoint.snapshot);
+        self.store(profile_id.clone(), snapshot.clone())?;
+        Ok(Some(snapshot))
+    }
 }
 
 impl<C> MidnightAccountSource for LiveMidnightAccountSource<C>
@@ -333,6 +452,10 @@ where
                 .lock()
                 .map_err(|_| WalletAccountPortError::Unavailable)?
                 .remove(profile_id);
+            self.indexer_snapshots
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?
+                .remove(profile_id);
             self.spendable_utxos
                 .lock()
                 .map_err(|_| WalletAccountPortError::Unavailable)?
@@ -348,7 +471,8 @@ where
     ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
         self.ensure_network(network)?;
         let (expected_account_id, expected_address) = self.active_account(profile_id)?;
-        self.cached
+        if let Some(snapshot) = self
+            .cached
             .lock()
             .map_err(|_| WalletAccountPortError::Unavailable)?
             .get(profile_id)
@@ -357,6 +481,10 @@ where
                 snapshot.account_id() == Some(&expected_account_id)
                     && snapshot.addresses() == [expected_address.clone()]
             })
+        {
+            return Ok(snapshot);
+        }
+        self.hydrate_checkpoint(profile_id, network, expected_account_id, expected_address)?
             .map_or_else(|| self.initial_snapshot(profile_id, network), Ok)
     }
 
@@ -380,6 +508,10 @@ where
                 ),
             );
             self.store(profile_id.clone(), syncing)?;
+            self.spendable_utxos
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?
+                .remove(profile_id);
 
             let address = previous
                 .addresses()
@@ -387,8 +519,29 @@ where
                 .ok_or(WalletAccountPortError::InvalidData)?
                 .clone();
 
-            let indexer = match self.transport.snapshot(address.value()).await {
+            let checkpoint = self
+                .indexer_snapshots
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?
+                .get(profile_id)
+                .cloned();
+            let indexer = match self
+                .transport
+                .snapshot(address.value(), checkpoint.clone())
+                .await
+            {
                 Ok(indexer) => indexer,
+                Err(IndexerTransportError::Protocol | IndexerTransportError::InvalidData)
+                    if checkpoint.is_some() =>
+                {
+                    match self.transport.snapshot(address.value(), None).await {
+                        Ok(indexer) => indexer,
+                        Err(error) => {
+                            self.store_stalled(profile_id, &previous)?;
+                            return Err(error.wallet_error());
+                        }
+                    }
+                }
                 Err(error) => {
                     self.store_stalled(profile_id, &previous)?;
                     return Err(error.wallet_error());
@@ -419,7 +572,7 @@ where
                 network.clone(),
                 previous.account_id().cloned(),
                 WalletAccountSource::Live,
-                vec![address],
+                vec![address.clone()],
                 balances,
                 sync,
                 transactions,
@@ -432,6 +585,15 @@ where
                 .filter(|utxo| utxo.token_type == NATIVE_NIGHT_TOKEN_TYPE)
                 .map(map_spendable_utxo)
                 .collect::<Result<Vec<_>, _>>()?;
+            let stored = StoredIndexerCheckpoint {
+                updated_at,
+                snapshot: indexer.clone(),
+            };
+            let _ = self.checkpoints.save(&self.network_id, &address, &stored);
+            self.indexer_snapshots
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?
+                .insert(profile_id.clone(), indexer);
             self.spendable_utxos
                 .lock()
                 .map_err(|_| WalletAccountPortError::Unavailable)?
@@ -491,6 +653,7 @@ trait MidnightIndexerTransport: Send + Sync {
     fn snapshot<'a>(
         &'a self,
         address: &'a str,
+        checkpoint: Option<IndexerSnapshot>,
     ) -> BoxFuture<'a, Result<IndexerSnapshot, IndexerTransportError>>;
 }
 
@@ -508,6 +671,7 @@ impl MidnightIndexerTransport for WebSocketMidnightIndexerTransport {
     fn snapshot<'a>(
         &'a self,
         address: &'a str,
+        checkpoint: Option<IndexerSnapshot>,
     ) -> BoxFuture<'a, Result<IndexerSnapshot, IndexerTransportError>> {
         let endpoint = self.endpoint.clone();
         let address = address.to_owned();
@@ -522,7 +686,7 @@ impl MidnightIndexerTransport for WebSocketMidnightIndexerTransport {
                         .build()
                         .map_err(|_| IndexerTransportError::Runtime)
                         .and_then(|runtime| {
-                            runtime.block_on(indexer_snapshot(&endpoint, &address))
+                            runtime.block_on(indexer_snapshot(&endpoint, &address, checkpoint))
                         });
                     let _ = sender.send(result);
                 })
@@ -533,7 +697,7 @@ impl MidnightIndexerTransport for WebSocketMidnightIndexerTransport {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum IndexerTransportError {
+pub(crate) enum IndexerTransportError {
     Runtime,
     Connect,
     Timeout,
@@ -556,7 +720,15 @@ impl IndexerTransportError {
 async fn indexer_snapshot(
     endpoint: &str,
     address: &str,
+    checkpoint: Option<IndexerSnapshot>,
 ) -> Result<IndexerSnapshot, IndexerTransportError> {
+    let transaction_id = checkpoint.as_ref().map_or(Ok(0), |snapshot| {
+        snapshot
+            .current_cursor
+            .checked_add(1)
+            .and_then(|cursor| i64::try_from(cursor).ok())
+            .ok_or(IndexerTransportError::InvalidData)
+    })?;
     ensure_tls_provider()?;
     let mut request = endpoint
         .into_client_request()
@@ -603,7 +775,7 @@ async fn indexer_snapshot(
                 "id": "oxid-account",
                 "payload": {
                     "query": INDEXER_QUERY,
-                    "variables": { "address": address, "transactionId": 0 }
+                    "variables": { "address": address, "transactionId": transaction_id }
                 }
             })
             .to_string()
@@ -612,7 +784,10 @@ async fn indexer_snapshot(
         .await
         .map_err(|_| IndexerTransportError::Protocol)?;
 
-    let mut accumulator = SnapshotAccumulator::default();
+    let mut accumulator = checkpoint.map_or_else(
+        || Ok(SnapshotAccumulator::default()),
+        SnapshotAccumulator::from_checkpoint,
+    )?;
     timeout(SNAPSHOT_TIMEOUT, async {
         while !accumulator.complete() {
             let message = timeout(IDLE_TIMEOUT, socket.next())
@@ -745,12 +920,14 @@ fn message_type(value: &Value) -> Result<&str, IndexerTransportError> {
         .ok_or(IndexerTransportError::InvalidData)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct IndexerUtxo {
-    token_type: String,
-    value: u128,
-    intent_hash: String,
-    output_index: u32,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct IndexerUtxo {
+    pub(crate) token_type: String,
+    #[serde(with = "serde_u128_decimal")]
+    pub(crate) value: u128,
+    pub(crate) intent_hash: String,
+    pub(crate) output_index: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -759,19 +936,22 @@ struct UtxoKey {
     output_index: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct IndexerTransaction {
-    hash: String,
-    block_height: u64,
-    timestamp_millis: u64,
-    status: IndexerTransactionStatus,
-    fee_specks: Option<u128>,
-    created: Vec<IndexerUtxo>,
-    spent: Vec<IndexerUtxo>,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct IndexerTransaction {
+    pub(crate) hash: String,
+    pub(crate) block_height: u64,
+    pub(crate) timestamp_millis: u64,
+    pub(crate) status: IndexerTransactionStatus,
+    #[serde(with = "serde_optional_u128_decimal")]
+    pub(crate) fee_specks: Option<u128>,
+    pub(crate) created: Vec<IndexerUtxo>,
+    pub(crate) spent: Vec<IndexerUtxo>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum IndexerTransactionStatus {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum IndexerTransactionStatus {
     Success,
     PartialSuccess,
     Failure,
@@ -788,13 +968,61 @@ enum IndexerEvent {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct IndexerSnapshot {
-    current_cursor: u64,
-    target_cursor: u64,
-    chain_tip_height: Option<u64>,
-    utxos: Vec<IndexerUtxo>,
-    transactions: Vec<IndexerTransaction>,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct IndexerSnapshot {
+    pub(crate) current_cursor: u64,
+    pub(crate) target_cursor: u64,
+    pub(crate) chain_tip_height: Option<u64>,
+    pub(crate) utxos: Vec<IndexerUtxo>,
+    pub(crate) transactions: Vec<IndexerTransaction>,
+}
+
+impl IndexerSnapshot {
+    pub(crate) fn validate_checkpoint(&self) -> Result<(), IndexerTransportError> {
+        if self.current_cursor != self.target_cursor
+            || self.utxos.len() > MAX_UTXO_RECORDS
+            || self.transactions.len() > MAX_EVENTS
+        {
+            return Err(IndexerTransportError::InvalidData);
+        }
+        let mut available = BTreeMap::new();
+        for utxo in &self.utxos {
+            validate_indexer_utxo(utxo)?;
+            if available.insert(utxo_key(utxo), utxo).is_some() {
+                return Err(IndexerTransportError::InvalidData);
+            }
+        }
+        let mut hashes = BTreeMap::new();
+        let mut utxo_records = 0_usize;
+        for transaction in &self.transactions {
+            if normalize_hex_32(&transaction.hash)? != transaction.hash {
+                return Err(IndexerTransportError::InvalidData);
+            }
+            if hashes.insert(&transaction.hash, ()).is_some() {
+                return Err(IndexerTransportError::InvalidData);
+            }
+            utxo_records = utxo_records
+                .checked_add(transaction.created.len())
+                .and_then(|count| count.checked_add(transaction.spent.len()))
+                .ok_or(IndexerTransportError::LimitExceeded)?;
+            if utxo_records > MAX_UTXO_RECORDS {
+                return Err(IndexerTransportError::LimitExceeded);
+            }
+            for utxo in transaction.created.iter().chain(&transaction.spent) {
+                validate_indexer_utxo(utxo)?;
+            }
+        }
+        let expected_tip = self
+            .transactions
+            .iter()
+            .map(|transaction| transaction.block_height)
+            .max();
+        if self.chain_tip_height != expected_tip {
+            return Err(IndexerTransportError::InvalidData);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -808,6 +1036,36 @@ struct SnapshotAccumulator {
 }
 
 impl SnapshotAccumulator {
+    fn from_checkpoint(checkpoint: IndexerSnapshot) -> Result<Self, IndexerTransportError> {
+        checkpoint.validate_checkpoint()?;
+        let utxo_record_count =
+            checkpoint
+                .transactions
+                .iter()
+                .try_fold(0_usize, |count, transaction| {
+                    count
+                        .checked_add(transaction.created.len())
+                        .and_then(|count| count.checked_add(transaction.spent.len()))
+                        .ok_or(IndexerTransportError::LimitExceeded)
+                })?;
+        Ok(Self {
+            current_cursor: checkpoint.current_cursor,
+            target_cursor: None,
+            event_count: checkpoint.transactions.len(),
+            utxo_record_count,
+            utxos: checkpoint
+                .utxos
+                .into_iter()
+                .map(|utxo| (utxo_key(&utxo), utxo))
+                .collect(),
+            transactions: checkpoint
+                .transactions
+                .into_iter()
+                .map(|transaction| (transaction.hash.clone(), transaction))
+                .collect(),
+        })
+    }
+
     fn apply(&mut self, event: IndexerEvent) -> Result<(), IndexerTransportError> {
         self.event_count = self
             .event_count
@@ -898,6 +1156,55 @@ fn utxo_key(utxo: &IndexerUtxo) -> UtxoKey {
     UtxoKey {
         intent_hash: utxo.intent_hash.clone(),
         output_index: utxo.output_index,
+    }
+}
+
+fn validate_indexer_utxo(utxo: &IndexerUtxo) -> Result<(), IndexerTransportError> {
+    if normalize_hex_32(&utxo.token_type)? != utxo.token_type
+        || normalize_hex_32(&utxo.intent_hash)? != utxo.intent_hash
+    {
+        return Err(IndexerTransportError::InvalidData);
+    }
+    Ok(())
+}
+
+mod serde_u128_decimal {
+    use serde::{Deserialize as _, Deserializer, Serializer};
+
+    pub(super) fn serialize<S>(value: &u128, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<u128, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+mod serde_optional_u128_decimal {
+    use serde::{Deserialize as _, Deserializer, Serialize as _, Serializer};
+
+    pub(super) fn serialize<S>(value: &Option<u128>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.map(|value| value.to_string()).serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<u128>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<String>::deserialize(deserializer)?
+            .map(|value| value.parse().map_err(serde::de::Error::custom))
+            .transpose()
     }
 }
 
@@ -1217,7 +1524,7 @@ pub(crate) fn validate_websocket_url(value: &str) -> Result<String, MidnightInde
     Ok(value.to_owned())
 }
 
-fn validate_unshielded_address(
+pub(crate) fn validate_unshielded_address(
     network_id: &ChainNetworkId,
     value: &str,
 ) -> Result<ChainAddress, MidnightIndexerConfigError> {
@@ -1246,6 +1553,8 @@ fn validate_unshielded_address(
 mod tests {
     use std::{
         collections::VecDeque,
+        fs,
+        sync::atomic::{AtomicU64, Ordering},
         sync::{Arc, Mutex},
         task::{Context, Poll, Waker},
     };
@@ -1255,6 +1564,8 @@ mod tests {
 
     use super::*;
     use crate::{fixture_addresses, network_id};
+
+    static CHECKPOINT_TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     struct FixedClock;
 
@@ -1267,18 +1578,28 @@ mod tests {
     struct ScriptedTransport {
         results: Mutex<VecDeque<Result<IndexerSnapshot, IndexerTransportError>>>,
         addresses: Mutex<Vec<String>>,
+        starting_cursors: Mutex<Vec<u64>>,
     }
 
     impl MidnightIndexerTransport for ScriptedTransport {
         fn snapshot<'a>(
             &'a self,
             address: &'a str,
+            checkpoint: Option<IndexerSnapshot>,
         ) -> BoxFuture<'a, Result<IndexerSnapshot, IndexerTransportError>> {
             Box::pin(async move {
                 self.addresses
                     .lock()
                     .expect("address lock should be available")
                     .push(address.to_owned());
+                self.starting_cursors
+                    .lock()
+                    .expect("cursor lock should be available")
+                    .push(
+                        checkpoint
+                            .map(|snapshot| snapshot.current_cursor.saturating_add(1))
+                            .unwrap_or(0),
+                    );
                 self.results
                     .lock()
                     .expect("script lock should be available")
@@ -1300,6 +1621,30 @@ mod tests {
 
     fn address() -> ChainAddress {
         fixture_addresses(network().id()).expect("fixture addresses are valid")[0].clone()
+    }
+
+    fn derived_account() -> DerivedChainAccount {
+        let receive_address = crate::encode_midnight_address(
+            network().id(),
+            ChainAddressKind::Unshielded,
+            "addr",
+            &[0x2a; 32],
+        )
+        .expect("derived address fixture encodes");
+        DerivedChainAccount::new(
+            network().id().clone(),
+            ChainAccountId::parse("midnight_account_0_0").expect("account id is valid"),
+            0,
+            0,
+            receive_address,
+            oxid_wallet_domain::WalletPublicKey::new(
+                oxid_wallet_domain::PublicKeyEncoding::Secp256k1XOnly,
+                vec![0x2a; 32],
+            ),
+            oxid_wallet_domain::WalletKeyReference::parse("key_derived")
+                .expect("key reference is valid"),
+        )
+        .expect("derived account is valid")
     }
 
     fn resolve<T>(mut future: BoxFuture<'_, T>) -> T {
@@ -1466,6 +1811,43 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_fold_resumes_after_the_stored_cursor_and_preserves_history() {
+        let checkpoint = live_snapshot();
+        let spent = checkpoint.utxos[0].clone();
+        let mut fold = SnapshotAccumulator::from_checkpoint(checkpoint)
+            .expect("checkpoint should hydrate the fold");
+        fold.apply(IndexerEvent::Progress { target: 12 })
+            .expect("progress is valid");
+        fold.apply(IndexerEvent::Transaction {
+            cursor: 12,
+            transaction: IndexerTransaction {
+                hash: "ef".repeat(32),
+                block_height: 78,
+                timestamp_millis: 1_700_000_000_100,
+                status: IndexerTransactionStatus::Success,
+                fee_specks: Some(10),
+                created: vec![raw_utxo(NATIVE_NIGHT_TOKEN_TYPE, 2_000_000, '3', 0)],
+                spent: vec![spent],
+            },
+        })
+        .expect("delta transaction should apply");
+
+        let resumed = fold.finish().expect("delta fold should finish");
+        assert_eq!(resumed.current_cursor, 12);
+        assert_eq!(resumed.target_cursor, 12);
+        assert_eq!(resumed.chain_tip_height, Some(78));
+        assert_eq!(resumed.transactions.len(), 2);
+        assert_eq!(
+            resumed
+                .utxos
+                .iter()
+                .find(|utxo| utxo.token_type == NATIVE_NIGHT_TOKEN_TYPE)
+                .map(|utxo| utxo.value),
+            Some(2_000_000)
+        );
+    }
+
+    #[test]
     fn empty_progress_is_a_complete_empty_snapshot() {
         let mut fold = SnapshotAccumulator::default();
         fold.apply(IndexerEvent::Progress { target: 0 })
@@ -1589,6 +1971,7 @@ mod tests {
         let transport = Arc::new(ScriptedTransport {
             results: Mutex::new(VecDeque::from([Ok(live_snapshot())])),
             addresses: Mutex::new(Vec::new()),
+            starting_cursors: Mutex::new(Vec::new()),
         });
         let source = LiveMidnightAccountSource::with_transport(
             network().id().clone(),
@@ -1636,6 +2019,7 @@ mod tests {
                 Err(IndexerTransportError::Connect),
             ])),
             addresses: Mutex::new(Vec::new()),
+            starting_cursors: Mutex::new(Vec::new()),
         });
         let source = LiveMidnightAccountSource::with_transport(
             network().id().clone(),
@@ -1659,10 +2043,108 @@ mod tests {
     }
 
     #[test]
+    fn incompatible_delta_replays_once_from_zero() {
+        let transport = Arc::new(ScriptedTransport {
+            results: Mutex::new(VecDeque::from([
+                Ok(live_snapshot()),
+                Err(IndexerTransportError::InvalidData),
+                Ok(live_snapshot()),
+            ])),
+            addresses: Mutex::new(Vec::new()),
+            starting_cursors: Mutex::new(Vec::new()),
+        });
+        let source = LiveMidnightAccountSource::with_transport(
+            network().id().clone(),
+            address(),
+            Arc::new(FixedClock),
+            transport.clone(),
+        );
+
+        resolve(source.sync(&profile(), &network())).expect("initial replay should succeed");
+        resolve(source.sync(&profile(), &network()))
+            .expect("clean replay should recover an incompatible delta");
+        assert_eq!(
+            *transport
+                .starting_cursors
+                .lock()
+                .expect("recorded cursors should be readable"),
+            vec![0, 10, 0]
+        );
+    }
+
+    #[test]
+    fn restored_checkpoint_requires_a_successful_live_catchup_before_spending() {
+        let sequence = CHECKPOINT_TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "oxid-indexer-resume-test-{}-{sequence}",
+            std::process::id()
+        ));
+        let checkpoint_config =
+            MidnightAccountCheckpointConfig::new(directory.join("account-checkpoints.json"))
+                .expect("checkpoint path should be valid");
+        let checkpoints = Arc::new(JsonMidnightAccountCheckpointStore::new(checkpoint_config));
+        let derived = derived_account();
+        checkpoints
+            .save(
+                network().id(),
+                derived.receive_address(),
+                &StoredIndexerCheckpoint {
+                    updated_at: UnixTimestampMillis::new(1_700_000_000_000),
+                    snapshot: live_snapshot(),
+                },
+            )
+            .expect("checkpoint fixture should save");
+        let transport = Arc::new(ScriptedTransport {
+            results: Mutex::new(VecDeque::from([Ok(live_snapshot())])),
+            addresses: Mutex::new(Vec::new()),
+            starting_cursors: Mutex::new(Vec::new()),
+        });
+        let source = LiveMidnightAccountSource::with_transport_and_checkpoints(
+            network().id().clone(),
+            address(),
+            Arc::new(FixedClock),
+            transport.clone(),
+            checkpoints,
+        );
+        source
+            .bind_derived_account(&profile(), &network(), &derived)
+            .expect("derived account should bind");
+
+        let restored = source
+            .account(&profile(), &network())
+            .expect("checkpoint should restore");
+        assert_eq!(restored.source(), WalletAccountSource::Cached);
+        assert!(matches!(
+            source.spendable_account(&profile(), &network()),
+            Err(WalletTransactionPortError::AccountNotSynchronized)
+        ));
+
+        resolve(source.sync(&profile(), &network())).expect("live catchup should succeed");
+        assert_eq!(
+            source
+                .spendable_account(&profile(), &network())
+                .expect("live inputs should become available")
+                .utxos
+                .len(),
+            1
+        );
+        assert_eq!(
+            *transport
+                .starting_cursors
+                .lock()
+                .expect("recorded cursors should be readable"),
+            vec![10]
+        );
+        drop(source);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn binding_a_derived_account_resets_cache_and_scopes_the_next_sync() {
         let transport = Arc::new(ScriptedTransport {
             results: Mutex::new(VecDeque::from([Ok(live_snapshot()), Ok(live_snapshot())])),
             addresses: Mutex::new(Vec::new()),
+            starting_cursors: Mutex::new(Vec::new()),
         });
         let configured_address = address();
         let source = LiveMidnightAccountSource::with_transport(
@@ -1673,27 +2155,8 @@ mod tests {
         );
 
         resolve(source.sync(&profile(), &network())).expect("configured watch sync succeeds");
-        let derived_address = crate::encode_midnight_address(
-            network().id(),
-            ChainAddressKind::Unshielded,
-            "addr",
-            &[0x2a; 32],
-        )
-        .expect("derived address fixture encodes");
-        let derived = DerivedChainAccount::new(
-            network().id().clone(),
-            ChainAccountId::parse("midnight_account_0_0").expect("account id is valid"),
-            0,
-            0,
-            derived_address.clone(),
-            oxid_wallet_domain::WalletPublicKey::new(
-                oxid_wallet_domain::PublicKeyEncoding::Secp256k1XOnly,
-                vec![0x2a; 32],
-            ),
-            oxid_wallet_domain::WalletKeyReference::parse("key_derived")
-                .expect("key reference is valid"),
-        )
-        .expect("derived account is valid");
+        let derived = derived_account();
+        let derived_address = derived.receive_address().clone();
         source
             .bind_derived_account(&profile(), &network(), &derived)
             .expect("derived account binds");

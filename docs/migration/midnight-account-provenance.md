@@ -133,6 +133,26 @@ The executable integration test starts an ephemeral local protocol fixture and
 drives the real headless binary through create/select/account/connect/balance/
 history/quit. No deployment endpoint, seed, or private key is committed.
 
+## Durable public unshielded checkpoint mapping
+
+[Issue #15](https://github.com/MediaNoxLabs/oxid/issues/15) retains the useful
+offset-plus-state pattern from the prototype backlog while keeping its redb
+wallet aggregate out of Oxid core. An explicit native adapter store records
+only the validated public unshielded fold under `(network, address)`. On
+restart, account reads project the snapshot as `cached`; the next subscription
+uses `current_cursor + 1` and folds the delta over the retained UTXOs and public
+history. Protocol/data incompatibility retries once from zero, while transport
+failure preserves the last values and marks them stalled.
+
+The v1 JSON document is capped at 16 MiB and 128 accounts, encodes every
+`u128` as a decimal string, rejects duplicate records and malformed snapshots,
+and uses owner-only atomic replacement. It contains no route, profile label,
+key reference, secret, draft, signature, witness, proof, or transaction bytes.
+Hydration does not unlock spendable inputs; a successful live catch-up in the
+current process is required before transfer preparation. The executable test
+proves initial cursor `0`, restart cursor `3` after a checkpoint at `2`, exact
+delta history/balance, and an offline cached/stalled read in a third process.
+
 The seven catalog IDs are `mainnet`, `preprod`, `preview`, `testnet`, `qanet`,
 `devnet`, and `undeployed`. They carry identity and environment only. Runtime
 node, indexer, and prover routes belong to future outgoing adapter
@@ -160,10 +180,10 @@ dependency review.
 - internal NIGHT/change roles beyond external receive derivation, shielded
   Zswap keys, exported DUST keys, and metadata keys;
 - committed local, tailnet, pre-production, node, indexer, or prover endpoints;
-- persisted unshielded cursors, background subscriptions, chain checkpoints,
-  shielded state, DUST generations, and DUST raw-ledger events;
-- replacement, fee preview/estimation, UTXO reservation, durable DUST
-  checkpoints, or durable draft queues;
+- background subscriptions, shielded state/checkpoints, DUST generations,
+  durable DUST checkpoints, and DUST raw-ledger events;
+- replacement, fee preview/estimation, UTXO reservation, durable submission
+  reconciliation, or durable draft queues;
 - generated proof artifacts, native projects, JavaScript bridges, QR scanning,
   copy/share integration, databases, and captured diagnostics.
 

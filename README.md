@@ -125,6 +125,20 @@ an initial watch-only fallback; deriving an account binds subsequent sync to
 the derived public address. This read-only live mode does not import recovery
 material, sync shielded/DUST state, prove, or submit transactions.
 
+To restore public unshielded balances/history after restart and resume from the
+next indexer cursor, optionally provide an absolute app-private file path:
+
+```bash
+export OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH='<absolute-app-private-checkpoint-file>'
+cargo run -p oxid-headless
+```
+
+The versioned file contains only bounded public replay state and is written
+atomically with owner-only permissions. A restored view is labeled `cached`;
+new transaction inputs remain unavailable until a live synchronization
+succeeds. Invalid state is ignored and rebuilt from cursor zero. The path by
+itself is incomplete configuration and fails startup.
+
 To enable the complete private standalone submission path, supply the same
 three values plus the indexer/node routes and an absolute app-private cache:
 

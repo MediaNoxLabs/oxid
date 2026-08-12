@@ -46,7 +46,8 @@ impl ProcessHarness {
             .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
             .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
             .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
-            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR");
+            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+            .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH");
         for (key, value) in environment {
             command.env(key, value);
         }
@@ -104,7 +105,10 @@ const NIGHT_TOKEN_TYPE: &str = "000000000000000000000000000000000000000000000000
 // The upstream handshake callback fixes a large HTTP response as its error
 // type; this test must use that signature to negotiate the GraphQL subprotocol.
 #[allow(clippy::result_large_err)]
-fn spawn_indexer_fixture() -> (String, thread::JoinHandle<()>) {
+fn spawn_indexer_fixture(
+    expected_transaction_id: i64,
+    incremental: bool,
+) -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .expect("fixture listener should bind");
     listener
@@ -182,46 +186,67 @@ fn spawn_indexer_fixture() -> (String, thread::JoinHandle<()>) {
                 .expect("subscription address should be a string")
                 .to_owned();
             assert!(subscribed_address.starts_with("mn_addr_devnet1"));
+            assert_eq!(
+                subscribe["payload"]["variables"]["transactionId"],
+                expected_transaction_id
+            );
             assert!(subscribe["payload"]["query"].as_str().is_some_and(|query| {
                 query.contains("highestTransactionId") && query.contains("fee")
             }));
 
+            let target = if incremental { 3 } else { 2 };
             send_fixture_event(
                 &mut socket,
                 json!({
                     "unshieldedTransactions": {
                         "__typename": "UnshieldedTransactionsProgress",
-                        "highestTransactionId": 2
+                        "highestTransactionId": target
                     }
                 }),
             )
             .await;
-            send_fixture_event(
-                &mut socket,
-                transaction_event(
-                    1,
-                    "11",
-                    41,
-                    vec![utxo(&subscribed_address, "aa", 0, "3000000")],
-                    vec![],
-                    "SUCCESS",
-                    "100",
-                ),
-            )
-            .await;
-            send_fixture_event(
-                &mut socket,
-                transaction_event(
-                    2,
-                    "22",
-                    42,
-                    vec![utxo(&subscribed_address, "bb", 0, "2500000")],
-                    vec![utxo(&subscribed_address, "aa", 0, "3000000")],
-                    "SUCCESS",
-                    "1500",
-                ),
-            )
-            .await;
+            if incremental {
+                send_fixture_event(
+                    &mut socket,
+                    transaction_event(
+                        3,
+                        "33",
+                        43,
+                        vec![utxo(&subscribed_address, "cc", 0, "1000000")],
+                        vec![utxo(&subscribed_address, "bb", 0, "2500000")],
+                        "SUCCESS",
+                        "900",
+                    ),
+                )
+                .await;
+            } else {
+                send_fixture_event(
+                    &mut socket,
+                    transaction_event(
+                        1,
+                        "11",
+                        41,
+                        vec![utxo(&subscribed_address, "aa", 0, "3000000")],
+                        vec![],
+                        "SUCCESS",
+                        "100",
+                    ),
+                )
+                .await;
+                send_fixture_event(
+                    &mut socket,
+                    transaction_event(
+                        2,
+                        "22",
+                        42,
+                        vec![utxo(&subscribed_address, "bb", 0, "2500000")],
+                        vec![utxo(&subscribed_address, "aa", 0, "3000000")],
+                        "SUCCESS",
+                        "1500",
+                    ),
+                )
+                .await;
+            }
 
             let complete = socket
                 .next()
@@ -376,6 +401,7 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
         .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
         .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
         .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+        .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
         .output()
         .expect("headless wallet should report startup failure");
 
@@ -844,7 +870,7 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
 
 #[test]
 fn executable_derives_and_syncs_a_live_account_without_secret_input() {
-    let (endpoint, server) = spawn_indexer_fixture();
+    let (endpoint, server) = spawn_indexer_fixture(0, false);
     let store = TestStore::new();
     let mut process = ProcessHarness::spawn_with_environment(
         &store.path,
@@ -970,4 +996,154 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
     server
         .join()
         .expect("indexer fixture should finish cleanly");
+}
+
+#[test]
+fn executable_restores_resumes_and_stalls_a_public_account_checkpoint() {
+    let store = TestStore::new();
+    let checkpoint_path = store.root.join("midnight-account-checkpoints.json");
+    let checkpoint = checkpoint_path
+        .to_str()
+        .expect("checkpoint fixture path should be Unicode");
+
+    let (first_endpoint, first_server) = spawn_indexer_fixture(0, false);
+    let mut first = ProcessHarness::spawn_with_environment(
+        &store.path,
+        &[
+            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_INDEXER_WS_URL", first_endpoint.as_str()),
+            ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
+            ("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH", checkpoint),
+        ],
+    );
+    let created = first.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "checkpoint-create",
+        "method": "wallet.profile.create",
+        "params": { "displayName": "Checkpoint flow" }
+    }));
+    let profile_id = created["result"]["profile"]["id"]
+        .as_str()
+        .expect("created profile should have an identifier")
+        .to_owned();
+    assert_eq!(
+        first.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "checkpoint-select",
+            "method": "wallet.profile.select",
+            "params": { "profileId": profile_id }
+        }))["ok"],
+        true
+    );
+    let synchronized = first.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "checkpoint-sync",
+        "method": "wallet.connect",
+        "params": {}
+    }));
+    assert_eq!(
+        synchronized["result"]["account"]["sync"]["currentCursor"],
+        2
+    );
+    assert_eq!(
+        synchronized["result"]["account"]["balances"][0]["atomicUnits"],
+        "2500000"
+    );
+    first.quit();
+    first_server
+        .join()
+        .expect("initial indexer fixture should finish cleanly");
+    assert!(checkpoint_path.is_file());
+
+    let (second_endpoint, second_server) = spawn_indexer_fixture(3, true);
+    let mut second = ProcessHarness::spawn_with_environment(
+        &store.path,
+        &[
+            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_INDEXER_WS_URL", second_endpoint.as_str()),
+            ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
+            ("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH", checkpoint),
+        ],
+    );
+    let restored = second.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "checkpoint-restored",
+        "method": "wallet.account.get",
+        "params": {}
+    }));
+    assert_eq!(restored["result"]["account"]["source"], "cached");
+    assert_eq!(restored["result"]["account"]["sync"]["state"], "synced");
+    assert_eq!(restored["result"]["account"]["sync"]["currentCursor"], 2);
+    assert_eq!(
+        restored["result"]["account"]["balances"][0]["atomicUnits"],
+        "2500000"
+    );
+
+    let resumed = second.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "checkpoint-resume",
+        "method": "wallet.connect",
+        "params": {}
+    }));
+    assert_eq!(resumed["result"]["account"]["source"], "live");
+    assert_eq!(resumed["result"]["account"]["sync"]["currentCursor"], 3);
+    assert_eq!(resumed["result"]["account"]["sync"]["chainTipHeight"], 43);
+    assert_eq!(
+        resumed["result"]["account"]["balances"][0]["atomicUnits"],
+        "1000000"
+    );
+    assert_eq!(
+        resumed["result"]["account"]["transactions"]
+            .as_array()
+            .map(Vec::len),
+        Some(3)
+    );
+    second.quit();
+    second_server
+        .join()
+        .expect("incremental indexer fixture should finish cleanly");
+
+    let mut offline = ProcessHarness::spawn_with_environment(
+        &store.path,
+        &[
+            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_INDEXER_WS_URL", second_endpoint.as_str()),
+            ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
+            ("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH", checkpoint),
+        ],
+    );
+    let offline_cached = offline.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "checkpoint-offline-read",
+        "method": "wallet.balance.snapshot",
+        "params": {}
+    }));
+    assert_eq!(offline_cached["result"]["source"], "cached");
+    assert_eq!(offline_cached["result"]["sync"]["currentCursor"], 3);
+    assert_eq!(
+        offline_cached["result"]["balances"][0]["atomicUnits"],
+        "1000000"
+    );
+
+    let failed = offline.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "checkpoint-offline-sync",
+        "method": "wallet.connect",
+        "params": {}
+    }));
+    assert_eq!(failed["error"]["code"], "capability_unavailable");
+    let stalled = offline.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "checkpoint-stalled",
+        "method": "wallet.account.get",
+        "params": {}
+    }));
+    assert_eq!(stalled["result"]["account"]["source"], "cached");
+    assert_eq!(stalled["result"]["account"]["sync"]["state"], "stalled");
+    assert_eq!(stalled["result"]["account"]["sync"]["currentCursor"], 3);
+    assert_eq!(
+        stalled["result"]["account"]["balances"][0]["atomicUnits"],
+        "1000000"
+    );
+    offline.quit();
 }

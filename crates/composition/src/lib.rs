@@ -6,9 +6,11 @@ use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
-    MidnightIndexerConfig, MidnightIndexerConfigError, MidnightLocalProvingConfig,
-    MidnightLocalProvingConfigError, MidnightStandaloneConfig, MidnightStandaloneConfigError,
-    protected_live_midnight_wallet, protected_standalone_midnight_wallet,
+    MidnightAccountCheckpointConfig, MidnightAccountCheckpointConfigError, MidnightIndexerConfig,
+    MidnightIndexerConfigError, MidnightLocalProvingConfig, MidnightLocalProvingConfigError,
+    MidnightStandaloneConfig, MidnightStandaloneConfigError, protected_live_midnight_wallet,
+    protected_live_midnight_wallet_with_checkpoints, protected_standalone_midnight_wallet,
+    protected_standalone_midnight_wallet_with_checkpoints,
 };
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
@@ -212,6 +214,9 @@ pub const MIDNIGHT_PROOF_SERVER_URL_ENV: &str = "OXID_MIDNIGHT_PROOF_SERVER_URL"
 /// Environment variable holding the app-private authenticated proving cache.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MIDNIGHT_PROVING_CACHE_DIR_ENV: &str = "OXID_MIDNIGHT_PROVING_CACHE_DIR";
+/// Environment variable holding the app-private public-account checkpoint file.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MIDNIGHT_ACCOUNT_CHECKPOINT_PATH_ENV: &str = "OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH";
 
 /// Safe startup failures for optional standalone-indexer composition.
 #[cfg(not(target_arch = "wasm32"))]
@@ -222,6 +227,7 @@ pub enum HeadlessCompositionError {
     InvalidMidnightIndexerConfiguration(MidnightIndexerConfigError),
     InvalidMidnightLocalProvingConfiguration(MidnightLocalProvingConfigError),
     InvalidMidnightStandaloneConfiguration(MidnightStandaloneConfigError),
+    InvalidMidnightAccountCheckpointConfiguration(MidnightAccountCheckpointConfigError),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -237,6 +243,9 @@ impl std::fmt::Display for HeadlessCompositionError {
             Self::InvalidMidnightIndexerConfiguration(error) => return error.fmt(formatter),
             Self::InvalidMidnightLocalProvingConfiguration(error) => return error.fmt(formatter),
             Self::InvalidMidnightStandaloneConfiguration(error) => return error.fmt(formatter),
+            Self::InvalidMidnightAccountCheckpointConfiguration(error) => {
+                return error.fmt(formatter);
+            }
         };
         formatter.write_str(message)
     }
@@ -260,10 +269,23 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
         read_optional_environment(MIDNIGHT_UNSHIELDED_ADDRESS_ENV)?,
         read_optional_environment(MIDNIGHT_PROVING_CACHE_DIR_ENV)?,
     ];
-    match parse_optional_midnight_config(values)? {
-        Some(HeadlessMidnightConfig::Indexer(config)) => Ok(compose_headless_live(config)),
-        Some(HeadlessMidnightConfig::Standalone(config)) => Ok(compose_headless_standalone(config)),
-        None => Ok(compose_headless()),
+    let checkpoints = read_optional_environment(MIDNIGHT_ACCOUNT_CHECKPOINT_PATH_ENV)?
+        .map(MidnightAccountCheckpointConfig::new)
+        .transpose()
+        .map_err(HeadlessCompositionError::InvalidMidnightAccountCheckpointConfiguration)?;
+    match (parse_optional_midnight_config(values)?, checkpoints) {
+        (Some(HeadlessMidnightConfig::Indexer(config)), Some(checkpoints)) => {
+            Ok(compose_headless_live_with_checkpoints(config, checkpoints))
+        }
+        (Some(HeadlessMidnightConfig::Standalone(config)), Some(checkpoints)) => Ok(
+            compose_headless_standalone_with_checkpoints(config, checkpoints),
+        ),
+        (Some(HeadlessMidnightConfig::Indexer(config)), None) => Ok(compose_headless_live(config)),
+        (Some(HeadlessMidnightConfig::Standalone(config)), None) => {
+            Ok(compose_headless_standalone(config))
+        }
+        (None, None) => Ok(compose_headless()),
+        (None, Some(_)) => Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration),
     }
 }
 
@@ -287,6 +309,29 @@ pub fn compose_headless_live(config: MidnightIndexerConfig) -> ApplicationServic
     )
 }
 
+/// Wires development custody and a public checkpoint store to a live indexer.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn compose_headless_live_with_checkpoints(
+    config: MidnightIndexerConfig,
+    checkpoints: MidnightAccountCheckpointConfig,
+) -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let midnight = Arc::new(protected_live_midnight_wallet_with_checkpoints(
+        config,
+        checkpoints,
+        Arc::clone(&clock),
+        Arc::clone(&security),
+    ));
+    compose_with_adapters(
+        Arc::new(JsonWalletProfileRepository::at_default_location()),
+        security,
+        midnight,
+    )
+}
+
 /// Wires development custody to the complete, explicitly configured standalone stack.
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
@@ -296,6 +341,29 @@ pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> Applicat
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
     let midnight = Arc::new(protected_standalone_midnight_wallet(
         config,
+        Arc::clone(&clock),
+        Arc::clone(&security),
+    ));
+    compose_with_adapters(
+        Arc::new(JsonWalletProfileRepository::at_default_location()),
+        security,
+        midnight,
+    )
+}
+
+/// Wires the complete standalone stack with durable public account checkpoints.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn compose_headless_standalone_with_checkpoints(
+    config: MidnightStandaloneConfig,
+    checkpoints: MidnightAccountCheckpointConfig,
+) -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let midnight = Arc::new(protected_standalone_midnight_wallet_with_checkpoints(
+        config,
+        checkpoints,
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
@@ -552,7 +620,15 @@ mod tests {
         let indexer =
             MidnightIndexerConfig::new("devnet", "ws://127.0.0.1:8088/api/v1/graphql/ws", ADDRESS)
                 .expect("indexer fixture is valid");
-        drop(compose_headless_live(indexer));
+        drop(compose_headless_live(indexer.clone()));
+        let checkpoint = MidnightAccountCheckpointConfig::new(
+            std::env::temp_dir().join("oxid-composition-account-checkpoints.json"),
+        )
+        .expect("checkpoint fixture is valid");
+        drop(compose_headless_live_with_checkpoints(
+            indexer,
+            checkpoint.clone(),
+        ));
 
         let remote = MidnightStandaloneConfig::new(
             "devnet",
@@ -563,7 +639,10 @@ mod tests {
             ADDRESS,
         )
         .expect("remote standalone fixture is valid");
-        drop(compose_headless_standalone(remote));
+        drop(compose_headless_standalone(remote.clone()));
+        drop(compose_headless_standalone_with_checkpoints(
+            remote, checkpoint,
+        ));
 
         let local_proving = MidnightLocalProvingConfig::new(
             std::env::temp_dir().join("oxid-composition-local-proving"),

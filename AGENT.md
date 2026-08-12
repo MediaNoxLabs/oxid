@@ -111,6 +111,17 @@ simulated completion. A default app build still calls `compose()` and remains
 fail-closed. Restarting the development app intentionally loses its protected
 root and retained drafts; reactivate the account before another flow.
 
+[Issue #15](https://github.com/MediaNoxLabs/oxid/issues/15) and ADR-0030 add an
+explicit native public-account checkpoint store. Headless live modes enable it
+only with `OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH`, which must be an absolute
+app-private file. The v1 JSON is keyed by network/address, bounded to 16 MiB and
+128 records, uses decimal-string `u128` values and owner-only atomic writes,
+and contains no endpoint, profile metadata, key reference, secret, draft,
+signature, proof, or witness. A valid restart read is `cached`; subscribe from
+`current_cursor + 1`, retry protocol/data incompatibility once from zero, and
+preserve cached values as `stalled` on transport failure. Never expose cached
+UTXOs to transaction preparation until a live catch-up succeeds.
+
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
 web --target wasm32-unknown-unknown` currently stops in the pre-existing
@@ -302,6 +313,13 @@ decimal `u128` decoding, address ownership, and checked aggregation. The
 `wasm32` graph intentionally excludes this native transport; browser WebSockets
 require a separate reviewed adapter.
 
+Public unshielded checkpoint persistence belongs inside that native Midnight
+adapter, not `wallet-domain`, `wallet-application`, or the public profile
+repository. Preserve schema/count/size/hex/cursor/tip validation, direct-target
+symlink rejection, owner-only permissions, same-directory atomic replacement,
+and best-effort disk semantics. Shielded Zswap and DUST state use different
+official state machines and remain separate checkpoint work.
+
 Standalone completion has separate bounded HTTP indexer replay, local or remote
 proof, and node-WebSocket paths. It rejects stale or malformed chain-tip parameters,
 replays canonical DUST events with checked decay and ordering, permits plain
@@ -485,6 +503,9 @@ to silence the shell probe.
 - The JSON profile store contains public labels, identifiers, timestamps, and
   active selection only. It serializes one repository instance; overlapping
   headless processes must use distinct `OXID_PROFILE_STORE_PATH` values.
+- The Midnight checkpoint file contains public replay state only and supports
+  one process writer. It must not be merged into the profile document or used
+  as proof that cached inputs are fresh enough to spend.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.

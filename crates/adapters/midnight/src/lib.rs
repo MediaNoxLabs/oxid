@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 
 #[cfg(not(target_arch = "wasm32"))]
+mod checkpoint;
+#[cfg(not(target_arch = "wasm32"))]
 mod indexer;
 #[cfg(not(target_arch = "wasm32"))]
 mod local_proving;
@@ -12,9 +14,12 @@ mod submission;
 mod transaction;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub use checkpoint::{MidnightAccountCheckpointConfig, MidnightAccountCheckpointConfigError};
+#[cfg(not(target_arch = "wasm32"))]
 pub use indexer::{
     LiveMidnightAccountSource, MidnightIndexerConfig, MidnightIndexerConfigError,
-    live_midnight_wallet, protected_live_midnight_wallet,
+    live_midnight_wallet, live_midnight_wallet_with_checkpoints, protected_live_midnight_wallet,
+    protected_live_midnight_wallet_with_checkpoints,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use local_proving::{
@@ -697,6 +702,29 @@ where
     let default_network = indexer.network_id().clone();
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         LiveMidnightAccountSource::new(indexer, clock),
+        default_network,
+        ProtectedMidnightAccountDeriver::new(keys),
+        Arc::new(submission::LiveMidnightTransactionCompleter::new(config)),
+    )
+}
+
+/// Development-only standalone adapter with durable public account checkpoints.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn protected_standalone_midnight_wallet_with_checkpoints<C, K>(
+    config: MidnightStandaloneConfig,
+    checkpoints: MidnightAccountCheckpointConfig,
+    clock: Arc<C>,
+    keys: Arc<K>,
+) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
+{
+    let indexer = config.indexer().clone();
+    let default_network = indexer.network_id().clone();
+    MidnightWalletAdapter::with_default_network_deriver_and_completer(
+        LiveMidnightAccountSource::new_with_checkpoints(indexer, checkpoints, clock),
         default_network,
         ProtectedMidnightAccountDeriver::new(keys),
         Arc::new(submission::LiveMidnightTransactionCompleter::new(config)),

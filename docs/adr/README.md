@@ -51,6 +51,7 @@ ADR status and delivery state answer different questions:
 | [0027](0027-complete-standalone-midnight-transaction-submission.md) Complete Midnight submission through bounded standalone adapters | Accepted | §§3, 7–8, 12–13 and issue #11 | Native development/headless DUST, proof-server, and node submission implemented; local path added by ADR-0028 |
 | [0028](0028-keep-midnight-proof-witnesses-local.md) Keep Midnight proof witnesses local by default | Accepted | §§3–5, 7–8, 12–13 and issue #12 | Native local DUST proving and iOS/Android resource harness implemented; production custody remains fail-closed |
 | [0029](0029-expose-standalone-wallet-flows-on-mobile.md) Expose standalone wallet flows on mobile | Accepted | §§3, 6–8, 12–13, 16–18 and issue #14 | Explicit development mobile composition, receive QR, and protected simulated transfer journey implemented; production remains fail-closed |
+| [0030](0030-persist-public-midnight-account-checkpoints.md) Persist public Midnight account checkpoints outside wallet core | Accepted | §§3, 5–8, 12–13, 17–18 and issue #15 | Public unshielded restart/cache/resume implemented; shielded Zswap and DUST checkpoints pending |
 
 ## Current boundaries
 
@@ -72,4 +73,6 @@ truthfully separate. ADR-0028 adds a measured private local-proving mode and
 leaves ADR-0027's remote path as an explicit development option.
 ADR-0029 exposes those existing account and transaction boundaries through a
 separately selected development mobile composition without changing normal
-production wiring.
+production wiring. ADR-0030 keeps public Midnight replay persistence inside the
+native outgoing adapter and requires a successful live catch-up before cached
+UTXOs can become spendable inputs.

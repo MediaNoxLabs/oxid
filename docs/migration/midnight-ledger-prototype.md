@@ -20,7 +20,7 @@ before migrating later work.
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
-| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, protected NIGHT/DUST derivation use, and canonical staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; shielded and durable checkpoints pending |
+| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded checkpoint/resume, protected NIGHT/DUST derivation use, and canonical staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; shielded Zswap and DUST checkpoints pending |
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; process-local Ed25519/P-256 plus BIP32/secp256k1-Schnorr conformance implemented; durable recovery and native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
@@ -198,8 +198,18 @@ authorize the retained draft, and complete a simulated submission. No
 prototype wallet facade, seed/key DTO, WebView JavaScript bundle, native
 generated project, or live endpoint is copied.
 
-Persisted cursors, shielded/DUST checkpoints and additional key roles,
-internal/change address management, replacement and
+[Issue #15](https://github.com/MediaNoxLabs/oxid/issues/15) and ADR-0030 migrate
+the prototype backlog's public unshielded checkpoint/resume behavior without
+copying its aggregate database boundary. The Midnight adapter persists a
+versioned, bounded public replay snapshot keyed by network and address, restores
+it as a cached read after process restart, and subscribes from the next cursor.
+Malformed or incompatible state is rebuilt through one full replay. Cached
+UTXOs cannot become spendable inputs until a live catch-up succeeds. The real
+headless binary is exercised across three processes: initial replay,
+incremental resume, then outage with preserved stalled state.
+
+Shielded Zswap/DUST checkpoints and additional key roles, internal/change
+address management, replacement and
 durable confirmation tracking, camera/copy/share bridges, explicit mobile
 submission cancellation, production endpoint discovery, recovery, and native
 custody remain separate follow-ups.
