@@ -122,6 +122,20 @@ signature, proof, or witness. A valid restart read is `cached`; subscribe from
 preserve cached values as `stalled` on transport failure. Never expose cached
 UTXOs to transaction preparation until a live catch-up succeeds.
 
+[Issue #16](https://github.com/MediaNoxLabs/oxid/issues/16) and ADR-0031 add a
+separate adapter-private DUST checkpoint enabled only by the complete
+standalone/headless stack through `OXID_MIDNIGHT_DUST_CHECKPOINT_PATH`. Its v1
+binary envelope is bounded to four records, 16 MiB per tagged
+`DustLocalState`, and 64 MiB total; records are scoped by network, SHA-256 of
+the tagged public DUST key, and SHA-256 of live tagged DUST parameters. It
+stores completed current/target cursor and update time but never the seed or
+secret scalar. Resume subscribes from `cursor + 1`, folds at most 256 events or
+4 MiB per batch, and bounds a run to one million events, 512 MiB, and 30
+minutes. Every spend still fetches live parameters and catches up to the live
+target. Incompatible cached deltas retry once from zero; transport/timeouts
+fail closed. Development roots remain ephemeral, so cross-process reuse awaits
+native durable custody.
+
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
 web --target wasm32-unknown-unknown` currently stops in the pre-existing
@@ -313,12 +327,13 @@ decimal `u128` decoding, address ownership, and checked aggregation. The
 `wasm32` graph intentionally excludes this native transport; browser WebSockets
 require a separate reviewed adapter.
 
-Public unshielded checkpoint persistence belongs inside that native Midnight
-adapter, not `wallet-domain`, `wallet-application`, or the public profile
-repository. Preserve schema/count/size/hex/cursor/tip validation, direct-target
-symlink rejection, owner-only permissions, same-directory atomic replacement,
-and best-effort disk semantics. Shielded Zswap and DUST state use different
-official state machines and remain separate checkpoint work.
+Public unshielded and private DUST checkpoint persistence belong inside that
+native Midnight adapter, not `wallet-domain`, `wallet-application`, or the
+public profile repository. Keep their formats separate. Preserve
+schema/count/size/scope/cursor/parameter validation, direct-target symlink
+rejection, owner-only permissions, same-directory atomic replacement, and
+best-effort disk semantics. Shielded Zswap uses a different official state
+machine and remains separate checkpoint work.
 
 Standalone completion has separate bounded HTTP indexer replay, local or remote
 proof, and node-WebSocket paths. It rejects stale or malformed chain-tip parameters,
@@ -506,6 +521,9 @@ to silence the shell probe.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.
+- The separate Midnight DUST checkpoint is privacy-sensitive tagged wallet
+  state scoped by a public-key fingerprint. Never put it in the public account
+  JSON, serialize its secret key, or bypass the live-before-spend catch-up.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.

@@ -16,7 +16,7 @@ use futures::{SinkExt, StreamExt};
 use midnight_base_crypto::{schnorr::Signature, time::Timestamp};
 use midnight_coin_structure::coin::TokenType;
 use midnight_ledger::{
-    dust::{DustActions, DustLocalState, DustOutput, DustParameters, DustSecretKey},
+    dust::{DustActions, DustLocalState, DustOutput, DustParameters, DustPublicKey, DustSecretKey},
     events::Event,
     structure::{
         Intent, LedgerParameters, ProofPreimageMarker, ProofPreimageVersioned, ProofVersioned,
@@ -34,6 +34,7 @@ use midnight_transient_crypto::{
     curve::Fr,
     proofs::{Proof, ProofPreimage, ProvingKeyMaterial, ProvingProvider},
 };
+use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::WalletTransactionPortError;
 use oxid_wallet_domain::WalletTransferSubmissionMode;
 use rand::rngs::OsRng;
@@ -47,7 +48,13 @@ use tokio_tungstenite::{
 };
 
 use crate::{
-    MidnightIndexerConfig, MidnightIndexerConfigError, MidnightLocalProvingConfig, local_proving,
+    MidnightDustCheckpointConfig, MidnightIndexerConfig, MidnightIndexerConfigError,
+    MidnightLocalProvingConfig,
+    dust_checkpoint::{
+        BinaryMidnightDustCheckpointStore, MidnightDustCheckpointStore, StoredDustCheckpoint,
+        UnavailableMidnightDustCheckpointStore,
+    },
+    local_proving,
     transaction::{
         MidnightCompletionOutcome, MidnightCompletionRequest, MidnightTransactionCompleter,
     },
@@ -59,15 +66,17 @@ const DUST_BALANCE_SEGMENT: u16 = 0xFEED;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const ACK_TIMEOUT: Duration = Duration::from_secs(15);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
-const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const PROOF_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const SUBMISSION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MAX_ENDPOINT_CHARACTERS: usize = 2_048;
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 const MAX_FRAME_BYTES: usize = 256 * 1024;
-const MAX_DUST_EVENTS: usize = 100_000;
+const MAX_DUST_EVENTS: usize = 1_000_000;
 const MAX_DUST_EVENT_BYTES: usize = 1024 * 1024;
-const MAX_DUST_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+const MAX_DUST_TOTAL_BYTES: usize = 512 * 1024 * 1024;
+const DUST_REPLAY_BATCH_EVENTS: usize = 256;
+const MAX_DUST_REPLAY_BATCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CHAIN_TIP_BYTES: usize = 1024 * 1024;
 const MAX_PROOF_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROOF_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
@@ -198,21 +207,41 @@ impl fmt::Display for MidnightStandaloneConfigError {
 impl std::error::Error for MidnightStandaloneConfigError {}
 
 #[derive(Clone)]
-pub(crate) struct LiveMidnightTransactionCompleter {
+pub(crate) struct LiveMidnightTransactionCompleter<C> {
     config: MidnightStandaloneConfig,
     local_proving_gate: Arc<Mutex<()>>,
+    dust_checkpoints: Arc<dyn MidnightDustCheckpointStore>,
+    clock: Arc<C>,
 }
 
-impl LiveMidnightTransactionCompleter {
-    pub(crate) fn new(config: MidnightStandaloneConfig) -> Self {
+impl<C> LiveMidnightTransactionCompleter<C> {
+    pub(crate) fn new(config: MidnightStandaloneConfig, clock: Arc<C>) -> Self {
         Self {
             config,
             local_proving_gate: Arc::new(Mutex::new(())),
+            dust_checkpoints: Arc::new(UnavailableMidnightDustCheckpointStore),
+            clock,
+        }
+    }
+
+    pub(crate) fn new_with_dust_checkpoints(
+        config: MidnightStandaloneConfig,
+        checkpoints: MidnightDustCheckpointConfig,
+        clock: Arc<C>,
+    ) -> Self {
+        Self {
+            config,
+            local_proving_gate: Arc::new(Mutex::new(())),
+            dust_checkpoints: Arc::new(BinaryMidnightDustCheckpointStore::new(checkpoints)),
+            clock,
         }
     }
 }
 
-impl MidnightTransactionCompleter for LiveMidnightTransactionCompleter {
+impl<C> MidnightTransactionCompleter for LiveMidnightTransactionCompleter<C>
+where
+    C: ClockPort + 'static,
+{
     fn complete(
         &self,
         request: MidnightCompletionRequest,
@@ -233,28 +262,62 @@ impl MidnightTransactionCompleter for LiveMidnightTransactionCompleter {
             .enable_all()
             .build()
             .map_err(|_| WalletTransactionPortError::Unavailable)?;
-        runtime.block_on(complete_live(&self.config, request, &dust_key))
+        runtime.block_on(complete_live(
+            &self.config,
+            request,
+            &dust_key,
+            self.dust_checkpoints.as_ref(),
+            self.clock.as_ref(),
+        ))
     }
 }
 
-async fn complete_live(
+async fn complete_live<C>(
     config: &MidnightStandaloneConfig,
     request: MidnightCompletionRequest,
     dust_key: &DustSecretKey,
-) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
+    checkpoints: &dyn MidnightDustCheckpointStore,
+    clock: &C,
+) -> Result<MidnightCompletionOutcome, WalletTransactionPortError>
+where
+    C: ClockPort,
+{
     let cancellation = request.cancellation_token();
     ensure_submission_active(&cancellation)?;
     let chain_tip = fetch_chain_tip(config.indexer_http_url()).await?;
     ensure_submission_active(&cancellation)?;
-    let mut dust_state = synchronize_dust(
+    let dust_public_key = DustPublicKey::from(dust_key.clone());
+    let checkpoint = checkpoints
+        .load(
+            config.indexer.network_id(),
+            &dust_public_key,
+            chain_tip.parameters.dust,
+        )
+        .ok()
+        .flatten();
+    let synchronized = synchronize_dust_with_fallback(
         config.indexer.websocket_url(),
         dust_key,
         chain_tip.parameters.dust,
+        checkpoint,
     )
     .await?;
+    let mut dust_state = synchronized.state;
     ensure_submission_active(&cancellation)?;
     if dust_state.params != chain_tip.parameters.dust {
         return Err(WalletTransactionPortError::InvalidChainState);
+    }
+    if let Ok(updated_at) = clock.now() {
+        let _ = checkpoints.save(
+            config.indexer.network_id(),
+            &dust_public_key,
+            &StoredDustCheckpoint {
+                current_cursor: synchronized.current_cursor,
+                target_cursor: synchronized.target_cursor,
+                updated_at,
+                state: dust_state.clone(),
+            },
+        );
     }
     let current_time = if chain_tip.timestamp > dust_state.sync_time {
         chain_tip.timestamp
@@ -411,7 +474,30 @@ async fn synchronize_dust(
     endpoint: &str,
     dust_key: &DustSecretKey,
     parameters: DustParameters,
-) -> Result<DustLocalState<DefaultDB>, WalletTransactionPortError> {
+    checkpoint: Option<StoredDustCheckpoint>,
+) -> Result<DustSynchronization, WalletTransactionPortError> {
+    let started_with_checkpoint = checkpoint.is_some();
+    let (mut state, starting_cursor, starting_target) = checkpoint.map_or_else(
+        || (DustLocalState::new(parameters), None, None),
+        |checkpoint| {
+            (
+                checkpoint.state,
+                Some(checkpoint.current_cursor),
+                Some(checkpoint.target_cursor),
+            )
+        },
+    );
+    if state.params != parameters {
+        return Err(WalletTransactionPortError::InvalidChainState);
+    }
+    let starting_id = match starting_cursor {
+        Some(cursor) => cursor
+            .checked_add(1)
+            .ok_or(WalletTransactionPortError::InvalidChainState)?,
+        None => 0,
+    };
+    let starting_id =
+        i64::try_from(starting_id).map_err(|_| WalletTransactionPortError::InvalidChainState)?;
     ensure_tls_provider()?;
     let mut request = endpoint
         .into_client_request()
@@ -451,22 +537,28 @@ async fn synchronize_dust(
         json!({
             "type": "subscribe",
             "id": "oxid-dust",
-            "payload": { "query": DUST_QUERY, "variables": { "id": 0 } }
+            "payload": { "query": DUST_QUERY, "variables": { "id": starting_id } }
         }),
     )
     .await?;
 
-    let events = timeout(SNAPSHOT_TIMEOUT, async {
-        let mut events = Vec::<Event<DefaultDB>>::new();
-        let mut last_id = None;
-        let mut target_id = None;
+    let synchronization = timeout(SNAPSHOT_TIMEOUT, async {
+        let mut batch = Vec::<Event<DefaultDB>>::with_capacity(DUST_REPLAY_BATCH_EVENTS);
+        let mut last_id = starting_cursor;
+        let mut target_id = starting_target;
         let mut total_bytes = 0_usize;
+        let mut batch_bytes = 0_usize;
+        let mut event_count = 0_usize;
+        let mut saw_event = false;
         loop {
-            let message = timeout(IDLE_TIMEOUT, socket.next())
-                .await
-                .map_err(|_| WalletTransactionPortError::Timeout)?
-                .ok_or(WalletTransactionPortError::InvalidChainState)?
-                .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+            let message = match timeout(IDLE_TIMEOUT, socket.next()).await {
+                Ok(Some(message)) => {
+                    message.map_err(|_| WalletTransactionPortError::InvalidChainState)?
+                }
+                Err(_) if started_with_checkpoint && !saw_event => break,
+                Ok(None) => return Err(WalletTransactionPortError::InvalidChainState),
+                Err(_) => return Err(WalletTransactionPortError::Timeout),
+            };
             match message {
                 Message::Text(text) => {
                     let value: Value = serde_json::from_str(text.as_str())
@@ -480,22 +572,54 @@ async fn synchronize_dust(
                                 .pointer("/payload/data/dustLedgerEvents")
                                 .ok_or(WalletTransactionPortError::InvalidChainState)?;
                             let decoded = decode_dust_event(data)?;
-                            if last_id.is_some_and(|last| decoded.id <= last)
+                            let expected_id = match last_id {
+                                Some(last) => last
+                                    .checked_add(1)
+                                    .ok_or(WalletTransactionPortError::InvalidChainState)?,
+                                None => 0,
+                            };
+                            if decoded.id != expected_id
                                 || decoded.id > decoded.max_id
                                 || target_id.is_some_and(|target| decoded.max_id < target)
                             {
                                 return Err(WalletTransactionPortError::InvalidChainState);
                             }
+                            saw_event = true;
                             target_id = Some(decoded.max_id);
                             last_id = Some(decoded.id);
+                            event_count = event_count
+                                .checked_add(1)
+                                .ok_or(WalletTransactionPortError::InvalidChainState)?;
                             total_bytes = total_bytes
                                 .checked_add(decoded.raw_bytes)
                                 .ok_or(WalletTransactionPortError::InvalidChainState)?;
-                            if total_bytes > MAX_DUST_TOTAL_BYTES || events.len() >= MAX_DUST_EVENTS
-                            {
+                            if total_bytes > MAX_DUST_TOTAL_BYTES || event_count > MAX_DUST_EVENTS {
                                 return Err(WalletTransactionPortError::InvalidChainState);
                             }
-                            events.push(decoded.event);
+                            if !batch.is_empty()
+                                && batch_bytes
+                                    .checked_add(decoded.raw_bytes)
+                                    .is_none_or(|bytes| bytes > MAX_DUST_REPLAY_BATCH_BYTES)
+                            {
+                                state = state
+                                    .replay_events(dust_key, batch.iter())
+                                    .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+                                batch.clear();
+                                batch_bytes = 0;
+                            }
+                            batch_bytes = batch_bytes
+                                .checked_add(decoded.raw_bytes)
+                                .ok_or(WalletTransactionPortError::InvalidChainState)?;
+                            batch.push(decoded.event);
+                            if batch.len() == DUST_REPLAY_BATCH_EVENTS
+                                || decoded.id == decoded.max_id
+                            {
+                                state = state
+                                    .replay_events(dust_key, batch.iter())
+                                    .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+                                batch.clear();
+                                batch_bytes = 0;
+                            }
                             if decoded.id == decoded.max_id {
                                 break;
                             }
@@ -508,6 +632,13 @@ async fn synchronize_dust(
                             .await?;
                         }
                         "pong" => {}
+                        "complete"
+                            if value.get("id").and_then(Value::as_str) == Some("oxid-dust")
+                                && started_with_checkpoint
+                                && !saw_event =>
+                        {
+                            break;
+                        }
                         _ => return Err(WalletTransactionPortError::InvalidChainState),
                     }
                 }
@@ -519,7 +650,21 @@ async fn synchronize_dust(
                 _ => return Err(WalletTransactionPortError::InvalidChainState),
             }
         }
-        Ok::<_, WalletTransactionPortError>(events)
+        if !batch.is_empty() {
+            state = state
+                .replay_events(dust_key, batch.iter())
+                .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+        }
+        let current_cursor = last_id.ok_or(WalletTransactionPortError::InvalidChainState)?;
+        let target_cursor = target_id.ok_or(WalletTransactionPortError::InvalidChainState)?;
+        if current_cursor != target_cursor {
+            return Err(WalletTransactionPortError::InvalidChainState);
+        }
+        Ok::<_, WalletTransactionPortError>(DustSynchronization {
+            state,
+            current_cursor,
+            target_cursor,
+        })
     })
     .await
     .map_err(|_| WalletTransactionPortError::Timeout)??;
@@ -530,9 +675,28 @@ async fn synchronize_dust(
     )
     .await;
     let _ = socket.close(None).await;
-    DustLocalState::new(parameters)
-        .replay_events(dust_key, events.iter())
-        .map_err(|_| WalletTransactionPortError::InvalidChainState)
+    Ok(synchronization)
+}
+
+async fn synchronize_dust_with_fallback(
+    endpoint: &str,
+    dust_key: &DustSecretKey,
+    parameters: DustParameters,
+    checkpoint: Option<StoredDustCheckpoint>,
+) -> Result<DustSynchronization, WalletTransactionPortError> {
+    let had_checkpoint = checkpoint.is_some();
+    match synchronize_dust(endpoint, dust_key, parameters, checkpoint).await {
+        Err(WalletTransactionPortError::InvalidChainState) if had_checkpoint => {
+            synchronize_dust(endpoint, dust_key, parameters, None).await
+        }
+        result => result,
+    }
+}
+
+struct DustSynchronization {
+    state: DustLocalState<DefaultDB>,
+    current_cursor: u64,
+    target_cursor: u64,
 }
 
 struct DecodedDustEvent {
@@ -963,6 +1127,7 @@ mod tests {
 
     const ADDRESS: &str =
         "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+    type DustSubscriptionScenario = (u64, Vec<(u64, u64, String)>);
 
     fn config(proof: &str) -> Result<MidnightStandaloneConfig, MidnightStandaloneConfigError> {
         MidnightStandaloneConfig::new(
@@ -1086,6 +1251,110 @@ mod tests {
             });
         });
         (format!("ws://{address}/graphql/ws"), worker)
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn serve_dust_subscriptions(
+        scenarios: Vec<DustSubscriptionScenario>,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener binds");
+        listener
+            .set_nonblocking(true)
+            .expect("test listener becomes nonblocking");
+        let address = listener.local_addr().expect("test listener has an address");
+        let worker = thread::spawn(move || {
+            runtime().block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener)
+                    .expect("Tokio listener accepts sockets");
+                for (expected_start, events) in scenarios {
+                    let (stream, _) = listener.accept().await.expect("client connects");
+                    let mut socket =
+                        accept_hdr_async(stream, |_: &Request, mut response: Response| {
+                            response.headers_mut().insert(
+                                "Sec-WebSocket-Protocol",
+                                "graphql-transport-ws"
+                                    .parse()
+                                    .expect("protocol header is valid"),
+                            );
+                            Ok(response)
+                        })
+                        .await
+                        .expect("WebSocket handshake succeeds");
+                    let _ = socket.next().await.expect("initialization arrives");
+                    socket
+                        .send(Message::Text(
+                            json!({ "type": "connection_ack", "payload": {} })
+                                .to_string()
+                                .into(),
+                        ))
+                        .await
+                        .expect("acknowledgement sends");
+                    let subscription = socket
+                        .next()
+                        .await
+                        .expect("subscription arrives")
+                        .expect("subscription is valid");
+                    let request: Value = serde_json::from_str(
+                        subscription.to_text().expect("subscription is textual"),
+                    )
+                    .expect("subscription is JSON");
+                    assert_eq!(
+                        request
+                            .pointer("/payload/variables/id")
+                            .and_then(Value::as_u64),
+                        Some(expected_start)
+                    );
+                    if events.is_empty() {
+                        socket
+                            .send(Message::Text(
+                                json!({ "type": "complete", "id": "oxid-dust" })
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await
+                            .expect("completion sends");
+                    } else {
+                        for (id, max_id, raw) in events {
+                            socket
+                                .send(Message::Text(
+                                    json!({
+                                        "type": "next",
+                                        "id": "oxid-dust",
+                                        "payload": {
+                                            "data": {
+                                                "dustLedgerEvents": {
+                                                    "id": id,
+                                                    "maxId": max_id,
+                                                    "raw": raw
+                                                }
+                                            }
+                                        }
+                                    })
+                                    .to_string()
+                                    .into(),
+                                ))
+                                .await
+                                .expect("event sends");
+                        }
+                    }
+                }
+            });
+        });
+        (format!("ws://{address}/graphql/ws"), worker)
+    }
+
+    fn parameter_change_event_hex() -> String {
+        let event = Event::<DefaultDB> {
+            source: EventSource {
+                transaction_hash: TransactionHash::default(),
+                logical_segment: 0,
+                physical_segment: 0,
+            },
+            content: EventDetails::ParamChange(Sp::new(INITIAL_PARAMETERS)),
+        };
+        let mut bytes = Vec::new();
+        midnight_serialize::tagged_serialize(&event, &mut bytes).expect("event serializes");
+        hex::encode(bytes)
     }
 
     #[test]
@@ -1369,12 +1638,107 @@ mod tests {
                 &endpoint,
                 &dust_key,
                 INITIAL_PARAMETERS.dust,
+                None,
             ))
             .expect("bounded DUST snapshot succeeds");
         worker.join().expect("WebSocket worker completes");
 
-        assert_eq!(state.sync_time, Timestamp::from_secs(0));
-        assert_eq!(state.params, INITIAL_PARAMETERS.dust);
+        assert_eq!(state.state.sync_time, Timestamp::from_secs(0));
+        assert_eq!(state.state.params, INITIAL_PARAMETERS.dust);
+        assert_eq!(state.current_cursor, 0);
+        assert_eq!(state.target_cursor, 0);
+    }
+
+    #[test]
+    fn dust_checkpoint_resumes_from_the_next_cursor_and_accepts_live_empty_catchup() {
+        use oxid_foundation::UnixTimestampMillis;
+
+        let raw = parameter_change_event_hex();
+        let (endpoint, worker) = serve_dust_subscriptions(vec![(43, vec![(43, 43, raw)])]);
+        let dust_key = DustSecretKey::derive_secret_key(&[7; 32]);
+        let checkpoint = StoredDustCheckpoint {
+            current_cursor: 42,
+            target_cursor: 42,
+            updated_at: UnixTimestampMillis::new(1_700_000_000_000),
+            state: DustLocalState::new(INITIAL_PARAMETERS.dust),
+        };
+        let synchronized = runtime()
+            .block_on(synchronize_dust(
+                &endpoint,
+                &dust_key,
+                INITIAL_PARAMETERS.dust,
+                Some(checkpoint),
+            ))
+            .expect("delta replay succeeds");
+        worker.join().expect("WebSocket worker completes");
+        assert_eq!(synchronized.current_cursor, 43);
+        assert_eq!(synchronized.target_cursor, 43);
+
+        let (endpoint, worker) = serve_dust_subscriptions(vec![(44, Vec::new())]);
+        let caught_up = runtime()
+            .block_on(synchronize_dust(
+                &endpoint,
+                &dust_key,
+                INITIAL_PARAMETERS.dust,
+                Some(StoredDustCheckpoint {
+                    current_cursor: 43,
+                    target_cursor: 43,
+                    updated_at: UnixTimestampMillis::new(1_700_000_000_001),
+                    state: synchronized.state,
+                }),
+            ))
+            .expect("live empty delta confirms an up-to-date checkpoint");
+        worker.join().expect("WebSocket worker completes");
+        assert_eq!(caught_up.current_cursor, 43);
+        assert_eq!(caught_up.target_cursor, 43);
+    }
+
+    #[test]
+    fn incompatible_dust_delta_replays_once_from_zero() {
+        use oxid_foundation::UnixTimestampMillis;
+
+        let raw = parameter_change_event_hex();
+        let (endpoint, worker) =
+            serve_dust_subscriptions(vec![(1, vec![(2, 2, raw.clone())]), (0, vec![(0, 0, raw)])]);
+        let dust_key = DustSecretKey::derive_secret_key(&[8; 32]);
+        let synchronized = runtime()
+            .block_on(synchronize_dust_with_fallback(
+                &endpoint,
+                &dust_key,
+                INITIAL_PARAMETERS.dust,
+                Some(StoredDustCheckpoint {
+                    current_cursor: 0,
+                    target_cursor: 0,
+                    updated_at: UnixTimestampMillis::new(1_700_000_000_000),
+                    state: DustLocalState::new(INITIAL_PARAMETERS.dust),
+                }),
+            ))
+            .expect("incompatible delta recovers with one clean replay");
+        worker.join().expect("both WebSocket attempts complete");
+        assert_eq!(synchronized.current_cursor, 0);
+        assert_eq!(synchronized.target_cursor, 0);
+    }
+
+    #[test]
+    fn cached_dust_state_does_not_hide_a_live_transport_failure() {
+        use oxid_foundation::UnixTimestampMillis;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("unused endpoint reserves a port");
+        let address = listener.local_addr().expect("listener has an address");
+        drop(listener);
+        let dust_key = DustSecretKey::derive_secret_key(&[9; 32]);
+        let result = runtime().block_on(synchronize_dust_with_fallback(
+            &format!("ws://{address}/graphql/ws"),
+            &dust_key,
+            INITIAL_PARAMETERS.dust,
+            Some(StoredDustCheckpoint {
+                current_cursor: 7,
+                target_cursor: 7,
+                updated_at: UnixTimestampMillis::new(1_700_000_000_000),
+                state: DustLocalState::new(INITIAL_PARAMETERS.dust),
+            }),
+        ));
+        assert_eq!(result.err(), Some(WalletTransactionPortError::Unavailable));
     }
 
     #[test]

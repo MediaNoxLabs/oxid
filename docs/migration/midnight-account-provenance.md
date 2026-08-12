@@ -153,6 +153,26 @@ current process is required before transfer preparation. The executable test
 proves initial cursor `0`, restart cursor `3` after a checkpoint at `2`, exact
 delta history/balance, and an offline cached/stalled read in a third process.
 
+## Durable private DUST checkpoint mapping
+
+[Issue #16](https://github.com/MediaNoxLabs/oxid/issues/16) and ADR-0031 retain
+the prototype syncer's official tagged-state-plus-offset behavior without its
+network-only cache scope or 524,288-event in-memory channel. An adapter-private
+v1 binary envelope is keyed by network plus SHA-256 of the tagged public DUST
+key and records the live parameter fingerprint, completed current/target
+cursor, update time, and tagged `DustLocalState<DefaultDB>`. It is bounded to
+four records, 16 MiB per state, and 64 MiB overall and uses owner-private atomic
+replacement. No seed or secret scalar is serialized.
+
+Standalone submission fetches the live tip first, loads only an exact
+network/key/parameter match, subscribes at `current_cursor + 1`, checks exact
+event continuity, and folds batches of at most 256 events/4 MiB. Catch-up is
+bounded to one million events, 512 MiB processed bytes, and 30 minutes. Cached
+state becomes eligible for balancing only after the live stream reaches its
+advertised target (including an explicit empty completion for an already
+current cursor). Invalid cached delta data gets one fresh replay; timeouts and
+connection failures fail closed and do not cause a second history request.
+
 The seven catalog IDs are `mainnet`, `preprod`, `preview`, `testnet`, `qanet`,
 `devnet`, and `undeployed`. They carry identity and environment only. Runtime
 node, indexer, and prover routes belong to future outgoing adapter
@@ -180,8 +200,8 @@ dependency review.
 - internal NIGHT/change roles beyond external receive derivation, shielded
   Zswap keys, exported DUST keys, and metadata keys;
 - committed local, tailnet, pre-production, node, indexer, or prover endpoints;
-- background subscriptions, shielded state/checkpoints, DUST generations,
-  durable DUST checkpoints, and DUST raw-ledger events;
+- background subscriptions, shielded state/checkpoints, and retained raw DUST
+  event history;
 - replacement, fee preview/estimation, UTXO reservation, durable submission
   reconciliation, or durable draft queues;
 - generated proof artifacts, native projects, JavaScript bridges, QR scanning,
@@ -194,5 +214,5 @@ or an explicitly configured public live source and adds process-local
 development derivation/BIP340 signing by opaque reference. Full standalone
 configuration additionally proves and submits canonical unshielded NIGHT
 intents through either private local proving or an explicit development proof
-server. No mode provides shielded assets, durable DUST generation state,
-durable recovery, or production custody.
+server. Explicit complete-standalone mode may persist key-scoped DUST state;
+no mode provides shielded assets, durable recovery, or production custody.

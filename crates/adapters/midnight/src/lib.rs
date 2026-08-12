@@ -5,6 +5,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod checkpoint;
 #[cfg(not(target_arch = "wasm32"))]
+mod dust_checkpoint;
+#[cfg(not(target_arch = "wasm32"))]
 mod indexer;
 #[cfg(not(target_arch = "wasm32"))]
 mod local_proving;
@@ -15,6 +17,8 @@ mod transaction;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use checkpoint::{MidnightAccountCheckpointConfig, MidnightAccountCheckpointConfigError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use dust_checkpoint::{MidnightDustCheckpointConfig, MidnightDustCheckpointConfigError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use indexer::{
     LiveMidnightAccountSource, MidnightIndexerConfig, MidnightIndexerConfigError,
@@ -695,16 +699,18 @@ pub fn protected_standalone_midnight_wallet<C, K>(
     keys: Arc<K>,
 ) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
 where
-    C: ClockPort,
+    C: ClockPort + 'static,
     K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
 {
     let indexer = config.indexer().clone();
     let default_network = indexer.network_id().clone();
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
-        LiveMidnightAccountSource::new(indexer, clock),
+        LiveMidnightAccountSource::new(indexer, Arc::clone(&clock)),
         default_network,
         ProtectedMidnightAccountDeriver::new(keys),
-        Arc::new(submission::LiveMidnightTransactionCompleter::new(config)),
+        Arc::new(submission::LiveMidnightTransactionCompleter::new(
+            config, clock,
+        )),
     )
 }
 
@@ -718,16 +724,81 @@ pub fn protected_standalone_midnight_wallet_with_checkpoints<C, K>(
     keys: Arc<K>,
 ) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
 where
-    C: ClockPort,
+    C: ClockPort + 'static,
     K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
 {
     let indexer = config.indexer().clone();
     let default_network = indexer.network_id().clone();
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
-        LiveMidnightAccountSource::new_with_checkpoints(indexer, checkpoints, clock),
+        LiveMidnightAccountSource::new_with_checkpoints(indexer, checkpoints, Arc::clone(&clock)),
         default_network,
         ProtectedMidnightAccountDeriver::new(keys),
-        Arc::new(submission::LiveMidnightTransactionCompleter::new(config)),
+        Arc::new(submission::LiveMidnightTransactionCompleter::new(
+            config, clock,
+        )),
+    )
+}
+
+/// Development-only standalone adapter with key-scoped private DUST checkpoints.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn protected_standalone_midnight_wallet_with_dust_checkpoints<C, K>(
+    config: MidnightStandaloneConfig,
+    dust_checkpoints: MidnightDustCheckpointConfig,
+    clock: Arc<C>,
+    keys: Arc<K>,
+) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
+{
+    let indexer = config.indexer().clone();
+    let default_network = indexer.network_id().clone();
+    MidnightWalletAdapter::with_default_network_deriver_and_completer(
+        LiveMidnightAccountSource::new(indexer, Arc::clone(&clock)),
+        default_network,
+        ProtectedMidnightAccountDeriver::new(keys),
+        Arc::new(
+            submission::LiveMidnightTransactionCompleter::new_with_dust_checkpoints(
+                config,
+                dust_checkpoints,
+                clock,
+            ),
+        ),
+    )
+}
+
+/// Development-only standalone adapter with public account and private DUST checkpoints.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn protected_standalone_midnight_wallet_with_all_checkpoints<C, K>(
+    config: MidnightStandaloneConfig,
+    account_checkpoints: MidnightAccountCheckpointConfig,
+    dust_checkpoints: MidnightDustCheckpointConfig,
+    clock: Arc<C>,
+    keys: Arc<K>,
+) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort,
+{
+    let indexer = config.indexer().clone();
+    let default_network = indexer.network_id().clone();
+    MidnightWalletAdapter::with_default_network_deriver_and_completer(
+        LiveMidnightAccountSource::new_with_checkpoints(
+            indexer,
+            account_checkpoints,
+            Arc::clone(&clock),
+        ),
+        default_network,
+        ProtectedMidnightAccountDeriver::new(keys),
+        Arc::new(
+            submission::LiveMidnightTransactionCompleter::new_with_dust_checkpoints(
+                config,
+                dust_checkpoints,
+                clock,
+            ),
+        ),
     )
 }
 

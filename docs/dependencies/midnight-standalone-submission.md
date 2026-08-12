@@ -56,6 +56,9 @@ RustSec exceptions and removal gates are documented in
 - DUST derives at `m/44'/2400'/account'/2/0` through a borrowed callback inside
   unlocked development custody. No seed or derived secret is returned through
   application or headless DTOs.
+- ADR-0031's optional DUST checkpoint stores only official tagged wallet state,
+  completed cursors, public scope fingerprints, and update time. A fresh chain
+  tip and successful live catch-up remain mandatory before balancing.
 - Transactions are submitted unsigned because the Midnight runtime validates
   this call through its unsigned transaction path. Successful runtime events
   are required before public transaction and block hashes are returned.
@@ -69,7 +72,8 @@ All new ledger/proof/HTTP/Subxt dependencies are native-target-only in
 `adapters/midnight`; the `wasm32-unknown-unknown` graph stays on Oxid-owned read
 types. Both Apple iOS and Android Tier-1 library builds remain mandatory.
 
-Replace this composition behind `WalletTransactionPort` when native custody or
-durable DUST checkpoints/reorg handling lands. Local proving is reviewed
+Replace this development composition behind `WalletTransactionPort` when
+native custody and durable submission reconciliation/reorg handling land.
+Local proving is reviewed
 separately in `midnight-local-proving.md`. Any upgrade must re-run source,
 advisory, license, native mobile, proof, and node interoperability gates.

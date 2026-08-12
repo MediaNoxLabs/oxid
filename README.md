@@ -18,7 +18,7 @@ than layers bolted onto one chain-specific frontend.
 > can instead opt into either a real standalone-indexer read source or the
 > complete DUST/local-prover/node submission path using explicit public startup
 > configuration; remote proving remains an explicit development option. The
-> The Assets page consumes the same account and transaction use cases. The
+> Assets page consumes the same account and transaction use cases. The
 > repository simulator/emulator launchers explicitly select process-local
 > development custody so receive QR plus prepare/review/authorize/submit can be
 > exercised end to end; normal production composition remains fail-closed. The remaining shell destinations deliberately label unconnected
@@ -164,6 +164,23 @@ present together. Proof-server HTTP is accepted only on loopback; remote
 proving requires HTTPS. The proof server receives private witness material, so
 that mode is development-only. The root is process-local and ephemeral; fund
 and exercise a newly derived address in the same run.
+
+For a complete standalone run, DUST replay can also resume from a private
+key-scoped checkpoint:
+
+```bash
+export OXID_MIDNIGHT_DUST_CHECKPOINT_PATH='<absolute-app-private-dust-checkpoint-file>'
+cargo run -p oxid-headless
+```
+
+This versioned binary file contains the official tagged DUST wallet state,
+completed cursor, network identity, parameter identity, and a one-way public
+DUST-key fingerprint. It never contains the DUST seed or secret scalar. Every
+submission still fetches current parameters and completes a live indexer
+catch-up before cached state may be used for balancing. Wrong-scope or changed
+parameters cause a clean replay, an incompatible delta retries once from zero,
+and transport failure fails the submission closed. The DUST checkpoint path is
+invalid with simulation or the read-only live-indexer configuration.
 
 An opt-in headless proving harness constructs one synthetic DUST spend, proves
 and seals it locally, and checks tagged-codec interoperability without node

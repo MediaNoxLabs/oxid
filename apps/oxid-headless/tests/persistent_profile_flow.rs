@@ -47,7 +47,8 @@ impl ProcessHarness {
             .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
             .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
             .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
-            .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH");
+            .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
+            .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH");
         for (key, value) in environment {
             command.env(key, value);
         }
@@ -402,6 +403,7 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
         .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
         .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
         .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
+        .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
         .output()
         .expect("headless wallet should report startup failure");
 
@@ -409,6 +411,54 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
     let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
     assert!(stderr.contains("requires the read-only indexer values"));
     assert!(!stderr.contains(LIVE_ADDRESS));
+}
+
+#[test]
+fn executable_accepts_dust_checkpoints_only_for_the_complete_standalone_stack() {
+    let store = TestStore::new();
+    let dust_path = store.root.join("private/dust-checkpoints.bin");
+    let dust_path = dust_path
+        .to_str()
+        .expect("fixture checkpoint path is Unicode");
+    let output = Command::new(env!("CARGO_BIN_EXE_oxid-headless"))
+        .env("OXID_PROFILE_STORE_PATH", &store.path)
+        .env("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH", dust_path)
+        .env_remove("OXID_MIDNIGHT_NETWORK_ID")
+        .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
+        .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
+        .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
+        .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
+        .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
+        .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+        .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
+        .output()
+        .expect("headless wallet reports an incomplete standalone boundary");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("startup error is UTF-8")
+            .contains("requires the read-only indexer values")
+    );
+
+    let process = ProcessHarness::spawn_with_environment(
+        &store.path,
+        &[
+            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            (
+                "OXID_MIDNIGHT_INDEXER_WS_URL",
+                "ws://127.0.0.1:18088/api/v1/graphql/ws",
+            ),
+            (
+                "OXID_MIDNIGHT_INDEXER_HTTP_URL",
+                "http://127.0.0.1:18088/api/v1/graphql",
+            ),
+            ("OXID_MIDNIGHT_NODE_WS_URL", "ws://127.0.0.1:19944"),
+            ("OXID_MIDNIGHT_PROOF_SERVER_URL", "http://127.0.0.1:16300"),
+            ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
+            ("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH", dust_path),
+        ],
+    );
+    process.quit();
 }
 
 #[test]

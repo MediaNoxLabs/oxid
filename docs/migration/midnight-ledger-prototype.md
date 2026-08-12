@@ -20,7 +20,7 @@ before migrating later work.
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
-| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded checkpoint/resume, protected NIGHT/DUST derivation use, and canonical staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; shielded Zswap and DUST checkpoints pending |
+| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded and private DUST checkpoint/resume, protected NIGHT/DUST derivation use, and canonical staged unshielded transfer through DUST proof and node inclusion implemented for development/headless; shielded Zswap pending |
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; process-local Ed25519/P-256 plus BIP32/secp256k1-Schnorr conformance implemented; durable recovery and native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | identity domain/use cases plus `adapters/did-midnight` | Deferred to M5 |
 | `wallet-core/oid4vci_client` and `oid4vp_client` | Credential issuance, SIOP/OID4VP response flows | credential/presentation application plus protocol adapters | Deferred to M4 |
@@ -208,7 +208,19 @@ UTXOs cannot become spendable inputs until a live catch-up succeeds. The real
 headless binary is exercised across three processes: initial replay,
 incremental resume, then outage with preserved stalled state.
 
-Shielded Zswap/DUST checkpoints and additional key roles, internal/change
+[Issue #16](https://github.com/MediaNoxLabs/oxid/issues/16) and ADR-0031 migrate
+the prototype's persisted DUST replay behavior behind a distinct private
+adapter store. The bounded binary envelope preserves the official tagged
+`DustLocalState`, completed cursor, live-parameter identity, network, and a
+one-way public-key fingerprint without persisting the DUST seed or scalar.
+Standalone completion resumes from the next cursor and folds events in small
+batches instead of retaining the prototype's history-sized queue. A current
+checkpoint still needs a successful live subscription; wrong scope or
+parameters replay cleanly, incompatible deltas retry once from zero, and
+transport failure never authorizes a cached-only spend. Headless composition
+accepts the store only with the complete standalone route set.
+
+Shielded Zswap checkpoints and additional key roles, internal/change
 address management, replacement and
 durable confirmation tracking, camera/copy/share bridges, explicit mobile
 submission cancellation, production endpoint discovery, recovery, and native

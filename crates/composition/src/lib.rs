@@ -6,11 +6,14 @@ use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
-    MidnightAccountCheckpointConfig, MidnightAccountCheckpointConfigError, MidnightIndexerConfig,
+    MidnightAccountCheckpointConfig, MidnightAccountCheckpointConfigError,
+    MidnightDustCheckpointConfig, MidnightDustCheckpointConfigError, MidnightIndexerConfig,
     MidnightIndexerConfigError, MidnightLocalProvingConfig, MidnightLocalProvingConfigError,
     MidnightStandaloneConfig, MidnightStandaloneConfigError, protected_live_midnight_wallet,
     protected_live_midnight_wallet_with_checkpoints, protected_standalone_midnight_wallet,
+    protected_standalone_midnight_wallet_with_all_checkpoints,
     protected_standalone_midnight_wallet_with_checkpoints,
+    protected_standalone_midnight_wallet_with_dust_checkpoints,
 };
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
@@ -217,6 +220,9 @@ pub const MIDNIGHT_PROVING_CACHE_DIR_ENV: &str = "OXID_MIDNIGHT_PROVING_CACHE_DI
 /// Environment variable holding the app-private public-account checkpoint file.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MIDNIGHT_ACCOUNT_CHECKPOINT_PATH_ENV: &str = "OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH";
+/// Environment variable holding the app-private key-scoped DUST checkpoint file.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MIDNIGHT_DUST_CHECKPOINT_PATH_ENV: &str = "OXID_MIDNIGHT_DUST_CHECKPOINT_PATH";
 
 /// Safe startup failures for optional standalone-indexer composition.
 #[cfg(not(target_arch = "wasm32"))]
@@ -228,6 +234,7 @@ pub enum HeadlessCompositionError {
     InvalidMidnightLocalProvingConfiguration(MidnightLocalProvingConfigError),
     InvalidMidnightStandaloneConfiguration(MidnightStandaloneConfigError),
     InvalidMidnightAccountCheckpointConfiguration(MidnightAccountCheckpointConfigError),
+    InvalidMidnightDustCheckpointConfiguration(MidnightDustCheckpointConfigError),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -246,6 +253,7 @@ impl std::fmt::Display for HeadlessCompositionError {
             Self::InvalidMidnightAccountCheckpointConfiguration(error) => {
                 return error.fmt(formatter);
             }
+            Self::InvalidMidnightDustCheckpointConfiguration(error) => return error.fmt(formatter),
         };
         formatter.write_str(message)
     }
@@ -273,19 +281,43 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
         .map(MidnightAccountCheckpointConfig::new)
         .transpose()
         .map_err(HeadlessCompositionError::InvalidMidnightAccountCheckpointConfiguration)?;
-    match (parse_optional_midnight_config(values)?, checkpoints) {
-        (Some(HeadlessMidnightConfig::Indexer(config)), Some(checkpoints)) => {
+    let dust_checkpoints = read_optional_environment(MIDNIGHT_DUST_CHECKPOINT_PATH_ENV)?
+        .map(MidnightDustCheckpointConfig::new)
+        .transpose()
+        .map_err(HeadlessCompositionError::InvalidMidnightDustCheckpointConfiguration)?;
+    match (
+        parse_optional_midnight_config(values)?,
+        checkpoints,
+        dust_checkpoints,
+    ) {
+        (Some(HeadlessMidnightConfig::Indexer(config)), Some(checkpoints), None) => {
             Ok(compose_headless_live_with_checkpoints(config, checkpoints))
         }
-        (Some(HeadlessMidnightConfig::Standalone(config)), Some(checkpoints)) => Ok(
+        (Some(HeadlessMidnightConfig::Standalone(config)), Some(checkpoints), None) => Ok(
             compose_headless_standalone_with_checkpoints(config, checkpoints),
         ),
-        (Some(HeadlessMidnightConfig::Indexer(config)), None) => Ok(compose_headless_live(config)),
-        (Some(HeadlessMidnightConfig::Standalone(config)), None) => {
+        (Some(HeadlessMidnightConfig::Standalone(config)), None, Some(dust_checkpoints)) => Ok(
+            compose_headless_standalone_with_dust_checkpoints(config, dust_checkpoints),
+        ),
+        (
+            Some(HeadlessMidnightConfig::Standalone(config)),
+            Some(account_checkpoints),
+            Some(dust_checkpoints),
+        ) => Ok(compose_headless_standalone_with_all_checkpoints(
+            config,
+            account_checkpoints,
+            dust_checkpoints,
+        )),
+        (Some(HeadlessMidnightConfig::Indexer(config)), None, None) => {
+            Ok(compose_headless_live(config))
+        }
+        (Some(HeadlessMidnightConfig::Standalone(config)), None, None) => {
             Ok(compose_headless_standalone(config))
         }
-        (None, None) => Ok(compose_headless()),
-        (None, Some(_)) => Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration),
+        (None, None, None) => Ok(compose_headless()),
+        (Some(HeadlessMidnightConfig::Indexer(_)), _, Some(_)) | (None, _, _) => {
+            Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
+        }
     }
 }
 
@@ -364,6 +396,54 @@ pub fn compose_headless_standalone_with_checkpoints(
     let midnight = Arc::new(protected_standalone_midnight_wallet_with_checkpoints(
         config,
         checkpoints,
+        Arc::clone(&clock),
+        Arc::clone(&security),
+    ));
+    compose_with_adapters(
+        Arc::new(JsonWalletProfileRepository::at_default_location()),
+        security,
+        midnight,
+    )
+}
+
+/// Wires the complete standalone stack with private key-scoped DUST checkpoints.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn compose_headless_standalone_with_dust_checkpoints(
+    config: MidnightStandaloneConfig,
+    dust_checkpoints: MidnightDustCheckpointConfig,
+) -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let midnight = Arc::new(protected_standalone_midnight_wallet_with_dust_checkpoints(
+        config,
+        dust_checkpoints,
+        Arc::clone(&clock),
+        Arc::clone(&security),
+    ));
+    compose_with_adapters(
+        Arc::new(JsonWalletProfileRepository::at_default_location()),
+        security,
+        midnight,
+    )
+}
+
+/// Wires the complete standalone stack with public account and private DUST checkpoints.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn compose_headless_standalone_with_all_checkpoints(
+    config: MidnightStandaloneConfig,
+    account_checkpoints: MidnightAccountCheckpointConfig,
+    dust_checkpoints: MidnightDustCheckpointConfig,
+) -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let midnight = Arc::new(protected_standalone_midnight_wallet_with_all_checkpoints(
+        config,
+        account_checkpoints,
+        dust_checkpoints,
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
@@ -641,7 +721,21 @@ mod tests {
         .expect("remote standalone fixture is valid");
         drop(compose_headless_standalone(remote.clone()));
         drop(compose_headless_standalone_with_checkpoints(
-            remote, checkpoint,
+            remote.clone(),
+            checkpoint.clone(),
+        ));
+        let dust_checkpoint = MidnightDustCheckpointConfig::new(
+            std::env::temp_dir().join("oxid-composition-dust-checkpoints.bin"),
+        )
+        .expect("DUST checkpoint fixture is valid");
+        drop(compose_headless_standalone_with_dust_checkpoints(
+            remote.clone(),
+            dust_checkpoint.clone(),
+        ));
+        drop(compose_headless_standalone_with_all_checkpoints(
+            remote,
+            checkpoint,
+            dust_checkpoint,
         ));
 
         let local_proving = MidnightLocalProvingConfig::new(
