@@ -148,6 +148,7 @@ freshness, and sanitized failure category. Headless v1 methods are
 or stalled DUST is display/resume state only and never live spend authority.
 The iOS standalone smoke flow exercises `Sync DUST`, the exact `12 DUST`
 fixture result, and the resulting `Resync DUST` action before transfer checks.
+The Android CDP smoke flow asserts the same DUST result and resync transition.
 
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features

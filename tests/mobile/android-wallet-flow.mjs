@@ -121,6 +121,13 @@ try {
     await clickButtonByLabel("Activate protected Midnight account");
     await waitForButton("Use my receive address");
 
+    await clickButton("Sync DUST");
+    await waitFor(
+      "document.body.innerText.includes('12 DUST')",
+      "exact simulated DUST balance",
+    );
+    await waitForButton("Resync DUST");
+
     await clickButton("Show QR");
     await waitFor(
       "Boolean(document.querySelector('.address-qr__frame svg'))",
@@ -144,9 +151,10 @@ try {
     const publicResult = await evaluate(`(() => ({
       submitted: document.body.innerText.includes("Transfer submitted"),
       simulated: document.body.innerText.includes("Mode: simulated"),
+      dustSynced: document.body.innerText.includes("12 DUST"),
     }))()`);
     const result = { ...publicResult, qrRendered };
-    if (!result.submitted || !result.simulated || !result.qrRendered) {
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.qrRendered) {
       throw new Error("Android standalone wallet flow did not expose the expected public result");
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);

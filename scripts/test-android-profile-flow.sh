@@ -127,4 +127,4 @@ if [ -z "$($adb_command -s "$device" shell pidof io.medianox.oxid | tr -d '\r')"
   exit 1
 fi
 
-echo "Android protected account, receive QR, transfer, and profile-restore smoke flow passed on $device."
+echo "Android protected account, DUST sync, receive QR, transfer, and profile-restore smoke flow passed on $device."
