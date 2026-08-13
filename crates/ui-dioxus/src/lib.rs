@@ -3157,6 +3157,39 @@ fn active_managed_authentication_method(records: &[DidRecordView]) -> Option<(St
         })
 }
 
+fn active_managed_issuance_methods(records: &[DidRecordView]) -> Option<(String, String, String)> {
+    records
+        .iter()
+        .filter(|record| record.document_metadata.deactivated != Some(true))
+        .find_map(|record| {
+            let authentication = record
+                .document
+                .relationships
+                .iter()
+                .find(|relationship| relationship.relationship == "authentication")?
+                .method_ids
+                .iter()
+                .find(|method_id| record.managed_method_ids.contains(method_id))?;
+            let assertion = record
+                .document
+                .relationships
+                .iter()
+                .find(|relationship| relationship.relationship == "assertionMethod")?;
+            let holder_binding = record.document.verification_methods.iter().find(|method| {
+                method.controller == record.document.id
+                    && method.public_key_jwk.key_type == "EC"
+                    && method.public_key_jwk.curve == "Jubjub"
+                    && record.managed_method_ids.contains(&method.id)
+                    && assertion.method_ids.contains(&method.id)
+            })?;
+            Some((
+                record.document.id.clone(),
+                authentication.clone(),
+                holder_binding.id.clone(),
+            ))
+        })
+}
+
 fn did_confirmation(title: &str, summary: &str, confirmed: bool) -> DidOperationConfirmation {
     DidOperationConfirmation {
         title: title.to_owned(),
@@ -3253,6 +3286,7 @@ fn ManagedDidControls(
                     id: "did-algorithm-{did}", value: "{algorithm}",
                     onchange: move |event| algorithm.set(event.value()),
                     option { value: "ed25519", "Ed25519" }
+                    option { value: "jubjub", "Jubjub" }
                     option { value: "p256", "P-256" }
                 }
             }
@@ -3318,10 +3352,10 @@ fn ManagedDidControls(
                     let method_or_service = identifier.read().trim().to_owned();
                     let input_value = value.read().trim().to_owned();
                     let endpoint_value = endpoint.read().trim().to_owned();
-                    let key_algorithm = if algorithm.read().as_str() == "p256" {
-                        DidKeyAlgorithm::P256
-                    } else {
-                        DidKeyAlgorithm::Ed25519
+                    let key_algorithm = match algorithm.read().as_str() {
+                        "jubjub" => DidKeyAlgorithm::Jubjub,
+                        "p256" => DidKeyAlgorithm::P256,
+                        _ => DidKeyAlgorithm::Ed25519,
                     };
                     let relationship = VerificationRelationship::parse(relationship.read().as_str())
                         .unwrap_or(VerificationRelationship::AssertionMethod);
@@ -4474,17 +4508,8 @@ fn CredentialsPage(active_profile: WalletProfileView) -> Element {
                                                         return;
                                                     }
                                                 };
-                                                let selection = records.iter()
-                                                    .filter(|record| record.document_metadata.deactivated != Some(true))
-                                                    .find_map(|record| {
-                                                        record.document.relationships.iter()
-                                                            .find(|relationship| relationship.relationship == "authentication")
-                                                            .and_then(|relationship| relationship.method_ids.iter()
-                                                                .find(|method_id| record.managed_method_ids.contains(method_id)))
-                                                            .map(|method| (record.document.id.clone(), method.clone()))
-                                                    });
-                                                let Some((holder_did, method_id)) = selection else {
-                                                    issuance_notice.set(Some("Create an active managed DID before accepting this credential offer.".to_owned()));
+                                                let Some((holder_did, method_id, holder_binding_method_id)) = active_managed_issuance_methods(&records) else {
+                                                    issuance_notice.set(Some("Create an active managed DID with protected authentication and Jubjub assertion methods before accepting this credential offer.".to_owned()));
                                                     return;
                                                 };
                                                 let service = services.accept_credential_issuance();
@@ -4500,6 +4525,7 @@ fn CredentialsPage(active_profile: WalletProfileView) -> Element {
                                                         issuance_id: execute_issuance_id,
                                                         holder_did,
                                                         method_id,
+                                                        holder_binding_method_id,
                                                         confirmed: true,
                                                         intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
                                                     }).await {

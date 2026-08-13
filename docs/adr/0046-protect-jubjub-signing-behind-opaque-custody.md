@@ -6,7 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/secret_storage/jubjub_schnorr.rs`
 - Reference package: `@midnight-ntwrk/midnight-did-jubjub-schnorr` 0.5.0, `packages/jubjub-schnorr/src/signing.ts`
 - Amends: ADR-0011, ADR-0017, ADR-0020, ADR-0021, ADR-0024, ADR-0037, ADR-0043, ADR-0044, and ADR-0045
-- Implementation state: exact process-local Jubjub generation/signing, opaque references, public cross-language conformance, and headless lifecycle are implemented; DID/credential holder binding, presentation proof wiring, durable native wrapping, user presence, and production composition remain fail-closed
+- Implementation state: exact process-local Jubjub generation/signing, opaque references, public cross-language conformance, headless lifecycle, and ADR-0047 standalone DID/credential issuance binding are implemented; presentation-time re-authorization, proof wiring, durable native wrapping, user presence, and production composition remain fail-closed
 
 ## Context
 
@@ -65,9 +65,10 @@ presentation proof adapter may use this primitive, it must independently
 prove that the selected profile-managed DID and method correspond to the
 holder verification-method reference signed into the Compact credential, and
 that the protected public key is the public key authorized by that method.
-The current standalone credential fixture does not yet establish that mapping,
-so the presentation adapter must remain fail-closed rather than silently
-provisioning a new key under the credential's method identifier.
+ADR-0047 establishes that mapping during standalone issuance by regenerating
+the exact credential body and issuer proof for the selected managed Jubjub
+assertion method. The presentation adapter must still reload and re-authorize
+that method at proof time rather than silently trusting a persisted public DID.
 
 Normal production composition continues to use unavailable custody. Native
 Apple/Android adapters must implement ADR-0017's protected wrapping,
@@ -85,5 +86,5 @@ this algorithm can be production-capable.
   application, UI, or headless result.
 - A holder signature remains distinct from the Digital Passport predicate
   proof and cannot by itself produce a `vp_token`.
-- Issue #29 remains open for selected-DID binding and native custody; issue #28
-  remains open for proof execution and independent proof verification.
+- Issue #29 remains open for presentation-time binding and native custody;
+  issue #28 remains open for proof execution and independent proof verification.

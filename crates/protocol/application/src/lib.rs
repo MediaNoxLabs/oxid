@@ -53,6 +53,7 @@ pub struct ProtocolIssueRequest {
     pub issuance_id: CredentialIssuanceId,
     pub holder_did: String,
     pub method_id: String,
+    pub holder_binding_method_id: String,
 }
 
 #[derive(PartialEq, Eq)]
@@ -243,6 +244,7 @@ pub struct AcceptCredentialIssuanceCommand {
     pub issuance_id: String,
     pub holder_did: String,
     pub method_id: String,
+    pub holder_binding_method_id: String,
     pub confirmed: bool,
     pub intent: String,
 }
@@ -459,6 +461,7 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
             }
             if !valid_holder_text(&command.holder_did, MAX_DID_CHARACTERS)
                 || !valid_holder_text(&command.method_id, MAX_METHOD_CHARACTERS)
+                || !valid_holder_text(&command.holder_binding_method_id, MAX_METHOD_CHARACTERS)
             {
                 return Err(CredentialIssuanceError::InvalidHolder);
             }
@@ -484,6 +487,7 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                     issuance_id: issuance_id.clone(),
                     holder_did: command.holder_did,
                     method_id: command.method_id,
+                    holder_binding_method_id: command.holder_binding_method_id,
                 })
                 .await
             {
@@ -1234,6 +1238,8 @@ mod tests {
                 issuance_id: prepared.id,
                 holder_did: "did:midnight:undeployed:holder".to_owned(),
                 method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
+                holder_binding_method_id: "did:midnight:undeployed:holder#holder-jubjub-1"
+                    .to_owned(),
                 confirmed: true,
                 intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
             },
@@ -1254,6 +1260,8 @@ mod tests {
                 issuance_id: prepared.id.clone(),
                 holder_did: "did:midnight:undeployed:holder".to_owned(),
                 method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
+                holder_binding_method_id: "did:midnight:undeployed:holder#holder-jubjub-1"
+                    .to_owned(),
                 confirmed: false,
                 intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
             },

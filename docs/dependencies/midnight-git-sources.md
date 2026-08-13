@@ -36,6 +36,10 @@ ADR-0046 reuses `midnight-transient-crypto` and `midnight-serialize` at that
 same full revision inside the development custody adapter for canonical Jubjub
 point arithmetic/compression and a 0.5.0-compatible Schnorr transcript. It adds
 no new source or floating dependency.
+ADR-0047 also uses those already pinned packages in `adapters/did-midnight` to
+decode the canonical compressed public key into the official little-endian
+EC/Jubjub JWK coordinates. Holder-bound standalone issuance therefore adds no
+repository, revision, path dependency, or floating source.
 The feature resolves published `midnight-proofs`, `midnight-circuits`, and
 `midnight-zk-stdlib` releases transitively. There is no direct `midnight-zk`
 dependency because the compatible proof crates are already selected by the

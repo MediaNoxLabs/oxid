@@ -25,7 +25,9 @@ mod compact_digital_passport;
 mod compact_presentation;
 mod digital_passport;
 
-pub use compact_digital_passport::MidnightCompactCredentialVerifier;
+pub use compact_digital_passport::{
+    MidnightCompactCredentialVerifier, StandaloneBoundCompactCredentialIssuer,
+};
 pub use compact_presentation::{
     CompactPresentationError, CompactPresentationPublicInput, DigitalPassportPresentationSelection,
     PreflightOnlyCompactPresentationProof, prepare_public_input,

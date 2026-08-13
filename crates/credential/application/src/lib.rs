@@ -18,6 +18,44 @@ pub type CredentialInspectionFuture<'a> = Pin<
 >;
 pub type CredentialViewFuture<'a> =
     Pin<Box<dyn Future<Output = Result<CredentialView, CredentialOperationError>> + Send + 'a>>;
+pub type BoundCredentialFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<BoundCredentialBundle, BoundCredentialError>> + Send + 'a>>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundCredentialRequest {
+    pub holder_did: String,
+    pub holder_binding_method_id: String,
+    pub public_key_x: String,
+    pub public_key_y: String,
+}
+
+#[derive(PartialEq, Eq)]
+pub struct BoundCredentialBundle {
+    pub signed_bytes: Vec<u8>,
+    pub detached_proof: Option<Vec<u8>>,
+    pub private_material: Option<Vec<u8>>,
+}
+
+impl fmt::Debug for BoundCredentialBundle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BoundCredentialBundle")
+            .field("signed_bytes_length", &self.signed_bytes.len())
+            .field(
+                "detached_proof_length",
+                &self.detached_proof.as_ref().map(Vec::len),
+            )
+            .field(
+                "private_material_length",
+                &self.private_material.as_ref().map(Vec::len),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+pub trait BoundCredentialIssuerPort: Send + Sync {
+    fn issue<'a>(&'a self, request: BoundCredentialRequest) -> BoundCredentialFuture<'a>;
+}
 
 pub trait CredentialInboxPort: Send + Sync {
     fn receive<'a>(&'a self) -> CredentialBytesFuture<'a>;
@@ -105,6 +143,12 @@ pub enum CredentialDisclosurePortError {
     ClaimNotRevealable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoundCredentialError {
+    InvalidHolderBinding,
+    Unavailable,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CredentialOperationError {
     InvalidProfileIdentifier(OpaqueIdError),
@@ -174,6 +218,10 @@ display_error!(CredentialDisclosurePortError,
     InvalidPrivateMaterial => "credential protected claim material is invalid",
     ClaimNotFound => "credential claim was not found",
     ClaimNotRevealable => "credential claim cannot be revealed locally",
+);
+display_error!(BoundCredentialError,
+    InvalidHolderBinding => "credential holder binding is invalid",
+    Unavailable => "bound credential issuance is unavailable",
 );
 
 #[derive(Clone, Debug, PartialEq, Eq)]

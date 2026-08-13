@@ -6,16 +6,18 @@
 //! The MCV1 container and circuit arithmetic mirror the exact source pinned by
 //! the repository's Nix inputs. No generated or SDK type crosses this adapter.
 
+use base64::{Engine as _, engine::general_purpose};
 use midnight_base_crypto::{hash::PersistentHashWriter, repr::BinaryHashRepr};
 use midnight_transient_crypto::{
-    curve::{EmbeddedGroupAffine, Fr},
+    curve::{EmbeddedFr, EmbeddedGroupAffine, Fr},
     fab::ValueReprAlignedValue,
     hash::{degrade_to_transient, transient_hash, upgrade_from_transient},
     repr::FieldRepr,
 };
 use oxid_credential_application::{
-    CredentialInspection, CredentialInspectionFuture, CredentialVerificationError,
-    CredentialVerificationPort,
+    BoundCredentialBundle, BoundCredentialError, BoundCredentialFuture, BoundCredentialIssuerPort,
+    BoundCredentialRequest, CredentialInspection, CredentialInspectionFuture,
+    CredentialVerificationError, CredentialVerificationPort,
 };
 use oxid_credential_domain::{
     CredentialFormat, CredentialMetadata, MAX_SIGNED_CREDENTIAL_BYTES, VerificationOutcome,
@@ -30,9 +32,22 @@ const MCV1_MAGIC: &[u8; 4] = b"MCV1";
 const CREDENTIAL_CHUNKS: usize = 18;
 const PROOF_CHUNKS: usize = 9;
 const ISSUANCE_CONTEXT: &[u8] = b"midnight:vc:issuance";
+// Public reference-fixture scalars. Standalone composition is conformance
+// infrastructure, not issuer custody; production composition never selects it.
+const STANDALONE_PUBLIC_ISSUER_SCALAR: u64 = 123_456_789;
+const STANDALONE_PUBLIC_NONCE_SCALAR: u64 = 11;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MidnightCompactCredentialVerifier;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StandaloneBoundCompactCredentialIssuer;
+
+impl BoundCredentialIssuerPort for StandaloneBoundCompactCredentialIssuer {
+    fn issue<'a>(&'a self, request: BoundCredentialRequest) -> BoundCredentialFuture<'a> {
+        Box::pin(async move { issue_bound_standalone_credential(&request) })
+    }
+}
 
 impl CredentialVerificationPort for MidnightCompactCredentialVerifier {
     fn inspect<'a>(
@@ -370,6 +385,12 @@ fn point(x: &[u8], y: &[u8]) -> Result<EmbeddedGroupAffine, CredentialVerificati
 }
 
 fn verify_issuance_proof(credential: &CompactCredential, proof: &CompactProof) -> bool {
+    let challenge = issuance_challenge(credential, proof);
+    EmbeddedGroupAffine::generator() * proof.response
+        == proof.announcement + proof.public_key * challenge
+}
+
+fn issuance_challenge(credential: &CompactCredential, proof: &CompactProof) -> Fr {
     let body_root = credential_body_root(credential);
     let proof_payload_root = persistent_hash(&(
         body_root,
@@ -378,14 +399,193 @@ fn verify_issuance_proof(credential: &CompactCredential, proof: &CompactProof) -
         upgrade_from_transient(transient_hash_value(proof.created_at)).0,
         proof.challenge_hash,
     ));
-    let challenge =
-        degrade_to_transient(midnight_base_crypto::hash::HashOutput(persistent_hash(&(
-            proof_payload_root,
-            upgrade_from_transient(transient_hash_value(proof.public_key)).0,
-            upgrade_from_transient(transient_hash_value(proof.announcement)).0,
-        ))));
-    EmbeddedGroupAffine::generator() * proof.response
-        == proof.announcement + proof.public_key * challenge
+    degrade_to_transient(midnight_base_crypto::hash::HashOutput(persistent_hash(&(
+        proof_payload_root,
+        upgrade_from_transient(transient_hash_value(proof.public_key)).0,
+        upgrade_from_transient(transient_hash_value(proof.announcement)).0,
+    ))))
+}
+
+fn issue_bound_standalone_credential(
+    request: &BoundCredentialRequest,
+) -> Result<BoundCredentialBundle, BoundCredentialError> {
+    let holder = holder_binding(request)?;
+    validate_holder_public_key(request)?;
+
+    let mut credential = parse_credential(&super::standalone_compact_credential())
+        .map_err(|_| BoundCredentialError::Unavailable)?;
+    credential.holder = holder;
+
+    let template = parse_proof(&super::standalone_compact_proof())
+        .map_err(|_| BoundCredentialError::Unavailable)?;
+    let secret = EmbeddedFr::from(STANDALONE_PUBLIC_ISSUER_SCALAR);
+    let public_key = EmbeddedGroupAffine::generator() * secret;
+    if template.signer != credential.issuer || template.public_key != public_key {
+        return Err(BoundCredentialError::Unavailable);
+    }
+    let nonce = EmbeddedFr::from(STANDALONE_PUBLIC_NONCE_SCALAR);
+    let mut proof = CompactProof {
+        signer: credential.issuer,
+        created_at: template.created_at,
+        challenge_hash: template.challenge_hash,
+        public_key,
+        announcement: EmbeddedGroupAffine::generator() * nonce,
+        response: Fr::from(0_u64),
+    };
+    let challenge = issuance_challenge(&credential, &proof);
+    let response = nonce
+        + EmbeddedFr::try_from(challenge).map_err(|_| BoundCredentialError::Unavailable)? * secret;
+    proof.response =
+        Fr::from_le_bytes(&response.as_le_bytes()).ok_or(BoundCredentialError::Unavailable)?;
+    if !verify_issuance_proof(&credential, &proof) {
+        return Err(BoundCredentialError::Unavailable);
+    }
+
+    Ok(BoundCredentialBundle {
+        signed_bytes: encode_credential(&credential)?,
+        detached_proof: Some(encode_proof(&proof)?),
+        private_material: Some(super::standalone_private_material()),
+    })
+}
+
+fn holder_binding(
+    request: &BoundCredentialRequest,
+) -> Result<VerificationMethodRef, BoundCredentialError> {
+    let identifier = request
+        .holder_did
+        .strip_prefix("did:midnight:undeployed:")
+        .ok_or(BoundCredentialError::InvalidHolderBinding)?;
+    let did_contract_address = hex::decode(identifier)
+        .ok()
+        .and_then(|value| <[u8; 32]>::try_from(value).ok())
+        .ok_or(BoundCredentialError::InvalidHolderBinding)?;
+    if hex::encode(did_contract_address) != identifier {
+        return Err(BoundCredentialError::InvalidHolderBinding);
+    }
+    let fragment = request
+        .holder_binding_method_id
+        .strip_prefix(&request.holder_did)
+        .filter(|value| value.starts_with('#') && value.len() <= 32)
+        .ok_or(BoundCredentialError::InvalidHolderBinding)?;
+    if fragment.len() < 2
+        || !fragment.bytes().all(|byte| {
+            byte == b'#'
+                || byte.is_ascii_alphanumeric()
+                || matches!(byte, b'.' | b'-' | b'_' | b':' | b'%')
+        })
+    {
+        return Err(BoundCredentialError::InvalidHolderBinding);
+    }
+    let mut method_id = [0_u8; 32];
+    method_id[..fragment.len()].copy_from_slice(fragment.as_bytes());
+    Ok(VerificationMethodRef {
+        did_contract_address,
+        method_id,
+    })
+}
+
+fn validate_holder_public_key(
+    request: &BoundCredentialRequest,
+) -> Result<(), BoundCredentialError> {
+    let decode = |value: &str| {
+        general_purpose::URL_SAFE_NO_PAD
+            .decode(value)
+            .ok()
+            .filter(|bytes| general_purpose::URL_SAFE_NO_PAD.encode(bytes) == value)
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .and_then(|bytes| Fr::from_le_bytes(&bytes))
+            .ok_or(BoundCredentialError::InvalidHolderBinding)
+    };
+    let point = EmbeddedGroupAffine::new(
+        decode(&request.public_key_x)?,
+        decode(&request.public_key_y)?,
+    )
+    .ok_or(BoundCredentialError::InvalidHolderBinding)?;
+    if point.is_identity() {
+        Err(BoundCredentialError::InvalidHolderBinding)
+    } else {
+        Ok(())
+    }
+}
+
+fn encode_credential(credential: &CompactCredential) -> Result<Vec<u8>, BoundCredentialError> {
+    Ok(encode_mcv1(&[
+        integer_chunk(credential.version),
+        bytes_chunk(&credential.package_id),
+        bytes_chunk(&credential.schema_id),
+        integer_chunk(credential.major_version),
+        integer_chunk(credential.minor_version),
+        bytes_chunk(&credential.issuer.did_contract_address),
+        bytes_chunk(&credential.issuer.method_id),
+        bytes_chunk(&credential.holder.did_contract_address),
+        bytes_chunk(&credential.holder.method_id),
+        integer_chunk(credential.issued_at),
+        if credential.has_expiration {
+            vec![1]
+        } else {
+            Vec::new()
+        },
+        integer_chunk(credential.expires_at),
+        bytes_chunk(&credential.commitments.first_name),
+        bytes_chunk(&credential.commitments.last_name),
+        bytes_chunk(&credential.commitments.date_of_birth),
+        bytes_chunk(&credential.commitments.document_number),
+        bytes_chunk(&credential.commitments.issuing_state),
+        bytes_chunk(&credential.commitments.claim_root),
+    ]))
+}
+
+fn encode_proof(proof: &CompactProof) -> Result<Vec<u8>, BoundCredentialError> {
+    let public_x = proof
+        .public_key
+        .x()
+        .ok_or(BoundCredentialError::Unavailable)?;
+    let public_y = proof
+        .public_key
+        .y()
+        .ok_or(BoundCredentialError::Unavailable)?;
+    let announcement_x = proof
+        .announcement
+        .x()
+        .ok_or(BoundCredentialError::Unavailable)?;
+    let announcement_y = proof
+        .announcement
+        .y()
+        .ok_or(BoundCredentialError::Unavailable)?;
+    Ok(encode_mcv1(&[
+        bytes_chunk(&proof.signer.did_contract_address),
+        bytes_chunk(&proof.signer.method_id),
+        integer_chunk(proof.created_at),
+        bytes_chunk(&proof.challenge_hash),
+        bytes_chunk(&public_x.as_le_bytes()),
+        bytes_chunk(&public_y.as_le_bytes()),
+        bytes_chunk(&announcement_x.as_le_bytes()),
+        bytes_chunk(&announcement_y.as_le_bytes()),
+        bytes_chunk(&proof.response.as_le_bytes()),
+    ]))
+}
+
+fn encode_mcv1(chunks: &[Vec<u8>]) -> Vec<u8> {
+    let mut output = Vec::new();
+    output.extend_from_slice(MCV1_MAGIC);
+    output.extend_from_slice(&(chunks.len() as u32).to_be_bytes());
+    for chunk in chunks {
+        output.extend_from_slice(&(chunk.len() as u32).to_be_bytes());
+        output.extend_from_slice(chunk);
+    }
+    output
+}
+
+fn bytes_chunk(bytes: &[u8]) -> Vec<u8> {
+    let length = bytes
+        .iter()
+        .rposition(|byte| *byte != 0)
+        .map_or(0, |index| index + 1);
+    bytes[..length].to_vec()
+}
+
+fn integer_chunk<T: Into<u64>>(value: T) -> Vec<u8> {
+    bytes_chunk(&value.into().to_le_bytes())
 }
 
 pub(crate) fn credential_body_root(credential: &CompactCredential) -> [u8; 32] {
@@ -478,12 +678,32 @@ mod tests {
             .expect("fixture base64")
     }
 
+    fn bound_request() -> BoundCredentialRequest {
+        let holder_key = EmbeddedGroupAffine::generator() * EmbeddedFr::from(987_654_321_u64);
+        BoundCredentialRequest {
+            holder_did: format!("did:midnight:undeployed:{}", "ab".repeat(32)),
+            holder_binding_method_id: format!(
+                "did:midnight:undeployed:{}#holder-jubjub-1",
+                "ab".repeat(32)
+            ),
+            public_key_x: general_purpose::URL_SAFE_NO_PAD
+                .encode(holder_key.x().expect("holder x").as_le_bytes()),
+            public_key_y: general_purpose::URL_SAFE_NO_PAD
+                .encode(holder_key.y().expect("holder y").as_le_bytes()),
+        }
+    }
+
     #[test]
     fn matches_upstream_body_root_and_issuance_proof() {
         let body = fixture(super::super::STANDALONE_COMPACT_CREDENTIAL_B64);
         let proof = fixture(super::super::STANDALONE_COMPACT_PROOF_B64);
         let credential = parse_credential(&body).expect("credential");
         let proof_value = parse_proof(&proof).expect("proof");
+        assert_eq!(
+            encode_credential(&credential).expect("credential codec"),
+            body
+        );
+        assert_eq!(encode_proof(&proof_value).expect("proof codec"), proof);
         assert_eq!(credential_body_root(&credential), BODY_ROOT);
         assert!(verify_issuance_proof(&credential, &proof_value));
         let inspected = super::inspect(&body, Some(&proof)).expect("inspection");
@@ -505,6 +725,61 @@ mod tests {
             };
             assert_eq!(stage.status(), expected, "{:?}", stage.name());
         }
+    }
+
+    #[test]
+    fn reissues_the_exact_bundle_for_the_selected_holder_method() {
+        let request = bound_request();
+        let issued = issue_bound_standalone_credential(&request).expect("bound issuance");
+        let proof = issued.detached_proof.as_deref().expect("detached proof");
+        let credential = parse_credential(&issued.signed_bytes).expect("credential");
+        let parsed_proof = parse_proof(proof).expect("proof");
+
+        assert_eq!(credential.holder.did_contract_address, [0xab; 32]);
+        assert_eq!(
+            bytes_chunk(&credential.holder.method_id),
+            b"#holder-jubjub-1"
+        );
+        assert!(verify_issuance_proof(&credential, &parsed_proof));
+        assert_ne!(
+            issued.signed_bytes,
+            super::super::standalone_compact_credential()
+        );
+        assert_eq!(
+            issued.private_material,
+            Some(super::super::standalone_private_material())
+        );
+        let inspected = super::inspect(&issued.signed_bytes, Some(proof)).expect("inspection");
+        assert_eq!(inspected.verification.outcome(), VerificationOutcome::Valid);
+        assert_eq!(
+            inspected.metadata.subject_did(),
+            Some(request.holder_did.as_str())
+        );
+    }
+
+    #[test]
+    fn rejects_noncanonical_holder_references_and_public_keys() {
+        let mut request = bound_request();
+        request.holder_binding_method_id = format!("{}#{}", request.holder_did, "x".repeat(32));
+        assert_eq!(
+            issue_bound_standalone_credential(&request),
+            Err(BoundCredentialError::InvalidHolderBinding)
+        );
+
+        let mut request = bound_request();
+        request.public_key_x.push('=');
+        assert_eq!(
+            issue_bound_standalone_credential(&request),
+            Err(BoundCredentialError::InvalidHolderBinding)
+        );
+
+        let mut request = bound_request();
+        request.holder_did = format!("did:midnight:undeployed:{}", "AB".repeat(32));
+        request.holder_binding_method_id = format!("{}#holder-jubjub-1", request.holder_did);
+        assert_eq!(
+            issue_bound_standalone_credential(&request),
+            Err(BoundCredentialError::InvalidHolderBinding)
+        );
     }
 
     #[test]

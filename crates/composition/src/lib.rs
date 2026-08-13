@@ -63,8 +63,8 @@ use oxid_adapter_storage_memory::{
 };
 use oxid_adapter_vc_midnight::{
     DigitalPassportDisclosureAdapter, MidnightCredentialVerifier,
-    PreflightOnlyCompactPresentationProof, StandaloneCredentialInbox,
-    standalone_compact_credential, standalone_compact_proof, standalone_private_material,
+    PreflightOnlyCompactPresentationProof, StandaloneBoundCompactCredentialIssuer,
+    StandaloneCredentialInbox,
 };
 use oxid_credential_application::{
     CredentialDisclosurePort, CredentialInboxPort, CredentialRepository, CredentialService,
@@ -1232,13 +1232,11 @@ where
             ));
             let importer: Arc<dyn ImportVerifiedCredentialUseCase> = credentials.clone();
             (
-                Arc::new(StandaloneOid4vciIssuer::with_credential_fixture(
+                Arc::new(StandaloneOid4vciIssuer::with_bound_credential_issuer(
                     proof,
                     get_did,
                     clock.clone(),
-                    standalone_compact_credential(),
-                    Some(standalone_compact_proof()),
-                    Some(standalone_private_material()),
+                    Arc::new(StandaloneBoundCompactCredentialIssuer),
                 )),
                 Arc::new(VerifiedCredentialSink::new(importer)),
             )

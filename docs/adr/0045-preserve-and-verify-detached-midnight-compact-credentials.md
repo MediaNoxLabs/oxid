@@ -6,7 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/vc_store/` and `wallet-core/src/oid4vci_client/credential/digital_passport.rs`
 - Reference package: `midnight-verifiable-credentials` commit `39b1354212620b396e914b29603e6a38f2656546`
 - Amends: ADR-0003, ADR-0007, ADR-0009, ADR-0011, ADR-0013, ADR-0015, ADR-0017, ADR-0020, ADR-0021, ADR-0023, ADR-0038, ADR-0039, ADR-0041, ADR-0042, ADR-0043, and ADR-0044
-- Implementation state: exact Compact credential body, detached issuance proof, and private opening material are independently bounded, retained, encrypted, restored, and verified in standalone flows; ADR-0046 supplies exact development Jubjub signing through opaque references, while issuer-method anchoring, selected-DID holder binding, native custody, presentation proving, and production transport remain fail-closed
+- Implementation state: exact Compact credential body, detached issuance proof, and private opening material are independently bounded, retained, encrypted, restored, and verified in standalone flows; ADR-0046 supplies exact development Jubjub custody and ADR-0047 binds standalone issuance to the selected managed holder method, while issuer-method anchoring, presentation-time re-authorization, native custody, proving, and production transport remain fail-closed
 
 ## Context
 
@@ -68,7 +68,7 @@ issuance, claim-free disclosure planning, process restart, re-verification, and
 deletion exercise that representation. The standalone inbox deliberately keeps
 the older CBOR fixture as a second-format conformance path.
 
-Protected holder Jubjub custody must be a separate key-operation adapter. Oxid
+Protected holder Jubjub custody is a separate key-operation adapter. Oxid
 must not reproduce public claim-root-derived holder secrets in normal or mobile
 composition. A deterministic public key may be used only by a clearly marked
 standalone conformance prover. This ADR does not open the ADR-0043/0044
@@ -86,9 +86,10 @@ proof generation or independent `vp_token` verification.
 - Cryptographic consistency is separated from issuer authorization and trust;
   unsupported stages remain visible instead of being reported as passed.
 - Production issuance and presentation remain unavailable until native
-  wrapping, issuer-method anchoring, selected-DID/public-key holder binding,
-  runtime proving, and independent verification are delivered. ADR-0046
-  supplies only the exact process-local development Jubjub primitive.
+  wrapping, issuer-method anchoring, presentation-time selected-DID/public-key
+  re-authorization, runtime proving, and independent verification are
+  delivered. ADR-0046 supplies the exact process-local primitive and ADR-0047
+  uses it for holder-bound standalone issuance only.
 
 ## Validation
 

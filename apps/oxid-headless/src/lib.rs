@@ -1727,7 +1727,7 @@ impl HeadlessWallet {
                 return Dispatch::continue_with(Response::error(
                     request.id,
                     "invalid_params",
-                    "credential.issuance.accept requires issuanceId, holderDid, methodId, confirmed, and intent fields",
+                    "credential.issuance.accept requires issuanceId, holderDid, methodId, holderBindingMethodId, confirmed, and intent fields",
                 ));
             }
         };
@@ -1741,6 +1741,7 @@ impl HeadlessWallet {
                 issuance_id: params.issuance_id,
                 holder_did: params.holder_did,
                 method_id: params.method_id,
+                holder_binding_method_id: params.holder_binding_method_id,
                 confirmed: params.confirmed,
                 intent: params.intent,
             },
@@ -2327,6 +2328,7 @@ struct AcceptCredentialIssuanceParams {
     issuance_id: String,
     holder_did: String,
     method_id: String,
+    holder_binding_method_id: String,
     confirmed: bool,
     intent: String,
 }
@@ -2592,6 +2594,7 @@ fn did_update(params: DidUpdateParams) -> Option<(String, DidUpdate, DidOperatio
 fn did_key_algorithm(value: &str) -> Option<DidKeyAlgorithm> {
     match value {
         "ed25519" => Some(DidKeyAlgorithm::Ed25519),
+        "jubjub" => Some(DidKeyAlgorithm::Jubjub),
         "p256" => Some(DidKeyAlgorithm::P256),
         _ => None,
     }
@@ -3987,13 +3990,13 @@ fn capability_manifest() -> Value {
         { "method": "credential.presentation.refuse", "status": "ready", "mode": "standalone" },
         { "method": "credential.presentation.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
         { "method": "credential.presentation.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
-        { "method": "did.create", "status": "ready", "mode": "development_only", "networks": ["undeployed"], "initialMethods": ["ed25519", "p256"] },
+        { "method": "did.create", "status": "ready", "mode": "development_only", "networks": ["undeployed"], "initialMethods": ["ed25519", "p256", "jubjub"] },
         { "method": "did.resolve", "status": "ready", "mode": "standalone", "sources": ["standalone", "live"] },
         { "method": "did.list", "status": "ready", "mode": "standalone", "scope": "active_profile" },
         { "method": "did.get", "status": "ready", "mode": "standalone", "scope": "active_profile" },
         { "method": "did.forget", "status": "ready", "mode": "standalone", "scope": "active_profile" },
         { "method": "did.update", "status": "ready", "mode": "development_only", "operations": ["addAlsoKnownAs", "removeAlsoKnownAs", "addVerificationMethod", "updateVerificationMethod", "removeVerificationMethod", "addVerificationRelationship", "removeVerificationRelationship", "addService", "updateService", "removeService"], "confirmationRequired": true },
-        { "method": "did.sign", "status": "ready", "mode": "development_only", "algorithms": ["ed25519", "p256"], "confirmationRequired": true },
+        { "method": "did.sign", "status": "ready", "mode": "development_only", "algorithms": ["ed25519", "p256", "jubjub"], "confirmationRequired": true },
         { "method": "did.deactivate", "status": "ready", "mode": "development_only", "confirmationRequired": true },
         { "method": "diagnostics.snapshot", "status": "queued" }
     ])
@@ -4207,6 +4210,13 @@ mod tests {
             .find(|relationship| relationship["relationship"] == "authentication")
             .and_then(|relationship| relationship["methodIds"][0].as_str())
             .expect("authentication method");
+        let holder_binding_method_id = record["verificationMethods"]
+            .as_array()
+            .expect("verification methods")
+            .iter()
+            .find(|method| method["publicKeyJwk"]["crv"] == "Jubjub")
+            .and_then(|method| method["id"].as_str())
+            .expect("managed Jubjub holder-binding method");
 
         let prepared = execute_with_wallet(
             &wallet,
@@ -4234,7 +4244,7 @@ mod tests {
                 "protocol": PROTOCOL_VERSION,
                 "id": "issuance-denied",
                 "method": "credential.issuance.accept",
-                "params": {"issuanceId": issuance_id, "holderDid": did, "methodId": method_id, "confirmed": false, "intent": "ACCEPT_CREDENTIAL_ISSUANCE"},
+                "params": {"issuanceId": issuance_id, "holderDid": did, "methodId": method_id, "holderBindingMethodId": holder_binding_method_id, "confirmed": false, "intent": "ACCEPT_CREDENTIAL_ISSUANCE"},
             })
             .to_string(),
         );
@@ -4246,7 +4256,7 @@ mod tests {
                 "protocol": PROTOCOL_VERSION,
                 "id": "issuance-accept",
                 "method": "credential.issuance.accept",
-                "params": {"issuanceId": issuance_id, "holderDid": did, "methodId": method_id, "confirmed": true, "intent": "ACCEPT_CREDENTIAL_ISSUANCE"},
+                "params": {"issuanceId": issuance_id, "holderDid": did, "methodId": method_id, "holderBindingMethodId": holder_binding_method_id, "confirmed": true, "intent": "ACCEPT_CREDENTIAL_ISSUANCE"},
             })
             .to_string(),
         );
@@ -4281,10 +4291,46 @@ mod tests {
             inventories[1]["result"]["credentials"][0]["displayName"],
             "Digital Passport"
         );
+        assert_eq!(
+            inventories[1]["result"]["credentials"][0]["subjectDid"],
+            did
+        );
         let issued_inventory = inventories[1].to_string();
         assert!(!issued_inventory.contains("signedBytes"));
         assert!(!issued_inventory.contains("detachedProof"));
         assert!(!issued_inventory.contains("privateMaterial"));
+
+        let mismatched_prepared = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "issuance-mismatch-prepare",
+                "method": "credential.issuance.prepare",
+                "params": {"offer": standalone_credential_offer()},
+            })
+            .to_string(),
+        );
+        let mismatched_issuance_id = mismatched_prepared[0]["result"]["issuance"]["id"]
+            .as_str()
+            .expect("mismatched issuance identifier");
+        let mismatched = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "issuance-mismatch",
+                "method": "credential.issuance.accept",
+                "params": {
+                    "issuanceId": mismatched_issuance_id,
+                    "holderDid": did,
+                    "methodId": method_id,
+                    "holderBindingMethodId": method_id,
+                    "confirmed": true,
+                    "intent": "ACCEPT_CREDENTIAL_ISSUANCE",
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(mismatched[0]["error"]["code"], "invalid_proof");
 
         let other_profile = execute_with_wallet(
             &wallet,
@@ -4927,7 +4973,7 @@ mod tests {
                 .as_array()
                 .expect("methods")
                 .len(),
-            2
+            3
         );
         assert!(!created[0].to_string().contains("key_"));
 
@@ -5042,6 +5088,35 @@ mod tests {
             128
         );
         assert!(!signed[0].to_string().contains("key_"));
+
+        let holder_signed = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "did-sign-holder-jubjub",
+                "method": "did.sign",
+                "params": {
+                    "did": did,
+                    "methodId": "#holder-jubjub-1",
+                    "payloadHex": "686f6c6465722d6368616c6c656e6765",
+                    "confirmation": {
+                        "title": "Sign holder challenge",
+                        "summary": "Authorize the holder challenge with the DID-bound Jubjub method",
+                        "confirmed": true,
+                    },
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(holder_signed[0]["result"]["algorithm"], "jubjub");
+        assert_eq!(
+            holder_signed[0]["result"]["signatureHex"]
+                .as_str()
+                .expect("Jubjub signature")
+                .len(),
+            192
+        );
+        assert!(!holder_signed[0].to_string().contains("key_"));
 
         let removals = [
             json!({ "operation": "removeVerificationRelationship", "did": did, "relationship": "assertionMethod", "methodId": "#recovery-1" }),

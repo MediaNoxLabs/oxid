@@ -7,6 +7,8 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
+use midnight_serialize::Deserializable as _;
+use midnight_transient_crypto::curve::EmbeddedGroupAffine;
 use oxid_identity_application::{
     DidKeyAlgorithm, DidLifecyclePort, DidLifecyclePortError, DidLifecycleSignature, DidUpdate,
 };
@@ -141,16 +143,35 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
                 return Err(error);
             }
         };
+        let presentation = match self.generate(
+            profile_id,
+            DidKeyAlgorithm::Jubjub,
+            "holder presentation",
+            WalletKeyPurpose::Assertion,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                let profile = Self::profile(profile_id)?;
+                let _ = self.keys.delete(&profile, authentication.reference());
+                let _ = self.keys.delete(&profile, assertion.reference());
+                return Err(error);
+            }
+        };
 
         let did = did_from_public_keys(profile_id, &authentication, &assertion)?;
         let authentication_method = verification_method(&did, "auth-1", &authentication)?;
         let assertion_method = verification_method(&did, "assertion-1", &assertion)?;
+        let presentation_method = verification_method(&did, "holder-jubjub-1", &presentation)?;
         let document = DidDocument::new(DidDocumentParts {
             contexts: vec![DID_CONTEXT.to_owned(), JWK_CONTEXT.to_owned()],
             id: did.clone(),
             controllers: vec![did.clone()],
             also_known_as: Vec::new(),
-            verification_methods: vec![authentication_method.clone(), assertion_method.clone()],
+            verification_methods: vec![
+                authentication_method.clone(),
+                assertion_method.clone(),
+                presentation_method.clone(),
+            ],
             relationships: vec![
                 VerificationRelationshipEntry::new(
                     oxid_identity_domain::VerificationRelationship::Authentication,
@@ -158,7 +179,10 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
                 ),
                 VerificationRelationshipEntry::new(
                     oxid_identity_domain::VerificationRelationship::AssertionMethod,
-                    vec![assertion_method.id().to_owned()],
+                    vec![
+                        assertion_method.id().to_owned(),
+                        presentation_method.id().to_owned(),
+                    ],
                 ),
                 VerificationRelationshipEntry::new(
                     oxid_identity_domain::VerificationRelationship::CapabilityInvocation,
@@ -183,6 +207,13 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
             KeyBinding {
                 reference: assertion.reference().clone(),
                 algorithm: DidKeyAlgorithm::P256,
+            },
+        );
+        methods.insert(
+            presentation_method.id().to_owned(),
+            KeyBinding {
+                reference: presentation.reference().clone(),
+                algorithm: DidKeyAlgorithm::Jubjub,
             },
         );
         if self
@@ -545,6 +576,7 @@ fn canonical_component_id(did: &MidnightDid, value: &str) -> Result<String, DidL
 fn wallet_algorithm(value: DidKeyAlgorithm) -> WalletKeyAlgorithm {
     match value {
         DidKeyAlgorithm::Ed25519 => WalletKeyAlgorithm::Ed25519,
+        DidKeyAlgorithm::Jubjub => WalletKeyAlgorithm::Jubjub,
         DidKeyAlgorithm::P256 => WalletKeyAlgorithm::P256,
     }
 }
@@ -631,6 +663,23 @@ fn public_jwk(descriptor: &WalletKeyDescriptor) -> Result<PublicJwk, DidLifecycl
             )
             .map_err(|_| DidLifecyclePortError::InvalidOperation)
         }
+        (WalletKeyAlgorithm::Jubjub, PublicKeyEncoding::JubjubCompressed) => {
+            let mut reader = descriptor.public_key().bytes();
+            let point = EmbeddedGroupAffine::deserialize(&mut reader, 0)
+                .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+            if !reader.is_empty() || point.is_identity() {
+                return Err(DidLifecyclePortError::InvalidOperation);
+            }
+            let x = point.x().ok_or(DidLifecyclePortError::InvalidOperation)?;
+            let y = point.y().ok_or(DidLifecyclePortError::InvalidOperation)?;
+            PublicJwk::new(
+                JwkKeyType::Ec,
+                JwkCurve::Jubjub,
+                base64url(&x.as_le_bytes()),
+                Some(base64url(&y.as_le_bytes())),
+            )
+            .map_err(|_| DidLifecyclePortError::InvalidOperation)
+        }
         _ => Err(DidLifecyclePortError::UnsupportedAlgorithm),
     }
 }
@@ -690,13 +739,13 @@ mod tests {
             .create(&profile, MidnightNetwork::Undeployed)
             .expect("create");
         let did = resolution.document().id().clone();
-        assert_eq!(resolution.document().verification_methods().len(), 2);
+        assert_eq!(resolution.document().verification_methods().len(), 3);
         assert_eq!(
             lifecycle
                 .managed_method_ids(&profile, &resolution)
                 .expect("managed methods")
                 .len(),
-            2
+            3
         );
         assert_eq!(
             resolution.document_metadata().version_id.as_deref(),
@@ -735,7 +784,7 @@ mod tests {
                 .expect("update");
         }
         assert_eq!(resolution.document().also_known_as().len(), 1);
-        assert_eq!(resolution.document().verification_methods().len(), 3);
+        assert_eq!(resolution.document().verification_methods().len(), 4);
         assert_eq!(resolution.document().services().len(), 1);
 
         let signature = lifecycle
@@ -744,6 +793,16 @@ mod tests {
         assert_eq!(signature.algorithm, DidKeyAlgorithm::Ed25519);
         assert_eq!(signature.signature_bytes.len(), 64);
         assert_eq!(signature.method_id, format!("{}#auth-1", did.as_str()));
+        let holder_signature = lifecycle
+            .sign(
+                &profile,
+                &resolution,
+                "#holder-jubjub-1",
+                b"holder challenge",
+            )
+            .expect("sign with protected Jubjub holder method");
+        assert_eq!(holder_signature.algorithm, DidKeyAlgorithm::Jubjub);
+        assert_eq!(holder_signature.signature_bytes.len(), 96);
 
         for operation in [
             DidUpdate::RemoveVerificationRelationship {
@@ -765,7 +824,7 @@ mod tests {
                 .expect("remove");
         }
         assert!(resolution.document().also_known_as().is_empty());
-        assert_eq!(resolution.document().verification_methods().len(), 2);
+        assert_eq!(resolution.document().verification_methods().len(), 3);
         assert!(resolution.document().services().is_empty());
 
         resolution = lifecycle

@@ -25,11 +25,13 @@ than layers bolted onto one chain-specific frontend.
 > adapter previews a standalone verifier request, requires explicit consent,
 > and independently verifies a single-use self-issued DID login without
 > exposing the ID Token. The standalone issuer now delivers the prototype's
-> exact `midnight_compact_vc` body, detached issuance proof, and five
-> commitment-bound protected claims. A native verifier checks its exact
-> Compact roots and Jubjub proof before encrypted storage. Exact development
-> Jubjub signing now stays behind opaque custody references; issuer trust,
-> selected-DID holder binding, and native custody remain explicit later gates.
+> exact `midnight_compact_vc` body shape, detached issuance proof, and five
+> commitment-bound protected claims. It reissues that exact bundle to the
+> selected profile's managed Jubjub assertion method, and a native verifier
+> checks the resulting Compact roots and proof before encrypted storage. Exact
+> development Jubjub signing stays behind opaque custody references; issuer
+> trust, presentation-time holder reauthorization, and native custody remain
+> explicit later gates.
 > Headless can inspect a claim-free
 > disclosure plan, while Dioxus explicitly reveals/hides first and last name
 > locally and plans an age predicate without claiming a presentation or proof.
@@ -131,7 +133,10 @@ plan only—never claim values, openings, or presentation secrets. Standalone is
 `credential.issuance.prepare`, `credential.issuance.accept`,
 `credential.issuance.refuse`, `credential.issuance.get`, and
 `credential.issuance.list`; their profile scope is always taken from the
-active wallet profile rather than caller parameters.
+active wallet profile rather than caller parameters. Acceptance uses
+`methodId` for the OpenID authentication proof and a distinct
+`holderBindingMethodId` for the managed Jubjub assertion method signed into the
+Compact credential holder reference.
 Standalone presentation preview adds `credential.presentation.prepare`,
 `credential.presentation.accept`, `credential.presentation.refuse`,
 `credential.presentation.get`, and `credential.presentation.list`. It strictly
@@ -207,12 +212,16 @@ mutation or production identity custody.
 Standalone composition accepts exactly one embedded, pre-authorized-code
 OpenID4VCI 1.0 Final offer without Transaction Code. It previews issuer and
 credential display metadata before explicit consent, signs a nonce-bound JWT
-through an active managed DID authentication method, verifies the issued
-Midnight credential, and stores it in the protected profile inventory. It now
-uses the exact prototype `midnight_compact_vc` representation: separately
-bounded body, detached issuance proof, and private openings. The adapter
-reconstructs the exact claim/body/payload roots and verifies the Jubjub Schnorr
-equation; issuer DID anchoring, status, trust, and production custody remain
+through an active managed DID authentication method, separately selects a
+managed Jubjub assertion method for holder binding, verifies the issued
+Midnight credential, and stores it in the protected profile inventory. It uses
+the exact prototype `midnight_compact_vc` representation: separately bounded
+body, detached issuance proof, and private openings. The standalone issuer
+canonically replaces the credential holder reference with the selected DID and
+method, rebuilds the detached proof over the changed root, and never receives a
+private key reference. The adapter reconstructs the exact claim/body/payload
+roots and verifies the Jubjub Schnorr equation; issuer DID anchoring, status,
+trust, presentation-time holder reauthorization, and production custody remain
 unavailable. Grant codes, access tokens, nonces, proofs, and original credential
 bytes never enter headless or UI results. The deterministic issuer is in-process
 and uses only loopback identifiers; normal production composition has no issuer
@@ -432,11 +441,11 @@ just android-smoke
 | `crates/wallet/domain` | Wallet entities and invariants. |
 | `crates/wallet/application` | Use cases and wallet-owned ports. |
 | `crates/identity/domain` | DID document, public JWK, relationship, and resolution invariants. |
-| `crates/identity/application` | Profile-scoped DID use cases and identity-owned ports. |
+| `crates/identity/application` | Profile-scoped DID use cases, multi-curve lifecycle/signing, and identity-owned ports. |
 | `crates/credential/domain` | Credential records, explicit formats, bounded detached proofs and opaque format-private material, schema-neutral disclosure candidates, and structured verification invariants. |
-| `crates/credential/application` | Profile-scoped credential inventory, exact-bundle verified import/reverification, disclosure inventory/plan, and targeted local-reveal use cases. |
+| `crates/credential/application` | Profile-scoped credential inventory, holder-bound issuer port, exact-bundle verified import/reverification, disclosure inventory/plan, and targeted local-reveal use cases. |
 | `crates/protocol/domain` | Credential-offer and self-issued-authentication preview/lifecycle invariants. |
-| `crates/protocol/application` | Protocol-neutral issuance and DID-authentication use cases and outgoing ports. |
+| `crates/protocol/application` | Protocol-neutral issuance, explicit holder-binding, and DID-authentication use cases and outgoing ports. |
 | `crates/platform/ports` | Time and randomness capability ports. |
 | `crates/adapters` | Replaceable outgoing implementations. |
 | `crates/ui-dioxus` | Incoming Dioxus UI adapter. |
@@ -471,7 +480,9 @@ and [ADR-0042](docs/adr/0042-bind-digital-passport-disclosure-to-signed-commitme
 The fail-closed presentation boundary is recorded in
 [ADR-0043](docs/adr/0043-gate-openid4vp-on-reproducible-compact-proofs.md),
 and exact Compact credential persistence/verification is recorded in
-[ADR-0045](docs/adr/0045-preserve-and-verify-detached-midnight-compact-credentials.md).
+[ADR-0045](docs/adr/0045-preserve-and-verify-detached-midnight-compact-credentials.md),
+while standalone selected-DID issuance binding is recorded in
+[ADR-0047](docs/adr/0047-bind-standalone-compact-credentials-to-managed-jubjub-did-methods.md).
 
 ## Security
 

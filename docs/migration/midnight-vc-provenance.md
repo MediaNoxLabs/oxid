@@ -39,6 +39,8 @@ dependency on the three identity repositories.
   expose local first/last reveal plus age-threshold planning.
 - preserve the prototype's exact `midnight_compact_vc` body, detached issuance
   proof, and private opening envelope as three bounded values;
+- bind standalone issuance to the selected profile's managed Jubjub assertion
+  method and regenerate the canonical body plus detached issuer proof;
 - reconstruct the upstream Compact body/payload roots and verify its Jubjub
   Schnorr issuance proof without exposing or mislabeling it as a presentation;
 - migrate encrypted credential-store schemas 1 and 2 into schema 3 and prove
@@ -65,13 +67,15 @@ dependency on the three identity repositories.
 | Disclosure planning can be mistaken for verifier proof | Headless returns claim-free candidates/plans only; Dioxus labels reveal as local and reports `presentationGenerated: false`; no OpenID4VP or Compact proof is constructed. |
 | Compact body, detached issuance proof, and private openings can be collapsed or confused | Keep three separately bounded, debug-redacted record fields; route exact `MCV1` only; reject proof data for CBOR; never reuse an issuance signature as a presentation proof. |
 | A self-contained Compact proof can be mistaken for issuer trust | Mark only structural/proof/schema stages passed; issuer method anchoring, current-time policy, status, and trust stay `not_checked`. |
-| Prototype presentation derives a holder scalar from public claim data | Do not copy that shortcut into normal/mobile composition. ADR-0046 adds exact Jubjub signing behind profile-scoped opaque development custody, but presentation remains blocked until the protected public key is bound to the selected DID and signed credential holder method. |
+| Prototype presentation derives a holder scalar from public claim data | Do not copy that shortcut into normal/mobile composition. ADR-0046 keeps exact Jubjub signing behind profile-scoped opaque development custody; ADR-0047 binds standalone issuance to the selected managed DID method. Presentation still requires current ownership reauthorization of that same protected key. |
 
 The standalone fixture contains only public conformance material. Its issuer
-secret was generated outside the repository and discarded. The revised DID
-fixture version is `standalone-fixture-v2`; its Ed25519 method is authorized for
-both authentication and assertion so the signed credential exercises the same
-resolver boundary as later protocol ingress.
+secret was generated outside the repository and discarded for the phase-1 CBOR
+path. The revised DID fixture version is `standalone-fixture-v2`; its Ed25519
+method is authorized for both authentication and assertion so the signed
+credential exercises the same resolver boundary as later protocol ingress. The
+separate Compact issuer scalar is intentionally public reference-conformance
+data and is selected only by standalone composition.
 
 ## Format contracts implemented
 
@@ -114,6 +118,15 @@ The verifier proves internal issuer-signature consistency. The proof embeds its
 public key; Oxid does not yet resolve and authorize that key through a Jubjub
 DID method. Issuer, temporal-current-time, status, and trust stages therefore
 remain `not_checked` rather than fabricated success.
+
+Standalone issuance parses this exact static body, replaces only its holder DID
+and method with the selected managed Jubjub assertion reference, canonically
+re-encodes all 18 chunks, and rebuilds the nine-chunk detached proof over the
+new body root. The public JWK is validated at issuance but is not embedded in
+the credential because the reference family's `ExplicitHolderBinding` contains
+only the DID/method reference. Presentation must re-resolve that exact method,
+authorize its current protected public key, and apply an explicit method-rotation
+policy before using it.
 
 ## Digital Passport protected-material contract
 
@@ -162,10 +175,12 @@ surfaces without widening the current UI. Headless never reveals a value.
 - Status/revocation, temporal policy, schema validation, and issuer trust remain
   visible `not_checked` stages rather than fabricated success.
 - Exact process-local Jubjub generation/signing is implemented by ADR-0046 and
-  cross-checked against the 0.5.0 Midnight DID package. Issuer-method anchoring,
-  selected-DID/public-key holder binding, and native custody remain tracked by
-  issue #29. The prototype's public claim-root-derived holder scalar must not
-  enter normal or mobile composition.
+  cross-checked against the 0.5.0 Midnight DID package. ADR-0047 implements
+  selected-DID/public-key validation and credential holder binding for
+  standalone issuance. Issuer-method anchoring, presentation-time ownership
+  reauthorization, and native custody remain tracked by issue #29. The
+  prototype's public claim-root-derived holder scalar must not enter normal or
+  mobile composition.
 - The development key file is not backup, recovery, biometric authorization,
   or production platform custody.
 
@@ -186,5 +201,5 @@ surfaces without widening the current UI. Headless never reveals a value.
 | Cryptographic validity mistaken for trust | Temporal/status/schema/trust are explicit `not_checked` stages. |
 | Malicious credential offer or metadata | Strict duplicate-rejecting bounded JSON; exact embedded-offer parameter; issuer/authorization metadata separation; HTTPS-only production endpoint policy; explicit loopback exception only for standalone. |
 | Pre-authorized code replay or disclosure | Single-use adapter session; code/token/nonce never cross the protocol port or incoming DTO and are zeroized when retained. |
-| Holder-key substitution | Active profile scope, non-deactivated managed DID, exact controller, authentication relationship, DID URL `kid`, supported curve, issuer audience, and nonce-bound typed JWS. |
+| Holder-key substitution | OpenID authentication requires active profile scope, a non-deactivated managed authentication method, exact controller, DID URL `kid`, supported curve, issuer audience, and nonce-bound typed JWS. Credential holder binding separately requires an active managed assertion method, exact controller, canonical EC/Jubjub coordinates, and a holder reference regenerated under the issuer proof. Presentation-time ownership reauthorization remains fail-closed. |
 | Self-issued login replay or verifier substitution | Exact loopback standalone verifier/request/response endpoints, short-lived nonce/state session consumed before verification, audience/issuer/subject checks, and independent DID-signature verification. |

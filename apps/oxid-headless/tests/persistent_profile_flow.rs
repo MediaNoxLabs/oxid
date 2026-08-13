@@ -575,6 +575,13 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         .find(|relationship| relationship["relationship"] == "authentication")
         .and_then(|relationship| relationship["methodIds"][0].as_str())
         .expect("authentication method");
+    let holder_binding_method_id = document["verificationMethods"]
+        .as_array()
+        .expect("verification methods")
+        .iter()
+        .find(|method| method["publicKeyJwk"]["crv"] == "Jubjub")
+        .and_then(|method| method["id"].as_str())
+        .expect("managed Jubjub holder-binding method");
     let prepared = first_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-offer",
         "method": "credential.issuance.prepare",
@@ -591,6 +598,7 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
             "issuanceId": issuance_id,
             "holderDid": holder_did,
             "methodId": method_id,
+            "holderBindingMethodId": holder_binding_method_id,
             "confirmed": true,
             "intent": "ACCEPT_CREDENTIAL_ISSUANCE"
         }

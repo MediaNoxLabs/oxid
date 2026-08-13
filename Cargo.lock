@@ -5400,6 +5400,8 @@ name = "oxid-adapter-did-midnight"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "midnight-serialize",
+ "midnight-transient-crypto",
  "oxid-adapter-platform-system",
  "oxid-adapter-storage-dev",
  "oxid-identity-application",

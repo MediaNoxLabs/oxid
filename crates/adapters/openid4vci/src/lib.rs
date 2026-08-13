@@ -11,6 +11,7 @@ use std::{
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature as Ed25519Signature, Verifier as _, VerifyingKey as Ed25519Key};
 use oxid_credential_application::{
+    BoundCredentialError, BoundCredentialIssuerPort, BoundCredentialRequest,
     CredentialDetachedProofInput, CredentialDisclosurePortError, CredentialOperationError,
     CredentialPrivateMaterialInput, CredentialRepositoryError, CredentialVerificationError,
     ImportVerifiedCredentialCommand, ImportVerifiedCredentialUseCase,
@@ -81,9 +82,16 @@ pub struct StandaloneOid4vciIssuer {
     clock: Arc<dyn ClockPort>,
     sessions: Mutex<BTreeMap<String, PreparedSecret>>,
     next_id: std::sync::atomic::AtomicU64,
-    signed_credential: Vec<u8>,
-    detached_proof: Option<Vec<u8>>,
-    private_material: Option<Vec<u8>>,
+    credential_source: CredentialSource,
+}
+
+enum CredentialSource {
+    Static {
+        signed_credential: Vec<u8>,
+        detached_proof: Option<Vec<u8>>,
+        private_material: Option<Vec<u8>>,
+    },
+    HolderBound(Arc<dyn BoundCredentialIssuerPort>),
 }
 
 impl StandaloneOid4vciIssuer {
@@ -120,9 +128,28 @@ impl StandaloneOid4vciIssuer {
             clock,
             sessions: Mutex::new(BTreeMap::new()),
             next_id: std::sync::atomic::AtomicU64::new(1),
-            signed_credential,
-            detached_proof,
-            private_material,
+            credential_source: CredentialSource::Static {
+                signed_credential,
+                detached_proof,
+                private_material,
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn with_bound_credential_issuer(
+        proof: Arc<dyn CredentialHolderProofPort>,
+        get_did: Arc<dyn GetDidRecordUseCase>,
+        clock: Arc<dyn ClockPort>,
+        issuer: Arc<dyn BoundCredentialIssuerPort>,
+    ) -> Self {
+        Self {
+            proof,
+            get_did,
+            clock,
+            sessions: Mutex::new(BTreeMap::new()),
+            next_id: std::sync::atomic::AtomicU64::new(1),
+            credential_source: CredentialSource::HolderBound(issuer),
         }
     }
 
@@ -284,23 +311,58 @@ impl CredentialIssuanceProtocolPort for StandaloneOid4vciIssuer {
                 &proof_method,
                 &proof,
             )?;
+            let holder_bound_request = match &self.credential_source {
+                CredentialSource::Static { .. } => None,
+                CredentialSource::HolderBound(_) => Some(resolve_holder_binding(
+                    self.get_did.as_ref(),
+                    &proof_profile,
+                    &proof_did,
+                    &request.holder_binding_method_id,
+                )?),
+            };
             validate_expected_endpoint(&secret.credential_endpoint, "/issuer/credential")?;
             if access_token.is_empty() || secret.configuration_id != STANDALONE_CONFIGURATION_ID {
                 return Err(IssuanceProtocolError::IssuerRejected);
             }
-            if self.signed_credential.is_empty() {
+            let issued = match (&self.credential_source, holder_bound_request) {
+                (
+                    CredentialSource::Static {
+                        signed_credential,
+                        detached_proof,
+                        private_material,
+                    },
+                    None,
+                ) => IssuedCredentialBytes {
+                    signed_bytes: signed_credential.clone(),
+                    detached_proof: detached_proof.clone(),
+                    private_material: private_material.clone(),
+                },
+                (CredentialSource::HolderBound(issuer), Some(binding)) => {
+                    let bundle = issuer
+                        .issue(binding)
+                        .await
+                        .map_err(map_bound_credential_error)?;
+                    IssuedCredentialBytes {
+                        signed_bytes: bundle.signed_bytes,
+                        detached_proof: bundle.detached_proof,
+                        private_material: bundle.private_material,
+                    }
+                }
+                _ => return Err(IssuanceProtocolError::InvalidCredentialResponse),
+            };
+            if issued.signed_bytes.is_empty() {
                 return Err(IssuanceProtocolError::InvalidCredentialResponse);
             }
             let response = json!({
                 "credentials": [{
-                    "credential": general_purpose::URL_SAFE_NO_PAD.encode(&self.signed_credential)
+                    "credential": general_purpose::URL_SAFE_NO_PAD.encode(&issued.signed_bytes)
                 }]
             });
             parse_credential_response(response.to_string().as_bytes()).map(|signed_bytes| {
                 IssuedCredentialBytes {
                     signed_bytes,
-                    detached_proof: self.detached_proof.clone(),
-                    private_material: self.private_material.clone(),
+                    detached_proof: issued.detached_proof,
+                    private_material: issued.private_material,
                 }
             })
         })
@@ -312,6 +374,65 @@ impl CredentialIssuanceProtocolPort for StandaloneOid4vciIssuer {
             .map(|_| ())
             .ok_or(IssuanceProtocolError::InvalidOffer)
     }
+}
+
+fn map_bound_credential_error(error: BoundCredentialError) -> IssuanceProtocolError {
+    match error {
+        BoundCredentialError::InvalidHolderBinding => IssuanceProtocolError::InvalidProof,
+        BoundCredentialError::Unavailable => IssuanceProtocolError::Unavailable,
+    }
+}
+
+fn resolve_holder_binding(
+    get_did: &dyn GetDidRecordUseCase,
+    profile_id: &oxid_protocol_domain::ProtocolProfileId,
+    holder_did: &str,
+    method_id: &str,
+) -> Result<BoundCredentialRequest, IssuanceProtocolError> {
+    let record = get_did
+        .execute(DidRecordQuery {
+            profile_id: profile_id.as_str().to_owned(),
+            did: holder_did.to_owned(),
+        })
+        .map_err(map_get_did_error)
+        .map_err(map_holder_proof_error)?;
+    if record.document_metadata.deactivated == Some(true)
+        || !record
+            .managed_method_ids
+            .iter()
+            .any(|managed| managed == method_id)
+        || !record.document.relationships.iter().any(|relationship| {
+            relationship.relationship == "assertionMethod"
+                && relationship
+                    .method_ids
+                    .iter()
+                    .any(|value| value == method_id)
+        })
+    {
+        return Err(IssuanceProtocolError::InvalidProof);
+    }
+    let method = record
+        .document
+        .verification_methods
+        .iter()
+        .find(|method| method.id == method_id)
+        .filter(|method| {
+            method.controller == holder_did
+                && method.public_key_jwk.key_type == "EC"
+                && method.public_key_jwk.curve == "Jubjub"
+        })
+        .ok_or(IssuanceProtocolError::InvalidProof)?;
+    let public_key_y = method
+        .public_key_jwk
+        .y
+        .clone()
+        .ok_or(IssuanceProtocolError::InvalidProof)?;
+    Ok(BoundCredentialRequest {
+        holder_did: holder_did.to_owned(),
+        holder_binding_method_id: method_id.to_owned(),
+        public_key_x: method.public_key_jwk.x.clone(),
+        public_key_y,
+    })
 }
 
 fn map_holder_proof_error(error: HolderProofError) -> IssuanceProtocolError {
@@ -1178,6 +1299,7 @@ mod tests {
         profile_id: String,
         did: String,
         method: String,
+        holder_binding_method: String,
     }
 
     fn proof_fixture() -> ProofFixture {
@@ -1225,6 +1347,13 @@ mod tests {
             .and_then(|relationship| relationship.method_ids.first())
             .cloned()
             .expect("authentication method should exist");
+        let holder_binding_method = did
+            .document
+            .verification_methods
+            .iter()
+            .find(|method| method.public_key_jwk.curve == "Jubjub")
+            .map(|method| method.id.clone())
+            .expect("Jubjub holder-binding method should exist");
         let get: Arc<dyn GetDidRecordUseCase> = identity.clone();
         let sign: Arc<dyn SignDidPayloadUseCase> = identity;
         let proof_clock: Arc<dyn ClockPort> = clock.clone();
@@ -1235,6 +1364,7 @@ mod tests {
             profile_id: created.id,
             did: did.document.id,
             method,
+            holder_binding_method,
         }
     }
 
@@ -1319,6 +1449,7 @@ mod tests {
             profile_id,
             did,
             method,
+            holder_binding_method,
         } = proof_fixture();
         let profile = ProtocolProfileId::parse(profile_id).expect("fixture profile id is valid");
         let jwt = block_on(proof.create(HolderProofRequest {
@@ -1334,6 +1465,17 @@ mod tests {
             .expect("generated proof should match the final OID4VCI shape");
         verify_key_proof_signature(get_did.as_ref(), &profile, &did, &method, &jwt)
             .expect("issuer should verify the generated proof signature");
+        let binding =
+            resolve_holder_binding(get_did.as_ref(), &profile, &did, &holder_binding_method)
+                .expect("managed Jubjub assertion method should bind the credential holder");
+        assert_eq!(binding.holder_did, did);
+        assert_eq!(binding.holder_binding_method_id, holder_binding_method);
+        assert!(!binding.public_key_x.is_empty());
+        assert!(!binding.public_key_y.is_empty());
+        assert_eq!(
+            resolve_holder_binding(get_did.as_ref(), &profile, &did, &method),
+            Err(IssuanceProtocolError::InvalidProof)
+        );
 
         let mut tampered = jwt.into_bytes();
         let signature_start = tampered
@@ -1362,6 +1504,7 @@ mod tests {
             profile_id,
             did,
             method,
+            holder_binding_method,
         } = proof_fixture();
         let adapter = StandaloneOid4vciIssuer::new(proof, get_did, clock);
         let profile = ProtocolProfileId::parse(profile_id).expect("fixture profile id is valid");
@@ -1375,6 +1518,7 @@ mod tests {
             issuance_id: prepared.id,
             holder_did: did,
             method_id: method,
+            holder_binding_method_id: holder_binding_method,
         }))
         .expect("valid managed proof should issue");
         let expected = general_purpose::STANDARD
@@ -1408,6 +1552,7 @@ mod tests {
             issuance_id: prepared.id,
             holder_did: "did:midnight:undeployed:holder".to_owned(),
             method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
+            holder_binding_method_id: "did:midnight:undeployed:holder#holder-jubjub-1".to_owned(),
         }))
         .expect_err("malformed proof must fail");
         assert_eq!(error, IssuanceProtocolError::InvalidProof);

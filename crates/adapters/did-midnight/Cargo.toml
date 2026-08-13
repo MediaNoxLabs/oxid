@@ -10,6 +10,8 @@ publish = false
 
 [dependencies]
 futures.workspace = true
+midnight-serialize.workspace = true
+midnight-transient-crypto.workspace = true
 oxid-identity-application.workspace = true
 oxid-identity-domain.workspace = true
 oxid-wallet-application.workspace = true

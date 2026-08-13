@@ -6,8 +6,9 @@
 - Normative source: [OpenID for Verifiable Credential Issuance 1.0 Final](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html), published 2025-09-16
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/oid4vci_client/` and `mobile-bench/wallet-core/tests/oid4vci_issuance_e2e.rs`
 - Supersedes: ADR-0038 statements that all protocol ingress is queued
+- Amended by: ADR-0047
 - Amends: ADR-0004, ADR-0007, ADR-0010, ADR-0011, ADR-0013, ADR-0017, ADR-0018, ADR-0020, ADR-0021, ADR-0023, ADR-0024, ADR-0029, and ADR-0038
-- Implementation state: final-shape embedded-offer, pre-authorized-code issuance is implemented with an in-process standalone issuer, explicit consent, DID-bound JWT proof, strict verification, protected persistence, headless flow, and Dioxus mobile flow; production HTTP, discovery, native custody, and other grant/transport variants remain unavailable
+- Implementation state: final-shape embedded-offer, pre-authorized-code issuance is implemented with an in-process standalone issuer, explicit consent, a DID-bound JWT proof, a separately selected managed Jubjub holder method, strict verification, protected persistence, headless flow, and Dioxus mobile flow; production HTTP, discovery, native custody, and other grant/transport variants remain unavailable
 
 ## Context
 
@@ -71,12 +72,20 @@ the selected public DID method independently, verifies the Ed25519 or P-256
 signature, enforces the anonymous-flow `iss` rule, and bounds `iat` freshness
 before issuing. No key handle or signing input leaves that bridge.
 
+ADR-0047 keeps that authentication proof distinct from credential holder
+binding. Standalone acceptance also selects an active managed EC/Jubjub
+`assertionMethod`, reloads and validates its public DID record, and asks a
+credential-application-owned issuer port to regenerate the exact Compact credential and
+detached proof for that DID/method reference. No private key reference crosses
+the protocol or issuer boundary.
+
 DID inventory views distinguish methods managed by the current lifecycle
 adapter from methods that are merely present in a resolved or restored public
 document. The mobile acceptance flow considers only an active authentication
-method in that managed set. This prevents a foreign resolved DID that sorts
-ahead of the holder DID from being selected for proof generation. The proof
-bridge rechecks control and authorization at the application boundary.
+method plus a managed Jubjub assertion method in that set. This prevents a
+foreign resolved DID that sorts ahead of the holder DID from being selected for
+proof generation or holder binding. The proof and binding bridges independently
+recheck control and authorization at the application boundary.
 
 Protocol output reaches the protected credential repository only through a
 new strict import use case. The existing verifier must produce `valid` before
@@ -88,9 +97,9 @@ strict Midnight verifier, and encrypted credential repository.
 Headless v1 exposes `credential.issuance.prepare`, `accept`, `refuse`, `get`,
 and `list`. Results contain only offer display metadata, lifecycle state, safe
 failure code, and final credential identifier. Dioxus previews issuer and
-credential display metadata, requires a checkbox confirmation, selects an
-active managed authentication method, and refreshes the same protected
-inventory after success.
+credential display metadata, requires a checkbox confirmation, selects active
+managed authentication and Jubjub assertion methods, and refreshes the same
+protected inventory after success.
 
 ## Alternatives considered
 

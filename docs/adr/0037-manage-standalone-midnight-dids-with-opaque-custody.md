@@ -6,7 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/did/`, `contracts/midnight-did/did.compact`, Dioxus DID operation builder, and headless wallet
 - Supersedes: ADR-0036 statements that DID create, update, and deactivate are queued
 - Amends: ADR-0007, ADR-0008, ADR-0011, ADR-0013, ADR-0017, ADR-0021, ADR-0023, ADR-0024, and ADR-0029
-- Implementation state: complete development-only standalone lifecycle, signing, headless flow, and mobile operation builder implemented; Compact-backed live writes, Jubjub custody, durable native custody, and recovery remain queued
+- Implementation state: complete development-only standalone lifecycle, Ed25519/P-256/Jubjub signing, headless flow, and mobile operation builder implemented; Compact-backed live writes, durable native custody, and recovery remain queued
 
 ## Context
 
@@ -34,14 +34,15 @@ the incoming adapter.
 development compositions. It delegates key generation and signing to the
 existing `WalletKeyOperationPort`, retaining only opaque key references in a
 profile-and-DID-scoped process-local map. It creates an undeployed DID with an
-Ed25519 authentication method and P-256 assertion method, derives the 64-hex
-identifier from a domain-separated SHA-256 digest of public inputs, and emits a
-fully validated DID document. Private key bytes never cross the custody port.
+Ed25519 authentication method, P-256 assertion method, and ADR-0047 Jubjub
+holder-presentation assertion method, derives the 64-hex identifier from a
+domain-separated SHA-256 digest of public inputs, and emits a fully validated
+DID document. Private key bytes never cross the custody port.
 
 The adapter implements the useful prototype state transitions:
 
 - add and remove `alsoKnownAs` entries;
-- add, rotate, and remove Ed25519 or P-256 verification methods;
+- add, rotate, and remove Ed25519, P-256, or Jubjub verification methods;
 - add and remove authentication, assertion, capability-invocation, and
   capability-delegation relationships;
 - add, update, and remove URI-backed services;
@@ -74,7 +75,7 @@ submits, and reconciles the official Compact circuits.
 
 ## Consequences
 
-- Standalone tests exercise actual protected Ed25519/P-256 keys and signatures
+- Standalone tests exercise actual protected Ed25519/P-256/Jubjub keys and signatures
   without exposing a seed, private scalar, or custody reference through DID
   APIs.
 - The mobile and headless adapters share one lifecycle implementation and the
@@ -82,10 +83,9 @@ submits, and reconciles the official Compact circuits.
   presentation code.
 - Public DID inventory survives restart while honestly refusing managed
   operations after development custody resets.
-- Jubjub assertion keys and the dedicated
-  `setSchnorrJubjubVerificationMethod` circuits remain a visible parity gap;
-  adding them requires a custody and public-key encoding decision, not a
-  fallback private-key field.
+- Jubjub assertion keys are implemented for standalone lifecycle and issuance;
+  live `setSchnorrJubjubVerificationMethod` circuits remain a visible parity
+  gap.
 - Live `setAlsoKnownAs`, `setVerificationMethod`, relationship, service,
   deactivate, authorization, proving, submission, and finality handling remain
   a separate adapter slice governed by ADR-0015, ADR-0017, and ADR-0028.

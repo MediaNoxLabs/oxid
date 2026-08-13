@@ -17,6 +17,7 @@ const MAX_CONFIRMATION_SUMMARY_CHARACTERS: usize = 512;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidKeyAlgorithm {
     Ed25519,
+    Jubjub,
     P256,
 }
 
@@ -25,6 +26,7 @@ impl DidKeyAlgorithm {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ed25519 => "ed25519",
+            Self::Jubjub => "jubjub",
             Self::P256 => "p256",
         }
     }
