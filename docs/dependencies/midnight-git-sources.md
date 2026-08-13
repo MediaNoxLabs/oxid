@@ -32,6 +32,10 @@ Issue #29 reuses those same exact packages to reconstruct the upstream Compact
 credential/issuance payload roots, decode Jubjub points/scalars, and verify the
 detached Schnorr issuance proof. It adds no path dependency, repository,
 revision, or proof-system package.
+ADR-0046 reuses `midnight-transient-crypto` and `midnight-serialize` at that
+same full revision inside the development custody adapter for canonical Jubjub
+point arithmetic/compression and a 0.5.0-compatible Schnorr transcript. It adds
+no new source or floating dependency.
 The feature resolves published `midnight-proofs`, `midnight-circuits`, and
 `midnight-zk-stdlib` releases transitively. There is no direct `midnight-zk`
 dependency because the compatible proof crates are already selected by the

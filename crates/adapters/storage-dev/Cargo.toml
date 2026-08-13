@@ -12,12 +12,18 @@ publish = false
 bip32.workspace = true
 ed25519-dalek.workspace = true
 k256.workspace = true
+midnight-serialize.workspace = true
+midnight-transient-crypto.workspace = true
 oxid-foundation.workspace = true
 oxid-platform-ports.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
 p256.workspace = true
+sha2.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
 
 [lints]
 workspace = true

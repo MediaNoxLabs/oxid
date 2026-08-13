@@ -5548,12 +5548,16 @@ version = "0.1.0"
 dependencies = [
  "bip32",
  "ed25519-dalek",
+ "hex",
  "k256",
+ "midnight-serialize",
+ "midnight-transient-crypto",
  "oxid-foundation",
  "oxid-platform-ports",
  "oxid-wallet-application",
  "oxid-wallet-domain",
  "p256",
+ "sha2 0.10.9",
  "zeroize",
 ]
 

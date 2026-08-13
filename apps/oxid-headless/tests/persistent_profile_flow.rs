@@ -1381,8 +1381,36 @@ fn executable_exercises_the_standalone_protected_key_flow() {
         p256["result"]["key"]["publicKey"]["encoding"],
         "sec1-compressed"
     );
+    let jubjub = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "generate-jubjub",
+        "method": "wallet.key.generate",
+        "params": {
+            "label": "Compact holder presentation",
+            "algorithm": "jubjub",
+            "purpose": "assertion"
+        }
+    }));
+    let jubjub_ref = jubjub["result"]["key"]["keyRef"]
+        .as_str()
+        .expect("opaque Jubjub reference should be returned")
+        .to_owned();
+    assert_eq!(
+        jubjub["result"]["key"]["publicKey"]["encoding"],
+        "jubjub-compressed"
+    );
+    assert_eq!(
+        jubjub["result"]["key"]["publicKey"]["bytesHex"]
+            .as_str()
+            .map(str::len),
+        Some(64)
+    );
 
-    for (algorithm, key_ref) in [("ed25519", &ed25519_ref), ("p256", &p256_ref)] {
+    for (algorithm, key_ref, signature_hex_length) in [
+        ("ed25519", &ed25519_ref, 128),
+        ("p256", &p256_ref, 128),
+        ("jubjub", &jubjub_ref, 192),
+    ] {
         let signed = process.request(json!({
             "protocol": "oxid.headless.v1",
             "id": format!("sign-{algorithm}"),
@@ -1399,10 +1427,9 @@ fn executable_exercises_the_standalone_protected_key_flow() {
         }));
         assert_eq!(signed["ok"], true, "unexpected response: {signed}");
         assert_eq!(signed["result"]["algorithm"], algorithm);
-        assert!(
-            signed["result"]["signatureHex"]
-                .as_str()
-                .is_some_and(|signature| !signature.is_empty())
+        assert_eq!(
+            signed["result"]["signatureHex"].as_str().map(str::len),
+            Some(signature_hex_length)
         );
     }
 
@@ -1454,7 +1481,7 @@ fn executable_exercises_the_standalone_protected_key_flow() {
         }
     }));
     assert_eq!(denied_delete["error"]["code"], "confirmation_required");
-    for key_ref in [&ed25519_ref, &p256_ref] {
+    for key_ref in [&ed25519_ref, &p256_ref, &jubjub_ref] {
         let deleted = process.request(json!({
             "protocol": "oxid.headless.v1",
             "id": "delete",

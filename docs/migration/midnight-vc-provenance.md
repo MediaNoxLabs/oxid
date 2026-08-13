@@ -65,7 +65,7 @@ dependency on the three identity repositories.
 | Disclosure planning can be mistaken for verifier proof | Headless returns claim-free candidates/plans only; Dioxus labels reveal as local and reports `presentationGenerated: false`; no OpenID4VP or Compact proof is constructed. |
 | Compact body, detached issuance proof, and private openings can be collapsed or confused | Keep three separately bounded, debug-redacted record fields; route exact `MCV1` only; reject proof data for CBOR; never reuse an issuance signature as a presentation proof. |
 | A self-contained Compact proof can be mistaken for issuer trust | Mark only structural/proof/schema stages passed; issuer method anchoring, current-time policy, status, and trust stay `not_checked`. |
-| Prototype presentation derives a holder scalar from public claim data | Do not copy that shortcut into normal/mobile composition; require protected Jubjub custody, with deterministic keys permitted only in a marked standalone conformance prover. |
+| Prototype presentation derives a holder scalar from public claim data | Do not copy that shortcut into normal/mobile composition. ADR-0046 adds exact Jubjub signing behind profile-scoped opaque development custody, but presentation remains blocked until the protected public key is bound to the selected DID and signed credential holder method. |
 
 The standalone fixture contains only public conformance material. Its issuer
 secret was generated outside the repository and discarded. The revised DID
@@ -161,7 +161,9 @@ surfaces without widening the current UI. Headless never reveals a value.
   verifier transport, and browser/native bridge ingress remain later adapters.
 - Status/revocation, temporal policy, schema validation, and issuer trust remain
   visible `not_checked` stages rather than fabricated success.
-- Issuer-method anchoring and protected holder Jubjub custody remain tracked by
+- Exact process-local Jubjub generation/signing is implemented by ADR-0046 and
+  cross-checked against the 0.5.0 Midnight DID package. Issuer-method anchoring,
+  selected-DID/public-key holder binding, and native custody remain tracked by
   issue #29. The prototype's public claim-root-derived holder scalar must not
   enter normal or mobile composition.
 - The development key file is not backup, recovery, biometric authorization,

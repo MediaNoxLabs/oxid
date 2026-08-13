@@ -6,7 +6,7 @@
 - Credential-family source: `midnight-verifiable-credentials` commit `39b1354212620b396e914b29603e6a38f2656546`
 - Toolchain source: `midnight-did` commit `05b237a5e51f9c22853b424e7d4236dfa9384c24`
 - Amends: ADR-0006, ADR-0010, ADR-0013, ADR-0015, ADR-0020, ADR-0022, ADR-0028, ADR-0042, and ADR-0043
-- Implementation state: immutable source/toolchain inputs, an Oxid-owned final Compact composition, real prover/verifier artifact generation, a digest manifest, exact Rust public-input construction, a portable public-input codec, and independent statement reconstruction are implemented; protected Jubjub signing, proof execution/encoding, independent proof verification, and `vp_token` remain fail-closed
+- Implementation state: immutable source/toolchain inputs, an Oxid-owned final Compact composition, real prover/verifier artifact generation, a digest manifest, exact Rust public-input construction, a portable public-input codec, and independent statement reconstruction are implemented; ADR-0046 supplies the development Jubjub primitive, while selected-DID holder binding, proof execution/encoding, independent proof verification, and `vp_token` remain fail-closed
 
 ## Context
 

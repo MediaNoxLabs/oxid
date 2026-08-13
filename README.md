@@ -11,7 +11,7 @@ than layers bolted onto one chain-specific frontend.
 > **Status:** M0 foundation plus the first prototype-parity slices. The wallet
 > profile lifecycle—create, list, select, persist, and restore—is available
 > through Dioxus and the standalone headless harness. A development-only
-> process-local adapter exercises opaque Ed25519/P-256 keys plus protected
+> process-local adapter exercises opaque Ed25519/P-256/Jubjub keys plus protected
 > Midnight HD/BIP340 account derivation headlessly; a deterministic adapter
 > exercises Midnight network, canonical unshielded and shielded receive
 > addresses, exact-balance, sync, history, and
@@ -27,8 +27,10 @@ than layers bolted onto one chain-specific frontend.
 > exposing the ID Token. The standalone issuer now delivers the prototype's
 > exact `midnight_compact_vc` body, detached issuance proof, and five
 > commitment-bound protected claims. A native verifier checks its exact
-> Compact roots and Jubjub proof before encrypted storage; issuer trust and
-> holder custody remain explicit later gates. Headless can inspect a claim-free
+> Compact roots and Jubjub proof before encrypted storage. Exact development
+> Jubjub signing now stays behind opaque custody references; issuer trust,
+> selected-DID holder binding, and native custody remain explicit later gates.
+> Headless can inspect a claim-free
 > disclosure plan, while Dioxus explicitly reveals/hides first and last name
 > locally and plans an age predicate without claiming a presentation or proof.
 > Native headless runs

@@ -25,9 +25,12 @@ use oxid_wallet_domain::{
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 use zeroize::Zeroizing;
 
+mod jubjub_schnorr;
+
 const KEY_REFERENCE_ATTEMPTS: usize = 8;
 const P256_SCALAR_ATTEMPTS: usize = 128;
 const SECP256K1_SCALAR_ATTEMPTS: usize = 128;
+const JUBJUB_SEED_ATTEMPTS: usize = 128;
 
 /// Explicitly insecure, process-local adapter for tests and headless flows.
 ///
@@ -172,7 +175,22 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
                 }
                 Err(WalletSecurityPortError::InvalidOperation)
             }
-            WalletKeyAlgorithm::Jubjub => Err(WalletSecurityPortError::UnsupportedAlgorithm),
+            WalletKeyAlgorithm::Jubjub => {
+                for _ in 0..JUBJUB_SEED_ATTEMPTS {
+                    let mut seed = Zeroizing::new([0_u8; 32]);
+                    self.random
+                        .fill_bytes(seed.as_mut())
+                        .map_err(|_| WalletSecurityPortError::Unavailable)?;
+                    if let Some(signing_key) = jubjub_schnorr::SigningKey::from_seed(seed) {
+                        let public_key = WalletPublicKey::new(
+                            PublicKeyEncoding::JubjubCompressed,
+                            signing_key.compressed_public_key()?,
+                        );
+                        return Ok((DevelopmentKeyMaterial::Jubjub(signing_key), public_key));
+                    }
+                }
+                Err(WalletSecurityPortError::InvalidOperation)
+            }
         }
     }
 
@@ -370,6 +388,10 @@ where
                     signature.to_bytes().to_vec(),
                 ))
             }
+            DevelopmentKeyMaterial::Jubjub(signing_key) => Ok(WalletSignature::new(
+                WalletKeyAlgorithm::Jubjub,
+                signing_key.sign(payload)?,
+            )),
         }
     }
 
@@ -565,6 +587,7 @@ enum DevelopmentKeyMaterial {
     Ed25519(Ed25519SigningKey),
     P256(P256SigningKey),
     Secp256k1Schnorr(Secp256k1SchnorrSigningKey),
+    Jubjub(jubjub_schnorr::SigningKey),
 }
 
 const fn development_status(state: WalletProtectionState) -> WalletSecurityStatus {
@@ -879,20 +902,51 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_jubjub_is_reported_and_delete_removes_keys() {
+    fn jubjub_key_signatures_verify_from_opaque_protected_keys() {
         let adapter = adapter();
         adapter.initialize(&profile_id()).expect("setup succeeds");
-        let error = adapter
-            .generate(
-                &profile_id(),
-                GenerateProtectedKeyRequest {
-                    label: WalletKeyLabel::parse("Jubjub key").expect("label is valid"),
-                    algorithm: WalletKeyAlgorithm::Jubjub,
-                    purpose: WalletKeyPurpose::Authentication,
-                },
+        let descriptor = generate(&adapter, WalletKeyAlgorithm::Jubjub, "Holder presentation");
+        assert_eq!(descriptor.algorithm(), WalletKeyAlgorithm::Jubjub);
+        assert_eq!(
+            descriptor.public_key().encoding(),
+            PublicKeyEncoding::JubjubCompressed
+        );
+        assert_eq!(descriptor.public_key().bytes().len(), 32);
+        assert!(descriptor.reference().as_str().starts_with("key_"));
+
+        let payload = b"bounded holder presentation statement";
+        let signature = adapter
+            .sign(&profile_id(), descriptor.reference(), payload)
+            .expect("Jubjub signing succeeds");
+        assert_eq!(signature.algorithm(), WalletKeyAlgorithm::Jubjub);
+        assert_eq!(signature.bytes().len(), 96);
+        jubjub_schnorr::verify(descriptor.public_key().bytes(), payload, signature.bytes())
+            .expect("public verification succeeds");
+
+        let mut tampered = payload.to_vec();
+        tampered[0] ^= 1;
+        assert!(
+            jubjub_schnorr::verify(
+                descriptor.public_key().bytes(),
+                &tampered,
+                signature.bytes(),
             )
-            .expect_err("Jubjub must not be emulated");
-        assert_eq!(error, WalletSecurityPortError::UnsupportedAlgorithm);
+            .is_err()
+        );
+
+        adapter.lock(&profile_id()).expect("lock succeeds");
+        assert_eq!(
+            adapter
+                .sign(&profile_id(), descriptor.reference(), payload)
+                .expect_err("locked custody must reject signing"),
+            WalletSecurityPortError::Locked
+        );
+    }
+
+    #[test]
+    fn delete_removes_keys() {
+        let adapter = adapter();
+        adapter.initialize(&profile_id()).expect("setup succeeds");
 
         let descriptor = generate(&adapter, WalletKeyAlgorithm::Ed25519, "Delete me");
         adapter

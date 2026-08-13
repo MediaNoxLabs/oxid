@@ -3924,7 +3924,7 @@ fn capability_manifest() -> Value {
         { "method": "wallet.security.initialize", "status": "ready", "mode": "development_only" },
         { "method": "wallet.security.unlock", "status": "ready", "mode": "development_only" },
         { "method": "wallet.security.lock", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.key.generate", "status": "ready", "mode": "development_only", "algorithms": ["ed25519", "p256", "secp256k1-schnorr"] },
+        { "method": "wallet.key.generate", "status": "ready", "mode": "development_only", "algorithms": ["ed25519", "p256", "secp256k1-schnorr", "jubjub"] },
         { "method": "wallet.key.list", "status": "ready", "mode": "development_only" },
         { "method": "wallet.key.sign", "status": "ready", "mode": "development_only" },
         { "method": "wallet.key.delete", "status": "ready", "mode": "development_only" },
@@ -4076,6 +4076,14 @@ mod tests {
             capability["method"] == "wallet.key.sign"
                 && capability["status"] == "ready"
                 && capability["mode"] == "development_only"
+        }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "wallet.key.generate"
+                && capability["algorithms"]
+                    .as_array()
+                    .is_some_and(|algorithms| {
+                        algorithms.iter().any(|algorithm| algorithm == "jubjub")
+                    })
         }));
         assert!(methods.iter().any(|capability| {
             capability["method"] == "wallet.balance.snapshot"
@@ -4777,6 +4785,99 @@ mod tests {
         assert_eq!(cleaned[1]["error"]["code"], "confirmation_required");
         assert_eq!(cleaned[2]["result"]["deleted"], true);
         assert_eq!(cleaned[3]["result"]["keys"], json!([]));
+    }
+
+    #[test]
+    fn exercises_jubjub_custody_through_opaque_headless_references() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"jubjub-profile","method":"wallet.profile.create","params":{"displayName":"Jubjub flow"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile identifier");
+        let setup = format!(
+            "{}\n{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "jubjub-select",
+                "method": "wallet.profile.select",
+                "params": { "profileId": profile_id }
+            }),
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "jubjub-init",
+                "method": "wallet.security.initialize",
+                "params": {}
+            }),
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "jubjub-generate",
+                "method": "wallet.key.generate",
+                "params": {
+                    "label": "Compact holder presentation",
+                    "algorithm": "jubjub",
+                    "purpose": "assertion"
+                }
+            })
+        );
+        let setup = execute_with_wallet(&wallet, &setup);
+        assert_eq!(setup[2]["ok"], true, "unexpected response: {setup:?}");
+        let key = &setup[2]["result"]["key"];
+        assert_eq!(key["algorithm"], "jubjub");
+        assert_eq!(key["purpose"], "assertion");
+        assert_eq!(key["publicKey"]["encoding"], "jubjub-compressed");
+        assert_eq!(
+            key["publicKey"]["bytesHex"]
+                .as_str()
+                .expect("public key bytes")
+                .len(),
+            64
+        );
+        let key_ref = key["keyRef"].as_str().expect("opaque key reference");
+        assert!(key_ref.starts_with("key_"));
+        assert!(key.get("privateKey").is_none());
+        assert!(key.get("seed").is_none());
+
+        let flow = format!(
+            "{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "jubjub-sign",
+                "method": "wallet.key.sign",
+                "params": {
+                    "keyRef": key_ref,
+                    "payloadHex": "4f78696420686f6c6465722073746174656d656e74",
+                    "confirmation": {
+                        "title": "Present credential",
+                        "summary": "Bind the consented public statement to holder custody.",
+                        "confirmed": true
+                    }
+                }
+            }),
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "jubjub-list",
+                "method": "wallet.key.list",
+                "params": {}
+            })
+        );
+        let flowed = execute_with_wallet(&wallet, &flow);
+        assert_eq!(flowed[0]["result"]["algorithm"], "jubjub");
+        assert_eq!(
+            flowed[0]["result"]["signatureHex"]
+                .as_str()
+                .expect("signature bytes")
+                .len(),
+            192
+        );
+        assert_eq!(
+            flowed[1]["result"]["keys"].as_array().map(Vec::len),
+            Some(1)
+        );
+        assert!(!flowed[1].to_string().contains("private"));
+        assert!(!flowed[1].to_string().contains("seed"));
     }
 
     #[test]

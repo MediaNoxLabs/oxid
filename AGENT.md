@@ -249,9 +249,10 @@ reverify, confirmation-delete, and restore the public fixture without exposing
 the signed body. Normal `compose()` remains unavailable pending native
 Keychain/Keystore wrapping. Live OID4VCI transport, OpenID4VP, disclosure
 openings, status/trust policy, issuer-anchored Compact verification, and
-protected Jubjub custody remain later slices. ADR-0045 separately adds exact
-detached Compact issuance-proof verification without claiming issuer trust or
-presentation proof generation.
+selected-DID Jubjub holder binding/native custody remain later slices.
+ADR-0045 separately adds exact detached Compact issuance-proof verification
+without claiming issuer trust or presentation proof generation; ADR-0046 adds
+only the exact development signing primitive.
 
 [Issue #24](https://github.com/MediaNoxLabs/oxid/issues/24) and ADR-0039 add a
 dependency-free protocol domain/application hexagon plus an exact OpenID4VCI
@@ -385,8 +386,9 @@ the issuance challenge in little-endian form is
 Standalone OID4VCI uses this exact three-part bundle; standalone inbox retains
 phase-1 CBOR as a second-format conformance path. Never copy the prototype's
 public claim-root-derived holder scalar into normal or mobile composition.
-Protected Jubjub holder custody and issuer-method anchoring remain issue #29
-acceptance gates, and detached issuance verification does not open the
+Development Jubjub signing exists behind opaque references, but selected-DID
+public-key binding, native custody, and issuer-method anchoring remain issue
+#29 acceptance gates. Detached issuance verification does not open the
 ADR-0043/0044 presentation gate.
 
 The 2026-08-13 `just ios-smoke` run passed the exact Compact OID4VCI bundle
@@ -510,7 +512,12 @@ derivation, and artifact digest manifest without opening that runtime gate.
 ADR-0045 adds explicit `midnight_compact_vc` body/proof/private-material
 separation, native detached issuance-proof verification, encrypted schema-v3
 migration, and exact headless restart conformance without opening the
-presentation gate or claiming issuer trust/Jubjub custody.
+presentation gate or claiming issuer trust/selected-DID native Jubjub custody.
+ADR-0046 adds exact 0.5.0-compatible Jubjub generation/signing to the
+development custody adapter. It exposes only a compressed public point, opaque
+key reference, and 96-byte signature. It does not bind that key to the holder
+method signed into a credential; selected-DID/public-key binding and native
+wrapping remain issue #29 gates.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -537,7 +544,7 @@ Current package ownership:
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/storage-identity-json` | Strict versioned persistence for validated profile-scoped public DID documents only. |
 | `crates/adapters/storage-credential-json` | Development-only authenticated encryption for bounded profile-scoped credential records, original signed bytes, detached proofs, and opaque format-private material. |
-| `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
+| `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256/Jubjub generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development lifecycle adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, and public standalone fixtures. |
