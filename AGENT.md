@@ -44,9 +44,14 @@ presentation artifact set is reproducible. Standalone OpenID4VCI now issues,
 encrypts, restores, and natively verifies the prototype's exact Compact
 credential shape plus a detached issuance proof dynamically bound to the
 selected profile's managed Jubjub assertion method. Vault, live protocol
-transport, runtime presentation-proof execution/verification, and `vp_token`
-remain deferred. Standalone presentation preflight now reauthorizes the exact
-statement with the credential-bound method's current managed protected key.
+transport, and production/mobile presentation proving remain deferred.
+Standalone presentation now reauthorizes the exact statement with the
+credential-bound method's current managed protected key, runs the authenticated
+k=18 Compact circuit, and independently verifies the public `MZP1` envelope
+before permitting an internal `vp_token`. The headless executable enables that
+path only when `OXID_PRESENTATION_ARTIFACTS_DIR` names the immutable Nix
+artifact closure; without it, consent fails closed at `proof_unavailable`.
+Headless views never expose the proof or token.
 
 ADR-0017 is accepted. The first M1 security slice separates protection/session
 state from key operations, secret blobs, and native user authorization. The
@@ -252,7 +257,7 @@ XChaCha20-Poly1305. Its separate owner-private key file is development-only,
 not native custody. Standalone headless and mobile flows receive, list,
 reverify, confirmation-delete, and restore the public fixture without exposing
 the signed body. Normal `compose()` remains unavailable pending native
-Keychain/Keystore wrapping. Live OID4VCI transport, OpenID4VP proof execution,
+Keychain/Keystore wrapping. Live OID4VCI/OpenID4VP transport, mobile proving,
 status/trust policy, issuer-anchored Compact verification, and native custody
 remain later slices. ADR-0045 adds
 exact detached Compact issuance-proof verification without claiming issuer
@@ -261,7 +266,8 @@ signing primitive, and ADR-0047 binds standalone issuance to the selected
 managed Jubjub DID method. ADR-0048 reauthorizes that exact reference against
 the current managed protected method before proof execution; ADR-0049 now
 constructs and independently checks the distinct credential-family holder
-`Proof` before the still-closed ZK runtime.
+`Proof`; ADR-0050 connects the ZK runtime only in explicit native headless
+composition.
 
 [Issue #24](https://github.com/MediaNoxLabs/oxid/issues/24) and ADR-0039 add a
 dependency-free protocol domain/application hexagon plus an exact OpenID4VCI
@@ -348,11 +354,11 @@ lacks `@midnight-ntwrk/midnight-did@0.5.0`.
 Artifact availability is not presentation readiness. Neither the generic
 holder authorization signature nor the exact credential-family Schnorr
 `Proof` is a selective-disclosure or age-predicate ZK proof. Keep
-`PresentationProofPort` and `PresentationVerifierPort` separate. A
-`vp_token` may be constructed only after proof creation and independent
+`PresentationProofPort` and `PresentationVerifierPort` separate. ADR-0050
+permits `vp_token` construction only after checked proof creation and independent
 verification bind the exact credential root, presentation root, verifier
 challenge/domain, actual disclosure flags, threshold, time input, and ledger
-context. Standalone wiring now reloads and re-verifies the exact encrypted
+context. Standalone wiring reloads and re-verifies the exact encrypted
 credential/proof/opening bundle, constructs the generated circuit's public
 statement, round-trips the fixed 524-byte `MPS1` public-input encoding, and
 independently reconstructs it. ADR-0048 then reloads the bound DID method,
@@ -363,9 +369,13 @@ atomic Jubjub challenge operation. Wallet custody retains a fresh nonce and
 protected scalar, `did-midnight` binds the current managed key, and
 `vc-midnight` derives the exact presentation-context challenge. The adapter
 constructs, decodes, and independently verifies the reference family's
-nine-chunk holder `Proof` before intentionally returning `proof_unavailable` at
-the ZK runtime gate. No scalar, nonce, key reference, private value, or opening
-crosses that operation. `MPS1` contains selected public values/openings with
+nine-chunk holder `Proof`. The native headless-only runtime then constructs a
+generated-runtime-identical `ProofPreimage`, checks it against the authenticated
+binary ZKIR, proves with OS entropy and p18 parameters, and independently
+verifies the public statement before OpenID validates its private response
+container. The bounded checksummed `MZP1` envelope contains public verification
+data only. No scalar, nonce, key reference, private value, opening, or serialized
+proof preimage crosses that operation. `MPS1` contains selected public values/openings with
 canonical zero padding and never contains the private date-of-birth
 value/opening. OpenID derives verifier domain as
 `SHA-256("oxid:openid4vp:verifier-domain:v1\0" || verifier_domain)` separately
@@ -375,10 +385,12 @@ credential `b42f1115042cefecbd5380a0a630c0ef5f18bb13e7615cb1de9d36256f100432`,
 presentation `cf7570efcabe17ba6aa6920aed951f2794a7d609a03a49920694c5c4e09d2876`,
 consent `5a442aeb83cd3e589bfc27bd029c5e561ed0aca7109ca4e5642780c2f0bd20a3`,
 statement `475caef55fc4b454931beb6b4435688ed36cc1740d33ade45741dcd31214011c`.
-This remains ZK preflight, not a ZK proof: the session is consumed and
-`presentationGenerated`/`verifierValidated` stay false. Normal composition
-keeps the whole protocol unavailable. Do not substitute a synthetic boolean,
-local age calculation, signature, or fixture bytes for a proof.
+Without the explicit artifact root this remains fail-closed preflight and the
+session ends at `proof_unavailable`; with the authenticated native headless
+runtime, `presentationGenerated` and `verifierValidated` become true only after
+the real proof succeeds. Normal/mobile composition keeps the prover unavailable.
+Do not substitute a synthetic boolean, local age calculation, signature, or
+fixture bytes for a proof.
 
 [Issue #29](https://github.com/MediaNoxLabs/oxid/issues/29) and ADR-0045 govern
 the exact stored `midnight_compact_vc` representation. `CredentialRecord`
@@ -414,7 +426,8 @@ method identifier and assertion relationship; removal, deactivation, locked
 custody, or a public-only restored record fail closed. Native custody and
 issuer-method anchoring remain issue #29 acceptance gates. Detached issuance
 verification, holder authorization, and the exact ADR-0049 holder `Proof` do
-not open the ADR-0043/0044 ZK proof gate.
+not themselves satisfy the ADR-0043/0044 ZK proof gate; ADR-0050's checked
+prover and independent verifier do so only for explicit native headless mode.
 
 The 2026-08-14 `just ios-smoke` and `just android-smoke` runs pass the exact
 Compact OID4VCI bundle through native verification, encrypted schema-v3
@@ -425,8 +438,13 @@ the same full flows include current managed holder authorization over the exact
 coverage additionally rotates the same method, locks custody, removes the
 assertion relationship, and restores a public-only DID without ever emitting a
 `vp_token`. After ADR-0049, both mobile flows also construct and independently
-verify the exact credential-family holder `Proof` before reaching that ZK-only
-gate. The strict Nix-shell gate reported 80.28% region and 81.97% line coverage.
+verify the exact credential-family holder `Proof` before reaching that
+headless-only ZK gate. ADR-0050 release tests additionally prove and independently
+verify the real circuit, reject public-envelope/request/freshness tampering and
+replay, and verify after runtime restart. The strict Nix-shell gate for this
+iteration reports 78.68% region, 80.22% function, and 80.36% line coverage;
+the real p18 proof tests remain separate ignored release gates so routine
+coverage does not load the 135 MiB artifact closure or its prover state.
 Preserve the
 prototype-compatible `Digital Passport`
 display name for this schema: the current Dioxus claim controls use that
@@ -805,7 +823,11 @@ cross-platform evidence for it.
 
 Direnv users can run `direnv allow`. The shell provides Rust, Cargo tooling,
 `dx`, `just`, Node.js, and the pinned project-local Pi packages from
-`.pi/settings.json`.
+`.pi/settings.json`. It also exports `OXID_PRESENTATION_ARTIFACTS_DIR` to the
+self-contained `presentation-compact-artifacts` Nix closure. The native
+headless composition authenticates its manifest, prover/verifier keys, binary
+ZKIR, and p18 parameters before enabling presentation proof generation; do not
+replace that path with a mutable cache or runtime download.
 
 The Pi review integration is pinned as
 `@input-output-hk/agent-review-pi@0.5.0`. That package declares both its review
@@ -844,7 +866,17 @@ cargo check -p oxid-app
 ./run.sh coverage --strict
 ./scripts/check-architecture.sh
 ./scripts/check-midnight-sources.sh
+nix develop --command cargo test --release -p oxid-adapter-vc-midnight \
+  native_runtime_proves_restarts_and_rejects_public_tampering -- --ignored
+nix develop --command cargo test --release -p oxid-headless \
+  proves_and_independently_verifies_a_compact_presentation_end_to_end -- --ignored
 ```
+
+The first aarch64-darwin release baseline completed the native tamper/restart
+test in 22.60 seconds and the complete headless flow in 18.37 seconds. macOS
+`time -l` reported roughly 5.07 GB maximum resident set size for both runs, so
+ADR-0050 deliberately keeps the native prover out of mobile composition until
+its packaging and memory strategy are separately reviewed.
 
 On macOS with Xcode and Rustup installed, `just ios-run` uses the Dioxus CLI
 from the locked flake and the host Apple/Rust toolchain to build, install, and
@@ -977,6 +1009,15 @@ to silence the shell probe.
   JWK `d`, credential claims, tokens, endpoint configuration, recovery data, or
   keys. Treat every resolver response as hostile and keep route/body details
   out of errors and logs.
+- Compact presentation artifacts are immutable build inputs, not wallet data.
+  Native headless proving accepts only an absolute authenticated artifact root,
+  rejects symlinked descendants and size/digest/circuit mismatches, runs the
+  tagged IR check before checked proving, and verifies the proof again through
+  a separately reconstructed public statement. `MZP1` may contain only the
+  artifact identity, signed credential, detached issuer proof, `MPS1`, holder
+  proof, public communications commitment, and tagged proof. Never add private
+  claims, openings, custody references, scalars, nonces, communications
+  randomness, or a serialized `ProofPreimage`.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

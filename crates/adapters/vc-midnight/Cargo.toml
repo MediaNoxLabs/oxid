@@ -26,6 +26,12 @@ oxid-presentation-application.workspace = true
 oxid-presentation-domain.workspace = true
 p256.workspace = true
 sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+midnight-zkir.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
 getrandom.workspace = true

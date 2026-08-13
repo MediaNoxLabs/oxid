@@ -7,8 +7,8 @@
 //! then constructs the credential family's exact protected-holder Schnorr
 //! `Proof`. Protected values and openings are used only to build the
 //! presentation preimage and never enter the portable `MPS1` public input. The
-//! ZK proof port remains deliberately unavailable until the reviewed prover
-//! runtime and independent verifier are connected.
+//! native standalone composition can connect the reviewed prover runtime and
+//! independent verifier explicitly; other compositions remain fail-closed.
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
@@ -33,8 +33,9 @@ use oxid_platform_ports::ClockPort;
 use oxid_presentation_application::{
     AuthorizePresentationHolderFuture, CreatePresentationProofFuture,
     PresentationHolderAuthorizationError, PresentationHolderAuthorizationPort,
-    PresentationHolderAuthorizationRequest, PresentationProofError, PresentationProofPort,
-    PresentationProofRequest,
+    PresentationHolderAuthorizationRequest, PresentationProofArtifact, PresentationProofError,
+    PresentationProofPort, PresentationProofRequest, PresentationVerificationError,
+    PresentationVerificationRequest, PresentationVerifierPort, VerifyPresentationProofFuture,
 };
 use oxid_presentation_domain::{PresentationClaimIntent, RequestedPresentationClaim};
 use sha2::{Digest as _, Sha256};
@@ -42,6 +43,12 @@ use sha2::{Digest as _, Sha256};
 use crate::compact_digital_passport::{
     CompactCredential, CompactProof, VerificationMethodRef, credential_body_root, encode_proof,
     inspect, parse_credential, parse_proof, persistent_hash, transient_hash_value,
+};
+use crate::compact_proving::{presentation_preimage, presentation_public_transcript};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::compact_runtime::{
+    NativeCompactPresentationRuntime, PortableCompactPresentation, decode_portable_presentation,
+    encode_portable_presentation, public_binding,
 };
 use crate::digital_passport::{
     CLAIM_DATE_OF_BIRTH, CLAIM_DOCUMENT_NUMBER, CLAIM_FIRST_NAME, CLAIM_ISSUING_STATE,
@@ -59,6 +66,7 @@ const CONSENTED_CLAIMS_DOMAIN: &[u8] = b"oxid:compact-vp:claims:v1";
 const HOLDER_AUTHORIZATION_DOMAIN: &[u8] = b"oxid:midnight-compact-holder-authorization:v1\0";
 const MAX_HOLDER_REFERENCE_CHARACTERS: usize = 512;
 const MAX_VERIFIER_CHARACTERS: usize = 2_048;
+const PRESENTATION_FRESHNESS_SECONDS: u64 = 300;
 
 const FLAG_FIRST_NAME: u8 = 1 << 0;
 const FLAG_LAST_NAME: u8 = 1 << 1;
@@ -228,21 +236,21 @@ impl DigitalPassportPresentationSelection {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct PublicDisclosures {
-    reveal_first_name: bool,
-    first_name: [u8; 64],
-    first_name_opening: [u8; 32],
-    reveal_last_name: bool,
-    last_name: [u8; 64],
-    last_name_opening: [u8; 32],
-    prove_age: bool,
-    age_threshold_years: u8,
-    reveal_document_number: bool,
-    document_number: [u8; 32],
-    document_number_opening: [u8; 32],
-    reveal_issuing_state: bool,
-    issuing_state: [u8; 32],
-    issuing_state_opening: [u8; 32],
+pub(crate) struct PublicDisclosures {
+    pub(crate) reveal_first_name: bool,
+    pub(crate) first_name: [u8; 64],
+    pub(crate) first_name_opening: [u8; 32],
+    pub(crate) reveal_last_name: bool,
+    pub(crate) last_name: [u8; 64],
+    pub(crate) last_name_opening: [u8; 32],
+    pub(crate) prove_age: bool,
+    pub(crate) age_threshold_years: u8,
+    pub(crate) reveal_document_number: bool,
+    pub(crate) document_number: [u8; 32],
+    pub(crate) document_number_opening: [u8; 32],
+    pub(crate) reveal_issuing_state: bool,
+    pub(crate) issuing_state: [u8; 32],
+    pub(crate) issuing_state_opening: [u8; 32],
 }
 
 impl PublicDisclosures {
@@ -338,14 +346,14 @@ impl PublicDisclosures {
 /// date-of-birth value/opening is intentionally absent.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CompactPresentationPublicInput {
-    credential_root: [u8; 32],
-    presentation_root: [u8; 32],
-    verifier_challenge_hash: [u8; 32],
-    verifier_domain_hash: [u8; 32],
-    consented_claims_hash: [u8; 32],
-    current_day: u32,
-    disclosures: PublicDisclosures,
-    statement: [u8; 32],
+    pub(crate) credential_root: [u8; 32],
+    pub(crate) presentation_root: [u8; 32],
+    pub(crate) verifier_challenge_hash: [u8; 32],
+    pub(crate) verifier_domain_hash: [u8; 32],
+    pub(crate) consented_claims_hash: [u8; 32],
+    pub(crate) current_day: u32,
+    pub(crate) disclosures: PublicDisclosures,
+    pub(crate) statement: [u8; 32],
 }
 
 impl fmt::Debug for CompactPresentationPublicInput {
@@ -955,7 +963,7 @@ fn compressed_jubjub_point(
     Ok(point)
 }
 
-fn presentation_proof_challenge(body_root: [u8; 32], proof: &CompactProof) -> Fr {
+pub(crate) fn presentation_proof_challenge(body_root: [u8; 32], proof: &CompactProof) -> Fr {
     let payload_root = persistent_hash(&(
         body_root,
         padded::<32>(PRESENTATION_PROOF_CONTEXT),
@@ -981,7 +989,7 @@ fn presentation_proof_challenge(body_root: [u8; 32], proof: &CompactProof) -> Fr
     ))
 }
 
-fn verify_presentation_proof(body_root: [u8; 32], proof: &CompactProof) -> bool {
+pub(crate) fn verify_presentation_proof(body_root: [u8; 32], proof: &CompactProof) -> bool {
     EmbeddedGroupAffine::generator() * proof.response
         == proof.announcement + proof.public_key * presentation_proof_challenge(body_root, proof)
 }
@@ -1178,6 +1186,8 @@ pub struct PreflightOnlyCompactPresentationProof {
     clock: Arc<dyn ClockPort>,
     holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
     holder_proof: Arc<dyn CompactHolderProofPort>,
+    #[cfg(not(target_arch = "wasm32"))]
+    runtime: Option<Arc<NativeCompactPresentationRuntime>>,
 }
 
 impl PreflightOnlyCompactPresentationProof {
@@ -1192,6 +1202,8 @@ impl PreflightOnlyCompactPresentationProof {
             clock,
             holder_authorization,
             holder_proof: Arc::new(UnavailableCompactHolderProof),
+            #[cfg(not(target_arch = "wasm32"))]
+            runtime: None,
         }
     }
 
@@ -1207,6 +1219,26 @@ impl PreflightOnlyCompactPresentationProof {
             clock,
             holder_authorization,
             holder_proof,
+            #[cfg(not(target_arch = "wasm32"))]
+            runtime: None,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[must_use]
+    pub fn with_runtime(
+        repository: Arc<dyn CredentialRepository>,
+        clock: Arc<dyn ClockPort>,
+        holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
+        holder_proof: Arc<dyn CompactHolderProofPort>,
+        runtime: Arc<NativeCompactPresentationRuntime>,
+    ) -> Self {
+        Self {
+            repository,
+            clock,
+            holder_authorization,
+            holder_proof,
+            runtime: Some(runtime),
         }
     }
 }
@@ -1230,11 +1262,11 @@ impl PresentationProofPort for PreflightOnlyCompactPresentationProof {
             {
                 return Err(PresentationProofError::InvalidCredential);
             }
-            let proof = record
+            let issuer_proof_bytes = record
                 .detached_proof()
                 .map(CredentialDetachedProof::as_bytes)
                 .ok_or(PresentationProofError::InvalidCredential)?;
-            let inspection = inspect(record.signed_bytes(), Some(proof))
+            let inspection = inspect(record.signed_bytes(), Some(issuer_proof_bytes))
                 .map_err(|_| PresentationProofError::InvalidCredential)?;
             if record.profile_id() != &profile_id
                 || inspection.id != *record.id()
@@ -1289,10 +1321,10 @@ impl PresentationProofPort for PreflightOnlyCompactPresentationProof {
                 })
                 .await
                 .map_err(map_holder_authorization_error)?;
-            let holder_proof = self
+            let holder_proof_bytes = self
                 .holder_proof
                 .create_holder_proof(CompactHolderProofRequest {
-                    profile_id: request.profile_id,
+                    profile_id: request.profile_id.clone(),
                     holder_did,
                     holder_method_id,
                     presentation_root: decoded.presentation_root(),
@@ -1301,7 +1333,7 @@ impl PresentationProofPort for PreflightOnlyCompactPresentationProof {
                 })
                 .map_err(map_compact_holder_proof_error)?;
             let holder_proof =
-                parse_proof(&holder_proof).map_err(|_| PresentationProofError::Rejected)?;
+                parse_proof(&holder_proof_bytes).map_err(|_| PresentationProofError::Rejected)?;
             if holder_proof.signer != credential.holder
                 || holder_proof.created_at != now / 1_000
                 || holder_proof.challenge_hash != request.challenge_hash
@@ -1309,8 +1341,218 @@ impl PresentationProofPort for PreflightOnlyCompactPresentationProof {
             {
                 return Err(PresentationProofError::Rejected);
             }
+            let credential_proof = parse_proof(issuer_proof_bytes)
+                .map_err(|_| PresentationProofError::InvalidCredential)?;
+            let (_, private_parts) =
+                validated_private_parts(record.signed_bytes(), private_material.as_bytes())
+                    .map_err(|_| PresentationProofError::InvalidCredential)?;
+            let preimage = presentation_preimage(
+                &credential,
+                &credential_proof,
+                &decoded,
+                &holder_proof,
+                &private_parts,
+            );
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(runtime) = self.runtime.as_ref() {
+                let proof = runtime
+                    .prove(&preimage)
+                    .await
+                    .map_err(map_runtime_proving_error)?;
+                let (_, communications_commitment) =
+                    public_binding(&preimage).map_err(map_runtime_proving_error)?;
+                let portable = PortableCompactPresentation {
+                    artifact_identity: runtime.identity(),
+                    credential: record.signed_bytes().to_vec(),
+                    issuer_proof: issuer_proof_bytes.to_vec(),
+                    public_input: decoded.encode(),
+                    holder_proof: holder_proof_bytes,
+                    communications_commitment,
+                    proof,
+                };
+                let encoded =
+                    encode_portable_presentation(&portable).map_err(map_runtime_proving_error)?;
+                return PresentationProofArtifact::new(encoded);
+            }
+            // Preflight-only composition drops the exact generated preimage
+            // and fails closed before creating a token.
+            drop(preimage);
             Err(PresentationProofError::Unavailable)
         })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub struct NativeCompactPresentationVerifier {
+    runtime: Arc<NativeCompactPresentationRuntime>,
+    clock: Arc<dyn ClockPort>,
+    get_did: Arc<dyn GetDidRecordUseCase>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeCompactPresentationVerifier {
+    #[must_use]
+    pub fn new(
+        runtime: Arc<NativeCompactPresentationRuntime>,
+        clock: Arc<dyn ClockPort>,
+        get_did: Arc<dyn GetDidRecordUseCase>,
+    ) -> Self {
+        Self {
+            runtime,
+            clock,
+            get_did,
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PresentationVerifierPort for NativeCompactPresentationVerifier {
+    fn verify<'a>(
+        &'a self,
+        request: PresentationVerificationRequest,
+    ) -> VerifyPresentationProofFuture<'a> {
+        Box::pin(async move {
+            let portable = decode_portable_presentation(request.proof.as_bytes())
+                .map_err(|_| PresentationVerificationError::InvalidProof)?;
+            if portable.artifact_identity != self.runtime.identity() {
+                return Err(PresentationVerificationError::InvalidProof);
+            }
+            let inspection = inspect(&portable.credential, Some(&portable.issuer_proof))
+                .map_err(|_| PresentationVerificationError::InvalidProof)?;
+            if inspection.id.as_str() != request.credential_id
+                || inspection.verification.outcome() != VerificationOutcome::Valid
+            {
+                return Err(PresentationVerificationError::InvalidProof);
+            }
+            let public_input = CompactPresentationPublicInput::decode(&portable.public_input)
+                .map_err(|_| PresentationVerificationError::InvalidProof)?;
+            let now = self
+                .clock
+                .now()
+                .map_err(|_| PresentationVerificationError::Unavailable)?
+                .value();
+            let current_day = u32::try_from(now / MILLISECONDS_PER_DAY)
+                .map_err(|_| PresentationVerificationError::Rejected)?;
+            let selection = DigitalPassportPresentationSelection::from_requested_claims(
+                &request.requested_claims,
+            )
+            .map_err(|_| PresentationVerificationError::InvalidProof)?;
+            public_input
+                .verify_against(
+                    &portable.credential,
+                    request.challenge_hash,
+                    request.verifier_domain_hash,
+                    current_day,
+                    selection,
+                )
+                .map_err(|_| PresentationVerificationError::InvalidProof)?;
+
+            let credential = parse_credential(&portable.credential)
+                .map_err(|_| PresentationVerificationError::InvalidProof)?;
+            let holder_proof = parse_proof(&portable.holder_proof)
+                .map_err(|_| PresentationVerificationError::InvalidProof)?;
+            let now_seconds = now / 1_000;
+            if holder_proof.signer != credential.holder
+                || holder_proof.challenge_hash != request.challenge_hash
+                || holder_proof.created_at > now_seconds
+                || now_seconds - holder_proof.created_at > PRESENTATION_FRESHNESS_SECONDS
+                || !verify_presentation_proof(public_input.presentation_root(), &holder_proof)
+            {
+                return Err(PresentationVerificationError::InvalidProof);
+            }
+
+            let (holder_did, holder_method_id) = holder_reference(&credential)
+                .map_err(|_| PresentationVerificationError::InvalidProof)?;
+            let identity_profile = IdentityProfileId::parse(request.profile_id.as_str().to_owned())
+                .map_err(|_| PresentationVerificationError::InvalidProof)?;
+            let did = MidnightDid::parse(holder_did.clone())
+                .map_err(|_| PresentationVerificationError::InvalidProof)?;
+            let record = self
+                .get_did
+                .execute(DidRecordQuery {
+                    profile_id: identity_profile.as_str().to_owned(),
+                    did: did.as_str().to_owned(),
+                })
+                .map_err(map_independent_did_error)?;
+            let method = record
+                .document
+                .verification_methods
+                .iter()
+                .find(|method| method.id == holder_method_id)
+                .ok_or(PresentationVerificationError::InvalidProof)?;
+            if record.document.id != holder_did
+                || record.document_metadata.deactivated == Some(true)
+                || method.controller != holder_did
+                || method.public_key_jwk.key_type != "EC"
+                || method.public_key_jwk.curve != "Jubjub"
+                || !record
+                    .managed_method_ids
+                    .iter()
+                    .any(|candidate| candidate == &holder_method_id)
+                || !record.document.relationships.iter().any(|relationship| {
+                    relationship.relationship == "assertionMethod"
+                        && relationship
+                            .method_ids
+                            .iter()
+                            .any(|candidate| candidate == &holder_method_id)
+                })
+            {
+                return Err(PresentationVerificationError::InvalidProof);
+            }
+            let expected_public_key = jubjub_public_key(
+                &method.public_key_jwk.x,
+                method
+                    .public_key_jwk
+                    .y
+                    .as_deref()
+                    .ok_or(PresentationVerificationError::InvalidProof)?,
+            )
+            .map_err(|_| PresentationVerificationError::InvalidProof)?;
+            if expected_public_key != holder_proof.public_key {
+                return Err(PresentationVerificationError::InvalidProof);
+            }
+
+            self.runtime
+                .verify_public(
+                    Fr::from(0_u64),
+                    portable.communications_commitment,
+                    &presentation_public_transcript(public_input.statement()),
+                    &portable.proof,
+                )
+                .map_err(|_| PresentationVerificationError::InvalidProof)
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn map_runtime_proving_error(
+    error: crate::CompactPresentationRuntimeError,
+) -> PresentationProofError {
+    match error {
+        crate::CompactPresentationRuntimeError::InvalidPreimage
+        | crate::CompactPresentationRuntimeError::InvalidProof
+        | crate::CompactPresentationRuntimeError::CircuitMismatch
+        | crate::CompactPresentationRuntimeError::ArtifactMismatch => {
+            PresentationProofError::Rejected
+        }
+        crate::CompactPresentationRuntimeError::InvalidConfiguration
+        | crate::CompactPresentationRuntimeError::ArtifactUnavailable
+        | crate::CompactPresentationRuntimeError::ProvingFailed => {
+            PresentationProofError::Unavailable
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn map_independent_did_error(error: DidOperationError) -> PresentationVerificationError {
+    match error {
+        DidOperationError::InvalidProfileIdentifier(_)
+        | DidOperationError::InvalidDid(_)
+        | DidOperationError::SubjectMismatch
+        | DidOperationError::Persistence(DidRecordRepositoryError::NotFound) => {
+            PresentationVerificationError::InvalidProof
+        }
+        _ => PresentationVerificationError::Unavailable,
     }
 }
 
@@ -1393,6 +1635,11 @@ mod tests {
     use oxid_credential_application::CredentialRepository;
     use oxid_credential_domain::{CredentialPrivateMaterial, CredentialRecord};
     use oxid_foundation::UnixTimestampMillis;
+    #[cfg(not(target_arch = "wasm32"))]
+    use oxid_identity_application::{
+        DidDocumentMetadataView, DidDocumentView, DidRecordView, PublicJwkView,
+        VerificationMethodView, VerificationRelationshipView,
+    };
     use oxid_platform_ports::PlatformError;
 
     use crate::{
@@ -1719,6 +1966,226 @@ mod tests {
             poll(adapter.create(proof_request(wrong_id.as_str().to_owned()))),
             Err(PresentationProofError::InvalidCredential)
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    struct HolderProof;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl CompactHolderProofPort for HolderProof {
+        fn create_holder_proof(
+            &self,
+            request: CompactHolderProofRequest,
+        ) -> Result<Vec<u8>, CompactHolderProofError> {
+            let signer = compact_holder_reference(&request.holder_did, &request.holder_method_id)?;
+            let secret = EmbeddedFr::from(987_654_321_u64);
+            let nonce = EmbeddedFr::from(17_u64);
+            let mut proof = CompactProof {
+                signer,
+                created_at: request.created_at_seconds,
+                challenge_hash: request.verifier_challenge_hash,
+                public_key: EmbeddedGroupAffine::generator() * secret,
+                announcement: EmbeddedGroupAffine::generator() * nonce,
+                response: Fr::from(0_u64),
+            };
+            let challenge = EmbeddedFr::try_from(presentation_proof_challenge(
+                request.presentation_root,
+                &proof,
+            ))
+            .map_err(|_| CompactHolderProofError::Rejected)?;
+            proof.response = Fr::from_le_bytes(&(nonce + challenge * secret).as_le_bytes())
+                .ok_or(CompactHolderProofError::Rejected)?;
+            encode_proof(&proof).map_err(|_| CompactHolderProofError::Rejected)
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[derive(Clone)]
+    struct DidLookup(DidRecordView);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl GetDidRecordUseCase for DidLookup {
+        fn execute(&self, query: DidRecordQuery) -> Result<DidRecordView, DidOperationError> {
+            if query.profile_id == "profile_one" && query.did == self.0.document.id {
+                Ok(self.0.clone())
+            } else {
+                Err(DidOperationError::Persistence(
+                    DidRecordRepositoryError::NotFound,
+                ))
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    struct ClockAt(u64);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl ClockPort for ClockAt {
+        fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
+            Ok(UnixTimestampMillis::new(self.0))
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn holder_did_record() -> DidRecordView {
+        let credential = parse_credential(&standalone_compact_credential()).expect("credential");
+        let (did, method_id) = holder_reference(&credential).expect("holder reference");
+        let public_key = EmbeddedGroupAffine::generator() * EmbeddedFr::from(987_654_321_u64);
+        DidRecordView {
+            document: DidDocumentView {
+                contexts: vec!["https://www.w3.org/ns/did/v1".to_owned()],
+                id: did.clone(),
+                network: "undeployed".to_owned(),
+                also_known_as: Vec::new(),
+                verification_methods: vec![VerificationMethodView {
+                    id: method_id.clone(),
+                    controller: did,
+                    public_key_jwk: PublicJwkView {
+                        key_type: "EC".to_owned(),
+                        curve: "Jubjub".to_owned(),
+                        x: general_purpose::URL_SAFE_NO_PAD
+                            .encode(public_key.x().expect("holder x-coordinate").as_le_bytes()),
+                        y: Some(
+                            general_purpose::URL_SAFE_NO_PAD
+                                .encode(public_key.y().expect("holder y-coordinate").as_le_bytes()),
+                        ),
+                    },
+                }],
+                relationships: vec![VerificationRelationshipView {
+                    relationship: "assertionMethod".to_owned(),
+                    method_ids: vec![method_id.clone()],
+                }],
+                services: Vec::new(),
+            },
+            document_metadata: DidDocumentMetadataView {
+                created: None,
+                updated: None,
+                deactivated: Some(false),
+                version_id: None,
+                next_update: None,
+                next_version_id: None,
+                equivalent_ids: Vec::new(),
+                canonical_id: None,
+            },
+            content_type: Some("application/did+ld+json".to_owned()),
+            source: "standalone".to_owned(),
+            managed_method_ids: vec![method_id],
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn verification_request(
+        credential_id: String,
+        proof: PresentationProofArtifact,
+    ) -> PresentationVerificationRequest {
+        PresentationVerificationRequest {
+            profile_id: oxid_presentation_domain::PresentationProfileId::parse("profile_one")
+                .expect("profile"),
+            credential_id,
+            verifier: "standalone verifier".to_owned(),
+            challenge_hash: [0x11; 32],
+            verifier_domain_hash: [0x22; 32],
+            requested_claims: requested_claims(),
+            proof,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn tampered_artifact(
+        artifact: &PresentationProofArtifact,
+        mutate: impl FnOnce(&mut PortableCompactPresentation),
+    ) -> PresentationProofArtifact {
+        let mut portable =
+            decode_portable_presentation(artifact.as_bytes()).expect("portable presentation");
+        mutate(&mut portable);
+        PresentationProofArtifact::new(
+            encode_portable_presentation(&portable).expect("tampered envelope remains structural"),
+        )
+        .expect("presentation artifact")
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore = "requires the authenticated p18 Compact proving artifact closure"]
+    fn native_runtime_proves_restarts_and_rejects_public_tampering() {
+        const NOW: u64 = 20_000 * MILLISECONDS_PER_DAY;
+        let root = std::env::var_os("OXID_PRESENTATION_ARTIFACTS_DIR")
+            .expect("set OXID_PRESENTATION_ARTIFACTS_DIR to the Nix artifact closure");
+        let config =
+            crate::CompactPresentationArtifactsConfig::new(root).expect("configured artifact root");
+        let runtime = Arc::new(
+            crate::NativeCompactPresentationRuntime::load(&config).expect("artifact runtime"),
+        );
+        let (credential_id, record) =
+            standalone_record(standalone_compact_proof(), standalone_private_material());
+        let adapter = PreflightOnlyCompactPresentationProof::with_runtime(
+            Arc::new(Repository(record)),
+            Arc::new(ClockAt(NOW)),
+            Arc::new(Authorization),
+            Arc::new(HolderProof),
+            Arc::clone(&runtime),
+        );
+        let artifact = poll(adapter.create(proof_request(credential_id.clone())))
+            .expect("checked proof creation");
+        let did = Arc::new(DidLookup(holder_did_record()));
+        let verifier = NativeCompactPresentationVerifier::new(
+            Arc::clone(&runtime),
+            Arc::new(ClockAt(NOW)),
+            did.clone(),
+        );
+        let request = verification_request(credential_id.clone(), artifact.clone());
+        assert_eq!(poll(verifier.verify(request.clone())), Ok(()));
+
+        let mut checksum_tamper = artifact.as_bytes().to_vec();
+        checksum_tamper[8] ^= 1;
+        let checksum_tamper = PresentationProofArtifact::new(checksum_tamper).expect("artifact");
+        assert_eq!(
+            poll(verifier.verify(verification_request(credential_id.clone(), checksum_tamper,))),
+            Err(PresentationVerificationError::InvalidProof)
+        );
+
+        let semantic_tampers = [
+            tampered_artifact(&artifact, |portable| portable.artifact_identity[0] ^= 1),
+            tampered_artifact(&artifact, |portable| portable.credential[0] ^= 1),
+            tampered_artifact(&artifact, |portable| portable.issuer_proof[0] ^= 1),
+            tampered_artifact(&artifact, |portable| portable.public_input[8] ^= 1),
+            tampered_artifact(&artifact, |portable| portable.holder_proof[0] ^= 1),
+            tampered_artifact(&artifact, |portable| {
+                portable.communications_commitment = Fr::from(123_u64);
+            }),
+            tampered_artifact(&artifact, |portable| portable.proof.0[0] ^= 1),
+        ];
+        for tampered in semantic_tampers {
+            assert_eq!(
+                poll(verifier.verify(verification_request(credential_id.clone(), tampered,))),
+                Err(PresentationVerificationError::InvalidProof)
+            );
+        }
+
+        let mut wrong_request = request.clone();
+        wrong_request.challenge_hash[0] ^= 1;
+        assert_eq!(
+            poll(verifier.verify(wrong_request)),
+            Err(PresentationVerificationError::InvalidProof)
+        );
+        let stale_verifier = NativeCompactPresentationVerifier::new(
+            Arc::clone(&runtime),
+            Arc::new(ClockAt(NOW + (PRESENTATION_FRESHNESS_SECONDS + 1) * 1_000)),
+            did.clone(),
+        );
+        assert_eq!(
+            poll(stale_verifier.verify(request.clone())),
+            Err(PresentationVerificationError::InvalidProof)
+        );
+
+        drop(verifier);
+        drop(runtime);
+        let restarted_runtime = Arc::new(
+            crate::NativeCompactPresentationRuntime::load(&config).expect("restarted runtime"),
+        );
+        let restarted_verifier =
+            NativeCompactPresentationVerifier::new(restarted_runtime, Arc::new(ClockAt(NOW)), did);
+        assert_eq!(poll(restarted_verifier.verify(request)), Ok(()));
     }
 
     fn poll<T>(

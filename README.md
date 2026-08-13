@@ -143,8 +143,12 @@ Standalone presentation preview adds `credential.presentation.prepare`,
 matches a Final-shaped DCQL request and requires exact consent. Acceptance
 re-verifies the encrypted exact Compact credential/private-opening bundle,
 constructs and independently checks the generated circuit's public statement,
-then truthfully stops before Compact proving: it returns `proof_unavailable`,
-consumes the session, and never emits a `vp_token`.
+and always consumes the session. The default standalone composition then fails
+closed with `proof_unavailable`. A native headless process launched from
+`nix develop` uses the explicit authenticated `OXID_PRESENTATION_ARTIFACTS_DIR`
+closure to create the real k=18 Compact proof, independently verify it, and
+validate an internal `vp_token`; ordinary headless views expose neither proof
+nor token bytes.
 Standalone self-issued login adds `identity.authentication.prepare`,
 `identity.authentication.accept`, `identity.authentication.refuse`,
 `identity.authentication.get`, and `identity.authentication.list`. Results are
@@ -234,11 +238,12 @@ reveal operation.
 The Dioxus card permits explicit device-local first/last reveal and age
 threshold planning. A separate OpenID4VP 1.0 Final-shaped DCQL panel previews a
 deterministic standalone verifier request, matching credential, and exact claim
-intents before consent. The proof port performs exact credential/opening and
-public-statement preflight but remains unavailable before proof construction,
-so acceptance fails closed and generates no presentation or `vp_token`.
-Compact proof execution/verification and live verifier transport remain
-unavailable.
+intents before consent. Mobile composition performs exact credential/opening,
+holder-control, holder-proof, and public-statement preflight but deliberately
+stays fail-closed before the resource-intensive native prover. The explicit
+headless artifact composition additionally performs checked Compact proving,
+independent public verification, and internal `vp_token` validation. Live
+verifier transport and mobile prover packaging remain unavailable.
 
 Standalone composition also accepts exactly one request-by-reference SIOPv2
 draft-13 login profile. It previews the verifier and purpose, requires exact

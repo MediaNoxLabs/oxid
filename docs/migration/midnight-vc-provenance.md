@@ -160,20 +160,20 @@ surfaces without widening the current UI. Headless never reveals a value.
   Digital Passport selective-disclosure/age presentation proof. The standalone
   proof adapter now re-verifies that bundle, independently reconstructs the
   exact generated-Compact public statement, and reauthorizes it through the
-  currently managed holder method, then stops before proving.
-  Runtime presentation proving and independent proof verification remain
-  separate adapters.
+  currently managed holder method. ADR-0050 connects checked runtime proving
+  and a separate independent verifier only in explicit native headless mode.
 - ADR-0041 provides atomic protected storage and ADR-0042 provides local
   interpretation and claim-free planning. ADR-0043 now provides strict
   Final-shaped OpenID4VP/DCQL request matching, exact consent, profile-scoped
-  candidates, and single-use sessions. Exact public-input construction and
-  preflight are implemented, while proof construction, transport, and proof
-  verification remain fail-closed until issues #28/#29.
+  candidates, and single-use sessions. Exact public-input construction,
+  authenticated proof construction, and independent verification are available
+  in native headless mode; mobile proving and live transport remain fail-closed.
 - Live OID4VCI HTTP/discovery, Authorization Code, by-reference offers,
   Transaction Code, batch/deferred issuance, notification, encrypted responses,
   wallet attestation, deep links, and QR scanning remain later protocol slices.
-- OpenID4VP Final proof/`vp_token` completion, selective disclosure, live SIOP
-  verifier transport, and browser/native bridge ingress remain later adapters.
+- Live OpenID4VP response delivery, mobile proving, ecosystem interoperability,
+  live SIOP verifier transport, and browser/native bridge ingress remain later
+  adapters.
 - Status/revocation, temporal policy, schema validation, and issuer trust remain
   visible `not_checked` stages rather than fabricated success.
 - Exact process-local Jubjub generation/signing is implemented by ADR-0046 and

@@ -8,7 +8,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, Digital Passport presentation path
 - Reference package: `midnight-verifiable-credentials` commit `39b1354212620b396e914b29603e6a38f2656546`
 - Related: ADR-0011, ADR-0017, ADR-0037, ADR-0043 through ADR-0048, issues #27–29
-- Implementation state: the standalone composition constructs and independently verifies the exact credential-family holder `Proof` before the Compact prover gate; native custody, ZK proof execution/verification, and `vp_token` remain fail-closed
+- Implementation state: the standalone composition constructs and independently verifies the exact credential-family holder `Proof`; ADR-0050 consumes it in explicit native headless ZK proof execution/verification and internal `vp_token` validation, while native custody/mobile proving remain fail-closed
 
 ## Context
 

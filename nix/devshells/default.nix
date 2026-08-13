@@ -2,7 +2,7 @@
 
 {
   perSystem =
-    { pkgs, ... }:
+    { pkgs, self', ... }:
     let
       midnightDidPackages = inputs.midnight-did-toolchain.packages.${pkgs.stdenv.hostPlatform.system};
       linuxLibraries = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
@@ -52,6 +52,7 @@
           export LLVM_COV=${pkgs.llvmPackages.llvm}/bin/llvm-cov
           export LLVM_PROFDATA=${pkgs.llvmPackages.llvm}/bin/llvm-profdata
           export COMPACT_DIRECTORY=${midnightDidPackages.compact-toolchain}
+          export OXID_PRESENTATION_ARTIFACTS_DIR=${self'.packages.presentation-compact-artifacts}
           ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
           ''}

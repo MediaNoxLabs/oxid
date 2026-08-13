@@ -5613,6 +5613,7 @@ dependencies = [
  "midnight-base-crypto",
  "midnight-serialize",
  "midnight-transient-crypto",
+ "midnight-zkir",
  "oxid-credential-application",
  "oxid-credential-domain",
  "oxid-foundation",
@@ -5622,6 +5623,9 @@ dependencies = [
  "oxid-presentation-application",
  "oxid-presentation-domain",
  "p256",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
 ]
 

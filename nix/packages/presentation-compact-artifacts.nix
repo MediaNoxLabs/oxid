@@ -82,8 +82,10 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p "$out/artifacts"
+    mkdir -p "$out/artifacts/params"
     cp -R generated/. "$out/artifacts/"
+    cp ${midnightCircuitParams}/bls_midnight_2p18 \
+      "$out/artifacts/params/bls_midnight_2p18"
 
     entries="$TMPDIR/artifacts.ndjson"
     : > "$entries"

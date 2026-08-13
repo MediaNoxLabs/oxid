@@ -64,13 +64,14 @@ ADR status and delivery state answer different questions:
 | [0040](0040-add-consented-standalone-siopv2-authentication.md) Add consented standalone SIOPv2 DID authentication | Accepted | §§3–7, 9–13, 16–18 and issue #25 | Draft-13 request-by-reference login, consent, managed-DID proof, independent verifier, and headless/mobile flow implemented; OpenID4VP presentation and production transport pending |
 | [0041](0041-protect-format-private-credential-material.md) Protect format-private credential material as opaque bytes | Accepted | §§3–7, 10, 12–13, 16–18 and issue #26 | Bounded opaque material, verified-import propagation, and encrypted schema migration implemented; Digital Passport interpretation/disclosure delivered by ADR-0042 |
 | [0042](0042-bind-digital-passport-disclosure-to-signed-commitments.md) Bind Digital Passport disclosure to signed commitments | Accepted | §§3–7, 9–13, 16–18 and issue #26 | Standalone five-claim issuance, commitment-bound private parts, safe headless planning, local Dioxus reveal, restart/deletion, and mobile smoke coverage implemented; OpenID4VP/proofs deferred |
-| [0043](0043-gate-openid4vp-on-reproducible-compact-proofs.md) Gate OpenID4VP on reproducible Compact proofs | Accepted | §§3–7, 9–13, 16–18 and issues #27/#28 | Strict Final-shaped DCQL request preview, matching, exact consent, single-use headless/mobile lifecycle implemented; proof, verifier response, and `vp_token` remain fail-closed |
-| [0044](0044-compose-reproducible-digital-passport-presentation-artifacts.md) Compose reproducible Digital Passport presentation artifacts | Accepted | §§3–7, 9–13, 16–18, 21 and issue #28 | Immutable artifacts plus exact Rust public-input construction, `MPS1` codec, generated-Compact oracle, standalone independent preflight, and ADR-0048/0049 holder authorization/proof implemented; ZK execution/verification and `vp_token` remain fail-closed |
+| [0043](0043-gate-openid4vp-on-reproducible-compact-proofs.md) Gate OpenID4VP on reproducible Compact proofs | Accepted | §§3–7, 9–13, 16–18 and issues #27/#28 | Strict Final-shaped DCQL request preview, matching, exact consent, and single-use lifecycle implemented; ADR-0050 opens proof/verification only for explicit native headless mode while mobile/live transport remain fail-closed |
+| [0044](0044-compose-reproducible-digital-passport-presentation-artifacts.md) Compose reproducible Digital Passport presentation artifacts | Accepted | §§3–7, 9–13, 16–18, 21 and issue #28 | Immutable artifacts plus exact Rust public-input construction, `MPS1` codec, generated-Compact oracle, and ADR-0048/0049 holder proof implemented; checked ZK execution and independent verification are delivered by ADR-0050 |
 | [0045](0045-preserve-and-verify-detached-midnight-compact-credentials.md) Preserve and verify detached Midnight Compact credentials | Accepted | §§3–7, 9–13, 16–18 and issue #29 | Exact Compact body/proof/private-material lifecycle, native issuance-proof verification, schema-3 encrypted persistence, and headless restart conformance implemented; ADR-0047/0048 bind and reauthorize the standalone holder while issuer anchoring/native custody/presentation proving remain fail-closed |
 | [0046](0046-protect-jubjub-signing-behind-opaque-custody.md) Protect Jubjub signing behind opaque custody | Accepted | §§3, 7, 9–13, 16–18 and issue #29 | Exact development Jubjub generation/signing and headless opaque-reference lifecycle implemented; ADR-0047/0048 bind issuance and reauthorize presentation while native custody and proving remain fail-closed |
 | [0047](0047-bind-standalone-compact-credentials-to-managed-jubjub-did-methods.md) Bind standalone Compact credentials to managed Jubjub DID methods | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone DID creation and exact Compact issuance bind a managed Jubjub assertion method; ADR-0048 adds presentation-time re-authorization while native custody, issuer anchoring, and proving remain fail-closed |
-| [0048](0048-reauthorize-compact-holder-methods-at-presentation-time.md) Reauthorize Compact holder methods at presentation time | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone preflight now requires current protected control of the exact credential-bound method with explicit same-method rotation semantics; Compact proving, verification, native custody, and `vp_token` remain fail-closed |
-| [0049](0049-sign-compact-holder-challenges-inside-opaque-custody.md) Sign Compact holder challenges inside opaque custody | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone custody constructs and independently verifies the exact credential-family holder `Proof` through a synchronous public-transcript callback; ZK proving/verification, native custody, and `vp_token` remain fail-closed |
+| [0048](0048-reauthorize-compact-holder-methods-at-presentation-time.md) Reauthorize Compact holder methods at presentation time | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone preflight requires current protected control of the exact credential-bound method with explicit same-method rotation semantics; ADR-0050 consumes it in native headless proving while native custody/mobile remain fail-closed |
+| [0049](0049-sign-compact-holder-challenges-inside-opaque-custody.md) Sign Compact holder challenges inside opaque custody | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone custody constructs and independently verifies the exact credential-family holder `Proof` through a synchronous public-transcript callback; ADR-0050 consumes it in native headless proving |
+| [0050](0050-prove-and-independently-verify-compact-presentations.md) Prove and independently verify Compact presentations | Accepted | §§3–7, 9–13, 16–18, 21 and issues #27–29 | Exact generated-runtime/Rust preimage parity, authenticated offline artifacts, checked proving, bounded `MZP1`, independent verification, headless OpenID4VP success, tamper/replay/restart tests, and resource baselines implemented; mobile proving remains gated |
 
 ## Current boundaries
 
@@ -126,15 +127,13 @@ claims in core; the Digital Passport adapter and local disclosure preview
 are delivered by ADR-0042. ADR-0042 requires the adapter to recompute every
 official Midnight commitment and signed claim root before exposing candidates,
 keeps local reveal out of headless, and labels preview as non-presenting;
-OpenID4VP and Compact proof generation remain fail-closed. ADR-0043 adds a
-strict OpenID4VP/DCQL request, consent, and session boundary, but requires a
-reproducible Compact proof plus independent verification before any `vp_token`
-can exist. ADR-0044 delivers the reproducible final Compact composition and
+OpenID4VP and Compact proof generation remain fail-closed in normal/mobile
+composition. ADR-0043 adds a strict OpenID4VP/DCQL request, consent, and session
+boundary and requires a reproducible Compact proof plus independent verification
+before any `vp_token` can exist. ADR-0044 delivers the reproducible final Compact composition and
 authenticated artifact baseline and now exact public-statement construction,
 portable `MPS1` round-trip, generated-Compact conformance, and independent
-preflight reconstruction without changing that runtime gate. Credential-family
-holder signing, proof execution/encoding, independent proof verification, and
-response construction are still required. ADR-0045
+preflight reconstruction. ADR-0045
 separately replaces standalone issuance's synthetic Digital Passport with the
 prototype's exact Compact body, detached issuer proof, and private openings. It
 verifies and persists that issuance bundle without confusing it with a
@@ -147,5 +146,12 @@ DID custody signature distinct from the credential-family presentation proof.
 ADR-0049 now supplies that distinct presentation proof through an atomic
 two-step Jubjub operation: wallet custody retains the key and nonce,
 `did-midnight` binds the managed method, and `vc-midnight` owns and independently
-checks the exact credential-family transcript. It does not open the ZK prover,
-independent-verifier, or `vp_token` gates.
+checks the exact credential-family transcript. Those inputs are consumed by
+ADR-0050's explicit native headless prover and verifier.
+ADR-0050 governs the remaining native ZK boundary: the Rust preimage must match
+generated Compact byte-for-byte, the Nix closure must carry every authenticated
+offline artifact including p18 parameters, checked proving and independent
+verification remain separate, and only a canonical public `MZP1` envelope may
+cross the protocol boundary. That headless path now succeeds and rejects
+tamper/replay/restart failures. Production/mobile composition stays fail-closed
+until its packaging, resource, and native-custody gates are accepted.

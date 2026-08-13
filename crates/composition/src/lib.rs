@@ -66,6 +66,11 @@ use oxid_adapter_vc_midnight::{
     MidnightCredentialVerifier, PreflightOnlyCompactPresentationProof,
     StandaloneBoundCompactCredentialIssuer, StandaloneCredentialInbox,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_adapter_vc_midnight::{
+    CompactPresentationArtifactsConfig, CompactPresentationRuntimeError,
+    NativeCompactPresentationRuntime, NativeCompactPresentationVerifier,
+};
 use oxid_credential_application::{
     CredentialDisclosurePort, CredentialInboxPort, CredentialRepository, CredentialService,
     CredentialVerificationPort, DeleteCredentialUseCase, GetCredentialDisclosureUseCase,
@@ -184,6 +189,7 @@ pub struct ApplicationServices {
     refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
     get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase>,
     list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase>,
+    compact_presentation_proof_available: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -198,10 +204,12 @@ enum SelfIssuedAuthenticationComposition {
     Standalone,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum CredentialPresentationComposition {
     Unavailable,
     Standalone,
+    #[cfg(not(target_arch = "wasm32"))]
+    StandaloneZk(Arc<NativeCompactPresentationRuntime>),
 }
 
 struct IdentityAdapters {
@@ -544,6 +552,13 @@ impl ApplicationServices {
     pub fn list_credential_presentations(&self) -> Arc<dyn ListCredentialPresentationsUseCase> {
         Arc::clone(&self.list_credential_presentations)
     }
+
+    /// Reports whether an authenticated Compact prover and an independent
+    /// verifier are connected to this composition.
+    #[must_use]
+    pub const fn compact_presentation_proof_available(&self) -> bool {
+        self.compact_presentation_proof_available
+    }
 }
 
 /// Wires the application with persistent public-profile metadata storage.
@@ -573,6 +588,12 @@ pub fn compose() -> ApplicationServices {
 /// adapter for the standalone development harness.
 #[must_use]
 pub fn compose_headless() -> ApplicationServices {
+    compose_headless_with_presentation(CredentialPresentationComposition::Standalone)
+}
+
+fn compose_headless_with_presentation(
+    credential_presentation: CredentialPresentationComposition,
+) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
@@ -600,7 +621,7 @@ pub fn compose_headless() -> ApplicationServices {
     ));
     #[cfg(not(target_arch = "wasm32"))]
     let midnight = Arc::new(midnight);
-    compose_with_adapters(profiles, security, midnight)
+    compose_with_adapters_and_presentation(profiles, security, midnight, credential_presentation)
 }
 
 /// Environment variable holding the selected Midnight network identity.
@@ -639,6 +660,9 @@ pub const MIDNIGHT_SUBMISSION_JOURNAL_PATH_ENV: &str = "OXID_MIDNIGHT_SUBMISSION
 /// Environment variable holding the explicitly trusted Midnight DID resolver base route.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MIDNIGHT_DID_RESOLVER_URL_ENV: &str = "OXID_MIDNIGHT_DID_RESOLVER_URL";
+/// Environment variable holding the immutable Compact presentation artifact root.
+#[cfg(not(target_arch = "wasm32"))]
+pub const PRESENTATION_COMPACT_ARTIFACTS_DIR_ENV: &str = "OXID_PRESENTATION_ARTIFACTS_DIR";
 /// Environment variable holding the app-private public DID record file.
 pub const DID_STORE_PATH_ENV: &str = "OXID_DID_STORE_PATH";
 /// Environment variable holding the app-private encrypted credential file.
@@ -660,6 +684,7 @@ pub enum HeadlessCompositionError {
     InvalidMidnightShieldedCheckpointConfiguration(MidnightShieldedCheckpointConfigError),
     InvalidMidnightSubmissionJournalConfiguration(MidnightSubmissionJournalConfigError),
     InvalidMidnightDidResolverConfiguration(HttpDidResolverConfigError),
+    InvalidCompactPresentationRuntime(CompactPresentationRuntimeError),
     IncompleteCredentialStoreConfiguration,
 }
 
@@ -687,6 +712,7 @@ impl std::fmt::Display for HeadlessCompositionError {
                 return error.fmt(formatter);
             }
             Self::InvalidMidnightDidResolverConfiguration(error) => return error.fmt(formatter),
+            Self::InvalidCompactPresentationRuntime(error) => return error.fmt(formatter),
             Self::IncompleteCredentialStoreConfiguration => {
                 "credential store and key paths must be configured together"
             }
@@ -704,6 +730,18 @@ impl std::error::Error for HeadlessCompositionError {}
 #[cfg(not(target_arch = "wasm32"))]
 pub fn compose_headless_from_environment() -> Result<ApplicationServices, HeadlessCompositionError>
 {
+    let credential_presentation =
+        read_optional_environment(PRESENTATION_COMPACT_ARTIFACTS_DIR_ENV)?
+            .map(|root| {
+                CompactPresentationArtifactsConfig::new(root)
+                    .and_then(|config| NativeCompactPresentationRuntime::load(&config))
+                    .map(Arc::new)
+            })
+            .transpose()
+            .map_err(HeadlessCompositionError::InvalidCompactPresentationRuntime)?
+            .map_or(CredentialPresentationComposition::Standalone, |runtime| {
+                CredentialPresentationComposition::StandaloneZk(runtime)
+            });
     let credential_paths = (
         read_optional_environment(CREDENTIAL_STORE_PATH_ENV)?,
         read_optional_environment(CREDENTIAL_KEY_PATH_ENV)?,
@@ -744,21 +782,25 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
         Some(HeadlessMidnightConfig::Indexer(config))
             if dust_checkpoints.is_none() && submission_journal.is_none() =>
         {
-            Ok(compose_headless_live_with_checkpoint_options(
-                config,
-                checkpoints,
-                shielded_checkpoints,
-            ))
+            Ok(
+                compose_headless_live_with_checkpoint_options_and_presentation(
+                    config,
+                    checkpoints,
+                    shielded_checkpoints,
+                    credential_presentation,
+                ),
+            )
         }
-        Some(HeadlessMidnightConfig::Standalone(config)) => {
-            Ok(compose_headless_standalone_with_checkpoint_options(
+        Some(HeadlessMidnightConfig::Standalone(config)) => Ok(
+            compose_headless_standalone_with_checkpoint_options_and_presentation(
                 config,
                 checkpoints,
                 dust_checkpoints,
                 shielded_checkpoints,
                 submission_journal,
-            ))
-        }
+                credential_presentation,
+            ),
+        ),
         Some(HeadlessMidnightConfig::Indexer(_))
             if checkpoints.is_some()
                 || dust_checkpoints.is_some()
@@ -773,10 +815,15 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
         {
             Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
         }
-        None => submission_journal.map_or_else(
-            || Ok(compose_headless()),
-            |journal| Ok(compose_headless_with_submission_journal(journal)),
-        ),
+        None => Ok(submission_journal.map_or_else(
+            || compose_headless_with_presentation(credential_presentation.clone()),
+            |journal| {
+                compose_headless_with_submission_journal_and_presentation(
+                    journal,
+                    credential_presentation.clone(),
+                )
+            },
+        )),
         Some(HeadlessMidnightConfig::Indexer(_)) => {
             Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
         }
@@ -791,6 +838,21 @@ pub fn compose_headless_live_with_checkpoint_options(
     account_checkpoints: Option<MidnightAccountCheckpointConfig>,
     shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
 ) -> ApplicationServices {
+    compose_headless_live_with_checkpoint_options_and_presentation(
+        config,
+        account_checkpoints,
+        shielded_checkpoints,
+        CredentialPresentationComposition::Standalone,
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compose_headless_live_with_checkpoint_options_and_presentation(
+    config: MidnightIndexerConfig,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+    credential_presentation: CredentialPresentationComposition,
+) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
@@ -801,10 +863,11 @@ pub fn compose_headless_live_with_checkpoint_options(
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
-    compose_with_adapters(
+    compose_with_adapters_and_presentation(
         Arc::new(JsonWalletProfileRepository::at_default_location()),
         security,
         midnight,
+        credential_presentation,
     )
 }
 
@@ -817,6 +880,25 @@ pub fn compose_headless_standalone_with_checkpoint_options(
     dust_checkpoints: Option<MidnightDustCheckpointConfig>,
     shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
     submission_journal: Option<MidnightSubmissionJournalConfig>,
+) -> ApplicationServices {
+    compose_headless_standalone_with_checkpoint_options_and_presentation(
+        config,
+        account_checkpoints,
+        dust_checkpoints,
+        shielded_checkpoints,
+        submission_journal,
+        CredentialPresentationComposition::Standalone,
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compose_headless_standalone_with_checkpoint_options_and_presentation(
+    config: MidnightStandaloneConfig,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    dust_checkpoints: Option<MidnightDustCheckpointConfig>,
+    shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+    submission_journal: Option<MidnightSubmissionJournalConfig>,
+    credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
@@ -832,10 +914,11 @@ pub fn compose_headless_standalone_with_checkpoint_options(
             Arc::clone(&security),
         ),
     );
-    compose_with_adapters(
+    compose_with_adapters_and_presentation(
         Arc::new(JsonWalletProfileRepository::at_default_location()),
         security,
         midnight,
+        credential_presentation,
     )
 }
 
@@ -845,6 +928,17 @@ pub fn compose_headless_standalone_with_checkpoint_options(
 pub fn compose_headless_with_submission_journal(
     journal: MidnightSubmissionJournalConfig,
 ) -> ApplicationServices {
+    compose_headless_with_submission_journal_and_presentation(
+        journal,
+        CredentialPresentationComposition::Standalone,
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compose_headless_with_submission_journal_and_presentation(
+    journal: MidnightSubmissionJournalConfig,
+    credential_presentation: CredentialPresentationComposition,
+) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
@@ -853,10 +947,11 @@ pub fn compose_headless_with_submission_journal(
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
-    compose_with_adapters(
+    compose_with_adapters_and_presentation(
         Arc::new(JsonWalletProfileRepository::at_default_location()),
         security,
         midnight,
+        credential_presentation,
     )
 }
 
@@ -1088,6 +1183,26 @@ fn parse_optional_midnight_config(
 /// Wires deterministic process-local services for tests and development tools.
 #[must_use]
 pub fn compose_in_memory() -> ApplicationServices {
+    compose_in_memory_with_presentation(CredentialPresentationComposition::Standalone)
+}
+
+/// Wires deterministic process-local services to one authenticated Compact
+/// presentation artifact set. This is the standalone end-to-end proof harness;
+/// normal production and mobile composition remain fail-closed.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn compose_in_memory_with_compact_presentation_artifacts(
+    root: impl Into<std::path::PathBuf>,
+) -> Result<ApplicationServices, CompactPresentationRuntimeError> {
+    let config = CompactPresentationArtifactsConfig::new(root)?;
+    let runtime = NativeCompactPresentationRuntime::load(&config)?;
+    Ok(compose_in_memory_with_presentation(
+        CredentialPresentationComposition::StandaloneZk(Arc::new(runtime)),
+    ))
+}
+
+fn compose_in_memory_with_presentation(
+    credential_presentation: CredentialPresentationComposition,
+) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
@@ -1120,7 +1235,7 @@ pub fn compose_in_memory() -> ApplicationServices {
             credential_disclosure: Arc::new(DigitalPassportDisclosureAdapter),
             credential_issuance: CredentialIssuanceComposition::Standalone,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
-            credential_presentation: CredentialPresentationComposition::Standalone,
+            credential_presentation,
         },
     )
 }
@@ -1129,6 +1244,31 @@ fn compose_with_adapters<R, S, M>(
     repository: Arc<R>,
     security: Arc<S>,
     midnight: Arc<M>,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository + 'static,
+    S: WalletProtectionPort + WalletKeyOperationPort + WalletJubjubChallengeSigningPort + 'static,
+    M: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletAccountDerivationPort
+        + WalletDustSyncPort
+        + WalletShieldedSyncPort
+        + WalletTransactionPort
+        + 'static,
+{
+    compose_with_adapters_and_presentation(
+        repository,
+        security,
+        midnight,
+        CredentialPresentationComposition::Standalone,
+    )
+}
+
+fn compose_with_adapters_and_presentation<R, S, M>(
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository + 'static,
@@ -1167,7 +1307,7 @@ where
             credential_disclosure: Arc::new(DigitalPassportDisclosureAdapter),
             credential_issuance: CredentialIssuanceComposition::Standalone,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
-            credential_presentation: CredentialPresentationComposition::Standalone,
+            credential_presentation,
         },
     )
 }
@@ -1203,6 +1343,13 @@ where
         credential_presentation,
     } = identity_adapters;
     let presentation_credential_repository = Arc::clone(&credential_repository);
+    #[cfg(not(target_arch = "wasm32"))]
+    let compact_presentation_proof_available = matches!(
+        &credential_presentation,
+        CredentialPresentationComposition::StandaloneZk(_)
+    );
+    #[cfg(target_arch = "wasm32")]
+    let compact_presentation_proof_available = false;
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let create_wallet_profile = Arc::new(CreateWalletProfileService::new(
@@ -1290,6 +1437,37 @@ where
                         holder_proof,
                     )),
                     Arc::new(UnavailablePresentationVerifier),
+                    clock.clone(),
+                ))
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            CredentialPresentationComposition::StandaloneZk(runtime) => {
+                let list: Arc<dyn ListCredentialsUseCase> = credentials.clone();
+                let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
+                let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
+                let verifier_get_did = Arc::clone(&get_did);
+                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+                let holder_authorization =
+                    Arc::new(ManagedDidJubjubHolderAuthorization::with_challenge_signing(
+                        get_did,
+                        sign_did,
+                        did_jubjub_challenge_signing,
+                    ));
+                let holder_proof: Arc<dyn CompactHolderProofPort> = holder_authorization.clone();
+                Arc::new(StandaloneOpenId4VpVerifier::new(
+                    Arc::new(CredentialDisclosureCandidateSource::new(list, disclosure)),
+                    Arc::new(PreflightOnlyCompactPresentationProof::with_runtime(
+                        presentation_credential_repository,
+                        clock.clone(),
+                        holder_authorization,
+                        holder_proof,
+                        Arc::clone(&runtime),
+                    )),
+                    Arc::new(NativeCompactPresentationVerifier::new(
+                        runtime,
+                        clock.clone(),
+                        verifier_get_did,
+                    )),
                     clock.clone(),
                 ))
             }
@@ -1452,6 +1630,7 @@ where
         refuse_credential_presentation,
         get_credential_presentation,
         list_credential_presentations,
+        compact_presentation_proof_available,
     }
 }
 

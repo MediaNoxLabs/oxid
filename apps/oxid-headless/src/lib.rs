@@ -253,7 +253,9 @@ impl HeadlessWallet {
                     "name": "oxid-headless",
                     "version": env!("CARGO_PKG_VERSION")
                 },
-                "methods": capability_manifest(),
+                "methods": capability_manifest(
+                    self.application.compact_presentation_proof_available()
+                ),
                 "custodyMode": "development_only",
                 "compatibilityAliases": ["quit", "exit"]
             }),
@@ -3915,7 +3917,7 @@ fn security_port_error(id: Option<String>, error: WalletSecurityPortError) -> Re
     }
 }
 
-fn capability_manifest() -> Value {
+fn capability_manifest(compact_presentation_proof_available: bool) -> Value {
     json!([
         { "method": "system.capabilities", "status": "ready" },
         { "method": "system.quit", "status": "ready" },
@@ -3986,7 +3988,7 @@ fn capability_manifest() -> Value {
         { "method": "credential.issuance.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
         { "method": "credential.issuance.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
         { "method": "credential.presentation.prepare", "status": "ready", "mode": "standalone", "standard": "OpenID4VP 1.0 Final", "query": "DCQL", "requestMode": "by_reference", "claimValuesExposed": false },
-        { "method": "credential.presentation.accept", "status": "blocked", "mode": "standalone", "confirmationRequired": true, "holderAuthorization": "current_managed_jubjub_method", "proofAvailable": false, "generatesPresentation": false, "blocker": "https://github.com/MediaNoxLabs/oxid/issues/28" },
+        { "method": "credential.presentation.accept", "status": if compact_presentation_proof_available { "ready" } else { "blocked" }, "mode": "standalone", "confirmationRequired": true, "holderAuthorization": "current_managed_jubjub_method", "proofAvailable": compact_presentation_proof_available, "artifactRootEnvironment": "OXID_PRESENTATION_ARTIFACTS_DIR", "generatesPresentation": compact_presentation_proof_available, "blocker": if compact_presentation_proof_available { Value::Null } else { json!("https://github.com/MediaNoxLabs/oxid/issues/28") } },
         { "method": "credential.presentation.refuse", "status": "ready", "mode": "standalone" },
         { "method": "credential.presentation.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
         { "method": "credential.presentation.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
@@ -4122,6 +4124,7 @@ mod tests {
                 && capability["status"] == "blocked"
                 && capability["holderAuthorization"] == "current_managed_jubjub_method"
                 && capability["proofAvailable"] == false
+                && capability["artifactRootEnvironment"] == "OXID_PRESENTATION_ARTIFACTS_DIR"
                 && capability["generatesPresentation"] == false
         }));
         assert!(methods.iter().any(|capability| {
@@ -4638,6 +4641,166 @@ mod tests {
                 .to_string()
                 .contains("vp_token")
         );
+    }
+
+    #[test]
+    #[ignore = "requires the authenticated p18 Compact proving artifact closure"]
+    fn proves_and_independently_verifies_a_compact_presentation_end_to_end() {
+        let artifact_root = std::env::var_os("OXID_PRESENTATION_ARTIFACTS_DIR")
+            .expect("set OXID_PRESENTATION_ARTIFACTS_DIR to the Nix artifact closure");
+        let application =
+            oxid_composition::compose_in_memory_with_compact_presentation_artifacts(artifact_root)
+                .expect("authenticated Compact runtime");
+        let wallet = HeadlessWallet::new(application);
+        let capabilities = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"zk-capabilities","method":"system.capabilities","params":{}}"#,
+        );
+        let presentation_capability = capabilities[0]["result"]["methods"]
+            .as_array()
+            .expect("capabilities")
+            .iter()
+            .find(|capability| capability["method"] == "credential.presentation.accept")
+            .expect("presentation capability");
+        assert_eq!(presentation_capability["status"], "ready");
+        assert_eq!(presentation_capability["proofAvailable"], true);
+        assert_eq!(presentation_capability["generatesPresentation"], true);
+
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"zk-profile","method":"wallet.profile.create","params":{"displayName":"ZK presentation flow"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile identifier")
+            .to_owned();
+        let initialized = execute_with_wallet(
+            &wallet,
+            &format!(
+                "{}\n{}",
+                json!({"protocol": PROTOCOL_VERSION, "id": "zk-select", "method": "wallet.profile.select", "params": {"profileId": profile_id}}),
+                json!({"protocol": PROTOCOL_VERSION, "id": "zk-security", "method": "wallet.security.initialize", "params": {}}),
+            ),
+        );
+        assert!(initialized.iter().all(|response| response["ok"] == true));
+
+        let created_did = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"zk-did","method":"did.create","params":{}}"#,
+        );
+        let document = &created_did[0]["result"]["didRecord"]["document"];
+        let did = document["id"].as_str().expect("holder DID").to_owned();
+        let method_id = document["relationships"]
+            .as_array()
+            .expect("relationships")
+            .iter()
+            .find(|relationship| relationship["relationship"] == "authentication")
+            .and_then(|relationship| relationship["methodIds"][0].as_str())
+            .expect("authentication method")
+            .to_owned();
+        let holder_binding_method_id = document["verificationMethods"]
+            .as_array()
+            .expect("verification methods")
+            .iter()
+            .find(|method| method["publicKeyJwk"]["crv"] == "Jubjub")
+            .and_then(|method| method["id"].as_str())
+            .expect("Jubjub holder method")
+            .to_owned();
+
+        let prepared_issuance = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "zk-issuance-prepare",
+                "method": "credential.issuance.prepare",
+                "params": {"offer": standalone_credential_offer()},
+            })
+            .to_string(),
+        );
+        let issuance_id = prepared_issuance[0]["result"]["issuance"]["id"]
+            .as_str()
+            .expect("issuance identifier");
+        let issued = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "zk-issuance-accept",
+                "method": "credential.issuance.accept",
+                "params": {
+                    "issuanceId": issuance_id,
+                    "holderDid": did,
+                    "methodId": method_id,
+                    "holderBindingMethodId": holder_binding_method_id,
+                    "confirmed": true,
+                    "intent": "ACCEPT_CREDENTIAL_ISSUANCE",
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(issued[0]["result"]["issuance"]["state"], "succeeded");
+        let credential_id = issued[0]["result"]["issuance"]["credentialId"]
+            .as_str()
+            .expect("credential identifier")
+            .to_owned();
+
+        let prepared_presentation = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "zk-presentation-prepare",
+                "method": "credential.presentation.prepare",
+                "params": {"request": oxid_composition::standalone_openid4vp_request()},
+            })
+            .to_string(),
+        );
+        let presentation_id = prepared_presentation[0]["result"]["presentation"]["id"]
+            .as_str()
+            .expect("presentation identifier");
+        let accepted = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "zk-presentation-accept",
+                "method": "credential.presentation.accept",
+                "params": {
+                    "presentationId": presentation_id,
+                    "credentialId": credential_id,
+                    "confirmed": true,
+                    "intent": "ACCEPT_CREDENTIAL_PRESENTATION",
+                },
+            })
+            .to_string(),
+        );
+        let presentation = &accepted[0]["result"]["presentation"];
+        assert_eq!(presentation["state"], "succeeded");
+        assert_eq!(presentation["presentationGenerated"], true);
+        assert_eq!(presentation["verifierValidated"], true);
+        assert!(presentation["failureCode"].is_null());
+
+        let public_result = accepted[0].to_string();
+        assert!(!public_result.contains("vp_token"));
+        assert!(!public_result.contains("Alice"));
+        assert!(!public_result.contains("Example"));
+        assert!(!public_result.contains("AB1234567"));
+        assert!(!public_result.contains("privateMaterial"));
+
+        let replayed = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "zk-presentation-replay",
+                "method": "credential.presentation.accept",
+                "params": {
+                    "presentationId": presentation_id,
+                    "credentialId": credential_id,
+                    "confirmed": true,
+                    "intent": "ACCEPT_CREDENTIAL_PRESENTATION",
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(replayed[0]["error"]["code"], "failed_precondition");
+        assert!(!replayed[0].to_string().contains("vp_token"));
     }
 
     #[test]

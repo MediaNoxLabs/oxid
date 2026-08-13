@@ -23,11 +23,21 @@ use sha2::{Digest as _, Sha256};
 
 mod compact_digital_passport;
 mod compact_presentation;
+mod compact_proving;
+#[cfg(not(target_arch = "wasm32"))]
+mod compact_runtime;
+#[cfg(not(target_arch = "wasm32"))]
+pub use compact_runtime::{
+    CompactPresentationArtifactsConfig, CompactPresentationRuntimeError,
+    NativeCompactPresentationRuntime,
+};
 mod digital_passport;
 
 pub use compact_digital_passport::{
     MidnightCompactCredentialVerifier, StandaloneBoundCompactCredentialIssuer,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use compact_presentation::NativeCompactPresentationVerifier;
 pub use compact_presentation::{
     CompactHolderProofError, CompactHolderProofPort, CompactHolderProofRequest,
     CompactPresentationError, CompactPresentationPublicInput, DigitalPassportPresentationSelection,

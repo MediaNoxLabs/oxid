@@ -6,7 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, Digital Passport presentation and DID custody paths
 - Reference package: `midnight-verifiable-credentials` commit `39b1354212620b396e914b29603e6a38f2656546`
 - Related: ADR-0037, ADR-0043 through ADR-0047, issues #27–29
-- Implementation state: standalone presentation preflight now requires current protected control of the exact credential-bound Jubjub assertion method; Compact proof execution, independent proof verification, native custody, and `vp_token` remain fail-closed
+- Implementation state: standalone presentation preflight requires current protected control of the exact credential-bound Jubjub assertion method; ADR-0050 consumes it in explicit native headless proof execution and independent verification, while mobile proving and native custody remain fail-closed
 
 ## Context
 
