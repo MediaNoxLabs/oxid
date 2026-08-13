@@ -143,6 +143,7 @@ struct PreparedRequest {
     response_uri: String,
     state: Zeroizing<String>,
     challenge_hash: [u8; 32],
+    verifier_domain_hash: [u8; 32],
     expires_at_seconds: u64,
     requested_claims: Vec<RequestedPresentationClaim>,
     candidate_ids: BTreeSet<String>,
@@ -256,6 +257,7 @@ impl CredentialPresentationProtocolPort for StandaloneOpenId4VpVerifier {
                 response_uri: parsed.response_uri,
                 state,
                 challenge_hash: parsed.challenge_hash,
+                verifier_domain_hash: parsed.verifier_domain_hash,
                 expires_at_seconds: parsed.expires_at_seconds,
                 requested_claims: parsed.requested_claims,
                 candidate_ids: candidates
@@ -302,6 +304,7 @@ impl CredentialPresentationProtocolPort for StandaloneOpenId4VpVerifier {
                 credential_id: request.credential_id.clone(),
                 verifier: prepared.client_id.clone(),
                 challenge_hash: prepared.challenge_hash,
+                verifier_domain_hash: prepared.verifier_domain_hash,
                 requested_claims: prepared.requested_claims.clone(),
             };
             let proof = self
@@ -315,6 +318,7 @@ impl CredentialPresentationProtocolPort for StandaloneOpenId4VpVerifier {
                     credential_id: request.credential_id,
                     verifier: prepared.client_id,
                     challenge_hash: prepared.challenge_hash,
+                    verifier_domain_hash: prepared.verifier_domain_hash,
                     requested_claims: prepared.requested_claims,
                     proof: proof.clone(),
                 })
@@ -464,6 +468,7 @@ struct ParsedRequestObject {
     schema_id: String,
     requested_claims: Vec<RequestedPresentationClaim>,
     challenge_hash: [u8; 32],
+    verifier_domain_hash: [u8; 32],
     expires_at_seconds: u64,
 }
 
@@ -604,9 +609,10 @@ fn parse_request_object(
             "predicate_hints",
         ],
     )?;
+    let verifier_domain = required_string(midnight, "verifier_domain", MAX_TEXT_CHARACTERS)?;
     if required_string(midnight, "profile", MAX_TEXT_CHARACTERS)?
         != "org.midnight.credentials.openid.v1"
-        || required_string(midnight, "verifier_domain", MAX_TEXT_CHARACTERS)? != "127.0.0.1:32193"
+        || verifier_domain != "127.0.0.1:32193"
     {
         return Err(PresentationProtocolError::UnsupportedRequest);
     }
@@ -641,8 +647,16 @@ fn parse_request_object(
         schema_id,
         requested_claims,
         challenge_hash: Sha256::digest(nonce.as_bytes()).into(),
+        verifier_domain_hash: verifier_domain_hash(&verifier_domain),
         expires_at_seconds: expires_at,
     })
+}
+
+fn verifier_domain_hash(domain: &str) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest.update(b"oxid:openid4vp:verifier-domain:v1\0");
+    digest.update(domain.as_bytes());
+    digest.finalize().into()
 }
 
 fn validate_response_container(
@@ -1034,6 +1048,21 @@ mod tests {
         let debug = format!("{prepared:?}");
         assert!(!debug.contains("Alice"));
         assert!(!debug.contains("Example"));
+    }
+
+    #[test]
+    fn request_parser_derives_the_domain_separated_verifier_hash() {
+        let parsed = parse_request_object(
+            standalone_request_object("nonce", "state", 1)
+                .to_string()
+                .as_bytes(),
+            1,
+        )
+        .expect("request");
+        assert_eq!(
+            hex::encode(parsed.verifier_domain_hash),
+            "786028d6c0189dbbc11bf4c3853af8bac2e840070f61494d94de2ca693801d36"
+        );
     }
 
     #[test]

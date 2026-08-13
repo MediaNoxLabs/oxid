@@ -106,7 +106,8 @@ check_workspace_dependencies oxid-adapter-storage-credential-json \
   oxid-credential-application oxid-credential-domain oxid-foundation
 check_workspace_dependencies oxid-adapter-vc-midnight \
   oxid-credential-application oxid-credential-domain oxid-foundation \
-  oxid-identity-application oxid-identity-domain
+  oxid-identity-application oxid-identity-domain oxid-platform-ports \
+  oxid-presentation-application oxid-presentation-domain
 check_workspace_dependencies oxid-adapter-openid4vci \
   oxid-credential-application oxid-identity-application oxid-platform-ports \
   oxid-protocol-application oxid-protocol-domain

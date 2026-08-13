@@ -143,13 +143,17 @@ surfaces without widening the current UI. Headless never reveals a value.
 
 - Oxid now stores and verifies the prototype's detached Compact issuance proof.
   That signature authenticates a credential body only; it is not the
-  Digital Passport selective-disclosure/age presentation proof. Runtime
-  presentation proving and independent verification remain separate adapters.
+  Digital Passport selective-disclosure/age presentation proof. The standalone
+  proof adapter now re-verifies that bundle and independently reconstructs the
+  exact generated-Compact public statement, then stops before proving.
+  Runtime presentation proving and independent proof verification remain
+  separate adapters.
 - ADR-0041 provides atomic protected storage and ADR-0042 provides local
   interpretation and claim-free planning. ADR-0043 now provides strict
   Final-shaped OpenID4VP/DCQL request matching, exact consent, profile-scoped
-  candidates, and single-use sessions. Presentation construction, transport,
-  and proof verification remain fail-closed until issue #28.
+  candidates, and single-use sessions. Exact public-input construction and
+  preflight are implemented, while proof construction, transport, and proof
+  verification remain fail-closed until issues #28/#29.
 - Live OID4VCI HTTP/discovery, Authorization Code, by-reference offers,
   Transaction Code, batch/deferred issuance, notification, encrypted responses,
   wallet attestation, deep links, and QR scanning remain later protocol slices.

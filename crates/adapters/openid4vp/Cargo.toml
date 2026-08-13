@@ -22,6 +22,7 @@ zeroize.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
+hex.workspace = true
 oxid-credential-domain.workspace = true
 oxid-foundation.workspace = true
 

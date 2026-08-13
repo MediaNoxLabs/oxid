@@ -45,23 +45,23 @@ impl CredentialVerificationPort for MidnightCompactCredentialVerifier {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct VerificationMethodRef {
-    did_contract_address: [u8; 32],
-    method_id: [u8; 32],
+pub(crate) struct VerificationMethodRef {
+    pub(crate) did_contract_address: [u8; 32],
+    pub(crate) method_id: [u8; 32],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CompactCredential {
-    version: u16,
-    package_id: [u8; 32],
-    schema_id: [u8; 32],
-    major_version: u16,
-    minor_version: u16,
-    issuer: VerificationMethodRef,
-    holder: VerificationMethodRef,
-    issued_at: u64,
-    has_expiration: bool,
-    expires_at: u64,
+    pub(crate) version: u16,
+    pub(crate) package_id: [u8; 32],
+    pub(crate) schema_id: [u8; 32],
+    pub(crate) major_version: u16,
+    pub(crate) minor_version: u16,
+    pub(crate) issuer: VerificationMethodRef,
+    pub(crate) holder: VerificationMethodRef,
+    pub(crate) issued_at: u64,
+    pub(crate) has_expiration: bool,
+    pub(crate) expires_at: u64,
     pub(crate) commitments: DigitalPassportCommitments,
 }
 
@@ -75,7 +75,7 @@ struct CompactProof {
     response: Fr,
 }
 
-fn inspect(
+pub(crate) fn inspect(
     credential_bytes: &[u8],
     detached_proof: Option<&[u8]>,
 ) -> Result<CredentialInspection, CredentialVerificationError> {
@@ -388,7 +388,7 @@ fn verify_issuance_proof(credential: &CompactCredential, proof: &CompactProof) -
         == proof.announcement + proof.public_key * challenge
 }
 
-fn credential_body_root(credential: &CompactCredential) -> [u8; 32] {
+pub(crate) fn credential_body_root(credential: &CompactCredential) -> [u8; 32] {
     persistent_hash(&(
         credential.version,
         (
@@ -440,7 +440,7 @@ where
     transient_hash(&aligned.field_vec())
 }
 
-fn persistent_hash<T: BinaryHashRepr + ?Sized>(value: &T) -> [u8; 32] {
+pub(crate) fn persistent_hash<T: BinaryHashRepr + ?Sized>(value: &T) -> [u8; 32] {
     let mut writer = PersistentHashWriter::new();
     value.binary_repr(&mut writer);
     writer.finalize().0

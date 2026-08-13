@@ -22,9 +22,14 @@ use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256Key};
 use sha2::{Digest as _, Sha256};
 
 mod compact_digital_passport;
+mod compact_presentation;
 mod digital_passport;
 
 pub use compact_digital_passport::MidnightCompactCredentialVerifier;
+pub use compact_presentation::{
+    CompactPresentationError, CompactPresentationPublicInput, DigitalPassportPresentationSelection,
+    PreflightOnlyCompactPresentationProof, prepare_public_input,
+};
 pub use digital_passport::{
     CLAIM_DATE_OF_BIRTH, CLAIM_DOCUMENT_NUMBER, CLAIM_FIRST_NAME, CLAIM_ISSUING_STATE,
     CLAIM_LAST_NAME, DigitalPassportCommitments, DigitalPassportDisclosureAdapter, PACKAGE_ID,

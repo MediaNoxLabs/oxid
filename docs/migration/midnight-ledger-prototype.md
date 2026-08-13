@@ -314,10 +314,11 @@ prototype's disabled-action fiction. `presentation/domain` and
 single-use state. `adapters/openid4vp` strictly accepts one deterministic
 request-by-reference OpenID4VP 1.0 Final-shaped DCQL profile and maps it to the
 commitment-bound Digital Passport candidates. Headless and Dioxus show the
-verifier, purpose, and exact claim intents without values. Acceptance currently
-consumes the session and fails with `proof_unavailable`; it cannot construct a
-`vp_token` until issue #28 supplies reproducible Compact artifacts and an
-independent verifier.
+verifier, purpose, and exact claim intents without values. Acceptance now
+re-verifies the protected exact Compact bundle, constructs and independently
+checks the generated-circuit public statement, consumes the session, and fails
+with `proof_unavailable`; it cannot construct a `vp_token` until protected
+holder signing, proof execution, and an independent proof verifier are wired.
 
 Shielded spending, internal/change address management, replacement handling,
 live DID writes, OpenID4VP verifier proof/response delivery and Compact disclosure/predicate proof generation, camera/copy/share

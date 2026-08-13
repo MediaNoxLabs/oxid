@@ -43,27 +43,27 @@ const NULL_DOCUMENT_LABEL: &[u8] = b"document-number";
 pub struct DigitalPassportDisclosureAdapter;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct ClaimValues {
-    first_name: [u8; 64],
-    last_name: [u8; 64],
-    date_of_birth_days: u32,
-    document_number: [u8; 32],
-    issuing_state: [u8; 32],
+pub(crate) struct ClaimValues {
+    pub(crate) first_name: [u8; 64],
+    pub(crate) last_name: [u8; 64],
+    pub(crate) date_of_birth_days: u32,
+    pub(crate) document_number: [u8; 32],
+    pub(crate) issuing_state: [u8; 32],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct ClaimOpenings {
-    first_name: [u8; 32],
-    last_name: [u8; 32],
-    date_of_birth: [u8; 32],
-    document_number: [u8; 32],
-    issuing_state: [u8; 32],
+pub(crate) struct ClaimOpenings {
+    pub(crate) first_name: [u8; 32],
+    pub(crate) last_name: [u8; 32],
+    pub(crate) date_of_birth: [u8; 32],
+    pub(crate) document_number: [u8; 32],
+    pub(crate) issuing_state: [u8; 32],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct PrivateParts {
-    values: ClaimValues,
-    openings: ClaimOpenings,
+pub(crate) struct PrivateParts {
+    pub(crate) values: ClaimValues,
+    pub(crate) openings: ClaimOpenings,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,9 +82,7 @@ impl CredentialDisclosurePort for DigitalPassportDisclosureAdapter {
         signed_bytes: &[u8],
         private_material: &[u8],
     ) -> Result<CredentialDisclosureManifest, CredentialDisclosurePortError> {
-        let commitments = parse_public_commitments(signed_bytes)?;
-        let private_parts = parse_private_parts(private_material)?;
-        validate_private_parts(&commitments, &private_parts)?;
+        let (commitments, _) = validated_private_parts(signed_bytes, private_material)?;
         manifest(&commitments)
     }
 
@@ -94,9 +92,7 @@ impl CredentialDisclosurePort for DigitalPassportDisclosureAdapter {
         private_material: &[u8],
         claim_path: &str,
     ) -> Result<CredentialLocalClaim, CredentialDisclosurePortError> {
-        let commitments = parse_public_commitments(signed_bytes)?;
-        let private_parts = parse_private_parts(private_material)?;
-        validate_private_parts(&commitments, &private_parts)?;
+        let (commitments, private_parts) = validated_private_parts(signed_bytes, private_material)?;
         let value = match claim_path {
             CLAIM_FIRST_NAME => decode_padded_text(&private_parts.values.first_name)?,
             CLAIM_LAST_NAME => decode_padded_text(&private_parts.values.last_name)?,
@@ -268,7 +264,7 @@ fn validate_private_parts(
     Ok(())
 }
 
-fn commit<T>(value: T, opening: [u8; 32]) -> [u8; 32]
+pub(crate) fn commit<T>(value: T, opening: [u8; 32]) -> [u8; 32]
 where
     T: midnight_base_crypto::fab::DynAligned,
     midnight_base_crypto::fab::Value: From<T>,
@@ -294,7 +290,7 @@ fn claim_root(commitments: &DigitalPassportCommitments) -> [u8; 32] {
     writer.finalize().0
 }
 
-fn document_number_null_commitment() -> [u8; 32] {
+pub(crate) fn document_number_null_commitment() -> [u8; 32] {
     let value = (
         pad_text::<32>(NULL_COMMITMENT_DOMAIN),
         pad_text::<32>(NULL_DOCUMENT_LABEL),
@@ -421,6 +417,16 @@ fn parse_private_parts(bytes: &[u8]) -> Result<PrivateParts, CredentialDisclosur
             issuing_state: required_bytes(openings, "issuingStateOpening")?,
         },
     })
+}
+
+pub(crate) fn validated_private_parts(
+    signed_bytes: &[u8],
+    private_material: &[u8],
+) -> Result<(DigitalPassportCommitments, PrivateParts), CredentialDisclosurePortError> {
+    let commitments = parse_public_commitments(signed_bytes)?;
+    let private_parts = parse_private_parts(private_material)?;
+    validate_private_parts(&commitments, &private_parts)?;
+    Ok((commitments, private_parts))
 }
 
 fn encode_private_parts(

@@ -116,6 +116,7 @@ pub struct PresentationProofRequest {
     pub credential_id: String,
     pub verifier: String,
     pub challenge_hash: [u8; 32],
+    pub verifier_domain_hash: [u8; 32],
     pub requested_claims: Vec<RequestedPresentationClaim>,
 }
 
@@ -168,6 +169,7 @@ pub struct PresentationVerificationRequest {
     pub credential_id: String,
     pub verifier: String,
     pub challenge_hash: [u8; 32],
+    pub verifier_domain_hash: [u8; 32],
     pub requested_claims: Vec<RequestedPresentationClaim>,
     pub proof: PresentationProofArtifact,
 }

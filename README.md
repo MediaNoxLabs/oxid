@@ -133,9 +133,11 @@ active wallet profile rather than caller parameters.
 Standalone presentation preview adds `credential.presentation.prepare`,
 `credential.presentation.accept`, `credential.presentation.refuse`,
 `credential.presentation.get`, and `credential.presentation.list`. It strictly
-matches a Final-shaped DCQL request and requires exact consent. Acceptance is
-truthfully blocked on Compact proving: it returns `proof_unavailable`, consumes
-the session, and never emits a `vp_token`.
+matches a Final-shaped DCQL request and requires exact consent. Acceptance
+re-verifies the encrypted exact Compact credential/private-opening bundle,
+constructs and independently checks the generated circuit's public statement,
+then truthfully stops before Compact proving: it returns `proof_unavailable`,
+consumes the session, and never emits a `vp_token`.
 Standalone self-issued login adds `identity.authentication.prepare`,
 `identity.authentication.accept`, `identity.authentication.refuse`,
 `identity.authentication.get`, and `identity.authentication.list`. Results are
@@ -221,9 +223,10 @@ reveal operation.
 The Dioxus card permits explicit device-local first/last reveal and age
 threshold planning. A separate OpenID4VP 1.0 Final-shaped DCQL panel previews a
 deterministic standalone verifier request, matching credential, and exact claim
-intents before consent. The proof port remains unavailable, so acceptance
-fails closed and generates no presentation or `vp_token`. Reproducible Compact
-selective-disclosure/predicate proofs and live verifier transport remain
+intents before consent. The proof port performs exact credential/opening and
+public-statement preflight but remains unavailable before proof construction,
+so acceptance fails closed and generates no presentation or `vp_token`.
+Compact proof execution/verification and live verifier transport remain
 unavailable.
 
 Standalone composition also accepts exactly one request-by-reference SIOPv2

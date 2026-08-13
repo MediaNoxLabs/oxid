@@ -20,6 +20,9 @@ oxid-credential-domain.workspace = true
 oxid-foundation.workspace = true
 oxid-identity-application.workspace = true
 oxid-identity-domain.workspace = true
+oxid-platform-ports.workspace = true
+oxid-presentation-application.workspace = true
+oxid-presentation-domain.workspace = true
 p256.workspace = true
 sha2.workspace = true
 

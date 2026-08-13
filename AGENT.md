@@ -341,11 +341,24 @@ proof. Keep `PresentationProofPort` and `PresentationVerifierPort` separate. A
 `vp_token` may be constructed only after proof creation and independent
 verification bind the exact credential root, presentation root, verifier
 challenge/domain, actual disclosure flags, threshold, time input, and ledger
-context. Current standalone wiring intentionally returns `proof_unavailable`,
-consumes the single-use session, and leaves
-`presentationGenerated`/`verifierValidated` false. Normal composition keeps the
-whole protocol unavailable. Do not substitute a synthetic boolean, local age
-calculation, signature, or fixture bytes for a proof.
+context. Standalone wiring now reloads and re-verifies the exact encrypted
+credential/proof/opening bundle, constructs the generated circuit's public
+statement, round-trips the fixed 524-byte `MPS1` public-input encoding, and
+independently reconstructs it before intentionally returning
+`proof_unavailable`. `MPS1` contains selected public values/openings with
+canonical zero padding and never contains the private date-of-birth
+value/opening. OpenID derives verifier domain as
+`SHA-256("oxid:openid4vp:verifier-domain:v1\0" || verifier_domain)` separately
+from the nonce challenge. The generated-runtime oracle for challenge `11…11`,
+domain `22…22`, current day 20000, first/last reveal, and age-over-18 is:
+credential `b42f1115042cefecbd5380a0a630c0ef5f18bb13e7615cb1de9d36256f100432`,
+presentation `cf7570efcabe17ba6aa6920aed951f2794a7d609a03a49920694c5c4e09d2876`,
+consent `5a442aeb83cd3e589bfc27bd029c5e561ed0aca7109ca4e5642780c2f0bd20a3`,
+statement `475caef55fc4b454931beb6b4435688ed36cc1740d33ade45741dcd31214011c`.
+This remains preflight, not a proof: the session is consumed and
+`presentationGenerated`/`verifierValidated` stay false. Normal composition
+keeps the whole protocol unavailable. Do not substitute a synthetic boolean,
+local age calculation, signature, or fixture bytes for a proof.
 
 [Issue #29](https://github.com/MediaNoxLabs/oxid/issues/29) and ADR-0045 govern
 the exact stored `midnight_compact_vc` representation. `CredentialRecord`
@@ -379,7 +392,13 @@ ADR-0043/0044 presentation gate.
 The 2026-08-13 `just ios-smoke` run passed the exact Compact OID4VCI bundle
 through native verification, encrypted schema-v3 persistence, process restart,
 reverification, local reveal/hide, disclosure-plan preview, and the fail-closed
-presentation gate. Preserve the prototype-compatible `Digital Passport`
+presentation gate. After the `MPS1` preflight wiring, both `just ios-smoke` and
+`just android-smoke` passed the same full flow, including exact
+credential/opening revalidation, public-statement preflight, the intentional
+`proof_unavailable` result, and restart restoration. The strict Nix-shell gate
+reported 80.97% region and 82.79% line coverage; the new Compact presentation
+module reported 90.65% and 91.80% respectively. Preserve the
+prototype-compatible `Digital Passport`
 display name for this schema: the current Dioxus claim controls use that
 metadata contract. Replacing the display-name dispatch with an explicit schema
 identifier is follow-up work, not a reason to silently rename issued records.
@@ -521,7 +540,7 @@ Current package ownership:
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development lifecycle adapters. |
-| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification, commitment-bound Digital Passport private-part interpretation, and public standalone fixtures. |
+| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, and public standalone fixtures. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |

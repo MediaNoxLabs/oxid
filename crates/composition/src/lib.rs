@@ -62,7 +62,8 @@ use oxid_adapter_storage_memory::{
     InMemoryCredentialRepository, InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
 };
 use oxid_adapter_vc_midnight::{
-    DigitalPassportDisclosureAdapter, MidnightCredentialVerifier, StandaloneCredentialInbox,
+    DigitalPassportDisclosureAdapter, MidnightCredentialVerifier,
+    PreflightOnlyCompactPresentationProof, StandaloneCredentialInbox,
     standalone_compact_credential, standalone_compact_proof, standalone_private_material,
 };
 use oxid_credential_application::{
@@ -84,7 +85,7 @@ use oxid_presentation_application::{
     CredentialPresentationService, GetCredentialPresentationUseCase,
     ListCredentialPresentationsUseCase, PrepareCredentialPresentationUseCase,
     RefuseCredentialPresentationUseCase, UnavailableCredentialPresentationProtocol,
-    UnavailablePresentationProof, UnavailablePresentationVerifier,
+    UnavailablePresentationVerifier,
 };
 use oxid_protocol_application::{
     AcceptCredentialIssuanceUseCase, AcceptSelfIssuedAuthenticationUseCase,
@@ -1183,6 +1184,7 @@ where
         self_issued_authentication,
         credential_presentation,
     } = identity_adapters;
+    let presentation_credential_repository = Arc::clone(&credential_repository);
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let create_wallet_profile = Arc::new(CreateWalletProfileService::new(
@@ -1256,7 +1258,10 @@ where
                 let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
                 Arc::new(StandaloneOpenId4VpVerifier::new(
                     Arc::new(CredentialDisclosureCandidateSource::new(list, disclosure)),
-                    Arc::new(UnavailablePresentationProof),
+                    Arc::new(PreflightOnlyCompactPresentationProof::new(
+                        presentation_credential_repository,
+                        clock.clone(),
+                    )),
                     Arc::new(UnavailablePresentationVerifier),
                     clock.clone(),
                 ))

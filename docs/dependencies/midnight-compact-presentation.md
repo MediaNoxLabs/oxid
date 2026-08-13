@@ -65,8 +65,19 @@ Only Nix and the Oxid-owned final Compact source know the upstream repository
 layout. Core, application, headless, and UI packages receive no Compact,
 credential-family, generated-runtime, or proof-system type. The future runtime
 implementation belongs behind the existing `PresentationProofPort` and
-`PresentationVerifierPort`; its portable proof DTO must remain an Oxid-owned,
-bounded, redacted type.
+`PresentationVerifierPort`. The implemented adapter-private `MPS1`
+public-input DTO is fixed at 524 bytes, redacts debug output, canonically
+zero-pads undisclosed slots, and excludes the private date-of-birth witness. It
+is not a proof or `vp_token`. The future portable proof DTO must likewise
+remain Oxid-owned, bounded, and redacted.
+
+Rust conformance tests pin the credential, presentation, consent, and statement
+roots against the generated runtime 0.15.0 contract. Standalone OpenID4VP
+derives the verifier domain hash with a versioned SHA-256 domain separator and
+passes it separately from the nonce-derived challenge. The standalone proof
+port re-verifies the exact issuance bundle and reconstructs this public input,
+but remains preflight-only until a reviewed prover and protected holder key are
+connected.
 
 The selected APIs are pre-stable prototype surfaces. Any source, compiler,
 runtime, parameter, circuit k/row, artifact-shape, or hash change triggers a

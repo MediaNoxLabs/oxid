@@ -6,7 +6,7 @@
 - Credential-family source: `midnight-verifiable-credentials` commit `39b1354212620b396e914b29603e6a38f2656546`
 - Toolchain source: `midnight-did` commit `05b237a5e51f9c22853b424e7d4236dfa9384c24`
 - Amends: ADR-0006, ADR-0010, ADR-0013, ADR-0015, ADR-0020, ADR-0022, ADR-0028, ADR-0042, and ADR-0043
-- Implementation state: immutable source/toolchain inputs, an Oxid-owned final Compact composition, real prover/verifier artifact generation, and a digest manifest are implemented; proof-preimage execution, portable proof encoding, independent runtime verification, tamper vectors, and `vp_token` remain fail-closed
+- Implementation state: immutable source/toolchain inputs, an Oxid-owned final Compact composition, real prover/verifier artifact generation, a digest manifest, exact Rust public-input construction, a portable public-input codec, and independent statement reconstruction are implemented; protected Jubjub signing, proof execution/encoding, independent proof verification, and `vp_token` remain fail-closed
 
 ## Context
 
@@ -72,6 +72,24 @@ credential, and exact consent; verify freshness and domain policy outside the
 proof; then verify the proof with the authenticated verifier key. Only that
 successful path may create a `vp_token`.
 
+The adapter boundary uses the Oxid-owned, fixed-size `MPS1` public-input
+encoding. Version 1 is exactly 524 bytes and contains the five statement roots
+or hashes, verifier-controlled current day, age threshold, disclosure flags,
+only the selected public values/openings with canonical zero padding for all
+unselected slots, and the final statement. The private date-of-birth value and
+opening are never encoded. The verifier-domain input is
+`SHA-256("oxid:openid4vp:verifier-domain:v1\0" || verifier_domain)`; it is
+derived from the already validated request extension and is distinct from the
+nonce-derived verifier challenge.
+
+Standalone composition now runs an exact preflight behind
+`PresentationProofPort`: it reloads the profile-scoped encrypted credential,
+re-verifies the detached issuance proof, validates all protected openings,
+applies the request selection and age precondition, round-trips `MPS1`, and
+independently reconstructs the statement. It then deliberately returns
+`proof_unavailable`. This exercises the real proof-preimage boundary without
+manufacturing proof bytes or changing the OpenID gate.
+
 ## Consequences
 
 - `nix build .#presentation-compact-artifacts` is the single reproducible
@@ -84,10 +102,11 @@ successful path may create a `vp_token`.
 - The 85 MB prover key and proving latency/RSS remain material mobile risks.
   iOS and Android packaging and measurements are required before enabling a
   production or standalone-development mobile prover.
-- Proof execution, independent verification, positive/tamper fixtures,
-  portable proof encoding, OpenID response construction, and verifier delivery
-  remain issue #28 work. Until all are present, acceptance continues to return
-  `proof_unavailable` and no `vp_token` exists.
+- Protected holder signing, proof execution, portable proof encoding,
+  independent proof verification, proof-byte/ledger-context vectors, OpenID
+  response construction, and verifier delivery remain issue #28/#29 work.
+  Until all are present, acceptance continues to return `proof_unavailable`
+  and no `vp_token` exists.
 
 ## Validation
 
@@ -98,6 +117,12 @@ successful path may create a `vp_token`.
 - Manifest digests are independently rehashed after the Nix build.
 - Hosted Linux CI builds the same flake package; the local reviewed artifact
   build is on `aarch64-darwin`.
-- Later runtime delivery must add a valid proof fixture plus challenge, domain,
-  disclosure, threshold, credential, ledger-context, and proof-byte tamper
-  failures before ADR-0043's fail-closed response gate changes.
+- Rust conformance tests reproduce the generated Compact oracle roots for the
+  exact standalone credential and first-name/last-name/age-over-18 selection:
+  credential `b42f1115…00432`, presentation `cf7570ef…d2876`, consent
+  `5a442aeb…d20a3`, and statement `475caef5…4011c`.
+- Codec/context tests reject truncation, non-canonical hidden slots, statement
+  tampering, challenge mismatch, and request mismatch without logging values.
+- Later runtime delivery must add a valid proof fixture plus ledger-context and
+  proof-byte tamper failures before ADR-0043's fail-closed response gate
+  changes.
