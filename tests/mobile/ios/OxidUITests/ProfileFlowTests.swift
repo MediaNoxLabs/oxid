@@ -176,7 +176,7 @@ final class ProfileFlowTests: XCTestCase {
         scrollTo(presentCredential, in: application)
         presentCredential.tap()
         XCTAssertTrue(
-            application.staticTexts["Compact proof runtime is not connected yet. Nothing was presented and no vp_token was generated."]
+            application.staticTexts["The holder authorized this exact presentation, but Compact proving is unavailable. No presentation or vp_token was generated."]
                 .waitForExistence(timeout: 10)
         )
         XCTAssertTrue(application.staticTexts["valid"].waitForExistence(timeout: 10))

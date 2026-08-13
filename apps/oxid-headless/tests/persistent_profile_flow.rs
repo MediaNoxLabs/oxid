@@ -713,6 +713,33 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         "midnight_compact_vc"
     );
     assert!(!reverified.to_string().contains("detachedProof"));
+    let restored_presentation = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-presentation-restored",
+        "method": "credential.presentation.prepare",
+        "params": { "request": oxid_composition::standalone_openid4vp_request() }
+    }));
+    let restored_presentation_id = restored_presentation["result"]["presentation"]["id"]
+        .as_str()
+        .expect("restored presentation id");
+    let restored_candidate_id =
+        restored_presentation["result"]["presentation"]["candidates"][0]["credentialId"]
+            .as_str()
+            .expect("restored presentation candidate");
+    let rejected_presentation = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "credential-presentation-restored-accept",
+        "method": "credential.presentation.accept",
+        "params": {
+            "presentationId": restored_presentation_id,
+            "credentialId": restored_candidate_id,
+            "confirmed": true,
+            "intent": "ACCEPT_CREDENTIAL_PRESENTATION"
+        }
+    }));
+    assert_eq!(
+        rejected_presentation["error"]["code"],
+        "holder_not_authorized"
+    );
+    assert!(!rejected_presentation.to_string().contains("vp_token"));
     let deleted = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-delete-restored",
         "method": "credential.delete",

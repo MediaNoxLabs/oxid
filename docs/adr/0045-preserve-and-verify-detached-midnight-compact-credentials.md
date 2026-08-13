@@ -6,7 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/vc_store/` and `wallet-core/src/oid4vci_client/credential/digital_passport.rs`
 - Reference package: `midnight-verifiable-credentials` commit `39b1354212620b396e914b29603e6a38f2656546`
 - Amends: ADR-0003, ADR-0007, ADR-0009, ADR-0011, ADR-0013, ADR-0015, ADR-0017, ADR-0020, ADR-0021, ADR-0023, ADR-0038, ADR-0039, ADR-0041, ADR-0042, ADR-0043, and ADR-0044
-- Implementation state: exact Compact credential body, detached issuance proof, and private opening material are independently bounded, retained, encrypted, restored, and verified in standalone flows; ADR-0046 supplies exact development Jubjub custody and ADR-0047 binds standalone issuance to the selected managed holder method, while issuer-method anchoring, presentation-time re-authorization, native custody, proving, and production transport remain fail-closed
+- Implementation state: exact Compact credential body, detached issuance proof, and private opening material are independently bounded, retained, encrypted, restored, and verified in standalone flows; ADR-0046 supplies exact development Jubjub custody, ADR-0047 binds standalone issuance to the selected managed holder method, and ADR-0048 reauthorizes current control, while issuer-method anchoring, native custody, proving, and production transport remain fail-closed
 
 ## Context
 

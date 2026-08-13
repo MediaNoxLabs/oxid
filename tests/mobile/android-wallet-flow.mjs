@@ -260,11 +260,11 @@ try {
     })()`);
     await clickButton("Consent and present");
     await waitFor(
-      "document.body.innerText.includes('Compact proof runtime is not connected yet. Nothing was presented and no vp_token was generated.')",
+      "document.body.innerText.includes('The holder authorized this exact presentation, but Compact proving is unavailable. No presentation or vp_token was generated.')",
       "fail-closed Compact presentation proof gate",
     );
     const presentationProofGated = await evaluate(
-      "document.body.innerText.includes('Nothing was presented and no vp_token was generated.')",
+      "document.body.innerText.includes('No presentation or vp_token was generated.')",
     );
     const claimsHiddenByDefault = await evaluate(
       "Boolean(document.querySelector('.passport-claims')) && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",

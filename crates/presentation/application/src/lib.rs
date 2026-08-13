@@ -52,6 +52,8 @@ pub type FindPresentationCandidatesFuture<'a> = Pin<
 pub type CreatePresentationProofFuture<'a> = Pin<
     Box<dyn Future<Output = Result<PresentationProofArtifact, PresentationProofError>> + Send + 'a>,
 >;
+pub type AuthorizePresentationHolderFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), PresentationHolderAuthorizationError>> + Send + 'a>>;
 pub type VerifyPresentationProofFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), PresentationVerificationError>> + Send + 'a>>;
 
@@ -163,6 +165,49 @@ pub trait PresentationProofPort: Send + Sync {
     -> CreatePresentationProofFuture<'a>;
 }
 
+/// Current-control check for the holder method named by a credential.
+///
+/// This is deliberately separate from [`PresentationProofPort`]. A successful
+/// authorization proves only that the current protected DID key approved the
+/// consented presentation statement; it is not a credential-family proof and
+/// must never be serialized as a `vp_token`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PresentationHolderAuthorizationRequest {
+    pub profile_id: PresentationProfileId,
+    pub holder_did: String,
+    pub holder_method_id: String,
+    pub verifier: String,
+    pub presentation_statement: [u8; 32],
+}
+
+impl fmt::Debug for PresentationHolderAuthorizationRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PresentationHolderAuthorizationRequest")
+            .field("profile_id", &self.profile_id)
+            .field("holder_did", &self.holder_did)
+            .field("holder_method_id", &self.holder_method_id)
+            .field("verifier", &self.verifier)
+            .finish_non_exhaustive()
+    }
+}
+
+pub trait PresentationHolderAuthorizationPort: Send + Sync {
+    fn authorize<'a>(
+        &'a self,
+        request: PresentationHolderAuthorizationRequest,
+    ) -> AuthorizePresentationHolderFuture<'a>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PresentationHolderAuthorizationError {
+    Unavailable,
+    InvalidBinding,
+    NotManaged,
+    Locked,
+    Rejected,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct PresentationVerificationRequest {
     pub profile_id: PresentationProfileId,
@@ -202,6 +247,8 @@ pub enum PresentationProtocolError {
     InvalidVerifier,
     RequestExpired,
     NoCandidate,
+    HolderAuthorizationUnavailable,
+    HolderNotAuthorized,
     ProofUnavailable,
     InvalidProof,
     VerifierRejected,
@@ -217,6 +264,8 @@ impl PresentationProtocolError {
             Self::InvalidVerifier => "invalid_verifier",
             Self::RequestExpired => "request_expired",
             Self::NoCandidate => "no_candidate",
+            Self::HolderAuthorizationUnavailable => "holder_authorization_unavailable",
+            Self::HolderNotAuthorized => "holder_not_authorized",
             Self::ProofUnavailable => "proof_unavailable",
             Self::InvalidProof => "invalid_proof",
             Self::VerifierRejected => "verifier_rejected",
@@ -235,6 +284,8 @@ pub enum PresentationProofError {
     Unavailable,
     InvalidCredential,
     InvalidSelection,
+    HolderAuthorizationUnavailable,
+    HolderNotAuthorized,
     Rejected,
 }
 
@@ -265,7 +316,20 @@ display_code_error!(PresentationProofError, |error| match error {
     PresentationProofError::Unavailable => "presentation proof capability is unavailable",
     PresentationProofError::InvalidCredential => "presentation credential is invalid",
     PresentationProofError::InvalidSelection => "presentation selection is invalid",
+    PresentationProofError::HolderAuthorizationUnavailable =>
+        "presentation holder authorization is unavailable",
+    PresentationProofError::HolderNotAuthorized => "presentation holder is not authorized",
     PresentationProofError::Rejected => "presentation proof was rejected",
+});
+display_code_error!(PresentationHolderAuthorizationError, |error| match error {
+    PresentationHolderAuthorizationError::Unavailable =>
+        "presentation holder authorization is unavailable",
+    PresentationHolderAuthorizationError::InvalidBinding =>
+        "presentation holder binding is invalid",
+    PresentationHolderAuthorizationError::NotManaged => "presentation holder method is not managed",
+    PresentationHolderAuthorizationError::Locked => "presentation holder key is locked",
+    PresentationHolderAuthorizationError::Rejected =>
+        "presentation holder authorization was rejected",
 });
 display_code_error!(PresentationVerificationError, |error| match error {
     PresentationVerificationError::Unavailable => "presentation verification is unavailable",
@@ -714,6 +778,18 @@ impl PresentationProofPort for UnavailablePresentationProof {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailablePresentationHolderAuthorization;
+
+impl PresentationHolderAuthorizationPort for UnavailablePresentationHolderAuthorization {
+    fn authorize<'a>(
+        &'a self,
+        _: PresentationHolderAuthorizationRequest,
+    ) -> AuthorizePresentationHolderFuture<'a> {
+        Box::pin(async { Err(PresentationHolderAuthorizationError::Unavailable) })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 pub struct UnavailablePresentationVerifier;
 
 impl PresentationVerifierPort for UnavailablePresentationVerifier {
@@ -841,5 +917,25 @@ mod tests {
         assert_eq!(failed.state, "failed");
         assert_eq!(failed.failure_code.as_deref(), Some("proof_unavailable"));
         assert!(!failed.presentation_generated);
+    }
+
+    #[test]
+    fn holder_authorization_redacts_the_exact_statement_and_fails_closed_by_default() {
+        let request = PresentationHolderAuthorizationRequest {
+            profile_id: PresentationProfileId::parse("profile_one").expect("profile"),
+            holder_did: "did:midnight:undeployed:holder".to_owned(),
+            holder_method_id: "did:midnight:undeployed:holder#jubjub-1".to_owned(),
+            verifier: "https://verifier.example".to_owned(),
+            presentation_statement: [0x5a; 32],
+        };
+
+        let debug = format!("{request:?}");
+        assert!(debug.contains("jubjub-1"));
+        assert!(!debug.contains("presentation_statement"));
+        assert!(!debug.contains("5a5a5a"));
+        assert_eq!(
+            ready(UnavailablePresentationHolderAuthorization.authorize(request)),
+            Err(PresentationHolderAuthorizationError::Unavailable)
+        );
     }
 }

@@ -3827,8 +3827,12 @@ fn credential_issuance_message(error: CredentialIssuanceError) -> String {
 
 fn credential_presentation_message(error: CredentialPresentationError) -> String {
     match error {
+        CredentialPresentationError::Protocol(PresentationProtocolError::HolderNotAuthorized) =>
+            "The credential's bound DID method is no longer active and controlled by this wallet. Nothing was presented and no vp_token was generated.".to_owned(),
+        CredentialPresentationError::Protocol(PresentationProtocolError::HolderAuthorizationUnavailable) =>
+            "Unlock the wallet and make the bound DID holder method available before presenting. Nothing was presented and no vp_token was generated.".to_owned(),
         CredentialPresentationError::Protocol(PresentationProtocolError::ProofUnavailable) =>
-            "Compact proof runtime is not connected yet. Nothing was presented and no vp_token was generated.".to_owned(),
+            "The holder authorized this exact presentation, but Compact proving is unavailable. No presentation or vp_token was generated.".to_owned(),
         other => other.to_string(),
     }
 }

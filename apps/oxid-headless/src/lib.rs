@@ -3986,7 +3986,7 @@ fn capability_manifest() -> Value {
         { "method": "credential.issuance.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
         { "method": "credential.issuance.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
         { "method": "credential.presentation.prepare", "status": "ready", "mode": "standalone", "standard": "OpenID4VP 1.0 Final", "query": "DCQL", "requestMode": "by_reference", "claimValuesExposed": false },
-        { "method": "credential.presentation.accept", "status": "blocked", "mode": "standalone", "confirmationRequired": true, "proofAvailable": false, "generatesPresentation": false, "blocker": "https://github.com/MediaNoxLabs/oxid/issues/28" },
+        { "method": "credential.presentation.accept", "status": "blocked", "mode": "standalone", "confirmationRequired": true, "holderAuthorization": "current_managed_jubjub_method", "proofAvailable": false, "generatesPresentation": false, "blocker": "https://github.com/MediaNoxLabs/oxid/issues/28" },
         { "method": "credential.presentation.refuse", "status": "ready", "mode": "standalone" },
         { "method": "credential.presentation.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
         { "method": "credential.presentation.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
@@ -4120,6 +4120,7 @@ mod tests {
         assert!(methods.iter().any(|capability| {
             capability["method"] == "credential.presentation.accept"
                 && capability["status"] == "blocked"
+                && capability["holderAuthorization"] == "current_managed_jubjub_method"
                 && capability["proofAvailable"] == false
                 && capability["generatesPresentation"] == false
         }));
@@ -4367,6 +4368,44 @@ mod tests {
         .to_string();
         assert_eq!(execute_with_wallet(&wallet, &select_owner)[0]["ok"], true);
 
+        let original_holder_x = record["verificationMethods"]
+            .as_array()
+            .expect("verification methods")
+            .iter()
+            .find(|method| method["id"] == holder_binding_method_id)
+            .and_then(|method| method["publicKeyJwk"]["x"].as_str())
+            .expect("original holder x-coordinate")
+            .to_owned();
+        let rotated_holder = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "presentation-holder-rotate",
+                "method": "did.update",
+                "params": {
+                    "operation": "updateVerificationMethod",
+                    "did": did,
+                    "methodId": holder_binding_method_id,
+                    "algorithm": "jubjub",
+                    "confirmation": {
+                        "title": "Rotate presentation key",
+                        "summary": "Authorize the current DID method to replace its protected presentation key.",
+                        "confirmed": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        let rotated_holder_x =
+            rotated_holder[0]["result"]["didRecord"]["document"]["verificationMethods"]
+                .as_array()
+                .expect("rotated verification methods")
+                .iter()
+                .find(|method| method["id"] == holder_binding_method_id)
+                .and_then(|method| method["publicKeyJwk"]["x"].as_str())
+                .expect("rotated holder x-coordinate");
+        assert_ne!(rotated_holder_x, original_holder_x);
+
         let disclosure = execute_with_wallet(
             &wallet,
             &format!(
@@ -4488,6 +4527,117 @@ mod tests {
         assert_eq!(failed["presentationGenerated"], false);
         assert_eq!(failed["verifierValidated"], false);
         assert!(!failed_presentation[0].to_string().contains("vp_token"));
+
+        let prepared_while_locked = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "presentation-locked-prepare",
+                "method": "credential.presentation.prepare",
+                "params": {"request": oxid_composition::standalone_openid4vp_request()},
+            })
+            .to_string(),
+        );
+        let locked = &prepared_while_locked[0]["result"]["presentation"];
+        let locked_id = locked["id"].as_str().expect("presentation identifier");
+        let locked_credential_id = locked["candidates"][0]["credentialId"]
+            .as_str()
+            .expect("credential candidate");
+        assert_eq!(
+            execute_with_wallet(
+                &wallet,
+                r#"{"protocol":"oxid.headless.v1","id":"presentation-wallet-lock","method":"wallet.security.lock","params":{}}"#,
+            )[0]["ok"],
+            true
+        );
+        let rejected_while_locked = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "presentation-locked-accept",
+                "method": "credential.presentation.accept",
+                "params": {
+                    "presentationId": locked_id,
+                    "credentialId": locked_credential_id,
+                    "confirmed": true,
+                    "intent": "ACCEPT_CREDENTIAL_PRESENTATION"
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            rejected_while_locked[0]["error"]["code"],
+            "holder_authorization_unavailable"
+        );
+        assert!(!rejected_while_locked[0].to_string().contains("vp_token"));
+        assert_eq!(
+            execute_with_wallet(
+                &wallet,
+                r#"{"protocol":"oxid.headless.v1","id":"presentation-wallet-unlock","method":"wallet.security.unlock","params":{}}"#,
+            )[0]["ok"],
+            true
+        );
+
+        let relationship_removed = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "presentation-holder-unlink",
+                "method": "did.update",
+                "params": {
+                    "operation": "removeVerificationRelationship",
+                    "did": did,
+                    "relationship": "assertionMethod",
+                    "methodId": holder_binding_method_id,
+                    "confirmation": {
+                        "title": "Remove presentation authority",
+                        "summary": "Remove this DID method from the assertion relationship.",
+                        "confirmed": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(relationship_removed[0]["ok"], true);
+        let prepared_without_authority = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "presentation-unlinked-prepare",
+                "method": "credential.presentation.prepare",
+                "params": {"request": oxid_composition::standalone_openid4vp_request()},
+            })
+            .to_string(),
+        );
+        let unlinked = &prepared_without_authority[0]["result"]["presentation"];
+        let unlinked_id = unlinked["id"].as_str().expect("presentation identifier");
+        let unlinked_credential_id = unlinked["candidates"][0]["credentialId"]
+            .as_str()
+            .expect("credential candidate");
+        let rejected_without_authority = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "presentation-unlinked-accept",
+                "method": "credential.presentation.accept",
+                "params": {
+                    "presentationId": unlinked_id,
+                    "credentialId": unlinked_credential_id,
+                    "confirmed": true,
+                    "intent": "ACCEPT_CREDENTIAL_PRESENTATION"
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            rejected_without_authority[0]["error"]["code"],
+            "holder_not_authorized"
+        );
+        assert!(
+            !rejected_without_authority[0]
+                .to_string()
+                .contains("vp_token")
+        );
     }
 
     #[test]

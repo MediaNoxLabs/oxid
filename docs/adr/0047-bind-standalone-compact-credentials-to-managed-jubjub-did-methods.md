@@ -6,7 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, Digital Passport holder and DID paths
 - Reference package: `midnight-verifiable-credentials` commit `39b1354212620b396e914b29603e6a38f2656546`
 - Related: ADR-0037, ADR-0039, ADR-0045, ADR-0046, issues #27–29
-- Implementation state: standalone DID creation, OpenID4VCI consent, and exact Compact re-issuance bind a protected Jubjub assertion method to the credential holder reference; presentation-time re-authorization, native custody, issuer anchoring, and proof execution remain fail-closed
+- Implementation state: standalone DID creation, OpenID4VCI consent, and exact Compact re-issuance bind a protected Jubjub assertion method to the credential holder reference; ADR-0048 implements presentation-time re-authorization, while native custody, issuer anchoring, and proof execution remain fail-closed
 
 ## Context
 
@@ -74,8 +74,9 @@ profile DID, require that the exact holder method encoded in the credential is
 still active, assertion-authorized, managed, Jubjub, and backed by the currently
 authorized protected public key, and sign the credential-family proof challenge
 inside custody. A restored public DID record is not proof that its private key
-is still owned. Whether a credential survives an intentional rotation of the
-same method identifier must be decided explicitly before production proving.
+is still owned. ADR-0048 decides that a credential survives intentional key
+rotation only when the exact method identifier remains currently managed and
+assertion-authorized.
 
 The existing preflight continues to verify the dynamically bound credential,
 detached issuer proof, openings, and public statement, then returns
@@ -93,6 +94,6 @@ detached issuer proof, openings, and public statement, then returns
 - Exact static upstream body/proof vectors remain checked and round-trip through
   the native codec; dynamic vectors add a holder-specific body and valid
   detached proof without rewriting the fixture files.
-- Native key wrapping, user presence, issuer DID anchoring, presentation-time
-  re-authorization, credential-family challenge signing, proof execution,
+- Native key wrapping, user presence, issuer DID anchoring,
+  credential-family challenge signing, proof execution,
   independent verification, and `vp_token` remain required production gates.

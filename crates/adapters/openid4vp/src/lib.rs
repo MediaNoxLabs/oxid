@@ -358,6 +358,12 @@ impl CredentialPresentationProtocolPort for StandaloneOpenId4VpVerifier {
 fn map_proof_error(error: PresentationProofError) -> PresentationProtocolError {
     match error {
         PresentationProofError::Unavailable => PresentationProtocolError::ProofUnavailable,
+        PresentationProofError::HolderAuthorizationUnavailable => {
+            PresentationProtocolError::HolderAuthorizationUnavailable
+        }
+        PresentationProofError::HolderNotAuthorized => {
+            PresentationProtocolError::HolderNotAuthorized
+        }
         PresentationProofError::InvalidCredential | PresentationProofError::InvalidSelection => {
             PresentationProtocolError::InvalidRequest
         }

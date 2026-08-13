@@ -30,7 +30,8 @@ pub use compact_digital_passport::{
 };
 pub use compact_presentation::{
     CompactPresentationError, CompactPresentationPublicInput, DigitalPassportPresentationSelection,
-    PreflightOnlyCompactPresentationProof, prepare_public_input,
+    ManagedDidJubjubHolderAuthorization, PreflightOnlyCompactPresentationProof,
+    prepare_public_input,
 };
 pub use digital_passport::{
     CLAIM_DATE_OF_BIRTH, CLAIM_DOCUMENT_NUMBER, CLAIM_FIRST_NAME, CLAIM_ISSUING_STATE,

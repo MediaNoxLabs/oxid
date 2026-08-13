@@ -67,7 +67,7 @@ dependency on the three identity repositories.
 | Disclosure planning can be mistaken for verifier proof | Headless returns claim-free candidates/plans only; Dioxus labels reveal as local and reports `presentationGenerated: false`; no OpenID4VP or Compact proof is constructed. |
 | Compact body, detached issuance proof, and private openings can be collapsed or confused | Keep three separately bounded, debug-redacted record fields; route exact `MCV1` only; reject proof data for CBOR; never reuse an issuance signature as a presentation proof. |
 | A self-contained Compact proof can be mistaken for issuer trust | Mark only structural/proof/schema stages passed; issuer method anchoring, current-time policy, status, and trust stay `not_checked`. |
-| Prototype presentation derives a holder scalar from public claim data | Do not copy that shortcut into normal/mobile composition. ADR-0046 keeps exact Jubjub signing behind profile-scoped opaque development custody; ADR-0047 binds standalone issuance to the selected managed DID method. Presentation still requires current ownership reauthorization of that same protected key. |
+| Prototype presentation derives a holder scalar from public claim data | Do not copy that shortcut into normal/mobile composition. ADR-0046 keeps exact Jubjub signing behind profile-scoped opaque development custody; ADR-0047 binds standalone issuance to the selected managed DID method; ADR-0048 reauthorizes the exact statement with the current managed protected key and discards the separately verified custody signature. |
 
 The standalone fixture contains only public conformance material. Its issuer
 secret was generated outside the repository and discarded for the phase-1 CBOR
@@ -124,9 +124,10 @@ and method with the selected managed Jubjub assertion reference, canonically
 re-encodes all 18 chunks, and rebuilds the nine-chunk detached proof over the
 new body root. The public JWK is validated at issuance but is not embedded in
 the credential because the reference family's `ExplicitHolderBinding` contains
-only the DID/method reference. Presentation must re-resolve that exact method,
-authorize its current protected public key, and apply an explicit method-rotation
-policy before using it.
+only the DID/method reference. ADR-0048 re-resolves that exact method and
+authorizes its current protected public key. Rotation preserves authority only
+when the exact method identifier remains managed and assertion-authorized;
+removal, deactivation, locked custody, or public-only restoration fail closed.
 
 ## Digital Passport protected-material contract
 
@@ -157,8 +158,9 @@ surfaces without widening the current UI. Headless never reveals a value.
 - Oxid now stores and verifies the prototype's detached Compact issuance proof.
   That signature authenticates a credential body only; it is not the
   Digital Passport selective-disclosure/age presentation proof. The standalone
-  proof adapter now re-verifies that bundle and independently reconstructs the
-  exact generated-Compact public statement, then stops before proving.
+  proof adapter now re-verifies that bundle, independently reconstructs the
+  exact generated-Compact public statement, and reauthorizes it through the
+  currently managed holder method, then stops before proving.
   Runtime presentation proving and independent proof verification remain
   separate adapters.
 - ADR-0041 provides atomic protected storage and ADR-0042 provides local
@@ -177,8 +179,9 @@ surfaces without widening the current UI. Headless never reveals a value.
 - Exact process-local Jubjub generation/signing is implemented by ADR-0046 and
   cross-checked against the 0.5.0 Midnight DID package. ADR-0047 implements
   selected-DID/public-key validation and credential holder binding for
-  standalone issuance. Issuer-method anchoring, presentation-time ownership
-  reauthorization, and native custody remain tracked by issue #29. The
+  standalone issuance. ADR-0048 implements presentation-time current-control
+  authorization with explicit same-method rotation semantics. Issuer-method
+  anchoring and native custody remain tracked by issue #29. The
   prototype's public claim-root-derived holder scalar must not enter normal or
   mobile composition.
 - The development key file is not backup, recovery, biometric authorization,
@@ -201,5 +204,5 @@ surfaces without widening the current UI. Headless never reveals a value.
 | Cryptographic validity mistaken for trust | Temporal/status/schema/trust are explicit `not_checked` stages. |
 | Malicious credential offer or metadata | Strict duplicate-rejecting bounded JSON; exact embedded-offer parameter; issuer/authorization metadata separation; HTTPS-only production endpoint policy; explicit loopback exception only for standalone. |
 | Pre-authorized code replay or disclosure | Single-use adapter session; code/token/nonce never cross the protocol port or incoming DTO and are zeroized when retained. |
-| Holder-key substitution | OpenID authentication requires active profile scope, a non-deactivated managed authentication method, exact controller, DID URL `kid`, supported curve, issuer audience, and nonce-bound typed JWS. Credential holder binding separately requires an active managed assertion method, exact controller, canonical EC/Jubjub coordinates, and a holder reference regenerated under the issuer proof. Presentation-time ownership reauthorization remains fail-closed. |
+| Holder-key substitution | OpenID authentication requires active profile scope, a non-deactivated managed authentication method, exact controller, DID URL `kid`, supported curve, issuer audience, and nonce-bound typed JWS. Credential holder binding separately requires an active managed assertion method, exact controller, canonical EC/Jubjub coordinates, and a holder reference regenerated under the issuer proof. Presentation reloads that exact reference, requires current managed assertion authority, signs the exact statement through protected custody, independently verifies and discards the custody attestation, and emits no token until the distinct credential-family proof verifies. |
 | Self-issued login replay or verifier substitution | Exact loopback standalone verifier/request/response endpoints, short-lived nonce/state session consumed before verification, audience/issuer/subject checks, and independent DID-signature verification. |

@@ -62,9 +62,9 @@ use oxid_adapter_storage_memory::{
     InMemoryCredentialRepository, InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
 };
 use oxid_adapter_vc_midnight::{
-    DigitalPassportDisclosureAdapter, MidnightCredentialVerifier,
-    PreflightOnlyCompactPresentationProof, StandaloneBoundCompactCredentialIssuer,
-    StandaloneCredentialInbox,
+    DigitalPassportDisclosureAdapter, ManagedDidJubjubHolderAuthorization,
+    MidnightCredentialVerifier, PreflightOnlyCompactPresentationProof,
+    StandaloneBoundCompactCredentialIssuer, StandaloneCredentialInbox,
 };
 use oxid_credential_application::{
     CredentialDisclosurePort, CredentialInboxPort, CredentialRepository, CredentialService,
@@ -1254,11 +1254,16 @@ where
             CredentialPresentationComposition::Standalone => {
                 let list: Arc<dyn ListCredentialsUseCase> = credentials.clone();
                 let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
+                let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
+                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+                let holder_authorization =
+                    Arc::new(ManagedDidJubjubHolderAuthorization::new(get_did, sign_did));
                 Arc::new(StandaloneOpenId4VpVerifier::new(
                     Arc::new(CredentialDisclosureCandidateSource::new(list, disclosure)),
                     Arc::new(PreflightOnlyCompactPresentationProof::new(
                         presentation_credential_repository,
                         clock.clone(),
+                        holder_authorization,
                     )),
                     Arc::new(UnavailablePresentationVerifier),
                     clock.clone(),
