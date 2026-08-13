@@ -38,9 +38,10 @@ DIDs, protected credential inventory, embedded pre-authorized OpenID4VCI
 issuance, and consented self-issued DID authentication are now functional in
 standalone development. Digital Passport private parts are commitment-bound and
 encrypted; safe headless disclosure planning plus explicit local Dioxus
-first/last reveal and age-threshold planning are functional. Vault, live
-protocol transport, OpenID4VP verifier presentation, and disclosure/predicate
-proof generation remain deferred.
+first/last reveal and age-threshold planning are functional. Strict standalone
+OpenID4VP request, matching, and consent are functional and the real Compact
+presentation artifact set is reproducible. Vault, live protocol transport,
+runtime proof execution/verification, and `vp_token` remain deferred.
 
 ADR-0017 is accepted. The first M1 security slice separates protection/session
 state from key operations, secret blobs, and native user authorization. The
@@ -317,13 +318,25 @@ proof bytes, or response tokens. Acceptance requires the literal
 [Issue #28](https://github.com/MediaNoxLabs/oxid/issues/28) is the hard proving
 gate. At pinned `midnight-verifiable-credentials`
 `39b1354212620b396e914b29603e6a38f2656546`, Digital Passport Compact source
-and pure tests exist but generated managed artifacts are not committed; the
-generic holder/context Jubjub signature is not a selective-disclosure or age
-predicate proof. Keep `PresentationProofPort` and `PresentationVerifierPort`
-separate. A `vp_token` may be constructed only after proof creation and
-independent verification bind the exact credential, verifier challenge, and
-consented claim set. Current standalone wiring intentionally returns
-`proof_unavailable`, consumes the single-use session, and leaves
+and pure tests exist but generated managed artifacts are not committed. ADR-0044
+adds the Oxid-owned final composition and reproducibly builds its real artifact
+set with Compact CLI 0.5.1/compiler 0.30.0 from `midnight-did`
+`05b237a5e51f9c22853b424e7d4236dfa9384c24`. Run
+`nix build .#presentation-compact-artifacts`; generated material stays in the
+Nix store. The reviewed Apple-silicon baseline is k=18, 156,301 rows, with an
+85,011,711-byte prover key. Treat k, rows, source/toolchain/parameter identity,
+and every manifest digest as a coordinated review boundary. The upstream full
+pnpm Nix build is not the dependency path: its pinned offline closure currently
+lacks `@midnight-ntwrk/midnight-did@0.5.0`.
+
+Artifact availability is not presentation readiness. The generic
+holder/context Jubjub signature is not a selective-disclosure or age predicate
+proof. Keep `PresentationProofPort` and `PresentationVerifierPort` separate. A
+`vp_token` may be constructed only after proof creation and independent
+verification bind the exact credential root, presentation root, verifier
+challenge/domain, actual disclosure flags, threshold, time input, and ledger
+context. Current standalone wiring intentionally returns `proof_unavailable`,
+consumes the single-use session, and leaves
 `presentationGenerated`/`verifierValidated` false. Normal composition keeps the
 whole protocol unavailable. Do not substitute a synthetic boolean, local age
 calculation, signature, or fixture bytes for a proof.
@@ -430,6 +443,8 @@ bound to the signed credential fixture.
 ADR-0043 adds strict Final-shaped OpenID4VP/DCQL request preview, candidate
 matching, exact consent, refusal, and replay protection, while preserving a
 hard proof/independent-verifier gate before `vp_token`.
+ADR-0044 adds the immutable final Compact composition, proving/verifying key
+derivation, and artifact digest manifest without opening that runtime gate.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -463,6 +478,7 @@ Current package ownership:
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
+| `contracts/presentation` | Oxid-owned final Compact presentation compositions; generated artifacts remain Nix-store outputs and never enter Git. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, and public receive-QR rendering. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |

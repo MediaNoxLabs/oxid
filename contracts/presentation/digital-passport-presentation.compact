@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: Apache-2.0
+
+pragma language_version >= 0.20;
+
+import CompactStandardLibrary;
+
+// The Nix artifact build places this Oxid-owned final composition one level
+// below the immutable midnight-verifiable-credentials source root. Keeping the
+// credential family as an include preserves the upstream ownership boundary:
+// pure families define semantics; this deployable composition owns proving
+// artifacts.
+include "../packages/prototypes/credential-families/digital-passport/src/digital-passport-credential";
+
+witness holderDateOfBirthDays(): Uint<32>;
+witness holderDateOfBirthOpening(): Bytes<32>;
+
+export ledger contractVersion: Uint<16>;
+export ledger lastPresentationStatement: Bytes<32>;
+
+constructor() {
+  contractVersion = 1;
+  lastPresentationStatement = pad(32, "oxid:compact-vp:none");
+}
+
+pure circuit oxidPresentationStatement(
+  credentialRoot: Bytes<32>,
+  presentationRoot: Bytes<32>,
+  verifierChallengeHash: Bytes<32>,
+  verifierDomainHash: Bytes<32>,
+  consentedClaimsHash: Bytes<32>,
+  currentDay: Uint<32>,
+  ageThresholdYears: Uint<8>
+): Bytes<32> {
+  return persistentHash<Vector<8, Bytes<32>>>([
+    pad(32, "oxid:midnight-compact-vp:v1"),
+    credentialRoot,
+    presentationRoot,
+    verifierChallengeHash,
+    verifierDomainHash,
+    consentedClaimsHash,
+    ((currentDay as Field) as Bytes<32>),
+    ((ageThresholdYears as Field) as Bytes<32>)
+  ]);
+}
+
+pure circuit oxidConsentedClaimsHash(
+  disclosures: DigitalPassportDisclosures
+): Bytes<32> {
+  return persistentHash<Vector<7, Bytes<32>>>([
+    pad(32, "oxid:compact-vp:claims:v1"),
+    ((disclosures.revealFirstName as Field) as Bytes<32>),
+    ((disclosures.revealLastName as Field) as Bytes<32>),
+    ((disclosures.proveAgeOverThreshold as Field) as Bytes<32>),
+    ((disclosures.ageThresholdYears as Field) as Bytes<32>),
+    ((disclosures.revealDocumentNumber as Field) as Bytes<32>),
+    ((disclosures.revealIssuingState as Field) as Bytes<32>)
+  ]);
+}
+
+// Produces the public statement for a real Compact proof. Credential content,
+// undisclosed claims, openings, and the date-of-birth witness remain private.
+// The verifier independently recomputes the returned statement from the exact
+// credential root, verifier request, consented disclosure set, and time-policy
+// input before verifying the proof.
+export circuit proveDigitalPassportPresentation(
+  credential: DigitalPassportCredential,
+  credentialProof: Proof,
+  request: DigitalPassportPresentationRequest,
+  presentation: DigitalPassportPresentation,
+  presentationProof: Proof,
+  currentDay: Uint<32>,
+  verifierDomainHash: Bytes<32>
+): Bytes<32> {
+  assert(currentDay > 0, "Current day must be set");
+  assert(
+    verifierDomainHash != default<Bytes<32>>,
+    "Verifier domain hash must be set"
+  );
+  assertValidDigitalPassportPresentation(
+    credential,
+    credentialProof,
+    presentation,
+    presentationProof
+  );
+  assertDigitalPassportPresentationSatisfiesRequest(
+    credential,
+    request,
+    presentation,
+    presentationProof
+  );
+  assertValidDigitalPassportAgePredicate(
+    credential,
+    presentation,
+    currentDay,
+    holderDateOfBirthDays(),
+    holderDateOfBirthOpening()
+  );
+
+  const statement = disclose(oxidPresentationStatement(
+    digitalPassportCredentialBodyRoot(credential),
+    digitalPassportPresentationBodyRoot(presentation),
+    request.verifierChallengeHash,
+    verifierDomainHash,
+    oxidConsentedClaimsHash(presentation.disclosed),
+    currentDay,
+    presentation.disclosed.ageThresholdYears
+  ));
+  lastPresentationStatement = statement;
+  return statement;
+}

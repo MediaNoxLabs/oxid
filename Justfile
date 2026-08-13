@@ -47,5 +47,8 @@ android-smoke:
 nix-check:
     nix flake check --print-build-logs
 
+presentation-compact-artifacts:
+    nix build .#presentation-compact-artifacts --print-build-logs
+
 clean:
     ./run.sh clean

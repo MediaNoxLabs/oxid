@@ -1,9 +1,10 @@
-{ ... }:
+{ inputs, ... }:
 
 {
   perSystem =
     { pkgs, ... }:
     let
+      midnightDidPackages = inputs.midnight-did-toolchain.packages.${pkgs.stdenv.hostPlatform.system};
       linuxLibraries = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         pkgs.glib
         pkgs.gtk3
@@ -30,6 +31,8 @@
             just
             lychee
             llvmPackages.llvm
+            midnightDidPackages.compact-midnight
+            midnightDidPackages.compact-toolchain
             nixfmt
             nodejs_24
             openssl
@@ -48,6 +51,7 @@
           export RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}
           export LLVM_COV=${pkgs.llvmPackages.llvm}/bin/llvm-cov
           export LLVM_PROFDATA=${pkgs.llvmPackages.llvm}/bin/llvm-profdata
+          export COMPACT_DIRECTORY=${midnightDidPackages.compact-toolchain}
           ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
           ''}

@@ -25,4 +25,5 @@ Current reviews and source policies:
 - [Midnight ledger transaction packages](midnight-ledger-8.2.md)
 - [Midnight standalone submission stack](midnight-standalone-submission.md)
 - [Midnight local proving](midnight-local-proving.md)
+- [Midnight Compact Digital Passport presentation](midnight-compact-presentation.md)
 - [Midnight DID resolution](midnight-did-resolution.md)

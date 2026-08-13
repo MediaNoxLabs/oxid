@@ -1,9 +1,16 @@
-{ ... }:
+{ inputs, ... }:
 
 {
   perSystem =
     { pkgs, self', ... }:
     let
+      midnightDidPackages = inputs.midnight-did-toolchain.packages.${pkgs.stdenv.hostPlatform.system};
+      presentationCompactArtifacts = pkgs.callPackage ./presentation-compact-artifacts.nix {
+        compactMidnight = midnightDidPackages.compact-midnight;
+        compactToolchain = midnightDidPackages.compact-toolchain;
+        midnightCircuitParams = midnightDidPackages.midnight-circuit-params;
+        midnightVcSource = inputs.midnight-verifiable-credentials;
+      };
       linuxBuildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         pkgs.glib
         pkgs.gtk3
@@ -79,6 +86,8 @@
           };
         };
 
+        presentation-compact-artifacts = presentationCompactArtifacts;
+
         dioxus-cli = pkgs.dioxus-cli;
       }
       // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
@@ -87,6 +96,7 @@
 
       checks.package = self'.packages.default;
       checks.headless = self'.packages.headless;
+      checks.presentation-compact-artifacts = presentationCompactArtifacts;
       formatter = pkgs.nixfmt;
     };
 }

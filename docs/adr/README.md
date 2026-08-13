@@ -65,6 +65,7 @@ ADR status and delivery state answer different questions:
 | [0041](0041-protect-format-private-credential-material.md) Protect format-private credential material as opaque bytes | Accepted | §§3–7, 10, 12–13, 16–18 and issue #26 | Bounded opaque material, verified-import propagation, and encrypted schema migration implemented; Digital Passport interpretation/disclosure delivered by ADR-0042 |
 | [0042](0042-bind-digital-passport-disclosure-to-signed-commitments.md) Bind Digital Passport disclosure to signed commitments | Accepted | §§3–7, 9–13, 16–18 and issue #26 | Standalone five-claim issuance, commitment-bound private parts, safe headless planning, local Dioxus reveal, restart/deletion, and mobile smoke coverage implemented; OpenID4VP/proofs deferred |
 | [0043](0043-gate-openid4vp-on-reproducible-compact-proofs.md) Gate OpenID4VP on reproducible Compact proofs | Accepted | §§3–7, 9–13, 16–18 and issues #27/#28 | Strict Final-shaped DCQL request preview, matching, exact consent, single-use headless/mobile lifecycle implemented; proof, verifier response, and `vp_token` remain fail-closed |
+| [0044](0044-compose-reproducible-digital-passport-presentation-artifacts.md) Compose reproducible Digital Passport presentation artifacts | Accepted | §§3–7, 9–13, 16–18, 21 and issue #28 | Immutable source/toolchain plus real prover/verifier artifact generation and digest manifest implemented; runtime proof, independent verification, tamper vectors, and `vp_token` remain fail-closed |
 
 ## Current boundaries
 
@@ -123,4 +124,7 @@ keeps local reveal out of headless, and labels preview as non-presenting;
 OpenID4VP and Compact proof generation remain fail-closed. ADR-0043 adds a
 strict OpenID4VP/DCQL request, consent, and session boundary, but requires a
 reproducible Compact proof plus independent verification before any `vp_token`
-can exist.
+can exist. ADR-0044 delivers the reproducible final Compact composition and
+authenticated artifact baseline without changing that runtime gate: proof
+execution, exact public-statement reconstruction, independent verification,
+tamper coverage, and response construction are still required.

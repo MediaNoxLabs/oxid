@@ -34,3 +34,6 @@ jobs:
 
       - name: Build the locked Nix package
         run: nix build --print-build-logs
+
+      - name: Build Digital Passport presentation artifacts
+        run: nix build .#presentation-compact-artifacts --print-build-logs
