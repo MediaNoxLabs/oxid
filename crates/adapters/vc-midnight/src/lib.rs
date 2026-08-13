@@ -32,6 +32,7 @@ pub use compact_runtime::{
     NativeCompactPresentationRuntime,
 };
 mod digital_passport;
+mod passport_policy;
 
 pub use compact_digital_passport::{
     MidnightCompactCredentialVerifier, StandaloneBoundCompactCredentialIssuer,
@@ -49,6 +50,11 @@ pub use digital_passport::{
     CLAIM_LAST_NAME, DigitalPassportCommitments, DigitalPassportDisclosureAdapter, PACKAGE_ID,
     SCHEMA_ID, STANDALONE_DIGITAL_PASSPORT_CREDENTIAL_B64, standalone_commitments,
     standalone_credential, standalone_private_material,
+};
+pub use passport_policy::{
+    DigitalPassportIssuerTrustAnchor, DigitalPassportPolicyError, DigitalPassportPolicyEvidence,
+    DigitalPassportPolicyRequest, standalone_digital_passport_issuer_trust_anchor,
+    verify_digital_passport_policy,
 };
 
 pub const STANDALONE_CREDENTIAL_B64: &str =

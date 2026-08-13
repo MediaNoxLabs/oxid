@@ -1,0 +1,20 @@
+[package]
+name = "oxid-adapter-passport-vault"
+description = "Standalone Passport Vault product adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+oxid-adapter-vc-midnight.workspace = true
+oxid-credential-application.workspace = true
+oxid-credential-domain.workspace = true
+oxid-passport-vault-application.workspace = true
+oxid-passport-vault-domain.workspace = true
+oxid-platform-ports.workspace = true
+
+[lints]
+workspace = true

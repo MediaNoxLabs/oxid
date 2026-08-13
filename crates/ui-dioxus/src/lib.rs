@@ -21,6 +21,12 @@ use oxid_identity_application::{
     UpdateDidUseCase,
 };
 use oxid_identity_domain::VerificationRelationship;
+use oxid_passport_vault_application::{
+    CLAIM_INTENT, CREATE_LOCK_INTENT, ClaimPassportVaultLockCommand, ClaimPassportVaultLockUseCase,
+    CreatePassportVaultLockCommand, CreatePassportVaultLockUseCase, DEPOSIT_INTENT,
+    DepositPassportVaultLockUseCase, ListPassportVaultLocksUseCase, PassportVaultAmountCommand,
+    PassportVaultLockView, PassportVaultView, WITHDRAW_INTENT, WithdrawPassportVaultLockUseCase,
+};
 use oxid_presentation_application::{
     AcceptCredentialPresentationCommand, AcceptCredentialPresentationUseCase,
     CredentialPresentationError, CredentialPresentationView, PrepareCredentialPresentationCommand,
@@ -117,6 +123,65 @@ pub struct WalletUiServices {
     accept_self_issued_authentication: Arc<dyn AcceptSelfIssuedAuthenticationUseCase>,
     refuse_self_issued_authentication: Arc<dyn RefuseSelfIssuedAuthenticationUseCase>,
     standalone_self_issued_request: Option<String>,
+    list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase>,
+    create_passport_vault_lock: Arc<dyn CreatePassportVaultLockUseCase>,
+    deposit_passport_vault_lock: Arc<dyn DepositPassportVaultLockUseCase>,
+    claim_passport_vault_lock: Arc<dyn ClaimPassportVaultLockUseCase>,
+    withdraw_passport_vault_lock: Arc<dyn WithdrawPassportVaultLockUseCase>,
+}
+
+/// Product-specific Passport Vault capabilities consumed only by the Vault page.
+pub struct PassportVaultUiServices {
+    list: Arc<dyn ListPassportVaultLocksUseCase>,
+    create: Arc<dyn CreatePassportVaultLockUseCase>,
+    deposit: Arc<dyn DepositPassportVaultLockUseCase>,
+    claim: Arc<dyn ClaimPassportVaultLockUseCase>,
+    withdraw: Arc<dyn WithdrawPassportVaultLockUseCase>,
+}
+
+impl PassportVaultUiServices {
+    #[must_use]
+    pub fn new(
+        list: Arc<dyn ListPassportVaultLocksUseCase>,
+        create: Arc<dyn CreatePassportVaultLockUseCase>,
+        deposit: Arc<dyn DepositPassportVaultLockUseCase>,
+        claim: Arc<dyn ClaimPassportVaultLockUseCase>,
+        withdraw: Arc<dyn WithdrawPassportVaultLockUseCase>,
+    ) -> Self {
+        Self {
+            list,
+            create,
+            deposit,
+            claim,
+            withdraw,
+        }
+    }
+}
+
+/// Runtime wallet flows kept separate from profile, security, and identity
+/// service bundles at the incoming composition boundary.
+pub struct WalletOperationalUiServices {
+    dust: WalletDustSyncUiServices,
+    shielded: WalletShieldedSyncUiServices,
+    transactions: WalletTransactionUiServices,
+    vault: PassportVaultUiServices,
+}
+
+impl WalletOperationalUiServices {
+    #[must_use]
+    pub const fn new(
+        dust: WalletDustSyncUiServices,
+        shielded: WalletShieldedSyncUiServices,
+        transactions: WalletTransactionUiServices,
+        vault: PassportVaultUiServices,
+    ) -> Self {
+        Self {
+            dust,
+            shielded,
+            transactions,
+            vault,
+        }
+    }
 }
 
 /// DID inventory and resolution use cases consumed by the DIDs page.
@@ -532,11 +597,13 @@ impl WalletUiServices {
         profiles: WalletProfileUiServices,
         security: WalletSecurityUiServices,
         account: WalletAccountUiServices,
-        dust: WalletDustSyncUiServices,
-        shielded: WalletShieldedSyncUiServices,
-        transactions: WalletTransactionUiServices,
+        operations: WalletOperationalUiServices,
         identity: IdentityUiServices,
     ) -> Self {
+        let dust = operations.dust;
+        let shielded = operations.shielded;
+        let transactions = operations.transactions;
+        let vault = operations.vault;
         let dids = identity.dids;
         let credentials = identity.credentials;
         let authentication = identity.authentication;
@@ -596,6 +663,11 @@ impl WalletUiServices {
             accept_self_issued_authentication: authentication.accept,
             refuse_self_issued_authentication: authentication.refuse,
             standalone_self_issued_request: authentication.standalone_request,
+            list_passport_vault_locks: vault.list,
+            create_passport_vault_lock: vault.create,
+            deposit_passport_vault_lock: vault.deposit,
+            claim_passport_vault_lock: vault.claim,
+            withdraw_passport_vault_lock: vault.withdraw,
         }
     }
 
@@ -882,11 +954,37 @@ impl WalletUiServices {
     pub fn standalone_self_issued_request(&self) -> Option<String> {
         self.standalone_self_issued_request.clone()
     }
+
+    #[must_use]
+    pub fn list_passport_vault_locks(&self) -> Arc<dyn ListPassportVaultLocksUseCase> {
+        Arc::clone(&self.list_passport_vault_locks)
+    }
+
+    #[must_use]
+    pub fn create_passport_vault_lock(&self) -> Arc<dyn CreatePassportVaultLockUseCase> {
+        Arc::clone(&self.create_passport_vault_lock)
+    }
+
+    #[must_use]
+    pub fn deposit_passport_vault_lock(&self) -> Arc<dyn DepositPassportVaultLockUseCase> {
+        Arc::clone(&self.deposit_passport_vault_lock)
+    }
+
+    #[must_use]
+    pub fn claim_passport_vault_lock(&self) -> Arc<dyn ClaimPassportVaultLockUseCase> {
+        Arc::clone(&self.claim_passport_vault_lock)
+    }
+
+    #[must_use]
+    pub fn withdraw_passport_vault_lock(&self) -> Arc<dyn WithdrawPassportVaultLockUseCase> {
+        Arc::clone(&self.withdraw_passport_vault_lock)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Destination {
     Assets,
+    Vault,
     Dids,
     Credentials,
     Diagnostics,
@@ -898,6 +996,7 @@ impl Destination {
     const fn label(self) -> &'static str {
         match self {
             Self::Assets => "Assets",
+            Self::Vault => "Vault",
             Self::Dids => "DIDs",
             Self::Credentials => "Credentials",
             Self::Diagnostics => "Diagnostics",
@@ -909,6 +1008,7 @@ impl Destination {
     const fn icon(self) -> &'static str {
         match self {
             Self::Assets => LUCIDE_WALLET,
+            Self::Vault => LUCIDE_LANDMARK,
             Self::Dids => LUCIDE_FINGERPRINT,
             Self::Credentials => LUCIDE_BADGE_CHECK,
             Self::Diagnostics => LUCIDE_ACTIVITY,
@@ -917,8 +1017,9 @@ impl Destination {
     }
 }
 
-const PRIMARY_DESTINATIONS: [Destination; 5] = [
+const PRIMARY_DESTINATIONS: [Destination; 6] = [
     Destination::Assets,
+    Destination::Vault,
     Destination::Dids,
     Destination::Credentials,
     Destination::Diagnostics,
@@ -985,6 +1086,18 @@ enum AccountPageState {
         account: Box<WalletAccountView>,
         security: WalletSecurityStatusView,
         busy: Option<AccountOperation>,
+    },
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PassportVaultPageState {
+    Loading,
+    Ready {
+        vault: PassportVaultView,
+        credentials: Vec<CredentialView>,
+        busy: bool,
+        operation_error: Option<String>,
     },
     Failed(String),
 }
@@ -1139,6 +1252,7 @@ pub fn App() -> Element {
                 nav { class: "menu-dropdown", aria_label: "All wallet destinations",
                     for destination in [
                         Destination::Assets,
+                        Destination::Vault,
                         Destination::Dids,
                         Destination::Credentials,
                         Destination::Diagnostics,
@@ -1162,6 +1276,7 @@ pub fn App() -> Element {
             main { class: "page-content",
                 match active {
                     Destination::Assets => rsx! { AssetsPage { active_profile: active_profile.clone() } },
+                    Destination::Vault => rsx! { PassportVaultPage { active_profile: active_profile.clone() } },
                     Destination::Dids => rsx! { DidsPage { active_profile: active_profile.clone() } },
                     Destination::Credentials => rsx! { CredentialsPage { active_profile: active_profile.clone() } },
                     Destination::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
@@ -3438,6 +3553,358 @@ fn ManagedDidControls(
     }
 }
 
+fn load_passport_vault_page(
+    services: &WalletUiServices,
+    profile_id: &str,
+    operation_error: Option<String>,
+) -> PassportVaultPageState {
+    let vault = match services.list_passport_vault_locks().execute() {
+        Ok(vault) => vault,
+        Err(error) => return PassportVaultPageState::Failed(error.to_string()),
+    };
+    let credentials = match services.list_credentials().execute(CredentialProfileQuery {
+        profile_id: profile_id.to_owned(),
+    }) {
+        Ok(credentials) => credentials
+            .into_iter()
+            .filter(|credential| {
+                credential.format == "midnight_compact_vc"
+                    && credential.verification_outcome == "valid"
+            })
+            .collect(),
+        Err(error) => return PassportVaultPageState::Failed(error.to_string()),
+    };
+    PassportVaultPageState::Ready {
+        vault,
+        credentials,
+        busy: false,
+        operation_error,
+    }
+}
+
+fn parse_vault_amount(value: &str) -> Result<u128, String> {
+    if value.is_empty()
+        || value.len() > 39
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return Err("Enter a canonical whole-number NIGHT amount in base units.".to_owned());
+    }
+    value
+        .parse()
+        .map_err(|_| "The NIGHT amount is outside the supported range.".to_owned())
+}
+
+fn vault_policy_value(value: &str) -> Result<Option<[u8; 32]>, String> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.trim() != value
+        || value.len() > 32
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() || byte == b' ')
+    {
+        return Err("Policy values must be 1–32 printable ASCII bytes.".to_owned());
+    }
+    let mut padded = [0_u8; 32];
+    padded[..value.len()].copy_from_slice(value.as_bytes());
+    Ok(Some(padded))
+}
+
+#[component]
+fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut page = use_signal(|| PassportVaultPageState::Loading);
+    let mut minimum_age = use_signal(|| "18".to_owned());
+    let mut maximum_claim = use_signal(|| "40".to_owned());
+    let mut initial_amount = use_signal(|| "100".to_owned());
+    let mut required_state = use_signal(String::new);
+    let mut required_document = use_signal(String::new);
+    let mut operation_amount = use_signal(|| "10".to_owned());
+    let mut selected_credential = use_signal(String::new);
+    let services_for_load = services.clone();
+    let profile_for_load = active_profile.id.clone();
+    use_effect(move || {
+        let loaded = load_passport_vault_page(&services_for_load, &profile_for_load, None);
+        if selected_credential.read().is_empty()
+            && let PassportVaultPageState::Ready { credentials, .. } = &loaded
+            && let Some(credential) = credentials.first()
+        {
+            selected_credential.set(credential.id.clone());
+        }
+        page.set(loaded);
+    });
+
+    match page.read().clone() {
+        PassportVaultPageState::Loading => rsx! {
+            section { class: "page-stack", aria_busy: "true",
+                h1 { "Passport Vault" }
+                p { "Loading standalone vault state…" }
+            }
+        },
+        PassportVaultPageState::Failed(message) => rsx! {
+            section { class: "page-stack",
+                div { class: "page-heading",
+                    div { h1 { "Passport Vault" } p { "Credential-gated NIGHT locks." } }
+                    span { class: "status-pill warning", "Unavailable" }
+                }
+                article { class: "info-card warning-card",
+                    h2 { "Vault capability unavailable" }
+                    p { "{message}" }
+                    p { "Enable the standalone development composition to exercise local vault flows. Live Compact contract submission remains a separate adapter." }
+                }
+            }
+        },
+        PassportVaultPageState::Ready {
+            vault,
+            credentials,
+            busy,
+            operation_error,
+        } => {
+            let profile_id = active_profile.id.clone();
+            let create_services = services.clone();
+            let create_profile = profile_id.clone();
+            let create_state = required_state.read().clone();
+            let create_document = required_document.read().clone();
+            let create_age = minimum_age.read().clone();
+            let create_maximum = maximum_claim.read().clone();
+            let create_initial = initial_amount.read().clone();
+            rsx! {
+                section { class: "page-stack",
+                    div { class: "page-heading",
+                        div {
+                            p { class: "eyebrow", "Product adapter" }
+                            h1 { "Passport Vault" }
+                            p { "Create, fund, claim, and withdraw credential-gated NIGHT locks." }
+                        }
+                        span { class: "status-pill", "Standalone" }
+                    }
+
+                    article { class: "balance-card",
+                        p { class: "card-eyebrow", "Total locked" }
+                        h2 { "{vault.total_locked} base units" }
+                        div { class: "balance-breakdown",
+                            span { "Deposited {vault.total_deposited}" }
+                            span { "Released {vault.total_released}" }
+                            span { "Claims {vault.claim_count}" }
+                        }
+                        p { class: "trust-line", "Process-local conformance ledger · no on-chain transaction submitted" }
+                    }
+
+                    if let Some(message) = operation_error {
+                        p { class: "field-error", role: "alert", "{message}" }
+                    }
+
+                    article { class: "info-card",
+                        div { class: "card-heading",
+                            div { p { class: "card-eyebrow", "Locker flow" } h2 { "Create a lock" } }
+                            span { class: "status-pill", "Explicit consent" }
+                        }
+                        div { class: "field-grid",
+                            label { "Minimum age"
+                                input { r#type: "number", min: "0", max: "120", aria_label: "Vault minimum age", value: "{minimum_age}", oninput: move |event| minimum_age.set(event.value()) }
+                            }
+                            label { "Maximum claim (base units)"
+                                input { inputmode: "numeric", aria_label: "Vault maximum claim", value: "{maximum_claim}", oninput: move |event| maximum_claim.set(event.value()) }
+                            }
+                            label { "Initial deposit (base units)"
+                                input { inputmode: "numeric", aria_label: "Vault initial deposit", value: "{initial_amount}", oninput: move |event| initial_amount.set(event.value()) }
+                            }
+                            label { "Required issuing state (optional)"
+                                input { maxlength: "32", aria_label: "Vault required issuing state", value: "{required_state}", placeholder: "US", oninput: move |event| required_state.set(event.value()) }
+                            }
+                            label { "Required document number (optional)"
+                                input { maxlength: "32", aria_label: "Vault required document number", value: "{required_document}", placeholder: "AB1234567", oninput: move |event| required_document.set(event.value()) }
+                            }
+                        }
+                        button {
+                            class: "primary-button",
+                            r#type: "button",
+                            disabled: busy,
+                            onclick: move |_| {
+                                let parsed = (|| {
+                                    let age = create_age.parse::<u8>().map_err(|_| "Minimum age must be 0–120.".to_owned())?;
+                                    let maximum = parse_vault_amount(&create_maximum)?;
+                                    let initial = if create_initial == "0" { 0 } else { parse_vault_amount(&create_initial)? };
+                                    let state = vault_policy_value(&create_state)?;
+                                    let document = vault_policy_value(&create_document)?;
+                                    Ok::<_, String>((age, maximum, initial, state, document))
+                                })();
+                                match parsed {
+                                    Err(message) => page.set(load_passport_vault_page(&create_services, &create_profile, Some(message))),
+                                    Ok((age, maximum, initial, state, document)) => {
+                                        let result = create_services.create_passport_vault_lock().execute(CreatePassportVaultLockCommand {
+                                            profile_id: create_profile.clone(),
+                                            minimum_age_years: age,
+                                            required_issuing_state: state,
+                                            required_document_number: document,
+                                            maximum_claim_amount: maximum,
+                                            initial_amount: initial,
+                                            confirmed: true,
+                                            intent: CREATE_LOCK_INTENT.to_owned(),
+                                        });
+                                        page.set(load_passport_vault_page(
+                                            &create_services,
+                                            &create_profile,
+                                            result.err().map(|error| error.to_string()),
+                                        ));
+                                    }
+                                }
+                            },
+                            "Create confirmed lock"
+                        }
+                    }
+
+                    article { class: "info-card",
+                        div { class: "card-heading",
+                            div { p { class: "card-eyebrow", "Redeemer flow" } h2 { "Claim controls" } }
+                            span { class: "status-pill", "Digital Passport" }
+                        }
+                        label { "Credential"
+                            select {
+                                aria_label: "Vault credential",
+                                value: "{selected_credential}",
+                                onchange: move |event| selected_credential.set(event.value()),
+                                option { value: "", "Select a verified Digital Passport" }
+                                for credential in &credentials {
+                                    option { value: "{credential.id}", "{credential.display_name} · {credential.id}" }
+                                }
+                            }
+                        }
+                        label { "Operation amount (base units)"
+                            input { inputmode: "numeric", aria_label: "Vault operation amount", value: "{operation_amount}", oninput: move |event| operation_amount.set(event.value()) }
+                        }
+                        if credentials.is_empty() {
+                            p { class: "field-hint", "Issue or import a verified compact Digital Passport on the Credentials page before claiming." }
+                        }
+                    }
+
+                    if vault.locks.is_empty() {
+                        article { class: "empty-card", h2 { "No vault locks" } p { "Create the first policy-bound lock above." } }
+                    } else {
+                        div { class: "credential-list",
+                            for lock in vault.locks.clone() {
+                                {
+                                    let complete_services = services.clone();
+                                    let complete_profile = profile_id.clone();
+                                    rsx! {
+                                        PassportVaultLockCard {
+                                            key: "{lock.lock_id}",
+                                            lock,
+                                            profile_id: profile_id.clone(),
+                                            amount: operation_amount.read().clone(),
+                                            credential_id: selected_credential.read().clone(),
+                                            busy,
+                                            on_complete: move |message: Option<String>| {
+                                                page.set(load_passport_vault_page(&complete_services, &complete_profile, message));
+                                            },
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn PassportVaultLockCard(
+    lock: PassportVaultLockView,
+    profile_id: String,
+    amount: String,
+    credential_id: String,
+    busy: bool,
+    on_complete: EventHandler<Option<String>>,
+) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let deposit = services.deposit_passport_vault_lock();
+    let withdraw = services.withdraw_passport_vault_lock();
+    let claim = services.claim_passport_vault_lock();
+    let creator = lock.creator_profile_id == profile_id;
+    let policy_detail = format!(
+        "Age {}+ · max {}{}{}",
+        lock.minimum_age_years,
+        lock.maximum_claim_amount,
+        lock.required_issuing_state
+            .as_ref()
+            .map_or(String::new(), |value| format!(" · state {value}")),
+        lock.required_document_number
+            .as_ref()
+            .map_or(String::new(), |value| format!(" · document {value}")),
+    );
+    rsx! {
+        article { class: "credential-card",
+            div { class: "credential-card__heading",
+                div { p { class: "card-eyebrow", "Lock #{lock.lock_id}" } h2 { "{lock.remaining} base units remaining" } }
+                span { class: "status-pill", if creator { "Your lock" } else { "Claimable" } }
+            }
+            p { "{policy_detail}" }
+            p { class: "field-hint", "Deposited {lock.total_deposited} · released {lock.total_released}" }
+            div { class: "button-row",
+                button {
+                    class: "secondary-button", r#type: "button", disabled: busy || !creator,
+                    onclick: {
+                        let amount = amount.clone();
+                        let profile_id = profile_id.clone();
+                        move |_| {
+                            let result = parse_vault_amount(&amount).and_then(|amount| deposit.execute(PassportVaultAmountCommand {
+                                profile_id: profile_id.clone(), lock_id: lock.lock_id, amount,
+                                confirmed: true, intent: DEPOSIT_INTENT.to_owned(),
+                            }).map(|_| ()).map_err(|error| error.to_string()));
+                            on_complete.call(result.err());
+                        }
+                    },
+                    "Deposit"
+                }
+                button {
+                    class: "primary-button", r#type: "button", disabled: busy || credential_id.is_empty(),
+                    onclick: {
+                        let amount = amount.clone();
+                        let profile_id = profile_id.clone();
+                        let credential_id = credential_id.clone();
+                        move |_| {
+                            let Ok(amount) = parse_vault_amount(&amount) else {
+                                on_complete.call(Some("Enter a valid claim amount.".to_owned()));
+                                return;
+                            };
+                            let service = claim.clone();
+                            let profile_id = profile_id.clone();
+                            let credential_id = credential_id.clone();
+                            spawn(async move {
+                                let result = service.execute(ClaimPassportVaultLockCommand {
+                                    profile_id, lock_id: lock.lock_id, credential_id, amount,
+                                    confirmed: true, intent: CLAIM_INTENT.to_owned(),
+                                }).await;
+                                on_complete.call(result.err().map(|error| error.to_string()));
+                            });
+                        }
+                    },
+                    "Claim with credential"
+                }
+                button {
+                    class: "secondary-button", r#type: "button", disabled: busy || !creator,
+                    onclick: {
+                        let amount = amount.clone();
+                        let profile_id = profile_id.clone();
+                        move |_| {
+                            let result = parse_vault_amount(&amount).and_then(|amount| withdraw.execute(PassportVaultAmountCommand {
+                                profile_id: profile_id.clone(), lock_id: lock.lock_id, amount,
+                                confirmed: true, intent: WITHDRAW_INTENT.to_owned(),
+                            }).map(|_| ()).map_err(|error| error.to_string()));
+                            on_complete.call(result.err());
+                        }
+                    },
+                    "Withdraw"
+                }
+            }
+        }
+    }
+}
+
 #[component]
 fn DidsPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -4920,6 +5387,7 @@ fn ProfilePage(
 // Inline Lucide icons retained from the reviewed prototype shell. Lucide's ISC
 // notice is reproduced in THIRD_PARTY_NOTICES.md.
 const LUCIDE_WALLET: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>"#;
+const LUCIDE_LANDMARK: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7"/><path d="M5 10v9"/><path d="M9 10v9"/><path d="M15 10v9"/><path d="M19 10v9"/><path d="M3 19h18"/><path d="M2 22h20"/></svg>"#;
 const LUCIDE_FINGERPRINT: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2c0 .47 0 1.17-.02 2"/></svg>"#;
 const LUCIDE_BADGE_CHECK: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg>"#;
 const LUCIDE_ACTIVITY: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.5.5 0 0 1-.96 0L9.24 2.18a.5.5 0 0 0-.96 0l-2.35 8.36A2 2 0 0 1 4 12H2"/></svg>"#;
@@ -4935,7 +5403,14 @@ mod tests {
 
         assert_eq!(
             labels,
-            ["Assets", "DIDs", "Credentials", "Diagnostics", "Settings"]
+            [
+                "Assets",
+                "Vault",
+                "DIDs",
+                "Credentials",
+                "Diagnostics",
+                "Settings"
+            ]
         );
     }
 

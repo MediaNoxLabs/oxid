@@ -20,6 +20,12 @@ use oxid_identity_application::{
     SignDidPayloadCommand, UpdateDidCommand,
 };
 use oxid_identity_domain::VerificationRelationship;
+use oxid_passport_vault_application::{
+    CLAIM_INTENT, CREATE_LOCK_INTENT, ClaimPassportVaultLockCommand,
+    CreatePassportVaultLockCommand, DEPOSIT_INTENT, PassportVaultAmountCommand,
+    PassportVaultLockView, PassportVaultOperationError, PassportVaultView, WITHDRAW_INTENT,
+};
+use oxid_passport_vault_domain::PassportVaultError;
 use oxid_presentation_application::{
     AcceptCredentialPresentationCommand, CredentialPresentationError,
     CredentialPresentationProfileQuery, CredentialPresentationQuery, CredentialPresentationView,
@@ -197,6 +203,11 @@ impl HeadlessWallet {
             "wallet.shielded.sync.status" => self.shielded_sync_status(request),
             "wallet.shielded.sync.start" => self.start_shielded_sync(request),
             "wallet.shielded.sync.cancel" => self.cancel_shielded_sync(request),
+            "vault.total_locked" | "vault.locks.list" => self.list_vault_locks(request),
+            "vault.lock.create" => self.create_vault_lock(request),
+            "vault.deposit" => self.deposit_to_vault_lock(request),
+            "vault.claim" => self.claim_from_vault_lock(request),
+            "vault.withdraw" => self.withdraw_from_vault_lock(request),
             "did.create" => self.create_did(request),
             "did.resolve" => self.resolve_did(request),
             "did.list" => self.list_dids(request),
@@ -206,7 +217,7 @@ impl HeadlessWallet {
             "did.deactivate" => self.deactivate_did(request),
             "did.forget" => self.forget_did(request),
             "credential.receive" | "credential.request" => self.receive_credential(request),
-            "credential.list" => self.list_credentials(request),
+            "credential.list" | "vault.credentials.list" => self.list_credentials(request),
             "credential.get" => self.get_credential(request),
             "credential.reverify" | "credential.verify" => self.reverify_credential(request),
             "credential.delete" => self.delete_credential(request),
@@ -275,6 +286,166 @@ impl HeadlessWallet {
             request.id,
             json!({ "shuttingDown": true }),
         ))
+    }
+
+    fn list_vault_locks(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "vault.locks.list");
+        }
+        if let Err(response) = self.active_profile_id(request.id.clone()) {
+            return Dispatch::continue_with(response);
+        }
+        match self.application.list_passport_vault_locks().execute() {
+            Ok(vault) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "vault": passport_vault_value(&vault) }),
+            )),
+            Err(error) => Dispatch::continue_with(passport_vault_error(request.id, error)),
+        }
+    }
+
+    fn create_vault_lock(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<CreateVaultLockParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "vault.lock.create requires minimumAgeYears, maximumClaimAmount, initialAmount, confirmed, and intent",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let maximum_claim_amount = match decimal_u128(&params.maximum_claim_amount) {
+            Some(value) => value,
+            None => return invalid_vault_amount(request.id, "maximumClaimAmount"),
+        };
+        let initial_amount = match decimal_u128(&params.initial_amount) {
+            Some(value) => value,
+            None => return invalid_vault_amount(request.id, "initialAmount"),
+        };
+        let required_issuing_state = match policy_value(params.required_issuing_state) {
+            Ok(value) => value,
+            Err(()) => return invalid_vault_policy_value(request.id, "requiredIssuingState"),
+        };
+        let required_document_number = match policy_value(params.required_document_number) {
+            Ok(value) => value,
+            Err(()) => return invalid_vault_policy_value(request.id, "requiredDocumentNumber"),
+        };
+        match self.application.create_passport_vault_lock().execute(
+            CreatePassportVaultLockCommand {
+                profile_id,
+                minimum_age_years: params.minimum_age_years,
+                required_issuing_state,
+                required_document_number,
+                maximum_claim_amount,
+                initial_amount,
+                confirmed: params.confirmed,
+                intent: params.intent,
+            },
+        ) {
+            Ok(lock) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "lock": passport_vault_lock_value(&lock) }),
+            )),
+            Err(error) => Dispatch::continue_with(passport_vault_error(request.id, error)),
+        }
+    }
+
+    fn deposit_to_vault_lock(&self, request: Request) -> Dispatch {
+        self.vault_amount_operation(request, false)
+    }
+
+    fn withdraw_from_vault_lock(&self, request: Request) -> Dispatch {
+        self.vault_amount_operation(request, true)
+    }
+
+    fn vault_amount_operation(&self, request: Request, withdraw: bool) -> Dispatch {
+        let params = match serde_json::from_value::<VaultAmountParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "vault amount operations require lockId, amount, confirmed, and intent",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let amount = match decimal_u128(&params.amount) {
+            Some(value) => value,
+            None => return invalid_vault_amount(request.id, "amount"),
+        };
+        let command = PassportVaultAmountCommand {
+            profile_id,
+            lock_id: params.lock_id,
+            amount,
+            confirmed: params.confirmed,
+            intent: params.intent,
+        };
+        let result = if withdraw {
+            self.application
+                .withdraw_passport_vault_lock()
+                .execute(command)
+        } else {
+            self.application
+                .deposit_passport_vault_lock()
+                .execute(command)
+        };
+        match result {
+            Ok(lock) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "lock": passport_vault_lock_value(&lock) }),
+            )),
+            Err(error) => Dispatch::continue_with(passport_vault_error(request.id, error)),
+        }
+    }
+
+    fn claim_from_vault_lock(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<ClaimVaultLockParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "vault.claim requires lockId, credentialId, amount, confirmed, and intent",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let amount = match decimal_u128(&params.amount) {
+            Some(value) => value,
+            None => return invalid_vault_amount(request.id, "amount"),
+        };
+        match futures::executor::block_on(self.application.claim_passport_vault_lock().execute(
+            ClaimPassportVaultLockCommand {
+                profile_id,
+                lock_id: params.lock_id,
+                credential_id: params.credential_id,
+                amount,
+                confirmed: params.confirmed,
+                intent: params.intent,
+            },
+        )) {
+            Ok(claim) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "releasedAmount": claim.released_amount,
+                    "currentDay": claim.current_day,
+                    "lock": passport_vault_lock_value(&claim.lock),
+                }),
+            )),
+            Err(error) => Dispatch::continue_with(passport_vault_error(request.id, error)),
+        }
     }
 
     fn resolve_did(&self, request: Request) -> Dispatch {
@@ -2197,6 +2368,39 @@ struct DeriveAccountParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateVaultLockParams {
+    minimum_age_years: u8,
+    #[serde(default)]
+    required_issuing_state: Option<String>,
+    #[serde(default)]
+    required_document_number: Option<String>,
+    maximum_claim_amount: String,
+    initial_amount: String,
+    confirmed: bool,
+    intent: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VaultAmountParams {
+    lock_id: u64,
+    amount: String,
+    confirmed: bool,
+    intent: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClaimVaultLockParams {
+    lock_id: u64,
+    credential_id: String,
+    amount: String,
+    confirmed: bool,
+    intent: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PrepareTransferParams {
     recipient_address: String,
     amount_atomic_units: String,
@@ -2625,13 +2829,16 @@ impl Response {
         }
     }
 
-    fn error(id: Option<String>, code: &'static str, message: &'static str) -> Self {
+    fn error(id: Option<String>, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             protocol: PROTOCOL_VERSION,
             id,
             ok: false,
             result: None,
-            error: Some(ErrorBody { code, message }),
+            error: Some(ErrorBody {
+                code,
+                message: message.into(),
+            }),
         }
     }
 }
@@ -2639,7 +2846,7 @@ impl Response {
 #[derive(Serialize)]
 struct ErrorBody {
     code: &'static str,
-    message: &'static str,
+    message: String,
 }
 
 struct Dispatch {
@@ -3917,6 +4124,107 @@ fn security_port_error(id: Option<String>, error: WalletSecurityPortError) -> Re
     }
 }
 
+fn decimal_u128(value: &str) -> Option<u128> {
+    if value.is_empty()
+        || value.len() > 39
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return None;
+    }
+    value.parse().ok()
+}
+
+fn policy_value(value: Option<String>) -> Result<Option<[u8; 32]>, ()> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_empty()
+        || value.trim() != value
+        || value.len() > 32
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() || byte == b' ')
+    {
+        return Err(());
+    }
+    let mut padded = [0_u8; 32];
+    padded[..value.len()].copy_from_slice(value.as_bytes());
+    Ok(Some(padded))
+}
+
+fn passport_vault_lock_value(lock: &PassportVaultLockView) -> Value {
+    json!({
+        "lockId": lock.lock_id,
+        "creatorProfileId": lock.creator_profile_id,
+        "policy": {
+            "minimumAgeYears": lock.minimum_age_years,
+            "requiredIssuingState": lock.required_issuing_state,
+            "requiredDocumentNumber": lock.required_document_number,
+            "maximumClaimAmount": lock.maximum_claim_amount,
+            "verifierChallengeHex": lock.verifier_challenge_hex,
+        },
+        "totalDeposited": lock.total_deposited,
+        "totalReleased": lock.total_released,
+        "remaining": lock.remaining,
+    })
+}
+
+fn passport_vault_value(vault: &PassportVaultView) -> Value {
+    json!({
+        "source": vault.source,
+        "totalDeposited": vault.total_deposited,
+        "totalReleased": vault.total_released,
+        "totalLocked": vault.total_locked,
+        "claimCount": vault.claim_count,
+        "locks": vault.locks.iter().map(passport_vault_lock_value).collect::<Vec<_>>(),
+    })
+}
+
+fn invalid_vault_amount(id: Option<String>, field: &str) -> Dispatch {
+    Dispatch::continue_with(Response::error(
+        id,
+        "invalid_params",
+        format!("{field} must be a canonical unsigned decimal string"),
+    ))
+}
+
+fn invalid_vault_policy_value(id: Option<String>, field: &str) -> Dispatch {
+    Dispatch::continue_with(Response::error(
+        id,
+        "invalid_params",
+        format!("{field} must be 1-32 printable ASCII bytes when present"),
+    ))
+}
+
+fn passport_vault_error(id: Option<String>, error: PassportVaultOperationError) -> Response {
+    let (code, message) = match &error {
+        PassportVaultOperationError::Repository(_) | PassportVaultOperationError::Platform(_) => {
+            ("capability_unavailable", error.to_string())
+        }
+        PassportVaultOperationError::Credential(
+            oxid_passport_vault_application::PassportVaultCredentialError::Unavailable,
+        ) => ("capability_unavailable", error.to_string()),
+        PassportVaultOperationError::Credential(
+            oxid_passport_vault_application::PassportVaultCredentialError::NotFound,
+        )
+        | PassportVaultOperationError::Domain(PassportVaultError::LockNotFound) => {
+            ("not_found", error.to_string())
+        }
+        PassportVaultOperationError::ConfirmationRequired
+        | PassportVaultOperationError::InvalidConfirmation => {
+            ("confirmation_required", error.to_string())
+        }
+        PassportVaultOperationError::Domain(PassportVaultError::CredentialAlreadyClaimed) => {
+            ("conflict", error.to_string())
+        }
+        PassportVaultOperationError::Credential(_)
+        | PassportVaultOperationError::Domain(_)
+        | PassportVaultOperationError::PolicyChanged => ("failed_precondition", error.to_string()),
+    };
+    Response::error(id, code, message)
+}
+
 fn capability_manifest(compact_presentation_proof_available: bool) -> Value {
     json!([
         { "method": "system.capabilities", "status": "ready" },
@@ -3961,12 +4269,13 @@ fn capability_manifest(compact_presentation_proof_available: bool) -> Value {
         { "method": "wallet.shielded.sync.status", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached", "unavailable"] },
         { "method": "wallet.shielded.sync.start", "status": "ready", "mode": "standalone", "execution": "adapter_worker" },
         { "method": "wallet.shielded.sync.cancel", "status": "ready", "mode": "standalone", "checkpoint": "resumable" },
-        { "method": "vault.total_locked", "status": "queued" },
-        { "method": "vault.locks.list", "status": "queued" },
-        { "method": "vault.credentials.list", "status": "queued" },
-        { "method": "vault.lock.create", "status": "queued" },
-        { "method": "vault.deposit", "status": "queued" },
-        { "method": "vault.claim", "status": "queued" },
+        { "method": "vault.total_locked", "status": "ready", "mode": "standalone", "state": "process_local" },
+        { "method": "vault.locks.list", "status": "ready", "mode": "standalone", "state": "process_local" },
+        { "method": "vault.credentials.list", "status": "ready", "mode": "standalone", "aliasFor": "credential.list" },
+        { "method": "vault.lock.create", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": CREATE_LOCK_INTENT },
+        { "method": "vault.deposit", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": DEPOSIT_INTENT },
+        { "method": "vault.claim", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": CLAIM_INTENT, "credentialPolicy": "digital-passport:v1", "replayProtection": "per_lock_credential_root" },
+        { "method": "vault.withdraw", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": WITHDRAW_INTENT },
         { "method": "identity.login", "status": "ready", "mode": "standalone", "aliasFor": "identity.authentication.prepare" },
         { "method": "identity.authentication.prepare", "status": "ready", "mode": "standalone", "standard": "SIOPv2 draft 13", "requestMode": "by_reference", "responseMode": "direct_post", "responseType": "id_token", "secretsExposed": false },
         { "method": "identity.authentication.accept", "status": "ready", "mode": "standalone", "confirmationRequired": true, "algorithms": ["EdDSA", "ES256"], "secretsExposed": false },
@@ -4132,6 +4441,176 @@ mod tests {
                 && capability["status"] == "ready"
                 && capability["aliasFor"] == "identity.authentication.prepare"
         }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "vault.claim"
+                && capability["status"] == "ready"
+                && capability["mode"] == "standalone"
+                && capability["replayProtection"] == "per_lock_credential_root"
+        }));
+    }
+
+    #[test]
+    fn runs_the_complete_standalone_passport_vault_flow_and_rejects_replay() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"vault-profile","method":"wallet.profile.create","params":{"displayName":"Vault holder"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile")
+            .to_owned();
+        let initialized = execute_with_wallet(
+            &wallet,
+            &format!(
+                "{}\n{}",
+                json!({"protocol": PROTOCOL_VERSION, "id": "vault-select", "method": "wallet.profile.select", "params": {"profileId": profile_id}}),
+                json!({"protocol": PROTOCOL_VERSION, "id": "vault-security", "method": "wallet.security.initialize", "params": {}}),
+            ),
+        );
+        assert!(initialized.iter().all(|response| response["ok"] == true));
+        let did_response = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"vault-did","method":"did.create","params":{}}"#,
+        );
+        let document = &did_response[0]["result"]["didRecord"]["document"];
+        let did = document["id"].as_str().expect("DID");
+        let method_id = document["relationships"]
+            .as_array()
+            .expect("relationships")
+            .iter()
+            .find(|relationship| relationship["relationship"] == "authentication")
+            .and_then(|relationship| relationship["methodIds"][0].as_str())
+            .expect("authentication method");
+        let holder_binding_method_id = document["verificationMethods"]
+            .as_array()
+            .expect("methods")
+            .iter()
+            .find(|method| method["publicKeyJwk"]["crv"] == "Jubjub")
+            .and_then(|method| method["id"].as_str())
+            .expect("Jubjub method");
+        let prepared = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "vault-issuance-prepare",
+                "method": "credential.issuance.prepare",
+                "params": {"offer": standalone_credential_offer()},
+            })
+            .to_string(),
+        );
+        let issuance_id = prepared[0]["result"]["issuance"]["id"]
+            .as_str()
+            .expect("issuance");
+        let issued = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "vault-issuance-accept",
+                "method": "credential.issuance.accept",
+                "params": {
+                    "issuanceId": issuance_id,
+                    "holderDid": did,
+                    "methodId": method_id,
+                    "holderBindingMethodId": holder_binding_method_id,
+                    "confirmed": true,
+                    "intent": "ACCEPT_CREDENTIAL_ISSUANCE",
+                },
+            })
+            .to_string(),
+        );
+        let credential_id = issued[0]["result"]["issuance"]["credentialId"]
+            .as_str()
+            .expect("credential")
+            .to_owned();
+
+        let created_lock = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "vault-create",
+                "method": "vault.lock.create",
+                "params": {
+                    "minimumAgeYears": 18,
+                    "requiredIssuingState": "US",
+                    "requiredDocumentNumber": "AB1234567",
+                    "maximumClaimAmount": "40",
+                    "initialAmount": "100",
+                    "confirmed": true,
+                    "intent": CREATE_LOCK_INTENT,
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(created_lock[0]["result"]["lock"]["lockId"], 0);
+        assert_eq!(created_lock[0]["result"]["lock"]["remaining"], "100");
+        assert_eq!(
+            created_lock[0]["result"]["lock"]["policy"]["requiredIssuingState"],
+            "US"
+        );
+
+        let deposited = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "vault-deposit",
+                "method": "vault.deposit",
+                "params": {"lockId": 0, "amount": "20", "confirmed": true, "intent": DEPOSIT_INTENT},
+            }).to_string(),
+        );
+        assert_eq!(deposited[0]["result"]["lock"]["remaining"], "120");
+        let denied = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "vault-claim-denied",
+                "method": "vault.claim",
+                "params": {"lockId": 0, "credentialId": credential_id, "amount": "40", "confirmed": false, "intent": CLAIM_INTENT},
+            }).to_string(),
+        );
+        assert_eq!(denied[0]["error"]["code"], "confirmation_required");
+        let claimed = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "vault-claim",
+                "method": "vault.claim",
+                "params": {"lockId": 0, "credentialId": credential_id, "amount": "40", "confirmed": true, "intent": CLAIM_INTENT},
+            }).to_string(),
+        );
+        assert_eq!(claimed[0]["ok"], true, "claim response: {}", claimed[0]);
+        assert_eq!(claimed[0]["result"]["releasedAmount"], "40");
+        assert_eq!(claimed[0]["result"]["lock"]["remaining"], "80");
+        let replay = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "vault-replay",
+                "method": "vault.claim",
+                "params": {"lockId": 0, "credentialId": credential_id, "amount": "1", "confirmed": true, "intent": CLAIM_INTENT},
+            }).to_string(),
+        );
+        assert_eq!(replay[0]["error"]["code"], "conflict");
+        let withdrawn = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "vault-withdraw",
+                "method": "vault.withdraw",
+                "params": {"lockId": 0, "amount": "80", "confirmed": true, "intent": WITHDRAW_INTENT},
+            }).to_string(),
+        );
+        assert_eq!(withdrawn[0]["result"]["lock"]["remaining"], "0");
+        let final_state = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"vault-list","method":"vault.locks.list","params":{}}"#,
+        );
+        assert_eq!(final_state[0]["result"]["vault"]["totalDeposited"], "120");
+        assert_eq!(final_state[0]["result"]["vault"]["totalReleased"], "120");
+        assert_eq!(final_state[0]["result"]["vault"]["claimCount"], 1);
+        let serialized = final_state[0].to_string();
+        assert!(!serialized.contains("privateMaterial"));
+        assert!(!serialized.contains("credentialFingerprint"));
     }
 
     #[test]

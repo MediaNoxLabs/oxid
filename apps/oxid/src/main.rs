@@ -39,26 +39,35 @@ fn main() {
             application.get_wallet_account(),
             application.sync_wallet_account(),
         ),
-        oxid_ui_dioxus::WalletDustSyncUiServices::new(
-            application.get_wallet_dust_sync_status(),
-            application.start_wallet_dust_sync(),
-            application.cancel_wallet_dust_sync(),
-        ),
-        oxid_ui_dioxus::WalletShieldedSyncUiServices::new(
-            application.get_wallet_shielded_sync_status(),
-            application.start_wallet_shielded_sync(),
-            application.cancel_wallet_shielded_sync(),
-        ),
-        oxid_ui_dioxus::WalletTransactionUiServices::new(
-            application.prepare_wallet_transfer(),
-            application.authorize_wallet_transfer(),
-            application.submit_wallet_transfer(),
-            application.get_wallet_transfer_draft(),
-            application.get_wallet_transfer_submission_status(),
-            application.cancel_wallet_transfer_submission(),
-            oxid_ui_dioxus::WalletTransactionRecoveryUiServices::new(
-                application.list_wallet_transfer_submissions(),
-                application.reconcile_wallet_transfer_submission(),
+        oxid_ui_dioxus::WalletOperationalUiServices::new(
+            oxid_ui_dioxus::WalletDustSyncUiServices::new(
+                application.get_wallet_dust_sync_status(),
+                application.start_wallet_dust_sync(),
+                application.cancel_wallet_dust_sync(),
+            ),
+            oxid_ui_dioxus::WalletShieldedSyncUiServices::new(
+                application.get_wallet_shielded_sync_status(),
+                application.start_wallet_shielded_sync(),
+                application.cancel_wallet_shielded_sync(),
+            ),
+            oxid_ui_dioxus::WalletTransactionUiServices::new(
+                application.prepare_wallet_transfer(),
+                application.authorize_wallet_transfer(),
+                application.submit_wallet_transfer(),
+                application.get_wallet_transfer_draft(),
+                application.get_wallet_transfer_submission_status(),
+                application.cancel_wallet_transfer_submission(),
+                oxid_ui_dioxus::WalletTransactionRecoveryUiServices::new(
+                    application.list_wallet_transfer_submissions(),
+                    application.reconcile_wallet_transfer_submission(),
+                ),
+            ),
+            oxid_ui_dioxus::PassportVaultUiServices::new(
+                application.list_passport_vault_locks(),
+                application.create_passport_vault_lock(),
+                application.deposit_passport_vault_lock(),
+                application.claim_passport_vault_lock(),
+                application.withdraw_passport_vault_lock(),
             ),
         ),
         oxid_ui_dioxus::IdentityUiServices::new(

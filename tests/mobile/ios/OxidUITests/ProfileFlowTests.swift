@@ -211,6 +211,28 @@ final class ProfileFlowTests: XCTestCase {
         reverify.tap()
         XCTAssertTrue(reverify.waitForExistence(timeout: 10))
 
+        let vault = application.buttons["Vault"]
+        XCTAssertTrue(vault.waitForExistence(timeout: 5))
+        vault.tap()
+        let createLock = application.buttons["Create confirmed lock"]
+        XCTAssertTrue(createLock.waitForExistence(timeout: 5))
+        scrollTo(createLock, in: application)
+        createLock.tap()
+        XCTAssertTrue(application.staticTexts["100 base units remaining"].waitForExistence(timeout: 5))
+        let deposit = application.buttons["Deposit"]
+        scrollTo(deposit, in: application)
+        deposit.tap()
+        XCTAssertTrue(application.staticTexts["110 base units remaining"].waitForExistence(timeout: 5))
+        let claim = application.buttons["Claim with credential"]
+        scrollTo(claim, in: application)
+        claim.tap()
+        XCTAssertTrue(application.staticTexts["100 base units remaining"].waitForExistence(timeout: 10))
+        let withdraw = application.buttons["Withdraw"]
+        scrollTo(withdraw, in: application)
+        withdraw.tap()
+        XCTAssertTrue(application.staticTexts["90 base units remaining"].waitForExistence(timeout: 5))
+        XCTAssertTrue(application.staticTexts["Claims 1"].exists)
+
         application.terminate()
         application.launch()
 

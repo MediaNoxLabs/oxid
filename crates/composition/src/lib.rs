@@ -31,6 +31,9 @@ use oxid_adapter_openid4vci::{
     DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
 };
 use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpenId4VpVerifier};
+use oxid_adapter_passport_vault::{
+    InMemoryPassportVaultRepository, StandalonePassportVaultCredential,
+};
 use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
 
 /// Returns the public embedded offer for the deterministic standalone issuer.
@@ -84,6 +87,12 @@ use oxid_identity_application::{
     DidRecordRepository, DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase,
     ListDidRecordsUseCase, ResolveDidUseCase, SignDidPayloadUseCase, UnavailableDidLifecycle,
     UnavailableDidRecordRepository, UnavailableDidResolver, UpdateDidUseCase,
+};
+use oxid_passport_vault_application::{
+    ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase, DepositPassportVaultLockUseCase,
+    ListPassportVaultLocksUseCase, PassportVaultCredentialPort, PassportVaultRepository,
+    PassportVaultService, UnavailablePassportVaultCredential, UnavailablePassportVaultRepository,
+    WithdrawPassportVaultLockUseCase,
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CredentialPresentationProtocolPort,
@@ -189,6 +198,11 @@ pub struct ApplicationServices {
     refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
     get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase>,
     list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase>,
+    list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase>,
+    create_passport_vault_lock: Arc<dyn CreatePassportVaultLockUseCase>,
+    deposit_passport_vault_lock: Arc<dyn DepositPassportVaultLockUseCase>,
+    claim_passport_vault_lock: Arc<dyn ClaimPassportVaultLockUseCase>,
+    withdraw_passport_vault_lock: Arc<dyn WithdrawPassportVaultLockUseCase>,
     compact_presentation_proof_available: bool,
 }
 
@@ -551,6 +565,31 @@ impl ApplicationServices {
     #[must_use]
     pub fn list_credential_presentations(&self) -> Arc<dyn ListCredentialPresentationsUseCase> {
         Arc::clone(&self.list_credential_presentations)
+    }
+
+    #[must_use]
+    pub fn list_passport_vault_locks(&self) -> Arc<dyn ListPassportVaultLocksUseCase> {
+        Arc::clone(&self.list_passport_vault_locks)
+    }
+
+    #[must_use]
+    pub fn create_passport_vault_lock(&self) -> Arc<dyn CreatePassportVaultLockUseCase> {
+        Arc::clone(&self.create_passport_vault_lock)
+    }
+
+    #[must_use]
+    pub fn deposit_passport_vault_lock(&self) -> Arc<dyn DepositPassportVaultLockUseCase> {
+        Arc::clone(&self.deposit_passport_vault_lock)
+    }
+
+    #[must_use]
+    pub fn claim_passport_vault_lock(&self) -> Arc<dyn ClaimPassportVaultLockUseCase> {
+        Arc::clone(&self.claim_passport_vault_lock)
+    }
+
+    #[must_use]
+    pub fn withdraw_passport_vault_lock(&self) -> Arc<dyn WithdrawPassportVaultLockUseCase> {
+        Arc::clone(&self.withdraw_passport_vault_lock)
     }
 
     /// Reports whether an authenticated Compact prover and an independent
@@ -1343,6 +1382,11 @@ where
         credential_presentation,
     } = identity_adapters;
     let presentation_credential_repository = Arc::clone(&credential_repository);
+    let vault_credential_repository = Arc::clone(&credential_repository);
+    let standalone_passport_vault = matches!(
+        credential_issuance,
+        CredentialIssuanceComposition::Standalone
+    );
     #[cfg(not(target_arch = "wasm32"))]
     let compact_presentation_proof_available = matches!(
         &credential_presentation,
@@ -1355,7 +1399,7 @@ where
     let create_wallet_profile = Arc::new(CreateWalletProfileService::new(
         Arc::clone(&repository),
         Arc::clone(&clock),
-        random,
+        Arc::clone(&random),
     ));
     let list_wallet_profiles = Arc::new(ListWalletProfilesService::new(Arc::clone(&repository)));
     let select_wallet_profile = Arc::new(SelectWalletProfileService::new(Arc::clone(&repository)));
@@ -1401,7 +1445,7 @@ where
                     proof,
                     get_did,
                     clock.clone(),
-                    Arc::new(StandaloneBoundCompactCredentialIssuer),
+                    Arc::new(StandaloneBoundCompactCredentialIssuer::new(clock.clone())),
                 )),
                 Arc::new(VerifiedCredentialSink::new(importer)),
             )
@@ -1491,6 +1535,26 @@ where
         };
     let self_issued_authentication =
         Arc::new(SelfIssuedAuthenticationService::new(self_issued_protocol));
+    let passport_vault_repository: Arc<dyn PassportVaultRepository> = if standalone_passport_vault {
+        Arc::new(InMemoryPassportVaultRepository::default())
+    } else {
+        Arc::new(UnavailablePassportVaultRepository)
+    };
+    let passport_vault_credential: Arc<dyn PassportVaultCredentialPort> =
+        if standalone_passport_vault {
+            Arc::new(StandalonePassportVaultCredential::new(
+                vault_credential_repository,
+                clock.clone(),
+                oxid_adapter_vc_midnight::standalone_digital_passport_issuer_trust_anchor(),
+            ))
+        } else {
+            Arc::new(UnavailablePassportVaultCredential)
+        };
+    let passport_vault = Arc::new(PassportVaultService::new(
+        passport_vault_repository,
+        passport_vault_credential,
+        random,
+    ));
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
     let initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase> = protection.clone();
@@ -1566,6 +1630,13 @@ where
         credential_presentation.clone();
     let list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase> =
         credential_presentation;
+    let list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase> = passport_vault.clone();
+    let create_passport_vault_lock: Arc<dyn CreatePassportVaultLockUseCase> =
+        passport_vault.clone();
+    let deposit_passport_vault_lock: Arc<dyn DepositPassportVaultLockUseCase> =
+        passport_vault.clone();
+    let claim_passport_vault_lock: Arc<dyn ClaimPassportVaultLockUseCase> = passport_vault.clone();
+    let withdraw_passport_vault_lock: Arc<dyn WithdrawPassportVaultLockUseCase> = passport_vault;
 
     ApplicationServices {
         create_wallet_profile,
@@ -1630,6 +1701,11 @@ where
         refuse_credential_presentation,
         get_credential_presentation,
         list_credential_presentations,
+        list_passport_vault_locks,
+        create_passport_vault_lock,
+        deposit_passport_vault_lock,
+        claim_passport_vault_lock,
+        withdraw_passport_vault_lock,
         compact_presentation_proof_available,
     }
 }

@@ -43,8 +43,13 @@ OpenID4VP request, matching, and consent are functional and the real Compact
 presentation artifact set is reproducible. Standalone OpenID4VCI now issues,
 encrypts, restores, and natively verifies the prototype's exact Compact
 credential shape plus a detached issuance proof dynamically bound to the
-selected profile's managed Jubjub assertion method. Vault, live protocol
-transport, and production/mobile presentation proving remain deferred.
+selected profile's managed Jubjub assertion method. ADR-0051 now delivers the
+Passport Vault as a separate standalone product hexagon with exact multi-lock
+accounting, Digital Passport claim policy, replay rejection, a headless flow,
+and a Dioxus mobile journey. It is visibly process-local and never an on-chain
+claim; live Compact transactions and optional durable standalone state remain
+issue #31. Live protocol transport and production/mobile presentation proving
+remain deferred.
 Standalone presentation now reauthorizes the exact statement with the
 credential-bound method's current managed protected key, runs the authenticated
 k=18 Compact circuit, and independently verifies the public `MZP1` envelope
@@ -576,6 +581,13 @@ the response. DID management resolves the opaque key reference, while the VC
 adapter alone owns, encodes, and independently verifies the exact proof
 transcript. This is an adapter-to-adapter capability, not an incoming arbitrary
 challenge-signing oracle, and it still leaves ZK proving/verification closed.
+ADR-0050 adds exact native headless Compact proving and an independently
+reconstructed verifier behind authenticated Nix artifacts. ADR-0051 isolates
+Passport Vault policy and accounting in a product-specific hexagon. Its
+standalone repository is bounded and process-local, its credential adapter
+rechecks the exact Compact Digital Passport and pinned development trust
+anchor, and its incoming surfaces never label local state movement as a chain
+submission. Issue #31 owns the separately authenticated live contract adapter.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -597,6 +609,8 @@ Current package ownership:
 | `crates/protocol/application` | Profile-scoped issuance, explicit public holder-binding, and self-issued-authentication use cases plus protocol/proof/verified-sink ports. |
 | `crates/presentation/domain` | Dependency-free credential-presentation preview, claim-intent, candidate, and lifecycle invariants. |
 | `crates/presentation/application` | Profile-scoped presentation use cases plus protocol, candidate, current-holder authorization, proof, and independent-verifier ports. |
+| `crates/passport-vault/domain` | Dependency-free product lock policy, creator authorization, checked accounting, and per-lock credential replay invariants. |
+| `crates/passport-vault/application` | Passport Vault list/create/deposit/claim/withdraw use cases plus focused repository and credential-policy ports. |
 | `crates/platform/ports` | Clock and randomness capabilities used by applications. |
 | `crates/adapters/storage-memory` | Development/test implementations of wallet, DID, and credential persistence ports. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
@@ -606,6 +620,7 @@ Current package ownership:
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
+| `crates/adapters/passport-vault` | Product-specific bounded process-local repository and exact standalone Digital Passport policy bridge; never a live-chain adapter. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
@@ -710,6 +725,16 @@ Cancellation is allowed only in `running`; `cancellation_requested` becomes
 selects the same zero-configuration `compose_headless()` stack explicitly at
 compile time. Repository simulator/emulator scripts enable it; default
 desktop/mobile/web builds do not. It is for flow testing only, never real funds.
+
+Passport Vault standalone composition follows the same exception. Its headless
+methods are `vault.total_locked`, `vault.locks.list`,
+`vault.credentials.list`, `vault.lock.create`, `vault.deposit`, `vault.claim`,
+and `vault.withdraw`. State-changing calls require their exact declared intent.
+The repository is process-local: restart clears locks, and all views must retain
+the `standalone` source label. Production composition wires unavailable vault
+ports. Never add a hard-coded contract address, JavaScript bridge, iframe,
+ambient companion-repository lookup, or generated artifact to make it appear
+live; issue #31 is the reviewed live boundary.
 
 The development root and every derived child remain inside `storage-dev`.
 `wallet.account.derive` exposes only bounded public indices, the selected
@@ -1018,6 +1043,12 @@ to silence the shell probe.
   proof, public communications commitment, and tagged proof. Never add private
   claims, openings, custody references, scalars, nonces, communications
   randomness, or a serialized `ProofPreimage`.
+- Passport Vault incoming views may expose public policy and aggregate amounts,
+  but never credential roots, openings, claim values, detached proof bytes, or
+  custody references. Standalone deposits, claims, and withdrawals are local
+  state transitions and must never be described as submitted, included, or
+  settled on Midnight. Live current-day and nullifier authority must come from
+  authenticated chain state, not the standalone clock or repository.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

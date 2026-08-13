@@ -26,9 +26,9 @@ before migrating later work.
 | `wallet-core/oid4vp_client` | Self-issued DID authentication mislabeled alongside an unimplemented OID4VP presentation action | `protocol/domain`, `protocol/application`, `adapters/siopv2`; `presentation/domain`, `presentation/application`, `adapters/openid4vp` | SIOPv2 draft-13 login implemented by issue #25/ADR-0040; issue #27/ADR-0043 adds strict Final-shaped DCQL request preview, consent, and replay protection; ADR-0048 adds current-holder authorization and ADR-0050 adds explicit native headless Compact proof plus independent `vp_token` verification |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification, protected Digital Passport values/openings | `credential/domain`, `credential/application`, `adapters/vc-midnight`, protected credential storage | Profile-scoped protected inventory and strict phase-1 verification implemented by issue #23/ADR-0038; issue #26/ADR-0041/0042 adds atomic opaque material, commitment-bound five-claim Digital Passport interpretation, safe local planning/reveal, restart/deletion, and mobile coverage; Compact presentation proofs, status/schema/trust policy, and native wrapping remain pending |
 | `wallet-core/oid4vci_client` and `oid4vci_issuance_e2e` | Pre-authorized offer, token/nonce, holder proof, credential request/store flow | `protocol/domain`, `protocol/application`, `adapters/openid4vci`, existing DID custody and verified credential sink | OpenID4VCI 1.0 Final embedded-offer standalone flow plus separate authentication and managed Jubjub holder-binding methods implemented by issue #24 and ADR-0039/0047; production transport/discovery and additional grant/response variants pending |
-| `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
-| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, protected development activation, staged transfer, DID lifecycle, protected credential inventory/verification, standalone issuance, consented self-issued DID authentication, Digital Passport local reveal/age plan, and OpenID4VP request/consent proof gate reimplemented; vault, mobile proving, and native bridges deferred |
-| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, wallet/identity flows, claim-free Digital Passport planning, and Final-shaped OpenID4VP request/consent/refusal implemented; an explicit authenticated artifact composition adds checked real proof, independent verification, and replay rejection while keeping proof/token bytes private |
+| `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | `passport-vault/domain`, `passport-vault/application`, product adapter, not generic wallet core | ADR-0051 delivers exact standalone multi-lock accounting, creator deposit/withdraw, Digital Passport policy claim, and per-lock credential replay rejection; live Compact state/transactions and durable standalone state remain issue #31 |
+| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, protected development activation, staged transfer, DID lifecycle, protected credential inventory/verification, standalone issuance, consented self-issued DID authentication, Digital Passport local reveal/age plan, OpenID4VP request/consent proof gate, and the standalone Passport Vault journey are reimplemented; mobile proving and native bridges remain deferred |
+| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, wallet/identity flows, claim-free Digital Passport planning, Final-shaped OpenID4VP proof/verification, and complete standalone Passport Vault create/deposit/claim/replay/withdraw accounting are implemented while credential/proof private material stays hidden |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness implemented and measured on iOS/Android; generated artifacts remain uncommitted |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch the explicit standalone-development composition through repository scripts; native camera/copy/share/custody bridges remain deferred |
@@ -323,6 +323,31 @@ method, requires current managed assertion authority, signs and independently
 verifies a disposable authorization over the exact statement, and applies
 explicit same-method rotation semantics. ADR-0050 wires credential-family proof
 execution and an independent proof verifier for native headless mode only.
+
+[Issue #2](https://github.com/MediaNoxLabs/oxid/issues/2), ADR-0051, and
+[issue #31](https://github.com/MediaNoxLabs/oxid/issues/31) migrate the
+prototype's Passport Vault as a product-specific hexagon. The reviewed wallet
+source remains `midnight-ledger` commit
+`074b1a4bccbfee1740ee188374b606a022ecef42`. The prototype's ambient companion
+workspace was independently resolved to `midnight-identity-solution-examples`
+commit `e4a92a6be2cc6dc34f68261f10c19c9312043807`; the reviewed
+`packages/contracts/vault/src/passport-vault.compact` has SHA-256
+`2ebc5b34dd440bc9a9736408f29f5003e7a78f26a564b392be2af36de69102f4`.
+That source is provenance, not yet a runtime dependency.
+
+The standalone adapter implements bounded multi-lock creation, deposit,
+credential-policy claim, creator withdrawal, total accounting, exact consent,
+and per-lock credential-root replay protection. The credential adapter verifies
+the exact Compact issuer proof, signed commitments/openings, pinned standalone
+issuer key, expiry, age, optional state/document predicates, and verifier time.
+Headless and Dioxus call the same application use cases and expose neither
+claim values nor credential roots. The UI and protocol label the source
+`standalone`, state `process_local`, and do not claim chain submission.
+Production remains fail-closed. Issue #31 owns authenticated Nix packaging of
+the live Compact artifacts, native state decoding, durable optional development
+state, and create/deposit/claim/withdraw integration with the existing Midnight
+transaction pipeline. WebView JavaScript, iframe origins, hard-coded addresses,
+and relative workspace paths remain excluded.
 
 Shielded spending, internal/change address management, replacement handling,
 live DID writes, live OpenID4VP response delivery and mobile Compact proving, camera/copy/share

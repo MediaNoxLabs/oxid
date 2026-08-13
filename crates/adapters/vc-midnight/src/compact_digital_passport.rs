@@ -24,6 +24,8 @@ use oxid_credential_domain::{
     VerificationReport, VerificationStage, VerificationStageName, VerificationStageStatus,
 };
 use oxid_foundation::UnixTimestampMillis;
+use oxid_platform_ports::ClockPort;
+use std::sync::Arc;
 
 use crate::credential_id;
 use crate::digital_passport::{DigitalPassportCommitments, PACKAGE_ID, SCHEMA_ID};
@@ -40,12 +42,29 @@ const STANDALONE_PUBLIC_NONCE_SCALAR: u64 = 11;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MidnightCompactCredentialVerifier;
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct StandaloneBoundCompactCredentialIssuer;
+#[derive(Clone)]
+pub struct StandaloneBoundCompactCredentialIssuer {
+    clock: Arc<dyn ClockPort>,
+}
+
+impl StandaloneBoundCompactCredentialIssuer {
+    #[must_use]
+    pub fn new(clock: Arc<dyn ClockPort>) -> Self {
+        Self { clock }
+    }
+}
 
 impl BoundCredentialIssuerPort for StandaloneBoundCompactCredentialIssuer {
     fn issue<'a>(&'a self, request: BoundCredentialRequest) -> BoundCredentialFuture<'a> {
-        Box::pin(async move { issue_bound_standalone_credential(&request) })
+        Box::pin(async move {
+            let issued_at = self
+                .clock
+                .now()
+                .map_err(|_| BoundCredentialError::Unavailable)?
+                .value()
+                / 1_000;
+            issue_bound_standalone_credential(&request, issued_at)
+        })
     }
 }
 
@@ -408,6 +427,7 @@ fn issuance_challenge(credential: &CompactCredential, proof: &CompactProof) -> F
 
 fn issue_bound_standalone_credential(
     request: &BoundCredentialRequest,
+    issued_at: u64,
 ) -> Result<BoundCredentialBundle, BoundCredentialError> {
     let holder = holder_binding(request)?;
     validate_holder_public_key(request)?;
@@ -415,6 +435,14 @@ fn issue_bound_standalone_credential(
     let mut credential = parse_credential(&super::standalone_compact_credential())
         .map_err(|_| BoundCredentialError::Unavailable)?;
     credential.holder = holder;
+    // The checked-in reference body is historical. Standalone issuance signs
+    // a fresh holder-bound body with a bounded ten-year development lifetime.
+    credential.issued_at = issued_at;
+    credential.has_expiration = true;
+    credential.expires_at = credential
+        .issued_at
+        .checked_add(10 * 365 * 24 * 60 * 60)
+        .ok_or(BoundCredentialError::Unavailable)?;
 
     let template = parse_proof(&super::standalone_compact_proof())
         .map_err(|_| BoundCredentialError::Unavailable)?;
@@ -426,7 +454,7 @@ fn issue_bound_standalone_credential(
     let nonce = EmbeddedFr::from(STANDALONE_PUBLIC_NONCE_SCALAR);
     let mut proof = CompactProof {
         signer: credential.issuer,
-        created_at: template.created_at,
+        created_at: issued_at,
         challenge_hash: template.challenge_hash,
         public_key,
         announcement: EmbeddedGroupAffine::generator() * nonce,
@@ -730,7 +758,8 @@ mod tests {
     #[test]
     fn reissues_the_exact_bundle_for_the_selected_holder_method() {
         let request = bound_request();
-        let issued = issue_bound_standalone_credential(&request).expect("bound issuance");
+        let issued =
+            issue_bound_standalone_credential(&request, 1_700_000_000).expect("bound issuance");
         let proof = issued.detached_proof.as_deref().expect("detached proof");
         let credential = parse_credential(&issued.signed_bytes).expect("credential");
         let parsed_proof = parse_proof(proof).expect("proof");
@@ -762,14 +791,14 @@ mod tests {
         let mut request = bound_request();
         request.holder_binding_method_id = format!("{}#{}", request.holder_did, "x".repeat(32));
         assert_eq!(
-            issue_bound_standalone_credential(&request),
+            issue_bound_standalone_credential(&request, 1_700_000_000),
             Err(BoundCredentialError::InvalidHolderBinding)
         );
 
         let mut request = bound_request();
         request.public_key_x.push('=');
         assert_eq!(
-            issue_bound_standalone_credential(&request),
+            issue_bound_standalone_credential(&request, 1_700_000_000),
             Err(BoundCredentialError::InvalidHolderBinding)
         );
 
@@ -777,7 +806,7 @@ mod tests {
         request.holder_did = format!("did:midnight:undeployed:{}", "AB".repeat(32));
         request.holder_binding_method_id = format!("{}#holder-jubjub-1", request.holder_did);
         assert_eq!(
-            issue_bound_standalone_credential(&request),
+            issue_bound_standalone_credential(&request, 1_700_000_000),
             Err(BoundCredentialError::InvalidHolderBinding)
         );
     }

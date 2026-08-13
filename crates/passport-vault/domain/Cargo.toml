@@ -1,0 +1,12 @@
+[package]
+name = "oxid-passport-vault-domain"
+description = "Oxid-owned Passport Vault domain model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true

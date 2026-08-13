@@ -7,6 +7,7 @@ members = [
   "crates/adapters/midnight",
   "crates/adapters/openid4vci",
   "crates/adapters/openid4vp",
+  "crates/adapters/passport-vault",
   "crates/adapters/siopv2",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
@@ -24,6 +25,8 @@ members = [
   "crates/platform/ports",
   "crates/presentation/application",
   "crates/presentation/domain",
+  "crates/passport-vault/application",
+  "crates/passport-vault/domain",
   "crates/protocol/application",
   "crates/protocol/domain",
   "crates/ui-dioxus",
@@ -37,6 +40,7 @@ default-members = [
   "crates/adapters/midnight",
   "crates/adapters/openid4vci",
   "crates/adapters/openid4vp",
+  "crates/adapters/passport-vault",
   "crates/adapters/siopv2",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
@@ -54,6 +58,8 @@ default-members = [
   "crates/platform/ports",
   "crates/presentation/application",
   "crates/presentation/domain",
+  "crates/passport-vault/application",
+  "crates/passport-vault/domain",
   "crates/protocol/application",
   "crates/protocol/domain",
   "crates/ui-dioxus",
@@ -112,6 +118,7 @@ zeroize = { version = "=1.9.0" }
 oxid-adapter-midnight = { version = "=0.1.0", path = "crates/adapters/midnight" }
 oxid-adapter-openid4vci = { version = "=0.1.0", path = "crates/adapters/openid4vci" }
 oxid-adapter-openid4vp = { version = "=0.1.0", path = "crates/adapters/openid4vp" }
+oxid-adapter-passport-vault = { version = "=0.1.0", path = "crates/adapters/passport-vault" }
 oxid-adapter-siopv2 = { version = "=0.1.0", path = "crates/adapters/siopv2" }
 oxid-adapter-vc-midnight = { version = "=0.1.0", path = "crates/adapters/vc-midnight" }
 oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-midnight" }
@@ -130,6 +137,8 @@ oxid-identity-domain = { version = "=0.1.0", path = "crates/identity/domain" }
 oxid-platform-ports = { version = "=0.1.0", path = "crates/platform/ports" }
 oxid-presentation-application = { version = "=0.1.0", path = "crates/presentation/application" }
 oxid-presentation-domain = { version = "=0.1.0", path = "crates/presentation/domain" }
+oxid-passport-vault-application = { version = "=0.1.0", path = "crates/passport-vault/application" }
+oxid-passport-vault-domain = { version = "=0.1.0", path = "crates/passport-vault/domain" }
 oxid-protocol-application = { version = "=0.1.0", path = "crates/protocol/application" }
 oxid-protocol-domain = { version = "=0.1.0", path = "crates/protocol/domain" }
 oxid-ui-dioxus = { version = "=0.1.0", path = "crates/ui-dioxus" }

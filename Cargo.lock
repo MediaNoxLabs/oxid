@@ -5497,6 +5497,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-adapter-passport-vault"
+version = "0.1.0"
+dependencies = [
+ "oxid-adapter-vc-midnight",
+ "oxid-credential-application",
+ "oxid-credential-domain",
+ "oxid-passport-vault-application",
+ "oxid-passport-vault-domain",
+ "oxid-platform-ports",
+]
+
+[[package]]
 name = "oxid-adapter-platform-system"
 version = "0.1.0"
 dependencies = [
@@ -5646,6 +5658,7 @@ dependencies = [
  "oxid-adapter-midnight",
  "oxid-adapter-openid4vci",
  "oxid-adapter-openid4vp",
+ "oxid-adapter-passport-vault",
  "oxid-adapter-platform-system",
  "oxid-adapter-siopv2",
  "oxid-adapter-storage-credential-json",
@@ -5656,6 +5669,7 @@ dependencies = [
  "oxid-adapter-vc-midnight",
  "oxid-credential-application",
  "oxid-identity-application",
+ "oxid-passport-vault-application",
  "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",
@@ -5691,6 +5705,8 @@ dependencies = [
  "oxid-credential-application",
  "oxid-identity-application",
  "oxid-identity-domain",
+ "oxid-passport-vault-application",
+ "oxid-passport-vault-domain",
  "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",
@@ -5715,6 +5731,18 @@ version = "0.1.0"
 dependencies = [
  "oxid-foundation",
 ]
+
+[[package]]
+name = "oxid-passport-vault-application"
+version = "0.1.0"
+dependencies = [
+ "oxid-passport-vault-domain",
+ "oxid-platform-ports",
+]
+
+[[package]]
+name = "oxid-passport-vault-domain"
+version = "0.1.0"
 
 [[package]]
 name = "oxid-platform-ports"
@@ -5761,6 +5789,7 @@ dependencies = [
  "oxid-credential-application",
  "oxid-identity-application",
  "oxid-identity-domain",
+ "oxid-passport-vault-application",
  "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",

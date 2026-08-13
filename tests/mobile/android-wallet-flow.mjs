@@ -306,6 +306,34 @@ try {
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid')",
     );
 
+    await clickButton("Vault");
+    await waitForButton("Create confirmed lock");
+    await setInput("Vault required issuing state", "US");
+    await setInput("Vault required document number", "AB1234567");
+    await clickButton("Create confirmed lock");
+    await waitFor(
+      "document.body.innerText.includes('100 base units remaining') && document.body.innerText.includes('state US') && document.body.innerText.includes('document AB1234567')",
+      "created policy-bound Passport Vault lock",
+    );
+    await clickButton("Deposit");
+    await waitFor(
+      "document.body.innerText.includes('110 base units remaining')",
+      "Passport Vault deposit",
+    );
+    await clickButton("Claim with credential");
+    await waitFor(
+      "document.body.innerText.includes('100 base units remaining') && document.body.innerText.includes('Claims 1')",
+      "credential-gated Passport Vault claim",
+    );
+    await clickButton("Withdraw");
+    await waitFor(
+      "document.body.innerText.includes('90 base units remaining')",
+      "Passport Vault creator withdrawal",
+    );
+    const vaultFlow = await evaluate(
+      "document.body.innerText.includes('Passport Vault') && document.body.innerText.includes('90 base units remaining') && document.body.innerText.includes('Claims 1')",
+    );
+
     await clickButton("DIDs");
     await waitFor(
       "document.body.innerText.includes('standalone-2')",
@@ -352,8 +380,8 @@ try {
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, presentationProofGated, qrRendered, shieldedAddressRendered, thresholdAvailable };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.presentationProofGated || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable) {
+    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, presentationProofGated, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.presentationProofGated || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);

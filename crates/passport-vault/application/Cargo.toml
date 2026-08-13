@@ -1,0 +1,16 @@
+[package]
+name = "oxid-passport-vault-application"
+description = "Passport Vault application ports and use cases"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+oxid-passport-vault-domain.workspace = true
+oxid-platform-ports.workspace = true
+
+[lints]
+workspace = true

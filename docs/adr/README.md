@@ -72,6 +72,7 @@ ADR status and delivery state answer different questions:
 | [0048](0048-reauthorize-compact-holder-methods-at-presentation-time.md) Reauthorize Compact holder methods at presentation time | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone preflight requires current protected control of the exact credential-bound method with explicit same-method rotation semantics; ADR-0050 consumes it in native headless proving while native custody/mobile remain fail-closed |
 | [0049](0049-sign-compact-holder-challenges-inside-opaque-custody.md) Sign Compact holder challenges inside opaque custody | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone custody constructs and independently verifies the exact credential-family holder `Proof` through a synchronous public-transcript callback; ADR-0050 consumes it in native headless proving |
 | [0050](0050-prove-and-independently-verify-compact-presentations.md) Prove and independently verify Compact presentations | Accepted | §§3–7, 9–13, 16–18, 21 and issues #27–29 | Exact generated-runtime/Rust preimage parity, authenticated offline artifacts, checked proving, bounded `MZP1`, independent verification, headless OpenID4VP success, tamper/replay/restart tests, and resource baselines implemented; mobile proving remains gated |
+| [0051](0051-isolate-passport-vault-as-product-specific-hexagon.md) Isolate Passport Vault as a product-specific hexagon | Accepted | §§3–7, 9–13, 16–18, prototype vault flow, and issues #2/#31 | Standalone multi-lock domain, exact Digital Passport policy adapter, headless flow, and mobile journey implemented; live Compact transactions and durable state pending #31 |
 
 ## Current boundaries
 
@@ -155,3 +156,9 @@ verification remain separate, and only a canonical public `MZP1` envelope may
 cross the protocol boundary. That headless path now succeeds and rejects
 tamper/replay/restart failures. Production/mobile composition stays fail-closed
 until its packaging, resource, and native-custody gates are accepted.
+ADR-0051 keeps the Passport Vault product separate from generic wallet and
+credential core. Its standalone adapter exercises exact policy, accounting,
+confirmation, and replay behavior but is visibly process-local and never claims
+chain submission. Production remains unavailable until issue #31 authenticates
+the Compact artifact closure, decodes live state, and composes transactions
+through the existing Midnight submission and reconciliation boundary.
