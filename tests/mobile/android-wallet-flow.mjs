@@ -246,6 +246,26 @@ try {
       "document.body.innerText.includes('Credential issued, verified, and stored in the protected inventory.') && document.body.innerText.includes('valid')",
       "issued and verified OID4VCI credential",
     );
+    await clickButton("Use standalone verifier request");
+    await clickButton("Preview presentation request");
+    await waitFor(
+      "document.body.innerText.includes('Presentation preview') && document.body.innerText.includes('Requested claims') && document.body.innerText.includes('No presentation or vp_token has been generated.')",
+      "claim-free OpenID4VP presentation preview",
+    );
+    await evaluate(`(() => {
+      const consent = document.querySelector('#credential-presentation-consent');
+      if (!consent) return false;
+      consent.click();
+      return consent.checked;
+    })()`);
+    await clickButton("Consent and present");
+    await waitFor(
+      "document.body.innerText.includes('Compact proof generation is not reproducible yet. Nothing was presented and no vp_token was generated.')",
+      "fail-closed Compact presentation proof gate",
+    );
+    const presentationProofGated = await evaluate(
+      "document.body.innerText.includes('Nothing was presented and no vp_token was generated.')",
+    );
     const claimsHiddenByDefault = await evaluate(
       "Boolean(document.querySelector('.passport-claims')) && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
     );
@@ -332,8 +352,8 @@ try {
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, qrRendered, shieldedAddressRendered, thresholdAvailable };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable) {
+    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, presentationProofGated, qrRendered, shieldedAddressRendered, thresholdAvailable };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.presentationProofGated || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);

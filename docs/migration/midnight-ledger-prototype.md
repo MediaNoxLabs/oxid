@@ -23,12 +23,12 @@ before migrating later work.
 | `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded plus private DUST/Zswap checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, native shielded replay lifecycle, and staged unshielded transfer through DUST proof, safe pre-broadcast cancellation, and node inclusion implemented for development/headless; shielded spending and durable production custody pending |
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017 accepted; process-local Ed25519/P-256 plus BIP32/secp256k1-Schnorr conformance implemented; durable recovery and native custody pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | `identity/domain`, `identity/application`, `adapters/did-midnight`, separate public record storage | Current 0.5.0-shaped resolution, profile inventory/persistence, and standalone create/update/deactivate/signing implemented by issues #21–22 and ADR-0036/0037; live Compact writes pending |
-| `wallet-core/oid4vp_client` | Self-issued DID authentication mislabeled alongside OID4VP presentation | `protocol/domain`, `protocol/application`, `adapters/siopv2`; later presentation domain/adapter | SIOPv2 draft-13 standalone login implemented by issue #25/ADR-0040; Final OpenID4VP credential presentation remains deferred |
+| `wallet-core/oid4vp_client` | Self-issued DID authentication mislabeled alongside an unimplemented OID4VP presentation action | `protocol/domain`, `protocol/application`, `adapters/siopv2`; `presentation/domain`, `presentation/application`, `adapters/openid4vp` | SIOPv2 draft-13 login implemented by issue #25/ADR-0040; issue #27/ADR-0043 adds strict Final-shaped DCQL request preview, consent, and replay protection while issue #28 blocks Compact proof and `vp_token` |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification, protected Digital Passport values/openings | `credential/domain`, `credential/application`, `adapters/vc-midnight`, protected credential storage | Profile-scoped protected inventory and strict phase-1 verification implemented by issue #23/ADR-0038; issue #26/ADR-0041/0042 adds atomic opaque material, commitment-bound five-claim Digital Passport interpretation, safe local planning/reveal, restart/deletion, and mobile coverage; Compact presentation proofs, status/schema/trust policy, and native wrapping remain pending |
 | `wallet-core/oid4vci_client` and `oid4vci_issuance_e2e` | Pre-authorized offer, token/nonce, holder proof, credential request/store flow | `protocol/domain`, `protocol/application`, `adapters/openid4vci`, existing DID custody and verified credential sink | OpenID4VCI 1.0 Final embedded-offer standalone flow implemented by issue #24/ADR-0039; production transport/discovery and additional grant/response variants pending |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | product-specific Midnight adapter/example, not generic wallet core | Deferred; separate ADR |
-| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, protected development activation, staged transfer, DID lifecycle, protected credential inventory/verification, standalone issuance, consented self-issued DID authentication, and Digital Passport local first/last reveal plus age-plan UI reimplemented; vault, verifier presentation, and native bridges deferred |
-| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, protected key/account flows, simulated/live reads, staged canonical transfer submission/status/cancellation, profile-scoped DID lifecycle, metadata-only credential inventory, pre-authorized issuance, self-issued DID authentication, and claim-free Digital Passport candidate/plan lifecycle implemented; vault and verifier-presentation flows queued |
+| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, protected development activation, staged transfer, DID lifecycle, protected credential inventory/verification, standalone issuance, consented self-issued DID authentication, Digital Passport local reveal/age plan, and OpenID4VP request/consent proof gate reimplemented; vault, real verifier proof, and native bridges deferred |
+| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, wallet/identity flows, claim-free Digital Passport planning, and Final-shaped OpenID4VP request/consent/refusal/fail-closed proof lifecycle implemented; vault and real verifier proof remain queued |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness implemented and measured on iOS/Android; generated artifacts remain uncommitted |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch the explicit standalone-development composition through repository scripts; native camera/copy/share/custody bridges remain deferred |
@@ -307,8 +307,20 @@ claim reveal method. Deterministic standalone issuance, process restart,
 profile isolation, atomic deletion, and iOS/Android flows are covered. The plan
 explicitly reports that no presentation was generated.
 
+[Issue #27](https://github.com/MediaNoxLabs/oxid/issues/27) and ADR-0043 add
+the missing “extra 10%” request and consent boundary without copying the
+prototype's disabled-action fiction. `presentation/domain` and
+`presentation/application` own schema-neutral preview, candidate, consent, and
+single-use state. `adapters/openid4vp` strictly accepts one deterministic
+request-by-reference OpenID4VP 1.0 Final-shaped DCQL profile and maps it to the
+commitment-bound Digital Passport candidates. Headless and Dioxus show the
+verifier, purpose, and exact claim intents without values. Acceptance currently
+consumes the session and fails with `proof_unavailable`; it cannot construct a
+`vp_token` until issue #28 supplies reproducible Compact artifacts and an
+independent verifier.
+
 Shielded spending, internal/change address management, replacement handling,
-live DID writes, OpenID4VP verifier presentation and disclosure/predicate proof generation, camera/copy/share
+live DID writes, OpenID4VP verifier proof/response delivery and Compact disclosure/predicate proof generation, camera/copy/share
 bridges, production endpoint discovery, durable recovery, and native custody
 remain separate follow-ups.
 

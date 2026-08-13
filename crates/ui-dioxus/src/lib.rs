@@ -21,6 +21,12 @@ use oxid_identity_application::{
     UpdateDidUseCase,
 };
 use oxid_identity_domain::VerificationRelationship;
+use oxid_presentation_application::{
+    AcceptCredentialPresentationCommand, AcceptCredentialPresentationUseCase,
+    CredentialPresentationError, CredentialPresentationView, PrepareCredentialPresentationCommand,
+    PrepareCredentialPresentationUseCase, PresentationProtocolError,
+    RefuseCredentialPresentationCommand, RefuseCredentialPresentationUseCase,
+};
 use oxid_protocol_application::{
     AcceptCredentialIssuanceCommand, AcceptCredentialIssuanceUseCase,
     AcceptSelfIssuedAuthenticationCommand, AcceptSelfIssuedAuthenticationUseCase,
@@ -103,6 +109,10 @@ pub struct WalletUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     standalone_credential_offer: Option<String>,
+    prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
+    accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
+    refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
+    standalone_openid4vp_request: Option<String>,
     prepare_self_issued_authentication: Arc<dyn PrepareSelfIssuedAuthenticationUseCase>,
     accept_self_issued_authentication: Arc<dyn AcceptSelfIssuedAuthenticationUseCase>,
     refuse_self_issued_authentication: Arc<dyn RefuseSelfIssuedAuthenticationUseCase>,
@@ -134,6 +144,38 @@ pub struct CredentialUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     standalone_credential_offer: Option<String>,
+    prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
+    accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
+    refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
+    standalone_openid4vp_request: Option<String>,
+}
+
+/// Protected credential inventory capabilities consumed by the Credentials page.
+pub struct CredentialInventoryUiServices {
+    receive: Arc<dyn ReceiveCredentialUseCase>,
+    list: Arc<dyn ListCredentialsUseCase>,
+    get: Arc<dyn GetCredentialUseCase>,
+    reverify: Arc<dyn ReverifyCredentialUseCase>,
+    delete: Arc<dyn DeleteCredentialUseCase>,
+}
+
+impl CredentialInventoryUiServices {
+    #[must_use]
+    pub fn new(
+        receive: Arc<dyn ReceiveCredentialUseCase>,
+        list: Arc<dyn ListCredentialsUseCase>,
+        get: Arc<dyn GetCredentialUseCase>,
+        reverify: Arc<dyn ReverifyCredentialUseCase>,
+        delete: Arc<dyn DeleteCredentialUseCase>,
+    ) -> Self {
+        Self {
+            receive,
+            list,
+            get,
+            reverify,
+            delete,
+        }
+    }
 }
 
 /// Consent-driven credential issuance capabilities consumed by the Credentials page.
@@ -142,6 +184,31 @@ pub struct CredentialIssuanceUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     standalone_credential_offer: Option<String>,
+}
+
+/// Consent-driven OpenID4VP capabilities consumed by the Credentials page.
+pub struct CredentialPresentationUiServices {
+    prepare: Arc<dyn PrepareCredentialPresentationUseCase>,
+    accept: Arc<dyn AcceptCredentialPresentationUseCase>,
+    refuse: Arc<dyn RefuseCredentialPresentationUseCase>,
+    standalone_request: Option<String>,
+}
+
+impl CredentialPresentationUiServices {
+    #[must_use]
+    pub fn new(
+        prepare: Arc<dyn PrepareCredentialPresentationUseCase>,
+        accept: Arc<dyn AcceptCredentialPresentationUseCase>,
+        refuse: Arc<dyn RefuseCredentialPresentationUseCase>,
+        standalone_request: Option<String>,
+    ) -> Self {
+        Self {
+            prepare,
+            accept,
+            refuse,
+            standalone_request,
+        }
+    }
 }
 
 /// Targeted protected-claim controls consumed only by schema-aware cards.
@@ -211,20 +278,17 @@ impl CredentialIssuanceUiServices {
 impl CredentialUiServices {
     #[must_use]
     pub fn new(
-        receive_credential: Arc<dyn ReceiveCredentialUseCase>,
-        list_credentials: Arc<dyn ListCredentialsUseCase>,
-        get_credential: Arc<dyn GetCredentialUseCase>,
-        reverify_credential: Arc<dyn ReverifyCredentialUseCase>,
-        delete_credential: Arc<dyn DeleteCredentialUseCase>,
+        inventory: CredentialInventoryUiServices,
         issuance: CredentialIssuanceUiServices,
+        presentation: CredentialPresentationUiServices,
         disclosure: CredentialDisclosureUiServices,
     ) -> Self {
         Self {
-            receive_credential,
-            list_credentials,
-            get_credential,
-            reverify_credential,
-            delete_credential,
+            receive_credential: inventory.receive,
+            list_credentials: inventory.list,
+            get_credential: inventory.get,
+            reverify_credential: inventory.reverify,
+            delete_credential: inventory.delete,
             get_credential_disclosure: disclosure.get,
             preview_credential_disclosure: disclosure.preview,
             reveal_credential_claim: disclosure.reveal_local,
@@ -232,6 +296,10 @@ impl CredentialUiServices {
             accept_credential_issuance: issuance.accept_credential_issuance,
             refuse_credential_issuance: issuance.refuse_credential_issuance,
             standalone_credential_offer: issuance.standalone_credential_offer,
+            prepare_credential_presentation: presentation.prepare,
+            accept_credential_presentation: presentation.accept,
+            refuse_credential_presentation: presentation.refuse,
+            standalone_openid4vp_request: presentation.standalone_request,
         }
     }
 }
@@ -520,6 +588,10 @@ impl WalletUiServices {
             accept_credential_issuance: credentials.accept_credential_issuance,
             refuse_credential_issuance: credentials.refuse_credential_issuance,
             standalone_credential_offer: credentials.standalone_credential_offer,
+            prepare_credential_presentation: credentials.prepare_credential_presentation,
+            accept_credential_presentation: credentials.accept_credential_presentation,
+            refuse_credential_presentation: credentials.refuse_credential_presentation,
+            standalone_openid4vp_request: credentials.standalone_openid4vp_request,
             prepare_self_issued_authentication: authentication.prepare,
             accept_self_issued_authentication: authentication.accept,
             refuse_self_issued_authentication: authentication.refuse,
@@ -763,6 +835,26 @@ impl WalletUiServices {
     #[must_use]
     pub fn standalone_credential_offer(&self) -> Option<String> {
         self.standalone_credential_offer.clone()
+    }
+
+    #[must_use]
+    pub fn prepare_credential_presentation(&self) -> Arc<dyn PrepareCredentialPresentationUseCase> {
+        Arc::clone(&self.prepare_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn accept_credential_presentation(&self) -> Arc<dyn AcceptCredentialPresentationUseCase> {
+        Arc::clone(&self.accept_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn refuse_credential_presentation(&self) -> Arc<dyn RefuseCredentialPresentationUseCase> {
+        Arc::clone(&self.refuse_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn standalone_openid4vp_request(&self) -> Option<String> {
+        self.standalone_openid4vp_request.clone()
     }
 
     #[must_use]
@@ -3699,6 +3791,204 @@ fn credential_issuance_message(error: CredentialIssuanceError) -> String {
     error.to_string()
 }
 
+fn credential_presentation_message(error: CredentialPresentationError) -> String {
+    match error {
+        CredentialPresentationError::Protocol(PresentationProtocolError::ProofUnavailable) =>
+            "Compact proof generation is not reproducible yet. Nothing was presented and no vp_token was generated.".to_owned(),
+        other => other.to_string(),
+    }
+}
+
+#[component]
+fn CredentialPresentationPanel(profile_id: String) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut request_input = use_signal(String::new);
+    let mut preview = use_signal(|| None::<CredentialPresentationView>);
+    let mut consent = use_signal(|| false);
+    let mut busy = use_signal(|| false);
+    let mut notice = use_signal(|| None::<String>);
+    let demo_request = services.standalone_openid4vp_request();
+
+    rsx! {
+        article { class: "surface-card credential-receive-card",
+            p { class: "card-eyebrow", "OpenID4VP 1.0 Final · DCQL" }
+            h2 { "Present a Digital Passport" }
+            p { class: "form-hint",
+                "Inspect the verifier, purpose, and exact requested claims before consent. Claim values stay protected while previewing."
+            }
+            label { r#for: "openid4vp-request", "OpenID4VP request URI" }
+            textarea {
+                id: "openid4vp-request",
+                maxlength: 65536,
+                rows: 4,
+                autocomplete: "off",
+                spellcheck: false,
+                value: "{request_input}",
+                oninput: move |event| request_input.set(event.value()),
+            }
+            if let Some(request) = demo_request {
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    disabled: busy(),
+                    onclick: move |_| {
+                        request_input.set(request.clone());
+                        preview.set(None);
+                        consent.set(false);
+                        notice.set(Some("Standalone verifier request loaded. Preview it before consenting.".to_owned()));
+                    },
+                    "Use standalone verifier request"
+                }
+            }
+            button {
+                class: "primary-action",
+                r#type: "button",
+                disabled: busy() || request_input.read().trim().is_empty(),
+                onclick: {
+                    let service = services.prepare_credential_presentation();
+                    let profile_id = profile_id.clone();
+                    move |_| {
+                        let service = service.clone();
+                        let profile_id = profile_id.clone();
+                        let request = request_input.read().trim().to_owned();
+                        busy.set(true);
+                        notice.set(None);
+                        spawn(async move {
+                            match service.execute(PrepareCredentialPresentationCommand { profile_id, request }).await {
+                                Ok(result) => {
+                                    preview.set(Some(result));
+                                    consent.set(false);
+                                    notice.set(Some("Request preview ready. Nothing has been presented.".to_owned()));
+                                }
+                                Err(error) => {
+                                    preview.set(None);
+                                    notice.set(Some(credential_presentation_message(error)));
+                                }
+                            }
+                            busy.set(false);
+                        });
+                    }
+                },
+                if busy() { "Checking request…" } else { "Preview presentation request" }
+            }
+            if let Some(presentation) = preview.read().clone() {
+                div { class: "credential-offer-preview",
+                    h3 { "Presentation preview" }
+                    dl { class: "credential-record__facts",
+                        div { dt { "Verifier" } dd { title: "{presentation.verifier}", "{presentation.verifier}" } }
+                        div { dt { "Purpose" } dd { "{presentation.purpose}" } }
+                        div { dt { "State" } dd { {presentation.state.replace('_', " ")} } }
+                    }
+                    h4 { "Requested claims" }
+                    ul { class: "credential-stage-list", aria_label: "Requested presentation claims",
+                        for claim in presentation.requested_claims.clone() {
+                            li { key: "{claim.claim_path}",
+                                span { "{claim.label}" }
+                                strong { "{claim.intent}" }
+                                if let Some(kind) = claim.predicate_kind {
+                                    small { "{kind} {claim.threshold.unwrap_or_default()}" }
+                                }
+                            }
+                        }
+                    }
+                    if presentation.candidates.is_empty() {
+                        p { class: "field-error", role: "alert", "No matching Digital Passport is available in this profile." }
+                    } else if presentation.state == "awaiting_consent" {
+                        label { class: "confirmation-check",
+                            input {
+                                id: "credential-presentation-consent",
+                                r#type: "checkbox",
+                                aria_label: "Consent to credential presentation",
+                                checked: consent(),
+                                onchange: move |event| consent.set(event.checked()),
+                            }
+                            span { "I consent to disclose exactly these claims to this verifier." }
+                        }
+                        div { class: "action-row",
+                            button {
+                                class: "primary-action",
+                                r#type: "button",
+                                disabled: busy() || !consent(),
+                                onclick: {
+                                    let service = services.accept_credential_presentation();
+                                    let profile_id = profile_id.clone();
+                                    let presentation_id = presentation.id.clone();
+                                    let credential_id = presentation.candidates[0].credential_id.clone();
+                                    move |_| {
+                                        let service = service.clone();
+                                        let profile_id = profile_id.clone();
+                                        let presentation_id = presentation_id.clone();
+                                        let credential_id = credential_id.clone();
+                                        busy.set(true);
+                                        notice.set(None);
+                                        spawn(async move {
+                                            match service.execute(AcceptCredentialPresentationCommand {
+                                                profile_id,
+                                                presentation_id,
+                                                credential_id,
+                                                confirmed: true,
+                                                intent: "ACCEPT_CREDENTIAL_PRESENTATION".to_owned(),
+                                            }).await {
+                                                Ok(result) => {
+                                                    preview.set(Some(result));
+                                                    notice.set(Some("Presentation generated and independently verified.".to_owned()));
+                                                }
+                                                Err(error) => {
+                                                    let failed_view = preview.read().clone();
+                                                    if let CredentialPresentationError::Protocol(protocol) = &error
+                                                        && let Some(mut failed) = failed_view {
+                                                        failed.state = "failed".to_owned();
+                                                        failed.presentation_generated = false;
+                                                        failed.verifier_validated = false;
+                                                        failed.failure_code = Some(protocol.code().to_owned());
+                                                        preview.set(Some(failed));
+                                                        consent.set(false);
+                                                    }
+                                                    notice.set(Some(credential_presentation_message(error)));
+                                                }
+                                            }
+                                            busy.set(false);
+                                        });
+                                    }
+                                },
+                                if busy() { "Generating proof…" } else { "Consent and present" }
+                            }
+                            button {
+                                class: "secondary-action",
+                                r#type: "button",
+                                disabled: busy(),
+                                onclick: {
+                                    let service = services.refuse_credential_presentation();
+                                    let profile_id = profile_id.clone();
+                                    let presentation_id = presentation.id.clone();
+                                    move |_| match service.execute(RefuseCredentialPresentationCommand {
+                                        profile_id: profile_id.clone(),
+                                        presentation_id: presentation_id.clone(),
+                                    }) {
+                                        Ok(result) => {
+                                            preview.set(Some(result));
+                                            consent.set(false);
+                                            notice.set(Some("Presentation refused; the one-time verifier session was discarded.".to_owned()));
+                                        }
+                                        Err(error) => notice.set(Some(credential_presentation_message(error))),
+                                    }
+                                },
+                                "Refuse request"
+                            }
+                        }
+                    }
+                    if !presentation.presentation_generated {
+                        p { class: "form-hint", "No presentation or vp_token has been generated." }
+                    }
+                }
+            }
+            if let Some(message) = notice.read().as_deref() {
+                p { class: "form-hint", role: "status", "{message}" }
+            }
+        }
+    }
+}
+
 enum CredentialChange {
     Updated(CredentialView),
     Deleted(String),
@@ -4256,6 +4546,7 @@ fn CredentialsPage(active_profile: WalletProfileView) -> Element {
                         p { class: "form-hint", role: "status", "{message}" }
                     }
                 }
+                CredentialPresentationPanel { profile_id: profile_id.clone() }
                 article { class: "surface-card credential-receive-card",
                     p { class: "card-eyebrow", "Standalone credential inbox" }
                     h2 { "Receive the public identity fixture" }

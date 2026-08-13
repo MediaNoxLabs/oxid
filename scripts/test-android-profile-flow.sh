@@ -136,4 +136,4 @@ if [ "$credential_header" != "4f58494456433031" ] || [ "$credential_key_size" !=
   exit 1
 fi
 
-echo "Android protected account, Digital Passport local reveal/disclosure preview/restore, DUST/shielded sync, receive QR, transfer, and profile-restore smoke flow passed on $device."
+echo "Android protected account, Digital Passport OpenID4VP proof gate/local reveal/disclosure preview/restore, DUST/shielded sync, receive QR, transfer, and profile-restore smoke flow passed on $device."

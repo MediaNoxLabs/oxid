@@ -13,6 +13,7 @@ oxid-adapter-did-midnight.workspace = true
 oxid-adapter-storage-credential-json.workspace = true
 oxid-adapter-midnight.workspace = true
 oxid-adapter-openid4vci.workspace = true
+oxid-adapter-openid4vp.workspace = true
 oxid-adapter-siopv2.workspace = true
 oxid-adapter-platform-system.workspace = true
 oxid-adapter-storage-json.workspace = true
@@ -22,6 +23,7 @@ oxid-adapter-storage-identity-json.workspace = true
 oxid-adapter-vc-midnight.workspace = true
 oxid-credential-application.workspace = true
 oxid-identity-application.workspace = true
+oxid-presentation-application.workspace = true
 oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
 

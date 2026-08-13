@@ -14,6 +14,7 @@ oxid-composition.workspace = true
 oxid-credential-application.workspace = true
 oxid-identity-application.workspace = true
 oxid-identity-domain.workspace = true
+oxid-presentation-application.workspace = true
 oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true

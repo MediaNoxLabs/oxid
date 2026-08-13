@@ -20,6 +20,11 @@ use oxid_identity_application::{
     SignDidPayloadCommand, UpdateDidCommand,
 };
 use oxid_identity_domain::VerificationRelationship;
+use oxid_presentation_application::{
+    AcceptCredentialPresentationCommand, CredentialPresentationError,
+    CredentialPresentationProfileQuery, CredentialPresentationQuery, CredentialPresentationView,
+    PrepareCredentialPresentationCommand, RefuseCredentialPresentationCommand,
+};
 use oxid_protocol_application::{
     AcceptCredentialIssuanceCommand, AcceptSelfIssuedAuthenticationCommand,
     CredentialIssuanceError, CredentialIssuanceProfileQuery, CredentialIssuanceQuery,
@@ -212,6 +217,11 @@ impl HeadlessWallet {
             "credential.issuance.refuse" => self.refuse_credential_issuance(request),
             "credential.issuance.get" => self.get_credential_issuance(request),
             "credential.issuance.list" => self.list_credential_issuances(request),
+            "credential.presentation.prepare" => self.prepare_credential_presentation(request),
+            "credential.presentation.accept" => self.accept_credential_presentation(request),
+            "credential.presentation.refuse" => self.refuse_credential_presentation(request),
+            "credential.presentation.get" => self.get_credential_presentation(request),
+            "credential.presentation.list" => self.list_credential_presentations(request),
             "identity.login" | "identity.authentication.prepare" => {
                 self.prepare_self_issued_authentication(request)
             }
@@ -1823,6 +1833,154 @@ impl HeadlessWallet {
         }
     }
 
+    fn prepare_credential_presentation(&self, request: Request) -> Dispatch {
+        let params =
+            match serde_json::from_value::<PrepareCredentialPresentationParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => {
+                    return Dispatch::continue_with(Response::error(
+                        request.id,
+                        "invalid_params",
+                        "credential.presentation.prepare requires only a string request field",
+                    ));
+                }
+            };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match futures::executor::block_on(
+            self.application.prepare_credential_presentation().execute(
+                PrepareCredentialPresentationCommand {
+                    profile_id,
+                    request: params.request,
+                },
+            ),
+        ) {
+            Ok(presentation) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "presentation": credential_presentation_value(&presentation) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_presentation_error(request.id, error)),
+        }
+    }
+
+    fn accept_credential_presentation(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<AcceptCredentialPresentationParams>(
+            request.params,
+        ) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.presentation.accept requires presentationId, credentialId, confirmed, and intent fields",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match futures::executor::block_on(
+            self.application.accept_credential_presentation().execute(
+                AcceptCredentialPresentationCommand {
+                    profile_id,
+                    presentation_id: params.presentation_id,
+                    credential_id: params.credential_id,
+                    confirmed: params.confirmed,
+                    intent: params.intent,
+                },
+            ),
+        ) {
+            Ok(presentation) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "presentation": credential_presentation_value(&presentation) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_presentation_error(request.id, error)),
+        }
+    }
+
+    fn refuse_credential_presentation(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<CredentialPresentationParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.presentation.refuse requires only a string presentationId field",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self.application.refuse_credential_presentation().execute(
+            RefuseCredentialPresentationCommand {
+                profile_id,
+                presentation_id: params.presentation_id,
+            },
+        ) {
+            Ok(presentation) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "presentation": credential_presentation_value(&presentation) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_presentation_error(request.id, error)),
+        }
+    }
+
+    fn get_credential_presentation(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<CredentialPresentationParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "credential.presentation.get requires only a string presentationId field",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .get_credential_presentation()
+            .execute(CredentialPresentationQuery {
+                profile_id,
+                presentation_id: params.presentation_id,
+            }) {
+            Ok(presentation) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "presentation": credential_presentation_value(&presentation) }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_presentation_error(request.id, error)),
+        }
+    }
+
+    fn list_credential_presentations(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "credential.presentation.list");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .list_credential_presentations()
+            .execute(CredentialPresentationProfileQuery { profile_id })
+        {
+            Ok(presentations) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "presentations": presentations.iter().map(credential_presentation_value).collect::<Vec<_>>() }),
+            )),
+            Err(error) => Dispatch::continue_with(credential_presentation_error(request.id, error)),
+        }
+    }
+
     fn prepare_self_issued_authentication(&self, request: Request) -> Dispatch {
         let params =
             match serde_json::from_value::<PrepareSelfIssuedAuthenticationParams>(request.params) {
@@ -2169,6 +2327,27 @@ struct AcceptCredentialIssuanceParams {
     issuance_id: String,
     holder_did: String,
     method_id: String,
+    confirmed: bool,
+    intent: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrepareCredentialPresentationParams {
+    request: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CredentialPresentationParams {
+    presentation_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AcceptCredentialPresentationParams {
+    presentation_id: String,
+    credential_id: String,
     confirmed: bool,
     intent: String,
 }
@@ -2893,6 +3072,67 @@ fn credential_issuance_error(id: Option<String>, error: CredentialIssuanceError)
         CredentialIssuanceError::Unavailable => (
             "capability_unavailable",
             "credential issuance capability is unavailable",
+        ),
+    };
+    Response::error(id, code, message)
+}
+
+fn credential_presentation_value(presentation: &CredentialPresentationView) -> Value {
+    json!({
+        "id": presentation.id,
+        "verifier": presentation.verifier,
+        "purpose": presentation.purpose,
+        "queryId": presentation.query_id,
+        "candidates": presentation.candidates.iter().map(|candidate| json!({
+            "credentialId": candidate.credential_id,
+            "displayName": candidate.display_name,
+        })).collect::<Vec<_>>(),
+        "requestedClaims": presentation.requested_claims.iter().map(|claim| json!({
+            "claimPath": claim.claim_path,
+            "label": claim.label,
+            "intent": claim.intent,
+            "predicateKind": claim.predicate_kind,
+            "threshold": claim.threshold,
+        })).collect::<Vec<_>>(),
+        "state": presentation.state,
+        "presentationGenerated": presentation.presentation_generated,
+        "verifierValidated": presentation.verifier_validated,
+        "failureCode": presentation.failure_code,
+    })
+}
+
+fn credential_presentation_error(
+    id: Option<String>,
+    error: CredentialPresentationError,
+) -> Response {
+    let (code, message) = match error {
+        CredentialPresentationError::InvalidProfileIdentifier(_)
+        | CredentialPresentationError::InvalidPresentationIdentifier(_)
+        | CredentialPresentationError::InvalidRequest
+        | CredentialPresentationError::InvalidCredential => (
+            "invalid_argument",
+            "credential presentation request contains invalid input",
+        ),
+        CredentialPresentationError::ConfirmationRequired
+        | CredentialPresentationError::InvalidConfirmation => (
+            "confirmation_required",
+            "valid explicit credential presentation consent is required",
+        ),
+        CredentialPresentationError::NotFound => (
+            "not_found",
+            "credential presentation session was not found for the active profile",
+        ),
+        CredentialPresentationError::InvalidState => (
+            "failed_precondition",
+            "credential presentation session is not awaiting this operation",
+        ),
+        CredentialPresentationError::Protocol(protocol) => (
+            protocol.code(),
+            "credential presentation protocol rejected or could not complete the request",
+        ),
+        CredentialPresentationError::Unavailable => (
+            "capability_unavailable",
+            "credential presentation capability is unavailable",
         ),
     };
     Response::error(id, code, message)
@@ -3742,6 +3982,11 @@ fn capability_manifest() -> Value {
         { "method": "credential.issuance.refuse", "status": "ready", "mode": "standalone" },
         { "method": "credential.issuance.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
         { "method": "credential.issuance.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
+        { "method": "credential.presentation.prepare", "status": "ready", "mode": "standalone", "standard": "OpenID4VP 1.0 Final", "query": "DCQL", "requestMode": "by_reference", "claimValuesExposed": false },
+        { "method": "credential.presentation.accept", "status": "blocked", "mode": "standalone", "confirmationRequired": true, "proofAvailable": false, "generatesPresentation": false, "blocker": "https://github.com/MediaNoxLabs/oxid/issues/28" },
+        { "method": "credential.presentation.refuse", "status": "ready", "mode": "standalone" },
+        { "method": "credential.presentation.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
+        { "method": "credential.presentation.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
         { "method": "did.create", "status": "ready", "mode": "development_only", "networks": ["undeployed"], "initialMethods": ["ed25519", "p256"] },
         { "method": "did.resolve", "status": "ready", "mode": "standalone", "sources": ["standalone", "live"] },
         { "method": "did.list", "status": "ready", "mode": "standalone", "scope": "active_profile" },
@@ -3860,6 +4105,12 @@ mod tests {
                 && capability["status"] == "ready"
                 && capability["generatesPresentation"] == false
                 && capability["claimValuesExposed"] == false
+        }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "credential.presentation.accept"
+                && capability["status"] == "blocked"
+                && capability["proofAvailable"] == false
+                && capability["generatesPresentation"] == false
         }));
         assert!(methods.iter().any(|capability| {
             capability["method"] == "identity.login"
@@ -4084,6 +4335,93 @@ mod tests {
         assert!(!disclosure_json.contains("Alice"));
         assert!(!disclosure_json.contains("Example"));
         assert!(!disclosure_json.contains("AB1234567"));
+
+        let prepared_presentation = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "presentation-prepare",
+                "method": "credential.presentation.prepare",
+                "params": {"request": oxid_composition::standalone_openid4vp_request()},
+            })
+            .to_string(),
+        );
+        let presentation = &prepared_presentation[0]["result"]["presentation"];
+        assert_eq!(presentation["state"], "awaiting_consent");
+        assert_eq!(presentation["presentationGenerated"], false);
+        assert_eq!(presentation["verifierValidated"], false);
+        assert_eq!(
+            presentation["requestedClaims"].as_array().map(Vec::len),
+            Some(3)
+        );
+        assert_eq!(presentation["candidates"].as_array().map(Vec::len), Some(1));
+        let presentation_id = presentation["id"]
+            .as_str()
+            .expect("presentation identifier");
+        let candidate_id = presentation["candidates"][0]["credentialId"]
+            .as_str()
+            .expect("credential candidate identifier");
+        let preview_json = prepared_presentation[0].to_string();
+        assert!(!preview_json.contains("Alice"));
+        assert!(!preview_json.contains("Example"));
+        assert!(!preview_json.contains("AB1234567"));
+
+        let denied_presentation = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "presentation-denied",
+                "method": "credential.presentation.accept",
+                "params": {
+                    "presentationId": presentation_id,
+                    "credentialId": candidate_id,
+                    "confirmed": false,
+                    "intent": "ACCEPT_CREDENTIAL_PRESENTATION"
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            denied_presentation[0]["error"]["code"],
+            "confirmation_required"
+        );
+
+        let blocked_presentation = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "presentation-accept",
+                "method": "credential.presentation.accept",
+                "params": {
+                    "presentationId": presentation_id,
+                    "credentialId": candidate_id,
+                    "confirmed": true,
+                    "intent": "ACCEPT_CREDENTIAL_PRESENTATION"
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            blocked_presentation[0]["error"]["code"],
+            "proof_unavailable"
+        );
+
+        let failed_presentation = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "presentation-get",
+                "method": "credential.presentation.get",
+                "params": {"presentationId": presentation_id},
+            })
+            .to_string(),
+        );
+        let failed = &failed_presentation[0]["result"]["presentation"];
+        assert_eq!(failed["state"], "failed");
+        assert_eq!(failed["failureCode"], "proof_unavailable");
+        assert_eq!(failed["presentationGenerated"], false);
+        assert_eq!(failed["verifierValidated"], false);
+        assert!(!failed_presentation[0].to_string().contains("vp_token"));
     }
 
     #[test]

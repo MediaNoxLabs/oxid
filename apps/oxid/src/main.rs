@@ -15,6 +15,10 @@ fn main() {
     let standalone_self_issued_request = Some(oxid_composition::standalone_siopv2_request());
     #[cfg(not(feature = "standalone-development"))]
     let standalone_self_issued_request = None;
+    #[cfg(feature = "standalone-development")]
+    let standalone_openid4vp_request = Some(oxid_composition::standalone_openid4vp_request());
+    #[cfg(not(feature = "standalone-development"))]
+    let standalone_openid4vp_request = None;
     let ui = oxid_ui_dioxus::WalletUiServices::new(
         oxid_ui_dioxus::WalletProfileUiServices::new(
             application.create_wallet_profile(),
@@ -68,16 +72,24 @@ fn main() {
                 application.forget_did(),
             ),
             oxid_ui_dioxus::CredentialUiServices::new(
-                application.receive_credential(),
-                application.list_credentials(),
-                application.get_credential(),
-                application.reverify_credential(),
-                application.delete_credential(),
+                oxid_ui_dioxus::CredentialInventoryUiServices::new(
+                    application.receive_credential(),
+                    application.list_credentials(),
+                    application.get_credential(),
+                    application.reverify_credential(),
+                    application.delete_credential(),
+                ),
                 oxid_ui_dioxus::CredentialIssuanceUiServices::new(
                     application.prepare_credential_issuance(),
                     application.accept_credential_issuance(),
                     application.refuse_credential_issuance(),
                     standalone_credential_offer,
+                ),
+                oxid_ui_dioxus::CredentialPresentationUiServices::new(
+                    application.prepare_credential_presentation(),
+                    application.accept_credential_presentation(),
+                    application.refuse_credential_presentation(),
+                    standalone_openid4vp_request,
                 ),
                 oxid_ui_dioxus::CredentialDisclosureUiServices::new(
                     application.get_credential_disclosure(),

@@ -5475,6 +5475,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-adapter-openid4vp"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures",
+ "oxid-credential-application",
+ "oxid-credential-domain",
+ "oxid-foundation",
+ "oxid-platform-ports",
+ "oxid-presentation-application",
+ "oxid-presentation-domain",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "oxid-adapter-platform-system"
 version = "0.1.0"
 dependencies = [
@@ -5611,6 +5630,7 @@ dependencies = [
  "oxid-adapter-did-midnight",
  "oxid-adapter-midnight",
  "oxid-adapter-openid4vci",
+ "oxid-adapter-openid4vp",
  "oxid-adapter-platform-system",
  "oxid-adapter-siopv2",
  "oxid-adapter-storage-credential-json",
@@ -5621,6 +5641,7 @@ dependencies = [
  "oxid-adapter-vc-midnight",
  "oxid-credential-application",
  "oxid-identity-application",
+ "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",
 ]
@@ -5655,6 +5676,7 @@ dependencies = [
  "oxid-credential-application",
  "oxid-identity-application",
  "oxid-identity-domain",
+ "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",
  "oxid-wallet-domain",
@@ -5687,6 +5709,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-presentation-application"
+version = "0.1.0"
+dependencies = [
+ "oxid-foundation",
+ "oxid-presentation-domain",
+]
+
+[[package]]
+name = "oxid-presentation-domain"
+version = "0.1.0"
+dependencies = [
+ "oxid-foundation",
+]
+
+[[package]]
 name = "oxid-protocol-application"
 version = "0.1.0"
 dependencies = [
@@ -5709,6 +5746,7 @@ dependencies = [
  "oxid-credential-application",
  "oxid-identity-application",
  "oxid-identity-domain",
+ "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",
  "qrcode",

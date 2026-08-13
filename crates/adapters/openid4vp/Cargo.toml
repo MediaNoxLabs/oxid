@@ -1,0 +1,29 @@
+[package]
+name = "oxid-adapter-openid4vp"
+description = "Strict standalone OpenID4VP and DCQL adapter for Oxid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+base64.workspace = true
+oxid-credential-application.workspace = true
+oxid-platform-ports.workspace = true
+oxid-presentation-application.workspace = true
+oxid-presentation-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+url.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+oxid-credential-domain.workspace = true
+oxid-foundation.workspace = true
+
+[lints]
+workspace = true

@@ -30,6 +30,7 @@ use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_mid
 use oxid_adapter_openid4vci::{
     DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
 };
+use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpenId4VpVerifier};
 use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
 
 /// Returns the public embedded offer for the deterministic standalone issuer.
@@ -44,6 +45,13 @@ pub fn standalone_oid4vci_offer() -> String {
 #[must_use]
 pub fn standalone_siopv2_request() -> String {
     oxid_adapter_siopv2::standalone_self_issued_request()
+}
+
+/// Returns the public request-by-reference URI for the deterministic
+/// standalone OpenID4VP verifier. Production composition keeps it unavailable.
+#[must_use]
+pub fn standalone_openid4vp_request() -> String {
+    oxid_adapter_openid4vp::standalone_openid4vp_request()
 }
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_credential_json::EncryptedJsonCredentialRepository;
@@ -70,6 +78,13 @@ use oxid_identity_application::{
     DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase,
     ResolveDidUseCase, SignDidPayloadUseCase, UnavailableDidLifecycle,
     UnavailableDidRecordRepository, UnavailableDidResolver, UpdateDidUseCase,
+};
+use oxid_presentation_application::{
+    AcceptCredentialPresentationUseCase, CredentialPresentationProtocolPort,
+    CredentialPresentationService, GetCredentialPresentationUseCase,
+    ListCredentialPresentationsUseCase, PrepareCredentialPresentationUseCase,
+    RefuseCredentialPresentationUseCase, UnavailableCredentialPresentationProtocol,
+    UnavailablePresentationProof, UnavailablePresentationVerifier,
 };
 use oxid_protocol_application::{
     AcceptCredentialIssuanceUseCase, AcceptSelfIssuedAuthenticationUseCase,
@@ -162,6 +177,11 @@ pub struct ApplicationServices {
     refuse_self_issued_authentication: Arc<dyn RefuseSelfIssuedAuthenticationUseCase>,
     get_self_issued_authentication: Arc<dyn GetSelfIssuedAuthenticationUseCase>,
     list_self_issued_authentications: Arc<dyn ListSelfIssuedAuthenticationsUseCase>,
+    prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
+    accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
+    refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
+    get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase>,
+    list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase>,
 }
 
 #[derive(Clone, Copy)]
@@ -176,6 +196,12 @@ enum SelfIssuedAuthenticationComposition {
     Standalone,
 }
 
+#[derive(Clone, Copy)]
+enum CredentialPresentationComposition {
+    Unavailable,
+    Standalone,
+}
+
 struct IdentityAdapters {
     did_repository: Arc<dyn DidRecordRepository>,
     did_resolver: Arc<dyn DidResolutionPort>,
@@ -186,6 +212,7 @@ struct IdentityAdapters {
     credential_disclosure: Arc<dyn CredentialDisclosurePort>,
     credential_issuance: CredentialIssuanceComposition,
     self_issued_authentication: SelfIssuedAuthenticationComposition,
+    credential_presentation: CredentialPresentationComposition,
 }
 
 impl ApplicationServices {
@@ -489,6 +516,31 @@ impl ApplicationServices {
     ) -> Arc<dyn ListSelfIssuedAuthenticationsUseCase> {
         Arc::clone(&self.list_self_issued_authentications)
     }
+
+    #[must_use]
+    pub fn prepare_credential_presentation(&self) -> Arc<dyn PrepareCredentialPresentationUseCase> {
+        Arc::clone(&self.prepare_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn accept_credential_presentation(&self) -> Arc<dyn AcceptCredentialPresentationUseCase> {
+        Arc::clone(&self.accept_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn refuse_credential_presentation(&self) -> Arc<dyn RefuseCredentialPresentationUseCase> {
+        Arc::clone(&self.refuse_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn get_credential_presentation(&self) -> Arc<dyn GetCredentialPresentationUseCase> {
+        Arc::clone(&self.get_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn list_credential_presentations(&self) -> Arc<dyn ListCredentialPresentationsUseCase> {
+        Arc::clone(&self.list_credential_presentations)
+    }
 }
 
 /// Wires the application with persistent public-profile metadata storage.
@@ -508,6 +560,7 @@ pub fn compose() -> ApplicationServices {
             credential_disclosure: Arc::new(UnavailableCredentialDisclosure),
             credential_issuance: CredentialIssuanceComposition::Unavailable,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
+            credential_presentation: CredentialPresentationComposition::Unavailable,
         },
     )
 }
@@ -1055,6 +1108,7 @@ pub fn compose_in_memory() -> ApplicationServices {
             credential_disclosure: Arc::new(DigitalPassportDisclosureAdapter),
             credential_issuance: CredentialIssuanceComposition::Standalone,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
+            credential_presentation: CredentialPresentationComposition::Standalone,
         },
     )
 }
@@ -1096,6 +1150,7 @@ where
             credential_disclosure: Arc::new(DigitalPassportDisclosureAdapter),
             credential_issuance: CredentialIssuanceComposition::Standalone,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
+            credential_presentation: CredentialPresentationComposition::Standalone,
         },
     )
 }
@@ -1127,6 +1182,7 @@ where
         credential_disclosure,
         credential_issuance,
         self_issued_authentication,
+        credential_presentation,
     } = identity_adapters;
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
@@ -1190,6 +1246,24 @@ where
         issuance_protocol,
         issuance_sink,
     ));
+    let presentation_protocol: Arc<dyn CredentialPresentationProtocolPort> =
+        match credential_presentation {
+            CredentialPresentationComposition::Unavailable => {
+                Arc::new(UnavailableCredentialPresentationProtocol)
+            }
+            CredentialPresentationComposition::Standalone => {
+                let list: Arc<dyn ListCredentialsUseCase> = credentials.clone();
+                let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
+                Arc::new(StandaloneOpenId4VpVerifier::new(
+                    Arc::new(CredentialDisclosureCandidateSource::new(list, disclosure)),
+                    Arc::new(UnavailablePresentationProof),
+                    Arc::new(UnavailablePresentationVerifier),
+                    clock.clone(),
+                ))
+            }
+        };
+    let credential_presentation =
+        Arc::new(CredentialPresentationService::new(presentation_protocol));
     let self_issued_protocol: Arc<dyn SelfIssuedAuthenticationProtocolPort> =
         match self_issued_authentication {
             SelfIssuedAuthenticationComposition::Unavailable => {
@@ -1202,7 +1276,7 @@ where
                     Arc::clone(&get_did),
                     sign_did,
                 ));
-                Arc::new(StandaloneSiopV2Verifier::new(proof, get_did, clock))
+                Arc::new(StandaloneSiopV2Verifier::new(proof, get_did, clock.clone()))
             }
         };
     let self_issued_authentication =
@@ -1272,6 +1346,16 @@ where
         self_issued_authentication.clone();
     let list_self_issued_authentications: Arc<dyn ListSelfIssuedAuthenticationsUseCase> =
         self_issued_authentication;
+    let prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase> =
+        credential_presentation.clone();
+    let accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase> =
+        credential_presentation.clone();
+    let refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase> =
+        credential_presentation.clone();
+    let get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase> =
+        credential_presentation.clone();
+    let list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase> =
+        credential_presentation;
 
     ApplicationServices {
         create_wallet_profile,
@@ -1331,6 +1415,11 @@ where
         refuse_self_issued_authentication,
         get_self_issued_authentication,
         list_self_issued_authentications,
+        prepare_credential_presentation,
+        accept_credential_presentation,
+        refuse_credential_presentation,
+        get_credential_presentation,
+        list_credential_presentations,
     }
 }
 
@@ -1610,6 +1699,7 @@ mod tests {
                 credential_disclosure: Arc::new(UnavailableCredentialDisclosure),
                 credential_issuance: CredentialIssuanceComposition::Unavailable,
                 self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
+                credential_presentation: CredentialPresentationComposition::Unavailable,
             },
         );
         let status = services

@@ -155,6 +155,30 @@ final class ProfileFlowTests: XCTestCase {
             application.staticTexts["Credential issued, verified, and stored in the protected inventory."]
                 .waitForExistence(timeout: 10)
         )
+        let verifierRequest = application.buttons["Use standalone verifier request"]
+        XCTAssertTrue(verifierRequest.waitForExistence(timeout: 5))
+        scrollTo(verifierRequest, in: application)
+        verifierRequest.tap()
+        let previewPresentation = application.buttons["Preview presentation request"]
+        scrollTo(previewPresentation, in: application)
+        previewPresentation.tap()
+        XCTAssertTrue(application.staticTexts["Presentation preview"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["Requested claims"].exists)
+        XCTAssertTrue(
+            application.staticTexts["No presentation or vp_token has been generated."]
+                .waitForExistence(timeout: 5)
+        )
+        let presentationConsent = application.descendants(matching: .any)["Consent to credential presentation"]
+        XCTAssertTrue(presentationConsent.waitForExistence(timeout: 5))
+        scrollTo(presentationConsent, in: application)
+        presentationConsent.tap()
+        let presentCredential = application.buttons["Consent and present"]
+        scrollTo(presentCredential, in: application)
+        presentCredential.tap()
+        XCTAssertTrue(
+            application.staticTexts["Compact proof generation is not reproducible yet. Nothing was presented and no vp_token was generated."]
+                .waitForExistence(timeout: 10)
+        )
         XCTAssertTrue(application.staticTexts["valid"].waitForExistence(timeout: 10))
         XCTAssertFalse(application.staticTexts["Alice"].exists)
         XCTAssertFalse(application.staticTexts["Example"].exists)

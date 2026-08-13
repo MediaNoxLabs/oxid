@@ -127,6 +127,12 @@ plan only—never claim values, openings, or presentation secrets. Standalone is
 `credential.issuance.refuse`, `credential.issuance.get`, and
 `credential.issuance.list`; their profile scope is always taken from the
 active wallet profile rather than caller parameters.
+Standalone presentation preview adds `credential.presentation.prepare`,
+`credential.presentation.accept`, `credential.presentation.refuse`,
+`credential.presentation.get`, and `credential.presentation.list`. It strictly
+matches a Final-shaped DCQL request and requires exact consent. Acceptance is
+truthfully blocked on Compact proving: it returns `proof_unavailable`, consumes
+the session, and never emits a `vp_token`.
 Standalone self-issued login adds `identity.authentication.prepare`,
 `identity.authentication.accept`, `identity.authentication.refuse`,
 `identity.authentication.get`, and `identity.authentication.list`. Results are
@@ -205,9 +211,12 @@ from ordinary incoming DTOs. The Digital Passport adapter interprets it only
 after recomputing all five official Midnight commitments and the signed claim
 root. Headless exposes safe candidate/plan metadata but no reveal operation.
 The Dioxus card permits explicit device-local first/last reveal and age
-threshold planning, clearly states that nothing is sent, and generates no
-presentation. OpenID4VP/DCQL, selective-disclosure and predicate proofs, and
-live verifier transport remain unavailable.
+threshold planning. A separate OpenID4VP 1.0 Final-shaped DCQL panel previews a
+deterministic standalone verifier request, matching credential, and exact claim
+intents before consent. The proof port remains unavailable, so acceptance
+fails closed and generates no presentation or `vp_token`. Reproducible Compact
+selective-disclosure/predicate proofs and live verifier transport remain
+unavailable.
 
 Standalone composition also accepts exactly one request-by-reference SIOPv2
 draft-13 login profile. It previews the verifier and purpose, requires exact
@@ -446,15 +455,18 @@ The credential migration and exact Digital Passport safety boundary are
 recorded in
 [docs/migration/midnight-vc-provenance.md](docs/migration/midnight-vc-provenance.md)
 and [ADR-0042](docs/adr/0042-bind-digital-passport-disclosure-to-signed-commitments.md).
+The fail-closed presentation boundary is recorded in
+[ADR-0043](docs/adr/0043-gate-openid4vp-on-reproducible-compact-proofs.md).
 
 ## Security
 
 The JSON repository is durable only for public profile metadata; it is not a
 secret store. The software signing and HD-derivation adapter is process-local development/test
 infrastructure and production composition does not select it. The encrypted
-credential repository and standalone issuer are development conformance
-boundaries, not production custody or trust. Local disclosure preview does not
-create a verifier presentation or prove a predicate. Never use this milestone to
+credential repository, standalone issuer, and deterministic verifier request
+are development conformance boundaries, not production custody or trust. Local
+disclosure or OpenID4VP request preview does not create a verifier presentation
+or prove a predicate. Never use this milestone to
 custody real assets or externally issued credentials. See
 [SECURITY.md](SECURITY.md) for reporting and the current threat boundaries.
 

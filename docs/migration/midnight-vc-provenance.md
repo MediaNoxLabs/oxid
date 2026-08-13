@@ -110,12 +110,14 @@ surfaces without widening the current UI. Headless never reveals a value.
   openings against signed commitments but does not represent that as a verifier
   proof; native proving/verification remains a separate adapter.
 - ADR-0041 provides atomic protected storage and ADR-0042 provides local
-  interpretation and claim-free planning. OpenID4VP request matching, consent,
-  presentation construction, transport, and proof verification remain absent.
+  interpretation and claim-free planning. ADR-0043 now provides strict
+  Final-shaped OpenID4VP/DCQL request matching, exact consent, profile-scoped
+  candidates, and single-use sessions. Presentation construction, transport,
+  and proof verification remain fail-closed until issue #28.
 - Live OID4VCI HTTP/discovery, Authorization Code, by-reference offers,
   Transaction Code, batch/deferred issuance, notification, encrypted responses,
   wallet attestation, deep links, and QR scanning remain later protocol slices.
-- OpenID4VP Final credential presentation, selective disclosure, live SIOP
+- OpenID4VP Final proof/`vp_token` completion, selective disclosure, live SIOP
   verifier transport, and browser/native bridge ingress remain later adapters.
 - Status/revocation, temporal policy, schema validation, and issuer trust remain
   visible `not_checked` stages rather than fabricated success.

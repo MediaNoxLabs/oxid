@@ -75,6 +75,7 @@ check_workspace_dependencies oxid-identity-domain oxid-foundation
 check_workspace_dependencies oxid-credential-domain oxid-foundation
 check_workspace_dependencies oxid-protocol-domain oxid-foundation
 check_workspace_dependencies oxid-platform-ports oxid-foundation
+check_workspace_dependencies oxid-presentation-domain oxid-foundation
 check_workspace_dependencies oxid-wallet-application \
   oxid-foundation oxid-platform-ports oxid-wallet-domain
 check_workspace_dependencies oxid-identity-application \
@@ -83,6 +84,8 @@ check_workspace_dependencies oxid-credential-application \
   oxid-credential-domain oxid-foundation
 check_workspace_dependencies oxid-protocol-application \
   oxid-foundation oxid-protocol-domain
+check_workspace_dependencies oxid-presentation-application \
+  oxid-foundation oxid-presentation-domain
 check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-credential-application oxid-credential-domain oxid-foundation \
   oxid-identity-application oxid-identity-domain \
@@ -107,25 +110,31 @@ check_workspace_dependencies oxid-adapter-vc-midnight \
 check_workspace_dependencies oxid-adapter-openid4vci \
   oxid-credential-application oxid-identity-application oxid-platform-ports \
   oxid-protocol-application oxid-protocol-domain
+check_workspace_dependencies oxid-adapter-openid4vp \
+  oxid-credential-application oxid-platform-ports \
+  oxid-presentation-application oxid-presentation-domain
 check_workspace_dependencies oxid-adapter-siopv2 \
   oxid-identity-application oxid-platform-ports \
   oxid-protocol-application oxid-protocol-domain
 check_workspace_dependencies oxid-ui-dioxus \
   oxid-credential-application oxid-identity-application oxid-identity-domain \
-  oxid-protocol-application oxid-wallet-application
+  oxid-presentation-application oxid-protocol-application oxid-wallet-application
 check_workspace_dependencies oxid-composition \
   oxid-adapter-did-midnight oxid-adapter-openid4vci oxid-adapter-siopv2 \
+  oxid-adapter-openid4vp \
   oxid-adapter-platform-system \
   oxid-adapter-storage-credential-json oxid-adapter-storage-json \
   oxid-adapter-storage-identity-json oxid-adapter-vc-midnight \
   oxid-adapter-storage-memory oxid-adapter-storage-dev oxid-adapter-midnight \
-  oxid-credential-application oxid-identity-application oxid-protocol-application \
+  oxid-credential-application oxid-identity-application oxid-presentation-application \
+  oxid-protocol-application \
   oxid-wallet-application
 check_workspace_dependencies oxid-app oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
   oxid-composition oxid-credential-application \
   oxid-identity-application oxid-identity-domain \
-  oxid-protocol-application oxid-wallet-application oxid-wallet-domain
+  oxid-presentation-application oxid-protocol-application \
+  oxid-wallet-application oxid-wallet-domain
 
 unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' || true)"
 if [ "$unsafe_sources" != "crates/adapters/storage-json/src/lib.rs" ]; then
@@ -142,9 +151,11 @@ check_no_external_dependencies oxid-identity-domain
 check_no_external_dependencies oxid-credential-domain
 check_no_external_dependencies oxid-protocol-domain
 check_no_external_dependencies oxid-platform-ports
+check_no_external_dependencies oxid-presentation-domain
 check_no_external_dependencies oxid-wallet-application
 check_no_external_dependencies oxid-identity-application
 check_no_external_dependencies oxid-credential-application
 check_no_external_dependencies oxid-protocol-application
+check_no_external_dependencies oxid-presentation-application
 
 echo "Architecture dependency rules passed."
