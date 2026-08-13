@@ -13,9 +13,10 @@ use ed25519_dalek::{Signer as _, SigningKey as Ed25519SigningKey};
 use k256::schnorr::{SigningKey as Secp256k1SchnorrSigningKey, signature::Signer as _};
 use oxid_platform_ports::{ClockPort, RandomPort};
 use oxid_wallet_application::{
-    DeriveProtectedKeyRequest, GenerateProtectedKeyRequest, WalletDerivedSecretUsePort,
-    WalletHdPath, WalletKeyDerivationPort, WalletKeyOperationPort, WalletProtectionPort,
-    WalletSecurityPortError,
+    DeriveProtectedKeyRequest, GenerateProtectedKeyRequest, JUBJUB_COMPACT_BYTES,
+    WalletDerivedSecretUsePort, WalletHdPath, WalletJubjubChallengeDeriver,
+    WalletJubjubChallengeSignature, WalletJubjubChallengeSigningPort, WalletKeyDerivationPort,
+    WalletKeyOperationPort, WalletProtectionPort, WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyReference,
@@ -410,6 +411,36 @@ where
     }
 }
 
+impl<C, N> WalletJubjubChallengeSigningPort for DevelopmentWalletSecurity<C, N>
+where
+    C: ClockPort,
+    N: RandomPort,
+{
+    fn sign_jubjub_challenge(
+        &self,
+        profile_id: &WalletProfileId,
+        key_reference: &WalletKeyReference,
+        derive_challenge: &mut WalletJubjubChallengeDeriver<'_>,
+    ) -> Result<WalletJubjubChallengeSignature, WalletSecurityPortError> {
+        let mut nonce_seed = Zeroizing::new([0_u8; JUBJUB_COMPACT_BYTES]);
+        self.random
+            .fill_bytes(nonce_seed.as_mut())
+            .map_err(|_| WalletSecurityPortError::Unavailable)?;
+        let profiles = self.profiles()?;
+        let profile = Self::unlocked_profile(&profiles, profile_id)?;
+        let key = profile
+            .keys
+            .get(key_reference.as_str())
+            .ok_or(WalletSecurityPortError::NotFound)?;
+        match &key.material {
+            DevelopmentKeyMaterial::Jubjub(signing_key) => {
+                signing_key.sign_challenge(&nonce_seed, derive_challenge)
+            }
+            _ => Err(WalletSecurityPortError::UnsupportedAlgorithm),
+        }
+    }
+}
+
 impl<C, N> WalletKeyDerivationPort for DevelopmentWalletSecurity<C, N>
 where
     C: ClockPort,
@@ -556,6 +587,17 @@ impl WalletKeyDerivationPort for UnavailableWalletSecurity {
         _: &WalletProfileId,
         _: DeriveProtectedKeyRequest,
     ) -> Result<WalletKeyDescriptor, WalletSecurityPortError> {
+        Err(WalletSecurityPortError::Unavailable)
+    }
+}
+
+impl WalletJubjubChallengeSigningPort for UnavailableWalletSecurity {
+    fn sign_jubjub_challenge(
+        &self,
+        _: &WalletProfileId,
+        _: &WalletKeyReference,
+        _: &mut WalletJubjubChallengeDeriver<'_>,
+    ) -> Result<WalletJubjubChallengeSignature, WalletSecurityPortError> {
         Err(WalletSecurityPortError::Unavailable)
     }
 }

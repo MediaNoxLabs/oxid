@@ -62,7 +62,7 @@ use oxid_adapter_storage_memory::{
     InMemoryCredentialRepository, InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
 };
 use oxid_adapter_vc_midnight::{
-    DigitalPassportDisclosureAdapter, ManagedDidJubjubHolderAuthorization,
+    CompactHolderProofPort, DigitalPassportDisclosureAdapter, ManagedDidJubjubHolderAuthorization,
     MidnightCredentialVerifier, PreflightOnlyCompactPresentationProof,
     StandaloneBoundCompactCredentialIssuer, StandaloneCredentialInbox,
 };
@@ -75,9 +75,9 @@ use oxid_credential_application::{
     UnavailableCredentialRepository, UnavailableCredentialVerifier,
 };
 use oxid_identity_application::{
-    CreateDidUseCase, DeactivateDidUseCase, DidLifecyclePort, DidRecordRepository,
-    DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase,
-    ResolveDidUseCase, SignDidPayloadUseCase, UnavailableDidLifecycle,
+    CreateDidUseCase, DeactivateDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort,
+    DidRecordRepository, DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase,
+    ListDidRecordsUseCase, ResolveDidUseCase, SignDidPayloadUseCase, UnavailableDidLifecycle,
     UnavailableDidRecordRepository, UnavailableDidResolver, UpdateDidUseCase,
 };
 use oxid_presentation_application::{
@@ -112,10 +112,11 @@ use oxid_wallet_application::{
     SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
     SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
     WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
-    WalletAccountService, WalletDustSyncPort, WalletDustSyncService, WalletKeyOperationPort,
-    WalletKeyService, WalletNetworkPort, WalletNetworkService, WalletProfileRepository,
-    WalletProtectionPort, WalletProtectionService, WalletShieldedSyncPort,
-    WalletShieldedSyncService, WalletTransactionPort, WalletTransactionService,
+    WalletAccountService, WalletDustSyncPort, WalletDustSyncService,
+    WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
+    WalletNetworkService, WalletProfileRepository, WalletProtectionPort, WalletProtectionService,
+    WalletShieldedSyncPort, WalletShieldedSyncService, WalletTransactionPort,
+    WalletTransactionService,
 };
 
 /// Application capabilities shared by every incoming adapter.
@@ -207,6 +208,7 @@ struct IdentityAdapters {
     did_repository: Arc<dyn DidRecordRepository>,
     did_resolver: Arc<dyn DidResolutionPort>,
     did_lifecycle: Arc<dyn DidLifecyclePort>,
+    did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort>,
     credential_repository: Arc<dyn CredentialRepository>,
     credential_inbox: Arc<dyn CredentialInboxPort>,
     credential_verifier: Arc<dyn CredentialVerificationPort>,
@@ -555,6 +557,7 @@ pub fn compose() -> ApplicationServices {
             did_repository: Arc::new(UnavailableDidRecordRepository),
             did_resolver: Arc::new(UnavailableDidResolver),
             did_lifecycle: Arc::new(UnavailableDidLifecycle),
+            did_jubjub_challenge_signing: Arc::new(UnavailableDidLifecycle),
             credential_repository: Arc::new(UnavailableCredentialRepository),
             credential_inbox: Arc::new(UnavailableCredentialInbox),
             credential_verifier: Arc::new(UnavailableCredentialVerifier),
@@ -1093,6 +1096,13 @@ pub fn compose_in_memory() -> ApplicationServices {
         Arc::clone(&security),
     ));
     let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
+    let challenge_signing: Arc<dyn WalletJubjubChallengeSigningPort> = security.clone();
+    let did_lifecycle = Arc::new(StandaloneDidLifecycle::with_jubjub_challenge_signing(
+        key_operations,
+        challenge_signing,
+    ));
+    let did_lifecycle_port: Arc<dyn DidLifecyclePort> = did_lifecycle.clone();
+    let did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort> = did_lifecycle;
     compose_with_identity_adapters(
         Arc::new(InMemoryWalletProfileRepository::new()),
         security,
@@ -1100,7 +1110,8 @@ pub fn compose_in_memory() -> ApplicationServices {
         IdentityAdapters {
             did_repository: Arc::new(InMemoryDidRecordRepository::new()),
             did_resolver: Arc::new(StandaloneDidResolver),
-            did_lifecycle: Arc::new(StandaloneDidLifecycle::new(key_operations)),
+            did_lifecycle: did_lifecycle_port,
+            did_jubjub_challenge_signing,
             credential_repository: Arc::new(InMemoryCredentialRepository::new()),
             credential_inbox: Arc::new(StandaloneCredentialInbox),
             credential_verifier: Arc::new(MidnightCredentialVerifier::new(Arc::new(
@@ -1121,7 +1132,7 @@ fn compose_with_adapters<R, S, M>(
 ) -> ApplicationServices
 where
     R: WalletProfileRepository + 'static,
-    S: WalletProtectionPort + WalletKeyOperationPort + 'static,
+    S: WalletProtectionPort + WalletKeyOperationPort + WalletJubjubChallengeSigningPort + 'static,
     M: WalletNetworkPort
         + WalletAccountReadPort
         + WalletAccountDerivationPort
@@ -1131,8 +1142,13 @@ where
         + 'static,
 {
     let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
-    let did_lifecycle: Arc<dyn DidLifecyclePort> =
-        Arc::new(StandaloneDidLifecycle::new(key_operations));
+    let challenge_signing: Arc<dyn WalletJubjubChallengeSigningPort> = security.clone();
+    let did_lifecycle = Arc::new(StandaloneDidLifecycle::with_jubjub_challenge_signing(
+        key_operations,
+        challenge_signing,
+    ));
+    let did_lifecycle_port: Arc<dyn DidLifecyclePort> = did_lifecycle.clone();
+    let did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort> = did_lifecycle;
     let did_resolver = headless_did_resolver();
     let verifier: Arc<dyn CredentialVerificationPort> =
         Arc::new(MidnightCredentialVerifier::new(Arc::clone(&did_resolver)));
@@ -1143,7 +1159,8 @@ where
         IdentityAdapters {
             did_repository: headless_did_repository(),
             did_resolver,
-            did_lifecycle,
+            did_lifecycle: did_lifecycle_port,
+            did_jubjub_challenge_signing,
             credential_repository: headless_credential_repository(),
             credential_inbox: Arc::new(StandaloneCredentialInbox),
             credential_verifier: verifier,
@@ -1163,7 +1180,7 @@ fn compose_with_identity_adapters<R, S, M>(
 ) -> ApplicationServices
 where
     R: WalletProfileRepository + 'static,
-    S: WalletProtectionPort + WalletKeyOperationPort + 'static,
+    S: WalletProtectionPort + WalletKeyOperationPort + WalletJubjubChallengeSigningPort + 'static,
     M: WalletNetworkPort
         + WalletAccountReadPort
         + WalletAccountDerivationPort
@@ -1176,6 +1193,7 @@ where
         did_repository,
         did_resolver,
         did_lifecycle,
+        did_jubjub_challenge_signing,
         credential_repository,
         credential_inbox,
         credential_verifier,
@@ -1257,13 +1275,19 @@ where
                 let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
                 let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
                 let holder_authorization =
-                    Arc::new(ManagedDidJubjubHolderAuthorization::new(get_did, sign_did));
+                    Arc::new(ManagedDidJubjubHolderAuthorization::with_challenge_signing(
+                        get_did,
+                        sign_did,
+                        did_jubjub_challenge_signing,
+                    ));
+                let holder_proof: Arc<dyn CompactHolderProofPort> = holder_authorization.clone();
                 Arc::new(StandaloneOpenId4VpVerifier::new(
                     Arc::new(CredentialDisclosureCandidateSource::new(list, disclosure)),
-                    Arc::new(PreflightOnlyCompactPresentationProof::new(
+                    Arc::new(PreflightOnlyCompactPresentationProof::with_holder_proof(
                         presentation_credential_repository,
                         clock.clone(),
                         holder_authorization,
+                        holder_proof,
                     )),
                     Arc::new(UnavailablePresentationVerifier),
                     clock.clone(),
@@ -1701,6 +1725,7 @@ mod tests {
                 did_repository: Arc::new(UnavailableDidRecordRepository),
                 did_resolver: Arc::new(UnavailableDidResolver),
                 did_lifecycle: Arc::new(UnavailableDidLifecycle),
+                did_jubjub_challenge_signing: Arc::new(UnavailableDidLifecycle),
                 credential_repository: Arc::new(UnavailableCredentialRepository),
                 credential_inbox: Arc::new(UnavailableCredentialInbox),
                 credential_verifier: Arc::new(UnavailableCredentialVerifier),

@@ -14,6 +14,7 @@ ciborium.workspace = true
 ed25519-dalek.workspace = true
 hex.workspace = true
 midnight-base-crypto.workspace = true
+midnight-serialize.workspace = true
 midnight-transient-crypto.workspace = true
 oxid-credential-application.workspace = true
 oxid-credential-domain.workspace = true

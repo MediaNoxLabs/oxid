@@ -10,6 +10,7 @@ use std::{
 use midnight_serialize::Deserializable as _;
 use midnight_transient_crypto::curve::EmbeddedGroupAffine;
 use oxid_identity_application::{
+    DidJubjubChallengeDeriver, DidJubjubChallengeSignature, DidJubjubChallengeSigningPort,
     DidKeyAlgorithm, DidLifecyclePort, DidLifecyclePortError, DidLifecycleSignature, DidUpdate,
 };
 use oxid_identity_domain::{
@@ -19,7 +20,8 @@ use oxid_identity_domain::{
     VerificationMethod, VerificationRelationshipEntry,
 };
 use oxid_wallet_application::{
-    GenerateProtectedKeyRequest, WalletKeyOperationPort, WalletSecurityPortError,
+    GenerateProtectedKeyRequest, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
+    WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyLabel, WalletKeyPurpose,
@@ -34,6 +36,7 @@ use sha2::{Digest, Sha256};
 /// through opaque wallet-custody handles.
 pub struct StandaloneDidLifecycle {
     keys: Arc<dyn WalletKeyOperationPort>,
+    jubjub_challenge_signing: Option<Arc<dyn WalletJubjubChallengeSigningPort>>,
     managed: Mutex<ManagedDids>,
     next_label: AtomicU64,
 }
@@ -56,6 +59,22 @@ impl StandaloneDidLifecycle {
     pub fn new(keys: Arc<dyn WalletKeyOperationPort>) -> Self {
         Self {
             keys,
+            jubjub_challenge_signing: None,
+            managed: Mutex::new(BTreeMap::new()),
+            next_label: AtomicU64::new(1),
+        }
+    }
+
+    /// Enables the protected two-step Jubjub operation used by exact Compact
+    /// credential proofs. Generic DID signing remains available independently.
+    #[must_use]
+    pub fn with_jubjub_challenge_signing(
+        keys: Arc<dyn WalletKeyOperationPort>,
+        jubjub_challenge_signing: Arc<dyn WalletJubjubChallengeSigningPort>,
+    ) -> Self {
+        Self {
+            keys,
+            jubjub_challenge_signing: Some(jubjub_challenge_signing),
             managed: Mutex::new(BTreeMap::new()),
             next_label: AtomicU64::new(1),
         }
@@ -526,6 +545,52 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
     }
 }
 
+impl DidJubjubChallengeSigningPort for StandaloneDidLifecycle {
+    fn sign_jubjub_challenge(
+        &self,
+        profile_id: &IdentityProfileId,
+        did: &MidnightDid,
+        method_id: &str,
+        derive_challenge: &mut DidJubjubChallengeDeriver<'_>,
+    ) -> Result<DidJubjubChallengeSignature, DidLifecyclePortError> {
+        let method_id = canonical_component_id(did, method_id)?;
+        let key = (profile_id.as_str().to_owned(), did.as_str().to_owned());
+        let binding = self
+            .managed()?
+            .get(&key)
+            .and_then(|managed| managed.methods.get(&method_id))
+            .cloned()
+            .ok_or(DidLifecyclePortError::NotManaged)?;
+        if binding.algorithm != DidKeyAlgorithm::Jubjub {
+            return Err(DidLifecyclePortError::UnsupportedAlgorithm);
+        }
+        let signer = self
+            .jubjub_challenge_signing
+            .as_ref()
+            .ok_or(DidLifecyclePortError::ProtectionUnavailable)?;
+        let mut callback_error = None;
+        let mut bridge = |public_key: &[u8; 32], announcement: &[u8; 32]| {
+            derive_challenge(public_key, announcement).map_err(|error| {
+                callback_error = Some(error);
+                WalletSecurityPortError::InvalidOperation
+            })
+        };
+        let signature = signer
+            .sign_jubjub_challenge(&Self::profile(profile_id)?, &binding.reference, &mut bridge)
+            .map_err(map_security_error);
+        if let Some(error) = callback_error {
+            return Err(error);
+        }
+        let signature = signature?;
+        Ok(DidJubjubChallengeSignature {
+            method_id,
+            public_key: signature.public_key,
+            announcement: signature.announcement,
+            response: signature.response,
+        })
+    }
+}
+
 fn ensure_active(resolution: &DidResolution) -> Result<(), DidLifecyclePortError> {
     if resolution.document_metadata().deactivated == Some(true) {
         Err(DidLifecyclePortError::Deactivated)
@@ -712,6 +777,7 @@ fn base64url(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use midnight_transient_crypto::curve::{EmbeddedFr, Fr};
     use oxid_adapter_platform_system::{OsRandom, SystemClock};
     use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
     use oxid_identity_domain::VerificationRelationship;
@@ -730,6 +796,73 @@ mod tests {
             .expect("initialize custody");
         let keys: Arc<dyn WalletKeyOperationPort> = security.clone();
         (security, StandaloneDidLifecycle::new(keys), profile)
+    }
+
+    fn setup_challenge() -> (Arc<Security>, StandaloneDidLifecycle, IdentityProfileId) {
+        let security = Arc::new(DevelopmentWalletSecurity::new(
+            Arc::new(SystemClock),
+            Arc::new(OsRandom),
+        ));
+        let profile = IdentityProfileId::parse("profile_did_challenge").expect("profile");
+        security
+            .initialize(&WalletProfileId::parse(profile.as_str()).expect("wallet profile"))
+            .expect("initialize custody");
+        let keys: Arc<dyn WalletKeyOperationPort> = security.clone();
+        let challenge_signing: Arc<dyn WalletJubjubChallengeSigningPort> = security.clone();
+        (
+            security,
+            StandaloneDidLifecycle::with_jubjub_challenge_signing(keys, challenge_signing),
+            profile,
+        )
+    }
+
+    #[test]
+    fn challenge_signing_keeps_nonce_and_secret_in_custody() {
+        let (security, lifecycle, profile) = setup_challenge();
+        let resolution = lifecycle
+            .create(&profile, MidnightNetwork::Undeployed)
+            .expect("create DID");
+        let did = resolution.document().id();
+        let method_id = format!("{}#holder-jubjub-1", did.as_str());
+        let callback_count = std::cell::Cell::new(0);
+        let mut derive = |public_key: &[u8; 32], announcement: &[u8; 32]| {
+            callback_count.set(callback_count.get() + 1);
+            assert_ne!(public_key, &[0; 32]);
+            assert_ne!(announcement, &[0; 32]);
+            Ok(Fr::from(7_u64)
+                .as_le_bytes()
+                .try_into()
+                .expect("field width"))
+        };
+        let signature = lifecycle
+            .sign_jubjub_challenge(&profile, did, &method_id, &mut derive)
+            .expect("protected challenge signature");
+        assert_eq!(callback_count.get(), 1);
+        assert_eq!(signature.method_id, method_id);
+
+        let decode = |bytes: &[u8; 32]| {
+            let mut input = bytes.as_slice();
+            let point = EmbeddedGroupAffine::deserialize(&mut input, 0).expect("point");
+            assert!(input.is_empty());
+            point
+        };
+        let public_key = decode(&signature.public_key);
+        let announcement = decode(&signature.announcement);
+        let response =
+            EmbeddedFr::try_from(Fr::from_le_bytes(&signature.response).expect("response field"))
+                .expect("embedded response");
+        assert_eq!(
+            EmbeddedGroupAffine::generator() * response,
+            announcement + public_key * Fr::from(7_u64)
+        );
+
+        security
+            .lock(&WalletProfileId::parse(profile.as_str()).expect("wallet profile"))
+            .expect("lock custody");
+        assert_eq!(
+            lifecycle.sign_jubjub_challenge(&profile, did, &method_id, &mut derive),
+            Err(DidLifecyclePortError::Locked)
+        );
     }
 
     #[test]

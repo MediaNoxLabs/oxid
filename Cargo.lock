@@ -5611,6 +5611,7 @@ dependencies = [
  "getrandom 0.3.4",
  "hex",
  "midnight-base-crypto",
+ "midnight-serialize",
  "midnight-transient-crypto",
  "oxid-credential-application",
  "oxid-credential-domain",

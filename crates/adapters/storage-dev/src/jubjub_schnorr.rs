@@ -17,6 +17,9 @@ use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
 use oxid_wallet_application::WalletSecurityPortError;
+use oxid_wallet_application::{
+    JUBJUB_COMPACT_BYTES, WalletJubjubChallengeDeriver, WalletJubjubChallengeSignature,
+};
 
 const NONCE_DOMAIN: &[u8] = b"midnight-did:jubjub-schnorr:v1";
 const COMPRESSED_POINT_BYTES: usize = 32;
@@ -68,6 +71,61 @@ impl SigningKey {
         let response = nonce + challenge * secret;
         encode_signature(&announcement, &response)
     }
+
+    pub(crate) fn sign_challenge(
+        &self,
+        nonce_seed: &[u8; 32],
+        derive_challenge: &mut WalletJubjubChallengeDeriver<'_>,
+    ) -> Result<WalletJubjubChallengeSignature, WalletSecurityPortError> {
+        let secret = seed_to_scalar(&self.seed);
+        let nonce = challenge_nonce(&self.seed, nonce_seed);
+        if nonce == EmbeddedFr::from(0_u64) {
+            return Err(WalletSecurityPortError::InvalidOperation);
+        }
+        let announcement = EmbeddedGroupAffine::generator() * nonce;
+        if announcement.is_identity() {
+            return Err(WalletSecurityPortError::InvalidOperation);
+        }
+        let public_key = compressed_point(&self.public_key)?;
+        let announcement_bytes = compressed_point(&announcement)?;
+        let challenge_bytes = derive_challenge(&public_key, &announcement_bytes)?;
+        let challenge = Fr::from_le_bytes(&challenge_bytes)
+            .and_then(|field| EmbeddedFr::try_from(field).ok())
+            .ok_or(WalletSecurityPortError::InvalidOperation)?;
+        let response = nonce + challenge * secret;
+        let response = Fr::from_le_bytes(&response.as_le_bytes())
+            .ok_or(WalletSecurityPortError::InvalidOperation)?;
+        Ok(WalletJubjubChallengeSignature {
+            public_key,
+            announcement: announcement_bytes,
+            response: response
+                .as_le_bytes()
+                .try_into()
+                .map_err(|_| WalletSecurityPortError::InvalidOperation)?,
+        })
+    }
+}
+
+fn challenge_nonce(secret_seed: &[u8; 32], random_seed: &[u8; 32]) -> EmbeddedFr {
+    let mut preimage =
+        Vec::with_capacity(NONCE_DOMAIN.len() + secret_seed.len() + random_seed.len() + 10);
+    preimage.extend_from_slice(NONCE_DOMAIN);
+    preimage.extend_from_slice(b":challenge");
+    preimage.extend_from_slice(secret_seed);
+    preimage.extend_from_slice(random_seed);
+    hash_to_scalar(&Sha256::digest(preimage))
+}
+
+fn compressed_point(
+    point: &EmbeddedGroupAffine,
+) -> Result<[u8; JUBJUB_COMPACT_BYTES], WalletSecurityPortError> {
+    let mut bytes = Vec::with_capacity(JUBJUB_COMPACT_BYTES);
+    point
+        .serialize(&mut bytes)
+        .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+    bytes
+        .try_into()
+        .map_err(|_| WalletSecurityPortError::InvalidOperation)
 }
 
 fn seed_to_scalar(seed: &[u8; 32]) -> EmbeddedFr {

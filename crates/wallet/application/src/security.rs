@@ -11,6 +11,9 @@ use oxid_wallet_domain::{
 
 /// Maximum raw payload accepted by the generic signing application boundary.
 pub const MAX_SIGNING_PAYLOAD_BYTES: usize = 64 * 1024;
+/// Canonical compressed-point and scalar width used by Midnight's Jubjub
+/// challenge-signing boundary.
+pub const JUBJUB_COMPACT_BYTES: usize = 32;
 const MAX_INTENT_TITLE_CHARACTERS: usize = 96;
 const MAX_INTENT_SUMMARY_CHARACTERS: usize = 512;
 
@@ -184,6 +187,40 @@ pub trait WalletKeyOperationPort: Send + Sync {
         profile_id: &WalletProfileId,
         key_reference: &WalletKeyReference,
     ) -> Result<(), WalletSecurityPortError>;
+}
+
+/// Public output of one protected Jubjub Schnorr challenge operation.
+///
+/// All byte strings use Midnight's canonical encodings: the points are
+/// compressed and the response scalar is little-endian. No secret scalar or
+/// nonce crosses this boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletJubjubChallengeSignature {
+    pub public_key: [u8; JUBJUB_COMPACT_BYTES],
+    pub announcement: [u8; JUBJUB_COMPACT_BYTES],
+    pub response: [u8; JUBJUB_COMPACT_BYTES],
+}
+
+pub type WalletJubjubChallengeDeriver<'a> = dyn FnMut(
+        &[u8; JUBJUB_COMPACT_BYTES],
+        &[u8; JUBJUB_COMPACT_BYTES],
+    ) -> Result<[u8; JUBJUB_COMPACT_BYTES], WalletSecurityPortError>
+    + 'a;
+
+/// Focused adapter-to-adapter capability for Schnorr protocols whose
+/// challenge commits to the public key and nonce announcement.
+///
+/// Custody creates a fresh nonce and invokes `derive_challenge` with public
+/// compressed points. The callback returns a canonical little-endian Midnight
+/// field. Custody then computes the response while keeping both the private
+/// key and nonce inside the adapter for the entire synchronous operation.
+pub trait WalletJubjubChallengeSigningPort: Send + Sync {
+    fn sign_jubjub_challenge(
+        &self,
+        profile_id: &WalletProfileId,
+        key_reference: &WalletKeyReference,
+        derive_challenge: &mut WalletJubjubChallengeDeriver<'_>,
+    ) -> Result<WalletJubjubChallengeSignature, WalletSecurityPortError>;
 }
 
 /// Focused outgoing port for HD derivation without exposing root or child secrets.

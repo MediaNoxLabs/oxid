@@ -29,6 +29,7 @@ pub use compact_digital_passport::{
     MidnightCompactCredentialVerifier, StandaloneBoundCompactCredentialIssuer,
 };
 pub use compact_presentation::{
+    CompactHolderProofError, CompactHolderProofPort, CompactHolderProofRequest,
     CompactPresentationError, CompactPresentationPublicInput, DigitalPassportPresentationSelection,
     ManagedDidJubjubHolderAuthorization, PreflightOnlyCompactPresentationProof,
     prepare_public_input,

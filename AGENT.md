@@ -259,7 +259,9 @@ exact detached Compact issuance-proof verification without claiming issuer
 trust or presentation proof generation; ADR-0046 adds the exact development
 signing primitive, and ADR-0047 binds standalone issuance to the selected
 managed Jubjub DID method. ADR-0048 reauthorizes that exact reference against
-the current managed protected method before proof execution.
+the current managed protected method before proof execution; ADR-0049 now
+constructs and independently checks the distinct credential-family holder
+`Proof` before the still-closed ZK runtime.
 
 [Issue #24](https://github.com/MediaNoxLabs/oxid/issues/24) and ADR-0039 add a
 dependency-free protocol domain/application hexagon plus an exact OpenID4VCI
@@ -343,9 +345,10 @@ and every manifest digest as a coordinated review boundary. The upstream full
 pnpm Nix build is not the dependency path: its pinned offline closure currently
 lacks `@midnight-ntwrk/midnight-did@0.5.0`.
 
-Artifact availability is not presentation readiness. The generic
-holder/context Jubjub signature is not a selective-disclosure or age predicate
-proof. Keep `PresentationProofPort` and `PresentationVerifierPort` separate. A
+Artifact availability is not presentation readiness. Neither the generic
+holder authorization signature nor the exact credential-family Schnorr
+`Proof` is a selective-disclosure or age-predicate ZK proof. Keep
+`PresentationProofPort` and `PresentationVerifierPort` separate. A
 `vp_token` may be constructed only after proof creation and independent
 verification bind the exact credential root, presentation root, verifier
 challenge/domain, actual disclosure flags, threshold, time input, and ledger
@@ -355,8 +358,14 @@ statement, round-trips the fixed 524-byte `MPS1` public-input encoding, and
 independently reconstructs it. ADR-0048 then reloads the bound DID method,
 requires active managed Jubjub assertion authority, signs a domain-separated
 authorization over the exact statement through protected custody, independently
-verifies and discards that generic DID signature, and only then intentionally
-returns `proof_unavailable`. `MPS1` contains selected public values/openings with
+verifies and discards that generic DID signature, and then invokes ADR-0049's
+atomic Jubjub challenge operation. Wallet custody retains a fresh nonce and
+protected scalar, `did-midnight` binds the current managed key, and
+`vc-midnight` derives the exact presentation-context challenge. The adapter
+constructs, decodes, and independently verifies the reference family's
+nine-chunk holder `Proof` before intentionally returning `proof_unavailable` at
+the ZK runtime gate. No scalar, nonce, key reference, private value, or opening
+crosses that operation. `MPS1` contains selected public values/openings with
 canonical zero padding and never contains the private date-of-birth
 value/opening. OpenID derives verifier domain as
 `SHA-256("oxid:openid4vp:verifier-domain:v1\0" || verifier_domain)` separately
@@ -366,7 +375,7 @@ credential `b42f1115042cefecbd5380a0a630c0ef5f18bb13e7615cb1de9d36256f100432`,
 presentation `cf7570efcabe17ba6aa6920aed951f2794a7d609a03a49920694c5c4e09d2876`,
 consent `5a442aeb83cd3e589bfc27bd029c5e561ed0aca7109ca4e5642780c2f0bd20a3`,
 statement `475caef55fc4b454931beb6b4435688ed36cc1740d33ade45741dcd31214011c`.
-This remains preflight, not a proof: the session is consumed and
+This remains ZK preflight, not a ZK proof: the session is consumed and
 `presentationGenerated`/`verifierValidated` stay false. Normal composition
 keeps the whole protocol unavailable. Do not substitute a synthetic boolean,
 local age calculation, signature, or fixture bytes for a proof.
@@ -404,9 +413,10 @@ construction: rotation is allowed only while preserving the exact managed
 method identifier and assertion relationship; removal, deactivation, locked
 custody, or a public-only restored record fail closed. Native custody and
 issuer-method anchoring remain issue #29 acceptance gates. Detached issuance
-verification and holder authorization do not open the ADR-0043/0044 proof gate.
+verification, holder authorization, and the exact ADR-0049 holder `Proof` do
+not open the ADR-0043/0044 ZK proof gate.
 
-The 2026-08-13 `just ios-smoke` and `just android-smoke` runs pass the exact
+The 2026-08-14 `just ios-smoke` and `just android-smoke` runs pass the exact
 Compact OID4VCI bundle through native verification, encrypted schema-v3
 persistence, process restart, reverification, local reveal/hide,
 disclosure-plan preview, and the fail-closed presentation gate. After ADR-0048,
@@ -414,8 +424,10 @@ the same full flows include current managed holder authorization over the exact
 `MPS1` statement before the intentional `proof_unavailable` result; headless
 coverage additionally rotates the same method, locks custody, removes the
 assertion relationship, and restores a public-only DID without ever emitting a
-`vp_token`. The strict Nix-shell gate reported 80.62% region and 82.38% line
-coverage. Preserve the
+`vp_token`. After ADR-0049, both mobile flows also construct and independently
+verify the exact credential-family holder `Proof` before reaching that ZK-only
+gate. The strict Nix-shell gate reported 80.28% region and 81.97% line coverage.
+Preserve the
 prototype-compatible `Digital Passport`
 display name for this schema: the current Dioxus claim controls use that
 metadata contract. Replacing the display-name dispatch with an explicit schema
@@ -539,6 +551,13 @@ restored DID record is not proof of ownership. ADR-0048 adds presentation-time
 reauthorization, explicit same-method rotation semantics, typed locked/unmanaged
 failures, and independent verification of the disposable custody attestation;
 native wrapping remains an issue #29 gate.
+ADR-0049 adds the reference family's distinct two-step presentation Schnorr
+operation. Wallet custody generates and retains the fresh nonce, exposes only
+canonical public points to a synchronous challenge callback, and returns only
+the response. DID management resolves the opaque key reference, while the VC
+adapter alone owns, encodes, and independently verifies the exact proof
+transcript. This is an adapter-to-adapter capability, not an incoming arbitrary
+challenge-signing oracle, and it still leaves ZK proving/verification closed.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -551,9 +570,9 @@ Current package ownership:
 | --- | --- |
 | `crates/foundation` | Small dependency-free primitives shared across core boundaries. |
 | `crates/wallet/domain` | Wallet profile invariants and entities. |
-| `crates/wallet/application` | Incoming use cases and owned outgoing repository ports. |
+| `crates/wallet/application` | Incoming use cases and owned outgoing repository/protected-operation ports, including atomic public-transcript Jubjub challenge signing without credential semantics. |
 | `crates/identity/domain` | Dependency-free Midnight DID, public JWK, document, and resolution invariants. |
-| `crates/identity/application` | Profile-scoped DID resolution, inventory, lifecycle/signing use cases, and owned outgoing ports. |
+| `crates/identity/application` | Profile-scoped DID resolution, inventory, lifecycle/signing use cases, managed-method challenge-signing binding, and owned outgoing ports. |
 | `crates/credential/domain` | Dependency-free credential records, explicit formats, separately bounded/redacted original bytes, detached proofs, opaque format-private material, schema-neutral disclosure candidates, and structured verification invariants. |
 | `crates/credential/application` | Profile-scoped receive/list/get/reverify/delete plus holder-bound issuance, exact bundle import, disclosure inventory/plan/local-reveal use cases, and repository/inbox/verifier/disclosure ports. |
 | `crates/protocol/domain` | Dependency-free credential-offer and self-issued-authentication preview/lifecycle invariants. |
@@ -565,10 +584,10 @@ Current package ownership:
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/storage-identity-json` | Strict versioned persistence for validated profile-scoped public DID documents only. |
 | `crates/adapters/storage-credential-json` | Development-only authenticated encryption for bounded profile-scoped credential records, original signed bytes, detached proofs, and opaque format-private material. |
-| `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256/Jubjub generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
+| `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256/Jubjub generation plus protected BIP32/secp256k1-Schnorr derivation, one-shot signing, and atomic fresh-nonce Jubjub challenge completion. |
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
-| `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle adapters. |
-| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, and public standalone fixtures. |
+| `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
+| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |

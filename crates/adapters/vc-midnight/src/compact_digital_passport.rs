@@ -81,13 +81,13 @@ pub(crate) struct CompactCredential {
 }
 
 #[derive(Clone, Copy)]
-struct CompactProof {
-    signer: VerificationMethodRef,
-    created_at: u64,
-    challenge_hash: [u8; 32],
-    public_key: EmbeddedGroupAffine,
-    announcement: EmbeddedGroupAffine,
-    response: Fr,
+pub(crate) struct CompactProof {
+    pub(crate) signer: VerificationMethodRef,
+    pub(crate) created_at: u64,
+    pub(crate) challenge_hash: [u8; 32],
+    pub(crate) public_key: EmbeddedGroupAffine,
+    pub(crate) announcement: EmbeddedGroupAffine,
+    pub(crate) response: Fr,
 }
 
 pub(crate) fn inspect(
@@ -275,7 +275,7 @@ pub(crate) fn parse_credential(
     })
 }
 
-fn parse_proof(bytes: &[u8]) -> Result<CompactProof, CredentialVerificationError> {
+pub(crate) fn parse_proof(bytes: &[u8]) -> Result<CompactProof, CredentialVerificationError> {
     let chunks = parse_mcv1(bytes, PROOF_CHUNKS)?;
     Ok(CompactProof {
         signer: VerificationMethodRef {
@@ -535,7 +535,7 @@ fn encode_credential(credential: &CompactCredential) -> Result<Vec<u8>, BoundCre
     ]))
 }
 
-fn encode_proof(proof: &CompactProof) -> Result<Vec<u8>, BoundCredentialError> {
+pub(crate) fn encode_proof(proof: &CompactProof) -> Result<Vec<u8>, BoundCredentialError> {
     let public_x = proof
         .public_key
         .x()
@@ -632,7 +632,7 @@ fn claim_root(commitments: &DigitalPassportCommitments) -> [u8; 32] {
     ))
 }
 
-fn transient_hash_value<T>(value: T) -> Fr
+pub(crate) fn transient_hash_value<T>(value: T) -> Fr
 where
     midnight_base_crypto::fab::AlignedValue: From<T>,
 {

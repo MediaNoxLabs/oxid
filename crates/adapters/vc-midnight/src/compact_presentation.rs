@@ -3,15 +3,17 @@
 //! Exact public-input boundary for the Oxid Digital Passport presentation
 //! circuit.
 //!
-//! This adapter prepares and independently reconstructs the public statement
-//! without producing a proof. Protected values and openings are used only to
-//! build the presentation preimage and never enter the portable `MPS1` public
-//! input. The proof port remains deliberately unavailable until protected
-//! Jubjub custody and the reviewed prover runtime are connected.
+//! This adapter prepares and independently reconstructs the public statement,
+//! then constructs the credential family's exact protected-holder Schnorr
+//! `Proof`. Protected values and openings are used only to build the
+//! presentation preimage and never enter the portable `MPS1` public input. The
+//! ZK proof port remains deliberately unavailable until the reviewed prover
+//! runtime and independent verifier are connected.
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use base64::{Engine as _, engine::general_purpose};
+use midnight_serialize::Deserializable as _;
 use midnight_transient_crypto::{
     curve::{EmbeddedFr, EmbeddedGroupAffine, Fr},
     hash::transient_hash,
@@ -22,9 +24,11 @@ use oxid_credential_domain::{
     VerificationOutcome,
 };
 use oxid_identity_application::{
-    DidLifecyclePortError, DidOperationConfirmation, DidOperationError, DidRecordQuery,
-    DidRecordRepositoryError, GetDidRecordUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
+    DidJubjubChallengeSigningPort, DidLifecyclePortError, DidOperationConfirmation,
+    DidOperationError, DidRecordQuery, DidRecordRepositoryError, GetDidRecordUseCase,
+    SignDidPayloadCommand, SignDidPayloadUseCase,
 };
+use oxid_identity_domain::{IdentityProfileId, MidnightDid};
 use oxid_platform_ports::ClockPort;
 use oxid_presentation_application::{
     AuthorizePresentationHolderFuture, CreatePresentationProofFuture,
@@ -36,7 +40,8 @@ use oxid_presentation_domain::{PresentationClaimIntent, RequestedPresentationCla
 use sha2::{Digest as _, Sha256};
 
 use crate::compact_digital_passport::{
-    CompactCredential, credential_body_root, inspect, parse_credential, persistent_hash,
+    CompactCredential, CompactProof, VerificationMethodRef, credential_body_root, encode_proof,
+    inspect, parse_credential, parse_proof, persistent_hash, transient_hash_value,
 };
 use crate::digital_passport::{
     CLAIM_DATE_OF_BIRTH, CLAIM_DOCUMENT_NUMBER, CLAIM_FIRST_NAME, CLAIM_ISSUING_STATE,
@@ -49,6 +54,7 @@ const PUBLIC_INPUT_VERSION: u16 = 1;
 const PUBLIC_INPUT_BYTES: usize = 524;
 const MILLISECONDS_PER_DAY: u64 = 86_400_000;
 const PRESENTATION_STATEMENT_DOMAIN: &[u8] = b"oxid:midnight-compact-vp:v1";
+const PRESENTATION_PROOF_CONTEXT: &[u8] = b"midnight:vc:presentation";
 const CONSENTED_CLAIMS_DOMAIN: &[u8] = b"oxid:compact-vp:claims:v1";
 const HOLDER_AUTHORIZATION_DOMAIN: &[u8] = b"oxid:midnight-compact-holder-authorization:v1\0";
 const MAX_HOLDER_REFERENCE_CHARACTERS: usize = 512;
@@ -69,6 +75,60 @@ pub enum CompactPresentationError {
     InvalidTime,
     InvalidEncoding,
     StatementMismatch,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompactHolderProofError {
+    InvalidBinding,
+    NotManaged,
+    Locked,
+    Rejected,
+    Unavailable,
+}
+
+/// Exact public transcript needed to construct the credential-family holder
+/// proof. The body root and verifier challenge are public protocol values; no
+/// claim value, opening, key reference, scalar, or nonce is included.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CompactHolderProofRequest {
+    pub profile_id: oxid_presentation_domain::PresentationProfileId,
+    pub holder_did: String,
+    pub holder_method_id: String,
+    pub presentation_root: [u8; 32],
+    pub verifier_challenge_hash: [u8; 32],
+    pub created_at_seconds: u64,
+}
+
+impl fmt::Debug for CompactHolderProofRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CompactHolderProofRequest")
+            .field("holder_did", &self.holder_did)
+            .field("holder_method_id", &self.holder_method_id)
+            .field("created_at_seconds", &self.created_at_seconds)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Exact Compact holder-proof operation used only inside the Midnight VC
+/// adapter/composition boundary.
+pub trait CompactHolderProofPort: Send + Sync {
+    fn create_holder_proof(
+        &self,
+        request: CompactHolderProofRequest,
+    ) -> Result<Vec<u8>, CompactHolderProofError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct UnavailableCompactHolderProof;
+
+impl CompactHolderProofPort for UnavailableCompactHolderProof {
+    fn create_holder_proof(
+        &self,
+        _: CompactHolderProofRequest,
+    ) -> Result<Vec<u8>, CompactHolderProofError> {
+        Err(CompactHolderProofError::Unavailable)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -637,15 +697,33 @@ const fn padded<const N: usize>(value: &[u8]) -> [u8; N] {
 pub struct ManagedDidJubjubHolderAuthorization {
     get_did: Arc<dyn GetDidRecordUseCase>,
     sign_did: Arc<dyn SignDidPayloadUseCase>,
+    challenge_signing: Option<Arc<dyn DidJubjubChallengeSigningPort>>,
 }
 
 impl ManagedDidJubjubHolderAuthorization {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         get_did: Arc<dyn GetDidRecordUseCase>,
         sign_did: Arc<dyn SignDidPayloadUseCase>,
     ) -> Self {
-        Self { get_did, sign_did }
+        Self {
+            get_did,
+            sign_did,
+            challenge_signing: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_challenge_signing(
+        get_did: Arc<dyn GetDidRecordUseCase>,
+        sign_did: Arc<dyn SignDidPayloadUseCase>,
+        challenge_signing: Arc<dyn DidJubjubChallengeSigningPort>,
+    ) -> Self {
+        Self {
+            get_did,
+            sign_did,
+            challenge_signing: Some(challenge_signing),
+        }
     }
 }
 
@@ -723,6 +801,218 @@ impl PresentationHolderAuthorizationPort for ManagedDidJubjubHolderAuthorization
             }
             Ok(())
         })
+    }
+}
+
+impl CompactHolderProofPort for ManagedDidJubjubHolderAuthorization {
+    fn create_holder_proof(
+        &self,
+        request: CompactHolderProofRequest,
+    ) -> Result<Vec<u8>, CompactHolderProofError> {
+        if request.presentation_root == [0; 32]
+            || request.verifier_challenge_hash == [0; 32]
+            || request.created_at_seconds == 0
+        {
+            return Err(CompactHolderProofError::InvalidBinding);
+        }
+        let profile_id = IdentityProfileId::parse(request.profile_id.as_str().to_owned())
+            .map_err(|_| CompactHolderProofError::InvalidBinding)?;
+        let did = MidnightDid::parse(request.holder_did.clone())
+            .map_err(|_| CompactHolderProofError::InvalidBinding)?;
+        let record = self
+            .get_did
+            .execute(DidRecordQuery {
+                profile_id: profile_id.as_str().to_owned(),
+                did: did.as_str().to_owned(),
+            })
+            .map_err(map_holder_proof_lookup_error)?;
+        if record.document.id != request.holder_did
+            || record.document_metadata.deactivated == Some(true)
+            || !record
+                .managed_method_ids
+                .iter()
+                .any(|method| method == &request.holder_method_id)
+        {
+            return Err(CompactHolderProofError::NotManaged);
+        }
+        let method = record
+            .document
+            .verification_methods
+            .iter()
+            .find(|method| method.id == request.holder_method_id)
+            .ok_or(CompactHolderProofError::InvalidBinding)?;
+        if method.controller != request.holder_did
+            || method.public_key_jwk.key_type != "EC"
+            || method.public_key_jwk.curve != "Jubjub"
+            || !record.document.relationships.iter().any(|relationship| {
+                relationship.relationship == "assertionMethod"
+                    && relationship
+                        .method_ids
+                        .iter()
+                        .any(|candidate| candidate == &request.holder_method_id)
+            })
+        {
+            return Err(CompactHolderProofError::InvalidBinding);
+        }
+        let expected_public_key = jubjub_public_key(
+            &method.public_key_jwk.x,
+            method
+                .public_key_jwk
+                .y
+                .as_deref()
+                .ok_or(CompactHolderProofError::InvalidBinding)?,
+        )
+        .map_err(|_| CompactHolderProofError::InvalidBinding)?;
+        let signer = compact_holder_reference(&request.holder_did, &request.holder_method_id)?;
+        let challenge_signing = self
+            .challenge_signing
+            .as_ref()
+            .ok_or(CompactHolderProofError::Unavailable)?;
+        let mut unsigned = None;
+        let mut derive = |public_key: &[u8; 32], announcement: &[u8; 32]| {
+            let public_key = compressed_jubjub_point(public_key)
+                .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+            let announcement = compressed_jubjub_point(announcement)
+                .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+            if public_key != expected_public_key || announcement.is_identity() {
+                return Err(DidLifecyclePortError::InvalidOperation);
+            }
+            let proof = CompactProof {
+                signer,
+                created_at: request.created_at_seconds,
+                challenge_hash: request.verifier_challenge_hash,
+                public_key,
+                announcement,
+                response: Fr::from(0_u64),
+            };
+            let challenge = presentation_proof_challenge(request.presentation_root, &proof);
+            let challenge_bytes = challenge
+                .as_le_bytes()
+                .try_into()
+                .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+            unsigned = Some(proof);
+            Ok(challenge_bytes)
+        };
+        let signature = challenge_signing
+            .sign_jubjub_challenge(&profile_id, &did, &request.holder_method_id, &mut derive)
+            .map_err(map_holder_challenge_error)?;
+        let mut proof = unsigned.ok_or(CompactHolderProofError::Rejected)?;
+        if signature.method_id != request.holder_method_id
+            || compressed_jubjub_point(&signature.public_key)
+                .map_err(|_| CompactHolderProofError::Rejected)?
+                != proof.public_key
+            || compressed_jubjub_point(&signature.announcement)
+                .map_err(|_| CompactHolderProofError::Rejected)?
+                != proof.announcement
+        {
+            return Err(CompactHolderProofError::Rejected);
+        }
+        proof.response =
+            Fr::from_le_bytes(&signature.response).ok_or(CompactHolderProofError::Rejected)?;
+        if !verify_presentation_proof(request.presentation_root, &proof) {
+            return Err(CompactHolderProofError::Rejected);
+        }
+        encode_proof(&proof).map_err(|_| CompactHolderProofError::Rejected)
+    }
+}
+
+fn compact_holder_reference(
+    did: &str,
+    method_id: &str,
+) -> Result<VerificationMethodRef, CompactHolderProofError> {
+    let address = did
+        .strip_prefix("did:midnight:undeployed:")
+        .filter(|value| value.len() == 64)
+        .and_then(|value| hex::decode(value).ok())
+        .and_then(|value| value.try_into().ok())
+        .ok_or(CompactHolderProofError::InvalidBinding)?;
+    let fragment = method_id
+        .strip_prefix(did)
+        .filter(|value| value.starts_with('#') && value.len() <= 32)
+        .ok_or(CompactHolderProofError::InvalidBinding)?;
+    if !fragment.bytes().all(|byte| {
+        byte == b'#'
+            || byte.is_ascii_alphanumeric()
+            || matches!(byte, b'.' | b'-' | b'_' | b':' | b'%')
+    }) {
+        return Err(CompactHolderProofError::InvalidBinding);
+    }
+    Ok(VerificationMethodRef {
+        did_contract_address: address,
+        method_id: padded::<32>(fragment.as_bytes()),
+    })
+}
+
+fn compressed_jubjub_point(
+    bytes: &[u8; 32],
+) -> Result<EmbeddedGroupAffine, CompactHolderProofError> {
+    let mut input = bytes.as_slice();
+    let point = EmbeddedGroupAffine::deserialize(&mut input, 0)
+        .map_err(|_| CompactHolderProofError::Rejected)?;
+    if !input.is_empty() || point.is_identity() {
+        return Err(CompactHolderProofError::Rejected);
+    }
+    Ok(point)
+}
+
+fn presentation_proof_challenge(body_root: [u8; 32], proof: &CompactProof) -> Fr {
+    let payload_root = persistent_hash(&(
+        body_root,
+        padded::<32>(PRESENTATION_PROOF_CONTEXT),
+        persistent_hash(&(proof.signer.did_contract_address, proof.signer.method_id)),
+        midnight_transient_crypto::hash::upgrade_from_transient(transient_hash_value(
+            proof.created_at,
+        ))
+        .0,
+        proof.challenge_hash,
+    ));
+    midnight_transient_crypto::hash::degrade_to_transient(midnight_base_crypto::hash::HashOutput(
+        persistent_hash(&(
+            payload_root,
+            midnight_transient_crypto::hash::upgrade_from_transient(transient_hash_value(
+                proof.public_key,
+            ))
+            .0,
+            midnight_transient_crypto::hash::upgrade_from_transient(transient_hash_value(
+                proof.announcement,
+            ))
+            .0,
+        )),
+    ))
+}
+
+fn verify_presentation_proof(body_root: [u8; 32], proof: &CompactProof) -> bool {
+    EmbeddedGroupAffine::generator() * proof.response
+        == proof.announcement + proof.public_key * presentation_proof_challenge(body_root, proof)
+}
+
+fn map_holder_proof_lookup_error(error: DidOperationError) -> CompactHolderProofError {
+    match error {
+        DidOperationError::InvalidProfileIdentifier(_)
+        | DidOperationError::InvalidDid(_)
+        | DidOperationError::SubjectMismatch => CompactHolderProofError::InvalidBinding,
+        DidOperationError::Persistence(DidRecordRepositoryError::NotFound) => {
+            CompactHolderProofError::NotManaged
+        }
+        _ => CompactHolderProofError::Unavailable,
+    }
+}
+
+fn map_holder_challenge_error(error: DidLifecyclePortError) -> CompactHolderProofError {
+    match error {
+        DidLifecyclePortError::NotManaged
+        | DidLifecyclePortError::NotFound
+        | DidLifecyclePortError::Deactivated => CompactHolderProofError::NotManaged,
+        DidLifecyclePortError::Locked => CompactHolderProofError::Locked,
+        DidLifecyclePortError::UnsupportedAlgorithm | DidLifecyclePortError::InvalidOperation => {
+            CompactHolderProofError::Rejected
+        }
+        DidLifecyclePortError::Unavailable | DidLifecyclePortError::ProtectionUnavailable => {
+            CompactHolderProofError::Unavailable
+        }
+        DidLifecyclePortError::UnsupportedNetwork | DidLifecyclePortError::Conflict => {
+            CompactHolderProofError::Rejected
+        }
     }
 }
 
@@ -879,18 +1169,20 @@ fn embedded_field_from_be(
 }
 
 /// Standalone proof port that performs exact proof-preimage validation and
-/// then fails closed before proof construction. This makes the headless/mobile
-/// consent flow exercise the real credential, opening, statement, and time
-/// boundaries without manufacturing a proof or `vp_token`.
+/// protected credential-family holder-proof construction, then fails closed
+/// before ZK proof construction. This makes the headless/mobile consent flow
+/// exercise the real credential, opening, statement, time, and holder custody
+/// boundaries without manufacturing a ZK proof or `vp_token`.
 pub struct PreflightOnlyCompactPresentationProof {
     repository: Arc<dyn CredentialRepository>,
     clock: Arc<dyn ClockPort>,
     holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
+    holder_proof: Arc<dyn CompactHolderProofPort>,
 }
 
 impl PreflightOnlyCompactPresentationProof {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         repository: Arc<dyn CredentialRepository>,
         clock: Arc<dyn ClockPort>,
         holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
@@ -899,6 +1191,22 @@ impl PreflightOnlyCompactPresentationProof {
             repository,
             clock,
             holder_authorization,
+            holder_proof: Arc::new(UnavailableCompactHolderProof),
+        }
+    }
+
+    #[must_use]
+    pub fn with_holder_proof(
+        repository: Arc<dyn CredentialRepository>,
+        clock: Arc<dyn ClockPort>,
+        holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
+        holder_proof: Arc<dyn CompactHolderProofPort>,
+    ) -> Self {
+        Self {
+            repository,
+            clock,
+            holder_authorization,
+            holder_proof,
         }
     }
 }
@@ -973,16 +1281,47 @@ impl PresentationProofPort for PreflightOnlyCompactPresentationProof {
                 .map_err(|_| PresentationProofError::InvalidCredential)?;
             self.holder_authorization
                 .authorize(PresentationHolderAuthorizationRequest {
-                    profile_id: request.profile_id,
-                    holder_did,
-                    holder_method_id,
-                    verifier: request.verifier,
+                    profile_id: request.profile_id.clone(),
+                    holder_did: holder_did.clone(),
+                    holder_method_id: holder_method_id.clone(),
+                    verifier: request.verifier.clone(),
                     presentation_statement: decoded.statement(),
                 })
                 .await
                 .map_err(map_holder_authorization_error)?;
+            let holder_proof = self
+                .holder_proof
+                .create_holder_proof(CompactHolderProofRequest {
+                    profile_id: request.profile_id,
+                    holder_did,
+                    holder_method_id,
+                    presentation_root: decoded.presentation_root(),
+                    verifier_challenge_hash: request.challenge_hash,
+                    created_at_seconds: now / 1_000,
+                })
+                .map_err(map_compact_holder_proof_error)?;
+            let holder_proof =
+                parse_proof(&holder_proof).map_err(|_| PresentationProofError::Rejected)?;
+            if holder_proof.signer != credential.holder
+                || holder_proof.created_at != now / 1_000
+                || holder_proof.challenge_hash != request.challenge_hash
+                || !verify_presentation_proof(decoded.presentation_root(), &holder_proof)
+            {
+                return Err(PresentationProofError::Rejected);
+            }
             Err(PresentationProofError::Unavailable)
         })
+    }
+}
+
+fn map_compact_holder_proof_error(error: CompactHolderProofError) -> PresentationProofError {
+    match error {
+        CompactHolderProofError::InvalidBinding
+        | CompactHolderProofError::NotManaged
+        | CompactHolderProofError::Rejected => PresentationProofError::HolderNotAuthorized,
+        CompactHolderProofError::Locked | CompactHolderProofError::Unavailable => {
+            PresentationProofError::HolderAuthorizationUnavailable
+        }
     }
 }
 
@@ -1116,6 +1455,55 @@ mod tests {
                     .expect("selection"),
             )
             .expect("independent reconstruction");
+    }
+
+    #[test]
+    fn native_holder_proof_round_trips_and_binds_the_exact_transcript() {
+        let credential = parse_credential(&standalone_compact_credential()).expect("credential");
+        let input = prepare_public_input(
+            &standalone_compact_credential(),
+            &standalone_private_material(),
+            [0x11; 32],
+            [0x22; 32],
+            20_000,
+            &requested_claims(),
+        )
+        .expect("preimage");
+        let secret = EmbeddedFr::from(987_654_321_u64);
+        let nonce = EmbeddedFr::from(17_u64);
+        let mut proof = CompactProof {
+            signer: credential.holder,
+            created_at: 10_100,
+            challenge_hash: [0x11; 32],
+            public_key: EmbeddedGroupAffine::generator() * secret,
+            announcement: EmbeddedGroupAffine::generator() * nonce,
+            response: Fr::from(0_u64),
+        };
+        let challenge = presentation_proof_challenge(input.presentation_root(), &proof);
+        let challenge = EmbeddedFr::try_from(challenge).expect("embedded challenge");
+        proof.response =
+            Fr::from_le_bytes(&(nonce + challenge * secret).as_le_bytes()).expect("response field");
+        assert!(verify_presentation_proof(input.presentation_root(), &proof));
+
+        let encoded = encode_proof(&proof).expect("proof encoding");
+        let decoded = parse_proof(&encoded).expect("proof decoding");
+        assert!(verify_presentation_proof(
+            input.presentation_root(),
+            &decoded
+        ));
+        assert!(!verify_presentation_proof([0x44; 32], &decoded));
+        let mut wrong_challenge = decoded;
+        wrong_challenge.challenge_hash[0] ^= 1;
+        assert!(!verify_presentation_proof(
+            input.presentation_root(),
+            &wrong_challenge
+        ));
+        let mut wrong_signer = decoded;
+        wrong_signer.signer.method_id[1] ^= 1;
+        assert!(!verify_presentation_proof(
+            input.presentation_root(),
+            &wrong_signer
+        ));
     }
 
     #[test]
@@ -1257,7 +1645,7 @@ mod tests {
     }
 
     #[test]
-    fn standalone_proof_port_reaches_exact_preflight_then_fails_closed() {
+    fn standalone_proof_port_requires_the_holder_proof_capability_after_preflight() {
         let (credential_id, record) =
             standalone_record(standalone_compact_proof(), standalone_private_material());
         let adapter = PreflightOnlyCompactPresentationProof::new(
@@ -1266,7 +1654,10 @@ mod tests {
             Arc::new(Authorization),
         );
         let result = poll(adapter.create(proof_request(credential_id)));
-        assert!(matches!(result, Err(PresentationProofError::Unavailable)));
+        assert_eq!(
+            result,
+            Err(PresentationProofError::HolderAuthorizationUnavailable)
+        );
     }
 
     #[test]

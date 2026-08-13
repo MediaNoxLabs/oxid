@@ -187,6 +187,36 @@ pub trait DidLifecyclePort: Send + Sync {
     ) -> Result<DidLifecycleSignature, DidLifecyclePortError>;
 }
 
+/// Public output from a protected Jubjub challenge signature by one currently
+/// managed DID method. Points are canonical Midnight compressed encodings and
+/// the response is a canonical little-endian field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DidJubjubChallengeSignature {
+    pub method_id: String,
+    pub public_key: [u8; 32],
+    pub announcement: [u8; 32],
+    pub response: [u8; 32],
+}
+
+pub type DidJubjubChallengeDeriver<'a> =
+    dyn FnMut(&[u8; 32], &[u8; 32]) -> Result<[u8; 32], DidLifecyclePortError> + 'a;
+
+/// Adapter-to-adapter capability for DID-bound Schnorr protocols whose exact
+/// challenge is derived by the consuming protocol adapter.
+///
+/// Implementations must resolve the method only from current managed custody.
+/// The callback sees public points only; the DID private key and nonce remain
+/// inside custody throughout the synchronous operation.
+pub trait DidJubjubChallengeSigningPort: Send + Sync {
+    fn sign_jubjub_challenge(
+        &self,
+        profile_id: &IdentityProfileId,
+        did: &MidnightDid,
+        method_id: &str,
+        derive_challenge: &mut DidJubjubChallengeDeriver<'_>,
+    ) -> Result<DidJubjubChallengeSignature, DidLifecyclePortError>;
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidLifecyclePortError {
     Unavailable,
@@ -256,6 +286,18 @@ impl DidLifecyclePort for UnavailableDidLifecycle {
         _: &str,
         _: &[u8],
     ) -> Result<DidLifecycleSignature, DidLifecyclePortError> {
+        Err(DidLifecyclePortError::Unavailable)
+    }
+}
+
+impl DidJubjubChallengeSigningPort for UnavailableDidLifecycle {
+    fn sign_jubjub_challenge(
+        &self,
+        _: &IdentityProfileId,
+        _: &MidnightDid,
+        _: &str,
+        _: &mut DidJubjubChallengeDeriver<'_>,
+    ) -> Result<DidJubjubChallengeSignature, DidLifecyclePortError> {
         Err(DidLifecyclePortError::Unavailable)
     }
 }
