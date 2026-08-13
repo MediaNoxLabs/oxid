@@ -4,6 +4,7 @@
   "sourceRepository": "https://github.com/midnightntwrk/midnight-identity-solution-examples",
   "sourceRevision": "e4a92a6be2cc6dc34f68261f10c19c9312043807",
   "contractPath": "packages/contracts/vault/src/passport-vault.compact",
+  "sourceDistributionPath": "contracts/passport-vault/passport-vault.compact",
   "contractSha256": "2ebc5b34dd440bc9a9736408f29f5003e7a78f26a564b392be2af36de69102f4",
   "generatedRuntimeVersion": "0.15.0",
   "compilerVersion": "0.30.0",

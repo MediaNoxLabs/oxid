@@ -333,10 +333,13 @@ workspace was independently resolved to `midnight-identity-solution-examples`
 commit `e4a92a6be2cc6dc34f68261f10c19c9312043807`; the reviewed
 `packages/contracts/vault/src/passport-vault.compact` has SHA-256
 `2ebc5b34dd440bc9a9736408f29f5003e7a78f26a564b392be2af36de69102f4`.
-ADR-0052 now authenticates that exact source as a flake input and composes its
-five impure circuits, generated ledger client/schema, IR, proving keys,
-parameters, and digest manifest in
-`passport-vault-compact-artifacts`. The generated files remain Nix outputs.
+ADR-0052 composes its five impure circuits, generated ledger client/schema, IR,
+proving keys, parameters, and digest manifest in
+`passport-vault-compact-artifacts`. The upstream repository is private, so
+ADR-0053 distributes its byte-identical Apache-2.0 source at
+`contracts/passport-vault/passport-vault.compact` and asserts the upstream
+digest before compilation. Public CI remains secret-free and generated files
+remain Nix outputs.
 
 The standalone adapter implements bounded multi-lock creation, deposit,
 credential-policy claim, creator withdrawal, total accounting, exact consent,

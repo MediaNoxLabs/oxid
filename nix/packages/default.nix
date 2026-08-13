@@ -16,7 +16,7 @@
         compactToolchain = midnightDidPackages.compact-toolchain;
         midnightCircuitParams = midnightDidPackages.midnight-circuit-params;
         midnightVcSource = inputs.midnight-verifiable-credentials;
-        passportVaultSource = inputs.midnight-identity-solution-examples;
+        passportVaultSource = ../../contracts/passport-vault;
       };
       linuxBuildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         pkgs.glib

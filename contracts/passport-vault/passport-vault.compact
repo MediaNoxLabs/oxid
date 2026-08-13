@@ -1,0 +1,572 @@
+// PassportVault: a multi-LOCK escrow. ANY user can create a "lock" that pins
+// its own claim policy and holds its own pool of UNSHIELDED native NIGHT; ANY
+// redeemer who proves possession of an issuer-signed `digital-passport`
+// verifiable credential satisfying that lock's policy may draw a share of that
+// lock's pool. Each credential may claim once PER LOCK (per-(lock,credential)
+// nullifier); a lock's pool is drawn down across many redeemers until it is
+// empty or the lock's creator withdraws the remainder.
+//
+// Why multi-lock: the policy is no longer sealed once-per-contract at deploy.
+// Instead each `createLock` call records an independent `LockRecord` in the
+// `locks` map, so one deployed contract serves arbitrarily many lockers, each
+// with their own gate (start simple: a minimum-age predicate).
+//
+// Per-lock policy gates (configured by the locker at `createLock`):
+//   - minimum age (zero-knowledge predicate over the holder's date of birth)
+//   - optional required issuing state / country (disclosed-value equality)
+//   - optional required document number (disclosed-value equality)
+//   - per-claim cap (`maxClaimAmount`)
+//   - verifier challenge hash (presentation freshness / session binding)
+//
+// On-chain composition reused from the Midnight VC stack (digital-passport
+// credential family):
+//   - assertValidDigitalPassportPresentation          (issuer envelope + signature,
+//                                                       holder binding + presentation
+//                                                       signature, disclosure↔commitment
+//                                                       consistency)
+//   - assertDigitalPassportPresentationSatisfiesRequest(verifier-policy alignment:
+//                                                       required disclosures + age
+//                                                       threshold + challenge)
+//   - assertValidDigitalPassportAgePredicate          (ZK age proof over the holder's
+//                                                       private date-of-birth witness)
+//
+// Trust model (no on-chain DID resolution / no contract composability yet):
+//   - The issuer is a real Midnight DID and is GLOBAL to the contract: the
+//     credential proof carries the issuer's Jubjub public key, and
+//     `verifySignature` (in the VC core) checks the Schnorr signature against
+//     THAT embedded key. Matching only the `VerificationMethodRef` is forgeable,
+//     so the vault ALSO pins the issuer's resolved Jubjub public key (as a hash)
+//     at deploy and requires every credential proof to use it. Per-lock issuers
+//     are a future extension.
+//   - Holder authentication is bounded: digital-passport uses explicit-DID
+//     holder binding (no committed holder secret), so on-chain we cannot bind
+//     the holder public key to the holder DID. Effective redeem capability is
+//     possession of the issuer-signed credential plus the private parts
+//     (openings + date-of-birth) needed to build the presentation/age proof.
+//
+// Trust boundaries (not addressed in this version):
+//   - currentDay is caller-supplied. A malicious prover can choose any value.
+//     A later version should bind currentDay to a block-derived range.
+//   - Credential expiry (`expiresAt`) is enforced off-chain: the envelope value
+//     is in seconds while the age clock is in days, so the two are not compared
+//     on-chain until the unit is reconciled.
+
+pragma language_version >= 0.20;
+
+import CompactStandardLibrary;
+
+include "./vendored/digital-passport-credential";
+
+export enum PassportVaultDecision {
+  noDecision,
+  released
+}
+
+// ---------------------------------------------------------------------------
+// Per-lock record
+// ---------------------------------------------------------------------------
+
+// A single lock: its creator, its claim policy, and its pool accounting. Stored
+// in the `locks` map keyed by an incrementing `Uint<64>` lock id. Pool custody
+// is the contract's shared UNSHIELDED native-NIGHT balance; per-lock solvency
+// is enforced by `lockedRemaining = totalDeposited - totalReleased`, so one
+// lock's redeemers can never draw another lock's funds.
+export struct LockRecord {
+  locker: Bytes<32>,
+  minimumAgeYears: Uint<8>,
+  requireIssuingState: Boolean,
+  requiredIssuingState: Bytes<32>,
+  requireDocumentNumber: Boolean,
+  requiredDocumentNumber: Bytes<32>,
+  maxClaimAmount: Uint<128>,
+  verifierChallengeHash: Bytes<32>,
+  totalDeposited: Uint<128>,
+  totalReleased: Uint<128>
+}
+
+// Per-(lock, credential) nullifier preimage: the same passport draws at most one
+// share PER LOCK, but may still claim from other locks.
+struct ClaimNullifier {
+  lockId: Uint<64>,
+  credentialRoot: Bytes<32>
+}
+
+// ---------------------------------------------------------------------------
+// Ledger state
+// ---------------------------------------------------------------------------
+
+export ledger contractVersion: Uint<32>;
+export ledger admin: ZswapCoinPublicKey;
+
+// Trusted issuer anchor (GLOBAL): the issuer's verification-method reference plus
+// a hash of its resolved Jubjub public key (resolved off-chain at deploy time).
+// Both fields are mutable through the admin-gated `setTrustedIssuer` circuit
+// so a verifier-admin can rotate the trusted issuer at runtime — e.g. when the
+// upstream credential issuer rotates its DID key, or when migrating from a
+// test issuer to a production one without redeploying the contract.
+export ledger trustedIssuer: VerificationMethodRef;
+export ledger trustedIssuerPublicKeyHash: Bytes<32>;
+
+// The locks. `lockCount` is the next lock id to assign (also the count of locks
+// ever created).
+export ledger locks: Map<Uint<64>, LockRecord>;
+export ledger lockCount: Uint<64>;
+
+// Per-(lock, credential) nullifier set: `persistentHash(ClaimNullifier)` is
+// recorded on a lock's first successful claim by a credential and rejected
+// thereafter.
+export ledger consumedClaims: Set<Bytes<32>>;
+
+// Global audit fields (sum across all locks; display only — per-lock authority is
+// the `LockRecord`).
+export ledger totalDeposited: Uint<128>;
+export ledger totalReleased: Uint<128>;
+export ledger claimCount: Uint<64>;
+export ledger lastVerifiedCredentialRoot: Bytes<32>;
+export ledger lastVerifiedCurrentDay: Uint<32>;
+export ledger lastVerifiedThresholdYears: Uint<8>;
+export ledger lastReleasedAmount: Uint<128>;
+export ledger lastBusinessDecision: PassportVaultDecision;
+
+// ---------------------------------------------------------------------------
+// Witnesses (holder-private inputs for the age predicate)
+// ---------------------------------------------------------------------------
+
+witness holderDateOfBirthDays(): Uint<32>;
+witness holderDateOfBirthOpening(): Bytes<32>;
+
+// ---------------------------------------------------------------------------
+// Constructor
+// ---------------------------------------------------------------------------
+
+constructor(
+  initialAdmin: ZswapCoinPublicKey,
+  issuerRef: VerificationMethodRef,
+  issuerPublicKey: JubjubPoint
+) {
+  contractVersion = 1;
+  admin = disclose(initialAdmin);
+  trustedIssuer = disclose(issuerRef);
+  trustedIssuerPublicKeyHash =
+    disclose(persistentHash<JubjubPoint>(issuerPublicKey));
+  lockCount = 0;
+  totalDeposited = 0;
+  totalReleased = 0;
+  claimCount = 0;
+  lastVerifiedCredentialRoot = pad(32, "passport-vault:no-cred");
+  lastVerifiedCurrentDay = 0;
+  lastVerifiedThresholdYears = 0;
+  lastReleasedAmount = 0;
+  lastBusinessDecision = PassportVaultDecision.noDecision;
+}
+
+// ---------------------------------------------------------------------------
+// Verifier policy
+// ---------------------------------------------------------------------------
+
+// Pure helper so off-chain callers can build the same typed request the contract
+// enforces during `claimFromLock`, from a lock's policy fields.
+export pure circuit passportPolicyRequestFor(
+  issuerVerificationMethodRef: VerificationMethodRef,
+  configuredVerifierChallengeHash: Bytes<32>,
+  reqIssuingState: Boolean,
+  reqDocumentNumber: Boolean,
+  requestedAgeThresholdYears: Uint<8>
+): DigitalPassportPresentationRequest {
+  return DigitalPassportPresentationRequest {
+    version: 1,
+    schema: SchemaRef {
+      packageId: pad(32, "midnight:vc:digital-passport"),
+      schemaId: pad(32, "digital-passport:v1"),
+      majorVersion: 1,
+      minorVersion: 0,
+    },
+    issuerVerificationMethodRef: issuerVerificationMethodRef,
+    requireFirstNameDisclosure: false,
+    requireLastNameDisclosure: false,
+    // Age is an OPTIONAL gate: a minimum age of 0 means "no age requirement",
+    // in which case the request must NOT require the age predicate (the
+    // digital-passport library forbids a zero threshold while the predicate is
+    // on). minAge > 0 enables the predicate at that threshold.
+    requireAgeOverThreshold: requestedAgeThresholdYears > 0,
+    requestedAgeThresholdYears: requestedAgeThresholdYears,
+    requireDocumentNumberDisclosure: reqDocumentNumber,
+    requireIssuingStateDisclosure: reqIssuingState,
+    verifierChallengeHash: configuredVerifierChallengeHash,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Set trusted issuer (admin only) — rotate the global trusted issuer anchor
+// ---------------------------------------------------------------------------
+
+// Rotates the contract's global trusted-issuer anchor (the verification-method
+// reference + Jubjub public key whose signatures `claimFromLock` accepts).
+// Only the contract admin (the coin pubkey passed to the constructor) may call.
+//
+// Use this when:
+//   - the upstream credential issuer rotates its DID key,
+//   - the verifier wants to migrate from a test/staging issuer to production
+//     without redeploying,
+//   - the verifier's trust policy expands or narrows the issuer set (this
+//     contract pins a single issuer — multi-issuer would be a separate
+//     ledger Set + a different gate in `claimFromLock`).
+//
+// Existing locks keep their policies; subsequent `claimFromLock` calls are
+// verified against the NEW issuer. Locks created before the rotation will only
+// accept credentials signed by the new issuer (the lock policy is purely about
+// the *claim values* — issuer trust is contract-global).
+export circuit setTrustedIssuer(
+  newIssuerRef: VerificationMethodRef,
+  newIssuerPublicKey: JubjubPoint
+): [] {
+  const caller = ownPublicKey();
+  assert(caller.bytes == admin.bytes, "Only the contract admin may rotate the trusted issuer");
+  trustedIssuer = disclose(newIssuerRef);
+  trustedIssuerPublicKeyHash =
+    disclose(persistentHash<JubjubPoint>(newIssuerPublicKey));
+}
+
+// ---------------------------------------------------------------------------
+// Create lock (anyone) — defines a policy and optionally seeds the pool
+// ---------------------------------------------------------------------------
+
+// Registers a new lock with the caller as its creator and the given claim
+// policy, returning the assigned lock id. When `initialAmount > 0` the call also
+// performs the first deposit (the off-chain wallet funds the `receiveUnshielded`
+// effect with that much native UNSHIELDED NIGHT while balancing).
+export circuit createLock(
+  minAge: Uint<8>,
+  reqIssuingState: Boolean,
+  reqIssuingStateValue: Bytes<32>,
+  reqDocumentNumber: Boolean,
+  reqDocumentNumberValue: Bytes<32>,
+  maxClaim: Uint<128>,
+  configuredVerifierChallengeHash: Bytes<32>,
+  initialAmount: Uint<128>
+): Uint<64> {
+  const caller = ownPublicKey();
+  assert(maxClaim > 0, "Per-claim maximum must be positive");
+
+  const lockId = lockCount;
+  const disclosedInitial = disclose(initialAmount);
+  if (disclosedInitial > 0) {
+    receiveUnshielded(nativeToken(), disclosedInitial);
+  }
+
+  locks.insert(
+    lockId,
+    LockRecord {
+      locker: disclose(caller.bytes),
+      minimumAgeYears: disclose(minAge),
+      requireIssuingState: disclose(reqIssuingState),
+      requiredIssuingState: disclose(reqIssuingStateValue),
+      requireDocumentNumber: disclose(reqDocumentNumber),
+      requiredDocumentNumber: disclose(reqDocumentNumberValue),
+      maxClaimAmount: disclose(maxClaim),
+      verifierChallengeHash: disclose(configuredVerifierChallengeHash),
+      totalDeposited: disclosedInitial,
+      totalReleased: 0,
+    }
+  );
+
+  lockCount = (lockCount + 1) as Uint<64>;
+  totalDeposited = (totalDeposited + disclosedInitial) as Uint<128>;
+  return lockId;
+}
+
+// ---------------------------------------------------------------------------
+// Deposit phase (lock creator only, repeatable)
+// ---------------------------------------------------------------------------
+
+// Tops up an existing lock's pool with `amount` base units of native UNSHIELDED
+// NIGHT. Only the lock's creator may deposit.
+export circuit depositToLock(lockId: Uint<64>, amount: Uint<128>): [] {
+  const id = disclose(lockId);
+  assert(locks.member(id), "Lock does not exist");
+  const rec = locks.lookup(id);
+
+  const caller = ownPublicKey();
+  assert(
+    caller.bytes == rec.locker,
+    "Only the lock's creator may deposit funds"
+  );
+
+  const disclosedAmount = disclose(amount);
+  assert(disclosedAmount > 0, "Deposit amount must be positive");
+
+  receiveUnshielded(nativeToken(), disclosedAmount);
+
+  locks.insert(
+    id,
+    LockRecord {
+      locker: rec.locker,
+      minimumAgeYears: rec.minimumAgeYears,
+      requireIssuingState: rec.requireIssuingState,
+      requiredIssuingState: rec.requiredIssuingState,
+      requireDocumentNumber: rec.requireDocumentNumber,
+      requiredDocumentNumber: rec.requiredDocumentNumber,
+      maxClaimAmount: rec.maxClaimAmount,
+      verifierChallengeHash: rec.verifierChallengeHash,
+      totalDeposited: (rec.totalDeposited + disclosedAmount) as Uint<128>,
+      totalReleased: rec.totalReleased,
+    }
+  );
+
+  totalDeposited = (totalDeposited + disclosedAmount) as Uint<128>;
+}
+
+// ---------------------------------------------------------------------------
+// Withdraw (lock creator reclaims remaining funds from their lock)
+// ---------------------------------------------------------------------------
+
+export circuit withdrawFromLock(
+  lockId: Uint<64>,
+  amount: Uint<128>,
+  recipientAddress: UserAddress
+): [] {
+  const id = disclose(lockId);
+  assert(locks.member(id), "Lock does not exist");
+  const rec = locks.lookup(id);
+
+  const caller = ownPublicKey();
+  assert(caller.bytes == rec.locker, "Only the lock's creator may withdraw");
+
+  const disclosedAmount = disclose(amount);
+  assert(disclosedAmount > 0, "Withdrawal amount must be positive");
+
+  // Per-lock solvency: a lock can only ever release what was deposited to it
+  // (`remaining`). The contract's shared unshielded balance is the sum of every
+  // lock's remaining, so a within-`remaining` withdrawal is always covered; the
+  // ledger's own `sendUnshielded` settlement is the ultimate solvency check.
+  const remaining = (rec.totalDeposited - rec.totalReleased) as Uint<128>;
+  assert(disclosedAmount <= remaining, "Insufficient lock balance");
+
+  drawFromVault(disclosedAmount, disclose(recipientAddress));
+
+  locks.insert(
+    id,
+    LockRecord {
+      locker: rec.locker,
+      minimumAgeYears: rec.minimumAgeYears,
+      requireIssuingState: rec.requireIssuingState,
+      requiredIssuingState: rec.requiredIssuingState,
+      requireDocumentNumber: rec.requireDocumentNumber,
+      requiredDocumentNumber: rec.requiredDocumentNumber,
+      maxClaimAmount: rec.maxClaimAmount,
+      verifierChallengeHash: rec.verifierChallengeHash,
+      totalDeposited: rec.totalDeposited,
+      totalReleased: (rec.totalReleased + disclosedAmount) as Uint<128>,
+    }
+  );
+
+  totalReleased = (totalReleased + disclosedAmount) as Uint<128>;
+}
+
+// ---------------------------------------------------------------------------
+// Claim phase (redeemer, policy-gated, multi-claim, per-lock)
+// ---------------------------------------------------------------------------
+
+// Verifies an issuer-signed digital-passport credential + presentation against
+// the chosen lock's claim policy and releases up to that lock's `maxClaimAmount`
+// (and no more than its remaining pool) to `recipientAddress`. The
+// (lock, credential) pair is recorded so the same passport cannot claim the same
+// lock twice.
+//
+// TRUST BOUNDARY: currentDay is caller-supplied. Callers must source it from a
+// trustworthy time/calendar oracle when this contract is used for real
+// acceptance decisions.
+export circuit claimFromLock(
+  lockId: Uint<64>,
+  credential: DigitalPassportCredential,
+  credentialProof: Proof,
+  presentation: DigitalPassportPresentation,
+  presentationProof: Proof,
+  currentDay: Uint<32>,
+  requestedAmount: Uint<128>,
+  recipientAddress: UserAddress
+): [] {
+  const id = disclose(lockId);
+  assert(locks.member(id), "Lock does not exist");
+  const rec = locks.lookup(id);
+
+  const disclosedAmount = disclose(requestedAmount);
+  assert(disclosedAmount > 0, "Requested amount must be positive");
+  assert(
+    disclosedAmount <= rec.maxClaimAmount,
+    "Requested amount exceeds the per-claim maximum"
+  );
+  // Per-lock solvency: a claim can only draw this lock's own remaining pool
+  // (`totalDeposited - totalReleased`). The contract's shared unshielded balance
+  // is the sum of all locks' remaining, so a within-`remaining` claim is always
+  // covered; the ledger's `sendUnshielded` settlement is the final solvency gate.
+  const remaining = (rec.totalDeposited - rec.totalReleased) as Uint<128>;
+  assert(
+    disclosedAmount <= remaining,
+    "Requested amount exceeds the remaining vault balance"
+  );
+
+  const credentialRoot =
+    disclose(digitalPassportCredentialBodyRoot(credential));
+
+  // Per-(lock, credential) nullifier: one share per passport per lock.
+  const nullifier = disclose(
+    persistentHash<ClaimNullifier>(
+      ClaimNullifier { lockId: id, credentialRoot: credentialRoot }
+    )
+  );
+  assert(
+    !consumedClaims.member(nullifier),
+    "Credential has already claimed from this vault"
+  );
+
+  // Issuer trust anchor (global): the credential's issuer reference must match
+  // the configured trusted issuer, AND the signing key in the proof must be the
+  // pinned issuer key (closes the on-chain DID-resolution gap).
+  assert(
+    credential.issuerVerificationMethodRef.didContractAddress.bytes
+      == trustedIssuer.didContractAddress.bytes,
+    "Credential issuer DID contract does not match trusted issuer"
+  );
+  assert(
+    credential.issuerVerificationMethodRef.methodId == trustedIssuer.methodId,
+    "Credential issuer verification method does not match trusted issuer"
+  );
+  assert(
+    persistentHash<JubjubPoint>(credentialProof.publicKey)
+      == trustedIssuerPublicKeyHash,
+    "Credential issuer signing key is not the pinned trusted issuer key"
+  );
+
+  // Issuer signature + holder binding + presentation signature +
+  // disclosure↔commitment consistency.
+  assertValidDigitalPassportPresentation(
+    credential,
+    credentialProof,
+    presentation,
+    presentationProof
+  );
+
+  // Credential expiry, enforced on-chain against the trustless block time.
+  // `expiresAt` is seconds since the Unix epoch — the same unit blockTimeLt
+  // compares against — so an expired credential can no longer claim (this
+  // closes the prior "expiry enforced off-chain" gap).
+  if (disclose(credential.hasExpiration)) {
+    assert(
+      blockTimeLt(disclose(credential.expiresAt)),
+      "Credential has expired"
+    );
+  }
+
+  // Build the verifier-policy request the lock is willing to accept and require
+  // the off-chain presentation to satisfy it (required disclosures, age
+  // threshold, and verifier challenge alignment).
+  const request = passportPolicyRequestFor(
+    trustedIssuer,
+    rec.verifierChallengeHash,
+    rec.requireIssuingState,
+    rec.requireDocumentNumber,
+    rec.minimumAgeYears
+  );
+  assertDigitalPassportPresentationSatisfiesRequest(
+    credential,
+    request,
+    presentation,
+    presentationProof
+  );
+
+  // Claim-value equality gates (the lock's policy on disclosed values).
+  if (rec.requireIssuingState) {
+    assert(
+      presentation.disclosed.issuingStateValue == rec.requiredIssuingState,
+      "Disclosed issuing state does not match the vault policy"
+    );
+  }
+  if (rec.requireDocumentNumber) {
+    assert(
+      presentation.disclosed.documentNumberValue == rec.requiredDocumentNumber,
+      "Disclosed document number does not match the vault policy"
+    );
+  }
+
+  // Zero-knowledge age predicate against the holder's private witness.
+  // Only enforced when the lock pins a minimum age (minimumAgeYears > 0).
+  // When age is disabled the request sets requireAgeOverThreshold = false and
+  // the presentation does not prove the predicate, so the library would reject
+  // a zero-threshold age proof — skip it entirely instead.
+  const holderDobDays = holderDateOfBirthDays();
+  const holderDobOpening = holderDateOfBirthOpening();
+  if (rec.minimumAgeYears > 0) {
+    // Bind the caller-supplied currentDay to the actual on-chain block time so
+    // a prover cannot future-date the claim to inflate the holder's age. The
+    // day window [currentDay*86400, (currentDay+1)*86400) seconds must contain
+    // the including block's time, which pins currentDay to the real current
+    // day (closes the "currentDay is caller-supplied" trust gap).
+    const currentDay64 = currentDay as Uint<64>;
+    const startOfDaySeconds = (currentDay64 * 86400) as Uint<64>;
+    const startOfNextDaySeconds = ((currentDay64 + 1) * 86400) as Uint<64>;
+    assert(
+      blockTimeGte(disclose(startOfDaySeconds)),
+      "currentDay is in the future relative to block time"
+    );
+    assert(
+      blockTimeLt(disclose(startOfNextDaySeconds)),
+      "currentDay is stale relative to block time"
+    );
+    assertValidDigitalPassportAgePredicate(
+      credential,
+      presentation,
+      currentDay,
+      holderDobDays,
+      holderDobOpening
+    );
+  }
+
+  // Release the requested amount to the redeemer's unshielded address. The
+  // remaining pool stays as the contract's unshielded balance for the next
+  // redeemer; there is no change coin to re-bank.
+  drawFromVault(disclosedAmount, disclose(recipientAddress));
+
+  consumedClaims.insert(nullifier);
+  locks.insert(
+    id,
+    LockRecord {
+      locker: rec.locker,
+      minimumAgeYears: rec.minimumAgeYears,
+      requireIssuingState: rec.requireIssuingState,
+      requiredIssuingState: rec.requiredIssuingState,
+      requireDocumentNumber: rec.requireDocumentNumber,
+      requiredDocumentNumber: rec.requiredDocumentNumber,
+      maxClaimAmount: rec.maxClaimAmount,
+      verifierChallengeHash: rec.verifierChallengeHash,
+      totalDeposited: rec.totalDeposited,
+      totalReleased: (rec.totalReleased + disclosedAmount) as Uint<128>,
+    }
+  );
+
+  totalReleased = (totalReleased + disclosedAmount) as Uint<128>;
+  claimCount = (claimCount + 1) as Uint<64>;
+  lastVerifiedCredentialRoot = credentialRoot;
+  lastVerifiedCurrentDay = disclose(currentDay);
+  lastVerifiedThresholdYears =
+    disclose(presentation.disclosed.ageThresholdYears);
+  lastReleasedAmount = disclosedAmount;
+  lastBusinessDecision = PassportVaultDecision.released;
+}
+
+// ---------------------------------------------------------------------------
+// Internal: send `amount` of native UNSHIELDED NIGHT from the shared escrow.
+// ---------------------------------------------------------------------------
+
+circuit drawFromVault(
+  amount: Uint<128>,
+  recipient: UserAddress
+): [] {
+  // The ledger debits the contract's unshielded balance and credits the
+  // recipient's unshielded address. No change is produced by `sendUnshielded`.
+  sendUnshielded(
+    nativeToken(),
+    disclose(amount),
+    right<ContractAddress, UserAddress>(recipient)
+  );
+}

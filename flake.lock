@@ -56,23 +56,6 @@
         "type": "github"
       }
     },
-    "midnight-identity-solution-examples": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1783070787,
-        "narHash": "sha256-N3AoPpd7t5wePgK22hfazlvlkV1yl/xEIlKDMKTV2yE=",
-        "owner": "midnightntwrk",
-        "repo": "midnight-identity-solution-examples",
-        "rev": "e4a92a6be2cc6dc34f68261f10c19c9312043807",
-        "type": "github"
-      },
-      "original": {
-        "owner": "midnightntwrk",
-        "repo": "midnight-identity-solution-examples",
-        "rev": "e4a92a6be2cc6dc34f68261f10c19c9312043807",
-        "type": "github"
-      }
-    },
     "midnight-verifiable-credentials": {
       "flake": false,
       "locked": {
@@ -156,7 +139,6 @@
       "inputs": {
         "flake-parts": "flake-parts",
         "midnight-did-toolchain": "midnight-did-toolchain",
-        "midnight-identity-solution-examples": "midnight-identity-solution-examples",
         "midnight-verifiable-credentials": "midnight-verifiable-credentials",
         "nixpkgs": "nixpkgs_2"
       }

@@ -47,12 +47,13 @@ selected profile's managed Jubjub assertion method. ADR-0051 now delivers the
 Passport Vault as a separate standalone product hexagon with exact multi-lock
 accounting, Digital Passport claim policy, replay rejection, a headless flow,
 and a Dioxus mobile journey. It is visibly process-local and never an on-chain
-claim. ADR-0052 authenticates the exact companion contract as a Nix input,
-builds all five impure circuits, and adds bounded native Rust decoding plus a
-headless generated-client fixture. Authenticated indexer acquisition, live
-Compact transactions, and optional durable standalone state remain issue #31.
-Live protocol transport and production/mobile presentation proving remain
-deferred.
+claim. ADR-0052 builds all five impure circuits and adds bounded native Rust
+decoding plus a headless generated-client fixture. ADR-0053 distributes the
+byte-identical reviewed contract in Oxid and asserts its upstream digest so
+public CI never needs private companion-repository credentials. Authenticated
+indexer acquisition, live Compact transactions, and optional durable standalone
+state remain issue #31. Live protocol transport and production/mobile
+presentation proving remain deferred.
 Standalone presentation now reauthorizes the exact statement with the
 credential-bound method's current managed protected key, runs the authenticated
 k=18 Compact circuit, and independently verifies the public `MZP1` envelope
@@ -360,8 +361,11 @@ pnpm Nix build is not the dependency path: its pinned offline closure currently
 lacks `@midnight-ntwrk/midnight-did@0.5.0`.
 
 ADR-0052 separately runs `nix build
-.#passport-vault-compact-artifacts` from companion revision
-`e4a92a6be2cc6dc34f68261f10c19c9312043807` and the same pinned VC/toolchain.
+.#passport-vault-compact-artifacts` from the byte-identical source distributed
+under `contracts/passport-vault` and the same pinned VC/toolchain. ADR-0053
+records its private companion provenance at revision
+`e4a92a6be2cc6dc34f68261f10c19c9312043807` and requires the exact upstream
+SHA-256 `2ebc5b34dd440bc9a9736408f29f5003e7a78f26a564b392be2af36de69102f4`.
 All five impure circuits are in the closure: `setTrustedIssuer` k=13/5,416
 rows, `createLock` k=11/1,823, `depositToLock` k=10/834, `claimFromLock`
 k=17/124,785, and `withdrawFromLock` k=11/1,212. Required circuit parameters
@@ -604,6 +608,9 @@ composes all five contract circuits, and decodes the 15-field version-1 tagged
 ledger natively with bounded integrity checks. Valid decoding alone is not
 proof of address authenticity, finality, or freshness. Issue #31 owns the
 remaining authenticated acquisition and live contract-call adapter.
+ADR-0053 supersedes only the private upstream flake-input choice: the reviewed
+contract source is distributed byte-identically from Oxid and hash-checked so
+public CI and forks remain secret-free.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -641,7 +648,8 @@ Current package ownership:
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
 | `contracts/presentation` | Oxid-owned final Compact presentation compositions; generated artifacts remain Nix-store outputs and never enter Git. |
-| `nix/packages/passport-vault-compact-artifacts.nix` | Immutable Passport Vault source/client/IR/key/parameter closure from the pinned companion, VC, and Compact toolchain revisions. |
+| `contracts/passport-vault` | Byte-identical Apache-2.0 Passport Vault Compact source distributed for secret-free public builds; its pinned private-upstream provenance and digest are ADR-0053 review boundaries. |
+| `nix/packages/passport-vault-compact-artifacts.nix` | Immutable Passport Vault client/IR/key/parameter closure from the hash-checked distributed contract plus pinned VC and Compact toolchain revisions. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, and public receive-QR rendering. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -765,6 +773,14 @@ and reject trailing bytes or unknown decisions. The deterministic fixture at
 `dc4a2f242b8a0a525310b1090ca1ad117cc0d7b019e16d8738f3c9505760a8c0`.
 Do not relabel it live/cached without an authenticated acquisition/freshness
 adapter.
+
+The Passport Vault upstream companion is private. Never add it back as a flake
+input or require CI/forks to hold a repository token. ADR-0053 permits only the
+byte-identical Apache-2.0 source at
+`contracts/passport-vault/passport-vault.compact`; its 23,776 bytes and SHA-256
+`2ebc5b34dd440bc9a9736408f29f5003e7a78f26a564b392be2af36de69102f4`
+are coordinated source/layout/artifact review boundaries. Generated clients,
+IR, parameters, and proving keys remain Nix outputs.
 
 The development root and every derived child remain inside `storage-dev`.
 `wallet.account.derive` exposes only bounded public indices, the selected

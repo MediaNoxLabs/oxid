@@ -74,6 +74,7 @@ ADR status and delivery state answer different questions:
 | [0050](0050-prove-and-independently-verify-compact-presentations.md) Prove and independently verify Compact presentations | Accepted | §§3–7, 9–13, 16–18, 21 and issues #27–29 | Exact generated-runtime/Rust preimage parity, authenticated offline artifacts, checked proving, bounded `MZP1`, independent verification, headless OpenID4VP success, tamper/replay/restart tests, and resource baselines implemented; mobile proving remains gated |
 | [0051](0051-isolate-passport-vault-as-product-specific-hexagon.md) Isolate Passport Vault as a product-specific hexagon | Accepted | §§3–7, 9–13, 16–18, prototype vault flow, and issues #2/#31 | Standalone multi-lock domain, exact Digital Passport policy adapter, headless flow, and mobile journey implemented; live Compact transactions and durable state pending #31 |
 | [0052](0052-authenticate-and-decode-passport-vault-contract-state.md) Authenticate and decode Passport Vault contract state natively | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault bridge, and issue #31 | Immutable five-circuit Nix closure, exact native tagged-state decoder, and headless fixture implemented; authenticated acquisition and contract-call transactions pending #31 |
+| [0053](0053-distribute-passport-vault-source-from-oxid.md) Distribute the reviewed Passport Vault source from Oxid | Accepted | §§3–8, 12–13, 16–18, 21 and issue #31 | Byte-identical Apache-2.0 contract source and digest assertion replace the private upstream flake input so public CI remains secret-free; generated artifacts stay in Nix |
 
 ## Current boundaries
 
@@ -166,3 +167,8 @@ that caller-supplied bytes are live or fresh. Production operations remain
 unavailable until issue #31 authenticates state acquisition and composes
 contract calls through the existing Midnight submission and reconciliation
 boundary.
+
+ADR-0053 supersedes only ADR-0052's private companion-repository flake input.
+Oxid distributes the byte-identical reviewed Compact source and asserts its
+upstream digest before building; public CI needs no private repository token,
+while generated clients, IR, parameters, and proving keys remain Nix outputs.

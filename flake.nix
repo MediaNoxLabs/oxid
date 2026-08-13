@@ -9,10 +9,6 @@
       url = "github:midnightntwrk/midnight-verifiable-credentials/39b1354212620b396e914b29603e6a38f2656546";
       flake = false;
     };
-    midnight-identity-solution-examples = {
-      url = "github:midnightntwrk/midnight-identity-solution-examples/e4a92a6be2cc6dc34f68261f10c19c9312043807";
-      flake = false;
-    };
   };
 
   outputs =

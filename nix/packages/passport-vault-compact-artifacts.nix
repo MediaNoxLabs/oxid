@@ -14,7 +14,8 @@ let
   vaultRevision = "e4a92a6be2cc6dc34f68261f10c19c9312043807";
   vcRevision = "39b1354212620b396e914b29603e6a38f2656546";
   compilerRevision = "05b237a5e51f9c22853b424e7d4236dfa9384c24";
-  vaultSource = "${passportVaultSource}/packages/contracts/vault/src/passport-vault.compact";
+  upstreamVaultLockDigest = "c8d47db1b63785765b8875a3eaa33221b61c779ce7d7cc6e83d8d386a50c0e9f";
+  vaultSource = "${passportVaultSource}/passport-vault.compact";
 in
 stdenvNoCC.mkDerivation {
   pname = "oxid-passport-vault-compact-artifacts";
@@ -36,6 +37,8 @@ stdenvNoCC.mkDerivation {
     mkdir -p "$HOME/.cache/midnight/zk-params" source/vendored generated
     cp -R ${midnightCircuitParams}/. "$HOME/.cache/midnight/zk-params/"
     cp ${vaultSource} source/passport-vault.compact
+    test "$(sha256sum ${vaultSource} | cut -d ' ' -f 1)" = \
+      "2ebc5b34dd440bc9a9736408f29f5003e7a78f26a564b392be2af36de69102f4"
 
     cp ${midnightVcSource}/packages/core/primitives/credentials/src/credentials.compact \
       source/vendored/credentials.compact
@@ -139,7 +142,6 @@ stdenvNoCC.mkDerivation {
       | LC_ALL=C sort)
 
     contract_digest="$(sha256sum ${vaultSource} | cut -d ' ' -f 1)"
-    vault_lock_digest="$(sha256sum package-lock.json | cut -d ' ' -f 1)"
     vc_lock_digest="$(sha256sum ${midnightVcSource}/pnpm-lock.yaml | cut -d ' ' -f 1)"
     parameter_10_digest="$(sha256sum ${midnightCircuitParams}/bls_midnight_2p10 | cut -d ' ' -f 1)"
     parameter_11_digest="$(sha256sum ${midnightCircuitParams}/bls_midnight_2p11 | cut -d ' ' -f 1)"
@@ -151,7 +153,7 @@ stdenvNoCC.mkDerivation {
       --arg vcRevision "${vcRevision}" \
       --arg compilerRevision "${compilerRevision}" \
       --arg contractSha256 "$contract_digest" \
-      --arg vaultLockSha256 "$vault_lock_digest" \
+      --arg vaultLockSha256 "${upstreamVaultLockDigest}" \
       --arg vcLockSha256 "$vc_lock_digest" \
       --arg parameter10Sha256 "$parameter_10_digest" \
       --arg parameter11Sha256 "$parameter_11_digest" \
@@ -166,7 +168,13 @@ stdenvNoCC.mkDerivation {
           revision: $vaultRevision,
           contract: "packages/contracts/vault/src/passport-vault.compact",
           contractSha256: $contractSha256,
-          lockSha256: $vaultLockSha256,
+          distribution: {
+            repository: "https://github.com/MediaNoxLabs/oxid",
+            path: "contracts/passport-vault/passport-vault.compact",
+            byteIdenticalToUpstream: true,
+            requiresPrivateRepositoryAccess: false
+          },
+          upstreamLockSha256: $vaultLockSha256,
           credentialRepository: "https://github.com/midnightntwrk/midnight-verifiable-credentials",
           credentialRevision: $vcRevision,
           credentialLockSha256: $vcLockSha256,
