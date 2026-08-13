@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "description": "Tagged Midnight ContractState produced by the generated Passport Vault v1 Compact client after two zero-balance createLock calls.",
+  "sourceRepository": "https://github.com/midnightntwrk/midnight-identity-solution-examples",
+  "sourceRevision": "e4a92a6be2cc6dc34f68261f10c19c9312043807",
+  "contractPath": "packages/contracts/vault/src/passport-vault.compact",
+  "contractSha256": "2ebc5b34dd440bc9a9736408f29f5003e7a78f26a564b392be2af36de69102f4",
+  "generatedRuntimeVersion": "0.15.0",
+  "compilerVersion": "0.30.0",
+  "serializedBytes": 2013,
+  "serializedSha256": "dc4a2f242b8a0a525310b1090ca1ad117cc0d7b019e16d8738f3c9505760a8c0",
+  "expected": {
+    "contractVersion": 1,
+    "lockCount": 2,
+    "minimumAgeYears": [18, 21],
+    "maximumClaimAmounts": ["40", "25"],
+    "totalDeposited": "0",
+    "totalReleased": "0",
+    "claimCount": 0
+  }
+}

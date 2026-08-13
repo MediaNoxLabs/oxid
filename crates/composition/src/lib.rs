@@ -31,6 +31,8 @@ use oxid_adapter_openid4vci::{
     DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
 };
 use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpenId4VpVerifier};
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_adapter_passport_vault::NativePassportVaultContractStateDecoder;
 use oxid_adapter_passport_vault::{
     InMemoryPassportVaultRepository, StandalonePassportVaultCredential,
 };
@@ -89,8 +91,10 @@ use oxid_identity_application::{
     UnavailableDidRecordRepository, UnavailableDidResolver, UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
-    ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase, DepositPassportVaultLockUseCase,
-    ListPassportVaultLocksUseCase, PassportVaultCredentialPort, PassportVaultRepository,
+    ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase,
+    DecodePassportVaultContractStateUseCase, DepositPassportVaultLockUseCase,
+    ListPassportVaultLocksUseCase, PassportVaultContractStateDecoderPort,
+    PassportVaultContractStateService, PassportVaultCredentialPort, PassportVaultRepository,
     PassportVaultService, UnavailablePassportVaultCredential, UnavailablePassportVaultRepository,
     WithdrawPassportVaultLockUseCase,
 };
@@ -199,6 +203,7 @@ pub struct ApplicationServices {
     get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase>,
     list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase>,
     list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase>,
+    decode_passport_vault_contract_state: Arc<dyn DecodePassportVaultContractStateUseCase>,
     create_passport_vault_lock: Arc<dyn CreatePassportVaultLockUseCase>,
     deposit_passport_vault_lock: Arc<dyn DepositPassportVaultLockUseCase>,
     claim_passport_vault_lock: Arc<dyn ClaimPassportVaultLockUseCase>,
@@ -570,6 +575,13 @@ impl ApplicationServices {
     #[must_use]
     pub fn list_passport_vault_locks(&self) -> Arc<dyn ListPassportVaultLocksUseCase> {
         Arc::clone(&self.list_passport_vault_locks)
+    }
+
+    #[must_use]
+    pub fn decode_passport_vault_contract_state(
+        &self,
+    ) -> Arc<dyn DecodePassportVaultContractStateUseCase> {
+        Arc::clone(&self.decode_passport_vault_contract_state)
     }
 
     #[must_use]
@@ -1555,6 +1567,15 @@ where
         passport_vault_credential,
         random,
     ));
+    #[cfg(not(target_arch = "wasm32"))]
+    let passport_vault_contract_state_decoder: Arc<dyn PassportVaultContractStateDecoderPort> =
+        Arc::new(NativePassportVaultContractStateDecoder);
+    #[cfg(target_arch = "wasm32")]
+    let passport_vault_contract_state_decoder: Arc<dyn PassportVaultContractStateDecoderPort> =
+        Arc::new(oxid_passport_vault_application::UnavailablePassportVaultContractStateDecoder);
+    let passport_vault_contract_state = Arc::new(PassportVaultContractStateService::new(
+        passport_vault_contract_state_decoder,
+    ));
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
     let initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase> = protection.clone();
@@ -1631,6 +1652,8 @@ where
     let list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase> =
         credential_presentation;
     let list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase> = passport_vault.clone();
+    let decode_passport_vault_contract_state: Arc<dyn DecodePassportVaultContractStateUseCase> =
+        passport_vault_contract_state;
     let create_passport_vault_lock: Arc<dyn CreatePassportVaultLockUseCase> =
         passport_vault.clone();
     let deposit_passport_vault_lock: Arc<dyn DepositPassportVaultLockUseCase> =
@@ -1702,6 +1725,7 @@ where
         get_credential_presentation,
         list_credential_presentations,
         list_passport_vault_locks,
+        decode_passport_vault_contract_state,
         create_passport_vault_lock,
         deposit_passport_vault_lock,
         claim_passport_vault_lock,

@@ -47,9 +47,12 @@ selected profile's managed Jubjub assertion method. ADR-0051 now delivers the
 Passport Vault as a separate standalone product hexagon with exact multi-lock
 accounting, Digital Passport claim policy, replay rejection, a headless flow,
 and a Dioxus mobile journey. It is visibly process-local and never an on-chain
-claim; live Compact transactions and optional durable standalone state remain
-issue #31. Live protocol transport and production/mobile presentation proving
-remain deferred.
+claim. ADR-0052 authenticates the exact companion contract as a Nix input,
+builds all five impure circuits, and adds bounded native Rust decoding plus a
+headless generated-client fixture. Authenticated indexer acquisition, live
+Compact transactions, and optional durable standalone state remain issue #31.
+Live protocol transport and production/mobile presentation proving remain
+deferred.
 Standalone presentation now reauthorizes the exact statement with the
 credential-bound method's current managed protected key, runs the authenticated
 k=18 Compact circuit, and independently verifies the public `MZP1` envelope
@@ -356,6 +359,15 @@ and every manifest digest as a coordinated review boundary. The upstream full
 pnpm Nix build is not the dependency path: its pinned offline closure currently
 lacks `@midnight-ntwrk/midnight-did@0.5.0`.
 
+ADR-0052 separately runs `nix build
+.#passport-vault-compact-artifacts` from companion revision
+`e4a92a6be2cc6dc34f68261f10c19c9312043807` and the same pinned VC/toolchain.
+All five impure circuits are in the closure: `setTrustedIssuer` k=13/5,416
+rows, `createLock` k=11/1,823, `depositToLock` k=10/834, `claimFromLock`
+k=17/124,785, and `withdrawFromLock` k=11/1,212. Required circuit parameters
+are p10, p11, p13, and p17. Treat these values and every manifest digest as a
+coordinated review boundary.
+
 Artifact availability is not presentation readiness. Neither the generic
 holder authorization signature nor the exact credential-family Schnorr
 `Proof` is a selective-disclosure or age-predicate ZK proof. Keep
@@ -587,7 +599,11 @@ Passport Vault policy and accounting in a product-specific hexagon. Its
 standalone repository is bounded and process-local, its credential adapter
 rechecks the exact Compact Digital Passport and pinned development trust
 anchor, and its incoming surfaces never label local state movement as a chain
-submission. Issue #31 owns the separately authenticated live contract adapter.
+submission. ADR-0052 authenticates the exact Passport Vault/VC/toolchain inputs,
+composes all five contract circuits, and decodes the 15-field version-1 tagged
+ledger natively with bounded integrity checks. Valid decoding alone is not
+proof of address authenticity, finality, or freshness. Issue #31 owns the
+remaining authenticated acquisition and live contract-call adapter.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -610,7 +626,7 @@ Current package ownership:
 | `crates/presentation/domain` | Dependency-free credential-presentation preview, claim-intent, candidate, and lifecycle invariants. |
 | `crates/presentation/application` | Profile-scoped presentation use cases plus protocol, candidate, current-holder authorization, proof, and independent-verifier ports. |
 | `crates/passport-vault/domain` | Dependency-free product lock policy, creator authorization, checked accounting, and per-lock credential replay invariants. |
-| `crates/passport-vault/application` | Passport Vault list/create/deposit/claim/withdraw use cases plus focused repository and credential-policy ports. |
+| `crates/passport-vault/application` | Passport Vault list/create/deposit/claim/withdraw use cases plus focused repository, credential-policy, and bounded contract-state decoder ports. |
 | `crates/platform/ports` | Clock and randomness capabilities used by applications. |
 | `crates/adapters/storage-memory` | Development/test implementations of wallet, DID, and credential persistence ports. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
@@ -620,11 +636,12 @@ Current package ownership:
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
-| `crates/adapters/passport-vault` | Product-specific bounded process-local repository and exact standalone Digital Passport policy bridge; never a live-chain adapter. |
+| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, and native pinned-layout contract-state decoder; it does not acquire chain state or submit transactions. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
 | `contracts/presentation` | Oxid-owned final Compact presentation compositions; generated artifacts remain Nix-store outputs and never enter Git. |
+| `nix/packages/passport-vault-compact-artifacts.nix` | Immutable Passport Vault source/client/IR/key/parameter closure from the pinned companion, VC, and Compact toolchain revisions. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, and public receive-QR rendering. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -735,6 +752,19 @@ the `standalone` source label. Production composition wires unavailable vault
 ports. Never add a hard-coded contract address, JavaScript bridge, iframe,
 ambient companion-repository lookup, or generated artifact to make it appear
 live; issue #31 is the reviewed live boundary.
+
+The read-only native Passport Vault state boundary is the exception recorded by
+ADR-0052. `vault.contract_state.decode` accepts only bounded tagged
+`ContractState` hex and labels its result `pinned_contract_layout`; it means
+only that the schema is authenticated and does not imply where the bytes came
+from. The exact ledger has 15 fields and
+contract version 1. Cap decoding at 16 MiB and 4,096 contiguous locks, require
+per-lock/global accounting agreement and `claimCount == consumedClaims.size`,
+and reject trailing bytes or unknown decisions. The deterministic fixture at
+`fixtures/passport-vault/contract-state-v1.hex` is 2,013 bytes with SHA-256
+`dc4a2f242b8a0a525310b1090ca1ad117cc0d7b019e16d8738f3c9505760a8c0`.
+Do not relabel it live/cached without an authenticated acquisition/freshness
+adapter.
 
 The development root and every derived child remain inside `storage-dev`.
 `wallet.account.derive` exposes only bounded public indices, the selected
@@ -849,8 +879,9 @@ cross-platform evidence for it.
 Direnv users can run `direnv allow`. The shell provides Rust, Cargo tooling,
 `dx`, `just`, Node.js, and the pinned project-local Pi packages from
 `.pi/settings.json`. It also exports `OXID_PRESENTATION_ARTIFACTS_DIR` to the
-self-contained `presentation-compact-artifacts` Nix closure. The native
-headless composition authenticates its manifest, prover/verifier keys, binary
+self-contained `presentation-compact-artifacts` Nix closure and
+`OXID_PASSPORT_VAULT_ARTIFACTS_DIR` to the authenticated vault closure. The
+native headless composition authenticates its manifest, prover/verifier keys, binary
 ZKIR, and p18 parameters before enabling presentation proof generation; do not
 replace that path with a mutable cache or runtime download.
 
@@ -1044,11 +1075,13 @@ to silence the shell probe.
   claims, openings, custody references, scalars, nonces, communications
   randomness, or a serialized `ProofPreimage`.
 - Passport Vault incoming views may expose public policy and aggregate amounts,
-  but never credential roots, openings, claim values, detached proof bytes, or
-  custody references. Standalone deposits, claims, and withdrawals are local
-  state transitions and must never be described as submitted, included, or
-  settled on Midnight. Live current-day and nullifier authority must come from
-  authenticated chain state, not the standalone clock or repository.
+  public contract issuer anchors, and redacted public audit fields, but never
+  credential roots, openings, claim values, detached proof bytes, private
+  witnesses, or custody references.
+  Standalone deposits, claims, and withdrawals are local state transitions and
+  must never be described as submitted, included, or settled on Midnight. Live
+  current-day, credential-root nullifier authority, and expiry enforcement must
+  come from authenticated chain state, not the standalone clock or repository.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

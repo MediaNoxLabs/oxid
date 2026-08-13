@@ -2,6 +2,12 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_arch = "wasm32"))]
+mod contract_state;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use contract_state::NativePassportVaultContractStateDecoder;
+
 use std::sync::{Arc, Mutex};
 
 use oxid_adapter_vc_midnight::{

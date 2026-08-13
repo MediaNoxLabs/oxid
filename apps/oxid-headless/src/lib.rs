@@ -22,8 +22,9 @@ use oxid_identity_application::{
 use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::{
     CLAIM_INTENT, CREATE_LOCK_INTENT, ClaimPassportVaultLockCommand,
-    CreatePassportVaultLockCommand, DEPOSIT_INTENT, PassportVaultAmountCommand,
-    PassportVaultLockView, PassportVaultOperationError, PassportVaultView, WITHDRAW_INTENT,
+    CreatePassportVaultLockCommand, DEPOSIT_INTENT, DecodePassportVaultContractStateCommand,
+    PassportVaultAmountCommand, PassportVaultContractStateError, PassportVaultLockView,
+    PassportVaultOperationError, PassportVaultView, WITHDRAW_INTENT,
 };
 use oxid_passport_vault_domain::PassportVaultError;
 use oxid_presentation_application::{
@@ -204,6 +205,7 @@ impl HeadlessWallet {
             "wallet.shielded.sync.start" => self.start_shielded_sync(request),
             "wallet.shielded.sync.cancel" => self.cancel_shielded_sync(request),
             "vault.total_locked" | "vault.locks.list" => self.list_vault_locks(request),
+            "vault.contract_state.decode" => self.decode_vault_contract_state(request),
             "vault.lock.create" => self.create_vault_lock(request),
             "vault.deposit" => self.deposit_to_vault_lock(request),
             "vault.claim" => self.claim_from_vault_lock(request),
@@ -301,6 +303,44 @@ impl HeadlessWallet {
                 json!({ "vault": passport_vault_value(&vault) }),
             )),
             Err(error) => Dispatch::continue_with(passport_vault_error(request.id, error)),
+        }
+    }
+
+    fn decode_vault_contract_state(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<DecodeVaultContractStateParams>(request.params)
+        {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "vault.contract_state.decode requires only contractStateHex",
+                ));
+            }
+        };
+        let Some(serialized_contract_state) = decode_hex_bounded(
+            &params.contract_state_hex,
+            oxid_passport_vault_application::MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES,
+        ) else {
+            return Dispatch::continue_with(Response::error(
+                request.id,
+                "invalid_params",
+                "contractStateHex must be canonical bounded hexadecimal tagged Midnight state",
+            ));
+        };
+        match self
+            .application
+            .decode_passport_vault_contract_state()
+            .execute(DecodePassportVaultContractStateCommand {
+                serialized_contract_state,
+            }) {
+            Ok(vault) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "vault": passport_vault_value(&vault) }),
+            )),
+            Err(error) => {
+                Dispatch::continue_with(passport_vault_contract_state_error(request.id, error))
+            }
         }
     }
 
@@ -2382,6 +2422,12 @@ struct CreateVaultLockParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DecodeVaultContractStateParams {
+    contract_state_hex: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct VaultAmountParams {
     lock_id: u64,
     amount: String,
@@ -3965,8 +4011,12 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    decode_hex_bounded(value, oxid_wallet_application::MAX_SIGNING_PAYLOAD_BYTES)
+}
+
+fn decode_hex_bounded(value: &str, maximum_bytes: usize) -> Option<Vec<u8>> {
     if value.is_empty()
-        || value.len() > oxid_wallet_application::MAX_SIGNING_PAYLOAD_BYTES * 2
+        || value.len() > maximum_bytes.checked_mul(2)?
         || !value.len().is_multiple_of(2)
         || !value.is_ascii()
     {
@@ -4173,12 +4223,38 @@ fn passport_vault_lock_value(lock: &PassportVaultLockView) -> Value {
 fn passport_vault_value(vault: &PassportVaultView) -> Value {
     json!({
         "source": vault.source,
+        "contract": vault.contract.as_ref().map(|contract| json!({
+            "version": contract.version,
+            "trustedIssuerDidContractHex": contract.trusted_issuer_did_contract_hex,
+            "trustedIssuerMethodHex": contract.trusted_issuer_method_hex,
+            "trustedIssuerPublicKeyHashHex": contract.trusted_issuer_public_key_hash_hex,
+            "consumedClaimCount": contract.consumed_claim_count,
+            "lastVerifiedCurrentDay": contract.last_verified_current_day,
+            "lastVerifiedThresholdYears": contract.last_verified_threshold_years,
+            "lastReleasedAmount": contract.last_released_amount,
+            "lastBusinessDecision": contract.last_business_decision,
+        })),
         "totalDeposited": vault.total_deposited,
         "totalReleased": vault.total_released,
         "totalLocked": vault.total_locked,
         "claimCount": vault.claim_count,
         "locks": vault.locks.iter().map(passport_vault_lock_value).collect::<Vec<_>>(),
     })
+}
+
+fn passport_vault_contract_state_error(
+    id: Option<String>,
+    error: PassportVaultContractStateError,
+) -> Response {
+    let code = match error {
+        PassportVaultContractStateError::Unavailable => "capability_unavailable",
+        PassportVaultContractStateError::InvalidEncoding
+        | PassportVaultContractStateError::LayoutMismatch
+        | PassportVaultContractStateError::UnsupportedVersion
+        | PassportVaultContractStateError::CapacityExceeded
+        | PassportVaultContractStateError::Integrity => "invalid_contract_state",
+    };
+    Response::error(id, code, error.to_string())
 }
 
 fn invalid_vault_amount(id: Option<String>, field: &str) -> Dispatch {
@@ -4271,6 +4347,7 @@ fn capability_manifest(compact_presentation_proof_available: bool) -> Value {
         { "method": "wallet.shielded.sync.cancel", "status": "ready", "mode": "standalone", "checkpoint": "resumable" },
         { "method": "vault.total_locked", "status": "ready", "mode": "standalone", "state": "process_local" },
         { "method": "vault.locks.list", "status": "ready", "mode": "standalone", "state": "process_local" },
+        { "method": "vault.contract_state.decode", "status": "ready", "mode": "native", "source": "pinned_layout_tagged_midnight_state", "mutates": false },
         { "method": "vault.credentials.list", "status": "ready", "mode": "standalone", "aliasFor": "credential.list" },
         { "method": "vault.lock.create", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": CREATE_LOCK_INTENT },
         { "method": "vault.deposit", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": DEPOSIT_INTENT },
@@ -4447,6 +4524,46 @@ mod tests {
                 && capability["mode"] == "standalone"
                 && capability["replayProtection"] == "per_lock_credential_root"
         }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "vault.contract_state.decode"
+                && capability["status"] == "ready"
+                && capability["mode"] == "native"
+                && capability["mutates"] == false
+        }));
+    }
+
+    #[test]
+    fn decodes_the_pinned_generated_passport_vault_fixture_headlessly() {
+        let contract_state_hex =
+            include_str!("../../../fixtures/passport-vault/contract-state-v1.hex").trim();
+        let responses = execute(
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "vault-contract-state",
+                "method": "vault.contract_state.decode",
+                "params": { "contractStateHex": contract_state_hex },
+            })
+            .to_string(),
+        );
+
+        assert_eq!(responses[0]["ok"], true);
+        let vault = &responses[0]["result"]["vault"];
+        assert_eq!(vault["source"], "pinned_contract_layout");
+        assert_eq!(vault["contract"]["version"], 1);
+        assert_eq!(
+            vault["contract"]["trustedIssuerDidContractHex"],
+            "02".repeat(32)
+        );
+        assert_eq!(vault["locks"].as_array().map(Vec::len), Some(2));
+        assert_eq!(vault["locks"][0]["policy"]["minimumAgeYears"], 18);
+        assert_eq!(vault["locks"][1]["policy"]["minimumAgeYears"], 21);
+        assert_eq!(vault["totalLocked"], "0");
+
+        let malformed = execute(
+            r#"{"protocol":"oxid.headless.v1","id":"bad-vault-state","method":"vault.contract_state.decode","params":{"contractStateHex":"00"}}"#,
+        );
+        assert_eq!(malformed[0]["ok"], false);
+        assert_eq!(malformed[0]["error"]["code"], "invalid_contract_state");
     }
 
     #[test]

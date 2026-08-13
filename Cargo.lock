@@ -5500,6 +5500,11 @@ dependencies = [
 name = "oxid-adapter-passport-vault"
 version = "0.1.0"
 dependencies = [
+ "hex",
+ "midnight-base-crypto",
+ "midnight-onchain-runtime",
+ "midnight-serialize",
+ "midnight-storage",
  "oxid-adapter-vc-midnight",
  "oxid-credential-application",
  "oxid-credential-domain",

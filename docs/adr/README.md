@@ -73,6 +73,7 @@ ADR status and delivery state answer different questions:
 | [0049](0049-sign-compact-holder-challenges-inside-opaque-custody.md) Sign Compact holder challenges inside opaque custody | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone custody constructs and independently verifies the exact credential-family holder `Proof` through a synchronous public-transcript callback; ADR-0050 consumes it in native headless proving |
 | [0050](0050-prove-and-independently-verify-compact-presentations.md) Prove and independently verify Compact presentations | Accepted | §§3–7, 9–13, 16–18, 21 and issues #27–29 | Exact generated-runtime/Rust preimage parity, authenticated offline artifacts, checked proving, bounded `MZP1`, independent verification, headless OpenID4VP success, tamper/replay/restart tests, and resource baselines implemented; mobile proving remains gated |
 | [0051](0051-isolate-passport-vault-as-product-specific-hexagon.md) Isolate Passport Vault as a product-specific hexagon | Accepted | §§3–7, 9–13, 16–18, prototype vault flow, and issues #2/#31 | Standalone multi-lock domain, exact Digital Passport policy adapter, headless flow, and mobile journey implemented; live Compact transactions and durable state pending #31 |
+| [0052](0052-authenticate-and-decode-passport-vault-contract-state.md) Authenticate and decode Passport Vault contract state natively | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault bridge, and issue #31 | Immutable five-circuit Nix closure, exact native tagged-state decoder, and headless fixture implemented; authenticated acquisition and contract-call transactions pending #31 |
 
 ## Current boundaries
 
@@ -159,6 +160,9 @@ until its packaging, resource, and native-custody gates are accepted.
 ADR-0051 keeps the Passport Vault product separate from generic wallet and
 credential core. Its standalone adapter exercises exact policy, accounting,
 confirmation, and replay behavior but is visibly process-local and never claims
-chain submission. Production remains unavailable until issue #31 authenticates
-the Compact artifact closure, decodes live state, and composes transactions
-through the existing Midnight submission and reconciliation boundary.
+chain submission. ADR-0052 authenticates the five-circuit Compact closure and
+adds exact native decoding of bounded tagged contract state without claiming
+that caller-supplied bytes are live or fresh. Production operations remain
+unavailable until issue #31 authenticates state acquisition and composes
+contract calls through the existing Midnight submission and reconciliation
+boundary.

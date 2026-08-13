@@ -1094,7 +1094,7 @@ enum AccountPageState {
 enum PassportVaultPageState {
     Loading,
     Ready {
-        vault: PassportVaultView,
+        vault: Box<PassportVaultView>,
         credentials: Vec<CredentialView>,
         busy: bool,
         operation_error: Option<String>,
@@ -3575,7 +3575,7 @@ fn load_passport_vault_page(
         Err(error) => return PassportVaultPageState::Failed(error.to_string()),
     };
     PassportVaultPageState::Ready {
-        vault,
+        vault: Box::new(vault),
         credentials,
         busy: false,
         operation_error,

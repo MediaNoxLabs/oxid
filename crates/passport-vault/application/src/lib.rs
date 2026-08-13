@@ -174,11 +174,25 @@ pub struct PassportVaultLockView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PassportVaultView {
     pub source: String,
+    pub contract: Option<PassportVaultContractView>,
     pub locks: Vec<PassportVaultLockView>,
     pub total_deposited: String,
     pub total_released: String,
     pub total_locked: String,
     pub claim_count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassportVaultContractView {
+    pub version: u32,
+    pub trusted_issuer_did_contract_hex: String,
+    pub trusted_issuer_method_hex: String,
+    pub trusted_issuer_public_key_hash_hex: String,
+    pub consumed_claim_count: u64,
+    pub last_verified_current_day: u32,
+    pub last_verified_threshold_years: u8,
+    pub last_released_amount: String,
+    pub last_business_decision: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -246,6 +260,95 @@ pub trait ClaimPassportVaultLockUseCase: Send + Sync {
         &'a self,
         command: ClaimPassportVaultLockCommand,
     ) -> PassportVaultClaimFuture<'a>;
+}
+
+/// Maximum serialized public contract-state payload accepted at the
+/// application boundary. Midnight's tagged state is public, but it is still
+/// untrusted network input and must remain bounded before native decoding.
+pub const MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PassportVaultContractStateError {
+    Unavailable,
+    InvalidEncoding,
+    LayoutMismatch,
+    UnsupportedVersion,
+    CapacityExceeded,
+    Integrity,
+}
+
+impl fmt::Display for PassportVaultContractStateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unavailable => "Passport Vault contract-state decoding is unavailable",
+            Self::InvalidEncoding => {
+                "Passport Vault contract state is not valid tagged Midnight data"
+            }
+            Self::LayoutMismatch => {
+                "contract state does not match the pinned Passport Vault ledger layout"
+            }
+            Self::UnsupportedVersion => "Passport Vault contract version is not supported",
+            Self::CapacityExceeded => {
+                "Passport Vault contract state exceeds a public decoding bound"
+            }
+            Self::Integrity => "Passport Vault contract accounting failed integrity validation",
+        })
+    }
+}
+impl Error for PassportVaultContractStateError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecodePassportVaultContractStateCommand {
+    pub serialized_contract_state: Vec<u8>,
+}
+
+pub trait PassportVaultContractStateDecoderPort: Send + Sync {
+    fn decode(
+        &self,
+        serialized_contract_state: &[u8],
+    ) -> Result<PassportVaultView, PassportVaultContractStateError>;
+}
+
+pub trait DecodePassportVaultContractStateUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: DecodePassportVaultContractStateCommand,
+    ) -> Result<PassportVaultView, PassportVaultContractStateError>;
+}
+
+pub struct PassportVaultContractStateService {
+    decoder: Arc<dyn PassportVaultContractStateDecoderPort>,
+}
+
+impl PassportVaultContractStateService {
+    #[must_use]
+    pub fn new(decoder: Arc<dyn PassportVaultContractStateDecoderPort>) -> Self {
+        Self { decoder }
+    }
+}
+
+impl DecodePassportVaultContractStateUseCase for PassportVaultContractStateService {
+    fn execute(
+        &self,
+        command: DecodePassportVaultContractStateCommand,
+    ) -> Result<PassportVaultView, PassportVaultContractStateError> {
+        if command.serialized_contract_state.is_empty() {
+            return Err(PassportVaultContractStateError::InvalidEncoding);
+        }
+        if command.serialized_contract_state.len() > MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES {
+            return Err(PassportVaultContractStateError::CapacityExceeded);
+        }
+        self.decoder.decode(&command.serialized_contract_state)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailablePassportVaultContractStateDecoder;
+
+impl PassportVaultContractStateDecoderPort for UnavailablePassportVaultContractStateDecoder {
+    fn decode(&self, _: &[u8]) -> Result<PassportVaultView, PassportVaultContractStateError> {
+        Err(PassportVaultContractStateError::Unavailable)
+    }
 }
 
 pub struct PassportVaultService {
@@ -328,6 +431,7 @@ impl ListPassportVaultLocksUseCase for PassportVaultService {
             .map_err(PassportVaultOperationError::Repository)?;
         Ok(PassportVaultView {
             source: "standalone".to_owned(),
+            contract: None,
             locks: state.locks().map(lock_view).collect(),
             total_deposited: state.total_deposited().to_string(),
             total_released: state.total_released().to_string(),

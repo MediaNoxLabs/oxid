@@ -11,6 +11,13 @@
         midnightCircuitParams = midnightDidPackages.midnight-circuit-params;
         midnightVcSource = inputs.midnight-verifiable-credentials;
       };
+      passportVaultCompactArtifacts = pkgs.callPackage ./passport-vault-compact-artifacts.nix {
+        compactMidnight = midnightDidPackages.compact-midnight;
+        compactToolchain = midnightDidPackages.compact-toolchain;
+        midnightCircuitParams = midnightDidPackages.midnight-circuit-params;
+        midnightVcSource = inputs.midnight-verifiable-credentials;
+        passportVaultSource = inputs.midnight-identity-solution-examples;
+      };
       linuxBuildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         pkgs.glib
         pkgs.gtk3
@@ -88,6 +95,8 @@
 
         presentation-compact-artifacts = presentationCompactArtifacts;
 
+        passport-vault-compact-artifacts = passportVaultCompactArtifacts;
+
         dioxus-cli = pkgs.dioxus-cli;
       }
       // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
@@ -97,6 +106,7 @@
       checks.package = self'.packages.default;
       checks.headless = self'.packages.headless;
       checks.presentation-compact-artifacts = presentationCompactArtifacts;
+      checks.passport-vault-compact-artifacts = passportVaultCompactArtifacts;
       formatter = pkgs.nixfmt;
     };
 }
