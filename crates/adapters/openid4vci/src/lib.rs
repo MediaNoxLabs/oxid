@@ -11,9 +11,9 @@ use std::{
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature as Ed25519Signature, Verifier as _, VerifyingKey as Ed25519Key};
 use oxid_credential_application::{
-    CredentialDisclosurePortError, CredentialOperationError, CredentialPrivateMaterialInput,
-    CredentialRepositoryError, CredentialVerificationError, ImportVerifiedCredentialCommand,
-    ImportVerifiedCredentialUseCase,
+    CredentialDetachedProofInput, CredentialDisclosurePortError, CredentialOperationError,
+    CredentialPrivateMaterialInput, CredentialRepositoryError, CredentialVerificationError,
+    ImportVerifiedCredentialCommand, ImportVerifiedCredentialUseCase,
 };
 use oxid_identity_application::{
     DidLifecyclePortError, DidOperationConfirmation, DidOperationError, DidRecordQuery,
@@ -82,6 +82,7 @@ pub struct StandaloneOid4vciIssuer {
     sessions: Mutex<BTreeMap<String, PreparedSecret>>,
     next_id: std::sync::atomic::AtomicU64,
     signed_credential: Vec<u8>,
+    detached_proof: Option<Vec<u8>>,
     private_material: Option<Vec<u8>>,
 }
 
@@ -98,7 +99,7 @@ impl StandaloneOid4vciIssuer {
                     .trim(),
             )
             .expect("checked-in standalone credential fixture must be valid base64");
-        Self::with_credential_fixture(proof, get_did, clock, signed_credential, None)
+        Self::with_credential_fixture(proof, get_did, clock, signed_credential, None, None)
     }
 
     /// Builds the standalone protocol around a composition-provided public
@@ -110,6 +111,7 @@ impl StandaloneOid4vciIssuer {
         get_did: Arc<dyn GetDidRecordUseCase>,
         clock: Arc<dyn ClockPort>,
         signed_credential: Vec<u8>,
+        detached_proof: Option<Vec<u8>>,
         private_material: Option<Vec<u8>>,
     ) -> Self {
         Self {
@@ -119,6 +121,7 @@ impl StandaloneOid4vciIssuer {
             sessions: Mutex::new(BTreeMap::new()),
             next_id: std::sync::atomic::AtomicU64::new(1),
             signed_credential,
+            detached_proof,
             private_material,
         }
     }
@@ -296,6 +299,7 @@ impl CredentialIssuanceProtocolPort for StandaloneOid4vciIssuer {
             parse_credential_response(response.to_string().as_bytes()).map(|signed_bytes| {
                 IssuedCredentialBytes {
                     signed_bytes,
+                    detached_proof: self.detached_proof.clone(),
                     private_material: self.private_material.clone(),
                 }
             })
@@ -1091,6 +1095,11 @@ impl IssuedCredentialSinkPort for VerifiedCredentialSink {
         request: StoreIssuedCredentialRequest,
     ) -> StoreIssuedCredentialFuture<'a> {
         Box::pin(async move {
+            let detached_proof = request
+                .detached_proof
+                .map(CredentialDetachedProofInput::new)
+                .transpose()
+                .map_err(|_| IssuedCredentialSinkError::InvalidCredential)?;
             let private_material = request
                 .private_material
                 .map(CredentialPrivateMaterialInput::new)
@@ -1100,6 +1109,7 @@ impl IssuedCredentialSinkPort for VerifiedCredentialSink {
                 .execute(ImportVerifiedCredentialCommand {
                     profile_id: request.profile_id.as_str().to_owned(),
                     signed_bytes: request.signed_bytes,
+                    detached_proof,
                     private_material,
                 })
                 .await

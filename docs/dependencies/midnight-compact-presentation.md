@@ -2,6 +2,7 @@
 
 - Reviewed: 2026-08-13
 - ADR: [ADR-0044](../adr/0044-compose-reproducible-digital-passport-presentation-artifacts.md)
+- Related credential boundary: [ADR-0045](../adr/0045-preserve-and-verify-detached-midnight-compact-credentials.md)
 - Scope: final Digital Passport predicate-proof composition and reproducible proving artifacts
 
 ## Selected projects and versions
@@ -35,6 +36,12 @@ this Oxid composition is claimed. Source revision, compiler/runtime versions,
 the exact `bls_midnight_2p18` parameter digest, circuit model, and generated
 artifact digests are recorded together. Proof artifacts are public but
 security-critical and are never accepted without their manifest identity.
+
+The exact public credential body/detached-issuance-proof vectors derived from
+the same pinned package are checked in separately for ADR-0045 conformance.
+Their native Rust verifier reuses the already-pinned official ledger crypto
+packages; it does not depend on generated Compact runtime types and does not
+turn an issuance signature into a presentation proof.
 
 The pinned upstream repository's complete offline pnpm build currently fails
 because its Nix dependency closure omits the

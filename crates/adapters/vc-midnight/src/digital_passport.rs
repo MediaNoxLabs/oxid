@@ -310,6 +310,11 @@ fn parse_public_commitments(
     if signed_bytes.is_empty() || signed_bytes.len() > MAX_SIGNED_CREDENTIAL_BYTES {
         return Err(CredentialDisclosurePortError::UnsupportedCredential);
     }
+    if signed_bytes.starts_with(b"MCV1") {
+        return super::compact_digital_passport::parse_credential(signed_bytes)
+            .map(|credential| credential.commitments)
+            .map_err(|_| CredentialDisclosurePortError::UnsupportedCredential);
+    }
     let mut input = signed_bytes;
     let value: Value = ciborium::de::from_reader_with_recursion_limit(&mut input, 32)
         .map_err(|_| CredentialDisclosurePortError::UnsupportedCredential)?;
@@ -691,6 +696,25 @@ mod tests {
         assert_eq!(
             adapter.inspect(&signed, &tampered),
             Err(CredentialDisclosurePortError::InvalidPrivateMaterial)
+        );
+    }
+
+    #[test]
+    fn exact_compact_body_binds_the_same_private_parts() {
+        let adapter = DigitalPassportDisclosureAdapter;
+        let signed = super::super::standalone_compact_credential();
+        let private_material = standalone_private_material();
+        let manifest = adapter
+            .inspect(&signed, &private_material)
+            .expect("Compact fixture must bind");
+        assert_eq!(manifest.schema_id(), SCHEMA_ID);
+        assert_eq!(manifest.candidates().len(), 5);
+        assert_eq!(
+            adapter
+                .reveal_local(&signed, &private_material, CLAIM_LAST_NAME)
+                .expect("local reveal")
+                .value(),
+            "Example"
         );
     }
 }

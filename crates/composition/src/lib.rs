@@ -62,8 +62,8 @@ use oxid_adapter_storage_memory::{
     InMemoryCredentialRepository, InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
 };
 use oxid_adapter_vc_midnight::{
-    DigitalPassportDisclosureAdapter, MidnightCborCredentialVerifier, StandaloneCredentialInbox,
-    standalone_credential, standalone_private_material,
+    DigitalPassportDisclosureAdapter, MidnightCredentialVerifier, StandaloneCredentialInbox,
+    standalone_compact_credential, standalone_compact_proof, standalone_private_material,
 };
 use oxid_credential_application::{
     CredentialDisclosurePort, CredentialInboxPort, CredentialRepository, CredentialService,
@@ -1102,7 +1102,7 @@ pub fn compose_in_memory() -> ApplicationServices {
             did_lifecycle: Arc::new(StandaloneDidLifecycle::new(key_operations)),
             credential_repository: Arc::new(InMemoryCredentialRepository::new()),
             credential_inbox: Arc::new(StandaloneCredentialInbox),
-            credential_verifier: Arc::new(MidnightCborCredentialVerifier::new(Arc::new(
+            credential_verifier: Arc::new(MidnightCredentialVerifier::new(Arc::new(
                 StandaloneDidResolver,
             ))),
             credential_disclosure: Arc::new(DigitalPassportDisclosureAdapter),
@@ -1133,9 +1133,8 @@ where
     let did_lifecycle: Arc<dyn DidLifecyclePort> =
         Arc::new(StandaloneDidLifecycle::new(key_operations));
     let did_resolver = headless_did_resolver();
-    let verifier: Arc<dyn CredentialVerificationPort> = Arc::new(
-        MidnightCborCredentialVerifier::new(Arc::clone(&did_resolver)),
-    );
+    let verifier: Arc<dyn CredentialVerificationPort> =
+        Arc::new(MidnightCredentialVerifier::new(Arc::clone(&did_resolver)));
     compose_with_identity_adapters(
         repository,
         security,
@@ -1235,7 +1234,8 @@ where
                     proof,
                     get_did,
                     clock.clone(),
-                    standalone_credential(),
+                    standalone_compact_credential(),
+                    Some(standalone_compact_proof()),
                     Some(standalone_private_material()),
                 )),
                 Arc::new(VerifiedCredentialSink::new(importer)),

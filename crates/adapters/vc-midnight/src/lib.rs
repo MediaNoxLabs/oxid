@@ -21,8 +21,10 @@ use oxid_identity_domain::{JwkCurve, MidnightDid, VerificationRelationship};
 use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256Key};
 use sha2::{Digest as _, Sha256};
 
+mod compact_digital_passport;
 mod digital_passport;
 
+pub use compact_digital_passport::MidnightCompactCredentialVerifier;
 pub use digital_passport::{
     CLAIM_DATE_OF_BIRTH, CLAIM_DOCUMENT_NUMBER, CLAIM_FIRST_NAME, CLAIM_ISSUING_STATE,
     CLAIM_LAST_NAME, DigitalPassportCommitments, DigitalPassportDisclosureAdapter, PACKAGE_ID,
@@ -32,6 +34,24 @@ pub use digital_passport::{
 
 pub const STANDALONE_CREDENTIAL_B64: &str =
     include_str!("../../../../fixtures/credentials/standalone-midnight-phase1.b64");
+pub const STANDALONE_COMPACT_CREDENTIAL_B64: &str =
+    include_str!("../../../../fixtures/credentials/standalone-digital-passport-compact-body.b64");
+pub const STANDALONE_COMPACT_PROOF_B64: &str =
+    include_str!("../../../../fixtures/credentials/standalone-digital-passport-compact-proof.b64");
+
+#[must_use]
+pub fn standalone_compact_credential() -> Vec<u8> {
+    general_purpose::STANDARD
+        .decode(STANDALONE_COMPACT_CREDENTIAL_B64.trim())
+        .expect("checked-in Compact credential fixture must be valid base64")
+}
+
+#[must_use]
+pub fn standalone_compact_proof() -> Vec<u8> {
+    general_purpose::STANDARD
+        .decode(STANDALONE_COMPACT_PROOF_B64.trim())
+        .expect("checked-in Compact proof fixture must be valid base64")
+}
 
 /// Deterministic, public, non-secret credential ingress used only by the
 /// standalone development composition and conformance harness.
@@ -52,6 +72,38 @@ impl CredentialInboxPort for StandaloneCredentialInbox {
 /// assertion method from the issuer's resolved DID document.
 pub struct MidnightCborCredentialVerifier {
     resolver: Arc<dyn DidResolutionPort>,
+}
+
+/// Routes the two deliberately distinct Midnight credential wire formats to
+/// their exact verifier without allowing a detached proof to change how CBOR
+/// bytes are interpreted.
+pub struct MidnightCredentialVerifier {
+    cbor: MidnightCborCredentialVerifier,
+    compact: MidnightCompactCredentialVerifier,
+}
+
+impl MidnightCredentialVerifier {
+    #[must_use]
+    pub fn new(resolver: Arc<dyn DidResolutionPort>) -> Self {
+        Self {
+            cbor: MidnightCborCredentialVerifier::new(resolver),
+            compact: MidnightCompactCredentialVerifier,
+        }
+    }
+}
+
+impl CredentialVerificationPort for MidnightCredentialVerifier {
+    fn inspect<'a>(
+        &'a self,
+        signed_bytes: &'a [u8],
+        detached_proof: Option<&'a [u8]>,
+    ) -> CredentialInspectionFuture<'a> {
+        if signed_bytes.starts_with(b"MCV1") {
+            self.compact.inspect(signed_bytes, detached_proof)
+        } else {
+            self.cbor.inspect(signed_bytes, detached_proof)
+        }
+    }
 }
 
 impl MidnightCborCredentialVerifier {
@@ -197,8 +249,17 @@ impl MidnightCborCredentialVerifier {
 }
 
 impl CredentialVerificationPort for MidnightCborCredentialVerifier {
-    fn inspect<'a>(&'a self, signed_bytes: &'a [u8]) -> CredentialInspectionFuture<'a> {
-        Box::pin(async move { self.inspect_inner(signed_bytes).await })
+    fn inspect<'a>(
+        &'a self,
+        signed_bytes: &'a [u8],
+        detached_proof: Option<&'a [u8]>,
+    ) -> CredentialInspectionFuture<'a> {
+        Box::pin(async move {
+            if detached_proof.is_some() {
+                return Err(CredentialVerificationError::UnsupportedFormat);
+            }
+            self.inspect_inner(signed_bytes).await
+        })
     }
 }
 
@@ -665,7 +726,7 @@ mod tests {
         let verifier = MidnightCborCredentialVerifier::new(Arc::new(FixtureResolver(
             VerificationRelationship::AssertionMethod,
         )));
-        let result = poll(verifier.inspect(&bytes)).expect("inspect");
+        let result = poll(verifier.inspect(&bytes, None)).expect("inspect");
         assert_eq!(result.verification.outcome(), VerificationOutcome::Valid);
         let mut tampered = bytes;
         let position = tampered
@@ -673,8 +734,22 @@ mod tests {
             .position(|window| window == b"Ada")
             .expect("Ada");
         tampered[position] = b'E';
-        let result = poll(verifier.inspect(&tampered)).expect("inspect tampered");
+        let result = poll(verifier.inspect(&tampered, None)).expect("inspect tampered");
         assert_eq!(result.verification.outcome(), VerificationOutcome::Invalid);
+    }
+
+    #[test]
+    fn format_router_rejects_detached_proof_confusion_for_cbor() {
+        let bytes = general_purpose::STANDARD
+            .decode(STANDALONE_CREDENTIAL_B64.trim())
+            .expect("fixture");
+        let verifier = MidnightCredentialVerifier::new(Arc::new(FixtureResolver(
+            VerificationRelationship::AssertionMethod,
+        )));
+        assert_eq!(
+            poll(verifier.inspect(&bytes, Some(b"not-a-cbor-proof"))),
+            Err(CredentialVerificationError::UnsupportedFormat)
+        );
     }
 
     #[test]
@@ -697,7 +772,7 @@ mod tests {
         let verifier = MidnightCborCredentialVerifier::new(Arc::new(FixtureResolver(
             VerificationRelationship::Authentication,
         )));
-        let result = poll(verifier.inspect(&bytes)).expect("inspect");
+        let result = poll(verifier.inspect(&bytes, None)).expect("inspect");
         assert_eq!(result.verification.outcome(), VerificationOutcome::Invalid);
         let proof = result
             .verification

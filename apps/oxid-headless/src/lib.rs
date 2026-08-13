@@ -4265,6 +4265,18 @@ mod tests {
             inventories[1]["result"]["credentials"][0]["verification"]["outcome"],
             "valid"
         );
+        assert_eq!(
+            inventories[1]["result"]["credentials"][0]["format"],
+            "midnight_compact_vc"
+        );
+        assert_eq!(
+            inventories[1]["result"]["credentials"][0]["displayName"],
+            "Digital Passport"
+        );
+        let issued_inventory = inventories[1].to_string();
+        assert!(!issued_inventory.contains("signedBytes"));
+        assert!(!issued_inventory.contains("detachedProof"));
+        assert!(!issued_inventory.contains("privateMaterial"));
 
         let other_profile = execute_with_wallet(
             &wallet,

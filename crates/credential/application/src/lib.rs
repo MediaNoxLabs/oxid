@@ -5,9 +5,9 @@
 use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_credential_domain::{
-    CredentialClaimPrivacy, CredentialDisclosureManifest, CredentialDomainError, CredentialId,
-    CredentialMetadata, CredentialPrivateMaterial, CredentialProfileId, CredentialRecord,
-    VerificationOutcome, VerificationReport,
+    CredentialClaimPrivacy, CredentialDetachedProof, CredentialDisclosureManifest,
+    CredentialDomainError, CredentialId, CredentialMetadata, CredentialPrivateMaterial,
+    CredentialProfileId, CredentialRecord, VerificationOutcome, VerificationReport,
 };
 use oxid_foundation::OpaqueIdError;
 
@@ -24,7 +24,11 @@ pub trait CredentialInboxPort: Send + Sync {
 }
 
 pub trait CredentialVerificationPort: Send + Sync {
-    fn inspect<'a>(&'a self, signed_bytes: &'a [u8]) -> CredentialInspectionFuture<'a>;
+    fn inspect<'a>(
+        &'a self,
+        signed_bytes: &'a [u8],
+        detached_proof: Option<&'a [u8]>,
+    ) -> CredentialInspectionFuture<'a>;
 }
 
 /// Schema adapter for protected claims. Implementations must validate that
@@ -237,6 +241,33 @@ impl CredentialPrivateMaterialInput {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct CredentialDetachedProofInput(CredentialDetachedProof);
+
+impl CredentialDetachedProofInput {
+    pub fn new(bytes: Vec<u8>) -> Result<Self, CredentialDomainError> {
+        CredentialDetachedProof::new(bytes).map(Self)
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    fn into_domain(self) -> CredentialDetachedProof {
+        self.0
+    }
+}
+
+impl fmt::Debug for CredentialDetachedProofInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CredentialDetachedProofInput")
+            .field("length", &self.as_bytes().len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl fmt::Debug for CredentialPrivateMaterialInput {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -250,6 +281,7 @@ impl fmt::Debug for CredentialPrivateMaterialInput {
 pub struct ImportVerifiedCredentialCommand {
     pub profile_id: String,
     pub signed_bytes: Vec<u8>,
+    pub detached_proof: Option<CredentialDetachedProofInput>,
     pub private_material: Option<CredentialPrivateMaterialInput>,
 }
 
@@ -259,6 +291,13 @@ impl fmt::Debug for ImportVerifiedCredentialCommand {
             .debug_struct("ImportVerifiedCredentialCommand")
             .field("profile_id", &self.profile_id)
             .field("signed_bytes_length", &self.signed_bytes.len())
+            .field(
+                "detached_proof_length",
+                &self
+                    .detached_proof
+                    .as_ref()
+                    .map(|proof| proof.as_bytes().len()),
+            )
             .field(
                 "private_material_length",
                 &self
@@ -461,12 +500,18 @@ impl CredentialService {
         &self,
         profile_id: CredentialProfileId,
         bytes: Vec<u8>,
+        detached_proof: Option<CredentialDetachedProof>,
         private_material: Option<CredentialPrivateMaterial>,
         require_valid: bool,
     ) -> Result<CredentialView, CredentialOperationError> {
         let inspection = self
             .verifier
-            .inspect(&bytes)
+            .inspect(
+                &bytes,
+                detached_proof
+                    .as_ref()
+                    .map(CredentialDetachedProof::as_bytes),
+            )
             .await
             .map_err(CredentialOperationError::Verification)?;
         if require_valid && inspection.verification.outcome() != VerificationOutcome::Valid {
@@ -477,10 +522,11 @@ impl CredentialService {
                 .inspect(&bytes, material.as_bytes())
                 .map_err(CredentialOperationError::Disclosure)?;
         }
-        let record = CredentialRecord::new_with_private_material(
+        let record = CredentialRecord::new_with_proof_and_private_material(
             profile_id,
             inspection.id,
             bytes,
+            detached_proof,
             private_material,
             inspection.metadata,
             inspection.verification,
@@ -550,7 +596,7 @@ impl ReceiveCredentialUseCase for CredentialService {
                 .receive()
                 .await
                 .map_err(CredentialOperationError::Ingress)?;
-            self.import(profile_id, bytes, None, false).await
+            self.import(profile_id, bytes, None, None, false).await
         })
     }
 }
@@ -562,6 +608,9 @@ impl ImportVerifiedCredentialUseCase for CredentialService {
             self.import(
                 profile_id,
                 command.signed_bytes,
+                command
+                    .detached_proof
+                    .map(CredentialDetachedProofInput::into_domain),
                 command
                     .private_material
                     .map(CredentialPrivateMaterialInput::into_domain),
@@ -610,7 +659,12 @@ impl ReverifyCredentialUseCase for CredentialService {
                 .map_err(CredentialOperationError::Persistence)?;
             let inspection = self
                 .verifier
-                .inspect(record.signed_bytes())
+                .inspect(
+                    record.signed_bytes(),
+                    record
+                        .detached_proof()
+                        .map(CredentialDetachedProof::as_bytes),
+                )
                 .await
                 .map_err(CredentialOperationError::Verification)?;
             if let Some(material) = record.private_material() {
@@ -785,7 +839,7 @@ impl CredentialInboxPort for UnavailableCredentialInbox {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UnavailableCredentialVerifier;
 impl CredentialVerificationPort for UnavailableCredentialVerifier {
-    fn inspect<'a>(&'a self, _: &'a [u8]) -> CredentialInspectionFuture<'a> {
+    fn inspect<'a>(&'a self, _: &'a [u8], _: Option<&'a [u8]>) -> CredentialInspectionFuture<'a> {
         Box::pin(async { Err(CredentialVerificationError::Unavailable) })
     }
 }
@@ -909,7 +963,11 @@ mod tests {
     }
     struct Verifier;
     impl CredentialVerificationPort for Verifier {
-        fn inspect<'a>(&'a self, _: &'a [u8]) -> CredentialInspectionFuture<'a> {
+        fn inspect<'a>(
+            &'a self,
+            _: &'a [u8],
+            _: Option<&'a [u8]>,
+        ) -> CredentialInspectionFuture<'a> {
             Box::pin(async {
                 let stages = VerificationStageName::ALL
                     .into_iter()
@@ -1012,7 +1070,7 @@ mod tests {
     fn validates_profile_scoped_disclosure_plans_and_targeted_local_reveal() {
         let repository = Arc::new(Memory::default());
         let service = CredentialService::from_ports(
-            repository,
+            repository.clone(),
             Arc::new(Inbox),
             Arc::new(Verifier),
             Arc::new(Disclosure),
@@ -1022,12 +1080,27 @@ mod tests {
             ImportVerifiedCredentialCommand {
                 profile_id: "profile_one".to_owned(),
                 signed_bytes: vec![1, 2, 3],
+                detached_proof: Some(
+                    CredentialDetachedProofInput::new(vec![7, 8]).expect("detached proof"),
+                ),
                 private_material: Some(
                     CredentialPrivateMaterialInput::new(vec![9]).expect("private material"),
                 ),
             },
         ))
         .expect("verified import");
+        let stored = repository
+            .get(
+                &CredentialProfileId::parse("profile_one").expect("profile"),
+                &CredentialId::parse(imported.id.clone()).expect("credential"),
+            )
+            .expect("stored record");
+        assert_eq!(
+            stored
+                .detached_proof()
+                .map(CredentialDetachedProof::as_bytes),
+            Some([7, 8].as_slice())
+        );
 
         let disclosure = GetCredentialDisclosureUseCase::execute(
             &service,

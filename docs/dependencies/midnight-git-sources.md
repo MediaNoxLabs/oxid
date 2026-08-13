@@ -1,6 +1,6 @@
 # Midnight Git source policy
 
-- Status: source policy enforced; canonical transaction, standalone submission, and Digital Passport commitment packages selected by issues #9/#11/#26
+- Status: source policy enforced; canonical transaction, standalone submission, Digital Passport commitment, and exact Compact issuance-proof packages selected by issues #9/#11/#26/#29
 - Reviewed: 2026-08-12
 - Repositories: `midnightntwrk/midnight-ledger`, `midnightntwrk/midnight-zk`
 - ADR: [ADR-0015](../adr/0015-midnight-library-selection.md)
@@ -28,7 +28,10 @@ adapter-private shielded state machine.
 Issue #26 reuses `midnight-base-crypto` and `midnight-transient-crypto` from the
 same immutable revision inside `adapters/vc-midnight` to reproduce the
 reference Digital Passport `persistentCommit` and `persistentHash` contract.
-It adds no path dependency, repository, revision, or proof-system package.
+Issue #29 reuses those same exact packages to reconstruct the upstream Compact
+credential/issuance payload roots, decode Jubjub points/scalars, and verify the
+detached Schnorr issuance proof. It adds no path dependency, repository,
+revision, or proof-system package.
 The feature resolves published `midnight-proofs`, `midnight-circuits`, and
 `midnight-zk-stdlib` releases transitively. There is no direct `midnight-zk`
 dependency because the compatible proof crates are already selected by the

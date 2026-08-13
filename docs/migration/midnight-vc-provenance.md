@@ -37,6 +37,12 @@ dependency on the three identity repositories.
 - retain all five Digital Passport value/opening pairs in the protected
   credential record, validate them against issuer-signed commitments, and
   expose local first/last reveal plus age-threshold planning.
+- preserve the prototype's exact `midnight_compact_vc` body, detached issuance
+  proof, and private opening envelope as three bounded values;
+- reconstruct the upstream Compact body/payload roots and verify its Jubjub
+  Schnorr issuance proof without exposing or mislabeling it as a presentation;
+- migrate encrypted credential-store schemas 1 and 2 into schema 3 and prove
+  exact Compact re-verification across a headless process restart.
 
 ## Deliberate 110% hardening
 
@@ -57,6 +63,9 @@ dependency on the three identity repositories.
 | Login proof can leak through UI state or be replayed | Keep nonce, state, signing input, and ID Token adapter-private; consume the verifier session before independent signature/claim verification. |
 | Private values can be attached to an unrelated signed credential | Parse exact bounded private parts and recompute each official Midnight `persistentCommit` plus the signed domain-separated claim root before candidates or local values are available. |
 | Disclosure planning can be mistaken for verifier proof | Headless returns claim-free candidates/plans only; Dioxus labels reveal as local and reports `presentationGenerated: false`; no OpenID4VP or Compact proof is constructed. |
+| Compact body, detached issuance proof, and private openings can be collapsed or confused | Keep three separately bounded, debug-redacted record fields; route exact `MCV1` only; reject proof data for CBOR; never reuse an issuance signature as a presentation proof. |
+| A self-contained Compact proof can be mistaken for issuer trust | Mark only structural/proof/schema stages passed; issuer method anchoring, current-time policy, status, and trust stay `not_checked`. |
+| Prototype presentation derives a holder scalar from public claim data | Do not copy that shortcut into normal/mobile composition; require protected Jubjub custody, with deterministic keys permitted only in a marked standalone conformance prover. |
 
 The standalone fixture contains only public conformance material. Its issuer
 secret was generated outside the repository and discarded. The revised DID
@@ -64,7 +73,9 @@ fixture version is `standalone-fixture-v2`; its Ed25519 method is authorized for
 both authentication and assertion so the signed credential exercises the same
 resolver boundary as later protocol ingress.
 
-## Format contract implemented
+## Format contracts implemented
+
+### Midnight phase-1 CBOR
 
 The supported format is a definite CBOR map containing at least:
 
@@ -79,15 +90,40 @@ The signature input is the original outer map with the complete encoded proof
 key/value pair removed and the map count decremented using the original header
 width. No other item is reordered or re-encoded.
 
+### Midnight Compact VC
+
+The second supported format is the prototype's exact `midnight_compact_vc`
+bundle. Its original credential value is a canonical 18-chunk `MCV1` body; its
+detached issuer proof is a canonical 9-chunk `MCV1` value. Both require exact
+end-of-input and bounded little-endian chunks. The adapter reconstructs the
+Digital Passport package/schema, claim root, credential body root, issuance
+payload root, challenge, Jubjub points/scalar, and Schnorr equation. Identity
+proof points, malformed/trailing containers, absent proof, package/schema
+mismatch, body tampering, and proof tampering fail closed.
+
+The public standalone vectors are exact reference-package outputs:
+
+- body bytes SHA-256:
+  `4d47be8d1aeeff5e06d9ba1b3ade3bab8e907f0939607cf46e100a9500ad4bcf`;
+- detached proof bytes SHA-256:
+  `fbf2c7e434c70d6f98fa7fae6cd146971db1fda6db96ff2ddea64fe9453e2e02`;
+- reconstructed body root:
+  `b42f1115042cefecbd5380a0a630c0ef5f18bb13e7615cb1de9d36256f100432`.
+
+The verifier proves internal issuer-signature consistency. The proof embeds its
+public key; Oxid does not yet resolve and authorize that key through a Jubjub
+DID method. Issuer, temporal-current-time, status, and trust stages therefore
+remain `not_checked` rather than fabricated success.
+
 ## Digital Passport protected-material contract
 
 The adapter accepts Digital Passport interpretation only for a verified
-phase-1 credential whose type includes `DigitalPassportCredential` and whose
-`credentialSubject.digitalPassport` contains the exact reviewed package ID,
-schema ID, five 32-byte claim commitments, and 32-byte claim root. The private
-CBOR envelope contains exactly the corresponding five padded values and five
-32-byte openings. Input is bounded to 256 KiB, depth limited, duplicate and
-unknown fields are rejected, and trailing bytes are forbidden.
+phase-1 credential with the exact reviewed typed commitment map or a verified
+Compact credential with the equivalent exact package/schema and five
+commitments plus claim root. The private CBOR envelope contains exactly the
+corresponding five padded values and five 32-byte openings. Input is bounded to
+256 KiB, depth limited, duplicate and unknown fields are rejected, and trailing
+bytes are forbidden.
 
 Rust recomputation matches the immutable reference package's cross-language
 vectors for first name, last name, date of birth, document number, issuing
@@ -105,10 +141,10 @@ surfaces without widening the current UI. Headless never reveals a value.
 
 ## Explicit exclusions and follow-ups
 
-- The prototype `midnight_compact_vc` digital-passport presentation proof uses
-  a JavaScript bridge and Compact verifier artifacts. Oxid validates the stored
-  openings against signed commitments but does not represent that as a verifier
-  proof; native proving/verification remains a separate adapter.
+- Oxid now stores and verifies the prototype's detached Compact issuance proof.
+  That signature authenticates a credential body only; it is not the
+  Digital Passport selective-disclosure/age presentation proof. Runtime
+  presentation proving and independent verification remain separate adapters.
 - ADR-0041 provides atomic protected storage and ADR-0042 provides local
   interpretation and claim-free planning. ADR-0043 now provides strict
   Final-shaped OpenID4VP/DCQL request matching, exact consent, profile-scoped
@@ -121,7 +157,9 @@ surfaces without widening the current UI. Headless never reveals a value.
   verifier transport, and browser/native bridge ingress remain later adapters.
 - Status/revocation, temporal policy, schema validation, and issuer trust remain
   visible `not_checked` stages rather than fabricated success.
-- Jubjub verification remains queued pending a reviewed current implementation.
+- Issuer-method anchoring and protected holder Jubjub custody remain tracked by
+  issue #29. The prototype's public claim-root-derived holder scalar must not
+  enter normal or mobile composition.
 - The development key file is not backup, recovery, biometric authorization,
   or production platform custody.
 
@@ -132,6 +170,7 @@ surfaces without widening the current UI. Headless never reveals a value.
 | Claim disclosure through protocol/UI/logs | Ordinary views include metadata and stage codes only; headless candidates/plans have no values; targeted Dioxus local reveal is never logged or returned by headless; errors are sanitized. |
 | Cross-profile access | Incoming adapters derive profile scope from the active profile and accept no profile parameter. |
 | Private material tampering or substitution | Exact codec plus recomputed commitments and signed root fail closed before candidate inventory, preview, or local reveal. |
+| Detached proof substitution or format confusion | Exact Compact payload reconstruction and Schnorr verification fail closed; CBOR rejects any detached proof, and ordinary views omit proof bytes. |
 | Ciphertext substitution/tampering | XChaCha20-Poly1305 authentication with fixed schema-associated data fails closed. |
 | Nonce reuse | A fresh 192-bit OS-random nonce is generated for every whole-document write. |
 | Weak key custody claim | Separate 256-bit owner-private key is labeled development-only; normal composition is unavailable. |

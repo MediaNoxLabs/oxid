@@ -602,6 +602,7 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         .to_owned();
     assert!(!issued.to_string().contains("pre-authorized"));
     assert!(!issued.to_string().contains("signedBytes"));
+    assert!(!issued.to_string().contains("detachedProof"));
     let disclosure = first_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-disclosure",
         "method": "credential.disclosure.candidates",
@@ -636,6 +637,21 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
                 .any(|window| window == secret)
         );
     }
+    for protected in [
+        include_str!("../../../fixtures/credentials/standalone-digital-passport-compact-body.b64")
+            .trim()
+            .as_bytes(),
+        include_str!("../../../fixtures/credentials/standalone-digital-passport-compact-proof.b64")
+            .trim()
+            .as_bytes(),
+    ] {
+        assert!(
+            !encrypted
+                .windows(protected.len())
+                .any(|window| window == protected),
+            "encrypted store must not expose Compact body or proof bytes"
+        );
+    }
     assert_eq!(
         fs::read(&key_path).expect("development wrapping key").len(),
         32
@@ -647,6 +663,10 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         "method": "credential.list", "params": {}
     }));
     assert_eq!(listed["result"]["credentials"][0]["id"], credential_id);
+    assert_eq!(
+        listed["result"]["credentials"][0]["format"],
+        "midnight_compact_vc"
+    );
     assert_eq!(
         listed["result"]["credentials"][0]["verification"]["outcome"],
         "valid"
@@ -680,6 +700,11 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         reverified["result"]["credential"]["verification"]["outcome"],
         "valid"
     );
+    assert_eq!(
+        reverified["result"]["credential"]["format"],
+        "midnight_compact_vc"
+    );
+    assert!(!reverified.to_string().contains("detachedProof"));
     let deleted = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-delete-restored",
         "method": "credential.delete",

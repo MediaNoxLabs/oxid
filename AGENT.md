@@ -40,8 +40,11 @@ standalone development. Digital Passport private parts are commitment-bound and
 encrypted; safe headless disclosure planning plus explicit local Dioxus
 first/last reveal and age-threshold planning are functional. Strict standalone
 OpenID4VP request, matching, and consent are functional and the real Compact
-presentation artifact set is reproducible. Vault, live protocol transport,
-runtime proof execution/verification, and `vp_token` remain deferred.
+presentation artifact set is reproducible. Standalone OpenID4VCI now issues,
+encrypts, restores, and natively verifies the prototype's exact Compact
+credential body plus detached issuance proof. Vault, live protocol transport,
+runtime presentation-proof execution/verification, and `vp_token` remain
+deferred.
 
 ADR-0017 is accepted. The first M1 security slice separates protection/session
 state from key operations, secret blobs, and native user authorization. The
@@ -245,8 +248,10 @@ not native custody. Standalone headless and mobile flows receive, list,
 reverify, confirmation-delete, and restore the public fixture without exposing
 the signed body. Normal `compose()` remains unavailable pending native
 Keychain/Keystore wrapping. Live OID4VCI transport, OpenID4VP, disclosure
-openings, status/schema/trust policy, Compact passport proofs, and Jubjub remain
-later slices.
+openings, status/trust policy, issuer-anchored Compact verification, and
+protected Jubjub custody remain later slices. ADR-0045 separately adds exact
+detached Compact issuance-proof verification without claiming issuer trust or
+presentation proof generation.
 
 [Issue #24](https://github.com/MediaNoxLabs/oxid/issues/24) and ADR-0039 add a
 dependency-free protocol domain/application hexagon plus an exact OpenID4VCI
@@ -299,8 +304,9 @@ profile-scoped use cases. Headless exposes
 reveals/hides first and last name only in component-local state and plans a
 date-of-birth age threshold; it must state that no verifier presentation or
 proof was generated. The deterministic standalone issuer supplies all five
-values/openings and a matching public signed fixture. Normal `compose()` stays
-unavailable. Do not add a headless reveal method or describe local preview as
+values/openings and, after ADR-0045, the exact public Compact body and detached
+issuance-proof fixtures. Normal `compose()` stays unavailable. Do not add a
+headless reveal method or describe local preview as
 OpenID4VP/selective-disclosure/predicate proof.
 
 [Issue #27](https://github.com/MediaNoxLabs/oxid/issues/27) and ADR-0043 add a
@@ -340,6 +346,43 @@ consumes the single-use session, and leaves
 `presentationGenerated`/`verifierValidated` false. Normal composition keeps the
 whole protocol unavailable. Do not substitute a synthetic boolean, local age
 calculation, signature, or fixture bytes for a proof.
+
+[Issue #29](https://github.com/MediaNoxLabs/oxid/issues/29) and ADR-0045 govern
+the exact stored `midnight_compact_vc` representation. `CredentialRecord`
+atomically separates a 1 MiB-bounded debug-redacted detached proof from the
+original MCV1 body and 256 KiB-bounded private opening envelope. The encrypted
+credential store writes schema v3; v1 reads as body-only and v2 as body plus
+optional private material. `MidnightCredentialVerifier` routes only `MCV1` to
+the native Compact verifier and rejects detached-proof confusion for CBOR. The
+verifier exactly reconstructs the 18-chunk credential, 9-chunk issuance proof,
+Digital Passport claim/body/payload roots, canonical Jubjub points/scalars, and
+Schnorr equation, including identity-point and tamper rejection. It marks only
+structural/proof/schema passed; issuer method anchoring, current-time policy,
+status, and trust remain `not_checked`.
+
+The public exact fixtures are
+`standalone-digital-passport-compact-{body,proof}.b64`. Raw-byte SHA-256 values
+are respectively
+`4d47be8d1aeeff5e06d9ba1b3ade3bab8e907f0939607cf46e100a9500ad4bcf`
+and `fbf2c7e434c70d6f98fa7fae6cd146971db1fda6db96ff2ddea64fe9453e2e02`.
+The immutable upstream oracle body root is
+`b42f1115042cefecbd5380a0a630c0ef5f18bb13e7615cb1de9d36256f100432`;
+the issuance challenge in little-endian form is
+`ac211b26c78ad2a361c034be79f11f67434d6f01dd4c26d2add5018b96b44700`.
+Standalone OID4VCI uses this exact three-part bundle; standalone inbox retains
+phase-1 CBOR as a second-format conformance path. Never copy the prototype's
+public claim-root-derived holder scalar into normal or mobile composition.
+Protected Jubjub holder custody and issuer-method anchoring remain issue #29
+acceptance gates, and detached issuance verification does not open the
+ADR-0043/0044 presentation gate.
+
+The 2026-08-13 `just ios-smoke` run passed the exact Compact OID4VCI bundle
+through native verification, encrypted schema-v3 persistence, process restart,
+reverification, local reveal/hide, disclosure-plan preview, and the fail-closed
+presentation gate. Preserve the prototype-compatible `Digital Passport`
+display name for this schema: the current Dioxus claim controls use that
+metadata contract. Replacing the display-name dispatch with an explicit schema
+identifier is follow-up work, not a reason to silently rename issued records.
 
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
@@ -445,6 +488,10 @@ matching, exact consent, refusal, and replay protection, while preserving a
 hard proof/independent-verifier gate before `vp_token`.
 ADR-0044 adds the immutable final Compact composition, proving/verifying key
 derivation, and artifact digest manifest without opening that runtime gate.
+ADR-0045 adds explicit `midnight_compact_vc` body/proof/private-material
+separation, native detached issuance-proof verification, encrypted schema-v3
+migration, and exact headless restart conformance without opening the
+presentation gate or claiming issuer trust/Jubjub custody.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -460,8 +507,8 @@ Current package ownership:
 | `crates/wallet/application` | Incoming use cases and owned outgoing repository ports. |
 | `crates/identity/domain` | Dependency-free Midnight DID, public JWK, document, and resolution invariants. |
 | `crates/identity/application` | Profile-scoped DID resolution, inventory, lifecycle/signing use cases, and owned outgoing ports. |
-| `crates/credential/domain` | Dependency-free credential records, metadata separation, bounded opaque format-private material, schema-neutral disclosure candidates, and structured verification invariants. |
-| `crates/credential/application` | Profile-scoped receive/list/get/reverify/delete plus disclosure inventory/plan/local-reveal use cases and repository/inbox/verifier/disclosure ports. |
+| `crates/credential/domain` | Dependency-free credential records, explicit formats, separately bounded/redacted original bytes, detached proofs, opaque format-private material, schema-neutral disclosure candidates, and structured verification invariants. |
+| `crates/credential/application` | Profile-scoped receive/list/get/reverify/delete plus exact bundle import, disclosure inventory/plan/local-reveal use cases, and repository/inbox/verifier/disclosure ports. |
 | `crates/protocol/domain` | Dependency-free credential-offer and self-issued-authentication preview/lifecycle invariants. |
 | `crates/protocol/application` | Profile-scoped issuance and self-issued-authentication use cases plus protocol/proof/verified-sink ports. |
 | `crates/presentation/domain` | Dependency-free credential-presentation preview, claim-intent, candidate, and lifecycle invariants. |
@@ -470,11 +517,11 @@ Current package ownership:
 | `crates/adapters/storage-memory` | Development/test implementations of wallet, DID, and credential persistence ports. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/storage-identity-json` | Strict versioned persistence for validated profile-scoped public DID documents only. |
-| `crates/adapters/storage-credential-json` | Development-only authenticated encryption for bounded profile-scoped credential records, original signed bytes, and opaque format-private material. |
+| `crates/adapters/storage-credential-json` | Development-only authenticated encryption for bounded profile-scoped credential records, original signed bytes, detached proofs, and opaque format-private material. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256 generation plus protected BIP32/secp256k1-Schnorr derivation and signing. |
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development lifecycle adapters. |
-| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification plus exact commitment-bound Digital Passport private-part interpretation and public standalone fixtures. |
+| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification, commitment-bound Digital Passport private-part interpretation, and public standalone fixtures. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |

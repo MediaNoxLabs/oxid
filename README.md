@@ -24,11 +24,14 @@ than layers bolted onto one chain-specific frontend.
 > credential storage end to end. A separate deterministic SIOPv2 draft-13
 > adapter previews a standalone verifier request, requires explicit consent,
 > and independently verifies a single-use self-issued DID login without
-> exposing the ID Token. The standalone issuer now delivers a signed Digital
-> Passport with five commitment-bound protected claims; headless can inspect a
-> claim-free disclosure plan, while Dioxus explicitly reveals/hides first and
-> last name locally and plans an age predicate without claiming a presentation
-> or proof. Native headless runs
+> exposing the ID Token. The standalone issuer now delivers the prototype's
+> exact `midnight_compact_vc` body, detached issuance proof, and five
+> commitment-bound protected claims. A native verifier checks its exact
+> Compact roots and Jubjub proof before encrypted storage; issuer trust and
+> holder custody remain explicit later gates. Headless can inspect a claim-free
+> disclosure plan, while Dioxus explicitly reveals/hides first and last name
+> locally and plans an age predicate without claiming a presentation or proof.
+> Native headless runs
 > can instead opt into a real standalone-indexer source for public-account and
 > shielded Zswap synchronization, or the complete DUST/local-prover/node
 > submission path using explicit public startup configuration; remote proving
@@ -201,15 +204,20 @@ Standalone composition accepts exactly one embedded, pre-authorized-code
 OpenID4VCI 1.0 Final offer without Transaction Code. It previews issuer and
 credential display metadata before explicit consent, signs a nonce-bound JWT
 through an active managed DID authentication method, verifies the issued
-Midnight credential, and stores it in the protected profile inventory. Grant
-codes, access tokens, nonces, proofs, and original credential bytes never enter
-headless or UI results. The deterministic issuer is in-process and uses only
-loopback identifiers; normal production composition has no issuer transport.
-Format-private credential material has a separate 256 KiB-bounded opaque route
-through verified import and the same encrypted atomic record. It remains absent
-from ordinary incoming DTOs. The Digital Passport adapter interprets it only
-after recomputing all five official Midnight commitments and the signed claim
-root. Headless exposes safe candidate/plan metadata but no reveal operation.
+Midnight credential, and stores it in the protected profile inventory. It now
+uses the exact prototype `midnight_compact_vc` representation: separately
+bounded body, detached issuance proof, and private openings. The adapter
+reconstructs the exact claim/body/payload roots and verifies the Jubjub Schnorr
+equation; issuer DID anchoring, status, trust, and production custody remain
+unavailable. Grant codes, access tokens, nonces, proofs, and original credential
+bytes never enter headless or UI results. The deterministic issuer is in-process
+and uses only loopback identifiers; normal production composition has no issuer
+transport. Format-private credential material has a separate 256 KiB-bounded
+opaque route through verified import and the same encrypted atomic record. It
+remains absent from ordinary incoming DTOs. The Digital Passport adapter
+interprets it only after recomputing all five official Midnight commitments and
+the signed claim root. Headless exposes safe candidate/plan metadata but no
+reveal operation.
 The Dioxus card permits explicit device-local first/last reveal and age
 threshold planning. A separate OpenID4VP 1.0 Final-shaped DCQL panel previews a
 deterministic standalone verifier request, matching credential, and exact claim
@@ -420,8 +428,8 @@ just android-smoke
 | `crates/wallet/application` | Use cases and wallet-owned ports. |
 | `crates/identity/domain` | DID document, public JWK, relationship, and resolution invariants. |
 | `crates/identity/application` | Profile-scoped DID use cases and identity-owned ports. |
-| `crates/credential/domain` | Credential records, metadata separation, bounded opaque format-private material, schema-neutral disclosure candidates, and structured verification invariants. |
-| `crates/credential/application` | Profile-scoped credential inventory, verified import, disclosure inventory/plan, and targeted local-reveal use cases. |
+| `crates/credential/domain` | Credential records, explicit formats, bounded detached proofs and opaque format-private material, schema-neutral disclosure candidates, and structured verification invariants. |
+| `crates/credential/application` | Profile-scoped credential inventory, exact-bundle verified import/reverification, disclosure inventory/plan, and targeted local-reveal use cases. |
 | `crates/protocol/domain` | Credential-offer and self-issued-authentication preview/lifecycle invariants. |
 | `crates/protocol/application` | Protocol-neutral issuance and DID-authentication use cases and outgoing ports. |
 | `crates/platform/ports` | Time and randomness capability ports. |
@@ -456,7 +464,9 @@ recorded in
 [docs/migration/midnight-vc-provenance.md](docs/migration/midnight-vc-provenance.md)
 and [ADR-0042](docs/adr/0042-bind-digital-passport-disclosure-to-signed-commitments.md).
 The fail-closed presentation boundary is recorded in
-[ADR-0043](docs/adr/0043-gate-openid4vp-on-reproducible-compact-proofs.md).
+[ADR-0043](docs/adr/0043-gate-openid4vp-on-reproducible-compact-proofs.md),
+and exact Compact credential persistence/verification is recorded in
+[ADR-0045](docs/adr/0045-preserve-and-verify-detached-midnight-compact-credentials.md).
 
 ## Security
 

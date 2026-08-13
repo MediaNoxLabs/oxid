@@ -3794,7 +3794,7 @@ fn credential_issuance_message(error: CredentialIssuanceError) -> String {
 fn credential_presentation_message(error: CredentialPresentationError) -> String {
     match error {
         CredentialPresentationError::Protocol(PresentationProtocolError::ProofUnavailable) =>
-            "Compact proof generation is not reproducible yet. Nothing was presented and no vp_token was generated.".to_owned(),
+            "Compact proof runtime is not connected yet. Nothing was presented and no vp_token was generated.".to_owned(),
         other => other.to_string(),
     }
 }

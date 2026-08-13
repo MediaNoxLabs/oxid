@@ -58,6 +58,7 @@ pub struct ProtocolIssueRequest {
 #[derive(PartialEq, Eq)]
 pub struct IssuedCredentialBytes {
     pub signed_bytes: Vec<u8>,
+    pub detached_proof: Option<Vec<u8>>,
     pub private_material: Option<Vec<u8>>,
 }
 
@@ -66,6 +67,10 @@ impl fmt::Debug for IssuedCredentialBytes {
         formatter
             .debug_struct("IssuedCredentialBytes")
             .field("signed_bytes_length", &self.signed_bytes.len())
+            .field(
+                "detached_proof_length",
+                &self.detached_proof.as_ref().map(Vec::len),
+            )
             .field(
                 "private_material_length",
                 &self.private_material.as_ref().map(Vec::len),
@@ -97,6 +102,7 @@ pub trait CredentialHolderProofPort: Send + Sync {
 pub struct StoreIssuedCredentialRequest {
     pub profile_id: ProtocolProfileId,
     pub signed_bytes: Vec<u8>,
+    pub detached_proof: Option<Vec<u8>>,
     pub private_material: Option<Vec<u8>>,
 }
 
@@ -106,6 +112,10 @@ impl fmt::Debug for StoreIssuedCredentialRequest {
             .debug_struct("StoreIssuedCredentialRequest")
             .field("profile_id", &self.profile_id)
             .field("signed_bytes_length", &self.signed_bytes.len())
+            .field(
+                "detached_proof_length",
+                &self.detached_proof.as_ref().map(Vec::len),
+            )
             .field(
                 "private_material_length",
                 &self.private_material.as_ref().map(Vec::len),
@@ -488,6 +498,7 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                 .store_verified(StoreIssuedCredentialRequest {
                     profile_id,
                     signed_bytes: issued.signed_bytes,
+                    detached_proof: issued.detached_proof,
                     private_material: issued.private_material,
                 })
                 .await
@@ -1109,12 +1120,15 @@ mod tests {
     fn issued_credential_debug_output_redacts_all_bytes() {
         let issued = IssuedCredentialBytes {
             signed_bytes: b"signed-credential-secret".to_vec(),
+            detached_proof: Some(b"detached-proof".to_vec()),
             private_material: Some(b"opening-secret".to_vec()),
         };
         let debug = format!("{issued:?}");
         assert!(debug.contains("signed_bytes_length"));
+        assert!(debug.contains("detached_proof_length"));
         assert!(debug.contains("private_material_length"));
         assert!(!debug.contains("signed-credential-secret"));
+        assert!(!debug.contains("detached-proof"));
         assert!(!debug.contains("opening-secret"));
     }
 
@@ -1145,6 +1159,7 @@ mod tests {
                 } else {
                     Ok(IssuedCredentialBytes {
                         signed_bytes: vec![1, 2, 3],
+                        detached_proof: Some(vec![4, 5, 6]),
                         private_material: None,
                     })
                 }
@@ -1165,6 +1180,7 @@ mod tests {
         ) -> StoreIssuedCredentialFuture<'a> {
             Box::pin(async move {
                 assert_eq!(request.signed_bytes, [1, 2, 3]);
+                assert_eq!(request.detached_proof, Some(vec![4, 5, 6]));
                 Ok(StoredCredential {
                     credential_id: "vc_1".to_owned(),
                 })

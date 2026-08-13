@@ -7,6 +7,7 @@ use std::{collections::BTreeSet, error::Error, fmt};
 use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
 
 pub const MAX_SIGNED_CREDENTIAL_BYTES: usize = 1_048_576;
+pub const MAX_CREDENTIAL_DETACHED_PROOF_BYTES: usize = 1_048_576;
 pub const MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES: usize = 262_144;
 const MAX_LABEL_CHARACTERS: usize = 128;
 const MAX_DID_CHARACTERS: usize = 8_192;
@@ -71,6 +72,40 @@ impl fmt::Debug for CredentialPrivateMaterial {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("CredentialPrivateMaterial")
+            .field("length", &self.0.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Opaque proof bytes delivered separately from a credential body.
+///
+/// Compact credential families deliberately serialize the semantic body and
+/// its cryptographic proof as distinct values. Core bounds and protects the
+/// proof without interpreting a format-specific codec or proof system.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CredentialDetachedProof(Vec<u8>);
+
+impl CredentialDetachedProof {
+    pub fn new(bytes: Vec<u8>) -> Result<Self, CredentialDomainError> {
+        if bytes.is_empty() {
+            return Err(CredentialDomainError::EmptyDetachedProof);
+        }
+        if bytes.len() > MAX_CREDENTIAL_DETACHED_PROOF_BYTES {
+            return Err(CredentialDomainError::DetachedProofTooLarge);
+        }
+        Ok(Self(bytes))
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for CredentialDetachedProof {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CredentialDetachedProof")
             .field("length", &self.0.len())
             .finish_non_exhaustive()
     }
@@ -183,6 +218,7 @@ impl CredentialDisclosureManifest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CredentialFormat {
     MidnightCborPhase1,
+    MidnightCompactVc,
 }
 
 impl CredentialFormat {
@@ -190,6 +226,7 @@ impl CredentialFormat {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::MidnightCborPhase1 => "midnight_cbor_phase1",
+            Self::MidnightCompactVc => "midnight_compact_vc",
         }
     }
 
@@ -197,6 +234,7 @@ impl CredentialFormat {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "midnight_cbor_phase1" => Some(Self::MidnightCborPhase1),
+            "midnight_compact_vc" => Some(Self::MidnightCompactVc),
             _ => None,
         }
     }
@@ -455,6 +493,7 @@ pub struct CredentialRecord {
     profile_id: CredentialProfileId,
     id: CredentialId,
     signed_bytes: Vec<u8>,
+    detached_proof: Option<CredentialDetachedProof>,
     private_material: Option<CredentialPrivateMaterial>,
     metadata: CredentialMetadata,
     verification: VerificationReport,
@@ -467,6 +506,13 @@ impl fmt::Debug for CredentialRecord {
             .field("profile_id", &self.profile_id)
             .field("id", &self.id)
             .field("signed_bytes_length", &self.signed_bytes.len())
+            .field(
+                "detached_proof_length",
+                &self
+                    .detached_proof
+                    .as_ref()
+                    .map(|proof| proof.as_bytes().len()),
+            )
             .field(
                 "private_material_length",
                 &self
@@ -488,13 +534,41 @@ impl CredentialRecord {
         metadata: CredentialMetadata,
         verification: VerificationReport,
     ) -> Result<Self, CredentialDomainError> {
-        Self::new_with_private_material(profile_id, id, signed_bytes, None, metadata, verification)
+        Self::new_with_proof_and_private_material(
+            profile_id,
+            id,
+            signed_bytes,
+            None,
+            None,
+            metadata,
+            verification,
+        )
     }
 
     pub fn new_with_private_material(
         profile_id: CredentialProfileId,
         id: CredentialId,
         signed_bytes: Vec<u8>,
+        private_material: Option<CredentialPrivateMaterial>,
+        metadata: CredentialMetadata,
+        verification: VerificationReport,
+    ) -> Result<Self, CredentialDomainError> {
+        Self::new_with_proof_and_private_material(
+            profile_id,
+            id,
+            signed_bytes,
+            None,
+            private_material,
+            metadata,
+            verification,
+        )
+    }
+
+    pub fn new_with_proof_and_private_material(
+        profile_id: CredentialProfileId,
+        id: CredentialId,
+        signed_bytes: Vec<u8>,
+        detached_proof: Option<CredentialDetachedProof>,
         private_material: Option<CredentialPrivateMaterial>,
         metadata: CredentialMetadata,
         verification: VerificationReport,
@@ -509,6 +583,7 @@ impl CredentialRecord {
             profile_id,
             id,
             signed_bytes,
+            detached_proof,
             private_material,
             metadata,
             verification,
@@ -526,6 +601,10 @@ impl CredentialRecord {
     #[must_use]
     pub fn signed_bytes(&self) -> &[u8] {
         &self.signed_bytes
+    }
+    #[must_use]
+    pub fn detached_proof(&self) -> Option<&CredentialDetachedProof> {
+        self.detached_proof.as_ref()
     }
     #[must_use]
     pub fn private_material(&self) -> Option<&CredentialPrivateMaterial> {
@@ -566,6 +645,8 @@ pub enum CredentialDomainError {
     InconsistentVerificationOutcome,
     EmptySignedCredential,
     SignedCredentialTooLarge,
+    EmptyDetachedProof,
+    DetachedProofTooLarge,
     EmptyPrivateMaterial,
     PrivateMaterialTooLarge,
     InvalidClaimPath,
@@ -592,6 +673,8 @@ impl fmt::Display for CredentialDomainError {
             }
             Self::EmptySignedCredential => "signed credential must not be empty",
             Self::SignedCredentialTooLarge => "signed credential exceeds the size limit",
+            Self::EmptyDetachedProof => "credential detached proof must not be empty",
+            Self::DetachedProofTooLarge => "credential detached proof exceeds the size limit",
             Self::EmptyPrivateMaterial => "credential private material must not be empty",
             Self::PrivateMaterialTooLarge => "credential private material exceeds the size limit",
             Self::InvalidClaimPath => "credential disclosure claim path is invalid",
@@ -747,6 +830,50 @@ mod tests {
         let debug = format!("{record:?}");
         assert!(!debug.contains("signed-secret"));
         assert!(!debug.contains("claim-secret"));
+    }
+
+    #[test]
+    fn bounds_redacts_and_retains_detached_proofs() {
+        assert_eq!(
+            CredentialDetachedProof::new(Vec::new()),
+            Err(CredentialDomainError::EmptyDetachedProof)
+        );
+        assert_eq!(
+            CredentialDetachedProof::new(vec![0; MAX_CREDENTIAL_DETACHED_PROOF_BYTES + 1]),
+            Err(CredentialDomainError::DetachedProofTooLarge)
+        );
+        let proof = CredentialDetachedProof::new(b"proof-secret".to_vec()).expect("proof");
+        assert!(!format!("{proof:?}").contains("proof-secret"));
+
+        let report = VerificationReport::new(
+            VerificationOutcome::Valid,
+            stages(VerificationStageStatus::Passed),
+        )
+        .expect("report");
+        let record = CredentialRecord::new_with_proof_and_private_material(
+            CredentialProfileId::parse("profile_one").expect("profile"),
+            CredentialId::parse("vc_one").expect("id"),
+            b"compact-body".to_vec(),
+            Some(proof),
+            None,
+            CredentialMetadata::new(
+                "Digital Passport credential",
+                "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                None,
+                CredentialFormat::MidnightCompactVc,
+                None,
+            )
+            .expect("metadata"),
+            report,
+        )
+        .expect("record");
+        assert_eq!(
+            record
+                .detached_proof()
+                .map(CredentialDetachedProof::as_bytes),
+            Some(b"proof-secret".as_slice())
+        );
+        assert!(!format!("{record:?}").contains("proof-secret"));
     }
 
     #[test]

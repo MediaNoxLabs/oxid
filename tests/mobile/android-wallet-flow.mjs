@@ -260,7 +260,7 @@ try {
     })()`);
     await clickButton("Consent and present");
     await waitFor(
-      "document.body.innerText.includes('Compact proof generation is not reproducible yet. Nothing was presented and no vp_token was generated.')",
+      "document.body.innerText.includes('Compact proof runtime is not connected yet. Nothing was presented and no vp_token was generated.')",
       "fail-closed Compact presentation proof gate",
     );
     const presentationProofGated = await evaluate(

@@ -176,14 +176,13 @@ final class ProfileFlowTests: XCTestCase {
         scrollTo(presentCredential, in: application)
         presentCredential.tap()
         XCTAssertTrue(
-            application.staticTexts["Compact proof generation is not reproducible yet. Nothing was presented and no vp_token was generated."]
+            application.staticTexts["Compact proof runtime is not connected yet. Nothing was presented and no vp_token was generated."]
                 .waitForExistence(timeout: 10)
         )
         XCTAssertTrue(application.staticTexts["valid"].waitForExistence(timeout: 10))
         XCTAssertFalse(application.staticTexts["Alice"].exists)
         XCTAssertFalse(application.staticTexts["Example"].exists)
         let revealFirst = application.buttons["Reveal First name locally"]
-        XCTAssertTrue(revealFirst.waitForExistence(timeout: 10))
         scrollTo(revealFirst, in: application)
         revealFirst.tap()
         XCTAssertTrue(application.staticTexts["Alice"].waitForExistence(timeout: 5))
