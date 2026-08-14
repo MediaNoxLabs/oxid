@@ -1,13 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{fs, io::Cursor, path::PathBuf, process::Command};
+use std::{fs, io::Cursor, path::PathBuf, process::Command, sync::Arc};
 
 use midnight_base_crypto::schnorr::Signature;
-use midnight_ledger::structure::{ProofPreimageMarker, Transaction};
-use midnight_serialize::tagged_deserialize;
+use midnight_ledger::structure::{INITIAL_PARAMETERS, ProofPreimageMarker, Transaction};
+use midnight_serialize::{tagged_deserialize, tagged_serialize};
 use midnight_storage::DefaultDB;
 use midnight_transient_crypto::commitment::PedersenRandomness;
+use midnight_zswap::ledger::State as ZswapChainState;
+use oxid_foundation::{OpaqueId, UnixTimestampMillis};
+use oxid_passport_vault_application::{
+    PassportVaultCallDraftState, PassportVaultCallOperation, PassportVaultCallPortError,
+    PassportVaultContractCallPort, PassportVaultContractStateAuthentication,
+    PassportVaultContractStateSnapshot, PreparePassportVaultCallRequest,
+};
+use oxid_passport_vault_domain::PassportVaultPolicy;
 use serde::Deserialize;
+
+use crate::{
+    NativePassportVaultContractCall, PassportVaultCallCompositionContext,
+    PassportVaultCallCompositionContextSource,
+};
 
 const MAX_COMPOSER_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const CONTRACT_STATE_FIXTURE: &str =
@@ -25,6 +38,36 @@ struct ComposerResponse {
     circuit_id: String,
     unproven_transaction_hex: String,
     unproven_transaction_bytes: usize,
+}
+
+struct PublicContext;
+
+impl PassportVaultCallCompositionContextSource for PublicContext {
+    fn context(
+        &self,
+        _: &OpaqueId,
+    ) -> Result<PassportVaultCallCompositionContext, PassportVaultCallPortError> {
+        let mut zswap_chain_state = Vec::new();
+        tagged_serialize(&ZswapChainState::<DefaultDB>::new(), &mut zswap_chain_state)
+            .map_err(|_| PassportVaultCallPortError::InvalidData)?;
+        let mut ledger_parameters = Vec::new();
+        tagged_serialize(&INITIAL_PARAMETERS, &mut ledger_parameters)
+            .map_err(|_| PassportVaultCallPortError::InvalidData)?;
+        PassportVaultCallCompositionContext::new(
+            "undeployed",
+            zswap_chain_state,
+            ledger_parameters,
+            hex::decode("1bd4f827be97ff013c4a702e4b08f30ec378728a54670cf7cc92cb9b1a14eff6")
+                .map_err(|_| PassportVaultCallPortError::InvalidData)?
+                .try_into()
+                .map_err(|_| PassportVaultCallPortError::InvalidData)?,
+            hex::decode("b62e630a030171b5e11af2487f0103e650cc703f284d0a478b2a3abdf9715b70")
+                .map_err(|_| PassportVaultCallPortError::InvalidData)?
+                .try_into()
+                .map_err(|_| PassportVaultCallPortError::InvalidData)?,
+            [3; 32],
+        )
+    }
 }
 
 #[test]
@@ -102,4 +145,29 @@ fn packaged_composer_emits_a_rust_compatible_unproven_call_when_configured() {
     };
     assert!(!standard.network_id.is_empty());
     assert_eq!(standard.intents.iter().count(), 1);
+
+    let adapter = NativePassportVaultContractCall::new(&executable, Arc::new(PublicContext))
+        .expect("native composer adapter");
+    let preview = adapter
+        .prepare(PreparePassportVaultCallRequest {
+            profile_id: OpaqueId::parse("profile_composer_conformance").expect("profile"),
+            contract_state: PassportVaultContractStateSnapshot {
+                serialized_contract_state: hex::decode(CONTRACT_STATE_FIXTURE.trim())
+                    .expect("contract state"),
+                authentication: PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
+                contract_address_hex: "00".repeat(32),
+                transaction_hash_hex: "11".repeat(32),
+                action_block_hash_hex: "22".repeat(32),
+                action_block_height: 10,
+                finalized_head_hash_hex: "33".repeat(32),
+                finalized_head_height: 12,
+            },
+            operation: PassportVaultCallOperation::CreateLock {
+                policy: PassportVaultPolicy::new(18, None, None, 40, [1; 32]).expect("policy"),
+                initial_amount: 0,
+            },
+            expires_at: UnixTimestampMillis::new(1_800_000_000_000),
+        })
+        .expect("retained native composition");
+    assert_eq!(preview.state, PassportVaultCallDraftState::Prepared);
 }

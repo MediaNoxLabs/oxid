@@ -15,6 +15,8 @@ mod finalized_history;
 #[cfg(not(target_arch = "wasm32"))]
 mod live_state;
 #[cfg(not(target_arch = "wasm32"))]
+mod native_call;
+#[cfg(not(target_arch = "wasm32"))]
 mod replay;
 #[cfg(not(target_arch = "wasm32"))]
 mod simulated_call;
@@ -38,6 +40,11 @@ pub use finalized_history::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use live_state::{
     NodeAnchoredPassportVaultStateConfigError, NodeAnchoredPassportVaultStateSource,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use native_call::{
+    NativePassportVaultContractCall, PassportVaultCallComposerConfigError,
+    PassportVaultCallCompositionContext, PassportVaultCallCompositionContextSource,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use replay::{

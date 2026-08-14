@@ -77,7 +77,11 @@ exposes the four wallet proof circuits through a native resolver while excluding
 the administrative circuit. ADR-0059 packages a bounded one-request generated-
 Compact composer for typed create/deposit/withdraw operations and proves its
 output matches the pinned Rust ledger codec. It rejects claims and
-administration and is not yet connected to the retained application port.
+administration. ADR-0060 installs it behind a native retained application-port
+adapter that requires canonical replay plus real bounded Zswap/ledger context,
+keeps the unproven transaction in zeroizing adapter custody, and deliberately
+leaves submit unavailable. The composition root does not yet supply fresh
+Midnight context.
 Explicit live and production composition still fail closed without protected
 claim composition, combined contract/DUST completion, NIGHT funding,
 submission, and reconciliation.
@@ -541,6 +545,9 @@ is loaded by ADR-0059's composer only from its Nix-fixed artifact closure; the
 wrapper clears Node loader overrides and accepts no artifact route or raw
 circuit argument surface. Its serialized transaction output remains adapter-
 owned and must never enter headless/mobile views.
+ADR-0060's retained adapter additionally requires non-empty serialized Zswap
+state and ledger parameters; never replace them with the composer's conformance
+defaults in live preparation. Expiry/drop erases retained transaction bytes.
 
 The staged component inventory and destination map live in
 `docs/migration/midnight-ledger-prototype.md`. Presentation-specific provenance
@@ -672,13 +679,13 @@ ADR-0056 exposes only `create_lock`, `deposit_to_lock`, `claim_from_lock`, and
 `canonical_finalized_replay`; authorization and submission are separate exact
 intents. `setTrustedIssuer` remains deployment/administration-only. Incoming
 commands never carry private credential data, witnesses, signatures, proofs,
-or serialized transactions, and composition remains unavailable until the
-native call adapter is installed. ADR-0058 supplies the runtime-authenticated
+or serialized transactions. ADR-0058 supplies the runtime-authenticated
 generated client plus a four-circuit native proof resolver. It does not supply
 NIGHT funding, the combined contract/DUST provider, submission, or
 reconciliation. ADR-0059 supplies a separate closed-schema composition oracle
-for create/deposit/withdraw, but it is not connected to this port and rejects
-claim until protected custody exists, so live capability labels remain
+for create/deposit/withdraw. ADR-0060 connects that oracle to a retained native
+port adapter through a bounded public context source, but rejects claim and
+leaves submit/context composition closed, so live capability labels remain
 unchanged.
 ADR-0017 records the accepted platform-custody split.
 ADR status
@@ -712,7 +719,7 @@ Current package ownership:
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
-| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, and generated-composer/Rust-codec conformance; live port completion/submission remains closed. |
+| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing retained native create/deposit/withdraw composition; live context/completion/submission remains closed. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
@@ -844,9 +851,10 @@ canonical replay state in live composition. The development-only simulator
 instead requires the distinct `deterministic_simulation` state class; neither
 call-service constructor may admit the other's class. Claim input contains only an opaque credential ID; no
 incoming method accepts credential bytes, openings, holder keys, witness data,
-proofs, signatures, or serialized transactions. Until a native call adapter is
-composed, explicit live discovery uses `native_pending` and calls fail closed
-after the state/authentication checks. Zero-configuration headless/development
+proofs, signatures, or serialized transactions. The native retained adapter is
+not yet composed with a fresh Midnight context/completion source, so explicit
+live discovery uses `native_pending` and submit fails closed after
+state/authentication and retained composition checks. Zero-configuration headless/development
 composition uses the fixed simulator address published by `system.capabilities`;
 its mode is `deterministic_simulation`, result mode is
 `deterministic_simulation_only`, history is process-local, and
@@ -1249,6 +1257,13 @@ to silence the shell probe.
   canonical bounds, and never add claim material, private state, arbitrary
   circuit names/arguments, or administration. Its unproven transaction output
   is adapter-owned and cannot appear in headless/mobile output or logs.
+- ADR-0060 native preparation accepts only canonical replay and a fresh public
+  context source with real non-empty bounded Zswap state and ledger parameters.
+  Never decode those values from an incoming UI address, let callers supply
+  them, or couple the Passport Vault adapter directly to the Midnight adapter.
+  Keep the serialized transaction in zeroizing retained custody; until the
+  protected funding/proving/journal/submission path consumes it, submit must
+  fail without changing the authorized draft or `not_started` status.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

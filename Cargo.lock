@@ -5510,6 +5510,7 @@ dependencies = [
  "midnight-storage",
  "midnight-transient-crypto",
  "midnight-zkir",
+ "midnight-zswap",
  "oxid-adapter-vc-midnight",
  "oxid-credential-application",
  "oxid-credential-domain",
@@ -5526,6 +5527,7 @@ dependencies = [
  "subxt",
  "tokio",
  "webpki-root-certs 1.0.9",
+ "zeroize",
 ]
 
 [[package]]

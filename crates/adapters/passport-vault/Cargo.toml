@@ -28,6 +28,7 @@ midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-transient-crypto.workspace = true
 midnight-zkir.workspace = true
+midnight-zswap.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 rustls.workspace = true
 serde.workspace = true
@@ -36,6 +37,7 @@ sha2.workspace = true
 subxt.workspace = true
 tokio.workspace = true
 webpki-root-certs.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
