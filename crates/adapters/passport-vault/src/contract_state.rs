@@ -162,6 +162,7 @@ fn decode_contract_state(
 
     Ok(PassportVaultView {
         source: "pinned_contract_layout".to_owned(),
+        chain_anchor: None,
         contract: Some(PassportVaultContractView {
             version,
             trusted_issuer_did_contract_hex: hex::encode(issuer_contract),

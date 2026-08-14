@@ -17,11 +17,19 @@ oxid-passport-vault-domain.workspace = true
 oxid-platform-ports.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+futures.workspace = true
 hex.workspace = true
 midnight-base-crypto.workspace = true
 midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subxt.workspace = true
+tokio.workspace = true
+webpki-root-certs.workspace = true
 
 [lints]
 workspace = true

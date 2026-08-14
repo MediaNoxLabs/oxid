@@ -5500,6 +5500,7 @@ dependencies = [
 name = "oxid-adapter-passport-vault"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "hex",
  "midnight-base-crypto",
  "midnight-onchain-runtime",
@@ -5511,6 +5512,13 @@ dependencies = [
  "oxid-passport-vault-application",
  "oxid-passport-vault-domain",
  "oxid-platform-ports",
+ "reqwest 0.13.4",
+ "rustls",
+ "serde",
+ "serde_json",
+ "subxt",
+ "tokio",
+ "webpki-root-certs 1.0.9",
 ]
 
 [[package]]

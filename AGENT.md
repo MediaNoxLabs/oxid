@@ -50,9 +50,16 @@ and a Dioxus mobile journey. It is visibly process-local and never an on-chain
 claim. ADR-0052 builds all five impure circuits and adds bounded native Rust
 decoding plus a headless generated-client fixture. ADR-0053 distributes the
 byte-identical reviewed contract in Oxid and asserts its upstream digest so
-public CI never needs private companion-repository credentials. Authenticated
-indexer acquisition, live Compact transactions, and optional durable standalone
-state remain issue #31. Live protocol transport and production/mobile
+public CI never needs private companion-repository credentials. ADR-0054 adds
+an address-scoped standalone read source that queries the indexer at the node's
+latest finalized height and verifies the action block's canonical node hash.
+Its source is always `node_anchored_indexer` and its authentication label is
+always `indexer_supplied_not_proven`: the transaction contains replayable call
+transcripts, not the post-call state, so only deterministic replay from an
+authenticated prior state or a reviewed storage proof can authenticate those
+bytes. Never use this read model to authorize or compose a contract call.
+Authenticated replay/proofs, live Compact transactions, and optional durable
+standalone state remain issue #31. Live protocol transport and production/mobile
 presentation proving remain deferred.
 Standalone presentation now reauthorizes the exact statement with the
 credential-bound method's current managed protected key, runs the authenticated
@@ -1098,6 +1105,12 @@ to silence the shell probe.
   must never be described as submitted, included, or settled on Midnight. Live
   current-day, credential-root nullifier authority, and expiry enforcement must
   come from authenticated chain state, not the standalone clock or repository.
+- Passport Vault `node_anchored_indexer` views prove only that the reported
+  action block hash is canonical at or below the node's finalized head. They do
+  not prove indexer state bytes or transaction provenance. Preserve the
+  `indexer_supplied_not_proven` label, explicit caller-supplied address, HTTPS/WSS
+  remote-route rule, proxy/redirect prohibition, response bounds, and closed
+  mutation ports until replay or a reviewed node proof authenticates state.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

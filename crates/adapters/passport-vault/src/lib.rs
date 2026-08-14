@@ -4,9 +4,15 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod contract_state;
+#[cfg(not(target_arch = "wasm32"))]
+mod live_state;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use contract_state::NativePassportVaultContractStateDecoder;
+#[cfg(not(target_arch = "wasm32"))]
+pub use live_state::{
+    NodeAnchoredPassportVaultStateConfigError, NodeAnchoredPassportVaultStateSource,
+};
 
 use std::sync::{Arc, Mutex};
 

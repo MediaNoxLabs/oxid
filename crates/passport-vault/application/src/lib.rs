@@ -174,12 +174,27 @@ pub struct PassportVaultLockView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PassportVaultView {
     pub source: String,
+    pub chain_anchor: Option<PassportVaultChainAnchorView>,
     pub contract: Option<PassportVaultContractView>,
     pub locks: Vec<PassportVaultLockView>,
     pub total_deposited: String,
     pub total_released: String,
     pub total_locked: String,
     pub claim_count: u64,
+}
+
+/// Public provenance for a contract-state snapshot. A canonical finalized
+/// block anchors the indexer's reported action location, but does not prove
+/// action inclusion or the state bytes without ledger replay or a storage proof.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassportVaultChainAnchorView {
+    pub contract_address_hex: String,
+    pub transaction_hash_hex: String,
+    pub action_block_hash_hex: String,
+    pub action_block_height: u64,
+    pub finalized_head_hash_hex: String,
+    pub finalized_head_height: u64,
+    pub state_authentication: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -302,6 +317,100 @@ pub struct DecodePassportVaultContractStateCommand {
     pub serialized_contract_state: Vec<u8>,
 }
 
+pub type PassportVaultContractStateReadFuture<'a> = Pin<
+    Box<
+        dyn Future<
+                Output = Result<
+                    PassportVaultContractStateSnapshot,
+                    PassportVaultContractStateSourceError,
+                >,
+            > + Send
+            + 'a,
+    >,
+>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PassportVaultContractStateSourceError {
+    Unavailable,
+    InvalidConfiguration,
+    InvalidAddress,
+    NotFound,
+    InvalidResponse,
+    CapacityExceeded,
+    FinalityMismatch,
+}
+
+impl fmt::Display for PassportVaultContractStateSourceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unavailable => "Passport Vault contract-state source is unavailable",
+            Self::InvalidConfiguration => "Passport Vault contract-state routes are invalid",
+            Self::InvalidAddress => "Passport Vault contract address is invalid",
+            Self::NotFound => "Passport Vault contract was not found",
+            Self::InvalidResponse => "Passport Vault contract-state response is invalid",
+            Self::CapacityExceeded => {
+                "Passport Vault contract-state response exceeds a public bound"
+            }
+            Self::FinalityMismatch => {
+                "Passport Vault contract-state block is not on the finalized node chain"
+            }
+        })
+    }
+}
+impl Error for PassportVaultContractStateSourceError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassportVaultContractStateSnapshot {
+    pub serialized_contract_state: Vec<u8>,
+    pub contract_address_hex: String,
+    pub transaction_hash_hex: String,
+    pub action_block_hash_hex: String,
+    pub action_block_height: u64,
+    pub finalized_head_hash_hex: String,
+    pub finalized_head_height: u64,
+}
+
+pub trait PassportVaultContractStateSourcePort: Send + Sync {
+    fn read<'a>(
+        &'a self,
+        contract_address_hex: &'a str,
+    ) -> PassportVaultContractStateReadFuture<'a>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadPassportVaultContractStateCommand {
+    pub contract_address_hex: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PassportVaultContractStateReadError {
+    Source(PassportVaultContractStateSourceError),
+    Decode(PassportVaultContractStateError),
+}
+
+impl fmt::Display for PassportVaultContractStateReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Source(error) => error.fmt(formatter),
+            Self::Decode(error) => error.fmt(formatter),
+        }
+    }
+}
+impl Error for PassportVaultContractStateReadError {}
+
+pub trait ReadPassportVaultContractStateUseCase: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        command: ReadPassportVaultContractStateCommand,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<PassportVaultView, PassportVaultContractStateReadError>>
+                + Send
+                + 'a,
+        >,
+    >;
+}
+
 pub trait PassportVaultContractStateDecoderPort: Send + Sync {
     fn decode(
         &self,
@@ -318,12 +427,24 @@ pub trait DecodePassportVaultContractStateUseCase: Send + Sync {
 
 pub struct PassportVaultContractStateService {
     decoder: Arc<dyn PassportVaultContractStateDecoderPort>,
+    source: Arc<dyn PassportVaultContractStateSourcePort>,
 }
 
 impl PassportVaultContractStateService {
     #[must_use]
     pub fn new(decoder: Arc<dyn PassportVaultContractStateDecoderPort>) -> Self {
-        Self { decoder }
+        Self {
+            decoder,
+            source: Arc::new(UnavailablePassportVaultContractStateSource),
+        }
+    }
+
+    #[must_use]
+    pub fn with_source(
+        decoder: Arc<dyn PassportVaultContractStateDecoderPort>,
+        source: Arc<dyn PassportVaultContractStateSourcePort>,
+    ) -> Self {
+        Self { decoder, source }
     }
 }
 
@@ -342,12 +463,101 @@ impl DecodePassportVaultContractStateUseCase for PassportVaultContractStateServi
     }
 }
 
+impl ReadPassportVaultContractStateUseCase for PassportVaultContractStateService {
+    fn execute<'a>(
+        &'a self,
+        command: ReadPassportVaultContractStateCommand,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<PassportVaultView, PassportVaultContractStateReadError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            let contract_address_hex = normalize_hex_32(&command.contract_address_hex).ok_or(
+                PassportVaultContractStateReadError::Source(
+                    PassportVaultContractStateSourceError::InvalidAddress,
+                ),
+            )?;
+            let snapshot = self
+                .source
+                .read(&contract_address_hex)
+                .await
+                .map_err(PassportVaultContractStateReadError::Source)?;
+            validate_snapshot(&snapshot, &contract_address_hex)
+                .map_err(PassportVaultContractStateReadError::Source)?;
+            let mut view = DecodePassportVaultContractStateUseCase::execute(
+                self,
+                DecodePassportVaultContractStateCommand {
+                    serialized_contract_state: snapshot.serialized_contract_state,
+                },
+            )
+            .map_err(PassportVaultContractStateReadError::Decode)?;
+            view.source = "node_anchored_indexer".to_owned();
+            view.chain_anchor = Some(PassportVaultChainAnchorView {
+                contract_address_hex: snapshot.contract_address_hex,
+                transaction_hash_hex: snapshot.transaction_hash_hex,
+                action_block_hash_hex: snapshot.action_block_hash_hex,
+                action_block_height: snapshot.action_block_height,
+                finalized_head_hash_hex: snapshot.finalized_head_hash_hex,
+                finalized_head_height: snapshot.finalized_head_height,
+                state_authentication: "indexer_supplied_not_proven".to_owned(),
+            });
+            Ok(view)
+        })
+    }
+}
+
+fn validate_snapshot(
+    snapshot: &PassportVaultContractStateSnapshot,
+    expected_contract_address_hex: &str,
+) -> Result<(), PassportVaultContractStateSourceError> {
+    if snapshot.serialized_contract_state.is_empty() {
+        return Err(PassportVaultContractStateSourceError::InvalidResponse);
+    }
+    if snapshot.serialized_contract_state.len() > MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES {
+        return Err(PassportVaultContractStateSourceError::CapacityExceeded);
+    }
+    if snapshot.contract_address_hex != expected_contract_address_hex
+        || normalize_hex_32(&snapshot.contract_address_hex).as_deref()
+            != Some(expected_contract_address_hex)
+        || normalize_hex_32(&snapshot.transaction_hash_hex).as_deref()
+            != Some(snapshot.transaction_hash_hex.as_str())
+        || normalize_hex_32(&snapshot.action_block_hash_hex).as_deref()
+            != Some(snapshot.action_block_hash_hex.as_str())
+        || normalize_hex_32(&snapshot.finalized_head_hash_hex).as_deref()
+            != Some(snapshot.finalized_head_hash_hex.as_str())
+    {
+        return Err(PassportVaultContractStateSourceError::InvalidResponse);
+    }
+    if snapshot.action_block_height > snapshot.finalized_head_height {
+        return Err(PassportVaultContractStateSourceError::FinalityMismatch);
+    }
+    Ok(())
+}
+
+fn normalize_hex_32(value: &str) -> Option<String> {
+    let value = value.strip_prefix("0x").unwrap_or(value);
+    (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UnavailablePassportVaultContractStateDecoder;
 
 impl PassportVaultContractStateDecoderPort for UnavailablePassportVaultContractStateDecoder {
     fn decode(&self, _: &[u8]) -> Result<PassportVaultView, PassportVaultContractStateError> {
         Err(PassportVaultContractStateError::Unavailable)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailablePassportVaultContractStateSource;
+
+impl PassportVaultContractStateSourcePort for UnavailablePassportVaultContractStateSource {
+    fn read<'a>(&'a self, _: &'a str) -> PassportVaultContractStateReadFuture<'a> {
+        Box::pin(async { Err(PassportVaultContractStateSourceError::Unavailable) })
     }
 }
 
@@ -431,6 +641,7 @@ impl ListPassportVaultLocksUseCase for PassportVaultService {
             .map_err(PassportVaultOperationError::Repository)?;
         Ok(PassportVaultView {
             source: "standalone".to_owned(),
+            chain_anchor: None,
             contract: None,
             locks: state.locks().map(lock_view).collect(),
             total_deposited: state.total_deposited().to_string(),
@@ -676,6 +887,36 @@ mod tests {
         }
     }
 
+    struct ContractStateDecoder;
+
+    impl PassportVaultContractStateDecoderPort for ContractStateDecoder {
+        fn decode(
+            &self,
+            serialized_contract_state: &[u8],
+        ) -> Result<PassportVaultView, PassportVaultContractStateError> {
+            assert_eq!(serialized_contract_state, [1, 2, 3]);
+            Ok(PassportVaultView {
+                source: "pinned_contract_layout".to_owned(),
+                chain_anchor: None,
+                contract: None,
+                locks: Vec::new(),
+                total_deposited: "0".to_owned(),
+                total_released: "0".to_owned(),
+                total_locked: "0".to_owned(),
+                claim_count: 0,
+            })
+        }
+    }
+
+    struct ContractStateSource(PassportVaultContractStateSnapshot);
+
+    impl PassportVaultContractStateSourcePort for ContractStateSource {
+        fn read<'a>(&'a self, _: &'a str) -> PassportVaultContractStateReadFuture<'a> {
+            let snapshot = self.0.clone();
+            Box::pin(async move { Ok(snapshot) })
+        }
+    }
+
     fn ready<T>(mut future: Pin<Box<dyn Future<Output = T> + Send + '_>>) -> T {
         let mut context = Context::from_waker(Waker::noop());
         match future.as_mut().poll(&mut context) {
@@ -810,6 +1051,63 @@ mod tests {
         assert_eq!(view.total_released, "120");
         assert_eq!(view.total_locked, "0");
         assert_eq!(view.claim_count, 1);
+    }
+
+    #[test]
+    fn labels_finalized_indexer_state_as_anchored_but_not_proven() {
+        let address = "11".repeat(32);
+        let service = PassportVaultContractStateService::with_source(
+            Arc::new(ContractStateDecoder),
+            Arc::new(ContractStateSource(PassportVaultContractStateSnapshot {
+                serialized_contract_state: vec![1, 2, 3],
+                contract_address_hex: address.clone(),
+                transaction_hash_hex: "22".repeat(32),
+                action_block_hash_hex: "33".repeat(32),
+                action_block_height: 40,
+                finalized_head_hash_hex: "44".repeat(32),
+                finalized_head_height: 42,
+            })),
+        );
+        let view = ready(ReadPassportVaultContractStateUseCase::execute(
+            &service,
+            ReadPassportVaultContractStateCommand {
+                contract_address_hex: format!("0x{}", address.to_uppercase()),
+            },
+        ))
+        .expect("node-anchored view");
+        assert_eq!(view.source, "node_anchored_indexer");
+        let anchor = view.chain_anchor.expect("anchor");
+        assert_eq!(anchor.contract_address_hex, address);
+        assert_eq!(anchor.action_block_height, 40);
+        assert_eq!(anchor.finalized_head_height, 42);
+        assert_eq!(anchor.state_authentication, "indexer_supplied_not_proven");
+    }
+
+    #[test]
+    fn contract_state_read_fails_closed_without_a_source_or_valid_address() {
+        let service = PassportVaultContractStateService::new(Arc::new(ContractStateDecoder));
+        assert_eq!(
+            ready(ReadPassportVaultContractStateUseCase::execute(
+                &service,
+                ReadPassportVaultContractStateCommand {
+                    contract_address_hex: "not-an-address".to_owned(),
+                },
+            )),
+            Err(PassportVaultContractStateReadError::Source(
+                PassportVaultContractStateSourceError::InvalidAddress
+            ))
+        );
+        assert_eq!(
+            ready(ReadPassportVaultContractStateUseCase::execute(
+                &service,
+                ReadPassportVaultContractStateCommand {
+                    contract_address_hex: "11".repeat(32),
+                },
+            )),
+            Err(PassportVaultContractStateReadError::Source(
+                PassportVaultContractStateSourceError::Unavailable
+            ))
+        );
     }
 
     #[test]

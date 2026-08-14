@@ -31,10 +31,12 @@ use oxid_adapter_openid4vci::{
     DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
 };
 use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpenId4VpVerifier};
-#[cfg(not(target_arch = "wasm32"))]
-use oxid_adapter_passport_vault::NativePassportVaultContractStateDecoder;
 use oxid_adapter_passport_vault::{
     InMemoryPassportVaultRepository, StandalonePassportVaultCredential,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_adapter_passport_vault::{
+    NativePassportVaultContractStateDecoder, NodeAnchoredPassportVaultStateSource,
 };
 use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
 
@@ -94,9 +96,10 @@ use oxid_passport_vault_application::{
     ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase,
     DecodePassportVaultContractStateUseCase, DepositPassportVaultLockUseCase,
     ListPassportVaultLocksUseCase, PassportVaultContractStateDecoderPort,
-    PassportVaultContractStateService, PassportVaultCredentialPort, PassportVaultRepository,
-    PassportVaultService, UnavailablePassportVaultCredential, UnavailablePassportVaultRepository,
-    WithdrawPassportVaultLockUseCase,
+    PassportVaultContractStateService, PassportVaultContractStateSourcePort,
+    PassportVaultCredentialPort, PassportVaultRepository, PassportVaultService,
+    ReadPassportVaultContractStateUseCase, UnavailablePassportVaultCredential,
+    UnavailablePassportVaultRepository, WithdrawPassportVaultLockUseCase,
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CredentialPresentationProtocolPort,
@@ -204,6 +207,7 @@ pub struct ApplicationServices {
     list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase>,
     list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase>,
     decode_passport_vault_contract_state: Arc<dyn DecodePassportVaultContractStateUseCase>,
+    read_passport_vault_contract_state: Arc<dyn ReadPassportVaultContractStateUseCase>,
     create_passport_vault_lock: Arc<dyn CreatePassportVaultLockUseCase>,
     deposit_passport_vault_lock: Arc<dyn DepositPassportVaultLockUseCase>,
     claim_passport_vault_lock: Arc<dyn ClaimPassportVaultLockUseCase>,
@@ -585,6 +589,13 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn read_passport_vault_contract_state(
+        &self,
+    ) -> Arc<dyn ReadPassportVaultContractStateUseCase> {
+        Arc::clone(&self.read_passport_vault_contract_state)
+    }
+
+    #[must_use]
     pub fn create_passport_vault_lock(&self) -> Arc<dyn CreatePassportVaultLockUseCase> {
         Arc::clone(&self.create_passport_vault_lock)
     }
@@ -951,6 +962,7 @@ fn compose_headless_standalone_with_checkpoint_options_and_presentation(
     submission_journal: Option<MidnightSubmissionJournalConfig>,
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
+    let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
@@ -965,11 +977,14 @@ fn compose_headless_standalone_with_checkpoint_options_and_presentation(
             Arc::clone(&security),
         ),
     );
-    compose_with_adapters_and_presentation(
-        Arc::new(JsonWalletProfileRepository::at_default_location()),
-        security,
-        midnight,
-        credential_presentation,
+    with_passport_vault_state_source(
+        compose_with_adapters_and_presentation(
+            Arc::new(JsonWalletProfileRepository::at_default_location()),
+            security,
+            midnight,
+            credential_presentation,
+        ),
+        passport_vault_state_source,
     )
 }
 
@@ -1053,6 +1068,7 @@ pub fn compose_headless_live_with_checkpoints(
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> ApplicationServices {
+    let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
@@ -1061,10 +1077,13 @@ pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> Applicat
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
-    compose_with_adapters(
-        Arc::new(JsonWalletProfileRepository::at_default_location()),
-        security,
-        midnight,
+    with_passport_vault_state_source(
+        compose_with_adapters(
+            Arc::new(JsonWalletProfileRepository::at_default_location()),
+            security,
+            midnight,
+        ),
+        passport_vault_state_source,
     )
 }
 
@@ -1075,6 +1094,7 @@ pub fn compose_headless_standalone_with_checkpoints(
     config: MidnightStandaloneConfig,
     checkpoints: MidnightAccountCheckpointConfig,
 ) -> ApplicationServices {
+    let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
@@ -1084,10 +1104,13 @@ pub fn compose_headless_standalone_with_checkpoints(
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
-    compose_with_adapters(
-        Arc::new(JsonWalletProfileRepository::at_default_location()),
-        security,
-        midnight,
+    with_passport_vault_state_source(
+        compose_with_adapters(
+            Arc::new(JsonWalletProfileRepository::at_default_location()),
+            security,
+            midnight,
+        ),
+        passport_vault_state_source,
     )
 }
 
@@ -1098,6 +1121,7 @@ pub fn compose_headless_standalone_with_dust_checkpoints(
     config: MidnightStandaloneConfig,
     dust_checkpoints: MidnightDustCheckpointConfig,
 ) -> ApplicationServices {
+    let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
@@ -1107,10 +1131,13 @@ pub fn compose_headless_standalone_with_dust_checkpoints(
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
-    compose_with_adapters(
-        Arc::new(JsonWalletProfileRepository::at_default_location()),
-        security,
-        midnight,
+    with_passport_vault_state_source(
+        compose_with_adapters(
+            Arc::new(JsonWalletProfileRepository::at_default_location()),
+            security,
+            midnight,
+        ),
+        passport_vault_state_source,
     )
 }
 
@@ -1122,6 +1149,7 @@ pub fn compose_headless_standalone_with_all_checkpoints(
     account_checkpoints: MidnightAccountCheckpointConfig,
     dust_checkpoints: MidnightDustCheckpointConfig,
 ) -> ApplicationServices {
+    let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
@@ -1132,10 +1160,13 @@ pub fn compose_headless_standalone_with_all_checkpoints(
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
-    compose_with_adapters(
-        Arc::new(JsonWalletProfileRepository::at_default_location()),
-        security,
-        midnight,
+    with_passport_vault_state_source(
+        compose_with_adapters(
+            Arc::new(JsonWalletProfileRepository::at_default_location()),
+            security,
+            midnight,
+        ),
+        passport_vault_state_source,
     )
 }
 
@@ -1289,6 +1320,33 @@ fn compose_in_memory_with_presentation(
             credential_presentation,
         },
     )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn node_anchored_passport_vault_state_source(
+    config: &MidnightStandaloneConfig,
+) -> Option<Arc<dyn PassportVaultContractStateSourcePort>> {
+    NodeAnchoredPassportVaultStateSource::new(
+        config.indexer_http_url(),
+        config.node_websocket_url(),
+    )
+    .ok()
+    .map(|source| Arc::new(source) as Arc<dyn PassportVaultContractStateSourcePort>)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn with_passport_vault_state_source(
+    mut services: ApplicationServices,
+    source: Option<Arc<dyn PassportVaultContractStateSourcePort>>,
+) -> ApplicationServices {
+    if let Some(source) = source {
+        services.read_passport_vault_contract_state =
+            Arc::new(PassportVaultContractStateService::with_source(
+                Arc::new(NativePassportVaultContractStateDecoder),
+                source,
+            ));
+    }
+    services
 }
 
 fn compose_with_adapters<R, S, M>(
@@ -1653,6 +1711,8 @@ where
         credential_presentation;
     let list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase> = passport_vault.clone();
     let decode_passport_vault_contract_state: Arc<dyn DecodePassportVaultContractStateUseCase> =
+        passport_vault_contract_state.clone();
+    let read_passport_vault_contract_state: Arc<dyn ReadPassportVaultContractStateUseCase> =
         passport_vault_contract_state;
     let create_passport_vault_lock: Arc<dyn CreatePassportVaultLockUseCase> =
         passport_vault.clone();
@@ -1726,6 +1786,7 @@ where
         list_credential_presentations,
         list_passport_vault_locks,
         decode_passport_vault_contract_state,
+        read_passport_vault_contract_state,
         create_passport_vault_lock,
         deposit_passport_vault_lock,
         claim_passport_vault_lock,

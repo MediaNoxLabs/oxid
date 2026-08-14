@@ -23,8 +23,10 @@ use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::{
     CLAIM_INTENT, CREATE_LOCK_INTENT, ClaimPassportVaultLockCommand,
     CreatePassportVaultLockCommand, DEPOSIT_INTENT, DecodePassportVaultContractStateCommand,
-    PassportVaultAmountCommand, PassportVaultContractStateError, PassportVaultLockView,
-    PassportVaultOperationError, PassportVaultView, WITHDRAW_INTENT,
+    PassportVaultAmountCommand, PassportVaultContractStateError,
+    PassportVaultContractStateReadError, PassportVaultContractStateSourceError,
+    PassportVaultLockView, PassportVaultOperationError, PassportVaultView,
+    ReadPassportVaultContractStateCommand, WITHDRAW_INTENT,
 };
 use oxid_passport_vault_domain::PassportVaultError;
 use oxid_presentation_application::{
@@ -206,6 +208,7 @@ impl HeadlessWallet {
             "wallet.shielded.sync.cancel" => self.cancel_shielded_sync(request),
             "vault.total_locked" | "vault.locks.list" => self.list_vault_locks(request),
             "vault.contract_state.decode" => self.decode_vault_contract_state(request),
+            "vault.contract_state.read" => self.read_vault_contract_state(request),
             "vault.lock.create" => self.create_vault_lock(request),
             "vault.deposit" => self.deposit_to_vault_lock(request),
             "vault.claim" => self.claim_from_vault_lock(request),
@@ -340,6 +343,44 @@ impl HeadlessWallet {
             )),
             Err(error) => {
                 Dispatch::continue_with(passport_vault_contract_state_error(request.id, error))
+            }
+        }
+    }
+
+    fn read_vault_contract_state(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<ReadVaultContractStateParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "vault.contract_state.read requires only contractAddressHex",
+                ));
+            }
+        };
+        let Some(contract_address) = decode_hex_bounded(&params.contract_address_hex, 32)
+            .filter(|address| address.len() == 32)
+        else {
+            return Dispatch::continue_with(Response::error(
+                request.id,
+                "invalid_params",
+                "contractAddressHex must be exactly 32 bytes of hexadecimal",
+            ));
+        };
+        let result = futures::executor::block_on(
+            self.application
+                .read_passport_vault_contract_state()
+                .execute(ReadPassportVaultContractStateCommand {
+                    contract_address_hex: encode_hex(&contract_address),
+                }),
+        );
+        match result {
+            Ok(vault) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "vault": passport_vault_value(&vault) }),
+            )),
+            Err(error) => {
+                Dispatch::continue_with(passport_vault_contract_state_read_error(request.id, error))
             }
         }
     }
@@ -2428,6 +2469,12 @@ struct DecodeVaultContractStateParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReadVaultContractStateParams {
+    contract_address_hex: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct VaultAmountParams {
     lock_id: u64,
     amount: String,
@@ -4223,6 +4270,15 @@ fn passport_vault_lock_value(lock: &PassportVaultLockView) -> Value {
 fn passport_vault_value(vault: &PassportVaultView) -> Value {
     json!({
         "source": vault.source,
+        "chainAnchor": vault.chain_anchor.as_ref().map(|anchor| json!({
+            "contractAddressHex": anchor.contract_address_hex,
+            "transactionHashHex": anchor.transaction_hash_hex,
+            "actionBlockHashHex": anchor.action_block_hash_hex,
+            "actionBlockHeight": anchor.action_block_height,
+            "finalizedHeadHashHex": anchor.finalized_head_hash_hex,
+            "finalizedHeadHeight": anchor.finalized_head_height,
+            "stateAuthentication": anchor.state_authentication,
+        })),
         "contract": vault.contract.as_ref().map(|contract| json!({
             "version": contract.version,
             "trustedIssuerDidContractHex": contract.trusted_issuer_did_contract_hex,
@@ -4240,6 +4296,31 @@ fn passport_vault_value(vault: &PassportVaultView) -> Value {
         "claimCount": vault.claim_count,
         "locks": vault.locks.iter().map(passport_vault_lock_value).collect::<Vec<_>>(),
     })
+}
+
+fn passport_vault_contract_state_read_error(
+    id: Option<String>,
+    error: PassportVaultContractStateReadError,
+) -> Response {
+    match error {
+        PassportVaultContractStateReadError::Decode(error) => {
+            passport_vault_contract_state_error(id, error)
+        }
+        PassportVaultContractStateReadError::Source(error) => {
+            let code = match error {
+                PassportVaultContractStateSourceError::InvalidAddress => "invalid_argument",
+                PassportVaultContractStateSourceError::NotFound => "not_found",
+                PassportVaultContractStateSourceError::Unavailable
+                | PassportVaultContractStateSourceError::InvalidConfiguration => {
+                    "capability_unavailable"
+                }
+                PassportVaultContractStateSourceError::InvalidResponse
+                | PassportVaultContractStateSourceError::CapacityExceeded
+                | PassportVaultContractStateSourceError::FinalityMismatch => "invalid_chain_state",
+            };
+            Response::error(id, code, error.to_string())
+        }
+    }
 }
 
 fn passport_vault_contract_state_error(
@@ -4348,6 +4429,7 @@ fn capability_manifest(compact_presentation_proof_available: bool) -> Value {
         { "method": "vault.total_locked", "status": "ready", "mode": "standalone", "state": "process_local" },
         { "method": "vault.locks.list", "status": "ready", "mode": "standalone", "state": "process_local" },
         { "method": "vault.contract_state.decode", "status": "ready", "mode": "native", "source": "pinned_layout_tagged_midnight_state", "mutates": false },
+        { "method": "vault.contract_state.read", "status": "composition_dependent", "mode": "native", "source": "node_anchored_indexer", "finality": "reported_action_block_hash_canonical", "stateAuthentication": "indexer_supplied_not_proven", "mutates": false },
         { "method": "vault.credentials.list", "status": "ready", "mode": "standalone", "aliasFor": "credential.list" },
         { "method": "vault.lock.create", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": CREATE_LOCK_INTENT },
         { "method": "vault.deposit", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": DEPOSIT_INTENT },
@@ -4530,6 +4612,13 @@ mod tests {
                 && capability["mode"] == "native"
                 && capability["mutates"] == false
         }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "vault.contract_state.read"
+                && capability["status"] == "composition_dependent"
+                && capability["source"] == "node_anchored_indexer"
+                && capability["stateAuthentication"] == "indexer_supplied_not_proven"
+                && capability["mutates"] == false
+        }));
     }
 
     #[test]
@@ -4549,6 +4638,7 @@ mod tests {
         assert_eq!(responses[0]["ok"], true);
         let vault = &responses[0]["result"]["vault"];
         assert_eq!(vault["source"], "pinned_contract_layout");
+        assert_eq!(vault["chainAnchor"], Value::Null);
         assert_eq!(vault["contract"]["version"], 1);
         assert_eq!(
             vault["contract"]["trustedIssuerDidContractHex"],
@@ -4564,6 +4654,58 @@ mod tests {
         );
         assert_eq!(malformed[0]["ok"], false);
         assert_eq!(malformed[0]["error"]["code"], "invalid_contract_state");
+    }
+
+    #[test]
+    fn contract_state_read_is_address_scoped_and_fails_closed_without_live_routes() {
+        let invalid = execute(
+            r#"{"protocol":"oxid.headless.v1","id":"bad-address","method":"vault.contract_state.read","params":{"contractAddressHex":"00"}}"#,
+        );
+        assert_eq!(invalid[0]["ok"], false);
+        assert_eq!(invalid[0]["error"]["code"], "invalid_params");
+
+        let unavailable = execute(
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "no-live-source",
+                "method": "vault.contract_state.read",
+                "params": { "contractAddressHex": "11".repeat(32) },
+            })
+            .to_string(),
+        );
+        assert_eq!(unavailable[0]["ok"], false);
+        assert_eq!(unavailable[0]["error"]["code"], "capability_unavailable");
+    }
+
+    #[test]
+    fn contract_state_projection_discloses_the_unproven_indexer_boundary() {
+        let view = PassportVaultView {
+            source: "node_anchored_indexer".to_owned(),
+            chain_anchor: Some(
+                oxid_passport_vault_application::PassportVaultChainAnchorView {
+                    contract_address_hex: "11".repeat(32),
+                    transaction_hash_hex: "22".repeat(32),
+                    action_block_hash_hex: "33".repeat(32),
+                    action_block_height: 40,
+                    finalized_head_hash_hex: "44".repeat(32),
+                    finalized_head_height: 42,
+                    state_authentication: "indexer_supplied_not_proven".to_owned(),
+                },
+            ),
+            contract: None,
+            locks: Vec::new(),
+            total_deposited: "0".to_owned(),
+            total_released: "0".to_owned(),
+            total_locked: "0".to_owned(),
+            claim_count: 0,
+        };
+        let value = passport_vault_value(&view);
+        assert_eq!(
+            value["chainAnchor"]["stateAuthentication"],
+            "indexer_supplied_not_proven"
+        );
+        assert_eq!(value["chainAnchor"]["actionBlockHeight"], 40);
+        assert_eq!(value["chainAnchor"]["finalizedHeadHeight"], 42);
     }
 
     #[test]
