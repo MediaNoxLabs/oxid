@@ -86,6 +86,8 @@ ADR status and delivery state answer different questions:
 | [0062](0062-fund-passport-vault-calls-inside-protected-midnight-custody.md) Fund Passport Vault calls inside protected Midnight custody | Accepted | §§3–8, 12–13, 16–18, 21, prototype wallet funding flow, and issue #31 | Exact authorization triggers protected synchronized NIGHT input selection, change, per-input signing, and zeroizing retention for native create/deposit; claim, DUST completion, proving, submission, and reconciliation remain pending |
 | [0063](0063-settle-passport-vault-calls-through-the-midnight-submission-lifecycle.md) Settle Passport Vault calls through the Midnight submission lifecycle | Accepted | §§3–8, 12–13, 16–18, 21, prototype proving/submission flow, and issue #31 | Native create/deposit/withdraw reuse protected DUST proving, persist-before-broadcast, finalized submission, cancellation, and restart reconciliation; protected claim remains pending |
 | [0064](0064-build-passport-vault-claims-from-managed-holder-custody.md) Build Passport Vault claims from managed holder custody | Accepted | §§3–7, 9–13, 16–18, 21, prototype claim composer, and issue #31 | Exact credential/trust/policy checks plus managed holder reauthorization and independently verified fresh-custody proof now produce a zeroizing claim DTO; generated composition and settlement remain pending |
+| [0065](0065-compose-protected-vault-claims-only-after-call-authorization.md) Compose protected vault claims only after call authorization | Accepted | §§3–7, 9–13, 16–18, 21, prototype claim composer, and issue #31 | Exact authorization now gates managed presentation assembly, fixed generated `claimFromLock` composition, funding, and shared settlement; discovery gate delivered by ADR-0066 |
+| [0066](0066-enable-native-vault-claim-discovery-after-managed-conformance.md) Enable native vault claim discovery after managed conformance | Accepted | §§3–7, 9–13, 16–18, 21, standalone issuance/custody/composer flow, and issue #31 | Full managed-DID and holder-bound credential conformance reaches terminal native submission through the packaged composer; `native_settlement` now advertises all four wallet operations |
 
 ## Current boundaries
 
@@ -244,4 +246,9 @@ one-request generated `claimFromLock` composition, funding, and the shared
 settlement lifecycle. Concurrent authorization and stale/invalid plans fail
 closed, failures retain no presentation, and public claim discovery remains
 off until a complete managed-custody generated-client settlement conformance
-test passes.
+test passes. ADR-0066 supplies that evidence using the actual standalone
+OpenID4VCI issuer, managed Jubjub DID custody, protected credential repository,
+authenticated claim-ready ledger state, packaged generated client, Midnight
+funding, and terminal completion port. Native settlement discovery therefore
+advertises `claim_from_lock`; deterministic completion remains explicitly test
+only, while real-node and mobile live-call fixtures stay on the backlog.

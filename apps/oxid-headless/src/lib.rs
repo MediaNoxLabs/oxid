@@ -5004,7 +5004,10 @@ fn capability_manifest(
     } else {
         "composition_dependent"
     };
-    let passport_vault_call_operations = if passport_vault_call_mode == "deterministic_simulation" {
+    let passport_vault_call_operations = if matches!(
+        passport_vault_call_mode,
+        "deterministic_simulation" | "native_settlement"
+    ) {
         vec![
             "create_lock",
             "deposit_to_lock",
@@ -5308,7 +5311,7 @@ mod tests {
     }
 
     #[test]
-    fn native_settlement_manifest_excludes_unimplemented_claim_and_reports_recovery() {
+    fn native_settlement_manifest_includes_conformant_claim_and_reports_recovery() {
         let methods = capability_manifest(false, "native_settlement");
         let methods = methods.as_array().expect("capability array");
         let prepare = methods
@@ -5318,7 +5321,12 @@ mod tests {
         assert_eq!(prepare["status"], "ready");
         assert_eq!(
             prepare["operations"],
-            json!(["create_lock", "deposit_to_lock", "withdraw_from_lock"])
+            json!([
+                "create_lock",
+                "deposit_to_lock",
+                "claim_from_lock",
+                "withdraw_from_lock"
+            ])
         );
         let history = methods
             .iter()

@@ -30,5 +30,14 @@ oxid-passport-vault-application.workspace = true
 oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
 
+[dev-dependencies]
+futures.workspace = true
+midnight-base-crypto.workspace = true
+midnight-ledger.workspace = true
+midnight-onchain-runtime.workspace = true
+midnight-serialize.workspace = true
+midnight-storage.workspace = true
+midnight-zswap.workspace = true
+
 [lints]
 workspace = true

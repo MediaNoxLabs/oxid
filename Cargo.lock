@@ -5678,7 +5678,14 @@ dependencies = [
 name = "oxid-composition"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "hex",
+ "midnight-base-crypto",
+ "midnight-ledger",
+ "midnight-onchain-runtime",
+ "midnight-serialize",
+ "midnight-storage",
+ "midnight-zswap",
  "oxid-adapter-did-midnight",
  "oxid-adapter-midnight",
  "oxid-adapter-openid4vci",

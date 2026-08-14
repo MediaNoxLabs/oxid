@@ -94,7 +94,7 @@ adapter custody. ADR-0063 routes native create/deposit/withdraw through the
 existing protected DUST, proving, persist-before-broadcast, finalized node
 submission, cancellation, and reconciliation machinery. Complete standalone
 composition now reports `native_settlement` and `settlesOnMidnight: true` for
-those three operations.
+the public create/deposit/withdraw operations.
 ADR-0064 permits only `vc-midnight` to assemble the sensitive Digital Passport
 claim material. Re-verify the stored credential/proof/private commitments,
 match the issuer DID/method and `persistentHash<JubjubPoint>` against the
@@ -114,9 +114,14 @@ claim authorization challenge to the complete public planning fingerprint.
 Authorize may then assemble the managed presentation, send the fixed zeroizing
 DTO to the one-request generated `claimFromLock` composer, and use ADR-0063's
 funding/settlement path. Failures must discard presentation material and reset
-the in-progress marker; concurrency and expiry fail closed. Keep public claim
-discovery absent until a complete managed-custody generated-client settlement
-conformance run succeeds.
+the in-progress marker; concurrency and expiry fail closed.
+ADR-0066 supplies the discovery gate with a composition-level flow using the
+real standalone OpenID4VCI issuer, a holder-bound credential, current managed
+Jubjub DID custody, byte-exact contract trust, the packaged generated composer,
+Midnight funding, and terminal completion. `native_settlement` may now
+advertise all four wallet operations. The deterministic terminal completer is
+test evidence only; do not relabel it as a real-node broadcast. Keep real-node
+fixtures and mobile live-call UX explicit backlog items.
 The finalized node's timestamp extrinsic is milliseconds and is normalized to
 seconds by canonical history collection; the indexer GraphQL `block.timestamp`
 is already Unix seconds and must not be divided again.
@@ -766,7 +771,7 @@ Current package ownership:
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
-| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, zeroizing native create/deposit/withdraw settlement, and authorization-bound protected `claimFromLock` composition through the same funding/submission boundary; public claim discovery awaits full managed-custody conformance. |
+| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing authorization-bound settlement for create/deposit/claim/withdraw; managed-custody claim conformance is exercised through composition. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
@@ -1342,10 +1347,11 @@ to silence the shell probe.
   public journal schema is version 2 with optional finalized block height and
   backward-compatible version-1 reads. Vault records use a domain-separated
   profile key plus `vault-` draft prefix so they never appear in transfer
-  history. `native_settlement` may report `settlesOnMidnight: true`; native
-  claim discovery must stay absent until ADR-0065's managed-custody generated
-  composition and complete settlement path pass end-to-end conformance. Never
-  reintroduce the prototype's public-derived holder scalar or fixed nonce 17.
+  history. `native_settlement` may report `settlesOnMidnight: true` and, after
+  ADR-0066's managed-custody packaged-client conformance, advertise all four
+  wallet operations. Never reintroduce the prototype's public-derived holder
+  scalar or fixed nonce 17, and never describe deterministic test completion
+  as live node inclusion.
   Configure `OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH` for restart-safe public
   status; never persist transactions, proofs, signatures, witnesses, or keys.
 - The Midnight checkpoint file contains public replay state only and supports

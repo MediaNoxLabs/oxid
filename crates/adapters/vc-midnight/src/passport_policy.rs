@@ -4,11 +4,14 @@
 //! verifier adapters. This module owns schema interpretation; vault state and
 //! money movement remain outside the reusable credential adapter.
 
-use midnight_transient_crypto::curve::EmbeddedGroupAffine;
+use midnight_base_crypto::fab::AlignedValue;
+use midnight_transient_crypto::{curve::EmbeddedGroupAffine, fab::ValueReprAlignedValue};
 use oxid_credential_domain::VerificationOutcome;
 
 use crate::{
-    compact_digital_passport::{credential_body_root, inspect, parse_credential, parse_proof},
+    compact_digital_passport::{
+        credential_body_root, inspect, parse_credential, parse_proof, persistent_hash,
+    },
     digital_passport::validated_private_parts,
     standalone_compact_credential, standalone_compact_proof,
 };
@@ -18,12 +21,23 @@ pub struct DigitalPassportIssuerTrustAnchor {
     issuer_did: String,
     method_id: [u8; 32],
     public_key: [u8; 64],
+    public_key_hash: [u8; 32],
 }
 
 impl DigitalPassportIssuerTrustAnchor {
     #[must_use]
     pub fn issuer_did(&self) -> &str {
         &self.issuer_did
+    }
+
+    #[must_use]
+    pub const fn method_id(&self) -> [u8; 32] {
+        self.method_id
+    }
+
+    #[must_use]
+    pub const fn public_key_hash(&self) -> [u8; 32] {
+        self.public_key_hash
     }
 }
 
@@ -67,6 +81,9 @@ pub fn standalone_digital_passport_issuer_trust_anchor() -> DigitalPassportIssue
         method_id: credential.issuer.method_id,
         public_key: point_bytes(proof.public_key)
             .expect("checked-in standalone issuer key must be affine"),
+        public_key_hash: persistent_hash(&ValueReprAlignedValue(AlignedValue::from(
+            proof.public_key,
+        ))),
     }
 }
 
@@ -166,11 +183,14 @@ mod tests {
 
     #[test]
     fn validates_the_exact_fixture_against_the_pinned_issuer_and_private_claims() {
+        let anchor = standalone_digital_passport_issuer_trust_anchor();
+        assert_ne!(anchor.method_id(), [0; 32]);
+        assert_ne!(anchor.public_key_hash(), [0; 32]);
         let evidence = verify_digital_passport_policy(
             &standalone_compact_credential(),
             &standalone_compact_proof(),
             &standalone_private_material(),
-            &standalone_digital_passport_issuer_trust_anchor(),
+            &anchor,
             &request(),
         )
         .expect("policy");
