@@ -1,9 +1,12 @@
 # The workflow badge returns 404 until the CI workflow exists on `develop`.
 # Keep checking its destination link while allowing the generated badge image.
-# Apple Developer documentation returns 503 to automated GitHub-hosted clients;
-# retain the reviewed references while excluding only those exact upstream URLs.
+# Apple and Android Developer documentation reject automated GitHub-hosted
+# clients; retain the reviewed references while excluding only those exact
+# upstream URLs.
 exclude = [
   'https://github\.com/MediaNoxLabs/oxid/actions/workflows/ci\.yml/badge\.svg.*',
   'https://developer\.apple\.com/documentation/security/protecting-keys-with-the-secure-enclave$',
   'https://developer\.apple\.com/documentation/security/restricting-keychain-item-accessibility$',
+  'https://developer\.android\.com/privacy-and-security/keystore$',
+  'https://developer\.android\.com/reference/android/content/Context#getNoBackupFilesDir\(\)$',
 ]
