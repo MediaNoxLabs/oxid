@@ -74,9 +74,13 @@ into zero-configuration headless/development composition with a distinct
 `settlesOnMidnight: false`. Its included outcomes are process-local simulation,
 not Midnight settlement. ADR-0058 authenticates the generated client/ABI and
 exposes the four wallet proof circuits through a native resolver while excluding
-the administrative circuit. Explicit live and production composition still
-fail closed without the bounded composer, combined contract/DUST provider,
-NIGHT funding, submission, and reconciliation adapter.
+the administrative circuit. ADR-0059 packages a bounded one-request generated-
+Compact composer for typed create/deposit/withdraw operations and proves its
+output matches the pinned Rust ledger codec. It rejects claims and
+administration and is not yet connected to the retained application port.
+Explicit live and production composition still fail closed without protected
+claim composition, combined contract/DUST completion, NIGHT funding,
+submission, and reconciliation.
 An authenticated replay cache and optional durable standalone state also remain
 issue #31. Live protocol transport and production/mobile presentation proving
 remain deferred.
@@ -533,8 +537,10 @@ an absolute canonical non-symlink root, streams exact size/SHA-256 checks, and
 implements Midnight resolver/parameter traits for `createLock`,
 `depositToLock`, `claimFromLock`, and `withdrawFromLock`. Never add
 `setTrustedIssuer` or degree 13 to this wallet resolver. The generated module
-may cross only as authenticated adapter-owned bytes to a bounded headless
-composer; its filesystem route and raw circuit arguments are not incoming APIs.
+is loaded by ADR-0059's composer only from its Nix-fixed artifact closure; the
+wrapper clears Node loader overrides and accepts no artifact route or raw
+circuit argument surface. Its serialized transaction output remains adapter-
+owned and must never enter headless/mobile views.
 
 The staged component inventory and destination map live in
 `docs/migration/midnight-ledger-prototype.md`. Presentation-specific provenance
@@ -669,8 +675,11 @@ commands never carry private credential data, witnesses, signatures, proofs,
 or serialized transactions, and composition remains unavailable until the
 native call adapter is installed. ADR-0058 supplies the runtime-authenticated
 generated client plus a four-circuit native proof resolver. It does not supply
-composition, NIGHT funding, the combined contract/DUST provider, submission,
-or reconciliation, so live capability labels remain unchanged.
+NIGHT funding, the combined contract/DUST provider, submission, or
+reconciliation. ADR-0059 supplies a separate closed-schema composition oracle
+for create/deposit/withdraw, but it is not connected to this port and rejects
+claim until protected custody exists, so live capability labels remain
+unchanged.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -703,13 +712,15 @@ Current package ownership:
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
-| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, and exact four-circuit generated-client/proof artifact resolver; transaction composition/submission remains closed. |
+| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, and generated-composer/Rust-codec conformance; live port completion/submission remains closed. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
 | `contracts/presentation` | Oxid-owned final Compact presentation compositions; generated artifacts remain Nix-store outputs and never enter Git. |
 | `contracts/passport-vault` | Byte-identical Apache-2.0 Passport Vault Compact source distributed for secret-free public builds; its pinned private-upstream provenance and digest are ADR-0053 review boundaries. |
 | `nix/packages/passport-vault-compact-artifacts.nix` | Immutable Passport Vault client/IR/key/parameter closure from the hash-checked distributed contract plus pinned VC and Compact toolchain revisions. |
+| `nix/packages/passport-vault-call-composer.nix` | One-request Node 24 outgoing adapter package with locked Midnight compatibility dependencies, Nix-fixed authenticated artifacts, closed typed operations, and real generated-client install checks. |
+| `tools/passport-vault-composer` | Internal generated-Compact composition implementation; never an incoming headless/mobile API and never a credential/private-witness bridge. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, and public receive-QR rendering. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
@@ -1233,6 +1244,11 @@ to silence the shell probe.
   degrees 10/11/17. `setTrustedIssuer` and degree 13 are administrative or DUST
   concerns and must not resolve through it. Exact IR digest plus encoded degree
   is the startup gate; expand the large claim model only during proof checking.
+- The ADR-0059 composer is one-request and internal. Keep its artifact closure
+  fixed by Nix, clear `NODE_OPTIONS`/`NODE_PATH`, retain exact object schemas and
+  canonical bounds, and never add claim material, private state, arbitrary
+  circuit names/arguments, or administration. Its unproven transaction output
+  is adapter-owned and cannot appear in headless/mobile output or logs.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

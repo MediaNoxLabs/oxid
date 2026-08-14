@@ -8,7 +8,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/dioxus-wallet/web/src/entry.ts` and `mobile-bench/wallet-core/src/wallet.rs`
 - Contract source: `midnight-identity-solution-examples` commit `e4a92a6be2cc6dc34f68261f10c19c9312043807`, distributed byte-identically at `contracts/passport-vault/passport-vault.compact`
 - Related: ADR-0013, ADR-0015, ADR-0017, ADR-0027, ADR-0028, ADR-0048 through ADR-0057, and issue #31
-- Implementation state: exact generated-client/ABI authentication and a native four-circuit key/IR/parameter resolver are implemented; call composition, combined DUST proving, funding, submission, and reconciliation remain pending
+- Implementation state: exact generated-client/ABI authentication and a native four-circuit key/IR/parameter resolver are implemented; ADR-0059 adds bounded public-operation composition while protected claim composition, combined DUST proving, funding, submission, and reconciliation remain pending
 
 ## Context
 
@@ -54,8 +54,8 @@ claim. Unknown identifiers and `setTrustedIssuer` resolve to no key, and degree
 13 is unavailable through this product resolver. DUST continues to use its
 separate official resolver until a reviewed combined provider is composed.
 
-A future bounded headless generated-Compact composer may receive the
-authenticated module bytes as adapter-owned data. It may not receive an
+ADR-0059's bounded generated-Compact composer may load the unchanged generated
+module only from the Nix-fixed authenticated closure. It may not accept an
 ambient artifact route, expose arbitrary circuit identifiers or arguments, or
 move credential/opening/key/nonce material into the incoming protocol. Claim
 composition must reload the opaque protected credential, use current managed

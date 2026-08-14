@@ -6,6 +6,8 @@
 mod authenticated_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod compact_artifacts;
+#[cfg(all(not(target_arch = "wasm32"), test))]
+mod compact_composer_conformance;
 #[cfg(not(target_arch = "wasm32"))]
 mod contract_state;
 #[cfg(not(target_arch = "wasm32"))]

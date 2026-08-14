@@ -18,6 +18,10 @@
         midnightVcSource = inputs.midnight-verifiable-credentials;
         passportVaultSource = ../../contracts/passport-vault;
       };
+      passportVaultCallComposer = pkgs.callPackage ./passport-vault-call-composer.nix {
+        inherit passportVaultCompactArtifacts;
+        vaultContractStateFixture = ../../fixtures/passport-vault/contract-state-v1.hex;
+      };
       linuxBuildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         pkgs.glib
         pkgs.gtk3
@@ -48,6 +52,7 @@
           ];
           cargoTestFlags = [ "--workspace" ];
           OXID_PASSPORT_VAULT_ARTIFACTS_DIR = passportVaultCompactArtifacts;
+          OXID_PASSPORT_VAULT_COMPOSER = "${passportVaultCallComposer}/bin/oxid-passport-vault-call-composer";
 
           nativeBuildInputs = [ pkgs.pkg-config ] ++ linuxNativeBuildInputs;
           buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;
@@ -98,6 +103,8 @@
 
         passport-vault-compact-artifacts = passportVaultCompactArtifacts;
 
+        passport-vault-call-composer = passportVaultCallComposer;
+
         dioxus-cli = pkgs.dioxus-cli;
       }
       // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
@@ -108,6 +115,7 @@
       checks.headless = self'.packages.headless;
       checks.presentation-compact-artifacts = presentationCompactArtifacts;
       checks.passport-vault-compact-artifacts = passportVaultCompactArtifacts;
+      checks.passport-vault-call-composer = passportVaultCallComposer;
       formatter = pkgs.nixfmt;
     };
 }

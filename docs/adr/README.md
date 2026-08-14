@@ -80,6 +80,7 @@ ADR status and delivery state answer different questions:
 | [0056](0056-stage-passport-vault-contract-calls.md) Stage Passport Vault contract calls before proof and submission | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault bridge, and issue #31 | Typed four-operation retained lifecycle, canonical-replay gate, fail-closed composition, and headless protocol implemented; native composer/prover/submission adapter pending |
 | [0057](0057-exercise-passport-vault-calls-in-explicit-simulation.md) Exercise Passport Vault calls in explicit deterministic simulation | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault bridge, and issue #31 | Zero-configuration headless/development composition executes all four retained calls with a distinct simulation-authentication class and explicit non-settlement labels; native adapter pending |
 | [0058](0058-authenticate-passport-vault-call-artifacts.md) Authenticate Passport Vault call artifacts at runtime | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault composer/prover, and issue #31 | Generated client/ABI plus four wallet circuits are authenticated at runtime and exposed through a native resolver; composition, combined DUST proving, funding, and submission remain pending |
+| [0059](0059-isolate-passport-vault-compact-call-composition.md) Isolate Passport Vault generated-Compact call composition | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault composer, and issue #31 | Reproducible closed-schema generated-client composer plus Rust ledger-codec conformance implemented for create/deposit/withdraw; claim custody, port wiring, funding, proving, and submission remain pending |
 
 ## Current boundaries
 
@@ -196,4 +197,7 @@ until a native Compact composer, combined prover, funding, submission, and
 durable public-journal adapter is composed. ADR-0058 authenticates the exact
 generated client and exposes only the four wallet circuits through native
 Midnight resolver traits; it deliberately excludes the administrative circuit
-and does not change those live capability labels.
+and does not change those live capability labels. ADR-0059 adds a separately
+packaged one-request generated-client composer for typed create/deposit/withdraw
+operations. It is not an incoming API, rejects claim and administration, and
+does not change those labels before completion/submission is wired.

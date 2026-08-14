@@ -346,9 +346,12 @@ Discover it through `system.capabilities`: the mode is always
 
 Explicit live composition instead requires canonical replay state and remains
 `native_pending`. The Nix closure's generated client, exact ABI, four wallet
-circuit keys/IR, and degree-10/11/17 parameters are authenticated at runtime;
-the bounded generated-Compact composer, combined contract/DUST prover, NIGHT
-funding, and node submission are not yet composed. Authorization and
+circuit keys/IR, and degree-10/11/17 parameters are authenticated at runtime.
+The separate Nix composer now executes typed `createLock`, `depositToLock`, and
+`withdrawFromLock` calls and its output round-trips through the pinned Rust
+ledger codec. It rejects claim and administration and is not yet wired into the
+retained live port; protected claim composition, the combined contract/DUST
+prover, NIGHT funding, and node submission are not yet composed. Authorization and
 proving/submission use two separate exact intents in both modes. Incoming JSON
 never accepts private credential material, witnesses, signatures, proofs, or
 serialized transactions.
