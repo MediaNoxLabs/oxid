@@ -46,8 +46,9 @@ pub use live_state::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use native_call::{
-    NativePassportVaultContractCall, PassportVaultCallComposerConfigError,
+    FundedPassportVaultCall, NativePassportVaultContractCall, PassportVaultCallComposerConfigError,
     PassportVaultCallCompositionContext, PassportVaultCallCompositionContextSource,
+    PassportVaultCallFundingPort, PassportVaultCallFundingRequest,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use replay::{

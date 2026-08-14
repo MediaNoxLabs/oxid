@@ -344,18 +344,22 @@ Discover it through `system.capabilities`: the mode is always
 `deterministic_simulation`, and `settlesOnMidnight` is `false`. Simulated
 `included` responses are process-local harness outcomes, not Midnight blocks.
 
-Explicit live composition instead requires canonical replay state and remains
-`native_pending`. The Nix closure's generated client, exact ABI, four wallet
+Explicit live composition requires canonical replay state. It remains
+`native_pending` until the complete standalone routes, deployment height, and
+packaged composer are configured. The Nix closure's generated client, exact ABI, four wallet
 circuit keys/IR, and degree-10/11/17 parameters are authenticated at runtime.
 The separate Nix composer now executes typed `createLock`, `depositToLock`, and
 `withdrawFromLock` calls and its output round-trips through the pinned Rust
 ledger codec. The native retained adapter now accepts only canonical-replay
 state plus fresh bounded public Midnight context, requires real serialized
 Zswap/ledger-parameter snapshots, and keeps the unproven transaction in a
-zeroizing private buffer through prepare/authorize. It rejects claim and
-administration. The composition root is not yet supplied with that live
-context, and submit remains unavailable; protected claim composition, the
-combined contract/DUST prover, NIGHT funding, durable journaling, node
+zeroizing private buffer through prepare. Exact authorization then derives the
+generated call's native NIGHT deficit, selects synchronized unshielded inputs,
+returns change, and signs once per input inside protected Midnight custody.
+Withdraw must require no NIGHT funding. This complete retained-only capability
+reports `native_funded_draft`; it rejects claim and administration, keeps
+`settlesOnMidnight` false, and leaves submit unavailable. Protected claim
+composition, combined DUST completion/proving, durable journaling, node
 submission, and reconciliation are not yet composed. Authorization and
 proving/submission use two separate exact intents in both modes. Incoming JSON
 never accepts private credential material, witnesses, signatures, proofs, or

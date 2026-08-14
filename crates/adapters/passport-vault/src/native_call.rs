@@ -118,6 +118,116 @@ pub trait PassportVaultCallCompositionContextSource: Send + Sync {
     ) -> Result<PassportVaultCallCompositionContext, PassportVaultCallPortError>;
 }
 
+/// Sensitive generated transaction passed only to a composition-local funding
+/// adapter after the user authorizes the exact Passport Vault operation.
+pub struct PassportVaultCallFundingRequest {
+    profile_id: String,
+    network_id: String,
+    expires_at_seconds: u64,
+    requires_night_funding: bool,
+    transaction: Zeroizing<Vec<u8>>,
+}
+
+impl fmt::Debug for PassportVaultCallFundingRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PassportVaultCallFundingRequest")
+            .field("profile_id", &self.profile_id)
+            .field("network_id", &self.network_id)
+            .field("expires_at_seconds", &self.expires_at_seconds)
+            .field("requires_night_funding", &self.requires_night_funding)
+            .field("transaction_bytes", &self.transaction.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PassportVaultCallFundingRequest {
+    #[must_use]
+    pub fn into_parts(self) -> (String, String, u64, bool, Zeroizing<Vec<u8>>) {
+        (
+            self.profile_id,
+            self.network_id,
+            self.expires_at_seconds,
+            self.requires_night_funding,
+            self.transaction,
+        )
+    }
+}
+
+/// Funded transaction returned directly to retained adapter custody.
+pub struct FundedPassportVaultCall {
+    transaction: Zeroizing<Vec<u8>>,
+    funded_night_atomic_units: u128,
+    funding_input_count: u16,
+}
+
+impl fmt::Debug for FundedPassportVaultCall {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FundedPassportVaultCall")
+            .field("transaction_bytes", &self.transaction.len())
+            .field("funded_night_atomic_units", &self.funded_night_atomic_units)
+            .field("funding_input_count", &self.funding_input_count)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FundedPassportVaultCall {
+    #[must_use]
+    pub fn new(
+        transaction: Zeroizing<Vec<u8>>,
+        funded_night_atomic_units: u128,
+        funding_input_count: u16,
+    ) -> Self {
+        Self {
+            transaction,
+            funded_night_atomic_units,
+            funding_input_count,
+        }
+    }
+
+    #[must_use]
+    pub fn into_transaction(self) -> Zeroizing<Vec<u8>> {
+        self.transaction
+    }
+}
+
+/// Composition-only protected funding boundary. Implementations must never
+/// project the serialized transaction through an incoming/application view.
+pub trait PassportVaultCallFundingPort: Send + Sync {
+    fn fund(
+        &self,
+        request: PassportVaultCallFundingRequest,
+    ) -> Result<FundedPassportVaultCall, PassportVaultCallPortError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct UnavailablePassportVaultCallFunding;
+
+impl PassportVaultCallFundingPort for UnavailablePassportVaultCallFunding {
+    fn fund(
+        &self,
+        _: PassportVaultCallFundingRequest,
+    ) -> Result<FundedPassportVaultCall, PassportVaultCallPortError> {
+        Err(PassportVaultCallPortError::Unavailable)
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+struct PassthroughTestFunding;
+
+#[cfg(test)]
+impl PassportVaultCallFundingPort for PassthroughTestFunding {
+    fn fund(
+        &self,
+        request: PassportVaultCallFundingRequest,
+    ) -> Result<FundedPassportVaultCall, PassportVaultCallPortError> {
+        let (_, _, _, _, transaction) = request.into_parts();
+        Ok(FundedPassportVaultCall::new(transaction, 0, 0))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PassportVaultCallComposerConfigError {
     PathNotAbsolute,
@@ -491,6 +601,7 @@ fn map_composer_error(code: &str) -> PassportVaultCallPortError {
 
 struct RetainedNativeCall {
     planning_fingerprint: [u8; 32],
+    network_id: String,
     preview: PassportVaultCallPreview,
     submission_status: PassportVaultCallSubmissionStatus,
     unproven_transaction: Zeroizing<Vec<u8>>,
@@ -498,6 +609,7 @@ struct RetainedNativeCall {
 
 pub struct NativePassportVaultContractCall {
     contexts: Arc<dyn PassportVaultCallCompositionContextSource>,
+    funding: Arc<dyn PassportVaultCallFundingPort>,
     composer: Arc<dyn PassportVaultCallComposer>,
     calls: Mutex<BTreeMap<CallKey, RetainedNativeCall>>,
 }
@@ -509,6 +621,20 @@ impl NativePassportVaultContractCall {
     ) -> Result<Self, PassportVaultCallComposerConfigError> {
         Ok(Self {
             contexts,
+            funding: Arc::new(UnavailablePassportVaultCallFunding),
+            composer: Arc::new(ProcessPassportVaultCallComposer::new(executable)?),
+            calls: Mutex::new(BTreeMap::new()),
+        })
+    }
+
+    pub fn new_with_funding(
+        executable: impl AsRef<Path>,
+        contexts: Arc<dyn PassportVaultCallCompositionContextSource>,
+        funding: Arc<dyn PassportVaultCallFundingPort>,
+    ) -> Result<Self, PassportVaultCallComposerConfigError> {
+        Ok(Self {
+            contexts,
+            funding,
             composer: Arc::new(ProcessPassportVaultCallComposer::new(executable)?),
             calls: Mutex::new(BTreeMap::new()),
         })
@@ -519,8 +645,18 @@ impl NativePassportVaultContractCall {
         contexts: Arc<dyn PassportVaultCallCompositionContextSource>,
         composer: Arc<dyn PassportVaultCallComposer>,
     ) -> Self {
+        Self::with_composer_and_funding(contexts, composer, Arc::new(PassthroughTestFunding))
+    }
+
+    #[cfg(test)]
+    fn with_composer_and_funding(
+        contexts: Arc<dyn PassportVaultCallCompositionContextSource>,
+        composer: Arc<dyn PassportVaultCallComposer>,
+        funding: Arc<dyn PassportVaultCallFundingPort>,
+    ) -> Self {
         Self {
             contexts,
+            funding,
             composer,
             calls: Mutex::new(BTreeMap::new()),
         }
@@ -626,6 +762,7 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
             key,
             RetainedNativeCall {
                 planning_fingerprint,
+                network_id: context.network_id,
                 preview: preview.clone(),
                 submission_status: empty_status(draft_id),
                 unproven_transaction,
@@ -655,6 +792,21 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
         }
         match retained.preview.state {
             PassportVaultCallDraftState::Prepared => {
+                let requires_night_funding = matches!(
+                    &retained.preview.operation,
+                    PassportVaultCallOperation::CreateLock { .. }
+                        | PassportVaultCallOperation::DepositToLock { .. }
+                );
+                let funded = self.funding.fund(PassportVaultCallFundingRequest {
+                    profile_id: profile_id.as_str().to_owned(),
+                    network_id: retained.network_id.clone(),
+                    expires_at_seconds: retained.preview.expires_at.value() / 1_000,
+                    requires_night_funding,
+                    transaction: Zeroizing::new(retained.unproven_transaction.to_vec()),
+                })?;
+                let transaction = funded.into_transaction();
+                validate_funded_transaction(&transaction, &retained.network_id)?;
+                retained.unproven_transaction = transaction;
                 retained.preview.state = PassportVaultCallDraftState::Authorized;
                 Ok(retained.preview.clone())
             }
@@ -779,6 +931,26 @@ fn validate_unproven_transaction(
         return Err(PassportVaultCallPortError::InvalidData);
     };
     if standard.network_id != network_id || standard.intents.iter().count() != 1 {
+        return Err(PassportVaultCallPortError::InvalidData);
+    }
+    Ok(())
+}
+
+fn validate_funded_transaction(
+    bytes: &[u8],
+    network_id: &str,
+) -> Result<(), PassportVaultCallPortError> {
+    let mut cursor = Cursor::new(bytes);
+    let transaction: UnprovenTransaction =
+        tagged_deserialize(&mut cursor).map_err(|_| PassportVaultCallPortError::InvalidData)?;
+    if cursor.position() != bytes.len() as u64 {
+        return Err(PassportVaultCallPortError::InvalidData);
+    }
+    let Transaction::Standard(standard) = transaction else {
+        return Err(PassportVaultCallPortError::InvalidData);
+    };
+    let intent_count = standard.intents.iter().count();
+    if standard.network_id != network_id || !(1..=2).contains(&intent_count) {
         return Err(PassportVaultCallPortError::InvalidData);
     }
     Ok(())
@@ -976,6 +1148,30 @@ mod tests {
         }
     }
 
+    struct RecordingFunding {
+        calls: AtomicUsize,
+        requires_night_funding: Mutex<Vec<bool>>,
+        failure: Option<PassportVaultCallPortError>,
+    }
+
+    impl PassportVaultCallFundingPort for RecordingFunding {
+        fn fund(
+            &self,
+            request: PassportVaultCallFundingRequest,
+        ) -> Result<FundedPassportVaultCall, PassportVaultCallPortError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let (_, _, _, requires_night_funding, transaction) = request.into_parts();
+            self.requires_night_funding
+                .lock()
+                .expect("funding observations")
+                .push(requires_night_funding);
+            if let Some(error) = self.failure {
+                return Err(error);
+            }
+            Ok(FundedPassportVaultCall::new(transaction, 10, 1))
+        }
+    }
+
     fn profile() -> OpaqueId {
         OpaqueId::parse("profile_native_vault").expect("profile")
     }
@@ -1034,6 +1230,30 @@ mod tests {
         )
     }
 
+    fn adapter_with_funding(
+        failure: Option<PassportVaultCallPortError>,
+    ) -> (NativePassportVaultContractCall, Arc<RecordingFunding>) {
+        let contexts = Arc::new(ContextSource {
+            calls: AtomicUsize::new(0),
+        });
+        let composer = Arc::new(Composer {
+            calls: AtomicUsize::new(0),
+        });
+        let funding = Arc::new(RecordingFunding {
+            calls: AtomicUsize::new(0),
+            requires_night_funding: Mutex::new(Vec::new()),
+            failure,
+        });
+        (
+            NativePassportVaultContractCall::with_composer_and_funding(
+                contexts,
+                composer,
+                funding.clone(),
+            ),
+            funding,
+        )
+    }
+
     #[test]
     fn retains_a_native_composed_draft_without_claiming_submission() {
         let (adapter, contexts, composer) = adapter();
@@ -1087,6 +1307,124 @@ mod tests {
                 .state,
             PassportVaultCallSubmissionState::NotStarted
         );
+    }
+
+    #[test]
+    fn funding_runs_only_after_exact_authorization_and_failure_keeps_prepared_draft() {
+        let (adapter, funding) =
+            adapter_with_funding(Some(PassportVaultCallPortError::InsufficientFunds));
+        let prepared = adapter
+            .prepare(request(create_operation()))
+            .expect("prepare");
+        let wrong_challenge =
+            PassportVaultCallAuthorizationChallenge::parse("00".repeat(32)).expect("challenge");
+        assert_eq!(
+            adapter.authorize(
+                &profile(),
+                AuthorizePassportVaultCallRequest {
+                    draft_id: prepared.draft_id.clone(),
+                    authorization_challenge: wrong_challenge,
+                    now: UnixTimestampMillis::new(1_000),
+                }
+            ),
+            Err(PassportVaultCallPortError::AuthorizationChallengeMismatch)
+        );
+        assert_eq!(funding.calls.load(Ordering::SeqCst), 0);
+
+        assert_eq!(
+            adapter.authorize(
+                &profile(),
+                AuthorizePassportVaultCallRequest {
+                    draft_id: prepared.draft_id.clone(),
+                    authorization_challenge: prepared.authorization_challenge,
+                    now: UnixTimestampMillis::new(1_001),
+                }
+            ),
+            Err(PassportVaultCallPortError::InsufficientFunds)
+        );
+        assert_eq!(funding.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            funding
+                .requires_night_funding
+                .lock()
+                .expect("funding observations")
+                .as_slice(),
+            &[true]
+        );
+        assert_eq!(
+            adapter
+                .get(
+                    &profile(),
+                    &prepared.draft_id,
+                    UnixTimestampMillis::new(1_002)
+                )
+                .expect("retained draft")
+                .state,
+            PassportVaultCallDraftState::Prepared
+        );
+    }
+
+    #[test]
+    fn authorization_types_night_funding_by_operation() {
+        for (operation, expected) in [
+            (create_operation(), true),
+            (
+                PassportVaultCallOperation::DepositToLock {
+                    lock_id: 2,
+                    amount: 5,
+                },
+                true,
+            ),
+            (
+                PassportVaultCallOperation::WithdrawFromLock {
+                    lock_id: 2,
+                    amount: 1,
+                },
+                false,
+            ),
+        ] {
+            let (adapter, funding) = adapter_with_funding(None);
+            let prepared = adapter.prepare(request(operation)).expect("prepare");
+            let authorized = adapter
+                .authorize(
+                    &profile(),
+                    AuthorizePassportVaultCallRequest {
+                        draft_id: prepared.draft_id,
+                        authorization_challenge: prepared.authorization_challenge,
+                        now: UnixTimestampMillis::new(1_000),
+                    },
+                )
+                .expect("authorize");
+            assert_eq!(authorized.state, PassportVaultCallDraftState::Authorized);
+            assert_eq!(
+                funding
+                    .requires_night_funding
+                    .lock()
+                    .expect("funding observations")
+                    .as_slice(),
+                &[expected]
+            );
+        }
+    }
+
+    #[test]
+    fn protected_funding_boundaries_redact_serialized_transactions() {
+        let request = PassportVaultCallFundingRequest {
+            profile_id: "profile_redaction".to_owned(),
+            network_id: "undeployed".to_owned(),
+            expires_at_seconds: 7,
+            requires_night_funding: true,
+            transaction: Zeroizing::new(vec![0xde, 0xad, 0xbe, 0xef]),
+        };
+        let debug = format!("{request:?}");
+        assert!(debug.contains("transaction_bytes: 4"));
+        assert!(!debug.contains("deadbeef"));
+
+        let funded =
+            FundedPassportVaultCall::new(Zeroizing::new(vec![0xde, 0xad, 0xbe, 0xef]), 9, 1);
+        let debug = format!("{funded:?}");
+        assert!(debug.contains("transaction_bytes: 4"));
+        assert!(!debug.contains("deadbeef"));
     }
 
     #[test]

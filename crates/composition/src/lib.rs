@@ -27,6 +27,8 @@ use oxid_adapter_midnight::{
     protected_standalone_midnight_wallet_with_checkpoints,
     protected_standalone_midnight_wallet_with_dust_checkpoints,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_adapter_midnight::{MidnightContractCallFundingPort, MidnightContractCallFundingRequest};
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 use oxid_adapter_openid4vci::{
     DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
@@ -35,11 +37,13 @@ use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpen
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_passport_vault::{
     AuthenticatedPassportVaultStateConfigError, AuthenticatedPassportVaultStateSource,
-    NativePassportVaultContractCall, NativePassportVaultContractStateDecoder,
-    NodeAnchoredPassportVaultStateSource, PassportVaultCallChainContextSource,
-    PassportVaultCallComposerConfigError, PassportVaultCallCompositionContext,
-    PassportVaultCallCompositionContextSource, SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX,
-    SimulatedPassportVaultContractCall, SimulatedPassportVaultStateSource,
+    FundedPassportVaultCall, NativePassportVaultContractCall,
+    NativePassportVaultContractStateDecoder, NodeAnchoredPassportVaultStateSource,
+    PassportVaultCallChainContextSource, PassportVaultCallComposerConfigError,
+    PassportVaultCallCompositionContext, PassportVaultCallCompositionContextSource,
+    PassportVaultCallFundingPort, PassportVaultCallFundingRequest,
+    SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX, SimulatedPassportVaultContractCall,
+    SimulatedPassportVaultStateSource,
 };
 use oxid_adapter_passport_vault::{
     InMemoryPassportVaultRepository, StandalonePassportVaultCredential,
@@ -164,10 +168,24 @@ use oxid_wallet_application::{
     WalletTransactionService,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+trait NativeMidnightCompositionCapability: MidnightContractCallFundingPort {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T> NativeMidnightCompositionCapability for T where T: MidnightContractCallFundingPort {}
+
+#[cfg(target_arch = "wasm32")]
+trait NativeMidnightCompositionCapability {}
+
+#[cfg(target_arch = "wasm32")]
+impl<T> NativeMidnightCompositionCapability for T {}
+
 /// Application capabilities shared by every incoming adapter.
 #[derive(Clone)]
 pub struct ApplicationServices {
     midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource>,
+    #[cfg(not(target_arch = "wasm32"))]
+    midnight_contract_call_funding: Arc<dyn MidnightContractCallFundingPort>,
     create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
@@ -1604,6 +1622,82 @@ const fn map_wallet_context_error(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+struct ComposedPassportVaultCallFunding {
+    midnight: Arc<dyn MidnightContractCallFundingPort>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PassportVaultCallFundingPort for ComposedPassportVaultCallFunding {
+    fn fund(
+        &self,
+        request: PassportVaultCallFundingRequest,
+    ) -> Result<FundedPassportVaultCall, PassportVaultCallPortError> {
+        let (profile_id, network_id, expires_at_seconds, requires_night_funding, transaction) =
+            request.into_parts();
+        let funded = self
+            .midnight
+            .fund_contract_call(MidnightContractCallFundingRequest::new(
+                profile_id,
+                network_id,
+                expires_at_seconds,
+                requires_night_funding,
+                transaction,
+            ))
+            .map_err(map_wallet_transaction_error)?;
+        let funded_night_atomic_units = funded.funded_night_atomic_units();
+        let funding_input_count = funded.funding_input_count();
+        Ok(FundedPassportVaultCall::new(
+            funded.into_transaction(),
+            funded_night_atomic_units,
+            funding_input_count,
+        ))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+const fn map_wallet_transaction_error(
+    error: oxid_wallet_application::WalletTransactionPortError,
+) -> PassportVaultCallPortError {
+    use oxid_wallet_application::WalletTransactionPortError as WalletError;
+
+    match error {
+        WalletError::Unavailable => PassportVaultCallPortError::Unavailable,
+        WalletError::ProtectionNotInitialized => {
+            PassportVaultCallPortError::ProtectionNotInitialized
+        }
+        WalletError::ProtectionLocked => PassportVaultCallPortError::ProtectionLocked,
+        WalletError::AccountNotDerived => PassportVaultCallPortError::AccountNotDerived,
+        WalletError::AccountNotSynchronized => PassportVaultCallPortError::AccountNotSynchronized,
+        WalletError::UnsupportedNetwork => PassportVaultCallPortError::UnsupportedNetwork,
+        WalletError::InvalidRecipient | WalletError::RecipientNetworkMismatch => {
+            PassportVaultCallPortError::InvalidData
+        }
+        WalletError::InsufficientFunds => PassportVaultCallPortError::InsufficientFunds,
+        WalletError::DraftNotFound => PassportVaultCallPortError::DraftNotFound,
+        WalletError::DraftExpired => PassportVaultCallPortError::DraftExpired,
+        WalletError::DraftConflict => PassportVaultCallPortError::DraftConflict,
+        WalletError::SubmissionInProgress => PassportVaultCallPortError::SubmissionInProgress,
+        WalletError::SubmissionNotInProgress => PassportVaultCallPortError::SubmissionNotInProgress,
+        WalletError::SubmissionCancelled => PassportVaultCallPortError::SubmissionCancelled,
+        WalletError::SubmissionCancellationUnsafe => {
+            PassportVaultCallPortError::SubmissionCancellationUnsafe
+        }
+        WalletError::AuthorizationChallengeMismatch => {
+            PassportVaultCallPortError::AuthorizationChallengeMismatch
+        }
+        WalletError::InsufficientDust => PassportVaultCallPortError::InsufficientDust,
+        WalletError::InvalidChainState => PassportVaultCallPortError::InvalidChainState,
+        WalletError::ProvingFailed => PassportVaultCallPortError::ProvingFailed,
+        WalletError::SubmissionRejected => PassportVaultCallPortError::SubmissionRejected,
+        WalletError::SubmissionOutcomeUnknown => {
+            PassportVaultCallPortError::SubmissionOutcomeUnknown
+        }
+        WalletError::Timeout => PassportVaultCallPortError::Timeout,
+        WalletError::InvalidData => PassportVaultCallPortError::InvalidData,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn with_native_passport_vault_calls(
     mut services: ApplicationServices,
     state_source: Arc<dyn PassportVaultContractStateSourcePort>,
@@ -1615,9 +1709,15 @@ fn with_native_passport_vault_calls(
             wallet: Arc::clone(&services.midnight_public_call_context),
             chain: chain_source,
         });
+    let funding: Arc<dyn PassportVaultCallFundingPort> =
+        Arc::new(ComposedPassportVaultCallFunding {
+            midnight: Arc::clone(&services.midnight_contract_call_funding),
+        });
     let calls = Arc::new(PassportVaultContractCallService::new(
         state_source,
-        Arc::new(NativePassportVaultContractCall::new(composer, contexts)?),
+        Arc::new(NativePassportVaultContractCall::new_with_funding(
+            composer, contexts, funding,
+        )?),
         Arc::new(SystemClock),
         Arc::new(OsRandom),
     ));
@@ -1629,7 +1729,7 @@ fn with_native_passport_vault_calls(
     services.cancel_passport_vault_call_submission = calls.clone();
     services.list_passport_vault_call_submissions = calls.clone();
     services.reconcile_passport_vault_call_submission = calls;
-    services.passport_vault_call_mode = "native_composed_draft";
+    services.passport_vault_call_mode = "native_funded_draft";
     Ok(services)
 }
 
@@ -1679,6 +1779,7 @@ where
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
+        + NativeMidnightCompositionCapability
         + 'static,
 {
     compose_with_adapters_and_presentation(
@@ -1705,6 +1806,7 @@ where
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
+        + NativeMidnightCompositionCapability
         + 'static,
 {
     let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
@@ -1754,6 +1856,7 @@ where
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
+        + NativeMidnightCompositionCapability
         + 'static,
 {
     let IdentityAdapters {
@@ -1795,6 +1898,8 @@ where
     let protection = Arc::new(WalletProtectionService::new(Arc::clone(&security)));
     let keys = Arc::new(WalletKeyService::new(security));
     let midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource> = midnight.clone();
+    #[cfg(not(target_arch = "wasm32"))]
+    let midnight_contract_call_funding: Arc<dyn MidnightContractCallFundingPort> = midnight.clone();
     let networks = Arc::new(WalletNetworkService::new(Arc::clone(&midnight)));
     let account_derivation = Arc::new(WalletAccountDerivationService::new(Arc::clone(&midnight)));
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
@@ -2069,6 +2174,8 @@ where
 
     ApplicationServices {
         midnight_public_call_context,
+        #[cfg(not(target_arch = "wasm32"))]
+        midnight_contract_call_funding,
         create_wallet_profile,
         list_wallet_profiles,
         select_wallet_profile,
@@ -2308,7 +2415,7 @@ mod tests {
             composer,
         )
         .expect("native adapter wiring");
-        assert_eq!(services.passport_vault_call_mode(), "native_composed_draft");
+        assert_eq!(services.passport_vault_call_mode(), "native_funded_draft");
     }
 
     #[test]

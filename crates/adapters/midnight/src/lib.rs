@@ -56,6 +56,10 @@ pub use submission::{
 pub use submission_journal::{
     MidnightSubmissionJournalConfig, MidnightSubmissionJournalConfigError,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use transaction::{
+    FundedMidnightContractCall, MidnightContractCallFundingPort, MidnightContractCallFundingRequest,
+};
 
 use std::{
     collections::{HashMap, HashSet},

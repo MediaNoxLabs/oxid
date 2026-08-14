@@ -17,7 +17,7 @@ use midnight_base_crypto::{
     schnorr::{Signature, VerifyingKey},
     time::Timestamp,
 };
-use midnight_coin_structure::coin::{NIGHT, UserAddress};
+use midnight_coin_structure::coin::{NIGHT, TokenType, UserAddress};
 use midnight_ledger::structure::{
     Intent, IntentHash, ProofPreimageMarker, StandardTransaction, Transaction, UnshieldedOffer,
     UtxoOutput, UtxoSpend,
@@ -55,9 +55,98 @@ use crate::{
 };
 
 const SEND_UNSHIELDED_SEGMENT: u16 = 0xCAFE;
+const CONTRACT_UNSHIELDED_FUNDING_SEGMENT: u16 = 0xBEEF;
+const MAX_CONTRACT_CALL_TRANSACTION_BYTES: usize = 16 * 1024 * 1024;
 
 type LedgerIntent = Intent<Signature, ProofPreimageMarker, PedersenRandomness, DefaultDB>;
 type LedgerTransaction = Transaction<Signature, ProofPreimageMarker, PedersenRandomness, DefaultDB>;
+
+/// Adapter-private contract transaction transferred only across the static
+/// composition root. The byte payload is zeroized and has no debug projection.
+pub struct MidnightContractCallFundingRequest {
+    profile_id: String,
+    network_id: String,
+    expires_at_seconds: u64,
+    requires_night_funding: bool,
+    transaction: Zeroizing<Vec<u8>>,
+}
+
+impl std::fmt::Debug for MidnightContractCallFundingRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MidnightContractCallFundingRequest")
+            .field("profile_id", &self.profile_id)
+            .field("network_id", &self.network_id)
+            .field("expires_at_seconds", &self.expires_at_seconds)
+            .field("requires_night_funding", &self.requires_night_funding)
+            .field("transaction_bytes", &self.transaction.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl MidnightContractCallFundingRequest {
+    #[must_use]
+    pub fn new(
+        profile_id: impl Into<String>,
+        network_id: impl Into<String>,
+        expires_at_seconds: u64,
+        requires_night_funding: bool,
+        transaction: Zeroizing<Vec<u8>>,
+    ) -> Self {
+        Self {
+            profile_id: profile_id.into(),
+            network_id: network_id.into(),
+            expires_at_seconds,
+            requires_night_funding,
+            transaction,
+        }
+    }
+}
+
+/// A funded unproven transaction retained by the Passport Vault adapter. Only
+/// safe aggregate funding metadata is debug-visible.
+pub struct FundedMidnightContractCall {
+    transaction: Zeroizing<Vec<u8>>,
+    funded_night_atomic_units: u128,
+    funding_input_count: u16,
+}
+
+impl std::fmt::Debug for FundedMidnightContractCall {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FundedMidnightContractCall")
+            .field("transaction_bytes", &self.transaction.len())
+            .field("funded_night_atomic_units", &self.funded_night_atomic_units)
+            .field("funding_input_count", &self.funding_input_count)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FundedMidnightContractCall {
+    #[must_use]
+    pub fn into_transaction(self) -> Zeroizing<Vec<u8>> {
+        self.transaction
+    }
+
+    #[must_use]
+    pub const fn funded_night_atomic_units(&self) -> u128 {
+        self.funded_night_atomic_units
+    }
+
+    #[must_use]
+    pub const fn funding_input_count(&self) -> u16 {
+        self.funding_input_count
+    }
+}
+
+/// Adds exact protected unshielded NIGHT funding to a generated contract call.
+/// The serialized transaction never crosses an incoming or application port.
+pub trait MidnightContractCallFundingPort: Send + Sync {
+    fn fund_contract_call(
+        &self,
+        request: MidnightContractCallFundingRequest,
+    ) -> Result<FundedMidnightContractCall, WalletTransactionPortError>;
+}
 
 #[derive(Clone)]
 pub(crate) struct MidnightCompletionRequest {
@@ -500,6 +589,261 @@ fn dust_path(account_index: u32) -> Result<WalletHdPath, WalletTransactionPortEr
         component(DUST_INDEX, false)?,
     ])
     .map_err(|_| WalletTransactionPortError::InvalidData)
+}
+
+impl<S, D> MidnightContractCallFundingPort for MidnightWalletAdapter<S, D>
+where
+    S: MidnightTransactionSource,
+    D: MidnightTransactionAuthorizer + Send + Sync,
+{
+    fn fund_contract_call(
+        &self,
+        request: MidnightContractCallFundingRequest,
+    ) -> Result<FundedMidnightContractCall, WalletTransactionPortError> {
+        let profile_id = WalletProfileId::parse(request.profile_id)
+            .map_err(|_| WalletTransactionPortError::InvalidData)?;
+        let selected = self.selected(&profile_id).map_err(map_account_error)?;
+        if selected.as_str() != request.network_id {
+            return Err(WalletTransactionPortError::UnsupportedNetwork);
+        }
+        if request.expires_at_seconds == 0
+            || request.transaction.is_empty()
+            || request.transaction.len() > MAX_CONTRACT_CALL_TRANSACTION_BYTES
+        {
+            return Err(WalletTransactionPortError::InvalidData);
+        }
+        let mut cursor = Cursor::new(request.transaction.as_slice());
+        let transaction: LedgerTransaction = midnight_serialize::tagged_deserialize(&mut cursor)
+            .map_err(|_| WalletTransactionPortError::InvalidData)?;
+        if usize::try_from(cursor.position()).ok() != Some(request.transaction.len()) {
+            return Err(WalletTransactionPortError::InvalidData);
+        }
+        let Transaction::Standard(standard) = &transaction else {
+            return Err(WalletTransactionPortError::InvalidData);
+        };
+        if standard.network_id != request.network_id || standard.intents.iter().count() != 1 {
+            return Err(WalletTransactionPortError::InvalidData);
+        }
+        let shortfall = unshielded_night_shortfall(&transaction)?;
+        let (funded, funded_night_atomic_units, funding_input_count) =
+            match (request.requires_night_funding, shortfall) {
+                (false, None) => (transaction, 0, 0),
+                (false, Some(_)) | (true, None) => {
+                    return Err(WalletTransactionPortError::InvalidChainState);
+                }
+                (true, Some((segment, amount))) => {
+                    let network = network_by_id(&selected)
+                        .map_err(map_account_error)?
+                        .ok_or(WalletTransactionPortError::UnsupportedNetwork)?;
+                    let spendable = self.source.spendable_account(&profile_id, &network)?;
+                    validate_account(&spendable.account, &selected)?;
+                    let (selected_utxos, total) = select_utxos(spendable.utxos, amount)?;
+                    let input_count = u16::try_from(selected_utxos.len())
+                        .map_err(|_| WalletTransactionPortError::InvalidData)?;
+                    let funded = fund_unshielded_night(
+                        transaction,
+                        segment,
+                        amount,
+                        total,
+                        &selected_utxos,
+                        &profile_id,
+                        &spendable.account,
+                        &self.deriver,
+                        request.expires_at_seconds,
+                        &request.network_id,
+                    )?;
+                    (funded, amount, input_count)
+                }
+            };
+        if unshielded_night_shortfall(&funded)?.is_some() {
+            return Err(WalletTransactionPortError::InvalidChainState);
+        }
+        let mut encoded = Zeroizing::new(Vec::new());
+        midnight_serialize::tagged_serialize(&funded, &mut *encoded)
+            .map_err(|_| WalletTransactionPortError::InvalidData)?;
+        if encoded.len() > MAX_CONTRACT_CALL_TRANSACTION_BYTES {
+            return Err(WalletTransactionPortError::InvalidData);
+        }
+        Ok(FundedMidnightContractCall {
+            transaction: encoded,
+            funded_night_atomic_units,
+            funding_input_count,
+        })
+    }
+}
+
+fn unshielded_night_shortfall(
+    transaction: &LedgerTransaction,
+) -> Result<Option<(u16, u128)>, WalletTransactionPortError> {
+    let balance = transaction
+        .balance(None)
+        .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+    let mut shortfall = None;
+    for ((token, segment), value) in balance.iter() {
+        let TokenType::Unshielded(unshielded) = token else {
+            continue;
+        };
+        if *value >= 0 {
+            continue;
+        }
+        if *unshielded != NIGHT || shortfall.is_some() {
+            return Err(WalletTransactionPortError::InvalidChainState);
+        }
+        let amount = value
+            .checked_neg()
+            .and_then(|value| u128::try_from(value).ok())
+            .ok_or(WalletTransactionPortError::InvalidChainState)?;
+        shortfall = Some((*segment, amount));
+    }
+    Ok(shortfall)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fund_unshielded_night<D>(
+    transaction: LedgerTransaction,
+    shortfall_segment: u16,
+    shortfall: u128,
+    selected_total: u128,
+    selected_utxos: &[MidnightSpendableUtxo],
+    profile_id: &WalletProfileId,
+    account: &DerivedChainAccount,
+    authorizer: &D,
+    expires_at_seconds: u64,
+    network_id: &str,
+) -> Result<LedgerTransaction, WalletTransactionPortError>
+where
+    D: MidnightTransactionAuthorizer,
+{
+    let owner = decode_verifying_key(account)?;
+    let mut inputs = selected_utxos
+        .iter()
+        .map(|utxo| UtxoSpend {
+            value: utxo.value,
+            owner: owner.clone(),
+            type_: NIGHT,
+            intent_hash: IntentHash(HashOutput(utxo.intent_hash)),
+            output_no: utxo.output_index,
+        })
+        .collect::<Vec<_>>();
+    let mut outputs = Vec::new();
+    let change = selected_total
+        .checked_sub(shortfall)
+        .ok_or(WalletTransactionPortError::InvalidChainState)?;
+    if change > 0 {
+        outputs.push(UtxoOutput {
+            value: change,
+            owner: UserAddress::from(owner),
+            type_: NIGHT,
+        });
+    }
+    inputs.sort();
+    outputs.sort();
+    let offer = UnshieldedOffer {
+        inputs: inputs.clone().into(),
+        outputs: outputs.into(),
+        signatures: Vec::new().into(),
+    };
+    let ttl = Timestamp::from_secs(expires_at_seconds);
+    if shortfall_segment == 0 {
+        let mut intent = LedgerIntent::empty(&mut OsRng, ttl);
+        intent.guaranteed_unshielded_offer = Some(Sp::new(offer));
+        let signed = authorize_contract_funding_intent(
+            intent,
+            CONTRACT_UNSHIELDED_FUNDING_SEGMENT,
+            true,
+            inputs.len(),
+            profile_id,
+            account,
+            authorizer,
+        )?;
+        let mut intents = LedgerHashMap::new();
+        intents = intents.insert(CONTRACT_UNSHIELDED_FUNDING_SEGMENT, signed);
+        return transaction
+            .merge(&Transaction::Standard(StandardTransaction::new(
+                network_id,
+                intents,
+                None,
+                LedgerHashMap::new(),
+            )))
+            .map_err(|_| WalletTransactionPortError::InvalidChainState);
+    }
+
+    let Transaction::Standard(standard) = transaction else {
+        return Err(WalletTransactionPortError::InvalidData);
+    };
+    let mut intents = LedgerHashMap::new();
+    let mut grafted = false;
+    for (segment, mut intent) in standard.intents.into_iter() {
+        if segment == shortfall_segment {
+            intent.fallible_unshielded_offer = Some(Sp::new(offer.clone()));
+            intent = authorize_contract_funding_intent(
+                intent,
+                segment,
+                false,
+                inputs.len(),
+                profile_id,
+                account,
+                authorizer,
+            )?;
+            grafted = true;
+        }
+        intents = intents.insert(segment, intent);
+    }
+    if !grafted {
+        return Err(WalletTransactionPortError::InvalidChainState);
+    }
+    Ok(Transaction::Standard(StandardTransaction {
+        network_id: standard.network_id,
+        intents,
+        guaranteed_coins: standard.guaranteed_coins,
+        fallible_coins: standard.fallible_coins,
+        binding_randomness: standard.binding_randomness,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn authorize_contract_funding_intent<D>(
+    mut intent: LedgerIntent,
+    segment: u16,
+    guaranteed: bool,
+    input_count: usize,
+    profile_id: &WalletProfileId,
+    account: &DerivedChainAccount,
+    authorizer: &D,
+) -> Result<LedgerIntent, WalletTransactionPortError>
+where
+    D: MidnightTransactionAuthorizer,
+{
+    let signing_payload = intent
+        .erase_proofs()
+        .erase_signatures()
+        .data_to_sign(segment);
+    let signature = authorizer.authorize(profile_id, account, &signing_payload)?;
+    if signature.algorithm() != WalletKeyAlgorithm::Secp256k1Schnorr {
+        return Err(WalletTransactionPortError::InvalidData);
+    }
+    let signature = decode_signature(&signature)?;
+    let verifying_key = decode_verifying_key(account)?;
+    if !verifying_key.verify(&signing_payload, &signature) {
+        return Err(WalletTransactionPortError::InvalidData);
+    }
+    let offer = if guaranteed {
+        intent.guaranteed_unshielded_offer.as_ref()
+    } else {
+        intent.fallible_unshielded_offer.as_ref()
+    }
+    .ok_or(WalletTransactionPortError::InvalidData)?;
+    if offer.inputs.len() != input_count || input_count == 0 {
+        return Err(WalletTransactionPortError::InvalidData);
+    }
+    let mut signed_offer = offer.deref().clone();
+    signed_offer.add_signatures(vec![signature; input_count]);
+    if guaranteed {
+        intent.guaranteed_unshielded_offer = Some(Sp::new(signed_offer));
+    } else {
+        intent.fallible_unshielded_offer = Some(Sp::new(signed_offer));
+    }
+    Ok(intent)
 }
 
 impl<S, D> WalletTransactionPort for MidnightWalletAdapter<S, D>
@@ -1822,6 +2166,129 @@ mod tests {
                 },
             )
             .expect("transfer authorizes")
+    }
+
+    fn serialized_contract_call_with_night_shortfall(amount: u128) -> Zeroizing<Vec<u8>> {
+        let recipient = SigningKey::from_bytes(&[9; 32])
+            .expect("test scalar")
+            .verifying_key();
+        let offer = UnshieldedOffer {
+            inputs: Vec::new().into(),
+            outputs: vec![UtxoOutput {
+                value: amount,
+                owner: UserAddress::from(recipient),
+                type_: NIGHT,
+            }]
+            .into(),
+            signatures: Vec::new().into(),
+        };
+        let mut intent = LedgerIntent::empty(&mut OsRng, Timestamp::from_secs(1_800_000_000));
+        intent.guaranteed_unshielded_offer = Some(Sp::new(offer));
+        let mut intents = LedgerHashMap::new();
+        intents = intents.insert(7, intent);
+        let transaction = Transaction::Standard(StandardTransaction::new(
+            "undeployed",
+            intents,
+            None,
+            LedgerHashMap::new(),
+        ));
+        let mut encoded = Zeroizing::new(Vec::new());
+        midnight_serialize::tagged_serialize(&transaction, &mut *encoded)
+            .expect("transaction serializes");
+        encoded
+    }
+
+    #[test]
+    fn protected_contract_funding_covers_exact_night_shortfall_and_signs_inputs() {
+        let adapter = submittable_adapter(Arc::new(SimulatedMidnightTransactionCompleter));
+        let funded = adapter
+            .fund_contract_call(MidnightContractCallFundingRequest::new(
+                profile().as_str(),
+                "undeployed",
+                1_800_000_000,
+                true,
+                serialized_contract_call_with_night_shortfall(2_500_000),
+            ))
+            .expect("contract call funding succeeds");
+        assert_eq!(funded.funded_night_atomic_units(), 2_500_000);
+        assert_eq!(funded.funding_input_count(), 2);
+        let debug = format!("{funded:?}");
+        assert!(debug.contains("funded_night_atomic_units: 2500000"));
+        assert!(!debug.contains("03030303"));
+
+        let encoded = funded.into_transaction();
+        let mut cursor = Cursor::new(encoded.as_slice());
+        let transaction: LedgerTransaction =
+            midnight_serialize::tagged_deserialize(&mut cursor).expect("funded transaction");
+        assert_eq!(unshielded_night_shortfall(&transaction), Ok(None));
+        let Transaction::Standard(standard) = transaction else {
+            panic!("standard transaction expected");
+        };
+        let funding = standard
+            .intents
+            .clone()
+            .into_iter()
+            .find_map(|(segment, intent)| {
+                (segment == CONTRACT_UNSHIELDED_FUNDING_SEGMENT).then_some(intent)
+            })
+            .expect("funding intent");
+        let offer = funding
+            .guaranteed_unshielded_offer
+            .as_ref()
+            .expect("funding offer");
+        assert_eq!(offer.inputs.len(), 2);
+        assert_eq!(offer.signatures.len(), 2);
+        assert_eq!(
+            offer
+                .outputs
+                .iter()
+                .map(|output| output.value)
+                .sum::<u128>(),
+            1_500_000
+        );
+    }
+
+    #[test]
+    fn contract_funding_rejects_wrong_mode_network_and_trailing_bytes() {
+        let adapter = submittable_adapter(Arc::new(SimulatedMidnightTransactionCompleter));
+        assert_eq!(
+            adapter
+                .fund_contract_call(MidnightContractCallFundingRequest::new(
+                    profile().as_str(),
+                    "undeployed",
+                    1_800_000_000,
+                    false,
+                    serialized_contract_call_with_night_shortfall(1),
+                ))
+                .err(),
+            Some(WalletTransactionPortError::InvalidChainState)
+        );
+        assert_eq!(
+            adapter
+                .fund_contract_call(MidnightContractCallFundingRequest::new(
+                    profile().as_str(),
+                    "devnet",
+                    1_800_000_000,
+                    true,
+                    serialized_contract_call_with_night_shortfall(1),
+                ))
+                .err(),
+            Some(WalletTransactionPortError::UnsupportedNetwork)
+        );
+        let mut trailing = serialized_contract_call_with_night_shortfall(1);
+        trailing.push(0);
+        assert_eq!(
+            adapter
+                .fund_contract_call(MidnightContractCallFundingRequest::new(
+                    profile().as_str(),
+                    "undeployed",
+                    1_800_000_000,
+                    true,
+                    trailing,
+                ))
+                .err(),
+            Some(WalletTransactionPortError::InvalidData)
+        );
     }
 
     fn profile() -> WalletProfileId {
