@@ -88,6 +88,7 @@ ADR status and delivery state answer different questions:
 | [0064](0064-build-passport-vault-claims-from-managed-holder-custody.md) Build Passport Vault claims from managed holder custody | Accepted | §§3–7, 9–13, 16–18, 21, prototype claim composer, and issue #31 | Exact credential/trust/policy checks plus managed holder reauthorization and independently verified fresh-custody proof now produce a zeroizing claim DTO; generated composition and settlement remain pending |
 | [0065](0065-compose-protected-vault-claims-only-after-call-authorization.md) Compose protected vault claims only after call authorization | Accepted | §§3–7, 9–13, 16–18, 21, prototype claim composer, and issue #31 | Exact authorization now gates managed presentation assembly, fixed generated `claimFromLock` composition, funding, and shared settlement; discovery gate delivered by ADR-0066 |
 | [0066](0066-enable-native-vault-claim-discovery-after-managed-conformance.md) Enable native vault claim discovery after managed conformance | Accepted | §§3–7, 9–13, 16–18, 21, standalone issuance/custody/composer flow, and issue #31 | Full managed-DID and holder-bound credential conformance reaches terminal native submission through the packaged composer; `native_settlement` now advertises all four wallet operations |
+| [0067](0067-drive-mobile-vault-settlement-through-typed-application-use-cases.md) Drive mobile vault settlement through typed application use cases | Accepted | §§3–8, 12–13, 16–18, 21, prototype mobile vault surface, and issue #31 | Dioxus reads truthfully labelled contract state and drives all four calls through explicit prepare/authorize/prove/submit/cancel/reconcile stages without WebView or secret-bearing bridges |
 
 ## Current boundaries
 
@@ -252,3 +253,10 @@ authenticated claim-ready ledger state, packaged generated client, Midnight
 funding, and terminal completion port. Native settlement discovery therefore
 advertises `claim_from_lock`; deterministic completion remains explicitly test
 only, while real-node and mobile live-call fixtures stay on the backlog.
+ADR-0067 connects those same typed state/call/recovery services to Dioxus. The
+mobile page keeps the standalone conformance ledger visibly separate from
+`deterministic_simulation` and `native_settlement`, requires exact review and
+authorization before proving/submission, and never blind-retries an ambiguous
+broadcast. Native development builds select the same environment-aware
+standalone composition as headless; device resource baselines and real-node
+fixtures remain pending.

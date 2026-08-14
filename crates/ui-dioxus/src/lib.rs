@@ -22,10 +22,20 @@ use oxid_identity_application::{
 };
 use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::{
-    CLAIM_INTENT, CREATE_LOCK_INTENT, ClaimPassportVaultLockCommand, ClaimPassportVaultLockUseCase,
-    CreatePassportVaultLockCommand, CreatePassportVaultLockUseCase, DEPOSIT_INTENT,
-    DepositPassportVaultLockUseCase, ListPassportVaultLocksUseCase, PassportVaultAmountCommand,
-    PassportVaultLockView, PassportVaultView, WITHDRAW_INTENT, WithdrawPassportVaultLockUseCase,
+    AUTHORIZE_PASSPORT_VAULT_CALL_INTENT, AuthorizePassportVaultCallCommand,
+    AuthorizePassportVaultCallUseCase, CLAIM_INTENT, CREATE_LOCK_INTENT,
+    CancelPassportVaultCallSubmissionUseCase, ClaimPassportVaultLockCommand,
+    ClaimPassportVaultLockUseCase, CreatePassportVaultLockCommand, CreatePassportVaultLockUseCase,
+    DEPOSIT_INTENT, DepositPassportVaultLockUseCase, GetPassportVaultCallSubmissionStatusUseCase,
+    GetPassportVaultCallUseCase, ListPassportVaultCallSubmissionsUseCase,
+    ListPassportVaultLocksUseCase, PassportVaultAmountCommand, PassportVaultCallPreviewView,
+    PassportVaultCallQuery, PassportVaultCallSubmissionStatusView, PassportVaultCallSubmissionView,
+    PassportVaultLockView, PassportVaultView, PreparePassportVaultCallAction,
+    PreparePassportVaultCallCommand, PreparePassportVaultCallUseCase,
+    ReadPassportVaultContractStateCommand, ReadPassportVaultContractStateUseCase,
+    ReconcilePassportVaultCallSubmissionUseCase, SUBMIT_PASSPORT_VAULT_CALL_INTENT,
+    SubmitPassportVaultCallCommand, SubmitPassportVaultCallUseCase, WITHDRAW_INTENT,
+    WithdrawPassportVaultLockUseCase,
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationCommand, AcceptCredentialPresentationUseCase,
@@ -128,6 +138,7 @@ pub struct WalletUiServices {
     deposit_passport_vault_lock: Arc<dyn DepositPassportVaultLockUseCase>,
     claim_passport_vault_lock: Arc<dyn ClaimPassportVaultLockUseCase>,
     withdraw_passport_vault_lock: Arc<dyn WithdrawPassportVaultLockUseCase>,
+    passport_vault_contract_calls: PassportVaultContractCallUiServices,
 }
 
 /// Product-specific Passport Vault capabilities consumed only by the Vault page.
@@ -137,6 +148,7 @@ pub struct PassportVaultUiServices {
     deposit: Arc<dyn DepositPassportVaultLockUseCase>,
     claim: Arc<dyn ClaimPassportVaultLockUseCase>,
     withdraw: Arc<dyn WithdrawPassportVaultLockUseCase>,
+    contract_calls: PassportVaultContractCallUiServices,
 }
 
 impl PassportVaultUiServices {
@@ -147,6 +159,7 @@ impl PassportVaultUiServices {
         deposit: Arc<dyn DepositPassportVaultLockUseCase>,
         claim: Arc<dyn ClaimPassportVaultLockUseCase>,
         withdraw: Arc<dyn WithdrawPassportVaultLockUseCase>,
+        contract_calls: PassportVaultContractCallUiServices,
     ) -> Self {
         Self {
             list,
@@ -154,6 +167,78 @@ impl PassportVaultUiServices {
             deposit,
             claim,
             withdraw,
+            contract_calls,
+        }
+    }
+}
+
+/// Public recovery operations for a retained or ambiguously submitted vault call.
+pub struct PassportVaultContractCallRecoveryUiServices {
+    get_draft: Arc<dyn GetPassportVaultCallUseCase>,
+    get_status: Arc<dyn GetPassportVaultCallSubmissionStatusUseCase>,
+    cancel: Arc<dyn CancelPassportVaultCallSubmissionUseCase>,
+    list: Arc<dyn ListPassportVaultCallSubmissionsUseCase>,
+    reconcile: Arc<dyn ReconcilePassportVaultCallSubmissionUseCase>,
+}
+
+impl PassportVaultContractCallRecoveryUiServices {
+    #[must_use]
+    pub fn new(
+        get_draft: Arc<dyn GetPassportVaultCallUseCase>,
+        get_status: Arc<dyn GetPassportVaultCallSubmissionStatusUseCase>,
+        cancel: Arc<dyn CancelPassportVaultCallSubmissionUseCase>,
+        list: Arc<dyn ListPassportVaultCallSubmissionsUseCase>,
+        reconcile: Arc<dyn ReconcilePassportVaultCallSubmissionUseCase>,
+    ) -> Self {
+        Self {
+            get_draft,
+            get_status,
+            cancel,
+            list,
+            reconcile,
+        }
+    }
+}
+
+/// Production-shaped Passport Vault call lifecycle exposed to the mobile page.
+#[derive(Clone)]
+pub struct PassportVaultContractCallUiServices {
+    read_state: Arc<dyn ReadPassportVaultContractStateUseCase>,
+    prepare: Arc<dyn PreparePassportVaultCallUseCase>,
+    authorize: Arc<dyn AuthorizePassportVaultCallUseCase>,
+    submit: Arc<dyn SubmitPassportVaultCallUseCase>,
+    get_draft: Arc<dyn GetPassportVaultCallUseCase>,
+    get_status: Arc<dyn GetPassportVaultCallSubmissionStatusUseCase>,
+    cancel: Arc<dyn CancelPassportVaultCallSubmissionUseCase>,
+    list: Arc<dyn ListPassportVaultCallSubmissionsUseCase>,
+    reconcile: Arc<dyn ReconcilePassportVaultCallSubmissionUseCase>,
+    mode: String,
+    configured_contract_address_hex: Option<String>,
+}
+
+impl PassportVaultContractCallUiServices {
+    #[must_use]
+    pub fn new(
+        read_state: Arc<dyn ReadPassportVaultContractStateUseCase>,
+        prepare: Arc<dyn PreparePassportVaultCallUseCase>,
+        authorize: Arc<dyn AuthorizePassportVaultCallUseCase>,
+        submit: Arc<dyn SubmitPassportVaultCallUseCase>,
+        recovery: PassportVaultContractCallRecoveryUiServices,
+        mode: impl Into<String>,
+        configured_contract_address_hex: Option<String>,
+    ) -> Self {
+        Self {
+            read_state,
+            prepare,
+            authorize,
+            submit,
+            get_draft: recovery.get_draft,
+            get_status: recovery.get_status,
+            cancel: recovery.cancel,
+            list: recovery.list,
+            reconcile: recovery.reconcile,
+            mode: mode.into(),
+            configured_contract_address_hex,
         }
     }
 }
@@ -668,6 +753,7 @@ impl WalletUiServices {
             deposit_passport_vault_lock: vault.deposit,
             claim_passport_vault_lock: vault.claim,
             withdraw_passport_vault_lock: vault.withdraw,
+            passport_vault_contract_calls: vault.contract_calls,
         }
     }
 
@@ -979,6 +1065,11 @@ impl WalletUiServices {
     pub fn withdraw_passport_vault_lock(&self) -> Arc<dyn WithdrawPassportVaultLockUseCase> {
         Arc::clone(&self.withdraw_passport_vault_lock)
     }
+
+    #[must_use]
+    pub fn passport_vault_contract_calls(&self) -> PassportVaultContractCallUiServices {
+        self.passport_vault_contract_calls.clone()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1097,6 +1188,49 @@ enum PassportVaultPageState {
         vault: Box<PassportVaultView>,
         credentials: Vec<CredentialView>,
         busy: bool,
+        operation_error: Option<String>,
+    },
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PassportVaultContractPanelState {
+    Editing,
+    Preparing,
+    Prepared(Box<PassportVaultCallPreviewView>),
+    Authorized(Box<PassportVaultCallPreviewView>),
+    Submitting(Box<PassportVaultCallPreviewView>),
+    Cancelling(Box<PassportVaultCallPreviewView>),
+    Submitted(Box<PassportVaultCallSubmissionView>),
+    Resolved(Box<PassportVaultCallSubmissionStatusView>),
+    Failed {
+        message: String,
+        retained: Option<Box<PassportVaultCallPreviewView>>,
+        recovery: PassportVaultCallRecovery,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PassportVaultCallRecovery {
+    Edit,
+    RetryAuthorized,
+    ReconcileUnknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PassportVaultContractStatePaneState {
+    Idle,
+    Loading,
+    Ready(Box<PassportVaultView>),
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PassportVaultCallRecoveryPaneState {
+    Loading,
+    Ready {
+        latest: Option<Box<PassportVaultCallSubmissionStatusView>>,
+        reconciling: bool,
         operation_error: Option<String>,
     },
     Failed(String),
@@ -3612,6 +3746,817 @@ fn vault_policy_value(value: &str) -> Result<Option<[u8; 32]>, String> {
     Ok(Some(padded))
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PassportVaultContractInputs {
+    operation: String,
+    lock_id: String,
+    amount: String,
+    minimum_age: String,
+    maximum_claim: String,
+    initial_amount: String,
+    required_state: String,
+    required_document: String,
+    credential_id: String,
+}
+
+impl PassportVaultContractInputs {
+    fn action(&self) -> Result<PreparePassportVaultCallAction, String> {
+        let amount = || {
+            let amount = parse_vault_amount(&self.amount)?;
+            if amount == 0 {
+                return Err("The vault operation amount must be greater than zero.".to_owned());
+            }
+            Ok(amount.to_string())
+        };
+        let lock_id = || parse_vault_lock_id(&self.lock_id);
+        match self.operation.as_str() {
+            "create_lock" => {
+                let minimum_age_years = self
+                    .minimum_age
+                    .parse::<u8>()
+                    .map_err(|_| "Minimum age must be 0–120.".to_owned())?;
+                if minimum_age_years > 120 {
+                    return Err("Minimum age must be 0–120.".to_owned());
+                }
+                Ok(PreparePassportVaultCallAction::CreateLock {
+                    minimum_age_years,
+                    required_issuing_state: vault_policy_value(&self.required_state)?,
+                    required_document_number: vault_policy_value(&self.required_document)?,
+                    maximum_claim_amount: parse_vault_amount(&self.maximum_claim)?.to_string(),
+                    initial_amount: parse_vault_amount(&self.initial_amount)?.to_string(),
+                })
+            }
+            "deposit_to_lock" => Ok(PreparePassportVaultCallAction::DepositToLock {
+                lock_id: lock_id()?,
+                amount: amount()?,
+            }),
+            "claim_from_lock" => {
+                if self.credential_id.is_empty() {
+                    return Err("Select a verified Digital Passport before claiming.".to_owned());
+                }
+                Ok(PreparePassportVaultCallAction::ClaimFromLock {
+                    lock_id: lock_id()?,
+                    amount: amount()?,
+                    credential_id: self.credential_id.clone(),
+                })
+            }
+            "withdraw_from_lock" => Ok(PreparePassportVaultCallAction::WithdrawFromLock {
+                lock_id: lock_id()?,
+                amount: amount()?,
+            }),
+            _ => Err("Select a supported Passport Vault operation.".to_owned()),
+        }
+    }
+}
+
+fn parse_vault_lock_id(value: &str) -> Result<u64, String> {
+    if value.is_empty()
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return Err("Enter a canonical non-negative lock identifier.".to_owned());
+    }
+    value
+        .parse()
+        .map_err(|_| "The lock identifier is outside the supported range.".to_owned())
+}
+
+fn passport_vault_call_mode_label(mode: &str) -> &'static str {
+    match mode {
+        "native_settlement" => "Midnight live",
+        "deterministic_simulation" => "Deterministic simulation",
+        _ => "Unavailable",
+    }
+}
+
+fn passport_vault_call_mode_note(mode: &str) -> &'static str {
+    match mode {
+        "native_settlement" => {
+            "Calls use authenticated finalized state and the protected Midnight proving, submission, and reconciliation boundary."
+        }
+        "deterministic_simulation" => {
+            "Calls exercise the complete retained lifecycle locally and are always labelled simulated; no node broadcast occurs."
+        }
+        _ => {
+            "Configure the complete standalone Midnight stack and authenticated Passport Vault artifacts to enable contract calls."
+        }
+    }
+}
+
+fn passport_vault_contract_source_label(source: &str) -> &str {
+    match source {
+        "deterministic_simulation" => "simulated",
+        value => value,
+    }
+}
+
+fn passport_vault_submission_mode_label(mode: &str) -> &str {
+    match mode {
+        "deterministic_simulation_only" => "simulated · deterministic simulation only",
+        value => value,
+    }
+}
+
+fn passport_vault_call_recovery(retained_state: Option<&str>) -> PassportVaultCallRecovery {
+    match retained_state {
+        Some("authorized") => PassportVaultCallRecovery::RetryAuthorized,
+        _ => PassportVaultCallRecovery::ReconcileUnknown,
+    }
+}
+
+fn passport_vault_submission_heading(state: &str) -> &'static str {
+    match state {
+        "included" => "Vault call included",
+        "broadcasting" => "Vault call broadcast",
+        "outcome_unknown" => "Vault call outcome unknown",
+        "rejected" => "Vault call rejected",
+        "expired" => "Vault call expired",
+        "cancelled" => "Vault call cancelled",
+        _ => "Vault call in progress",
+    }
+}
+
+fn passport_vault_submission_note(state: &str) -> &'static str {
+    match state {
+        "included" => "Midnight reported finalized public inclusion metadata for this call.",
+        "broadcasting" => {
+            "The broadcast boundary was crossed; cancellation and replacement are disabled."
+        }
+        "outcome_unknown" => {
+            "Oxid will not submit a duplicate. Reconcile this attempt with finalized history."
+        }
+        "rejected" => "Finalized history rejected this attempt; prepare a fresh call if allowed.",
+        "expired" => "The retained authorization expired before safe completion.",
+        "cancelled" => {
+            "The worker stopped before broadcast; the authorized draft may be retryable."
+        }
+        _ => "Proving or submission is still running.",
+    }
+}
+
+#[component]
+fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<CredentialView>) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let calls = services.passport_vault_contract_calls();
+    let configured_address = calls.configured_contract_address_hex.clone();
+    let mut contract_address = use_signal(|| configured_address.clone().unwrap_or_default());
+    let mut operation = use_signal(|| "create_lock".to_owned());
+    let mut lock_id = use_signal(|| "0".to_owned());
+    let mut amount = use_signal(|| "10".to_owned());
+    let mut minimum_age = use_signal(|| "18".to_owned());
+    let mut maximum_claim = use_signal(|| "40".to_owned());
+    let mut initial_amount = use_signal(|| "100".to_owned());
+    let mut required_state = use_signal(String::new);
+    let mut required_document = use_signal(String::new);
+    let mut selected_credential = use_signal(|| {
+        credentials
+            .first()
+            .map_or_else(String::new, |credential| credential.id.clone())
+    });
+    let mut panel = use_signal(|| PassportVaultContractPanelState::Editing);
+    let mut chain_state = use_signal(|| PassportVaultContractStatePaneState::Idle);
+    let available = matches!(
+        calls.mode.as_str(),
+        "native_settlement" | "deterministic_simulation"
+    );
+    let mode_label = passport_vault_call_mode_label(&calls.mode);
+    let mode_note = passport_vault_call_mode_note(&calls.mode);
+    let read_state_button_label = match chain_state.read().clone() {
+        PassportVaultContractStatePaneState::Loading => "Reading contract state…".to_owned(),
+        PassportVaultContractStatePaneState::Ready(vault) => {
+            format!(
+                "Refresh {} contract state",
+                passport_vault_contract_source_label(&vault.source)
+            )
+        }
+        PassportVaultContractStatePaneState::Idle
+        | PassportVaultContractStatePaneState::Failed(_) => "Read contract state".to_owned(),
+    };
+
+    rsx! {
+        article { class: "info-card",
+            div { class: "card-heading",
+                div {
+                    p { class: "card-eyebrow", "Midnight contract lifecycle" }
+                    h2 { "Prepare, authorize, prove, and submit" }
+                }
+                span {
+                    class: if available { "status-pill" } else { "status-pill warning" },
+                    "{mode_label}"
+                }
+            }
+            p { "{mode_note}" }
+            label { "Contract address (hex)"
+                input {
+                    r#type: "text",
+                    aria_label: "Passport Vault contract address",
+                    maxlength: 64,
+                    autocomplete: "off",
+                    disabled: configured_address.is_some(),
+                    value: "{contract_address}",
+                    oninput: move |event| contract_address.set(event.value()),
+                }
+            }
+            if configured_address.is_some() {
+                p { class: "form-hint", "This deterministic fixture address is fixed by the development composition." }
+            } else if calls.mode == "native_settlement" {
+                p { class: "form-hint", "Enter the reviewed deployment address. Oxid will authenticate state from configured finalized history." }
+            }
+            div { class: "button-row",
+                button {
+                    class: "secondary-button",
+                    r#type: "button",
+                    disabled: !available || contract_address.read().len() != 64,
+                    onclick: {
+                        let reader = calls.read_state.clone();
+                        let address = contract_address.read().clone();
+                        move |_| {
+                            chain_state.set(PassportVaultContractStatePaneState::Loading);
+                            let reader = reader.clone();
+                            let address = address.clone();
+                            spawn(async move {
+                                match reader.execute(ReadPassportVaultContractStateCommand {
+                                    contract_address_hex: address,
+                                }).await {
+                                    Ok(view) => chain_state.set(PassportVaultContractStatePaneState::Ready(Box::new(view))),
+                                    Err(error) => chain_state.set(PassportVaultContractStatePaneState::Failed(error.to_string())),
+                                }
+                            });
+                        }
+                    },
+                    "{read_state_button_label}"
+                }
+            }
+            match chain_state.read().clone() {
+                PassportVaultContractStatePaneState::Idle => rsx! {},
+                PassportVaultContractStatePaneState::Loading => rsx! {
+                    p { class: "form-hint", role: "status", "Reading Passport Vault state…" }
+                },
+                PassportVaultContractStatePaneState::Failed(message) => rsx! {
+                    p { class: "field-error", role: "alert", "State unavailable: {message}" }
+                },
+                PassportVaultContractStatePaneState::Ready(vault) => {
+                    let authentication = vault.chain_anchor.as_ref().map_or(
+                        "simulated_or_unanchored",
+                        |anchor| anchor.state_authentication.as_str(),
+                    );
+                    rsx! {
+                        p { class: "form-hint", aria_live: "polite",
+                            "Contract state loaded from {vault.source}."
+                        }
+                        div { class: "surface-card",
+                            p { class: "card-eyebrow", "Contract state" }
+                            dl { class: "preview-list",
+                                div { dt { "Source" } dd { "{vault.source}" } }
+                                div { dt { "Authentication" } dd { "{authentication}" } }
+                                div { dt { "Total locked" } dd { "{vault.total_locked} base units" } }
+                                div { dt { "Locks" } dd { "{vault.locks.len()}" } }
+                                if let Some(anchor) = vault.chain_anchor.as_ref() {
+                                    div { dt { "Finalized height" } dd { "{anchor.finalized_head_height}" } }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+
+        if available {
+            PassportVaultCallRecoveryPane { profile_id: profile_id.clone() }
+        }
+
+        match panel.read().clone() {
+            PassportVaultContractPanelState::Editing => {
+                let inputs = PassportVaultContractInputs {
+                    operation: operation.read().clone(),
+                    lock_id: lock_id.read().clone(),
+                    amount: amount.read().clone(),
+                    minimum_age: minimum_age.read().clone(),
+                    maximum_claim: maximum_claim.read().clone(),
+                    initial_amount: initial_amount.read().clone(),
+                    required_state: required_state.read().clone(),
+                    required_document: required_document.read().clone(),
+                    credential_id: selected_credential.read().clone(),
+                };
+                let selected_operation = operation.read().clone();
+                rsx! {
+                    article { class: "info-card",
+                        p { class: "card-eyebrow", "New contract call" }
+                        h2 { "Choose an operation" }
+                        label { "Operation"
+                            select {
+                                aria_label: "Passport Vault contract operation",
+                                disabled: !available,
+                                value: "{operation}",
+                                onchange: move |event| operation.set(event.value()),
+                                option { value: "create_lock", "Create lock" }
+                                option { value: "deposit_to_lock", "Deposit to lock" }
+                                option { value: "claim_from_lock", "Claim from lock" }
+                                option { value: "withdraw_from_lock", "Withdraw from lock" }
+                            }
+                        }
+                        if selected_operation == "create_lock" {
+                            div { class: "field-grid",
+                                label { "Minimum age"
+                                    input { r#type: "number", min: "0", max: "120", value: "{minimum_age}", oninput: move |event| minimum_age.set(event.value()) }
+                                }
+                                label { "Maximum claim (base units)"
+                                    input { inputmode: "numeric", value: "{maximum_claim}", oninput: move |event| maximum_claim.set(event.value()) }
+                                }
+                                label { "Initial deposit (base units)"
+                                    input { inputmode: "numeric", value: "{initial_amount}", oninput: move |event| initial_amount.set(event.value()) }
+                                }
+                                label { "Required issuing state (optional)"
+                                    input { maxlength: "32", value: "{required_state}", oninput: move |event| required_state.set(event.value()) }
+                                }
+                                label { "Required document number (optional)"
+                                    input { maxlength: "32", value: "{required_document}", oninput: move |event| required_document.set(event.value()) }
+                                }
+                            }
+                        } else {
+                            div { class: "field-grid",
+                                label { "Lock ID"
+                                    input { inputmode: "numeric", value: "{lock_id}", oninput: move |event| lock_id.set(event.value()) }
+                                }
+                                label { "Amount (base units)"
+                                    input { inputmode: "numeric", value: "{amount}", oninput: move |event| amount.set(event.value()) }
+                                }
+                            }
+                            if selected_operation == "claim_from_lock" {
+                                label { "Verified Digital Passport"
+                                    select {
+                                        aria_label: "Passport Vault claim credential",
+                                        value: "{selected_credential}",
+                                        onchange: move |event| selected_credential.set(event.value()),
+                                        option { value: "", "Select a credential" }
+                                        for credential in &credentials {
+                                            option { value: "{credential.id}", "{credential.display_name} · {credential.id}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        p { class: "consent-copy", "Preparation reads authenticated public state but does not sign, prove, or submit." }
+                        button {
+                            class: "primary-button",
+                            r#type: "button",
+                            disabled: !available || contract_address.read().len() != 64,
+                            onclick: {
+                                let prepare = calls.prepare.clone();
+                                let profile_id = profile_id.clone();
+                                let address = contract_address.read().clone();
+                                move |_| match inputs.action() {
+                                    Err(message) => panel.set(PassportVaultContractPanelState::Failed {
+                                        message,
+                                        retained: None,
+                                        recovery: PassportVaultCallRecovery::Edit,
+                                    }),
+                                    Ok(action) => {
+                                        panel.set(PassportVaultContractPanelState::Preparing);
+                                        let prepare = prepare.clone();
+                                        let profile_id = profile_id.clone();
+                                        let address = address.clone();
+                                        spawn(async move {
+                                            match prepare.execute(PreparePassportVaultCallCommand {
+                                                profile_id,
+                                                contract_address_hex: address,
+                                                action,
+                                            }).await {
+                                                Ok(preview) => panel.set(PassportVaultContractPanelState::Prepared(Box::new(preview))),
+                                                Err(error) => panel.set(PassportVaultContractPanelState::Failed {
+                                                    message: error.to_string(),
+                                                    retained: None,
+                                                    recovery: PassportVaultCallRecovery::Edit,
+                                                }),
+                                            }
+                                        });
+                                    }
+                                }
+                            },
+                            "Review contract call"
+                        }
+                    }
+                }
+            },
+            PassportVaultContractPanelState::Preparing => rsx! {
+                article { class: "info-card", role: "status", aria_busy: "true",
+                    p { class: "card-eyebrow", "Preparing" }
+                    h2 { "Reading authenticated vault state" }
+                    p { "No protected claim material or transaction signature is produced before review." }
+                }
+            },
+            PassportVaultContractPanelState::Prepared(preview) => {
+                let draft_id = preview.draft_id.clone();
+                let challenge = preview.authorization_challenge.clone();
+                rsx! {
+                    PassportVaultCallPreviewCard { preview: preview.clone() }
+                    article { class: "info-card review-card",
+                        p { class: "consent-copy", "Authorization is bound to this exact operation, amount, contract, state anchor, account context, and expiry. Claim presentations are assembled only after this consent." }
+                        div { class: "button-row",
+                            button { class: "secondary-button", r#type: "button", onclick: move |_| panel.set(PassportVaultContractPanelState::Editing), "Edit" }
+                            button {
+                                class: "primary-button",
+                                r#type: "button",
+                                onclick: {
+                                    let authorize = calls.authorize.clone();
+                                    let profile_id = profile_id.clone();
+                                    move |_| match authorize.execute(AuthorizePassportVaultCallCommand {
+                                        profile_id: profile_id.clone(),
+                                        draft_id: draft_id.clone(),
+                                        authorization_challenge: challenge.clone(),
+                                        confirmed: true,
+                                        intent: AUTHORIZE_PASSPORT_VAULT_CALL_INTENT.to_owned(),
+                                    }) {
+                                        Ok(authorized) => panel.set(PassportVaultContractPanelState::Authorized(Box::new(authorized))),
+                                        Err(error) => panel.set(PassportVaultContractPanelState::Failed {
+                                            message: error.to_string(),
+                                            retained: Some(preview.clone()),
+                                            recovery: PassportVaultCallRecovery::Edit,
+                                        }),
+                                    }
+                                },
+                                "Authorize exact call"
+                            }
+                        }
+                    }
+                }
+            },
+            PassportVaultContractPanelState::Authorized(preview) => {
+                let draft_id = preview.draft_id.clone();
+                let submitting_preview = preview.clone();
+                rsx! {
+                    PassportVaultCallPreviewCard { preview: preview.clone() }
+                    article { class: "info-card review-card",
+                        h2 { "Authorized call is retained safely" }
+                        p { "Continue to balance NIGHT/DUST, prove, persist the public attempt, and submit. A failure before broadcast remains retryable." }
+                        button {
+                            class: "primary-button",
+                            r#type: "button",
+                            onclick: {
+                                let submit = calls.submit.clone();
+                                let drafts = calls.get_draft.clone();
+                                let profile_id = profile_id.clone();
+                                move |_| {
+                                    panel.set(PassportVaultContractPanelState::Submitting(submitting_preview.clone()));
+                                    let submit = submit.clone();
+                                    let drafts = drafts.clone();
+                                    let profile_id = profile_id.clone();
+                                    let draft_id = draft_id.clone();
+                                    spawn(async move {
+                                        match submit.execute(SubmitPassportVaultCallCommand {
+                                            profile_id: profile_id.clone(),
+                                            draft_id: draft_id.clone(),
+                                            confirmed: true,
+                                            intent: SUBMIT_PASSPORT_VAULT_CALL_INTENT.to_owned(),
+                                        }).await {
+                                            Ok(submission) => panel.set(PassportVaultContractPanelState::Submitted(Box::new(submission))),
+                                            Err(error) => {
+                                                let retained = drafts.execute(PassportVaultCallQuery {
+                                                    profile_id,
+                                                    draft_id,
+                                                }).ok().map(Box::new);
+                                                let recovery = passport_vault_call_recovery(
+                                                    retained.as_deref().map(|value| value.state.as_str()),
+                                                );
+                                                panel.set(PassportVaultContractPanelState::Failed {
+                                                    message: error.to_string(),
+                                                    retained,
+                                                    recovery,
+                                                });
+                                            }
+                                        }
+                                    });
+                                }
+                            },
+                            "Prove and submit"
+                        }
+                    }
+                }
+            },
+            PassportVaultContractPanelState::Submitting(preview) => {
+                let profile = profile_id.clone();
+                let draft = preview.draft_id.clone();
+                let cancelling = preview.clone();
+                rsx! {
+                    article { class: "info-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
+                        p { class: "card-eyebrow", "Submitting" }
+                        h2 { "Proving {preview.operation}" }
+                        p { "Cancellation is safe only before the broadcast boundary. Oxid never blind-retries an ambiguous outcome." }
+                        button {
+                            class: "secondary-button",
+                            r#type: "button",
+                            onclick: {
+                                let calls = calls.clone();
+                                move |_| match calls.cancel.execute(PassportVaultCallQuery {
+                                    profile_id: profile.clone(),
+                                    draft_id: draft.clone(),
+                                }) {
+                                    Ok(status) => {
+                                        panel.set(PassportVaultContractPanelState::Cancelling(cancelling.clone()));
+                                        poll_passport_vault_cancellation(
+                                            calls.clone(),
+                                            profile.clone(),
+                                            draft.clone(),
+                                            panel,
+                                            status,
+                                        );
+                                    }
+                                    Err(error) => panel.set(PassportVaultContractPanelState::Failed {
+                                        message: error.to_string(),
+                                        retained: Some(preview.clone()),
+                                        recovery: PassportVaultCallRecovery::ReconcileUnknown,
+                                    }),
+                                }
+                            },
+                            "Cancel before broadcast"
+                        }
+                    }
+                }
+            },
+            PassportVaultContractPanelState::Cancelling(preview) => rsx! {
+                article { class: "info-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
+                    p { class: "card-eyebrow", "Cancelling" }
+                    h2 { "Stopping {preview.operation} safely" }
+                    p { "Waiting for the submission worker to acknowledge a pre-broadcast boundary." }
+                }
+            },
+            PassportVaultContractPanelState::Submitted(submission) => rsx! {
+                article { class: "info-card submitted-card", role: "status", aria_live: "polite",
+                    p { class: "card-eyebrow", "Included" }
+                    h2 { "Passport Vault call completed" }
+                    p { "Mode: {passport_vault_submission_mode_label(&submission.mode)}. Final DUST fee: {submission.fee_atomic_units} base units." }
+                    dl { class: "preview-list",
+                        div { dt { "Operation" } dd { "{submission.call.operation}" } }
+                        div { dt { "Transaction" } dd { title: "{submission.transaction_hash_hex}", "{truncate_middle(&submission.transaction_hash_hex, 16, 8)}" } }
+                        div { dt { "Block" } dd { title: "{submission.block_hash_hex}", "{truncate_middle(&submission.block_hash_hex, 16, 8)}" } }
+                        div { dt { "Height" } dd { "{submission.block_height}" } }
+                    }
+                    button { class: "secondary-button", r#type: "button", onclick: move |_| panel.set(PassportVaultContractPanelState::Editing), "Prepare another call" }
+                }
+            },
+            PassportVaultContractPanelState::Resolved(submission) => rsx! {
+                article { class: "info-card", role: "status", aria_live: "polite",
+                    p { class: "card-eyebrow", "Cancellation resolved" }
+                    h2 { "{passport_vault_submission_heading(&submission.state)}" }
+                    p { "{passport_vault_submission_note(&submission.state)}" }
+                    dl { class: "preview-list",
+                        div { dt { "State" } dd { "{submission.state}" } }
+                        if let Some(mode) = submission.mode.as_deref() {
+                            div { dt { "Mode" } dd { "{passport_vault_submission_mode_label(mode)}" } }
+                        }
+                        if let Some(transaction) = submission.transaction_hash_hex.as_deref() {
+                            div { dt { "Transaction" } dd { title: "{transaction}", "{truncate_middle(transaction, 16, 8)}" } }
+                        }
+                        if let Some(block) = submission.block_hash_hex.as_deref() {
+                            div { dt { "Block" } dd { title: "{block}", "{truncate_middle(block, 16, 8)}" } }
+                        }
+                    }
+                    button { class: "secondary-button", r#type: "button", onclick: move |_| panel.set(PassportVaultContractPanelState::Editing), "Prepare another call" }
+                }
+            },
+            PassportVaultContractPanelState::Failed { message, retained, recovery } => {
+                let retry = retained.clone();
+                rsx! {
+                    article { class: "info-card warning-card", role: "alert",
+                        p { class: "card-eyebrow", "Call not completed" }
+                        h2 {
+                            if recovery == PassportVaultCallRecovery::ReconcileUnknown {
+                                "Submission outcome needs reconciliation"
+                            } else if recovery == PassportVaultCallRecovery::RetryAuthorized {
+                                "Authorized call can be retried safely"
+                            } else {
+                                "Review the call configuration"
+                            }
+                        }
+                        p { "{message}" }
+                        if recovery == PassportVaultCallRecovery::ReconcileUnknown {
+                            p { "Oxid will not prepare or submit a replacement while broadcast may have occurred. Use the recovery card above." }
+                        } else if recovery == PassportVaultCallRecovery::RetryAuthorized {
+                            button {
+                                class: "secondary-button",
+                                r#type: "button",
+                                onclick: move |_| {
+                                    if let Some(preview) = retry.clone() {
+                                        panel.set(PassportVaultContractPanelState::Authorized(preview));
+                                    }
+                                },
+                                "Retry safe submission"
+                            }
+                        } else {
+                            button { class: "secondary-button", r#type: "button", onclick: move |_| panel.set(PassportVaultContractPanelState::Editing), "Back to call" }
+                        }
+                    }
+                }
+            },
+        }
+    }
+}
+
+#[component]
+fn PassportVaultCallPreviewCard(preview: Box<PassportVaultCallPreviewView>) -> Element {
+    rsx! {
+        article { class: "info-card review-card", aria_label: "Reviewed Passport Vault call",
+            p { class: "card-eyebrow", "Exact call preview" }
+            h2 { "{preview.operation}" }
+            dl { class: "preview-list",
+                div { dt { "Amount" } dd { "{preview.amount_atomic_units} base units" } }
+                if let Some(lock_id) = preview.lock_id {
+                    div { dt { "Lock" } dd { "#{lock_id}" } }
+                }
+                div { dt { "State height" } dd { "{preview.state_anchor_block_height}" } }
+                div { dt { "State block" } dd { title: "{preview.state_anchor_block_hash_hex}", "{truncate_middle(&preview.state_anchor_block_hash_hex, 16, 8)}" } }
+                div { dt { "Draft state" } dd { "{preview.state}" } }
+                div { dt { "DUST fee" } dd { if let Some(fee) = preview.fee_atomic_units.as_deref() { "{fee} base units" } else { "Calculated during proving" } } }
+            }
+        }
+    }
+}
+
+#[component]
+fn PassportVaultCallRecoveryPane(profile_id: String) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let calls = services.passport_vault_contract_calls();
+    let mut state = use_signal(|| PassportVaultCallRecoveryPaneState::Loading);
+    let load_calls = calls.clone();
+    let load_profile = profile_id.clone();
+    use_effect(move || {
+        state.set(load_calls.list.execute(load_profile.clone()).map_or_else(
+            |error| PassportVaultCallRecoveryPaneState::Failed(error.to_string()),
+            |submissions| PassportVaultCallRecoveryPaneState::Ready {
+                latest: submissions.into_iter().next().map(Box::new),
+                reconciling: false,
+                operation_error: None,
+            },
+        ));
+    });
+
+    match state.read().clone() {
+        PassportVaultCallRecoveryPaneState::Loading
+        | PassportVaultCallRecoveryPaneState::Ready { latest: None, .. } => rsx! {},
+        PassportVaultCallRecoveryPaneState::Failed(message) => rsx! {
+            article { class: "info-card warning-card", role: "alert",
+                p { class: "card-eyebrow", "Vault-call recovery" }
+                h2 { "Submission history unavailable" }
+                p { "{message}" }
+            }
+        },
+        PassportVaultCallRecoveryPaneState::Ready {
+            latest: Some(submission),
+            reconciling,
+            operation_error,
+        } => {
+            let current = submission.clone();
+            let draft_id = submission.draft_id.clone();
+            rsx! {
+                article { class: "info-card", role: "status", aria_live: "polite", aria_busy: if reconciling { "true" } else { "false" },
+                    p { class: "card-eyebrow", "Latest vault call" }
+                    h2 { "{passport_vault_submission_heading(&submission.state)}" }
+                    p { "{passport_vault_submission_note(&submission.state)}" }
+                    dl { class: "preview-list",
+                        div { dt { "State" } dd { "{submission.state}" } }
+                        if let Some(mode) = submission.mode.as_deref() {
+                            div { dt { "Mode" } dd { "{passport_vault_submission_mode_label(mode)}" } }
+                        }
+                        if let Some(transaction) = submission.transaction_hash_hex.as_deref() {
+                            div { dt { "Transaction" } dd { title: "{transaction}", "{truncate_middle(transaction, 16, 8)}" } }
+                        }
+                        if let Some(block) = submission.block_hash_hex.as_deref() {
+                            div { dt { "Block" } dd { title: "{block}", "{truncate_middle(block, 16, 8)}" } }
+                        }
+                    }
+                    if let Some(message) = operation_error {
+                        p { class: "field-error", role: "alert", "{message}" }
+                    }
+                    if submission.reconciliation_allowed {
+                        button {
+                            class: "secondary-button",
+                            r#type: "button",
+                            disabled: reconciling,
+                            onclick: {
+                                let calls = calls.clone();
+                                let profile_id = profile_id.clone();
+                                move |_| {
+                                    state.set(PassportVaultCallRecoveryPaneState::Ready {
+                                        latest: Some(current.clone()),
+                                        reconciling: true,
+                                        operation_error: None,
+                                    });
+                                    let calls = calls.clone();
+                                    let profile_id = profile_id.clone();
+                                    let draft_id = draft_id.clone();
+                                    let fallback = current.clone();
+                                    spawn(async move {
+                                        match calls.reconcile.execute(PassportVaultCallQuery {
+                                            profile_id,
+                                            draft_id,
+                                        }).await {
+                                            Ok(updated) => state.set(PassportVaultCallRecoveryPaneState::Ready {
+                                                latest: Some(Box::new(updated)),
+                                                reconciling: false,
+                                                operation_error: None,
+                                            }),
+                                            Err(error) => state.set(PassportVaultCallRecoveryPaneState::Ready {
+                                                latest: Some(fallback),
+                                                reconciling: false,
+                                                operation_error: Some(error.to_string()),
+                                            }),
+                                        }
+                                    });
+                                }
+                            },
+                            if reconciling { "Reconciling…" } else { "Reconcile with Midnight" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn poll_passport_vault_cancellation(
+    calls: PassportVaultContractCallUiServices,
+    profile_id: String,
+    draft_id: String,
+    mut panel: Signal<PassportVaultContractPanelState>,
+    initial: PassportVaultCallSubmissionStatusView,
+) {
+    spawn(async move {
+        let mut status = initial;
+        loop {
+            match status.state.as_str() {
+                "running" | "cancellation_requested" => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    match calls.get_status.execute(PassportVaultCallQuery {
+                        profile_id: profile_id.clone(),
+                        draft_id: draft_id.clone(),
+                    }) {
+                        Ok(updated) => status = updated,
+                        Err(error) => {
+                            panel.set(PassportVaultContractPanelState::Failed {
+                                message: format!(
+                                    "Cancellation status is unavailable and may require reconciliation: {error}"
+                                ),
+                                retained: None,
+                                recovery: PassportVaultCallRecovery::ReconcileUnknown,
+                            });
+                            break;
+                        }
+                    }
+                }
+                "cancelled" => {
+                    let retained = calls
+                        .get_draft
+                        .execute(PassportVaultCallQuery {
+                            profile_id,
+                            draft_id,
+                        })
+                        .ok()
+                        .map(Box::new);
+                    let recovery = if retained
+                        .as_deref()
+                        .is_some_and(|preview| preview.state == "authorized")
+                    {
+                        PassportVaultCallRecovery::RetryAuthorized
+                    } else {
+                        PassportVaultCallRecovery::Edit
+                    };
+                    panel.set(PassportVaultContractPanelState::Failed {
+                        message: "Vault-call submission was cancelled before broadcast.".to_owned(),
+                        retained,
+                        recovery,
+                    });
+                    break;
+                }
+                "broadcasting" | "outcome_unknown" => {
+                    panel.set(PassportVaultContractPanelState::Failed {
+                        message:
+                            "The vault call may have reached Midnight and requires reconciliation."
+                                .to_owned(),
+                        retained: None,
+                        recovery: PassportVaultCallRecovery::ReconcileUnknown,
+                    });
+                    break;
+                }
+                "included" | "rejected" | "expired" => {
+                    panel.set(PassportVaultContractPanelState::Resolved(Box::new(status)));
+                    break;
+                }
+                _ => {
+                    panel.set(PassportVaultContractPanelState::Failed {
+                        message: format!(
+                            "Cancellation returned an unsupported status `{}`; reconcile before replacing the call.",
+                            status.state
+                        ),
+                        retained: None,
+                        recovery: PassportVaultCallRecovery::ReconcileUnknown,
+                    });
+                    break;
+                }
+            }
+        }
+    });
+}
+
 #[component]
 fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -3640,7 +4585,7 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
         PassportVaultPageState::Loading => rsx! {
             section { class: "page-stack", aria_busy: "true",
                 h1 { "Passport Vault" }
-                p { "Loading standalone vault state…" }
+                p { "Loading standalone and Midnight vault capabilities…" }
             }
         },
         PassportVaultPageState::Failed(message) => rsx! {
@@ -3652,7 +4597,7 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                 article { class: "info-card warning-card",
                     h2 { "Vault capability unavailable" }
                     p { "{message}" }
-                    p { "Enable the standalone development composition to exercise local vault flows. Live Compact contract submission remains a separate adapter." }
+                    p { "Enable the standalone development composition to exercise local and Midnight-shaped vault flows." }
                 }
             }
         },
@@ -3678,11 +4623,16 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                             h1 { "Passport Vault" }
                             p { "Create, fund, claim, and withdraw credential-gated NIGHT locks." }
                         }
-                        span { class: "status-pill", "Standalone" }
+                        span { class: "status-pill", "Standalone + Midnight" }
+                    }
+
+                    PassportVaultContractCallPanel {
+                        profile_id: profile_id.clone(),
+                        credentials: credentials.clone(),
                     }
 
                     article { class: "balance-card",
-                        p { class: "card-eyebrow", "Total locked" }
+                        p { class: "card-eyebrow", "Standalone conformance ledger · total locked" }
                         h2 { "{vault.total_locked} base units" }
                         div { class: "balance-breakdown",
                             span { "Deposited {vault.total_deposited}" }
@@ -5608,6 +6558,118 @@ mod tests {
         assert!(submission_status_note("broadcasting").contains("before broadcast"));
         assert!(submission_status_note("outcome_unknown").contains("not submit a duplicate"));
         assert!(submission_status_note("expired").contains("expired"));
+    }
+
+    fn vault_contract_inputs(operation: &str) -> PassportVaultContractInputs {
+        PassportVaultContractInputs {
+            operation: operation.to_owned(),
+            lock_id: "7".to_owned(),
+            amount: "10".to_owned(),
+            minimum_age: "18".to_owned(),
+            maximum_claim: "40".to_owned(),
+            initial_amount: "100".to_owned(),
+            required_state: "US".to_owned(),
+            required_document: "AB1234567".to_owned(),
+            credential_id: "credential_test".to_owned(),
+        }
+    }
+
+    #[test]
+    fn mobile_vault_inputs_map_only_the_closed_native_operation_set() {
+        assert!(matches!(
+            vault_contract_inputs("create_lock").action(),
+            Ok(PreparePassportVaultCallAction::CreateLock {
+                minimum_age_years: 18,
+                maximum_claim_amount,
+                initial_amount,
+                ..
+            }) if maximum_claim_amount == "40" && initial_amount == "100"
+        ));
+        assert!(matches!(
+            vault_contract_inputs("deposit_to_lock").action(),
+            Ok(PreparePassportVaultCallAction::DepositToLock {
+                lock_id: 7,
+                amount,
+            }) if amount == "10"
+        ));
+        assert!(matches!(
+            vault_contract_inputs("claim_from_lock").action(),
+            Ok(PreparePassportVaultCallAction::ClaimFromLock {
+                lock_id: 7,
+                amount,
+                credential_id,
+            }) if amount == "10" && credential_id == "credential_test"
+        ));
+        assert!(matches!(
+            vault_contract_inputs("withdraw_from_lock").action(),
+            Ok(PreparePassportVaultCallAction::WithdrawFromLock {
+                lock_id: 7,
+                amount,
+            }) if amount == "10"
+        ));
+        assert!(
+            vault_contract_inputs("set_trusted_issuer")
+                .action()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn mobile_vault_claims_require_opaque_credentials_and_nonzero_canonical_amounts() {
+        let mut missing_credential = vault_contract_inputs("claim_from_lock");
+        missing_credential.credential_id.clear();
+        assert!(missing_credential.action().is_err());
+
+        let mut zero = vault_contract_inputs("deposit_to_lock");
+        zero.amount = "0".to_owned();
+        assert!(zero.action().is_err());
+
+        let mut ambiguous_lock = vault_contract_inputs("withdraw_from_lock");
+        ambiguous_lock.lock_id = "07".to_owned();
+        assert!(ambiguous_lock.action().is_err());
+    }
+
+    #[test]
+    fn mobile_vault_modes_and_recovery_copy_never_overstate_settlement() {
+        assert_eq!(
+            passport_vault_call_mode_label("deterministic_simulation"),
+            "Deterministic simulation"
+        );
+        assert!(
+            passport_vault_call_mode_note("deterministic_simulation").contains("no node broadcast")
+        );
+        assert_eq!(
+            passport_vault_call_mode_label("native_settlement"),
+            "Midnight live"
+        );
+        assert_eq!(
+            passport_vault_contract_source_label("deterministic_simulation"),
+            "simulated"
+        );
+        assert_eq!(
+            passport_vault_contract_source_label("authenticated_node"),
+            "authenticated_node"
+        );
+        assert_eq!(
+            passport_vault_submission_mode_label("deterministic_simulation_only"),
+            "simulated · deterministic simulation only"
+        );
+        assert_eq!(passport_vault_submission_mode_label("midnight"), "midnight");
+        assert!(
+            passport_vault_call_mode_note("native_settlement")
+                .contains("authenticated finalized state")
+        );
+        assert_eq!(
+            passport_vault_call_recovery(Some("authorized")),
+            PassportVaultCallRecovery::RetryAuthorized
+        );
+        assert_eq!(
+            passport_vault_call_recovery(Some("submitting")),
+            PassportVaultCallRecovery::ReconcileUnknown
+        );
+        assert!(
+            passport_vault_submission_note("outcome_unknown").contains("not submit a duplicate")
+        );
     }
 
     #[test]

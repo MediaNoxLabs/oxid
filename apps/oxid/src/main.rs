@@ -3,7 +3,10 @@
 #![forbid(unsafe_code)]
 
 fn main() {
-    #[cfg(feature = "standalone-development")]
+    #[cfg(all(feature = "standalone-development", not(target_arch = "wasm32")))]
+    let application = oxid_composition::compose_headless_from_environment()
+        .unwrap_or_else(|error| panic!("standalone wallet configuration is invalid: {error}"));
+    #[cfg(all(feature = "standalone-development", target_arch = "wasm32"))]
     let application = oxid_composition::compose_headless();
     #[cfg(not(feature = "standalone-development"))]
     let application = oxid_composition::compose();
@@ -68,6 +71,23 @@ fn main() {
                 application.deposit_passport_vault_lock(),
                 application.claim_passport_vault_lock(),
                 application.withdraw_passport_vault_lock(),
+                oxid_ui_dioxus::PassportVaultContractCallUiServices::new(
+                    application.read_passport_vault_contract_state(),
+                    application.prepare_passport_vault_call(),
+                    application.authorize_passport_vault_call(),
+                    application.submit_passport_vault_call(),
+                    oxid_ui_dioxus::PassportVaultContractCallRecoveryUiServices::new(
+                        application.get_passport_vault_call(),
+                        application.get_passport_vault_call_submission_status(),
+                        application.cancel_passport_vault_call_submission(),
+                        application.list_passport_vault_call_submissions(),
+                        application.reconcile_passport_vault_call_submission(),
+                    ),
+                    application.passport_vault_call_mode(),
+                    application
+                        .passport_vault_call_contract_address_hex()
+                        .map(str::to_owned),
+                ),
             ),
         ),
         oxid_ui_dioxus::IdentityUiServices::new(

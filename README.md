@@ -454,11 +454,13 @@ just ios-run
 ```
 
 The repository iOS and Android launch scripts explicitly enable
-`oxid-app/standalone-development`. This composes the same deterministic
-development wallet as the headless harness: public profiles persist, protected
-roots and drafts are process-local, no chain service is contacted, and the UI
-labels simulated results. A normal `cargo run -p oxid-app` does not enable this
-feature and stays fail-closed.
+`oxid-app/standalone-development`. Native builds select the same
+environment-aware composition as the headless harness: with no live variables,
+public profiles persist, protected roots and drafts are process-local, no chain
+service is contacted, and the UI labels simulated results. A complete reviewed
+standalone configuration selects authenticated native settlement; partial or
+invalid configuration fails startup. A normal `cargo run -p oxid-app` does not
+enable this feature and stays fail-closed.
 
 Set `OXID_IOS_DEVICE` to a simulator UDID to select a particular device. The
 script obtains the pinned Dioxus CLI from the locked Nix flake but deliberately
@@ -481,6 +483,8 @@ simulator/emulator, create the default profile, activate the protected
 development account, render receive QR, complete a staged simulated transfer,
 create and resolve standalone DIDs, preview and accept an OpenID4VCI offer,
 complete a consented self-issued DID login,
+read the truthfully labelled Passport Vault contract state, complete an exact
+prepare/authorize/prove/submit call lifecycle,
 restart the process, and assert public-profile, submission, DID-inventory, and
 encrypted credential restoration:
 

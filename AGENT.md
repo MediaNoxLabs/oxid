@@ -121,7 +121,23 @@ Jubjub DID custody, byte-exact contract trust, the packaged generated composer,
 Midnight funding, and terminal completion. `native_settlement` may now
 advertise all four wallet operations. The deterministic terminal completer is
 test evidence only; do not relabel it as a real-node broadcast. Keep real-node
-fixtures and mobile live-call UX explicit backlog items.
+and device resource fixtures explicit backlog items.
+ADR-0067 connects the typed contract-state and retained vault-call lifecycle to
+Dioxus without WebView/iframe/JavaScript bridges. The page must keep the
+process-local standalone ledger, `deterministic_simulation`, and
+`native_settlement` visibly distinct; require prepare, exact authorization, and
+separate prove/submit stages; permit cancellation only before broadcast; and
+route any non-authorized failed submission to reconciliation rather than a
+replacement. Native standalone-development builds use
+`compose_headless_from_environment`; no configuration selects explicit
+simulation, complete reviewed configuration may select native settlement, and
+partial invalid configuration fails startup. Only deterministic simulation may
+supply a fixed fixture address; native mode requires an explicit deployment
+address. The iOS and Android smoke flows cover deterministic state read and the
+complete typed lifecycle; terminal copy preserves the adapter's
+simulation-only qualifier. Those simulator checks are not real-node or device
+resource-baseline evidence. Device real-node fixtures and resource baselines
+remain backlog.
 The finalized node's timestamp extrinsic is milliseconds and is normalized to
 seconds by canonical history collection; the indexer GraphQL `block.timestamp`
 is already Unix seconds and must not be divided again.
@@ -781,7 +797,7 @@ Current package ownership:
 | `nix/packages/passport-vault-call-composer.nix` | One-request Node 24 outgoing adapter package with locked Midnight compatibility dependencies, Nix-fixed authenticated artifacts, closed typed operations, and real generated-client install checks. |
 | `tools/passport-vault-composer` | Internal generated-Compact composition implementation; never an incoming headless/mobile API and never a credential/private-witness bridge. |
 | `crates/adapters/platform-system` | System clock and OS randomness implementations. |
-| `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, and public receive-QR rendering. |
+| `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, public receive-QR rendering, standalone Passport Vault UI, and truthfully labelled typed native vault-call review/authorization/submission/cancellation/reconciliation. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
 | `apps/oxid` | Executable shell and platform launch point. |
 | `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |

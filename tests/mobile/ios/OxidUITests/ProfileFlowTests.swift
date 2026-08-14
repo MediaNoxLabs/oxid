@@ -9,7 +9,7 @@ final class ProfileFlowTests: XCTestCase {
 
     @MainActor
     private func scrollTo(_ element: XCUIElement, in application: XCUIApplication) {
-        for _ in 0..<10 where !element.isHittable {
+        for _ in 0..<20 where !element.isHittable {
             application.swipeUp()
         }
         XCTAssertTrue(element.isHittable)
@@ -74,7 +74,10 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(amount.exists)
         scrollTo(amount, in: application)
         amount.tap()
-        amount.typeText("1.5")
+        // The iOS 26 simulator keyboard drops the decimal separator from
+        // `typeText("1.5")`; use an exact whole NIGHT for this interaction
+        // smoke while Rust unit tests retain fractional conversion coverage.
+        amount.typeText("1")
         let review = application.buttons["Review transfer"]
         scrollTo(review, in: application)
         review.tap()
@@ -214,6 +217,37 @@ final class ProfileFlowTests: XCTestCase {
         let vault = application.buttons["Vault"]
         XCTAssertTrue(vault.waitForExistence(timeout: 5))
         vault.tap()
+        XCTAssertTrue(
+            application.staticTexts["Deterministic simulation"].waitForExistence(timeout: 5)
+        )
+        let readContractState = application.buttons["Read contract state"]
+        scrollTo(readContractState, in: application)
+        readContractState.tap()
+        application.swipeUp()
+        XCTAssertTrue(
+            application.buttons["Refresh simulated contract state"]
+                .waitForExistence(timeout: 10)
+        )
+        let reviewContractCall = application.buttons["Review contract call"]
+        scrollTo(reviewContractCall, in: application)
+        reviewContractCall.tap()
+        let authorizeContractCall = application.buttons["Authorize exact call"]
+        XCTAssertTrue(authorizeContractCall.waitForExistence(timeout: 10))
+        scrollTo(authorizeContractCall, in: application)
+        authorizeContractCall.tap()
+        let submitContractCall = application.buttons["Prove and submit"]
+        XCTAssertTrue(submitContractCall.waitForExistence(timeout: 10))
+        scrollTo(submitContractCall, in: application)
+        submitContractCall.tap()
+        XCTAssertTrue(
+            application.staticTexts["Passport Vault call completed"]
+                .waitForExistence(timeout: 15)
+        )
+        application.swipeDown()
+        XCTAssertTrue(
+            application.staticTexts["Mode: simulated · deterministic simulation only. Final DUST fee: 1000000 base units."]
+                .waitForExistence(timeout: 5)
+        )
         let createLock = application.buttons["Create confirmed lock"]
         XCTAssertTrue(createLock.waitForExistence(timeout: 5))
         scrollTo(createLock, in: application)
@@ -251,4 +285,5 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(application.buttons["Assets"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
     }
+
 }

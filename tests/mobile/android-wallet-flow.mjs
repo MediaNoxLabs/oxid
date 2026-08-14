@@ -307,6 +307,25 @@ try {
     );
 
     await clickButton("Vault");
+    await waitFor(
+      "document.body.innerText.includes('Deterministic simulation') && document.body.innerText.includes('no node broadcast occurs')",
+      "truthfully labelled deterministic vault-call mode",
+    );
+    await clickButton("Read contract state");
+    await waitFor(
+      "document.body.innerText.includes('Contract state') && document.body.innerText.includes('simulated')",
+      "simulated Passport Vault contract state",
+    );
+    await clickButton("Review contract call");
+    await clickButton("Authorize exact call");
+    await clickButton("Prove and submit");
+    await waitFor(
+      "document.body.innerText.includes('Passport Vault call completed') && document.body.innerText.includes('Mode: simulated')",
+      "simulated native Passport Vault call lifecycle",
+    );
+    const nativeVaultCallFlow = await evaluate(
+      "document.body.innerText.includes('Passport Vault call completed') && document.body.innerText.includes('Mode: simulated') && document.body.innerText.includes('Transaction') && document.body.innerText.includes('Block')",
+    );
     await waitForButton("Create confirmed lock");
     await setInput("Vault required issuing state", "US");
     await setInput("Vault required document number", "AB1234567");
@@ -380,8 +399,8 @@ try {
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, presentationProofGated, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.presentationProofGated || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow) {
+    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);
