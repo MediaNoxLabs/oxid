@@ -58,9 +58,14 @@ always `indexer_supplied_not_proven`: the transaction contains replayable call
 transcripts, not the post-call state, so only deterministic replay from an
 authenticated prior state or a reviewed storage proof can authenticate those
 bytes. Never use this read model to authorize or compose a contract call.
-Authenticated replay/proofs, live Compact transactions, and optional durable
-standalone state remain issue #31. Live protocol transport and production/mobile
-presentation proving remain deferred.
+ADR-0055 selects deterministic replay and implements the transport-independent
+native verifier for official raw transactions, node operation outcomes,
+guaranteed/fallible semantics, exact public transcripts/effects, and checked
+contract balances. It does not establish history completeness. A node adapter
+must still validate deployment and scan every canonical finalized block through
+the target head before the result can replace the unproven label. Live Compact
+transactions and optional durable standalone state remain issue #31. Live
+protocol transport and production/mobile presentation proving remain deferred.
 Standalone presentation now reauthorizes the exact statement with the
 credential-bound method's current managed protected key, runs the authenticated
 k=18 Compact circuit, and independently verifies the public `MZP1` envelope
@@ -502,6 +507,11 @@ branches. Record a new immutable commit here before taking later prototype
 changes. Do not copy ledger-relative path dependencies, demo secrets, generated
 proof artifacts, pre-production keys, vendored JS, or environment-specific
 mobile projects into Oxid without an explicit migration decision.
+The prototype Passport Vault claim code in `web/src/entry.ts` derives its holder
+scalar from the public credential claim root and uses the fixed presentation
+nonce `17`. Never migrate either shortcut: use opaque managed holder custody and
+fresh wallet-generated randomness, with no scalar, nonce, or private witness in
+incoming adapters.
 
 The staged component inventory and destination map live in
 `docs/migration/midnight-ledger-prototype.md`. Presentation-specific provenance
@@ -618,6 +628,12 @@ remaining authenticated acquisition and live contract-call adapter.
 ADR-0053 supersedes only the private upstream flake-input choice: the reviewed
 contract source is distributed byte-identically from Oxid and hash-checked so
 public CI and forks remain secret-free.
+ADR-0054 anchors indexer reads to finalized node hashes without authenticating
+their state bytes. ADR-0055 selects deterministic canonical replay and owns the
+pure verifier; its future source must scan every finalized block from a
+node-validated deployment and bind raw `send_mn_transaction` payloads to the
+ordered pallet outcome/action events. Indexer history or failed-segment data is
+not a completeness or outcome authority.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -780,6 +796,18 @@ and reject trailing bytes or unknown decisions. The deterministic fixture at
 `dc4a2f242b8a0a525310b1090ca1ad117cc0d7b019e16d8738f3c9505760a8c0`.
 Do not relabel it live/cached without an authenticated acquisition/freshness
 adapter.
+
+The native replay verifier in `crates/adapters/passport-vault/src/replay.rs`
+accepts only complete canonical observations supplied in block/extrinsic order.
+It strictly decodes the official tagged proven transaction, matches its inner
+hash and ordered applied operations to node events, replays every guaranteed
+target transcript plus only uniquely identified fallible target actions, and
+requires exact proven effects. Target maintenance, repeated-address outcome
+ambiguity, missing global commitment indices, or any transcript mismatch fail
+closed. It deliberately has no transport; the pending collector must derive
+`BlockContext` from node timestamp, parent hash, prior-block timestamp, and the
+consensus 30-second uncertainty while scanning every finalized block from the
+validated deployment.
 
 The Passport Vault upstream companion is private. Never add it back as a flake
 input or require CI/forks to hold a repository token. ADR-0053 permits only the

@@ -20,9 +20,12 @@ oxid-platform-ports.workspace = true
 futures.workspace = true
 hex.workspace = true
 midnight-base-crypto.workspace = true
+midnight-coin-structure.workspace = true
+midnight-ledger.workspace = true
 midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
+midnight-transient-crypto.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 rustls.workspace = true
 serde.workspace = true
@@ -30,6 +33,9 @@ serde_json.workspace = true
 subxt.workspace = true
 tokio.workspace = true
 webpki-root-certs.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
 
 [lints]
 workspace = true

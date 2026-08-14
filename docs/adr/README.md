@@ -76,6 +76,7 @@ ADR status and delivery state answer different questions:
 | [0052](0052-authenticate-and-decode-passport-vault-contract-state.md) Authenticate and decode Passport Vault contract state natively | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault bridge, and issue #31 | Immutable five-circuit Nix closure, exact native tagged-state decoder, and headless fixture implemented; authenticated acquisition and contract-call transactions pending #31 |
 | [0053](0053-distribute-passport-vault-source-from-oxid.md) Distribute the reviewed Passport Vault source from Oxid | Accepted | §§3–8, 12–13, 16–18, 21 and issue #31 | Byte-identical Apache-2.0 contract source and digest assertion replace the private upstream flake input so public CI remains secret-free; generated artifacts stay in Nix |
 | [0054](0054-anchor-passport-vault-indexer-state-to-finality.md) Anchor Passport Vault indexer state to node finality | Accepted | §§3–8, 12–13, 16–18, 21, prototype contract-state query, and issue #31 | Address-scoped finalized-height indexer reads verify the canonical action block and disclose that state bytes remain indexer-supplied; replay/proof authentication and calls remain pending |
+| [0055](0055-replay-canonical-passport-vault-history.md) Replay canonical Passport Vault history before mutation | Accepted | §§3–8, 12–13, 16–18, 21, node transaction/events, and issue #31 | Bounded native verifier authenticates exact transaction outcomes and replays contract-local state; complete finalized-block collection, caching, composed authenticated reads, and calls remain pending |
 
 ## Current boundaries
 
@@ -178,3 +179,8 @@ native source queries at a node-finalized height and verifies the action block's
 canonical hash, while every view explicitly says the indexer-supplied state is
 not proven. Those snapshots remain read-only until deterministic replay or a
 reviewed storage proof authenticates the state bytes.
+ADR-0055 selects deterministic replay and implements its pure native verifier.
+Only a scanner that observes every canonical finalized block from the validated
+deployment can establish input completeness, so ADR-0054's indexer snapshot
+remains explicitly unproven and mutation stays closed until that adapter is
+composed.

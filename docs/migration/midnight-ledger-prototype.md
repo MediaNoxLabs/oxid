@@ -356,12 +356,20 @@ fixture without claiming that supplied bytes are live or fresh. Issue #31 owns
 the remaining acquisition trust boundary: ADR-0054 now queries an explicit
 address at a node-finalized height, verifies the action block's canonical node
 hash, and exposes `indexer_supplied_not_proven` because block anchoring alone
-does not authenticate returned state bytes. Deterministic replay or a reviewed
-storage proof, caching, durable optional development state, and
+does not authenticate returned state bytes. ADR-0055 selects deterministic
+replay and adds a bounded native verifier for official raw transactions,
+inner hashes, ordered node operation outcomes, guaranteed/fallible semantics,
+exact public transcripts, effects, and contract balances. A complete scanner
+must still validate the deployment and observe every finalized canonical node
+block before that replay becomes an authenticated read source. Caching, durable
+optional development state, and
 create/deposit/claim/withdraw integration with a capability-specific contract
 transaction port must preserve the existing submission/reconciliation safety
 model. WebView JavaScript, iframe origins, hard-coded addresses, and relative
-workspace paths remain excluded.
+workspace paths remain excluded. The prototype claim composer also derives a
+holder scalar from the public credential claim root and fixes the presentation
+nonce to `17`; Oxid requires opaque managed holder custody and fresh randomness
+instead of migrating either shortcut.
 
 Shielded spending, internal/change address management, replacement handling,
 live DID writes, live OpenID4VP response delivery and mobile Compact proving, camera/copy/share

@@ -6,12 +6,19 @@
 mod contract_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod live_state;
+#[cfg(not(target_arch = "wasm32"))]
+mod replay;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use contract_state::NativePassportVaultContractStateDecoder;
 #[cfg(not(target_arch = "wasm32"))]
 pub use live_state::{
     NodeAnchoredPassportVaultStateConfigError, NodeAnchoredPassportVaultStateSource,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use replay::{
+    CanonicalMidnightBlockContext, CanonicalMidnightOperation, CanonicalMidnightTransaction,
+    PassportVaultReplayError, ReplayedPassportVaultState, replay_canonical_passport_vault_history,
 };
 
 use std::sync::{Arc, Mutex};
