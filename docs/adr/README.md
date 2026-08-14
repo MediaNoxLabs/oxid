@@ -85,6 +85,7 @@ ADR status and delivery state answer different questions:
 | [0061](0061-compose-finalized-passport-vault-call-context.md) Compose finalized Passport Vault call context | Accepted | §§3–8, 12–13, 16–18, 21, prototype wallet/indexer context flow, and issue #31 | Complete standalone composition joins exact profile public addresses with replay-matched bounded chain context and enables retained native create/deposit/withdraw drafts; claim, funding, proving, submission, and reconciliation remain pending |
 | [0062](0062-fund-passport-vault-calls-inside-protected-midnight-custody.md) Fund Passport Vault calls inside protected Midnight custody | Accepted | §§3–8, 12–13, 16–18, 21, prototype wallet funding flow, and issue #31 | Exact authorization triggers protected synchronized NIGHT input selection, change, per-input signing, and zeroizing retention for native create/deposit; claim, DUST completion, proving, submission, and reconciliation remain pending |
 | [0063](0063-settle-passport-vault-calls-through-the-midnight-submission-lifecycle.md) Settle Passport Vault calls through the Midnight submission lifecycle | Accepted | §§3–8, 12–13, 16–18, 21, prototype proving/submission flow, and issue #31 | Native create/deposit/withdraw reuse protected DUST proving, persist-before-broadcast, finalized submission, cancellation, and restart reconciliation; protected claim remains pending |
+| [0064](0064-build-passport-vault-claims-from-managed-holder-custody.md) Build Passport Vault claims from managed holder custody | Accepted | §§3–7, 9–13, 16–18, 21, prototype claim composer, and issue #31 | Exact credential/trust/policy checks plus managed holder reauthorization and independently verified fresh-custody proof now produce a zeroizing claim DTO; generated composition and settlement remain pending |
 
 ## Current boundaries
 
@@ -228,3 +229,10 @@ block height while keeping schema-one reads compatible and namespaces Passport
 Vault records away from transfer history. Complete standalone native
 create/deposit/withdraw calls now report `native_settlement` and
 `settlesOnMidnight: true`; protected claim remains closed.
+ADR-0064 now prepares that claim's sensitive credential and presentation
+material inside `vc-midnight`: exact stored credential verification,
+contract-pinned issuer hashing, finalized-time policy checks, current managed
+holder reauthorization, custody-owned fresh proof signing, independent proof
+verification, and zeroizing fixed-shape output. It deliberately leaves the
+public claim capability closed until the authenticated generated composer and
+existing settlement lifecycle consume that output.

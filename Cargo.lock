@@ -5659,8 +5659,10 @@ dependencies = [
  "p256",
  "rand 0.8.5",
  "serde",
+ "serde_arrays",
  "serde_json",
  "sha2 0.10.9",
+ "zeroize",
 ]
 
 [[package]]

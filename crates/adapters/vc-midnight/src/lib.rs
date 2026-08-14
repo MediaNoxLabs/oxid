@@ -33,6 +33,7 @@ pub use compact_runtime::{
 };
 mod digital_passport;
 mod passport_policy;
+mod protected_presentation;
 
 pub use compact_digital_passport::{
     MidnightCompactCredentialVerifier, StandaloneBoundCompactCredentialIssuer,
@@ -55,6 +56,10 @@ pub use passport_policy::{
     DigitalPassportIssuerTrustAnchor, DigitalPassportPolicyError, DigitalPassportPolicyEvidence,
     DigitalPassportPolicyRequest, standalone_digital_passport_issuer_trust_anchor,
     verify_digital_passport_policy,
+};
+pub use protected_presentation::{
+    PreparedDigitalPassportPresentation, ProtectedDigitalPassportPresentationError,
+    ProtectedDigitalPassportPresentationRequest, ProtectedDigitalPassportPresentationSource,
 };
 
 pub const STANDALONE_CREDENTIAL_B64: &str =

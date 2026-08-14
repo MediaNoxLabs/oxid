@@ -95,6 +95,16 @@ existing protected DUST, proving, persist-before-broadcast, finalized node
 submission, cancellation, and reconciliation machinery. Complete standalone
 composition now reports `native_settlement` and `settlesOnMidnight: true` for
 those three operations. Protected claim composition remains fail-closed.
+ADR-0064 permits only `vc-midnight` to assemble the sensitive Digital Passport
+claim material. Re-verify the stored credential/proof/private commitments,
+match the issuer DID/method and `persistentHash<JubjubPoint>` against the
+authenticated contract anchor, derive expiry/current day from finalized chain
+time, reauthorize the exact current managed holder method, and independently
+verify the custody-produced holder proof. Never derive a holder scalar from a
+public credential field, reuse nonce `17`, accept lock policy/trust from an
+incoming caller, or expose the zeroizing composer DTO through headless/mobile.
+Keep claim capability absent until the authenticated generated composer and the
+ADR-0063 authorization/funding/proving/submission lifecycle consume it.
 An authenticated replay cache and optional durable standalone state also remain
 issue #31. Live protocol transport and production/mobile presentation proving
 remain deferred.

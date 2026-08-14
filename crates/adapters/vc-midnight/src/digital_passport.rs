@@ -23,6 +23,7 @@ use oxid_credential_domain::{
     MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES, MAX_SIGNED_CREDENTIAL_BYTES,
 };
 use sha2::{Digest as _, Sha256};
+use zeroize::Zeroize;
 
 pub const PACKAGE_ID: &str = "midnight:vc:digital-passport";
 pub const SCHEMA_ID: &str = "digital-passport:v1";
@@ -42,7 +43,7 @@ const NULL_DOCUMENT_LABEL: &[u8] = b"document-number";
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DigitalPassportDisclosureAdapter;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Zeroize)]
 pub(crate) struct ClaimValues {
     pub(crate) first_name: [u8; 64],
     pub(crate) last_name: [u8; 64],
@@ -51,7 +52,7 @@ pub(crate) struct ClaimValues {
     pub(crate) issuing_state: [u8; 32],
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Zeroize)]
 pub(crate) struct ClaimOpenings {
     pub(crate) first_name: [u8; 32],
     pub(crate) last_name: [u8; 32],
@@ -60,7 +61,7 @@ pub(crate) struct ClaimOpenings {
     pub(crate) issuing_state: [u8; 32],
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Zeroize)]
 pub(crate) struct PrivateParts {
     pub(crate) values: ClaimValues,
     pub(crate) openings: ClaimOpenings,

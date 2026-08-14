@@ -413,7 +413,14 @@ and finalized reconciliation path. Capability discovery reports
 `native_settlement` and `settlesOnMidnight: true` for those three native
 operations; a configured submission journal restores public status across
 process restarts. Protected claim composition and optional authenticated state
-caching remain issue #31 adapter work. WebView JavaScript, iframe origins,
+caching remain issue #31 adapter work. ADR-0064 now replaces the prototype's
+unsafe claim-presentation construction with a protected `vc-midnight` source:
+it re-verifies the exact credential/private material and contract issuer anchor,
+derives policy time from finalized chain time, reauthorizes the current managed
+holder method, obtains a fresh custody-backed Jubjub proof, independently
+verifies it, and returns a zeroizing fixed-shape composer DTO. Claim capability
+remains closed until the authenticated generated composer and ADR-0063
+settlement lifecycle consume that DTO. WebView JavaScript, iframe origins,
 hard-coded addresses, and relative workspace paths remain excluded.
 The prototype claim composer also derives a holder scalar from the public
 credential claim root and fixes the presentation nonce to `17`; Oxid requires

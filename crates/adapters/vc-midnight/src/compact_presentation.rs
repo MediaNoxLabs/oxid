@@ -233,6 +233,24 @@ impl DigitalPassportPresentationSelection {
             reveal_issuing_state: flags & FLAG_ISSUING_STATE != 0,
         })
     }
+
+    pub(crate) const fn for_passport_vault(
+        minimum_age_years: u8,
+        reveal_document_number: bool,
+        reveal_issuing_state: bool,
+    ) -> Result<Self, CompactPresentationError> {
+        if minimum_age_years > 120 {
+            return Err(CompactPresentationError::InvalidSelection);
+        }
+        Ok(Self {
+            reveal_first_name: false,
+            reveal_last_name: false,
+            prove_age: minimum_age_years > 0,
+            age_threshold_years: minimum_age_years,
+            reveal_document_number,
+            reveal_issuing_state,
+        })
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -254,7 +272,7 @@ pub(crate) struct PublicDisclosures {
 }
 
 impl PublicDisclosures {
-    fn from_private_parts(
+    pub(crate) fn from_private_parts(
         selection: DigitalPassportPresentationSelection,
         private_parts: &PrivateParts,
     ) -> Self {
@@ -593,7 +611,10 @@ fn validate_revealed_commitments(
     Ok(())
 }
 
-fn presentation_root(credential: &CompactCredential, disclosures: &PublicDisclosures) -> [u8; 32] {
+pub(crate) fn presentation_root(
+    credential: &CompactCredential,
+    disclosures: &PublicDisclosures,
+) -> [u8; 32] {
     persistent_hash(&(
         1_u16,
         (
@@ -632,7 +653,7 @@ fn presentation_root(credential: &CompactCredential, disclosures: &PublicDisclos
     ))
 }
 
-fn consented_claims_hash(disclosures: &PublicDisclosures) -> [u8; 32] {
+pub(crate) fn consented_claims_hash(disclosures: &PublicDisclosures) -> [u8; 32] {
     persistent_hash(&(
         padded::<32>(CONSENTED_CLAIMS_DOMAIN),
         field_bytes(u64::from(disclosures.reveal_first_name)),
@@ -644,7 +665,7 @@ fn consented_claims_hash(disclosures: &PublicDisclosures) -> [u8; 32] {
     ))
 }
 
-fn presentation_statement(
+pub(crate) fn presentation_statement(
     credential_root: [u8; 32],
     presentation_root: [u8; 32],
     verifier_challenge_hash: [u8; 32],
@@ -1567,7 +1588,7 @@ fn map_compact_holder_proof_error(error: CompactHolderProofError) -> Presentatio
     }
 }
 
-fn holder_reference(
+pub(crate) fn holder_reference(
     credential: &CompactCredential,
 ) -> Result<(String, String), CompactPresentationError> {
     if credential.holder.did_contract_address == [0; 32] {
