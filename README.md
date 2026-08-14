@@ -345,10 +345,13 @@ Discover it through `system.capabilities`: the mode is always
 `included` responses are process-local harness outcomes, not Midnight blocks.
 
 Explicit live composition instead requires canonical replay state and remains
-`native_pending` until the generated-Compact composer/prover/submission adapter
-is installed. Authorization and proving/submission use two separate exact
-intents in both modes. Incoming JSON never accepts private credential material,
-witnesses, signatures, proofs, or serialized transactions.
+`native_pending`. The Nix closure's generated client, exact ABI, four wallet
+circuit keys/IR, and degree-10/11/17 parameters are authenticated at runtime;
+the bounded generated-Compact composer, combined contract/DUST prover, NIGHT
+funding, and node submission are not yet composed. Authorization and
+proving/submission use two separate exact intents in both modes. Incoming JSON
+never accepts private credential material, witnesses, signatures, proofs, or
+serialized transactions.
 
 For a complete standalone run, DUST replay can also resume from a private
 key-scoped checkpoint:

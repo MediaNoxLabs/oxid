@@ -47,6 +47,7 @@
             "oxid-app"
           ];
           cargoTestFlags = [ "--workspace" ];
+          OXID_PASSPORT_VAULT_ARTIFACTS_DIR = passportVaultCompactArtifacts;
 
           nativeBuildInputs = [ pkgs.pkg-config ] ++ linuxNativeBuildInputs;
           buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;

@@ -27,6 +27,7 @@ midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-transient-crypto.workspace = true
+midnight-zkir.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 rustls.workspace = true
 serde.workspace = true

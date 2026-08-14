@@ -7,8 +7,8 @@
 - Blueprint: §§3–8, 12–13, 16–18, 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/wallet.rs`, `mobile-bench/dioxus-wallet/web/src/entry.ts`, and `mobile-bench/dioxus-wallet/src/bridge.rs`
 - Contract source: `midnight-identity-solution-examples` commit `e4a92a6be2cc6dc34f68261f10c19c9312043807`, distributed byte-identically at `contracts/passport-vault/passport-vault.compact`
-- Related: ADR-0013, ADR-0015, ADR-0017, ADR-0026 through ADR-0028, ADR-0034, ADR-0035, ADR-0048 through ADR-0055, and issue #31
-- Implementation state: capability-specific application port, authenticated-state gate, retained lifecycle, fail-closed composition, and headless protocol are implemented; the native Compact composer/prover/submission adapter remains issue #31
+- Related: ADR-0013, ADR-0015, ADR-0017, ADR-0026 through ADR-0028, ADR-0034, ADR-0035, ADR-0048 through ADR-0055, ADR-0058, and issue #31
+- Implementation state: capability-specific application port, authenticated-state gate, retained lifecycle, fail-closed composition, headless protocol, and authenticated four-circuit proof resolver are implemented; the generated-Compact composer/funding/submission adapter remains issue #31
 
 ## Context
 
@@ -118,10 +118,11 @@ before the claim circuit is composed.
   only an opaque credential reference crosses the application port.
 - The current headless methods are useful for validation and discovery but
   truthfully fail closed until the native adapter is composed.
-- A later call adapter must still implement generated-Compact composition,
-  funding, DUST balancing, local proving, node submission, durable public
-  journaling, and finalized reconciliation; this ADR does not claim those
-  operations are live.
+- ADR-0058 supplies the authenticated generated client, exact wallet-circuit
+  resolver, and parameters needed by a later call adapter. That adapter must
+  still implement generated-Compact composition, funding, combined
+  contract/DUST proving, node submission, durable public journaling, and
+  finalized reconciliation; this ADR does not claim those operations are live.
 
 ## Validation
 

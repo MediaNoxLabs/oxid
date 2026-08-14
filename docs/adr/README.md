@@ -79,6 +79,7 @@ ADR status and delivery state answer different questions:
 | [0055](0055-replay-canonical-passport-vault-history.md) Replay canonical Passport Vault history before mutation | Accepted | §§3–8, 12–13, 16–18, 21, node transaction/events, and issue #31 | Bounded native verifier, history-complete finalized-node collector, and opt-in authenticated replay reads implemented; cache and calls remain pending |
 | [0056](0056-stage-passport-vault-contract-calls.md) Stage Passport Vault contract calls before proof and submission | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault bridge, and issue #31 | Typed four-operation retained lifecycle, canonical-replay gate, fail-closed composition, and headless protocol implemented; native composer/prover/submission adapter pending |
 | [0057](0057-exercise-passport-vault-calls-in-explicit-simulation.md) Exercise Passport Vault calls in explicit deterministic simulation | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault bridge, and issue #31 | Zero-configuration headless/development composition executes all four retained calls with a distinct simulation-authentication class and explicit non-settlement labels; native adapter pending |
+| [0058](0058-authenticate-passport-vault-call-artifacts.md) Authenticate Passport Vault call artifacts at runtime | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault composer/prover, and issue #31 | Generated client/ABI plus four wallet circuits are authenticated at runtime and exposed through a native resolver; composition, combined DUST proving, funding, and submission remain pending |
 
 ## Current boundaries
 
@@ -191,5 +192,8 @@ and the existing cancellation/reconciliation model. The headless boundary is
 implemented. ADR-0057 wires it only in explicit zero-configuration development
 composition with a distinct simulation-authentication class and
 `settlesOnMidnight: false`; live and production composition still fail closed
-until a native Compact composer, prover, funding, submission, and durable
-public-journal adapter is composed.
+until a native Compact composer, combined prover, funding, submission, and
+durable public-journal adapter is composed. ADR-0058 authenticates the exact
+generated client and exposes only the four wallet circuits through native
+Midnight resolver traits; it deliberately excludes the administrative circuit
+and does not change those live capability labels.

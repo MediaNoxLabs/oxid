@@ -5,6 +5,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod authenticated_state;
 #[cfg(not(target_arch = "wasm32"))]
+mod compact_artifacts;
+#[cfg(not(target_arch = "wasm32"))]
 mod contract_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod finalized_history;
@@ -19,6 +21,11 @@ mod simulated_state;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use authenticated_state::AuthenticatedPassportVaultStateSource;
+#[cfg(not(target_arch = "wasm32"))]
+pub use compact_artifacts::{
+    NativePassportVaultCompactArtifacts, PassportVaultCompactArtifactError,
+    PassportVaultCompactArtifactsConfig, PassportVaultCompactCircuit,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use contract_state::NativePassportVaultContractStateDecoder;
 #[cfg(not(target_arch = "wasm32"))]
