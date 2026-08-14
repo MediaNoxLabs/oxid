@@ -59,6 +59,7 @@ impl ProcessHarness {
             .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
+            .env_remove("OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT")
             .env_remove("OXID_PRESENTATION_ARTIFACTS_DIR")
             .env_remove("OXID_CREDENTIAL_STORE_PATH")
             .env_remove("OXID_CREDENTIAL_KEY_PATH");
@@ -1085,6 +1086,7 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
         .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
         .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
         .env_remove("OXID_MIDNIGHT_DID_RESOLVER_URL")
+        .env_remove("OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT")
         .env_remove("OXID_PRESENTATION_ARTIFACTS_DIR")
         .output()
         .expect("headless wallet should report startup failure");
@@ -1093,6 +1095,34 @@ fn executable_fails_startup_on_partial_live_configuration_without_echoing_values
     let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
     assert!(stderr.contains("requires the read-only indexer values"));
     assert!(!stderr.contains(LIVE_ADDRESS));
+}
+
+#[test]
+fn executable_requires_standalone_routes_for_authenticated_vault_replay() {
+    let store = TestStore::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_oxid-headless"))
+        .env("OXID_PROFILE_STORE_PATH", &store.path)
+        .env("OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT", "42")
+        .env_remove("OXID_MIDNIGHT_NETWORK_ID")
+        .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
+        .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
+        .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
+        .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
+        .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
+        .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+        .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
+        .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
+        .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
+        .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
+        .env_remove("OXID_MIDNIGHT_DID_RESOLVER_URL")
+        .env_remove("OXID_PRESENTATION_ARTIFACTS_DIR")
+        .output()
+        .expect("headless wallet should report startup failure");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
+    assert!(stderr.contains("canonical replay requires the complete standalone Midnight routes"));
+    assert!(!stderr.contains("42"));
 }
 
 #[test]
@@ -1110,6 +1140,7 @@ fn executable_fails_startup_on_partial_credential_configuration_without_echoing_
         .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
         .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
         .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+        .env_remove("OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT")
         .env_remove("OXID_PRESENTATION_ARTIFACTS_DIR")
         .output()
         .expect("headless wallet should report startup failure");
@@ -1136,6 +1167,7 @@ fn executable_rejects_insecure_did_resolver_without_echoing_the_route() {
         .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
         .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
         .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+        .env_remove("OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT")
         .env_remove("OXID_PRESENTATION_ARTIFACTS_DIR")
         .output()
         .expect("headless wallet should report startup failure");
@@ -1176,6 +1208,7 @@ fn executable_accepts_private_checkpoints_only_for_supported_live_stacks() {
             .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
+            .env_remove("OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT")
             .env_remove("OXID_PRESENTATION_ARTIFACTS_DIR")
             .env(variable, path);
         let output = command

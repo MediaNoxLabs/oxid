@@ -4,9 +4,9 @@ use std::{error::Error, fmt, net::IpAddr, sync::Arc, thread, time::Duration};
 
 use futures::{StreamExt, channel::oneshot};
 use oxid_passport_vault_application::{
-    MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES, PassportVaultContractStateReadFuture,
-    PassportVaultContractStateSnapshot, PassportVaultContractStateSourceError,
-    PassportVaultContractStateSourcePort,
+    MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES, PassportVaultContractStateAuthentication,
+    PassportVaultContractStateReadFuture, PassportVaultContractStateSnapshot,
+    PassportVaultContractStateSourceError, PassportVaultContractStateSourcePort,
 };
 use reqwest::{Certificate, Client, Method, Url, header::CONTENT_TYPE, redirect::Policy};
 use serde::Deserialize;
@@ -317,6 +317,7 @@ fn decode_indexer_response(
     let serialized_contract_state = decode_bounded_hex_state(&action.state)?;
     Ok(PassportVaultContractStateSnapshot {
         serialized_contract_state,
+        authentication: PassportVaultContractStateAuthentication::IndexerSuppliedNotProven,
         contract_address_hex,
         transaction_hash_hex,
         action_block_hash_hex,

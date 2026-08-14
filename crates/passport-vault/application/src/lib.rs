@@ -183,9 +183,9 @@ pub struct PassportVaultView {
     pub claim_count: u64,
 }
 
-/// Public provenance for a contract-state snapshot. A canonical finalized
-/// block anchors the indexer's reported action location, but does not prove
-/// action inclusion or the state bytes without ledger replay or a storage proof.
+/// Public provenance for a contract-state snapshot. `state_authentication`
+/// distinguishes a merely node-anchored indexer action from state reconstructed
+/// by complete canonical replay through the reported finalized head.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PassportVaultChainAnchorView {
     pub contract_address_hex: String,
@@ -362,12 +362,40 @@ impl Error for PassportVaultContractStateSourceError {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PassportVaultContractStateSnapshot {
     pub serialized_contract_state: Vec<u8>,
+    pub authentication: PassportVaultContractStateAuthentication,
     pub contract_address_hex: String,
     pub transaction_hash_hex: String,
     pub action_block_hash_hex: String,
     pub action_block_height: u64,
     pub finalized_head_hash_hex: String,
     pub finalized_head_height: u64,
+}
+
+/// Trust boundary established by the state-source adapter. These variants are
+/// intentionally application-owned so an adapter cannot invent a stronger
+/// source or authentication label with an arbitrary string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PassportVaultContractStateAuthentication {
+    IndexerSuppliedNotProven,
+    CanonicalFinalizedReplay,
+}
+
+impl PassportVaultContractStateAuthentication {
+    #[must_use]
+    pub const fn source_name(self) -> &'static str {
+        match self {
+            Self::IndexerSuppliedNotProven => "node_anchored_indexer",
+            Self::CanonicalFinalizedReplay => "finalized_node_replay",
+        }
+    }
+
+    #[must_use]
+    pub const fn authentication_name(self) -> &'static str {
+        match self {
+            Self::IndexerSuppliedNotProven => "indexer_supplied_not_proven",
+            Self::CanonicalFinalizedReplay => "canonical_finalized_replay",
+        }
+    }
 }
 
 pub trait PassportVaultContractStateSourcePort: Send + Sync {
@@ -494,7 +522,7 @@ impl ReadPassportVaultContractStateUseCase for PassportVaultContractStateService
                 },
             )
             .map_err(PassportVaultContractStateReadError::Decode)?;
-            view.source = "node_anchored_indexer".to_owned();
+            view.source = snapshot.authentication.source_name().to_owned();
             view.chain_anchor = Some(PassportVaultChainAnchorView {
                 contract_address_hex: snapshot.contract_address_hex,
                 transaction_hash_hex: snapshot.transaction_hash_hex,
@@ -502,7 +530,7 @@ impl ReadPassportVaultContractStateUseCase for PassportVaultContractStateService
                 action_block_height: snapshot.action_block_height,
                 finalized_head_hash_hex: snapshot.finalized_head_hash_hex,
                 finalized_head_height: snapshot.finalized_head_height,
-                state_authentication: "indexer_supplied_not_proven".to_owned(),
+                state_authentication: snapshot.authentication.authentication_name().to_owned(),
             });
             Ok(view)
         })
@@ -1060,6 +1088,7 @@ mod tests {
             Arc::new(ContractStateDecoder),
             Arc::new(ContractStateSource(PassportVaultContractStateSnapshot {
                 serialized_contract_state: vec![1, 2, 3],
+                authentication: PassportVaultContractStateAuthentication::IndexerSuppliedNotProven,
                 contract_address_hex: address.clone(),
                 transaction_hash_hex: "22".repeat(32),
                 action_block_hash_hex: "33".repeat(32),
@@ -1081,6 +1110,37 @@ mod tests {
         assert_eq!(anchor.action_block_height, 40);
         assert_eq!(anchor.finalized_head_height, 42);
         assert_eq!(anchor.state_authentication, "indexer_supplied_not_proven");
+    }
+
+    #[test]
+    fn labels_canonical_replay_as_authenticated_without_changing_anchor_validation() {
+        let address = "11".repeat(32);
+        let service = PassportVaultContractStateService::with_source(
+            Arc::new(ContractStateDecoder),
+            Arc::new(ContractStateSource(PassportVaultContractStateSnapshot {
+                serialized_contract_state: vec![1, 2, 3],
+                authentication: PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
+                contract_address_hex: address.clone(),
+                transaction_hash_hex: "22".repeat(32),
+                action_block_hash_hex: "33".repeat(32),
+                action_block_height: 40,
+                finalized_head_hash_hex: "44".repeat(32),
+                finalized_head_height: 42,
+            })),
+        );
+
+        let view = ready(ReadPassportVaultContractStateUseCase::execute(
+            &service,
+            ReadPassportVaultContractStateCommand {
+                contract_address_hex: address,
+            },
+        ))
+        .expect("authenticated replay view");
+        assert_eq!(view.source, "finalized_node_replay");
+        assert_eq!(
+            view.chain_anchor.expect("anchor").state_authentication,
+            "canonical_finalized_replay"
+        );
     }
 
     #[test]

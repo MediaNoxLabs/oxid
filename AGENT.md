@@ -61,13 +61,14 @@ bytes. Never use this read model to authorize or compose a contract call.
 ADR-0055 selects deterministic replay and implements the transport-independent
 native verifier for official raw transactions, node operation outcomes,
 guaranteed/fallible semantics, exact public transcripts/effects, and checked
-contract balances. The native finalized-history collector now treats a
+contract balances. The native finalized-history collector treats a
 non-genesis deployment height as an untrusted hint, authenticates its exact
 deployment event, resolves each historical runtime schema at the block's parent
 state, and verifies every header/parent link through one captured finalized
-head. Replay and acquisition are not yet composed as the application read
-source, so the unproven label remains. Live Compact transactions, an
-authenticated replay cache, and optional durable standalone state remain issue #31. Live
+head. Opt-in headless standalone composition now exposes collected and replayed
+state as `finalized_node_replay` / `canonical_finalized_replay`; the legacy
+indexer route remains unproven. Live Compact transactions, an authenticated
+replay cache, and optional durable standalone state remain issue #31. Live
 protocol transport and production/mobile presentation proving remain deferred.
 Standalone presentation now reauthorizes the exact statement with the
 credential-bound method's current managed protected key, runs the authenticated
@@ -673,7 +674,7 @@ Current package ownership:
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
-| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, and history-complete finalized-node collector; authenticated replay composition and transaction submission remain closed. |
+| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, and opt-in authenticated replay source; transaction submission remains closed. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
@@ -709,7 +710,10 @@ proving uses `OXID_MIDNIGHT_PROVING_CACHE_DIR`; the explicit development
 alternative uses `OXID_MIDNIGHT_PROOF_SERVER_URL`. Supplying neither or both
 fails startup. The original
 three are `OXID_MIDNIGHT_NETWORK_ID`, `OXID_MIDNIGHT_INDEXER_WS_URL`, and
-`OXID_MIDNIGHT_UNSHIELDED_ADDRESS`. `compose_in_memory()` uses the development
+`OXID_MIDNIGHT_UNSHIELDED_ADDRESS`. Optional authenticated Passport Vault reads
+also require the non-zero untrusted hint
+`OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT`; it is rejected outside the complete
+standalone stack. `compose_in_memory()` uses the development
 adapters for tests. Never change `compose()` to select `storage-dev`, simulation,
 or environment-derived indexer, node, or proof configuration. Headless
 protected-key methods accept only public labels,
@@ -819,8 +823,10 @@ deployment. It reads metadata at the parent state so runtime upgrades decode
 with their historical schema, accepts only direct Midnight transaction calls,
 and fails closed for wrapper events whose raw payload cannot be authenticated.
 The deployment height is a hint, never authority: exactly one target deployment
-must appear there. Do not call the replay result authenticated until composition
-also exposes the captured finalized head and freshness semantics.
+must appear there. `authenticated_state.rs` composes this collector and replay,
+admits only one in-flight scan, and exposes both the latest target transaction
+and the captured finalized head through application-owned provenance variants.
+Only that source may use the authenticated replay label.
 
 The Passport Vault upstream companion is private. Never add it back as a flake
 input or require CI/forks to hold a repository token. ADR-0053 permits only the
@@ -1158,6 +1164,9 @@ to silence the shell probe.
   runtime schema. Missing archival data, wrapped target calls, or any gap fail
   closed. The one-million-block and per-response bounds are security limits,
   not permission to truncate and report partial state.
+- `OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT` is accepted only with the complete
+  standalone routes. It enables one-at-a-time canonical replay reads; it does
+  not enable calls, cache partial history, or turn indexer bytes into authority.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

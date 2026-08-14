@@ -10,7 +10,7 @@
 - Node source: `midnight-node` commit `06858f9a7fe40866c2c074ff07eecc39d7d35ef7`, `pallets/midnight/src/lib.rs`
 - Related: ADR-0003, ADR-0004, ADR-0006, ADR-0013, ADR-0015, ADR-0018, ADR-0020, ADR-0027, ADR-0035, ADR-0051, ADR-0052, ADR-0054, and issue #31
 - Supersedes: ADR-0054's open choice between deterministic replay and a reviewed storage proof for Passport Vault state authentication
-- Implementation state: bounded native transaction decoding, outcome authentication, exact contract-local replay, and the complete finalized-node block scanner are implemented; authenticated replay composition, cache, and contract calls remain issue #31
+- Implementation state: bounded native transaction decoding, outcome authentication, exact contract-local replay, the complete finalized-node block scanner, and opt-in headless authenticated-read composition are implemented; cache and contract calls remain issue #31
 
 ## Context
 
@@ -87,12 +87,21 @@ authenticated raw inner payload. If target operation/outcome events occur under
 a wrapper call, the collector fails closed instead of constructing incomplete
 history.
 
+Native headless composition selects this source only when the complete
+standalone stack and `OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT` are both present.
+The source allows one in-flight scan, composes the collector with the pure
+replay verifier, and exposes the latest replayed transaction plus captured
+finalized head. Its application-owned provenance values are
+`finalized_node_replay` and `canonical_finalized_replay`; adapters cannot invent
+stronger string labels. Without the deployment hint, the existing
+`node_anchored_indexer` source remains explicitly unproven.
+
 Target maintenance, non-canonical ordering, duplicate deployment, hash/event
 mismatch, ambiguous target outcomes, unsupported global commitment-index
 dependencies, transcript/effect mismatch, and arithmetic overflow all fail
-closed. Contract mutation remains closed until the finalized scanner feeds this
-verifier and the resulting state is exposed with a truthful authenticated
-source/freshness label.
+closed. Contract mutation remains closed until capability-specific call ports
+consume this authenticated state with the wallet's existing
+submission/reconciliation guarantees.
 
 Holder authorization for future claims must use an opaque managed holder key
 and fresh randomness. No scalar, nonce, private-state witness, or browser bridge
@@ -133,7 +142,8 @@ may cross an incoming adapter boundary.
 - Maintenance and transcripts requiring unavailable global commitment indices
   remain explicit compatibility gates rather than guessed behavior.
 - `node_anchored_indexer` remains read-only and
-  `indexer_supplied_not_proven` until the scanner is complete.
+  `indexer_supplied_not_proven`; only the opt-in complete replay source receives
+  the authenticated label.
 
 ## Validation
 
@@ -147,6 +157,9 @@ may cross an incoming adapter boundary.
 - Finalized collector tests cover strict routes, bounded SCALE/event decoding,
   exact outcome-hash binding, failed-extrinsic exclusion, contiguous parent
   links, prior timestamps, and deployment-hint authentication.
+- Application/composition tests cover typed provenance, exact replay-to-view
+  anchors, single-scan admission, strict deployment-height parsing, and refusal
+  to enable replay without the complete standalone routes.
 - `cargo test -p oxid-adapter-passport-vault replay::`
 - `cargo test -p oxid-adapter-passport-vault finalized_history::`
 - `./run.sh --light --strict`

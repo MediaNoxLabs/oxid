@@ -315,6 +315,24 @@ proving requires HTTPS. The proof server receives private witness material, so
 that mode is development-only. The root is process-local and ephemeral; fund
 and exercise a newly derived address in the same run.
 
+An optional Passport Vault read can replace the unproven indexer state with
+complete finalized-node replay. Supply the non-zero deployment height together
+with the complete standalone routes, then call `vault.contract_state.read`
+with the exact 32-byte contract address:
+
+```bash
+export OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT='<deployment-block-height>'
+cargo run -p oxid-headless
+```
+
+The height is only a discovery hint: Oxid requires the target deployment event
+there, scans every canonical block through one captured finalized head, and
+replays the official public transcripts. The node must retain historical block
+bodies, metadata, and `System.Events`; missing archive data fails unavailable.
+Only this path reports `finalized_node_replay` with
+`canonical_finalized_replay`. Without the variable, the standalone read keeps
+the explicit `node_anchored_indexer` / `indexer_supplied_not_proven` boundary.
+
 For a complete standalone run, DUST replay can also resume from a private
 key-scoped checkpoint:
 

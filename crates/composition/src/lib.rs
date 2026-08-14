@@ -31,12 +31,13 @@ use oxid_adapter_openid4vci::{
     DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
 };
 use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpenId4VpVerifier};
-use oxid_adapter_passport_vault::{
-    InMemoryPassportVaultRepository, StandalonePassportVaultCredential,
-};
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_passport_vault::{
+    AuthenticatedPassportVaultStateSource, FinalizedMidnightHistoryCollectorConfigError,
     NativePassportVaultContractStateDecoder, NodeAnchoredPassportVaultStateSource,
+};
+use oxid_adapter_passport_vault::{
+    InMemoryPassportVaultRepository, StandalonePassportVaultCredential,
 };
 use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
 
@@ -722,6 +723,9 @@ pub const MIDNIGHT_SUBMISSION_JOURNAL_PATH_ENV: &str = "OXID_MIDNIGHT_SUBMISSION
 /// Environment variable holding the explicitly trusted Midnight DID resolver base route.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MIDNIGHT_DID_RESOLVER_URL_ENV: &str = "OXID_MIDNIGHT_DID_RESOLVER_URL";
+/// Environment variable holding the untrusted Passport Vault deployment-height hint.
+#[cfg(not(target_arch = "wasm32"))]
+pub const PASSPORT_VAULT_DEPLOYMENT_HEIGHT_ENV: &str = "OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT";
 /// Environment variable holding the immutable Compact presentation artifact root.
 #[cfg(not(target_arch = "wasm32"))]
 pub const PRESENTATION_COMPACT_ARTIFACTS_DIR_ENV: &str = "OXID_PRESENTATION_ARTIFACTS_DIR";
@@ -746,6 +750,9 @@ pub enum HeadlessCompositionError {
     InvalidMidnightShieldedCheckpointConfiguration(MidnightShieldedCheckpointConfigError),
     InvalidMidnightSubmissionJournalConfiguration(MidnightSubmissionJournalConfigError),
     InvalidMidnightDidResolverConfiguration(HttpDidResolverConfigError),
+    InvalidPassportVaultDeploymentHeight,
+    InvalidPassportVaultHistoryConfiguration(FinalizedMidnightHistoryCollectorConfigError),
+    PassportVaultHistoryRequiresStandalone,
     InvalidCompactPresentationRuntime(CompactPresentationRuntimeError),
     IncompleteCredentialStoreConfiguration,
 }
@@ -774,6 +781,13 @@ impl std::fmt::Display for HeadlessCompositionError {
                 return error.fmt(formatter);
             }
             Self::InvalidMidnightDidResolverConfiguration(error) => return error.fmt(formatter),
+            Self::InvalidPassportVaultDeploymentHeight => {
+                "Passport Vault deployment height must be a non-zero unsigned integer"
+            }
+            Self::InvalidPassportVaultHistoryConfiguration(error) => return error.fmt(formatter),
+            Self::PassportVaultHistoryRequiresStandalone => {
+                "Passport Vault canonical replay requires the complete standalone Midnight routes"
+            }
             Self::InvalidCompactPresentationRuntime(error) => return error.fmt(formatter),
             Self::IncompleteCredentialStoreConfiguration => {
                 "credential store and key paths must be configured together"
@@ -840,7 +854,19 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
         .map(MidnightSubmissionJournalConfig::new)
         .transpose()
         .map_err(HeadlessCompositionError::InvalidMidnightSubmissionJournalConfiguration)?;
-    match parse_optional_midnight_config(values)? {
+    let passport_vault_deployment_height = parse_optional_passport_vault_deployment_height(
+        read_optional_environment(PASSPORT_VAULT_DEPLOYMENT_HEIGHT_ENV)?,
+    )?;
+    let midnight_config = parse_optional_midnight_config(values)?;
+    if passport_vault_deployment_height.is_some()
+        && !matches!(
+            &midnight_config,
+            Some(HeadlessMidnightConfig::Standalone(_))
+        )
+    {
+        return Err(HeadlessCompositionError::PassportVaultHistoryRequiresStandalone);
+    }
+    match midnight_config {
         Some(HeadlessMidnightConfig::Indexer(config))
             if dust_checkpoints.is_none() && submission_journal.is_none() =>
         {
@@ -853,16 +879,29 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
                 ),
             )
         }
-        Some(HeadlessMidnightConfig::Standalone(config)) => Ok(
-            compose_headless_standalone_with_checkpoint_options_and_presentation(
+        Some(HeadlessMidnightConfig::Standalone(config)) => {
+            let passport_vault_state_source = passport_vault_deployment_height
+                .map(|height| {
+                    AuthenticatedPassportVaultStateSource::new(config.node_websocket_url(), height)
+                        .map(|source| {
+                            Arc::new(source) as Arc<dyn PassportVaultContractStateSourcePort>
+                        })
+                })
+                .transpose()
+                .map_err(HeadlessCompositionError::InvalidPassportVaultHistoryConfiguration)?;
+            let services = compose_headless_standalone_with_checkpoint_options_and_presentation(
                 config,
                 checkpoints,
                 dust_checkpoints,
                 shielded_checkpoints,
                 submission_journal,
                 credential_presentation,
-            ),
-        ),
+            );
+            Ok(with_passport_vault_state_source(
+                services,
+                passport_vault_state_source,
+            ))
+        }
         Some(HeadlessMidnightConfig::Indexer(_))
             if checkpoints.is_some()
                 || dust_checkpoints.is_some()
@@ -1260,6 +1299,21 @@ fn parse_optional_midnight_config(
         }
         _ => Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration),
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_optional_passport_vault_deployment_height(
+    value: Option<String>,
+) -> Result<Option<u64>, HeadlessCompositionError> {
+    value
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .ok()
+                .filter(|height| *height > 0)
+                .ok_or(HeadlessCompositionError::InvalidPassportVaultDeploymentHeight)
+        })
+        .transpose()
 }
 
 /// Wires deterministic process-local services for tests and development tools.
@@ -2220,5 +2274,19 @@ mod tests {
             .err(),
             Some(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
         );
+        assert_eq!(
+            parse_optional_passport_vault_deployment_height(None),
+            Ok(None)
+        );
+        assert_eq!(
+            parse_optional_passport_vault_deployment_height(Some("42".to_owned())),
+            Ok(Some(42))
+        );
+        for invalid in ["", "0", "-1", " 42", "18446744073709551616"] {
+            assert_eq!(
+                parse_optional_passport_vault_deployment_height(Some(invalid.to_owned())),
+                Err(HeadlessCompositionError::InvalidPassportVaultDeploymentHeight)
+            );
+        }
     }
 }
