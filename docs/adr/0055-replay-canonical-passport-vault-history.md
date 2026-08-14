@@ -10,7 +10,7 @@
 - Node source: `midnight-node` commit `06858f9a7fe40866c2c074ff07eecc39d7d35ef7`, `pallets/midnight/src/lib.rs`
 - Related: ADR-0003, ADR-0004, ADR-0006, ADR-0013, ADR-0015, ADR-0018, ADR-0020, ADR-0027, ADR-0035, ADR-0051, ADR-0052, ADR-0054, and issue #31
 - Supersedes: ADR-0054's open choice between deterministic replay and a reviewed storage proof for Passport Vault state authentication
-- Implementation state: bounded native transaction decoding, outcome authentication, and exact contract-local replay are implemented as a transport-independent verifier; the complete finalized-node block scanner, cache, authenticated read composition, and contract calls remain issue #31
+- Implementation state: bounded native transaction decoding, outcome authentication, exact contract-local replay, and the complete finalized-node block scanner are implemented; authenticated replay composition, cache, and contract calls remain issue #31
 
 ## Context
 
@@ -39,7 +39,7 @@ custody or signing behavior and cannot be migrated into Oxid.
 
 Oxid selects deterministic replay from the canonical deployment. A pure native
 verifier consumes a complete, canonically ordered sequence of successful
-Midnight extrinsics supplied by a future finalized-node scanner. For every
+Midnight extrinsics supplied by the finalized-node scanner. For every
 transaction it:
 
 1. strictly decodes one official tagged proven transaction with no trailing
@@ -63,14 +63,29 @@ raw transaction hash plus operation events to bind the replay input to that
 outcome. It has no transport and does not itself establish history
 completeness.
 
-The node adapter must validate the deployment in a canonical event and scan
-every canonical finalized block from deployment through the target head. It
+The node adapter validates the deployment in a canonical event and scans every
+canonical finalized block from deployment through one captured target head. It
 must extract the raw `Midnight.send_mn_transaction` payload, extrinsic success,
 one `TxApplied` or `TxPartialSuccess` outcome, matching action events, and the
 exact block context: timestamp in seconds, 30-second uncertainty, parent block
 hash, and prior-block timestamp. An indexer may provide a deployment hint or an
 independent comparison, but it may not omit history or choose applied
 segments.
+
+The caller supplies a non-genesis deployment height as an untrusted discovery
+hint. The collector requires exactly one target `ContractDeploy` event at that
+height and rejects deployment elsewhere. It resolves runtime metadata at each
+block's parent state, caches it only by `specVersion`, decodes raw block bodies
+and `System.Events` with that historical schema, recomputes every header hash,
+and checks every parent link through the captured finalized head. This supports
+runtime upgrades without interpreting historical calls or events using the
+node's current metadata. A node without the required archival blocks, metadata,
+or event storage fails unavailable; it cannot silently shorten the range.
+
+Only direct `Midnight.send_mn_transaction` extrinsics currently expose an
+authenticated raw inner payload. If target operation/outcome events occur under
+a wrapper call, the collector fails closed instead of constructing incomplete
+history.
 
 Target maintenance, non-canonical ordering, duplicate deployment, hash/event
 mismatch, ambiguous target outcomes, unsupported global commitment-index
@@ -111,6 +126,10 @@ may cross an incoming adapter boundary.
 - Scanning from deployment is more expensive than a latest-state query, so a
   later authenticated cache must retain its finalized cursor and canonical
   block anchor without weakening replay-on-reorg and freshness rules.
+- The live collector requires archival RPC access for the entire configured
+  range and rejects spans above one million blocks, blocks above 4,096
+  extrinsics, and oversized bodies, event storage, metadata, payloads, or target
+  histories.
 - Maintenance and transcripts requiring unavailable global commitment indices
   remain explicit compatibility gates rather than guessed behavior.
 - `node_anchored_indexer` remains read-only and
@@ -125,6 +144,10 @@ may cross an incoming adapter boundary.
   non-canonical order, duplicate deployment, and ambiguous target outcomes.
 - Acceptance of ambiguity outside the target when the target action set is
   identical for every valid outcome.
+- Finalized collector tests cover strict routes, bounded SCALE/event decoding,
+  exact outcome-hash binding, failed-extrinsic exclusion, contiguous parent
+  links, prior timestamps, and deployment-hint authentication.
 - `cargo test -p oxid-adapter-passport-vault replay::`
+- `cargo test -p oxid-adapter-passport-vault finalized_history::`
 - `./run.sh --light --strict`
 - `nix flake check --print-build-logs`

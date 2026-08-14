@@ -61,10 +61,13 @@ bytes. Never use this read model to authorize or compose a contract call.
 ADR-0055 selects deterministic replay and implements the transport-independent
 native verifier for official raw transactions, node operation outcomes,
 guaranteed/fallible semantics, exact public transcripts/effects, and checked
-contract balances. It does not establish history completeness. A node adapter
-must still validate deployment and scan every canonical finalized block through
-the target head before the result can replace the unproven label. Live Compact
-transactions and optional durable standalone state remain issue #31. Live
+contract balances. The native finalized-history collector now treats a
+non-genesis deployment height as an untrusted hint, authenticates its exact
+deployment event, resolves each historical runtime schema at the block's parent
+state, and verifies every header/parent link through one captured finalized
+head. Replay and acquisition are not yet composed as the application read
+source, so the unproven label remains. Live Compact transactions, an
+authenticated replay cache, and optional durable standalone state remain issue #31. Live
 protocol transport and production/mobile presentation proving remain deferred.
 Standalone presentation now reauthorizes the exact statement with the
 credential-bound method's current managed protected key, runs the authenticated
@@ -630,8 +633,9 @@ contract source is distributed byte-identically from Oxid and hash-checked so
 public CI and forks remain secret-free.
 ADR-0054 anchors indexer reads to finalized node hashes without authenticating
 their state bytes. ADR-0055 selects deterministic canonical replay and owns the
-pure verifier; its future source must scan every finalized block from a
-node-validated deployment and bind raw `send_mn_transaction` payloads to the
+pure verifier plus its finalized-node collector. The collector scans every
+finalized block from a node-validated deployment and binds direct raw
+`send_mn_transaction` payloads to the
 pallet outcome and canonical typed action-event batches: calls first,
 deployments second, maintenance third, with transaction order preserved inside
 each batch. Indexer history or failed-segment data is not a completeness or
@@ -669,7 +673,7 @@ Current package ownership:
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
-| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, and native pinned-layout contract-state decoder; it does not acquire chain state or submit transactions. |
+| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, and history-complete finalized-node collector; authenticated replay composition and transaction submission remain closed. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
@@ -807,10 +811,16 @@ hash and ordered applied operations to node events, replays every guaranteed
 target transcript plus only uniquely identified fallible target actions, and
 requires exact proven effects. Target maintenance, repeated-address outcome
 ambiguity, missing global commitment indices, or any transcript mismatch fail
-closed. It deliberately has no transport; the pending collector must derive
-`BlockContext` from node timestamp, parent hash, prior-block timestamp, and the
-consensus 30-second uncertainty while scanning every finalized block from the
-validated deployment.
+closed. It deliberately has no transport. The collector in
+`crates/adapters/passport-vault/src/finalized_history.rs` derives `BlockContext`
+from node timestamp, parent hash, prior-block timestamp, and the consensus
+30-second uncertainty while scanning every finalized block from the validated
+deployment. It reads metadata at the parent state so runtime upgrades decode
+with their historical schema, accepts only direct Midnight transaction calls,
+and fails closed for wrapper events whose raw payload cannot be authenticated.
+The deployment height is a hint, never authority: exactly one target deployment
+must appear there. Do not call the replay result authenticated until composition
+also exposes the captured finalized head and freshness semantics.
 
 The Passport Vault upstream companion is private. Never add it back as a flake
 input or require CI/forks to hold a repository token. ADR-0053 permits only the
@@ -1142,6 +1152,12 @@ to silence the shell probe.
   `indexer_supplied_not_proven` label, explicit caller-supplied address, HTTPS/WSS
   remote-route rule, proxy/redirect prohibition, response bounds, and closed
   mutation ports until replay or a reviewed node proof authenticates state.
+- Passport Vault finalized-history acquisition requires an explicit deployment
+  height, archival node bodies/metadata/events, canonical header continuity,
+  exact direct-call success/outcome/address hashes, and the node's historical
+  runtime schema. Missing archival data, wrapped target calls, or any gap fail
+  closed. The one-million-block and per-response bounds are security limits,
+  not permission to truncate and report partial state.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

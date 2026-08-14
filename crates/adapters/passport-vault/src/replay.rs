@@ -346,6 +346,20 @@ fn decode_transaction(raw: &[u8]) -> Result<ProvenTransaction, PassportVaultRepl
     Ok(transaction)
 }
 
+pub(super) fn transaction_targets_contract(
+    raw: &[u8],
+    contract_address: [u8; 32],
+) -> Result<bool, PassportVaultReplayError> {
+    if raw.is_empty() || raw.len() > MAX_REPLAY_TRANSACTION_BYTES {
+        return Err(PassportVaultReplayError::CapacityExceeded);
+    }
+    let transaction = decode_transaction(raw)?;
+    let erased = transaction.erase_signatures().erase_proofs();
+    Ok(action_records(&erased)?
+        .iter()
+        .any(|record| action_targets(&record.action, contract_address)))
+}
+
 fn action_records(
     transaction: &ErasedTransaction,
 ) -> Result<Vec<ActionRecord>, PassportVaultReplayError> {
@@ -891,6 +905,19 @@ mod tests {
         assert_eq!(
             replay_canonical_passport_vault_history(address, &[observation]),
             Err(PassportVaultReplayError::InvalidTransaction)
+        );
+    }
+
+    #[test]
+    fn identifies_target_actions_even_without_consulting_applied_events() {
+        let (deployment, _, address) = deployment_observation();
+        assert!(
+            transaction_targets_contract(&deployment.raw_transaction, address)
+                .expect("deployment contains its target")
+        );
+        assert!(
+            !transaction_targets_contract(&deployment.raw_transaction, [99; 32])
+                .expect("foreign address is absent")
         );
     }
 

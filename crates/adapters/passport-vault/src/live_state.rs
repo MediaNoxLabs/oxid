@@ -352,7 +352,7 @@ fn validate_http_endpoint(value: &str) -> Option<Url> {
     }
 }
 
-fn validate_node_endpoint(value: &str) -> Option<String> {
+pub(super) fn validate_node_endpoint(value: &str) -> Option<String> {
     let endpoint = validate_endpoint(value)?;
     match endpoint.scheme() {
         "wss" => Some(endpoint.to_string()),
@@ -390,7 +390,7 @@ fn host_is_loopback(url: &Url) -> bool {
     })
 }
 
-fn ensure_tls_provider() -> Result<(), ()> {
+pub(super) fn ensure_tls_provider() -> Result<(), ()> {
     if rustls::crypto::CryptoProvider::get_default().is_none() {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }
