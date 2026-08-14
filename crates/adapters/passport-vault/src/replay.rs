@@ -6,7 +6,8 @@
 //! every successful Midnight extrinsic from the deployment block onward, in
 //! canonical block/extrinsic order, together with the Midnight pallet's applied
 //! operation events. The replay engine verifies the official inner transaction
-//! hash, derives the uniquely applied fallible action set, and executes the
+//! hash, matches the pallet's canonical typed event batches, derives the
+//! uniquely applied fallible action set, and executes the
 //! official public transcripts against the prior official `ContractState`.
 
 use std::{collections::BTreeSet, error::Error, fmt, io::Cursor};
@@ -160,8 +161,7 @@ struct ActionRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct OutcomeCandidate {
-    event_position: usize,
-    included_target_actions: Vec<usize>,
+    included_actions: Vec<usize>,
 }
 
 /// Reconstructs one contract's exact official state from a complete,
@@ -259,7 +259,7 @@ pub fn replay_canonical_passport_vault_history(
         }
 
         // Apply only fallible actions whose segment is uniquely authenticated
-        // by the node's ordered operation events.
+        // by the node's canonical typed operation-event batches.
         for record in &records {
             if !included_target_actions.contains(&record.index) {
                 continue;
@@ -370,12 +370,10 @@ fn infer_included_target_actions(
     all_applied: bool,
     observed: &[CanonicalMidnightOperation],
 ) -> Result<BTreeSet<usize>, PassportVaultReplayError> {
+    let groups = action_groups(records)?;
+    let observed_batches = observed_operation_batches(observed)?;
     if all_applied {
-        let expected = records
-            .iter()
-            .map(|record| operation(&record.action))
-            .collect::<Vec<_>>();
-        if expected != observed {
+        if record_operation_batches(records.iter()) != observed_batches {
             return Err(PassportVaultReplayError::OutcomeMismatch);
         }
         return Ok(records
@@ -385,37 +383,23 @@ fn infer_included_target_actions(
             .collect());
     }
 
-    let groups = action_groups(records)?;
     let mut candidates = BTreeSet::from([OutcomeCandidate {
-        event_position: 0,
-        included_target_actions: Vec::new(),
+        included_actions: Vec::new(),
     }]);
     for group in groups {
         let mut next = BTreeSet::new();
         for candidate in &candidates {
-            if group[0].segment != 0 {
+            if group[0].segment != 0
+                && candidate_matches_observed_prefix(candidate, records, &observed_batches)
+            {
                 next.insert(candidate.clone());
             }
-            let expected = group
-                .iter()
-                .map(|record| operation(&record.action))
-                .collect::<Vec<_>>();
-            let end = candidate
-                .event_position
-                .checked_add(expected.len())
-                .ok_or(PassportVaultReplayError::CapacityExceeded)?;
-            if observed.get(candidate.event_position..end) == Some(expected.as_slice()) {
-                let mut included_target_actions = candidate.included_target_actions.clone();
-                included_target_actions.extend(
-                    group
-                        .iter()
-                        .filter(|record| action_targets(&record.action, contract_address))
-                        .map(|record| record.index),
-                );
-                next.insert(OutcomeCandidate {
-                    event_position: end,
-                    included_target_actions,
-                });
+            let mut included = candidate.clone();
+            included
+                .included_actions
+                .extend(group.iter().map(|record| record.index));
+            if candidate_matches_observed_prefix(&included, records, &observed_batches) {
+                next.insert(included);
             }
         }
         if next.is_empty() {
@@ -429,8 +413,21 @@ fn infer_included_target_actions(
 
     let target_sets = candidates
         .into_iter()
-        .filter(|candidate| candidate.event_position == observed.len())
-        .map(|candidate| candidate.included_target_actions)
+        .filter(|candidate| {
+            record_operation_batches(
+                candidate
+                    .included_actions
+                    .iter()
+                    .map(|index| &records[*index]),
+            ) == observed_batches
+        })
+        .map(|candidate| {
+            candidate
+                .included_actions
+                .into_iter()
+                .filter(|index| action_targets(&records[*index].action, contract_address))
+                .collect::<Vec<_>>()
+        })
         .collect::<BTreeSet<_>>();
     if target_sets.is_empty() {
         return Err(PassportVaultReplayError::OutcomeMismatch);
@@ -444,6 +441,58 @@ fn infer_included_target_actions(
         .expect("one target action set was established")
         .into_iter()
         .collect())
+}
+
+fn candidate_matches_observed_prefix(
+    candidate: &OutcomeCandidate,
+    records: &[ActionRecord],
+    observed: &[Vec<CanonicalMidnightOperation>; 3],
+) -> bool {
+    let candidate = record_operation_batches(
+        candidate
+            .included_actions
+            .iter()
+            .map(|index| &records[*index]),
+    );
+    candidate
+        .iter()
+        .zip(observed)
+        .all(|(candidate, observed)| observed.starts_with(candidate))
+}
+
+fn observed_operation_batches(
+    observed: &[CanonicalMidnightOperation],
+) -> Result<[Vec<CanonicalMidnightOperation>; 3], PassportVaultReplayError> {
+    let mut batches: [Vec<CanonicalMidnightOperation>; 3] = std::array::from_fn(|_| Vec::new());
+    let mut previous_batch = 0usize;
+    for operation in observed {
+        let batch = operation_batch(*operation);
+        if batch < previous_batch {
+            return Err(PassportVaultReplayError::OutcomeMismatch);
+        }
+        previous_batch = batch;
+        batches[batch].push(*operation);
+    }
+    Ok(batches)
+}
+
+fn record_operation_batches<'a>(
+    records: impl IntoIterator<Item = &'a ActionRecord>,
+) -> [Vec<CanonicalMidnightOperation>; 3] {
+    let mut batches: [Vec<CanonicalMidnightOperation>; 3] = std::array::from_fn(|_| Vec::new());
+    for record in records {
+        let operation = operation(&record.action);
+        batches[operation_batch(operation)].push(operation);
+    }
+    batches
+}
+
+const fn operation_batch(operation: CanonicalMidnightOperation) -> usize {
+    match operation {
+        CanonicalMidnightOperation::Call(_) => 0,
+        CanonicalMidnightOperation::Deploy(_) => 1,
+        CanonicalMidnightOperation::Maintain(_) => 2,
+    }
 }
 
 fn action_groups(
@@ -909,6 +958,81 @@ mod tests {
         )
         .expect("target state is still uniquely determined");
         assert_eq!(included, BTreeSet::from([0]));
+    }
+
+    #[test]
+    fn matches_the_pallets_typed_event_batches_instead_of_raw_action_order() {
+        let deploy = ContractDeploy {
+            initial_state: fixture_state(),
+            nonce: HashOutput([33; 32]),
+        };
+        let target = address_bytes(&deploy.address());
+        let other = [44; 32];
+        let records = vec![
+            ActionRecord {
+                index: 0,
+                segment: 1,
+                action: deploy.into(),
+            },
+            ActionRecord {
+                index: 1,
+                segment: 2,
+                action: synthetic_call(other),
+            },
+        ];
+        let pallet_order = [
+            CanonicalMidnightOperation::Call(other),
+            CanonicalMidnightOperation::Deploy(target),
+        ];
+        assert_eq!(
+            infer_included_target_actions(&records, target, true, &pallet_order)
+                .expect("pallet batch order authenticates all actions"),
+            BTreeSet::from([0])
+        );
+        assert_eq!(
+            infer_included_target_actions(
+                &records,
+                target,
+                true,
+                &[
+                    CanonicalMidnightOperation::Deploy(target),
+                    CanonicalMidnightOperation::Call(other),
+                ],
+            ),
+            Err(PassportVaultReplayError::OutcomeMismatch)
+        );
+    }
+
+    #[test]
+    fn infers_partial_segments_across_separate_pallet_event_batches() {
+        let deploy = ContractDeploy {
+            initial_state: fixture_state(),
+            nonce: HashOutput([55; 32]),
+        };
+        let target = address_bytes(&deploy.address());
+        let other = [66; 32];
+        let records = vec![
+            ActionRecord {
+                index: 0,
+                segment: 1,
+                action: deploy.into(),
+            },
+            ActionRecord {
+                index: 1,
+                segment: 2,
+                action: synthetic_call(other),
+            },
+        ];
+        assert!(
+            infer_included_target_actions(
+                &records,
+                target,
+                false,
+                &[CanonicalMidnightOperation::Call(other)],
+            )
+            .expect("only the call segment applied")
+            .is_empty()
+        );
     }
 
     fn synthetic_call(address: [u8; 32]) -> ContractAction<(), DefaultDB> {

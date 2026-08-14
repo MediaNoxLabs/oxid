@@ -7,6 +7,7 @@
 - Blueprint: §§3–8, 12–13, 16–18, 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/dioxus-wallet/web/src/entry.ts`
 - Consensus source: `midnight-ledger` commit `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, ledger transaction structures, verifier, and on-chain runtime
+- Node source: `midnight-node` commit `06858f9a7fe40866c2c074ff07eecc39d7d35ef7`, `pallets/midnight/src/lib.rs`
 - Related: ADR-0003, ADR-0004, ADR-0006, ADR-0013, ADR-0015, ADR-0018, ADR-0020, ADR-0027, ADR-0035, ADR-0051, ADR-0052, ADR-0054, and issue #31
 - Supersedes: ADR-0054's open choice between deterministic replay and a reviewed storage proof for Passport Vault state authentication
 - Implementation state: bounded native transaction decoding, outcome authentication, and exact contract-local replay are implemented as a transport-independent verifier; the complete finalized-node block scanner, cache, authenticated read composition, and contract calls remain issue #31
@@ -15,8 +16,10 @@
 
 ADR-0054 proves that an indexer action block is canonical and finalized, but it
 does not authenticate the state bytes returned by that indexer. The Midnight
-node does authenticate the raw inner transaction and emits ordered pallet
-events for contract operations that actually applied. The transaction carries
+node does authenticate the raw inner transaction and emits canonical pallet
+events for contract operations that actually applied. Calls, deployments, and
+maintenance are emitted in typed batches while preserving order within each
+batch. The transaction carries
 the exact public transcripts and effects needed to reconstruct contract-local
 state from the authenticated deployment.
 
@@ -43,8 +46,9 @@ transaction it:
    bytes and enforces per-transaction, per-action, and aggregate bounds;
 2. recomputes the official inner transaction hash and requires an exact match
    with the node's pallet outcome event;
-3. matches the transaction's ordered operations to the node's ordered
-   `ContractDeploy`, `ContractCall`, and `ContractMaintain` events;
+3. matches applied actions to the pallet's canonical event batches: ordered
+   `ContractCall` events, then ordered `ContractDeploy` events, then ordered
+   `ContractMaintain` events;
 4. for partial success, derives every event-compatible intent outcome and
    proceeds only when all outcomes produce the same target action set;
 5. applies all target guaranteed transcripts, then only uniquely authenticated

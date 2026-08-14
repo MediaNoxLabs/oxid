@@ -632,8 +632,11 @@ ADR-0054 anchors indexer reads to finalized node hashes without authenticating
 their state bytes. ADR-0055 selects deterministic canonical replay and owns the
 pure verifier; its future source must scan every finalized block from a
 node-validated deployment and bind raw `send_mn_transaction` payloads to the
-ordered pallet outcome/action events. Indexer history or failed-segment data is
-not a completeness or outcome authority.
+pallet outcome and canonical typed action-event batches: calls first,
+deployments second, maintenance third, with transaction order preserved inside
+each batch. Indexer history or failed-segment data is not a completeness or
+outcome authority. This order is pinned to `midnight-node` commit
+`06858f9a7fe40866c2c074ff07eecc39d7d35ef7`.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is

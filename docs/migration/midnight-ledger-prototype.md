@@ -359,7 +359,9 @@ hash, and exposes `indexer_supplied_not_proven` because block anchoring alone
 does not authenticate returned state bytes. ADR-0055 selects deterministic
 replay and adds a bounded native verifier for official raw transactions,
 inner hashes, ordered node operation outcomes, guaranteed/fallible semantics,
-exact public transcripts, effects, and contract balances. A complete scanner
+exact public transcripts, effects, and contract balances. The node pallet emits
+applied calls, deployments, and maintenance in separate typed batches rather
+than raw action order; the verifier authenticates that exact ordering. A complete scanner
 must still validate the deployment and observe every finalized canonical node
 block before that replay becomes an authenticated read source. Caching, durable
 optional development state, and
