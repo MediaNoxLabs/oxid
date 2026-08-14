@@ -12,6 +12,10 @@ mod finalized_history;
 mod live_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod replay;
+#[cfg(not(target_arch = "wasm32"))]
+mod simulated_call;
+#[cfg(not(target_arch = "wasm32"))]
+mod simulated_state;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use authenticated_state::AuthenticatedPassportVaultStateSource;
@@ -30,6 +34,12 @@ pub use live_state::{
 pub use replay::{
     CanonicalMidnightBlockContext, CanonicalMidnightOperation, CanonicalMidnightTransaction,
     PassportVaultReplayError, ReplayedPassportVaultState, replay_canonical_passport_vault_history,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use simulated_call::SimulatedPassportVaultContractCall;
+#[cfg(not(target_arch = "wasm32"))]
+pub use simulated_state::{
+    SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX, SimulatedPassportVaultStateSource,
 };
 
 use std::sync::{Arc, Mutex};

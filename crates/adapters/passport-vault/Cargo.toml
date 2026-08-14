@@ -12,6 +12,7 @@ publish = false
 oxid-adapter-vc-midnight.workspace = true
 oxid-credential-application.workspace = true
 oxid-credential-domain.workspace = true
+oxid-foundation.workspace = true
 oxid-passport-vault-application.workspace = true
 oxid-passport-vault-domain.workspace = true
 oxid-platform-ports.workspace = true
@@ -30,6 +31,7 @@ reqwest = { workspace = true, features = ["stream"] }
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 subxt.workspace = true
 tokio.workspace = true
 webpki-root-certs.workspace = true

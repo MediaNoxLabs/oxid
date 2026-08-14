@@ -78,6 +78,7 @@ ADR status and delivery state answer different questions:
 | [0054](0054-anchor-passport-vault-indexer-state-to-finality.md) Anchor Passport Vault indexer state to node finality | Accepted | §§3–8, 12–13, 16–18, 21, prototype contract-state query, and issue #31 | Address-scoped finalized-height indexer reads verify the canonical action block and disclose that state bytes remain indexer-supplied; replay/proof authentication and calls remain pending |
 | [0055](0055-replay-canonical-passport-vault-history.md) Replay canonical Passport Vault history before mutation | Accepted | §§3–8, 12–13, 16–18, 21, node transaction/events, and issue #31 | Bounded native verifier, history-complete finalized-node collector, and opt-in authenticated replay reads implemented; cache and calls remain pending |
 | [0056](0056-stage-passport-vault-contract-calls.md) Stage Passport Vault contract calls before proof and submission | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault bridge, and issue #31 | Typed four-operation retained lifecycle, canonical-replay gate, fail-closed composition, and headless protocol implemented; native composer/prover/submission adapter pending |
+| [0057](0057-exercise-passport-vault-calls-in-explicit-simulation.md) Exercise Passport Vault calls in explicit deterministic simulation | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault bridge, and issue #31 | Zero-configuration headless/development composition executes all four retained calls with a distinct simulation-authentication class and explicit non-settlement labels; native adapter pending |
 
 ## Current boundaries
 
@@ -187,5 +188,8 @@ reads. ADR-0054's indexer snapshot remains explicitly unproven. ADR-0056 stages
 the four user-facing Passport Vault operations behind a typed retained draft,
 separate authorization and submission intents, authenticated-replay admission,
 and the existing cancellation/reconciliation model. The headless boundary is
-implemented and fails closed until a native Compact composer, prover, funding,
-submission, and durable public-journal adapter is composed.
+implemented. ADR-0057 wires it only in explicit zero-configuration development
+composition with a distinct simulation-authentication class and
+`settlesOnMidnight: false`; live and production composition still fail closed
+until a native Compact composer, prover, funding, submission, and durable
+public-journal adapter is composed.

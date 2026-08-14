@@ -538,7 +538,7 @@ impl fmt::Display for PassportVaultCallError {
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
             Self::UnauthenticatedState => formatter.write_str(
-                "Passport Vault calls require state from complete canonical finalized replay",
+                "Passport Vault state does not satisfy the configured authentication mode",
             ),
             Self::Clock(error) | Self::Random(error) => error.fmt(formatter),
             Self::State(error) => error.fmt(formatter),
@@ -623,6 +623,7 @@ pub struct PassportVaultContractCallService {
     calls: Arc<dyn PassportVaultContractCallPort>,
     clock: Arc<dyn ClockPort>,
     random: Arc<dyn RandomPort>,
+    required_authentication: PassportVaultContractStateAuthentication,
 }
 
 impl PassportVaultContractCallService {
@@ -638,6 +639,28 @@ impl PassportVaultContractCallService {
             calls,
             clock,
             random,
+            required_authentication:
+                PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
+        }
+    }
+
+    /// Constructs the explicitly development-only call harness. Keeping its
+    /// authentication label distinct prevents fixture state from being
+    /// accepted by the live finalized-node composition.
+    #[must_use]
+    pub fn new_simulated(
+        state: Arc<dyn PassportVaultContractStateSourcePort>,
+        calls: Arc<dyn PassportVaultContractCallPort>,
+        clock: Arc<dyn ClockPort>,
+        random: Arc<dyn RandomPort>,
+    ) -> Self {
+        Self {
+            state,
+            calls,
+            clock,
+            random,
+            required_authentication:
+                PassportVaultContractStateAuthentication::DeterministicSimulation,
         }
     }
 
@@ -672,9 +695,7 @@ impl PreparePassportVaultCallUseCase for PassportVaultContractCallService {
                 .map_err(PassportVaultCallError::State)?;
             validate_snapshot(&snapshot, &contract_address_hex)
                 .map_err(PassportVaultCallError::State)?;
-            if snapshot.authentication
-                != PassportVaultContractStateAuthentication::CanonicalFinalizedReplay
-            {
+            if snapshot.authentication != self.required_authentication {
                 return Err(PassportVaultCallError::UnauthenticatedState);
             }
             let expected_contract_address_hex = snapshot.contract_address_hex.clone();
@@ -1484,6 +1505,18 @@ mod tests {
         )
     }
 
+    fn simulated_call_service(
+        authentication: PassportVaultContractStateAuthentication,
+        calls: Arc<Calls>,
+    ) -> PassportVaultContractCallService {
+        PassportVaultContractCallService::new_simulated(
+            Arc::new(Source { authentication }),
+            calls,
+            Arc::new(Clock),
+            Arc::new(Random),
+        )
+    }
+
     fn command(action: PreparePassportVaultCallAction) -> PreparePassportVaultCallCommand {
         PreparePassportVaultCallCommand {
             profile_id: "profile_1".to_owned(),
@@ -1551,6 +1584,55 @@ mod tests {
             assert!(!preview.submission_ready);
         }
         assert_eq!(calls.prepares.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn live_and_simulated_compositions_reject_each_others_state_authentication() {
+        let action = || PreparePassportVaultCallAction::DepositToLock {
+            lock_id: 3,
+            amount: "10".to_owned(),
+        };
+
+        let calls = Arc::new(Calls::default());
+        let live_service = call_service(
+            PassportVaultContractStateAuthentication::DeterministicSimulation,
+            Arc::clone(&calls),
+        );
+        assert_eq!(
+            ready(PreparePassportVaultCallUseCase::execute(
+                &live_service,
+                command(action()),
+            )),
+            Err(PassportVaultCallError::UnauthenticatedState)
+        );
+        assert_eq!(calls.prepares.load(Ordering::SeqCst), 0);
+
+        let calls = Arc::new(Calls::default());
+        let simulated_service = simulated_call_service(
+            PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
+            Arc::clone(&calls),
+        );
+        assert_eq!(
+            ready(PreparePassportVaultCallUseCase::execute(
+                &simulated_service,
+                command(action()),
+            )),
+            Err(PassportVaultCallError::UnauthenticatedState)
+        );
+        assert_eq!(calls.prepares.load(Ordering::SeqCst), 0);
+
+        let simulated_service = simulated_call_service(
+            PassportVaultContractStateAuthentication::DeterministicSimulation,
+            Arc::clone(&calls),
+        );
+        assert!(
+            ready(PreparePassportVaultCallUseCase::execute(
+                &simulated_service,
+                command(action()),
+            ))
+            .is_ok()
+        );
+        assert_eq!(calls.prepares.load(Ordering::SeqCst), 1);
     }
 
     #[test]

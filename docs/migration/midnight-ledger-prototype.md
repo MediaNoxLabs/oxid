@@ -374,9 +374,14 @@ scan at a time. ADR-0056 now supplies the capability-specific boundary for all
 four user operations: typed retained prepare/authorize/submit drafts, separate
 confirmation intents, authenticated-replay admission, bounded public history,
 safe cancellation, finalized reconciliation, and a headless flow harness.
-Composition still fails closed because generated-Compact composition, funding,
-DUST balancing, proving, submission, durable public journaling, and optional
-state caching remain issue #31 adapter work. WebView JavaScript, iframe
+ADR-0057 executes that full protocol in zero-configuration headless/development
+composition with a fixed fixture address and a distinct
+`deterministic_simulation` authentication class. Capability discovery reports
+`settlesOnMidnight: false`; its deterministic transaction/block hashes and
+`included` status are process-local harness outcomes only. Explicit live and
+production composition still fail closed because generated-Compact
+composition, funding, DUST balancing, proving, submission, durable public
+journaling, and optional state caching remain issue #31 adapter work. WebView JavaScript, iframe
 origins, hard-coded addresses, and relative workspace paths remain excluded.
 The prototype claim composer also derives a holder scalar from the public
 credential claim root and fixes the presentation nonce to `17`; Oxid requires

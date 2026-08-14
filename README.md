@@ -335,12 +335,20 @@ the explicit `node_anchored_indexer` / `indexer_supplied_not_proven` boundary.
 
 The headless `vault.contract_call.*` methods stage typed `create_lock`,
 `deposit_to_lock`, `claim_from_lock`, and `withdraw_from_lock` operations as
-retained drafts. Preparation requires that canonical replay source, and
-authorization and proving/submission use two separate exact intents. Incoming
-JSON never accepts private credential material, witnesses, signatures, proofs,
-or serialized transactions. The methods are deliberately
-`composition_dependent` and fail closed until a native generated-Compact
-composer/prover/submission adapter is installed.
+retained drafts. Zero-configuration headless runs exercise the complete
+prepare, authorize, submit, history, cancellation, and reconciliation protocol
+against a deterministic fixture at
+`9d57c7c697a747bac5b8c5828686728049d2e032cf98ff357607f086a3916fd0`.
+Discover it through `system.capabilities`: the mode is always
+`deterministic_simulation`, its state authentication is
+`deterministic_simulation`, and `settlesOnMidnight` is `false`. Simulated
+`included` responses are process-local harness outcomes, not Midnight blocks.
+
+Explicit live composition instead requires canonical replay state and remains
+`native_pending` until the generated-Compact composer/prover/submission adapter
+is installed. Authorization and proving/submission use two separate exact
+intents in both modes. Incoming JSON never accepts private credential material,
+witnesses, signatures, proofs, or serialized transactions.
 
 For a complete standalone run, DUST replay can also resume from a private
 key-scoped checkpoint:

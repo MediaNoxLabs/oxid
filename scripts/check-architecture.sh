@@ -122,7 +122,8 @@ check_workspace_dependencies oxid-adapter-siopv2 \
   oxid-protocol-application oxid-protocol-domain
 check_workspace_dependencies oxid-adapter-passport-vault \
   oxid-adapter-vc-midnight oxid-credential-application oxid-credential-domain \
-  oxid-passport-vault-application oxid-passport-vault-domain oxid-platform-ports
+  oxid-foundation oxid-passport-vault-application oxid-passport-vault-domain \
+  oxid-platform-ports
 check_workspace_dependencies oxid-ui-dioxus \
   oxid-credential-application oxid-identity-application oxid-identity-domain \
   oxid-passport-vault-application oxid-presentation-application \

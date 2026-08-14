@@ -68,9 +68,13 @@ state, and verifies every header/parent link through one captured finalized
 head. Opt-in headless standalone composition now exposes collected and replayed
 state as `finalized_node_replay` / `canonical_finalized_replay`; the legacy
 indexer route remains unproven. ADR-0056 adds the typed four-operation retained
-contract-call lifecycle and headless harness, but composition still fails closed
-without its native generated-Compact composer/prover/submission adapter. An
-authenticated replay cache and optional durable standalone state also remain
+contract-call lifecycle and headless harness. ADR-0057 wires that lifecycle only
+into zero-configuration headless/development composition with a distinct
+`deterministic_simulation` authentication class, fixed fixture address, and
+`settlesOnMidnight: false`. Its included outcomes are process-local simulation,
+not Midnight settlement. Explicit live and production composition still fail
+closed without the native generated-Compact composer/prover/submission adapter.
+An authenticated replay cache and optional durable standalone state also remain
 issue #31. Live protocol transport and production/mobile presentation proving
 remain deferred.
 Standalone presentation now reauthorizes the exact statement with the
@@ -810,11 +814,17 @@ The staged chain-call harness is the `vault.contract_call.*` family:
 `submission_status`, `submission_history`, `cancel_submission`, and
 `reconcile_submission`. It supports exactly create, deposit, claim, and
 withdraw. Preparation is active-profile-scoped and requires authenticated
-canonical replay state. Claim input contains only an opaque credential ID; no
+canonical replay state in live composition. The development-only simulator
+instead requires the distinct `deterministic_simulation` state class; neither
+call-service constructor may admit the other's class. Claim input contains only an opaque credential ID; no
 incoming method accepts credential bytes, openings, holder keys, witness data,
 proofs, signatures, or serialized transactions. Until a native call adapter is
-composed, discovery labels every method `composition_dependent` and calls fail
-closed after the state/authentication checks.
+composed, explicit live discovery uses `native_pending` and calls fail closed
+after the state/authentication checks. Zero-configuration headless/development
+composition uses the fixed simulator address published by `system.capabilities`;
+its mode is `deterministic_simulation`, result mode is
+`deterministic_simulation_only`, history is process-local, and
+`settlesOnMidnight` is always false.
 
 The read-only native Passport Vault state boundary is the exception recorded by
 ADR-0052. `vault.contract_state.decode` accepts only bounded tagged
@@ -1189,11 +1199,14 @@ to silence the shell probe.
   standalone routes. It enables one-at-a-time canonical replay reads; it does
   not enable calls, cache partial history, or turn indexer bytes into authority.
 - Passport Vault contract-call preparation must admit only
-  `canonical_finalized_replay`. Retain chain-specific call/proof material behind
-  an opaque draft ID, require distinct authorization and submission intents,
-  and never project a credential ID, private credential data, witness, holder
-  key, nonce, proof, signature, or serialized transaction into headless output
-  or errors.
+  `canonical_finalized_replay` in live composition. The development-only call
+  service must admit only `deterministic_simulation`; its state, call mode, and
+  `settlesOnMidnight: false` capability label must never be relabelled live,
+  persisted as chain history, or composed with authenticated live replay.
+  Retain chain-specific call/proof material behind an opaque draft ID, require
+  distinct authorization and submission intents, and never project a
+  credential ID, private credential data, witness, holder key, nonce, proof,
+  signature, or serialized transaction into headless output or errors.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

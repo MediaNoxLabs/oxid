@@ -35,6 +35,8 @@ use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpen
 use oxid_adapter_passport_vault::{
     AuthenticatedPassportVaultStateSource, FinalizedMidnightHistoryCollectorConfigError,
     NativePassportVaultContractStateDecoder, NodeAnchoredPassportVaultStateSource,
+    SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX, SimulatedPassportVaultContractCall,
+    SimulatedPassportVaultStateSource,
 };
 use oxid_adapter_passport_vault::{
     InMemoryPassportVaultRepository, StandalonePassportVaultCredential,
@@ -60,6 +62,14 @@ pub fn standalone_siopv2_request() -> String {
 #[must_use]
 pub fn standalone_openid4vp_request() -> String {
     oxid_adapter_openid4vp::standalone_openid4vp_request()
+}
+
+/// Returns the fixed development-only Passport Vault address accepted by the
+/// deterministic headless call harness.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub const fn simulated_passport_vault_contract_address_hex() -> &'static str {
+    SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX
 }
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_credential_json::EncryptedJsonCredentialRepository;
@@ -227,6 +237,8 @@ pub struct ApplicationServices {
     cancel_passport_vault_call_submission: Arc<dyn CancelPassportVaultCallSubmissionUseCase>,
     list_passport_vault_call_submissions: Arc<dyn ListPassportVaultCallSubmissionsUseCase>,
     reconcile_passport_vault_call_submission: Arc<dyn ReconcilePassportVaultCallSubmissionUseCase>,
+    passport_vault_call_mode: &'static str,
+    passport_vault_call_contract_address_hex: Option<&'static str>,
     compact_presentation_proof_available: bool,
 }
 
@@ -678,6 +690,18 @@ impl ApplicationServices {
         Arc::clone(&self.reconcile_passport_vault_call_submission)
     }
 
+    /// Returns the explicit adapter mode for incoming capability discovery.
+    #[must_use]
+    pub const fn passport_vault_call_mode(&self) -> &'static str {
+        self.passport_vault_call_mode
+    }
+
+    /// Returns the fixed address only for deterministic development simulation.
+    #[must_use]
+    pub const fn passport_vault_call_contract_address_hex(&self) -> Option<&'static str> {
+        self.passport_vault_call_contract_address_hex
+    }
+
     /// Reports whether an authenticated Compact prover and an independent
     /// verifier are connected to this composition.
     #[must_use]
@@ -746,7 +770,20 @@ fn compose_headless_with_presentation(
     ));
     #[cfg(not(target_arch = "wasm32"))]
     let midnight = Arc::new(midnight);
-    compose_with_adapters_and_presentation(profiles, security, midnight, credential_presentation)
+    let services = compose_with_adapters_and_presentation(
+        profiles,
+        security,
+        midnight,
+        credential_presentation,
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        with_simulated_passport_vault_calls(services)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        services
+    }
 }
 
 /// Environment variable holding the selected Midnight network identity.
@@ -1114,12 +1151,12 @@ fn compose_headless_with_submission_journal_and_presentation(
         Arc::clone(&clock),
         Arc::clone(&security),
     ));
-    compose_with_adapters_and_presentation(
+    with_simulated_passport_vault_calls(compose_with_adapters_and_presentation(
         Arc::new(JsonWalletProfileRepository::at_default_location()),
         security,
         midnight,
         credential_presentation,
-    )
+    ))
 }
 
 /// Wires persistent public profiles and development custody to an explicitly
@@ -1416,7 +1453,7 @@ fn compose_in_memory_with_presentation(
     ));
     let did_lifecycle_port: Arc<dyn DidLifecyclePort> = did_lifecycle.clone();
     let did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort> = did_lifecycle;
-    compose_with_identity_adapters(
+    let services = compose_with_identity_adapters(
         Arc::new(InMemoryWalletProfileRepository::new()),
         security,
         midnight,
@@ -1435,7 +1472,15 @@ fn compose_in_memory_with_presentation(
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
             credential_presentation,
         },
-    )
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        with_simulated_passport_vault_calls(services)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        services
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1475,7 +1520,39 @@ fn with_passport_vault_state_source(
         services.cancel_passport_vault_call_submission = calls.clone();
         services.list_passport_vault_call_submissions = calls.clone();
         services.reconcile_passport_vault_call_submission = calls;
+        services.passport_vault_call_mode = "native_pending";
     }
+    services
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn with_simulated_passport_vault_calls(mut services: ApplicationServices) -> ApplicationServices {
+    let Ok(source) = SimulatedPassportVaultStateSource::new() else {
+        return services;
+    };
+    let source: Arc<dyn PassportVaultContractStateSourcePort> = Arc::new(source);
+    services.read_passport_vault_contract_state =
+        Arc::new(PassportVaultContractStateService::with_source(
+            Arc::new(NativePassportVaultContractStateDecoder),
+            Arc::clone(&source),
+        ));
+    let calls = Arc::new(PassportVaultContractCallService::new_simulated(
+        source,
+        Arc::new(SimulatedPassportVaultContractCall::new()),
+        Arc::new(SystemClock),
+        Arc::new(OsRandom),
+    ));
+    services.prepare_passport_vault_call = calls.clone();
+    services.authorize_passport_vault_call = calls.clone();
+    services.submit_passport_vault_call = calls.clone();
+    services.get_passport_vault_call = calls.clone();
+    services.get_passport_vault_call_submission_status = calls.clone();
+    services.cancel_passport_vault_call_submission = calls.clone();
+    services.list_passport_vault_call_submissions = calls.clone();
+    services.reconcile_passport_vault_call_submission = calls;
+    services.passport_vault_call_mode = "deterministic_simulation";
+    services.passport_vault_call_contract_address_hex =
+        Some(SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX);
     services
 }
 
@@ -1956,6 +2033,8 @@ where
         cancel_passport_vault_call_submission,
         list_passport_vault_call_submissions,
         reconcile_passport_vault_call_submission,
+        passport_vault_call_mode: "unavailable",
+        passport_vault_call_contract_address_hex: None,
         compact_presentation_proof_available,
     }
 }

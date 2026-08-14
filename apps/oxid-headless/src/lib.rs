@@ -293,8 +293,14 @@ impl HeadlessWallet {
                     "version": env!("CARGO_PKG_VERSION")
                 },
                 "methods": capability_manifest(
-                    self.application.compact_presentation_proof_available()
+                    self.application.compact_presentation_proof_available(),
+                    self.application.passport_vault_call_mode(),
                 ),
+                "passportVaultContractCalls": {
+                    "mode": self.application.passport_vault_call_mode(),
+                    "contractAddressHex": self.application.passport_vault_call_contract_address_hex(),
+                    "settlesOnMidnight": false
+                },
                 "custodyMode": "development_only",
                 "compatibilityAliases": ["quit", "exit"]
             }),
@@ -4979,7 +4985,21 @@ fn passport_vault_call_port_error(
     Response::error(id, code, error.to_string())
 }
 
-fn capability_manifest(compact_presentation_proof_available: bool) -> Value {
+fn capability_manifest(
+    compact_presentation_proof_available: bool,
+    passport_vault_call_mode: &str,
+) -> Value {
+    let passport_vault_call_authentication =
+        if passport_vault_call_mode == "deterministic_simulation" {
+            "deterministic_simulation"
+        } else {
+            "canonical_finalized_replay"
+        };
+    let passport_vault_call_status = if passport_vault_call_mode == "deterministic_simulation" {
+        "ready"
+    } else {
+        "composition_dependent"
+    };
     json!([
         { "method": "system.capabilities", "status": "ready" },
         { "method": "system.quit", "status": "ready" },
@@ -5026,16 +5046,16 @@ fn capability_manifest(compact_presentation_proof_available: bool) -> Value {
         { "method": "vault.total_locked", "status": "ready", "mode": "standalone", "state": "process_local" },
         { "method": "vault.locks.list", "status": "ready", "mode": "standalone", "state": "process_local" },
         { "method": "vault.contract_state.decode", "status": "ready", "mode": "native", "source": "pinned_layout_tagged_midnight_state", "mutates": false },
-        { "method": "vault.contract_state.read", "status": "composition_dependent", "mode": "native", "sources": ["node_anchored_indexer", "finalized_node_replay"], "stateAuthentication": ["indexer_supplied_not_proven", "canonical_finalized_replay"], "mutates": false },
-        { "method": "vault.contract_call.prepare", "status": "composition_dependent", "mode": "native", "operations": ["create_lock", "deposit_to_lock", "claim_from_lock", "withdraw_from_lock"], "requiresStateAuthentication": "canonical_finalized_replay", "privateMaterialExposed": false },
-        { "method": "vault.contract_call.authorize", "status": "composition_dependent", "mode": "native", "confirmationRequired": true, "intent": AUTHORIZE_PASSPORT_VAULT_CALL_INTENT },
-        { "method": "vault.contract_call.draft", "status": "composition_dependent", "mode": "native", "serializedTransactionExposed": false },
-        { "method": "vault.contract_call.submit", "status": "composition_dependent", "mode": "native", "confirmationRequired": true, "intent": SUBMIT_PASSPORT_VAULT_CALL_INTENT },
-        { "method": "vault.contract_call.start_submission", "status": "composition_dependent", "mode": "native", "execution": "adapter_worker" },
-        { "method": "vault.contract_call.submission_status", "status": "composition_dependent", "mode": "native" },
-        { "method": "vault.contract_call.submission_history", "status": "composition_dependent", "mode": "native", "persistence": "public_metadata_only" },
-        { "method": "vault.contract_call.cancel_submission", "status": "composition_dependent", "mode": "native", "boundary": "pre_broadcast_only" },
-        { "method": "vault.contract_call.reconcile_submission", "status": "composition_dependent", "mode": "native", "scope": "finalized_chain" },
+        { "method": "vault.contract_state.read", "status": "composition_dependent", "mode": "native", "sources": ["deterministic_simulation", "node_anchored_indexer", "finalized_node_replay"], "stateAuthentication": ["deterministic_simulation", "indexer_supplied_not_proven", "canonical_finalized_replay"], "mutates": false },
+        { "method": "vault.contract_call.prepare", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "operations": ["create_lock", "deposit_to_lock", "claim_from_lock", "withdraw_from_lock"], "requiresStateAuthentication": passport_vault_call_authentication, "privateMaterialExposed": false },
+        { "method": "vault.contract_call.authorize", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "confirmationRequired": true, "intent": AUTHORIZE_PASSPORT_VAULT_CALL_INTENT },
+        { "method": "vault.contract_call.draft", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "serializedTransactionExposed": false },
+        { "method": "vault.contract_call.submit", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "confirmationRequired": true, "intent": SUBMIT_PASSPORT_VAULT_CALL_INTENT },
+        { "method": "vault.contract_call.start_submission", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "execution": "adapter_worker" },
+        { "method": "vault.contract_call.submission_status", "status": passport_vault_call_status, "mode": passport_vault_call_mode },
+        { "method": "vault.contract_call.submission_history", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "persistence": "process_local_public_metadata" },
+        { "method": "vault.contract_call.cancel_submission", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "boundary": "pre_broadcast_only" },
+        { "method": "vault.contract_call.reconcile_submission", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "scope": "adapter_status" },
         { "method": "vault.credentials.list", "status": "ready", "mode": "standalone", "aliasFor": "credential.list" },
         { "method": "vault.lock.create", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": CREATE_LOCK_INTENT },
         { "method": "vault.deposit", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": DEPOSIT_INTENT },
@@ -5139,6 +5159,18 @@ mod tests {
 
         assert_eq!(responses[0]["id"], "cap-1");
         assert_eq!(responses[0]["ok"], true);
+        assert_eq!(
+            responses[0]["result"]["passportVaultContractCalls"]["mode"],
+            "deterministic_simulation"
+        );
+        assert_eq!(
+            responses[0]["result"]["passportVaultContractCalls"]["contractAddressHex"],
+            oxid_composition::simulated_passport_vault_contract_address_hex()
+        );
+        assert_eq!(
+            responses[0]["result"]["passportVaultContractCalls"]["settlesOnMidnight"],
+            false
+        );
         let methods = responses[0]["result"]["methods"]
             .as_array()
             .expect("methods should be an array");
@@ -5222,15 +5254,24 @@ mod tests {
             capability["method"] == "vault.contract_state.read"
                 && capability["status"] == "composition_dependent"
                 && capability["sources"]
-                    == json!(["node_anchored_indexer", "finalized_node_replay"])
+                    == json!([
+                        "deterministic_simulation",
+                        "node_anchored_indexer",
+                        "finalized_node_replay"
+                    ])
                 && capability["stateAuthentication"]
-                    == json!(["indexer_supplied_not_proven", "canonical_finalized_replay"])
+                    == json!([
+                        "deterministic_simulation",
+                        "indexer_supplied_not_proven",
+                        "canonical_finalized_replay"
+                    ])
                 && capability["mutates"] == false
         }));
         assert!(methods.iter().any(|capability| {
             capability["method"] == "vault.contract_call.prepare"
-                && capability["status"] == "composition_dependent"
-                && capability["requiresStateAuthentication"] == "canonical_finalized_replay"
+                && capability["status"] == "ready"
+                && capability["mode"] == "deterministic_simulation"
+                && capability["requiresStateAuthentication"] == "deterministic_simulation"
                 && capability["privateMaterialExposed"] == false
                 && capability["operations"]
                     == json!([
@@ -5278,28 +5319,49 @@ mod tests {
     }
 
     #[test]
-    fn contract_state_read_is_address_scoped_and_fails_closed_without_live_routes() {
+    fn simulated_contract_state_read_is_explicit_and_address_scoped() {
         let invalid = execute(
             r#"{"protocol":"oxid.headless.v1","id":"bad-address","method":"vault.contract_state.read","params":{"contractAddressHex":"00"}}"#,
         );
         assert_eq!(invalid[0]["ok"], false);
         assert_eq!(invalid[0]["error"]["code"], "invalid_params");
 
-        let unavailable = execute(
+        let missing = execute(
             &json!({
                 "protocol": PROTOCOL_VERSION,
-                "id": "no-live-source",
+                "id": "unknown-simulated-contract",
                 "method": "vault.contract_state.read",
                 "params": { "contractAddressHex": "11".repeat(32) },
             })
             .to_string(),
         );
-        assert_eq!(unavailable[0]["ok"], false);
-        assert_eq!(unavailable[0]["error"]["code"], "capability_unavailable");
+        assert_eq!(missing[0]["ok"], false);
+        assert_eq!(missing[0]["error"]["code"], "not_found");
+
+        let simulated = execute(
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "simulated-state",
+                "method": "vault.contract_state.read",
+                "params": {
+                    "contractAddressHex": oxid_composition::simulated_passport_vault_contract_address_hex()
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(simulated[0]["ok"], true);
+        assert_eq!(
+            simulated[0]["result"]["vault"]["source"],
+            "deterministic_simulation"
+        );
+        assert_eq!(
+            simulated[0]["result"]["vault"]["chainAnchor"]["stateAuthentication"],
+            "deterministic_simulation"
+        );
     }
 
     #[test]
-    fn contract_call_protocol_is_typed_and_fails_closed_without_authenticated_routes() {
+    fn contract_call_protocol_runs_all_four_simulated_operations_without_secret_views() {
         let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
         let created = execute_with_wallet(
             &wallet,
@@ -5325,27 +5387,107 @@ mod tests {
             .to_string(),
         );
         assert_eq!(selected[0]["ok"], true);
-        let responses = execute_with_wallet(
+        let actions = [
+            json!({
+                "type": "create_lock",
+                "minimumAgeYears": 18,
+                "maximumClaimAmount": "40",
+                "initialAmount": "100"
+            }),
+            json!({ "type": "deposit_to_lock", "lockId": 0, "amount": "12" }),
+            json!({
+                "type": "claim_from_lock",
+                "lockId": 0,
+                "credentialId": "credential_private_reference",
+                "amount": "5"
+            }),
+            json!({ "type": "withdraw_from_lock", "lockId": 0, "amount": "4" }),
+        ];
+        let mut transcript = Vec::new();
+        for (index, action) in actions.into_iter().enumerate() {
+            let prepared = execute_with_wallet(
+                &wallet,
+                &json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "id": format!("prepare-{index}"),
+                    "method": "vault.contract_call.prepare",
+                    "params": {
+                        "contractAddressHex": oxid_composition::simulated_passport_vault_contract_address_hex(),
+                        "action": action
+                    },
+                })
+                .to_string(),
+            );
+            assert_eq!(prepared[0]["ok"], true);
+            assert_eq!(prepared[0]["result"]["call"]["state"], "prepared");
+            let draft_id = prepared[0]["result"]["call"]["draftId"]
+                .as_str()
+                .expect("draft id");
+            let challenge = prepared[0]["result"]["call"]["authorizationChallenge"]
+                .as_str()
+                .expect("authorization challenge");
+            let authorized = execute_with_wallet(
+                &wallet,
+                &json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "id": format!("authorize-{index}"),
+                    "method": "vault.contract_call.authorize",
+                    "params": {
+                        "draftId": draft_id,
+                        "authorizationChallenge": challenge,
+                        "confirmed": true,
+                        "intent": AUTHORIZE_PASSPORT_VAULT_CALL_INTENT
+                    },
+                })
+                .to_string(),
+            );
+            assert_eq!(authorized[0]["result"]["call"]["state"], "authorized");
+            let submitted = execute_with_wallet(
+                &wallet,
+                &json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "id": format!("submit-{index}"),
+                    "method": "vault.contract_call.submit",
+                    "params": {
+                        "draftId": draft_id,
+                        "confirmed": true,
+                        "intent": SUBMIT_PASSPORT_VAULT_CALL_INTENT
+                    },
+                })
+                .to_string(),
+            );
+            assert_eq!(submitted[0]["ok"], true);
+            assert_eq!(
+                submitted[0]["result"]["submission"]["mode"],
+                "deterministic_simulation_only"
+            );
+            assert_eq!(
+                submitted[0]["result"]["submission"]["call"]["state"],
+                "submitted"
+            );
+            transcript.extend(prepared);
+            transcript.extend(authorized);
+            transcript.extend(submitted);
+        }
+        let history = execute_with_wallet(
             &wallet,
             &json!({
                 "protocol": PROTOCOL_VERSION,
-                "id": "prepare",
-                "method": "vault.contract_call.prepare",
-                "params": {
-                    "contractAddressHex": "11".repeat(32),
-                    "action": {
-                        "type": "claim_from_lock",
-                        "lockId": 7,
-                        "credentialId": "credential_1",
-                        "amount": "12"
-                    }
-                },
+                "id": "vault-call-history",
+                "method": "vault.contract_call.submission_history",
+                "params": {}
             })
             .to_string(),
         );
-        assert_eq!(responses[0]["ok"], false);
-        assert_eq!(responses[0]["error"]["code"], "capability_unavailable");
-        assert!(!responses[0].to_string().contains("credential_1"));
+        assert_eq!(
+            history[0]["result"]["submissions"].as_array().map(Vec::len),
+            Some(4)
+        );
+        assert!(
+            !serde_json::to_string(&transcript)
+                .expect("transcript JSON")
+                .contains("credential_private_reference")
+        );
 
         let malformed = execute(
             &json!({

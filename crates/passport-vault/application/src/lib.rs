@@ -382,6 +382,7 @@ pub struct PassportVaultContractStateSnapshot {
 pub enum PassportVaultContractStateAuthentication {
     IndexerSuppliedNotProven,
     CanonicalFinalizedReplay,
+    DeterministicSimulation,
 }
 
 impl PassportVaultContractStateAuthentication {
@@ -390,6 +391,7 @@ impl PassportVaultContractStateAuthentication {
         match self {
             Self::IndexerSuppliedNotProven => "node_anchored_indexer",
             Self::CanonicalFinalizedReplay => "finalized_node_replay",
+            Self::DeterministicSimulation => "deterministic_simulation",
         }
     }
 
@@ -398,6 +400,7 @@ impl PassportVaultContractStateAuthentication {
         match self {
             Self::IndexerSuppliedNotProven => "indexer_supplied_not_proven",
             Self::CanonicalFinalizedReplay => "canonical_finalized_replay",
+            Self::DeterministicSimulation => "deterministic_simulation",
         }
     }
 }
