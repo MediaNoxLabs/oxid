@@ -88,7 +88,7 @@ check_workspace_dependencies oxid-protocol-application \
 check_workspace_dependencies oxid-presentation-application \
   oxid-foundation oxid-presentation-domain
 check_workspace_dependencies oxid-passport-vault-application \
-  oxid-passport-vault-domain oxid-platform-ports
+  oxid-foundation oxid-passport-vault-domain oxid-platform-ports
 check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-credential-application oxid-credential-domain oxid-foundation \
   oxid-identity-application oxid-identity-domain \

@@ -333,6 +333,15 @@ Only this path reports `finalized_node_replay` with
 `canonical_finalized_replay`. Without the variable, the standalone read keeps
 the explicit `node_anchored_indexer` / `indexer_supplied_not_proven` boundary.
 
+The headless `vault.contract_call.*` methods stage typed `create_lock`,
+`deposit_to_lock`, `claim_from_lock`, and `withdraw_from_lock` operations as
+retained drafts. Preparation requires that canonical replay source, and
+authorization and proving/submission use two separate exact intents. Incoming
+JSON never accepts private credential material, witnesses, signatures, proofs,
+or serialized transactions. The methods are deliberately
+`composition_dependent` and fail closed until a native generated-Compact
+composer/prover/submission adapter is installed.
+
 For a complete standalone run, DUST replay can also resume from a private
 key-scoped checkpoint:
 

@@ -21,12 +21,16 @@ use oxid_identity_application::{
 };
 use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::{
-    CLAIM_INTENT, CREATE_LOCK_INTENT, ClaimPassportVaultLockCommand,
-    CreatePassportVaultLockCommand, DEPOSIT_INTENT, DecodePassportVaultContractStateCommand,
-    PassportVaultAmountCommand, PassportVaultContractStateError,
-    PassportVaultContractStateReadError, PassportVaultContractStateSourceError,
-    PassportVaultLockView, PassportVaultOperationError, PassportVaultView,
-    ReadPassportVaultContractStateCommand, WITHDRAW_INTENT,
+    AUTHORIZE_PASSPORT_VAULT_CALL_INTENT, AuthorizePassportVaultCallCommand, CLAIM_INTENT,
+    CREATE_LOCK_INTENT, ClaimPassportVaultLockCommand, CreatePassportVaultLockCommand,
+    DEPOSIT_INTENT, DecodePassportVaultContractStateCommand, PassportVaultAmountCommand,
+    PassportVaultCallError, PassportVaultCallPortError, PassportVaultCallPreviewView,
+    PassportVaultCallQuery, PassportVaultCallSubmissionStatusView, PassportVaultCallSubmissionView,
+    PassportVaultContractStateError, PassportVaultContractStateReadError,
+    PassportVaultContractStateSourceError, PassportVaultLockView, PassportVaultOperationError,
+    PassportVaultView, PreparePassportVaultCallAction, PreparePassportVaultCallCommand,
+    ReadPassportVaultContractStateCommand, SUBMIT_PASSPORT_VAULT_CALL_INTENT,
+    SubmitPassportVaultCallCommand, WITHDRAW_INTENT,
 };
 use oxid_passport_vault_domain::PassportVaultError;
 use oxid_presentation_application::{
@@ -209,6 +213,25 @@ impl HeadlessWallet {
             "vault.total_locked" | "vault.locks.list" => self.list_vault_locks(request),
             "vault.contract_state.decode" => self.decode_vault_contract_state(request),
             "vault.contract_state.read" => self.read_vault_contract_state(request),
+            "vault.contract_call.prepare" => self.prepare_vault_contract_call(request),
+            "vault.contract_call.authorize" => self.authorize_vault_contract_call(request),
+            "vault.contract_call.draft" => self.vault_contract_call_draft(request),
+            "vault.contract_call.submit" => self.submit_vault_contract_call(request),
+            "vault.contract_call.start_submission" => {
+                self.start_vault_contract_call_submission(request)
+            }
+            "vault.contract_call.submission_status" => {
+                self.vault_contract_call_submission_status(request)
+            }
+            "vault.contract_call.submission_history" => {
+                self.vault_contract_call_submission_history(request)
+            }
+            "vault.contract_call.cancel_submission" => {
+                self.cancel_vault_contract_call_submission(request)
+            }
+            "vault.contract_call.reconcile_submission" => {
+                self.reconcile_vault_contract_call_submission(request)
+            }
             "vault.lock.create" => self.create_vault_lock(request),
             "vault.deposit" => self.deposit_to_vault_lock(request),
             "vault.claim" => self.claim_from_vault_lock(request),
@@ -382,6 +405,346 @@ impl HeadlessWallet {
             Err(error) => {
                 Dispatch::continue_with(passport_vault_contract_state_read_error(request.id, error))
             }
+        }
+    }
+
+    fn prepare_vault_contract_call(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<PrepareVaultContractCallParams>(request.params)
+        {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "vault.contract_call.prepare requires contractAddressHex and one typed action",
+                ));
+            }
+        };
+        let Some(contract_address) = decode_hex_bounded(&params.contract_address_hex, 32)
+            .filter(|address| address.len() == 32)
+        else {
+            return Dispatch::continue_with(Response::error(
+                request.id,
+                "invalid_params",
+                "contractAddressHex must be exactly 32 bytes of hexadecimal",
+            ));
+        };
+        let action = match vault_contract_call_action(request.id.clone(), params.action) {
+            Ok(action) => action,
+            Err(dispatch) => return *dispatch,
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let result =
+            futures::executor::block_on(self.application.prepare_passport_vault_call().execute(
+                PreparePassportVaultCallCommand {
+                    profile_id,
+                    contract_address_hex: encode_hex(&contract_address),
+                    action,
+                },
+            ));
+        match result {
+            Ok(call) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "call": passport_vault_call_preview_value(&call) }),
+            )),
+            Err(error) => Dispatch::continue_with(passport_vault_call_error(request.id, error)),
+        }
+    }
+
+    fn authorize_vault_contract_call(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<AuthorizeVaultContractCallParams>(
+            request.params,
+        ) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "vault.contract_call.authorize requires draftId, authorizationChallenge, confirmed, and intent",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self.application.authorize_passport_vault_call().execute(
+            AuthorizePassportVaultCallCommand {
+                profile_id,
+                draft_id: params.draft_id,
+                authorization_challenge: params.authorization_challenge,
+                confirmed: params.confirmed,
+                intent: params.intent,
+            },
+        ) {
+            Ok(call) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "call": passport_vault_call_preview_value(&call) }),
+            )),
+            Err(error) => Dispatch::continue_with(passport_vault_call_error(request.id, error)),
+        }
+    }
+
+    fn vault_contract_call_draft(&self, request: Request) -> Dispatch {
+        self.vault_contract_call_query_operation(
+            request,
+            "vault.contract_call.draft",
+            |application, query| {
+                application
+                    .get_passport_vault_call()
+                    .execute(query)
+                    .map(|call| json!({ "call": passport_vault_call_preview_value(&call) }))
+            },
+        )
+    }
+
+    fn submit_vault_contract_call(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<SubmitVaultContractCallParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "vault.contract_call.submit requires draftId, confirmed, and intent",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let result =
+            futures::executor::block_on(self.application.submit_passport_vault_call().execute(
+                SubmitPassportVaultCallCommand {
+                    profile_id,
+                    draft_id: params.draft_id,
+                    confirmed: params.confirmed,
+                    intent: params.intent,
+                },
+            ));
+        match result {
+            Ok(submission) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "submission": passport_vault_call_submission_value(&submission) }),
+            )),
+            Err(error) => Dispatch::continue_with(passport_vault_call_error(request.id, error)),
+        }
+    }
+
+    fn start_vault_contract_call_submission(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<SubmitVaultContractCallParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "vault.contract_call.start_submission requires draftId, confirmed, and intent",
+                ));
+            }
+        };
+        if !params.confirmed {
+            return Dispatch::continue_with(passport_vault_call_error(
+                request.id,
+                PassportVaultCallError::ConfirmationRequired,
+            ));
+        }
+        if params.intent != SUBMIT_PASSPORT_VAULT_CALL_INTENT {
+            return Dispatch::continue_with(passport_vault_call_error(
+                request.id,
+                PassportVaultCallError::InvalidConfirmation,
+            ));
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let query = PassportVaultCallQuery {
+            profile_id: profile_id.clone(),
+            draft_id: params.draft_id.clone(),
+        };
+        let preview = match self
+            .application
+            .get_passport_vault_call()
+            .execute(query.clone())
+        {
+            Ok(preview) => preview,
+            Err(error) => {
+                return Dispatch::continue_with(passport_vault_call_error(request.id, error));
+            }
+        };
+        match preview.state.as_str() {
+            "authorized" | "submitting" | "submitted" => {}
+            "expired" => {
+                return Dispatch::continue_with(passport_vault_call_port_error(
+                    request.id,
+                    PassportVaultCallPortError::DraftExpired,
+                ));
+            }
+            _ => {
+                return Dispatch::continue_with(passport_vault_call_port_error(
+                    request.id,
+                    PassportVaultCallPortError::DraftConflict,
+                ));
+            }
+        }
+        let submit = self.application.submit_passport_vault_call();
+        let command = SubmitPassportVaultCallCommand {
+            profile_id,
+            draft_id: params.draft_id,
+            confirmed: true,
+            intent: params.intent,
+        };
+        if thread::Builder::new()
+            .name("oxid-headless-vault-submit".to_owned())
+            .spawn(move || {
+                let _ = futures::executor::block_on(submit.execute(command));
+            })
+            .is_err()
+        {
+            return Dispatch::continue_with(Response::error(
+                request.id,
+                "unavailable",
+                "Passport Vault submission worker could not be started",
+            ));
+        }
+        let status = self.application.get_passport_vault_call_submission_status();
+        for _ in 0..100 {
+            match status.execute(query.clone()) {
+                Ok(status) if status.state != "not_started" => {
+                    return Dispatch::continue_with(Response::success(
+                        request.id,
+                        json!({
+                            "submissionStatus": passport_vault_call_submission_status_value(&status)
+                        }),
+                    ));
+                }
+                Ok(_) => thread::sleep(Duration::from_millis(1)),
+                Err(error) => {
+                    return Dispatch::continue_with(passport_vault_call_error(request.id, error));
+                }
+            }
+        }
+        Dispatch::continue_with(Response::error(
+            request.id,
+            "unavailable",
+            "Passport Vault submission worker did not start",
+        ))
+    }
+
+    fn vault_contract_call_submission_status(&self, request: Request) -> Dispatch {
+        self.vault_contract_call_query_operation(
+            request,
+            "vault.contract_call.submission_status",
+            |application, query| {
+                application
+                    .get_passport_vault_call_submission_status()
+                    .execute(query)
+                    .map(|status| {
+                        json!({
+                            "submissionStatus": passport_vault_call_submission_status_value(&status)
+                        })
+                    })
+            },
+        )
+    }
+
+    fn cancel_vault_contract_call_submission(&self, request: Request) -> Dispatch {
+        self.vault_contract_call_query_operation(
+            request,
+            "vault.contract_call.cancel_submission",
+            |application, query| {
+                application
+                    .cancel_passport_vault_call_submission()
+                    .execute(query)
+                    .map(|status| {
+                        json!({
+                            "submissionStatus": passport_vault_call_submission_status_value(&status)
+                        })
+                    })
+            },
+        )
+    }
+
+    fn reconcile_vault_contract_call_submission(&self, request: Request) -> Dispatch {
+        self.vault_contract_call_query_operation(
+            request,
+            "vault.contract_call.reconcile_submission",
+            |application, query| {
+                futures::executor::block_on(
+                    application
+                        .reconcile_passport_vault_call_submission()
+                        .execute(query),
+                )
+                .map(|status| {
+                    json!({
+                        "submissionStatus": passport_vault_call_submission_status_value(&status)
+                    })
+                })
+            },
+        )
+    }
+
+    fn vault_contract_call_submission_history(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "vault.contract_call.submission_history");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .list_passport_vault_call_submissions()
+            .execute(profile_id)
+        {
+            Ok(statuses) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "submissions": statuses
+                        .iter()
+                        .map(passport_vault_call_submission_status_value)
+                        .collect::<Vec<_>>()
+                }),
+            )),
+            Err(error) => Dispatch::continue_with(passport_vault_call_error(request.id, error)),
+        }
+    }
+
+    fn vault_contract_call_query_operation(
+        &self,
+        request: Request,
+        method: &'static str,
+        operation: impl FnOnce(
+            &ApplicationServices,
+            PassportVaultCallQuery,
+        ) -> Result<Value, PassportVaultCallError>,
+    ) -> Dispatch {
+        let params = match serde_json::from_value::<VaultContractCallDraftParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    format!("{method} requires only a string draftId"),
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match operation(
+            &self.application,
+            PassportVaultCallQuery {
+                profile_id,
+                draft_id: params.draft_id,
+            },
+        ) {
+            Ok(value) => Dispatch::continue_with(Response::success(request.id, value)),
+            Err(error) => Dispatch::continue_with(passport_vault_call_error(request.id, error)),
         }
     }
 
@@ -2475,6 +2838,66 @@ struct ReadVaultContractStateParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PrepareVaultContractCallParams {
+    contract_address_hex: String,
+    action: VaultContractCallActionParams,
+}
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum VaultContractCallActionParams {
+    #[serde(rename = "create_lock")]
+    Create {
+        minimum_age_years: u8,
+        #[serde(default)]
+        required_issuing_state: Option<String>,
+        #[serde(default)]
+        required_document_number: Option<String>,
+        maximum_claim_amount: String,
+        initial_amount: String,
+    },
+    #[serde(rename = "deposit_to_lock")]
+    Deposit { lock_id: u64, amount: String },
+    #[serde(rename = "claim_from_lock")]
+    Claim {
+        lock_id: u64,
+        credential_id: String,
+        amount: String,
+    },
+    #[serde(rename = "withdraw_from_lock")]
+    Withdraw { lock_id: u64, amount: String },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AuthorizeVaultContractCallParams {
+    draft_id: String,
+    authorization_challenge: String,
+    confirmed: bool,
+    intent: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SubmitVaultContractCallParams {
+    draft_id: String,
+    confirmed: bool,
+    intent: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VaultContractCallDraftParams {
+    draft_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct VaultAmountParams {
     lock_id: u64,
     amount: String,
@@ -4250,6 +4673,69 @@ fn policy_value(value: Option<String>) -> Result<Option<[u8; 32]>, ()> {
     Ok(Some(padded))
 }
 
+fn vault_contract_call_action(
+    id: Option<String>,
+    action: VaultContractCallActionParams,
+) -> Result<PreparePassportVaultCallAction, Box<Dispatch>> {
+    Ok(match action {
+        VaultContractCallActionParams::Create {
+            minimum_age_years,
+            required_issuing_state,
+            required_document_number,
+            maximum_claim_amount,
+            initial_amount,
+        } => {
+            if decimal_u128(&maximum_claim_amount).is_none() {
+                return Err(Box::new(invalid_vault_amount(id, "maximumClaimAmount")));
+            }
+            if decimal_u128(&initial_amount).is_none() {
+                return Err(Box::new(invalid_vault_amount(id, "initialAmount")));
+            }
+            let required_issuing_state = policy_value(required_issuing_state).map_err(|()| {
+                Box::new(invalid_vault_policy_value(
+                    id.clone(),
+                    "requiredIssuingState",
+                ))
+            })?;
+            let required_document_number = policy_value(required_document_number)
+                .map_err(|()| Box::new(invalid_vault_policy_value(id, "requiredDocumentNumber")))?;
+            PreparePassportVaultCallAction::CreateLock {
+                minimum_age_years,
+                required_issuing_state,
+                required_document_number,
+                maximum_claim_amount,
+                initial_amount,
+            }
+        }
+        VaultContractCallActionParams::Deposit { lock_id, amount } => {
+            if decimal_u128(&amount).is_none() {
+                return Err(Box::new(invalid_vault_amount(id, "amount")));
+            }
+            PreparePassportVaultCallAction::DepositToLock { lock_id, amount }
+        }
+        VaultContractCallActionParams::Claim {
+            lock_id,
+            credential_id,
+            amount,
+        } => {
+            if decimal_u128(&amount).is_none() {
+                return Err(Box::new(invalid_vault_amount(id, "amount")));
+            }
+            PreparePassportVaultCallAction::ClaimFromLock {
+                lock_id,
+                credential_id,
+                amount,
+            }
+        }
+        VaultContractCallActionParams::Withdraw { lock_id, amount } => {
+            if decimal_u128(&amount).is_none() {
+                return Err(Box::new(invalid_vault_amount(id, "amount")));
+            }
+            PreparePassportVaultCallAction::WithdrawFromLock { lock_id, amount }
+        }
+    })
+}
+
 fn passport_vault_lock_value(lock: &PassportVaultLockView) -> Value {
     json!({
         "lockId": lock.lock_id,
@@ -4295,6 +4781,57 @@ fn passport_vault_value(vault: &PassportVaultView) -> Value {
         "totalLocked": vault.total_locked,
         "claimCount": vault.claim_count,
         "locks": vault.locks.iter().map(passport_vault_lock_value).collect::<Vec<_>>(),
+    })
+}
+
+fn passport_vault_call_preview_value(call: &PassportVaultCallPreviewView) -> Value {
+    json!({
+        "draftId": call.draft_id,
+        "authorizationChallenge": call.authorization_challenge,
+        "contractAddressHex": call.contract_address_hex,
+        "operation": call.operation,
+        "lockId": call.lock_id,
+        "amountAtomicUnits": call.amount_atomic_units,
+        "stateAnchor": {
+            "transactionHashHex": call.state_anchor_transaction_hash_hex,
+            "blockHashHex": call.state_anchor_block_hash_hex,
+            "blockHeight": call.state_anchor_block_height,
+            "stateAuthentication": "canonical_finalized_replay",
+        },
+        "expiresAtMillis": call.expires_at_millis,
+        "state": call.state,
+        "feeAtomicUnits": call.fee_atomic_units,
+        "proofRequired": call.proof_required,
+        "submissionReady": call.submission_ready,
+    })
+}
+
+fn passport_vault_call_submission_value(submission: &PassportVaultCallSubmissionView) -> Value {
+    json!({
+        "call": passport_vault_call_preview_value(&submission.call),
+        "transactionHashHex": submission.transaction_hash_hex,
+        "blockHashHex": submission.block_hash_hex,
+        "blockHeight": submission.block_height,
+        "feeAtomicUnits": submission.fee_atomic_units,
+        "mode": submission.mode,
+    })
+}
+
+fn passport_vault_call_submission_status_value(
+    status: &PassportVaultCallSubmissionStatusView,
+) -> Value {
+    json!({
+        "draftId": status.draft_id,
+        "state": status.state,
+        "cancellationAllowed": status.cancellation_allowed,
+        "retryable": status.retryable,
+        "replacementAllowed": status.replacement_allowed,
+        "reconciliationAllowed": status.reconciliation_allowed,
+        "transactionHashHex": status.transaction_hash_hex,
+        "blockHashHex": status.block_hash_hex,
+        "blockHeight": status.block_height,
+        "feeAtomicUnits": status.fee_atomic_units,
+        "mode": status.mode,
     })
 }
 
@@ -4382,6 +4919,66 @@ fn passport_vault_error(id: Option<String>, error: PassportVaultOperationError) 
     Response::error(id, code, message)
 }
 
+fn passport_vault_call_error(id: Option<String>, error: PassportVaultCallError) -> Response {
+    match error {
+        PassportVaultCallError::InvalidIdentifier(_)
+        | PassportVaultCallError::InvalidAddress
+        | PassportVaultCallError::InvalidAmount
+        | PassportVaultCallError::ZeroAmount
+        | PassportVaultCallError::InvalidPolicy => {
+            Response::error(id, "invalid_argument", error.to_string())
+        }
+        PassportVaultCallError::ConfirmationRequired
+        | PassportVaultCallError::InvalidConfirmation => {
+            Response::error(id, "confirmation_required", error.to_string())
+        }
+        PassportVaultCallError::UnauthenticatedState => {
+            Response::error(id, "failed_precondition", error.to_string())
+        }
+        PassportVaultCallError::Clock(_) | PassportVaultCallError::Random(_) => {
+            Response::error(id, "capability_unavailable", error.to_string())
+        }
+        PassportVaultCallError::State(state) => passport_vault_contract_state_read_error(
+            id,
+            PassportVaultContractStateReadError::Source(state),
+        ),
+        PassportVaultCallError::Operation(operation) => {
+            passport_vault_call_port_error(id, operation)
+        }
+    }
+}
+
+fn passport_vault_call_port_error(
+    id: Option<String>,
+    error: PassportVaultCallPortError,
+) -> Response {
+    let code = match error {
+        PassportVaultCallPortError::Unavailable => "capability_unavailable",
+        PassportVaultCallPortError::ProtectionNotInitialized
+        | PassportVaultCallPortError::AccountNotDerived
+        | PassportVaultCallPortError::AccountNotSynchronized
+        | PassportVaultCallPortError::InsufficientFunds
+        | PassportVaultCallPortError::InsufficientDust => "failed_precondition",
+        PassportVaultCallPortError::ProtectionLocked => "wallet_locked",
+        PassportVaultCallPortError::UnsupportedNetwork
+        | PassportVaultCallPortError::AuthorizationChallengeMismatch => "invalid_argument",
+        PassportVaultCallPortError::DraftNotFound => "not_found",
+        PassportVaultCallPortError::DraftExpired
+        | PassportVaultCallPortError::DraftConflict
+        | PassportVaultCallPortError::SubmissionInProgress
+        | PassportVaultCallPortError::SubmissionNotInProgress
+        | PassportVaultCallPortError::SubmissionCancellationUnsafe => "conflict",
+        PassportVaultCallPortError::SubmissionCancelled => "cancelled",
+        PassportVaultCallPortError::InvalidChainState => "invalid_chain_state",
+        PassportVaultCallPortError::ProvingFailed => "proving_failed",
+        PassportVaultCallPortError::SubmissionRejected => "submission_rejected",
+        PassportVaultCallPortError::SubmissionOutcomeUnknown => "submission_outcome_unknown",
+        PassportVaultCallPortError::Timeout => "timeout",
+        PassportVaultCallPortError::InvalidData => "internal_error",
+    };
+    Response::error(id, code, error.to_string())
+}
+
 fn capability_manifest(compact_presentation_proof_available: bool) -> Value {
     json!([
         { "method": "system.capabilities", "status": "ready" },
@@ -4429,7 +5026,16 @@ fn capability_manifest(compact_presentation_proof_available: bool) -> Value {
         { "method": "vault.total_locked", "status": "ready", "mode": "standalone", "state": "process_local" },
         { "method": "vault.locks.list", "status": "ready", "mode": "standalone", "state": "process_local" },
         { "method": "vault.contract_state.decode", "status": "ready", "mode": "native", "source": "pinned_layout_tagged_midnight_state", "mutates": false },
-        { "method": "vault.contract_state.read", "status": "composition_dependent", "mode": "native", "source": "node_anchored_indexer", "finality": "reported_action_block_hash_canonical", "stateAuthentication": "indexer_supplied_not_proven", "mutates": false },
+        { "method": "vault.contract_state.read", "status": "composition_dependent", "mode": "native", "sources": ["node_anchored_indexer", "finalized_node_replay"], "stateAuthentication": ["indexer_supplied_not_proven", "canonical_finalized_replay"], "mutates": false },
+        { "method": "vault.contract_call.prepare", "status": "composition_dependent", "mode": "native", "operations": ["create_lock", "deposit_to_lock", "claim_from_lock", "withdraw_from_lock"], "requiresStateAuthentication": "canonical_finalized_replay", "privateMaterialExposed": false },
+        { "method": "vault.contract_call.authorize", "status": "composition_dependent", "mode": "native", "confirmationRequired": true, "intent": AUTHORIZE_PASSPORT_VAULT_CALL_INTENT },
+        { "method": "vault.contract_call.draft", "status": "composition_dependent", "mode": "native", "serializedTransactionExposed": false },
+        { "method": "vault.contract_call.submit", "status": "composition_dependent", "mode": "native", "confirmationRequired": true, "intent": SUBMIT_PASSPORT_VAULT_CALL_INTENT },
+        { "method": "vault.contract_call.start_submission", "status": "composition_dependent", "mode": "native", "execution": "adapter_worker" },
+        { "method": "vault.contract_call.submission_status", "status": "composition_dependent", "mode": "native" },
+        { "method": "vault.contract_call.submission_history", "status": "composition_dependent", "mode": "native", "persistence": "public_metadata_only" },
+        { "method": "vault.contract_call.cancel_submission", "status": "composition_dependent", "mode": "native", "boundary": "pre_broadcast_only" },
+        { "method": "vault.contract_call.reconcile_submission", "status": "composition_dependent", "mode": "native", "scope": "finalized_chain" },
         { "method": "vault.credentials.list", "status": "ready", "mode": "standalone", "aliasFor": "credential.list" },
         { "method": "vault.lock.create", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": CREATE_LOCK_INTENT },
         { "method": "vault.deposit", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": DEPOSIT_INTENT },
@@ -4615,9 +5221,24 @@ mod tests {
         assert!(methods.iter().any(|capability| {
             capability["method"] == "vault.contract_state.read"
                 && capability["status"] == "composition_dependent"
-                && capability["source"] == "node_anchored_indexer"
-                && capability["stateAuthentication"] == "indexer_supplied_not_proven"
+                && capability["sources"]
+                    == json!(["node_anchored_indexer", "finalized_node_replay"])
+                && capability["stateAuthentication"]
+                    == json!(["indexer_supplied_not_proven", "canonical_finalized_replay"])
                 && capability["mutates"] == false
+        }));
+        assert!(methods.iter().any(|capability| {
+            capability["method"] == "vault.contract_call.prepare"
+                && capability["status"] == "composition_dependent"
+                && capability["requiresStateAuthentication"] == "canonical_finalized_replay"
+                && capability["privateMaterialExposed"] == false
+                && capability["operations"]
+                    == json!([
+                        "create_lock",
+                        "deposit_to_lock",
+                        "claim_from_lock",
+                        "withdraw_from_lock"
+                    ])
         }));
     }
 
@@ -4675,6 +5296,74 @@ mod tests {
         );
         assert_eq!(unavailable[0]["ok"], false);
         assert_eq!(unavailable[0]["error"]["code"], "capability_unavailable");
+    }
+
+    #[test]
+    fn contract_call_protocol_is_typed_and_fails_closed_without_authenticated_routes() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "profile",
+                "method": "wallet.profile.create",
+                "params": { "displayName": "Vault caller" },
+            })
+            .to_string(),
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile");
+        let selected = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "select",
+                "method": "wallet.profile.select",
+                "params": { "profileId": profile_id },
+            })
+            .to_string(),
+        );
+        assert_eq!(selected[0]["ok"], true);
+        let responses = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "prepare",
+                "method": "vault.contract_call.prepare",
+                "params": {
+                    "contractAddressHex": "11".repeat(32),
+                    "action": {
+                        "type": "claim_from_lock",
+                        "lockId": 7,
+                        "credentialId": "credential_1",
+                        "amount": "12"
+                    }
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(responses[0]["ok"], false);
+        assert_eq!(responses[0]["error"]["code"], "capability_unavailable");
+        assert!(!responses[0].to_string().contains("credential_1"));
+
+        let malformed = execute(
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "malformed-call",
+                "method": "vault.contract_call.prepare",
+                "params": {
+                    "contractAddressHex": "11".repeat(32),
+                    "action": {
+                        "type": "deposit_to_lock",
+                        "lockId": 0,
+                        "amount": "01"
+                    }
+                },
+            })
+            .to_string(),
+        );
+        assert_eq!(malformed[0]["error"]["code"], "invalid_params");
     }
 
     #[test]

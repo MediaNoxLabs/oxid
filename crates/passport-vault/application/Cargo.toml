@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+oxid-foundation.workspace = true
 oxid-passport-vault-domain.workspace = true
 oxid-platform-ports.workspace = true
 

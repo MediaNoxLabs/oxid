@@ -94,13 +94,19 @@ use oxid_identity_application::{
     UnavailableDidRecordRepository, UnavailableDidResolver, UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
+    AuthorizePassportVaultCallUseCase, CancelPassportVaultCallSubmissionUseCase,
     ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase,
     DecodePassportVaultContractStateUseCase, DepositPassportVaultLockUseCase,
-    ListPassportVaultLocksUseCase, PassportVaultContractStateDecoderPort,
+    GetPassportVaultCallSubmissionStatusUseCase, GetPassportVaultCallUseCase,
+    ListPassportVaultCallSubmissionsUseCase, ListPassportVaultLocksUseCase,
+    PassportVaultContractCallService, PassportVaultContractStateDecoderPort,
     PassportVaultContractStateService, PassportVaultContractStateSourcePort,
     PassportVaultCredentialPort, PassportVaultRepository, PassportVaultService,
-    ReadPassportVaultContractStateUseCase, UnavailablePassportVaultCredential,
-    UnavailablePassportVaultRepository, WithdrawPassportVaultLockUseCase,
+    PreparePassportVaultCallUseCase, ReadPassportVaultContractStateUseCase,
+    ReconcilePassportVaultCallSubmissionUseCase, SubmitPassportVaultCallUseCase,
+    UnavailablePassportVaultContractCall, UnavailablePassportVaultContractStateSource,
+    UnavailablePassportVaultCredential, UnavailablePassportVaultRepository,
+    WithdrawPassportVaultLockUseCase,
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CredentialPresentationProtocolPort,
@@ -213,6 +219,14 @@ pub struct ApplicationServices {
     deposit_passport_vault_lock: Arc<dyn DepositPassportVaultLockUseCase>,
     claim_passport_vault_lock: Arc<dyn ClaimPassportVaultLockUseCase>,
     withdraw_passport_vault_lock: Arc<dyn WithdrawPassportVaultLockUseCase>,
+    prepare_passport_vault_call: Arc<dyn PreparePassportVaultCallUseCase>,
+    authorize_passport_vault_call: Arc<dyn AuthorizePassportVaultCallUseCase>,
+    submit_passport_vault_call: Arc<dyn SubmitPassportVaultCallUseCase>,
+    get_passport_vault_call: Arc<dyn GetPassportVaultCallUseCase>,
+    get_passport_vault_call_submission_status: Arc<dyn GetPassportVaultCallSubmissionStatusUseCase>,
+    cancel_passport_vault_call_submission: Arc<dyn CancelPassportVaultCallSubmissionUseCase>,
+    list_passport_vault_call_submissions: Arc<dyn ListPassportVaultCallSubmissionsUseCase>,
+    reconcile_passport_vault_call_submission: Arc<dyn ReconcilePassportVaultCallSubmissionUseCase>,
     compact_presentation_proof_available: bool,
 }
 
@@ -614,6 +628,54 @@ impl ApplicationServices {
     #[must_use]
     pub fn withdraw_passport_vault_lock(&self) -> Arc<dyn WithdrawPassportVaultLockUseCase> {
         Arc::clone(&self.withdraw_passport_vault_lock)
+    }
+
+    #[must_use]
+    pub fn prepare_passport_vault_call(&self) -> Arc<dyn PreparePassportVaultCallUseCase> {
+        Arc::clone(&self.prepare_passport_vault_call)
+    }
+
+    #[must_use]
+    pub fn authorize_passport_vault_call(&self) -> Arc<dyn AuthorizePassportVaultCallUseCase> {
+        Arc::clone(&self.authorize_passport_vault_call)
+    }
+
+    #[must_use]
+    pub fn submit_passport_vault_call(&self) -> Arc<dyn SubmitPassportVaultCallUseCase> {
+        Arc::clone(&self.submit_passport_vault_call)
+    }
+
+    #[must_use]
+    pub fn get_passport_vault_call(&self) -> Arc<dyn GetPassportVaultCallUseCase> {
+        Arc::clone(&self.get_passport_vault_call)
+    }
+
+    #[must_use]
+    pub fn get_passport_vault_call_submission_status(
+        &self,
+    ) -> Arc<dyn GetPassportVaultCallSubmissionStatusUseCase> {
+        Arc::clone(&self.get_passport_vault_call_submission_status)
+    }
+
+    #[must_use]
+    pub fn cancel_passport_vault_call_submission(
+        &self,
+    ) -> Arc<dyn CancelPassportVaultCallSubmissionUseCase> {
+        Arc::clone(&self.cancel_passport_vault_call_submission)
+    }
+
+    #[must_use]
+    pub fn list_passport_vault_call_submissions(
+        &self,
+    ) -> Arc<dyn ListPassportVaultCallSubmissionsUseCase> {
+        Arc::clone(&self.list_passport_vault_call_submissions)
+    }
+
+    #[must_use]
+    pub fn reconcile_passport_vault_call_submission(
+        &self,
+    ) -> Arc<dyn ReconcilePassportVaultCallSubmissionUseCase> {
+        Arc::clone(&self.reconcile_passport_vault_call_submission)
     }
 
     /// Reports whether an authenticated Compact prover and an independent
@@ -1397,8 +1459,22 @@ fn with_passport_vault_state_source(
         services.read_passport_vault_contract_state =
             Arc::new(PassportVaultContractStateService::with_source(
                 Arc::new(NativePassportVaultContractStateDecoder),
-                source,
+                Arc::clone(&source),
             ));
+        let calls = Arc::new(PassportVaultContractCallService::new(
+            source,
+            Arc::new(UnavailablePassportVaultContractCall),
+            Arc::new(SystemClock),
+            Arc::new(OsRandom),
+        ));
+        services.prepare_passport_vault_call = calls.clone();
+        services.authorize_passport_vault_call = calls.clone();
+        services.submit_passport_vault_call = calls.clone();
+        services.get_passport_vault_call = calls.clone();
+        services.get_passport_vault_call_submission_status = calls.clone();
+        services.cancel_passport_vault_call_submission = calls.clone();
+        services.list_passport_vault_call_submissions = calls.clone();
+        services.reconcile_passport_vault_call_submission = calls;
     }
     services
 }
@@ -1677,7 +1753,7 @@ where
     let passport_vault = Arc::new(PassportVaultService::new(
         passport_vault_repository,
         passport_vault_credential,
-        random,
+        random.clone(),
     ));
     #[cfg(not(target_arch = "wasm32"))]
     let passport_vault_contract_state_decoder: Arc<dyn PassportVaultContractStateDecoderPort> =
@@ -1685,8 +1761,17 @@ where
     #[cfg(target_arch = "wasm32")]
     let passport_vault_contract_state_decoder: Arc<dyn PassportVaultContractStateDecoderPort> =
         Arc::new(oxid_passport_vault_application::UnavailablePassportVaultContractStateDecoder);
-    let passport_vault_contract_state = Arc::new(PassportVaultContractStateService::new(
+    let passport_vault_contract_state_source: Arc<dyn PassportVaultContractStateSourcePort> =
+        Arc::new(UnavailablePassportVaultContractStateSource);
+    let passport_vault_contract_state = Arc::new(PassportVaultContractStateService::with_source(
         passport_vault_contract_state_decoder,
+        Arc::clone(&passport_vault_contract_state_source),
+    ));
+    let passport_vault_contract_calls = Arc::new(PassportVaultContractCallService::new(
+        passport_vault_contract_state_source,
+        Arc::new(UnavailablePassportVaultContractCall),
+        clock.clone(),
+        random,
     ));
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
@@ -1774,6 +1859,24 @@ where
         passport_vault.clone();
     let claim_passport_vault_lock: Arc<dyn ClaimPassportVaultLockUseCase> = passport_vault.clone();
     let withdraw_passport_vault_lock: Arc<dyn WithdrawPassportVaultLockUseCase> = passport_vault;
+    let prepare_passport_vault_call: Arc<dyn PreparePassportVaultCallUseCase> =
+        passport_vault_contract_calls.clone();
+    let authorize_passport_vault_call: Arc<dyn AuthorizePassportVaultCallUseCase> =
+        passport_vault_contract_calls.clone();
+    let submit_passport_vault_call: Arc<dyn SubmitPassportVaultCallUseCase> =
+        passport_vault_contract_calls.clone();
+    let get_passport_vault_call: Arc<dyn GetPassportVaultCallUseCase> =
+        passport_vault_contract_calls.clone();
+    let get_passport_vault_call_submission_status: Arc<
+        dyn GetPassportVaultCallSubmissionStatusUseCase,
+    > = passport_vault_contract_calls.clone();
+    let cancel_passport_vault_call_submission: Arc<dyn CancelPassportVaultCallSubmissionUseCase> =
+        passport_vault_contract_calls.clone();
+    let list_passport_vault_call_submissions: Arc<dyn ListPassportVaultCallSubmissionsUseCase> =
+        passport_vault_contract_calls.clone();
+    let reconcile_passport_vault_call_submission: Arc<
+        dyn ReconcilePassportVaultCallSubmissionUseCase,
+    > = passport_vault_contract_calls;
 
     ApplicationServices {
         create_wallet_profile,
@@ -1845,6 +1948,14 @@ where
         deposit_passport_vault_lock,
         claim_passport_vault_lock,
         withdraw_passport_vault_lock,
+        prepare_passport_vault_call,
+        authorize_passport_vault_call,
+        submit_passport_vault_call,
+        get_passport_vault_call,
+        get_passport_vault_call_submission_status,
+        cancel_passport_vault_call_submission,
+        list_passport_vault_call_submissions,
+        reconcile_passport_vault_call_submission,
         compact_presentation_proof_available,
     }
 }
@@ -1999,6 +2110,14 @@ mod tests {
         drop(services.refuse_self_issued_authentication());
         drop(services.get_self_issued_authentication());
         drop(services.list_self_issued_authentications());
+        drop(services.prepare_passport_vault_call());
+        drop(services.authorize_passport_vault_call());
+        drop(services.submit_passport_vault_call());
+        drop(services.get_passport_vault_call());
+        drop(services.get_passport_vault_call_submission_status());
+        drop(services.cancel_passport_vault_call_submission());
+        drop(services.list_passport_vault_call_submissions());
+        drop(services.reconcile_passport_vault_call_submission());
     }
 
     #[cfg(not(target_arch = "wasm32"))]

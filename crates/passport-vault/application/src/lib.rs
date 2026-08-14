@@ -2,6 +2,10 @@
 
 #![forbid(unsafe_code)]
 
+mod contract_call;
+
+pub use contract_call::*;
+
 use std::{
     error::Error,
     fmt,

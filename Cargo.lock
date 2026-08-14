@@ -5753,6 +5753,7 @@ dependencies = [
 name = "oxid-passport-vault-application"
 version = "0.1.0"
 dependencies = [
+ "oxid-foundation",
  "oxid-passport-vault-domain",
  "oxid-platform-ports",
 ]

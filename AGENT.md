@@ -67,9 +67,12 @@ deployment event, resolves each historical runtime schema at the block's parent
 state, and verifies every header/parent link through one captured finalized
 head. Opt-in headless standalone composition now exposes collected and replayed
 state as `finalized_node_replay` / `canonical_finalized_replay`; the legacy
-indexer route remains unproven. Live Compact transactions, an authenticated
-replay cache, and optional durable standalone state remain issue #31. Live
-protocol transport and production/mobile presentation proving remain deferred.
+indexer route remains unproven. ADR-0056 adds the typed four-operation retained
+contract-call lifecycle and headless harness, but composition still fails closed
+without its native generated-Compact composer/prover/submission adapter. An
+authenticated replay cache and optional durable standalone state also remain
+issue #31. Live protocol transport and production/mobile presentation proving
+remain deferred.
 Standalone presentation now reauthorizes the exact statement with the
 credential-bound method's current managed protected key, runs the authenticated
 k=18 Compact circuit, and independently verifies the public `MZP1` envelope
@@ -642,6 +645,13 @@ deployments second, maintenance third, with transaction order preserved inside
 each batch. Indexer history or failed-segment data is not a completeness or
 outcome authority. This order is pinned to `midnight-node` commit
 `06858f9a7fe40866c2c074ff07eecc39d7d35ef7`.
+ADR-0056 exposes only `create_lock`, `deposit_to_lock`, `claim_from_lock`, and
+`withdraw_from_lock` through a retained application port. Preparation requires
+`canonical_finalized_replay`; authorization and submission are separate exact
+intents. `setTrustedIssuer` remains deployment/administration-only. Incoming
+commands never carry private credential data, witnesses, signatures, proofs,
+or serialized transactions, and composition remains unavailable until the
+native call adapter is installed.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -664,7 +674,7 @@ Current package ownership:
 | `crates/presentation/domain` | Dependency-free credential-presentation preview, claim-intent, candidate, and lifecycle invariants. |
 | `crates/presentation/application` | Profile-scoped presentation use cases plus protocol, candidate, current-holder authorization, proof, and independent-verifier ports. |
 | `crates/passport-vault/domain` | Dependency-free product lock policy, creator authorization, checked accounting, and per-lock credential replay invariants. |
-| `crates/passport-vault/application` | Passport Vault list/create/deposit/claim/withdraw use cases plus focused repository, credential-policy, and bounded contract-state decoder ports. |
+| `crates/passport-vault/application` | Passport Vault list/create/deposit/claim/withdraw use cases plus focused repository, credential-policy, bounded contract-state source, and retained four-operation contract-call ports. |
 | `crates/platform/ports` | Clock and randomness capabilities used by applications. |
 | `crates/adapters/storage-memory` | Development/test implementations of wallet, DID, and credential persistence ports. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
@@ -794,6 +804,17 @@ the `standalone` source label. Production composition wires unavailable vault
 ports. Never add a hard-coded contract address, JavaScript bridge, iframe,
 ambient companion-repository lookup, or generated artifact to make it appear
 live; issue #31 is the reviewed live boundary.
+
+The staged chain-call harness is the `vault.contract_call.*` family:
+`prepare`, `authorize`, `draft`, `submit`, `start_submission`,
+`submission_status`, `submission_history`, `cancel_submission`, and
+`reconcile_submission`. It supports exactly create, deposit, claim, and
+withdraw. Preparation is active-profile-scoped and requires authenticated
+canonical replay state. Claim input contains only an opaque credential ID; no
+incoming method accepts credential bytes, openings, holder keys, witness data,
+proofs, signatures, or serialized transactions. Until a native call adapter is
+composed, discovery labels every method `composition_dependent` and calls fail
+closed after the state/authentication checks.
 
 The read-only native Passport Vault state boundary is the exception recorded by
 ADR-0052. `vault.contract_state.decode` accepts only bounded tagged
@@ -1167,6 +1188,12 @@ to silence the shell probe.
 - `OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT` is accepted only with the complete
   standalone routes. It enables one-at-a-time canonical replay reads; it does
   not enable calls, cache partial history, or turn indexer bytes into authority.
+- Passport Vault contract-call preparation must admit only
+  `canonical_finalized_replay`. Retain chain-specific call/proof material behind
+  an opaque draft ID, require distinct authorization and submission intents,
+  and never project a credential ID, private credential data, witness, holder
+  key, nonce, proof, signature, or serialized transaction into headless output
+  or errors.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

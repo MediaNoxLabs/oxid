@@ -370,14 +370,18 @@ data, event/hash disagreement, and bounded-resource overflow. The opt-in
 headless standalone composition joins collection and replay into a typed
 `finalized_node_replay` / `canonical_finalized_replay` read source, exposes the
 latest target transaction and captured finalized head, and permits only one
-scan at a time. Caching, durable optional development state, and
-create/deposit/claim/withdraw integration with a capability-specific contract
-transaction port must preserve the existing submission/reconciliation safety
-model. WebView JavaScript, iframe origins, hard-coded addresses, and relative
-workspace paths remain excluded. The prototype claim composer also derives a
-holder scalar from the public credential claim root and fixes the presentation
-nonce to `17`; Oxid requires opaque managed holder custody and fresh randomness
-instead of migrating either shortcut.
+scan at a time. ADR-0056 now supplies the capability-specific boundary for all
+four user operations: typed retained prepare/authorize/submit drafts, separate
+confirmation intents, authenticated-replay admission, bounded public history,
+safe cancellation, finalized reconciliation, and a headless flow harness.
+Composition still fails closed because generated-Compact composition, funding,
+DUST balancing, proving, submission, durable public journaling, and optional
+state caching remain issue #31 adapter work. WebView JavaScript, iframe
+origins, hard-coded addresses, and relative workspace paths remain excluded.
+The prototype claim composer also derives a holder scalar from the public
+credential claim root and fixes the presentation nonce to `17`; Oxid requires
+opaque managed holder custody and fresh randomness instead of migrating either
+shortcut.
 
 Shielded spending, internal/change address management, replacement handling,
 live DID writes, live OpenID4VP response delivery and mobile Compact proving, camera/copy/share
