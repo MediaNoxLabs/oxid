@@ -80,9 +80,13 @@ output matches the pinned Rust ledger codec. It rejects claims and
 administration. ADR-0060 installs it behind a native retained application-port
 adapter that requires canonical replay plus real bounded Zswap/ledger context,
 keeps the unproven transaction in zeroizing adapter custody, and deliberately
-leaves submit unavailable. The composition root does not yet supply fresh
-Midnight context.
-Explicit live and production composition still fail closed without protected
+leaves submit unavailable. ADR-0061 now supplies that context only in the
+complete standalone composition: the Midnight adapter decodes exact
+profile-scoped public address payloads, canonical replay must match the
+node-anchored indexer action and state byte-for-byte, and the composition root
+joins the ports when the immutable packaged composer is configured. It reports
+`native_composed_draft` without claiming settlement.
+Live settlement and production composition still fail closed without protected
 claim composition, combined contract/DUST completion, NIGHT funding,
 submission, and reconciliation.
 An authenticated replay cache and optional durable standalone state also remain
@@ -548,6 +552,11 @@ owned and must never enter headless/mobile views.
 ADR-0060's retained adapter additionally requires non-empty serialized Zswap
 state and ledger parameters; never replace them with the composer's conformance
 defaults in live preparation. Expiry/drop erases retained transaction bytes.
+ADR-0061 sources those bytes only from the node-anchored indexer query associated
+with the exact canonical replay state/action. The Midnight adapter is the sole
+Bech32m address decoder; it requires the selected profile's exact network HRP,
+one 32-byte unshielded payload, and one 64-byte shielded public payload. The
+composition root is the only place those two outgoing sources are joined.
 
 The staged component inventory and destination map live in
 `docs/migration/midnight-ledger-prototype.md`. Presentation-specific provenance
@@ -685,8 +694,10 @@ NIGHT funding, the combined contract/DUST provider, submission, or
 reconciliation. ADR-0059 supplies a separate closed-schema composition oracle
 for create/deposit/withdraw. ADR-0060 connects that oracle to a retained native
 port adapter through a bounded public context source, but rejects claim and
-leaves submit/context composition closed, so live capability labels remain
-unchanged.
+leaves submit closed. ADR-0061 composes the public context for the complete
+standalone stack and labels the resulting prepare/authorize-only capability
+`native_composed_draft`; it does not add funding, proof, broadcast, or outcome
+authority.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -760,7 +771,10 @@ three are `OXID_MIDNIGHT_NETWORK_ID`, `OXID_MIDNIGHT_INDEXER_WS_URL`, and
 `OXID_MIDNIGHT_UNSHIELDED_ADDRESS`. Optional authenticated Passport Vault reads
 also require the non-zero untrusted hint
 `OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT`; it is rejected outside the complete
-standalone stack. `compose_in_memory()` uses the development
+standalone stack. With canonical replay enabled,
+`OXID_PASSPORT_VAULT_COMPOSER` optionally installs the packaged retained native
+composer; missing keeps `native_pending`, while an invalid configured path
+fails startup. `compose_in_memory()` uses the development
 adapters for tests. Never change `compose()` to select `storage-dev`, simulation,
 or environment-derived indexer, node, or proof configuration. Headless
 protected-key methods accept only public labels,
@@ -1264,6 +1278,12 @@ to silence the shell probe.
   Keep the serialized transaction in zeroizing retained custody; until the
   protected funding/proving/journal/submission path consumes it, submit must
   fail without changing the authorized draft or `not_started` status.
+- ADR-0061 permits that public context only after the node-anchored indexer
+  state/action matches canonical replay byte-for-byte. Keep Zswap state and
+  current ledger parameters bounded and snapshot-bound; require exact selected-
+  network address HRPs and payload lengths inside the Midnight adapter; join
+  the two sources only in composition. `native_composed_draft` still means
+  prepare/authorize only and must keep `settlesOnMidnight: false`.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

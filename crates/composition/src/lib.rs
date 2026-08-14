@@ -9,6 +9,7 @@ use oxid_adapter_did_midnight::{
     HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
 };
 use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
+use oxid_adapter_midnight::MidnightPublicCallContextSource;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
     MidnightAccountCheckpointConfig, MidnightAccountCheckpointConfigError,
@@ -33,10 +34,12 @@ use oxid_adapter_openid4vci::{
 use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpenId4VpVerifier};
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_passport_vault::{
-    AuthenticatedPassportVaultStateSource, FinalizedMidnightHistoryCollectorConfigError,
-    NativePassportVaultContractStateDecoder, NodeAnchoredPassportVaultStateSource,
-    SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX, SimulatedPassportVaultContractCall,
-    SimulatedPassportVaultStateSource,
+    AuthenticatedPassportVaultStateConfigError, AuthenticatedPassportVaultStateSource,
+    NativePassportVaultContractCall, NativePassportVaultContractStateDecoder,
+    NodeAnchoredPassportVaultStateSource, PassportVaultCallChainContextSource,
+    PassportVaultCallComposerConfigError, PassportVaultCallCompositionContext,
+    PassportVaultCallCompositionContextSource, SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX,
+    SimulatedPassportVaultContractCall, SimulatedPassportVaultStateSource,
 };
 use oxid_adapter_passport_vault::{
     InMemoryPassportVaultRepository, StandalonePassportVaultCredential,
@@ -118,6 +121,10 @@ use oxid_passport_vault_application::{
     UnavailablePassportVaultCredential, UnavailablePassportVaultRepository,
     WithdrawPassportVaultLockUseCase,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_passport_vault_application::{
+    PassportVaultCallPortError, PassportVaultContractStateSnapshot,
+};
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CredentialPresentationProtocolPort,
     CredentialPresentationService, GetCredentialPresentationUseCase,
@@ -160,6 +167,7 @@ use oxid_wallet_application::{
 /// Application capabilities shared by every incoming adapter.
 #[derive(Clone)]
 pub struct ApplicationServices {
+    midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource>,
     create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
@@ -825,6 +833,9 @@ pub const MIDNIGHT_DID_RESOLVER_URL_ENV: &str = "OXID_MIDNIGHT_DID_RESOLVER_URL"
 /// Environment variable holding the untrusted Passport Vault deployment-height hint.
 #[cfg(not(target_arch = "wasm32"))]
 pub const PASSPORT_VAULT_DEPLOYMENT_HEIGHT_ENV: &str = "OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT";
+/// Environment variable holding the immutable packaged Passport Vault call composer.
+#[cfg(not(target_arch = "wasm32"))]
+pub const PASSPORT_VAULT_COMPOSER_ENV: &str = "OXID_PASSPORT_VAULT_COMPOSER";
 /// Environment variable holding the immutable Compact presentation artifact root.
 #[cfg(not(target_arch = "wasm32"))]
 pub const PRESENTATION_COMPACT_ARTIFACTS_DIR_ENV: &str = "OXID_PRESENTATION_ARTIFACTS_DIR";
@@ -850,7 +861,8 @@ pub enum HeadlessCompositionError {
     InvalidMidnightSubmissionJournalConfiguration(MidnightSubmissionJournalConfigError),
     InvalidMidnightDidResolverConfiguration(HttpDidResolverConfigError),
     InvalidPassportVaultDeploymentHeight,
-    InvalidPassportVaultHistoryConfiguration(FinalizedMidnightHistoryCollectorConfigError),
+    InvalidPassportVaultHistoryConfiguration(AuthenticatedPassportVaultStateConfigError),
+    InvalidPassportVaultComposerConfiguration(PassportVaultCallComposerConfigError),
     PassportVaultHistoryRequiresStandalone,
     InvalidCompactPresentationRuntime(CompactPresentationRuntimeError),
     IncompleteCredentialStoreConfiguration,
@@ -884,6 +896,7 @@ impl std::fmt::Display for HeadlessCompositionError {
                 "Passport Vault deployment height must be a non-zero unsigned integer"
             }
             Self::InvalidPassportVaultHistoryConfiguration(error) => return error.fmt(formatter),
+            Self::InvalidPassportVaultComposerConfiguration(error) => return error.fmt(formatter),
             Self::PassportVaultHistoryRequiresStandalone => {
                 "Passport Vault canonical replay requires the complete standalone Midnight routes"
             }
@@ -956,6 +969,7 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
     let passport_vault_deployment_height = parse_optional_passport_vault_deployment_height(
         read_optional_environment(PASSPORT_VAULT_DEPLOYMENT_HEIGHT_ENV)?,
     )?;
+    let passport_vault_composer = read_optional_environment(PASSPORT_VAULT_COMPOSER_ENV)?;
     let midnight_config = parse_optional_midnight_config(values)?;
     if passport_vault_deployment_height.is_some()
         && !matches!(
@@ -979,12 +993,14 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
             )
         }
         Some(HeadlessMidnightConfig::Standalone(config)) => {
-            let passport_vault_state_source = passport_vault_deployment_height
+            let passport_vault_source = passport_vault_deployment_height
                 .map(|height| {
-                    AuthenticatedPassportVaultStateSource::new(config.node_websocket_url(), height)
-                        .map(|source| {
-                            Arc::new(source) as Arc<dyn PassportVaultContractStateSourcePort>
-                        })
+                    AuthenticatedPassportVaultStateSource::new_with_indexer(
+                        config.indexer_http_url(),
+                        config.node_websocket_url(),
+                        height,
+                    )
+                    .map(Arc::new)
                 })
                 .transpose()
                 .map_err(HeadlessCompositionError::InvalidPassportVaultHistoryConfiguration)?;
@@ -996,10 +1012,17 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
                 submission_journal,
                 credential_presentation,
             );
-            Ok(with_passport_vault_state_source(
-                services,
-                passport_vault_state_source,
-            ))
+            let Some(source) = passport_vault_source else {
+                return Ok(services);
+            };
+            let state_source: Arc<dyn PassportVaultContractStateSourcePort> = source.clone();
+            let services = with_passport_vault_state_source(services, Some(state_source.clone()));
+            let Some(composer) = passport_vault_composer else {
+                return Ok(services);
+            };
+            let chain_source: Arc<dyn PassportVaultCallChainContextSource> = source;
+            with_native_passport_vault_calls(services, state_source, chain_source, composer)
+                .map_err(HeadlessCompositionError::InvalidPassportVaultComposerConfiguration)
         }
         Some(HeadlessMidnightConfig::Indexer(_))
             if checkpoints.is_some()
@@ -1526,6 +1549,91 @@ fn with_passport_vault_state_source(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+struct ComposedPassportVaultCallContextSource {
+    wallet: Arc<dyn MidnightPublicCallContextSource>,
+    chain: Arc<dyn PassportVaultCallChainContextSource>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PassportVaultCallCompositionContextSource for ComposedPassportVaultCallContextSource {
+    fn context(
+        &self,
+        profile_id: &str,
+        contract_state: &PassportVaultContractStateSnapshot,
+    ) -> Result<PassportVaultCallCompositionContext, PassportVaultCallPortError> {
+        let wallet = self
+            .wallet
+            .public_call_context(profile_id)
+            .map_err(map_wallet_context_error)?;
+        let chain = self.chain.chain_context(contract_state)?;
+        PassportVaultCallCompositionContext::new(
+            wallet.network_id().as_str(),
+            chain.zswap_chain_state().to_vec(),
+            chain.ledger_parameters().to_vec(),
+            wallet.coin_public_key(),
+            wallet.encryption_public_key(),
+            wallet.unshielded_recipient(),
+        )
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+const fn map_wallet_context_error(
+    error: oxid_wallet_application::WalletAccountPortError,
+) -> PassportVaultCallPortError {
+    match error {
+        oxid_wallet_application::WalletAccountPortError::ProtectionNotInitialized => {
+            PassportVaultCallPortError::ProtectionNotInitialized
+        }
+        oxid_wallet_application::WalletAccountPortError::ProtectionLocked => {
+            PassportVaultCallPortError::ProtectionLocked
+        }
+        oxid_wallet_application::WalletAccountPortError::NotFound => {
+            PassportVaultCallPortError::AccountNotDerived
+        }
+        oxid_wallet_application::WalletAccountPortError::UnsupportedNetwork => {
+            PassportVaultCallPortError::UnsupportedNetwork
+        }
+        oxid_wallet_application::WalletAccountPortError::Unavailable => {
+            PassportVaultCallPortError::Unavailable
+        }
+        oxid_wallet_application::WalletAccountPortError::InvalidData => {
+            PassportVaultCallPortError::InvalidData
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn with_native_passport_vault_calls(
+    mut services: ApplicationServices,
+    state_source: Arc<dyn PassportVaultContractStateSourcePort>,
+    chain_source: Arc<dyn PassportVaultCallChainContextSource>,
+    composer: impl AsRef<std::path::Path>,
+) -> Result<ApplicationServices, PassportVaultCallComposerConfigError> {
+    let contexts: Arc<dyn PassportVaultCallCompositionContextSource> =
+        Arc::new(ComposedPassportVaultCallContextSource {
+            wallet: Arc::clone(&services.midnight_public_call_context),
+            chain: chain_source,
+        });
+    let calls = Arc::new(PassportVaultContractCallService::new(
+        state_source,
+        Arc::new(NativePassportVaultContractCall::new(composer, contexts)?),
+        Arc::new(SystemClock),
+        Arc::new(OsRandom),
+    ));
+    services.prepare_passport_vault_call = calls.clone();
+    services.authorize_passport_vault_call = calls.clone();
+    services.submit_passport_vault_call = calls.clone();
+    services.get_passport_vault_call = calls.clone();
+    services.get_passport_vault_call_submission_status = calls.clone();
+    services.cancel_passport_vault_call_submission = calls.clone();
+    services.list_passport_vault_call_submissions = calls.clone();
+    services.reconcile_passport_vault_call_submission = calls;
+    services.passport_vault_call_mode = "native_composed_draft";
+    Ok(services)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn with_simulated_passport_vault_calls(mut services: ApplicationServices) -> ApplicationServices {
     let Ok(source) = SimulatedPassportVaultStateSource::new() else {
         return services;
@@ -1570,6 +1678,7 @@ where
         + WalletDustSyncPort
         + WalletShieldedSyncPort
         + WalletTransactionPort
+        + MidnightPublicCallContextSource
         + 'static,
 {
     compose_with_adapters_and_presentation(
@@ -1595,6 +1704,7 @@ where
         + WalletDustSyncPort
         + WalletShieldedSyncPort
         + WalletTransactionPort
+        + MidnightPublicCallContextSource
         + 'static,
 {
     let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
@@ -1643,6 +1753,7 @@ where
         + WalletDustSyncPort
         + WalletShieldedSyncPort
         + WalletTransactionPort
+        + MidnightPublicCallContextSource
         + 'static,
 {
     let IdentityAdapters {
@@ -1683,6 +1794,7 @@ where
     let get_active_wallet_profile = Arc::new(GetActiveWalletProfileService::new(repository));
     let protection = Arc::new(WalletProtectionService::new(Arc::clone(&security)));
     let keys = Arc::new(WalletKeyService::new(security));
+    let midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource> = midnight.clone();
     let networks = Arc::new(WalletNetworkService::new(Arc::clone(&midnight)));
     let account_derivation = Arc::new(WalletAccountDerivationService::new(Arc::clone(&midnight)));
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
@@ -1956,6 +2068,7 @@ where
     > = passport_vault_contract_calls;
 
     ApplicationServices {
+        midnight_public_call_context,
         create_wallet_profile,
         list_wallet_profiles,
         select_wallet_profile,
@@ -2114,6 +2227,27 @@ mod tests {
         WalletProfileSecurityCommand, WalletShieldedSyncCommand,
     };
 
+    #[cfg(not(target_arch = "wasm32"))]
+    struct FixedVaultChainContext;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl PassportVaultCallChainContextSource for FixedVaultChainContext {
+        fn chain_context(
+            &self,
+            snapshot: &PassportVaultContractStateSnapshot,
+        ) -> Result<
+            oxid_adapter_passport_vault::PassportVaultCallChainContext,
+            PassportVaultCallPortError,
+        > {
+            oxid_adapter_passport_vault::PassportVaultCallChainContext::from_snapshot(
+                snapshot,
+                vec![1],
+                vec![2],
+            )
+            .map_err(|_| PassportVaultCallPortError::InvalidChainState)
+        }
+    }
+
     #[test]
     fn composed_application_executes_the_vertical_slice() {
         let services = compose_in_memory();
@@ -2133,6 +2267,48 @@ mod tests {
                 .expect("composed query should succeed"),
             vec![result]
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_vault_context_is_joined_only_inside_composition() {
+        let services = compose_in_memory();
+        let source = ComposedPassportVaultCallContextSource {
+            wallet: Arc::clone(&services.midnight_public_call_context),
+            chain: Arc::new(FixedVaultChainContext),
+        };
+        let snapshot = PassportVaultContractStateSnapshot {
+            serialized_contract_state: vec![3],
+            authentication:
+                oxid_passport_vault_application::PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
+            contract_address_hex: "11".repeat(32),
+            transaction_hash_hex: "22".repeat(32),
+            action_block_hash_hex: "33".repeat(32),
+            action_block_height: 4,
+            finalized_head_hash_hex: "44".repeat(32),
+            finalized_head_height: 5,
+        };
+        let context = source
+            .context("profile_test", &snapshot)
+            .expect("public contexts join");
+        let debug = format!("{context:?}");
+        assert!(debug.contains("undeployed"));
+        assert!(debug.contains("zswap_chain_state_bytes: 1"));
+        assert!(!debug.contains("094a9125"));
+
+        let state =
+            Arc::new(SimulatedPassportVaultStateSource::new().expect("simulated state source"));
+        let state_port: Arc<dyn PassportVaultContractStateSourcePort> = state;
+        let composer = std::fs::canonicalize(std::env::current_exe().expect("test executable"))
+            .expect("canonical test executable");
+        let services = with_native_passport_vault_calls(
+            services,
+            state_port,
+            Arc::new(FixedVaultChainContext),
+            composer,
+        )
+        .expect("native adapter wiring");
+        assert_eq!(services.passport_vault_call_mode(), "native_composed_draft");
     }
 
     #[test]

@@ -82,6 +82,7 @@ ADR status and delivery state answer different questions:
 | [0058](0058-authenticate-passport-vault-call-artifacts.md) Authenticate Passport Vault call artifacts at runtime | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault composer/prover, and issue #31 | Generated client/ABI plus four wallet circuits are authenticated at runtime and exposed through a native resolver; composition, combined DUST proving, funding, and submission remain pending |
 | [0059](0059-isolate-passport-vault-compact-call-composition.md) Isolate Passport Vault generated-Compact call composition | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault composer, and issue #31 | Reproducible closed-schema generated-client composer plus Rust ledger-codec conformance implemented for create/deposit/withdraw; claim custody, port wiring, funding, proving, and submission remain pending |
 | [0060](0060-retain-native-passport-vault-composed-drafts.md) Retain native Passport Vault composed drafts | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault completion flow, and issue #31 | Canonical-replay create/deposit/withdraw composition is retained behind the native application port with zeroizing transaction custody; fresh Midnight context, claim custody, funding, proving, submission, and reconciliation remain pending |
+| [0061](0061-compose-finalized-passport-vault-call-context.md) Compose finalized Passport Vault call context | Accepted | §§3–8, 12–13, 16–18, 21, prototype wallet/indexer context flow, and issue #31 | Complete standalone composition joins exact profile public addresses with replay-matched bounded chain context and enables retained native create/deposit/withdraw drafts; claim, funding, proving, submission, and reconciliation remain pending |
 
 ## Current boundaries
 
@@ -207,3 +208,11 @@ public context source. It requires real serialized Zswap state and ledger
 parameters, zeroizes the retained transaction, and keeps submit unavailable;
 the composition root remains `native_pending` until the Midnight stack supplies
 that context plus funding, proving, durable submission, and reconciliation.
+ADR-0061 supplies the public-context boundary in complete standalone
+composition. The Midnight adapter alone decodes profile-scoped public address
+payloads; the Passport Vault source retains bounded Zswap state and current
+ledger parameters only beside an exact node-anchored action; canonical replay
+must match its state and action byte-for-byte. The composition root joins those
+ports and reports `native_composed_draft` when the packaged composer is present.
+Claim, funding, DUST completion, proving, submission, and reconciliation remain
+closed, so `settlesOnMidnight` remains false.

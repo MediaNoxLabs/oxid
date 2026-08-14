@@ -398,11 +398,14 @@ ADR-0057 executes that full protocol in zero-configuration headless/development
 composition with a fixed fixture address and a distinct
 `deterministic_simulation` authentication class. Capability discovery reports
 `settlesOnMidnight: false`; its deterministic transaction/block hashes and
-`included` status are process-local harness outcomes only. Explicit live and
-production composition still fail closed because the retained native adapter
-is not yet connected to fresh Midnight account/chain context and funding, DUST
-balancing, proving, submission, durable public journaling, and optional state
-caching remain issue #31 adapter work. WebView JavaScript, iframe
+`included` status are process-local harness outcomes only. ADR-0061 now connects
+the retained native adapter in complete standalone composition to exact
+profile-scoped public Midnight addresses plus bounded Zswap state and current
+ledger parameters. The indexer action and state must match canonical replay
+before composition, and capability discovery reports `native_composed_draft`
+while `settlesOnMidnight` remains false. Protected claim composition, funding,
+DUST balancing, proving, submission, durable public journaling, and optional
+state caching remain issue #31 adapter work. WebView JavaScript, iframe
 origins, hard-coded addresses, and relative workspace paths remain excluded.
 The prototype claim composer also derives a holder scalar from the public
 credential claim root and fixes the presentation nonce to `17`; Oxid requires

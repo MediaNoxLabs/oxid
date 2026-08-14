@@ -1,16 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{error::Error, fmt, net::IpAddr, sync::Arc, thread, time::Duration};
+use std::{
+    collections::BTreeMap,
+    error::Error,
+    fmt,
+    net::IpAddr,
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
 
 use futures::{StreamExt, channel::oneshot};
 use oxid_passport_vault_application::{
-    MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES, PassportVaultContractStateAuthentication,
-    PassportVaultContractStateReadFuture, PassportVaultContractStateSnapshot,
-    PassportVaultContractStateSourceError, PassportVaultContractStateSourcePort,
+    MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES, PassportVaultCallPortError,
+    PassportVaultContractStateAuthentication, PassportVaultContractStateReadFuture,
+    PassportVaultContractStateSnapshot, PassportVaultContractStateSourceError,
+    PassportVaultContractStateSourcePort,
 };
 use reqwest::{Certificate, Client, Method, Url, header::CONTENT_TYPE, redirect::Policy};
 use serde::Deserialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use subxt::{
     SubstrateConfig,
     backend::{legacy::LegacyRpcMethods, rpc::RpcClient},
@@ -21,16 +31,29 @@ use tokio::time::timeout;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ENDPOINT_CHARACTERS: usize = 2_048;
-const MAX_RESPONSE_BYTES: usize = MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES * 2 + 128 * 1024;
+const MAX_CHAIN_CONTEXTS: usize = 128;
+const MAX_ZSWAP_CHAIN_STATE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_LEDGER_PARAMETERS_BYTES: usize = 512 * 1024;
+const MAX_RESPONSE_BYTES: usize = (MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES
+    + MAX_ZSWAP_CHAIN_STATE_BYTES
+    + MAX_LEDGER_PARAMETERS_BYTES)
+    * 2
+    + 128 * 1024;
 
 const CONTRACT_STATE_AT_FINALIZED_HEIGHT_QUERY: &str = r#"
 query OxidPassportVaultState($address: HexEncoded!, $height: Int!) {
+  block(offset: { height: $height }) {
+    hash
+    height
+    ledgerParameters
+  }
   contractAction(
     address: $address
     offset: { blockOffset: { height: $height } }
   ) {
     address
     state
+    zswapState
     transaction {
       hash
       block {
@@ -61,11 +84,113 @@ impl fmt::Display for NodeAnchoredPassportVaultStateConfigError {
 
 impl Error for NodeAnchoredPassportVaultStateConfigError {}
 
-#[derive(Clone)]
 struct NodeAnchoredPassportVaultStateConfig {
     indexer_endpoint: Url,
     node_endpoint: String,
     client: Client,
+    contexts: Mutex<BTreeMap<String, PassportVaultCallChainContext>>,
+}
+
+/// Bounded public chain material retained beside the exact indexer snapshot
+/// that supplied it. Contract state and anchor metadata are retained only as a
+/// digest and public identifiers so callers cannot substitute chain context.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PassportVaultCallChainContext {
+    contract_address_hex: String,
+    transaction_hash_hex: String,
+    action_block_hash_hex: String,
+    action_block_height: u64,
+    finalized_head_hash_hex: String,
+    finalized_head_height: u64,
+    contract_state_digest: [u8; 32],
+    zswap_chain_state: Vec<u8>,
+    ledger_parameters: Vec<u8>,
+}
+
+impl fmt::Debug for PassportVaultCallChainContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PassportVaultCallChainContext")
+            .field("contract_address_hex", &self.contract_address_hex)
+            .field("action_block_height", &self.action_block_height)
+            .field("finalized_head_height", &self.finalized_head_height)
+            .field("zswap_chain_state_bytes", &self.zswap_chain_state.len())
+            .field("ledger_parameters_bytes", &self.ledger_parameters.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PassportVaultCallChainContext {
+    pub fn from_snapshot(
+        snapshot: &PassportVaultContractStateSnapshot,
+        zswap_chain_state: Vec<u8>,
+        ledger_parameters: Vec<u8>,
+    ) -> Result<Self, PassportVaultContractStateSourceError> {
+        if snapshot.serialized_contract_state.is_empty()
+            || snapshot.serialized_contract_state.len() > MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES
+            || normalize_hex_32(&snapshot.contract_address_hex).as_deref()
+                != Some(snapshot.contract_address_hex.as_str())
+            || normalize_hex_32(&snapshot.transaction_hash_hex).as_deref()
+                != Some(snapshot.transaction_hash_hex.as_str())
+            || normalize_hex_32(&snapshot.action_block_hash_hex).as_deref()
+                != Some(snapshot.action_block_hash_hex.as_str())
+            || normalize_hex_32(&snapshot.finalized_head_hash_hex).as_deref()
+                != Some(snapshot.finalized_head_hash_hex.as_str())
+            || snapshot.action_block_height > snapshot.finalized_head_height
+        {
+            return Err(PassportVaultContractStateSourceError::InvalidResponse);
+        }
+        if zswap_chain_state.is_empty() || ledger_parameters.is_empty() {
+            return Err(PassportVaultContractStateSourceError::InvalidResponse);
+        }
+        if zswap_chain_state.len() > MAX_ZSWAP_CHAIN_STATE_BYTES
+            || ledger_parameters.len() > MAX_LEDGER_PARAMETERS_BYTES
+        {
+            return Err(PassportVaultContractStateSourceError::CapacityExceeded);
+        }
+        Ok(Self {
+            contract_address_hex: snapshot.contract_address_hex.clone(),
+            transaction_hash_hex: snapshot.transaction_hash_hex.clone(),
+            action_block_hash_hex: snapshot.action_block_hash_hex.clone(),
+            action_block_height: snapshot.action_block_height,
+            finalized_head_hash_hex: snapshot.finalized_head_hash_hex.clone(),
+            finalized_head_height: snapshot.finalized_head_height,
+            contract_state_digest: Sha256::digest(&snapshot.serialized_contract_state).into(),
+            zswap_chain_state,
+            ledger_parameters,
+        })
+    }
+
+    #[must_use]
+    pub fn zswap_chain_state(&self) -> &[u8] {
+        &self.zswap_chain_state
+    }
+
+    #[must_use]
+    pub fn ledger_parameters(&self) -> &[u8] {
+        &self.ledger_parameters
+    }
+
+    fn matches_snapshot(&self, snapshot: &PassportVaultContractStateSnapshot) -> bool {
+        self.contract_address_hex == snapshot.contract_address_hex
+            && self.transaction_hash_hex == snapshot.transaction_hash_hex
+            && self.action_block_hash_hex == snapshot.action_block_hash_hex
+            && self.action_block_height == snapshot.action_block_height
+            && self.finalized_head_height >= snapshot.finalized_head_height
+            && (self.finalized_head_height != snapshot.finalized_head_height
+                || self.finalized_head_hash_hex == snapshot.finalized_head_hash_hex)
+            && self.contract_state_digest
+                == <[u8; 32]>::from(Sha256::digest(&snapshot.serialized_contract_state))
+    }
+}
+
+/// Resolves chain composition material only for an already authenticated,
+/// exact Passport Vault state snapshot.
+pub trait PassportVaultCallChainContextSource: Send + Sync {
+    fn chain_context(
+        &self,
+        snapshot: &PassportVaultContractStateSnapshot,
+    ) -> Result<PassportVaultCallChainContext, PassportVaultCallPortError>;
 }
 
 /// Reads an indexer snapshot at a node-finalized height and verifies that the
@@ -103,7 +228,26 @@ impl NodeAnchoredPassportVaultStateSource {
             indexer_endpoint,
             node_endpoint,
             client,
+            contexts: Mutex::new(BTreeMap::new()),
         })))
+    }
+}
+
+impl PassportVaultCallChainContextSource for NodeAnchoredPassportVaultStateSource {
+    fn chain_context(
+        &self,
+        snapshot: &PassportVaultContractStateSnapshot,
+    ) -> Result<PassportVaultCallChainContext, PassportVaultCallPortError> {
+        let contexts = self
+            .0
+            .contexts
+            .lock()
+            .map_err(|_| PassportVaultCallPortError::Unavailable)?;
+        let context = contexts
+            .get(&snapshot.contract_address_hex)
+            .filter(|context| context.matches_snapshot(snapshot))
+            .ok_or(PassportVaultCallPortError::InvalidChainState)?;
+        Ok(context.clone())
     }
 }
 
@@ -163,7 +307,7 @@ async fn read_on_runtime(
     let graphql_height = i32::try_from(finalized_head_height)
         .map_err(|_| PassportVaultContractStateSourceError::CapacityExceeded)?;
 
-    let mut snapshot = fetch_indexer_snapshot(
+    let (mut snapshot, context) = fetch_indexer_snapshot(
         &config,
         &contract_address_hex,
         graphql_height,
@@ -185,7 +329,24 @@ async fn read_on_runtime(
         return Err(PassportVaultContractStateSourceError::FinalityMismatch);
     }
     snapshot.finalized_head_hash_hex = hex::encode(finalized_head.as_ref());
+    retain_context(&config, context)?;
     Ok(snapshot)
+}
+
+fn retain_context(
+    config: &NodeAnchoredPassportVaultStateConfig,
+    context: PassportVaultCallChainContext,
+) -> Result<(), PassportVaultContractStateSourceError> {
+    let mut contexts = config
+        .contexts
+        .lock()
+        .map_err(|_| PassportVaultContractStateSourceError::Unavailable)?;
+    if !contexts.contains_key(&context.contract_address_hex) && contexts.len() >= MAX_CHAIN_CONTEXTS
+    {
+        return Err(PassportVaultContractStateSourceError::CapacityExceeded);
+    }
+    contexts.insert(context.contract_address_hex.clone(), context);
+    Ok(())
 }
 
 async fn fetch_indexer_snapshot(
@@ -194,7 +355,13 @@ async fn fetch_indexer_snapshot(
     finalized_head_height: i32,
     finalized_head_hash_hex: String,
     finalized_head_height_u64: u64,
-) -> Result<PassportVaultContractStateSnapshot, PassportVaultContractStateSourceError> {
+) -> Result<
+    (
+        PassportVaultContractStateSnapshot,
+        PassportVaultCallChainContext,
+    ),
+    PassportVaultContractStateSourceError,
+> {
     let body = serde_json::to_vec(&json!({
         "query": CONTRACT_STATE_AT_FINALIZED_HEIGHT_QUERY,
         "variables": {
@@ -260,13 +427,16 @@ struct GraphqlResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GraphqlData {
+    block: Option<GraphqlFinalizedBlock>,
     contract_action: Option<GraphqlContractAction>,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GraphqlContractAction {
     address: String,
     state: String,
+    zswap_state: String,
     transaction: GraphqlTransaction,
 }
 
@@ -282,12 +452,26 @@ struct GraphqlBlock {
     height: i64,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GraphqlFinalizedBlock {
+    hash: String,
+    height: i64,
+    ledger_parameters: String,
+}
+
 fn decode_indexer_response(
     response: &[u8],
     expected_contract_address_hex: &str,
     finalized_head_hash_hex: String,
     finalized_head_height: u64,
-) -> Result<PassportVaultContractStateSnapshot, PassportVaultContractStateSourceError> {
+) -> Result<
+    (
+        PassportVaultContractStateSnapshot,
+        PassportVaultCallChainContext,
+    ),
+    PassportVaultContractStateSourceError,
+> {
     if response.len() > MAX_RESPONSE_BYTES {
         return Err(PassportVaultContractStateSourceError::CapacityExceeded);
     }
@@ -296,10 +480,24 @@ fn decode_indexer_response(
     if response.errors.is_some_and(|errors| !errors.is_empty()) {
         return Err(PassportVaultContractStateSourceError::InvalidResponse);
     }
-    let action = response
+    let data = response
         .data
-        .and_then(|data| data.contract_action)
         .ok_or(PassportVaultContractStateSourceError::NotFound)?;
+    let finalized_block = data
+        .block
+        .ok_or(PassportVaultContractStateSourceError::NotFound)?;
+    let action = data
+        .contract_action
+        .ok_or(PassportVaultContractStateSourceError::NotFound)?;
+    let returned_finalized_hash = normalize_hex_32(&finalized_block.hash)
+        .ok_or(PassportVaultContractStateSourceError::InvalidResponse)?;
+    let returned_finalized_height = u64::try_from(finalized_block.height)
+        .map_err(|_| PassportVaultContractStateSourceError::InvalidResponse)?;
+    if returned_finalized_hash != finalized_head_hash_hex
+        || returned_finalized_height != finalized_head_height
+    {
+        return Err(PassportVaultContractStateSourceError::FinalityMismatch);
+    }
     let contract_address_hex = normalize_hex_32(&action.address)
         .ok_or(PassportVaultContractStateSourceError::InvalidResponse)?;
     if contract_address_hex != expected_contract_address_hex {
@@ -315,7 +513,12 @@ fn decode_indexer_response(
         return Err(PassportVaultContractStateSourceError::FinalityMismatch);
     }
     let serialized_contract_state = decode_bounded_hex_state(&action.state)?;
-    Ok(PassportVaultContractStateSnapshot {
+    let zswap_chain_state = decode_bounded_hex(&action.zswap_state, MAX_ZSWAP_CHAIN_STATE_BYTES)?;
+    let ledger_parameters = decode_bounded_hex(
+        &finalized_block.ledger_parameters,
+        MAX_LEDGER_PARAMETERS_BYTES,
+    )?;
+    let snapshot = PassportVaultContractStateSnapshot {
         serialized_contract_state,
         authentication: PassportVaultContractStateAuthentication::IndexerSuppliedNotProven,
         contract_address_hex,
@@ -324,15 +527,28 @@ fn decode_indexer_response(
         action_block_height,
         finalized_head_hash_hex,
         finalized_head_height,
-    })
+    };
+    let context = PassportVaultCallChainContext::from_snapshot(
+        &snapshot,
+        zswap_chain_state,
+        ledger_parameters,
+    )?;
+    Ok((snapshot, context))
 }
 
 fn decode_bounded_hex_state(value: &str) -> Result<Vec<u8>, PassportVaultContractStateSourceError> {
+    decode_bounded_hex(value, MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES)
+}
+
+fn decode_bounded_hex(
+    value: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>, PassportVaultContractStateSourceError> {
     let value = value.strip_prefix("0x").unwrap_or(value);
     if value.is_empty() || !value.len().is_multiple_of(2) {
         return Err(PassportVaultContractStateSourceError::InvalidResponse);
     }
-    if value.len() > MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES * 2 {
+    if value.len() > max_bytes * 2 {
         return Err(PassportVaultContractStateSourceError::CapacityExceeded);
     }
     hex::decode(value).map_err(|_| PassportVaultContractStateSourceError::InvalidResponse)
@@ -423,9 +639,15 @@ mod tests {
         let finalized_hash = "44".repeat(32);
         let response = serde_json::to_vec(&json!({
             "data": {
+                "block": {
+                    "hash": finalized_hash,
+                    "height": 42,
+                    "ledgerParameters": "0506"
+                },
                 "contractAction": {
                     "address": format!("0x{address}"),
                     "state": "0102",
+                    "zswapState": "0304",
                     "transaction": {
                         "hash": tx_hash,
                         "block": { "hash": block_hash, "height": 41 }
@@ -434,11 +656,15 @@ mod tests {
             }
         }))
         .expect("response");
-        let snapshot = decode_indexer_response(&response, &address, finalized_hash.clone(), 42)
-            .expect("snapshot");
+        let (snapshot, context) =
+            decode_indexer_response(&response, &address, finalized_hash.clone(), 42)
+                .expect("snapshot");
         assert_eq!(snapshot.serialized_contract_state, [1, 2]);
         assert_eq!(snapshot.action_block_height, 41);
         assert_eq!(snapshot.finalized_head_hash_hex, finalized_hash);
+        assert_eq!(context.zswap_chain_state(), [3, 4]);
+        assert_eq!(context.ledger_parameters(), [5, 6]);
+        assert!(context.matches_snapshot(&snapshot));
     }
 
     #[test]
@@ -447,9 +673,15 @@ mod tests {
         let response = |returned_address: String, height: i64| {
             serde_json::to_vec(&json!({
                 "data": {
+                    "block": {
+                        "hash": "44".repeat(32),
+                        "height": 5,
+                        "ledgerParameters": "05"
+                    },
                     "contractAction": {
                         "address": returned_address,
                         "state": "00",
+                        "zswapState": "03",
                         "transaction": {
                             "hash": "22".repeat(32),
                             "block": { "hash": "33".repeat(32), "height": height }

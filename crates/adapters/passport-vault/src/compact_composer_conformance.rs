@@ -45,7 +45,8 @@ struct PublicContext;
 impl PassportVaultCallCompositionContextSource for PublicContext {
     fn context(
         &self,
-        _: &OpaqueId,
+        _: &str,
+        _: &oxid_passport_vault_application::PassportVaultContractStateSnapshot,
     ) -> Result<PassportVaultCallCompositionContext, PassportVaultCallPortError> {
         let mut zswap_chain_state = Vec::new();
         tagged_serialize(&ZswapChainState::<DefaultDB>::new(), &mut zswap_chain_state)

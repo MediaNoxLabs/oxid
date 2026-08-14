@@ -24,7 +24,9 @@ mod simulated_call;
 mod simulated_state;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use authenticated_state::AuthenticatedPassportVaultStateSource;
+pub use authenticated_state::{
+    AuthenticatedPassportVaultStateConfigError, AuthenticatedPassportVaultStateSource,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use compact_artifacts::{
     NativePassportVaultCompactArtifacts, PassportVaultCompactArtifactError,
@@ -40,6 +42,7 @@ pub use finalized_history::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use live_state::{
     NodeAnchoredPassportVaultStateConfigError, NodeAnchoredPassportVaultStateSource,
+    PassportVaultCallChainContext, PassportVaultCallChainContextSource,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use native_call::{

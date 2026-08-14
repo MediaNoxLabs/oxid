@@ -4,6 +4,8 @@
 //! deterministic native Midnight replay.
 
 use std::{
+    error::Error,
+    fmt,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -13,21 +15,41 @@ use std::{
 
 use futures::channel::oneshot;
 use oxid_passport_vault_application::{
-    PassportVaultContractStateAuthentication, PassportVaultContractStateReadFuture,
-    PassportVaultContractStateSnapshot, PassportVaultContractStateSourceError,
-    PassportVaultContractStateSourcePort,
+    PassportVaultCallPortError, PassportVaultContractStateAuthentication,
+    PassportVaultContractStateReadFuture, PassportVaultContractStateSnapshot,
+    PassportVaultContractStateSourceError, PassportVaultContractStateSourcePort,
 };
 
 use super::{
     FinalizedMidnightHistory, FinalizedMidnightHistoryCollector,
     FinalizedMidnightHistoryCollectorConfigError, FinalizedMidnightHistoryError,
-    PassportVaultReplayError, replay_canonical_passport_vault_history,
+    NodeAnchoredPassportVaultStateConfigError, NodeAnchoredPassportVaultStateSource,
+    PassportVaultCallChainContext, PassportVaultCallChainContextSource, PassportVaultReplayError,
+    replay_canonical_passport_vault_history,
 };
 
 struct AuthenticatedPassportVaultStateConfig {
     collector: FinalizedMidnightHistoryCollector,
+    node_anchored: Option<NodeAnchoredPassportVaultStateSource>,
     in_flight: AtomicBool,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthenticatedPassportVaultStateConfigError {
+    History(FinalizedMidnightHistoryCollectorConfigError),
+    NodeAnchored(NodeAnchoredPassportVaultStateConfigError),
+}
+
+impl fmt::Display for AuthenticatedPassportVaultStateConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::History(error) => error.fmt(formatter),
+            Self::NodeAnchored(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for AuthenticatedPassportVaultStateConfigError {}
 
 /// Reads only state reconstructed from a complete canonical range through one
 /// captured finalized head. A process permits one expensive replay at a time;
@@ -45,8 +67,40 @@ impl AuthenticatedPassportVaultStateSource {
                 node_endpoint,
                 deployment_block_height,
             )?,
+            node_anchored: None,
             in_flight: AtomicBool::new(false),
         })))
+    }
+
+    pub fn new_with_indexer(
+        indexer_endpoint: impl AsRef<str>,
+        node_endpoint: impl AsRef<str>,
+        deployment_block_height: u64,
+    ) -> Result<Self, AuthenticatedPassportVaultStateConfigError> {
+        let collector =
+            FinalizedMidnightHistoryCollector::new(node_endpoint.as_ref(), deployment_block_height)
+                .map_err(AuthenticatedPassportVaultStateConfigError::History)?;
+        let node_anchored =
+            NodeAnchoredPassportVaultStateSource::new(indexer_endpoint, node_endpoint)
+                .map_err(AuthenticatedPassportVaultStateConfigError::NodeAnchored)?;
+        Ok(Self(Arc::new(AuthenticatedPassportVaultStateConfig {
+            collector,
+            node_anchored: Some(node_anchored),
+            in_flight: AtomicBool::new(false),
+        })))
+    }
+}
+
+impl PassportVaultCallChainContextSource for AuthenticatedPassportVaultStateSource {
+    fn chain_context(
+        &self,
+        snapshot: &PassportVaultContractStateSnapshot,
+    ) -> Result<PassportVaultCallChainContext, PassportVaultCallPortError> {
+        self.0
+            .node_anchored
+            .as_ref()
+            .ok_or(PassportVaultCallPortError::Unavailable)?
+            .chain_context(snapshot)
     }
 }
 
@@ -87,7 +141,7 @@ impl PassportVaultContractStateSourcePort for AuthenticatedPassportVaultStateSou
                     .build()
                     .map_err(|_| PassportVaultContractStateSourceError::Unavailable)
                     .and_then(|runtime| {
-                        runtime.block_on(read_on_runtime(&config.collector, contract_address))
+                        runtime.block_on(read_on_runtime(&config, contract_address))
                     });
                 let _ = sender.send(result);
             });
@@ -104,14 +158,38 @@ impl PassportVaultContractStateSourcePort for AuthenticatedPassportVaultStateSou
 }
 
 async fn read_on_runtime(
-    collector: &FinalizedMidnightHistoryCollector,
+    config: &AuthenticatedPassportVaultStateConfig,
     contract_address: [u8; 32],
 ) -> Result<PassportVaultContractStateSnapshot, PassportVaultContractStateSourceError> {
-    let history = collector
+    let history = config
+        .collector
         .collect(contract_address)
         .await
         .map_err(map_history_error)?;
-    snapshot_from_history(contract_address, history)
+    let snapshot = snapshot_from_history(contract_address, history)?;
+    if let Some(node_anchored) = &config.node_anchored {
+        let indexed = node_anchored.read(&snapshot.contract_address_hex).await?;
+        validate_indexed_anchor(&snapshot, &indexed)?;
+    }
+    Ok(snapshot)
+}
+
+fn validate_indexed_anchor(
+    canonical: &PassportVaultContractStateSnapshot,
+    indexed: &PassportVaultContractStateSnapshot,
+) -> Result<(), PassportVaultContractStateSourceError> {
+    if indexed.contract_address_hex != canonical.contract_address_hex
+        || indexed.serialized_contract_state != canonical.serialized_contract_state
+        || indexed.transaction_hash_hex != canonical.transaction_hash_hex
+        || indexed.action_block_hash_hex != canonical.action_block_hash_hex
+        || indexed.action_block_height != canonical.action_block_height
+        || indexed.finalized_head_height < canonical.finalized_head_height
+        || (indexed.finalized_head_height == canonical.finalized_head_height
+            && indexed.finalized_head_hash_hex != canonical.finalized_head_hash_hex)
+    {
+        return Err(PassportVaultContractStateSourceError::FinalityMismatch);
+    }
+    Ok(())
 }
 
 fn snapshot_from_history(
@@ -278,6 +356,23 @@ mod tests {
         assert_eq!(
             map_replay_error(PassportVaultReplayError::EffectsMismatch),
             PassportVaultContractStateSourceError::InvalidResponse
+        );
+    }
+
+    #[test]
+    fn indexed_context_must_match_the_replayed_action_and_state() {
+        let (address, history) = deployment_history();
+        let canonical = snapshot_from_history(address, history).expect("canonical snapshot");
+        let mut indexed = canonical.clone();
+        indexed.authentication = PassportVaultContractStateAuthentication::IndexerSuppliedNotProven;
+        indexed.finalized_head_height += 1;
+        indexed.finalized_head_hash_hex = hex::encode([6; 32]);
+        assert_eq!(validate_indexed_anchor(&canonical, &indexed), Ok(()));
+
+        indexed.transaction_hash_hex = hex::encode([9; 32]);
+        assert_eq!(
+            validate_indexed_anchor(&canonical, &indexed),
+            Err(PassportVaultContractStateSourceError::FinalityMismatch)
         );
     }
 

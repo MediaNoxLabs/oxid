@@ -113,7 +113,8 @@ impl PassportVaultCallCompositionContext {
 pub trait PassportVaultCallCompositionContextSource: Send + Sync {
     fn context(
         &self,
-        profile_id: &OpaqueId,
+        profile_id: &str,
+        contract_state: &oxid_passport_vault_application::PassportVaultContractStateSnapshot,
     ) -> Result<PassportVaultCallCompositionContext, PassportVaultCallPortError>;
 }
 
@@ -551,7 +552,9 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
         ) {
             return Err(PassportVaultCallPortError::Unavailable);
         }
-        let context = self.contexts.context(&request.profile_id)?;
+        let context = self
+            .contexts
+            .context(request.profile_id.as_str(), &request.contract_state)?;
         let planning_fingerprint = planning_fingerprint(&request, &context);
         {
             let calls = self
@@ -938,7 +941,8 @@ mod tests {
     impl PassportVaultCallCompositionContextSource for ContextSource {
         fn context(
             &self,
-            _: &OpaqueId,
+            _: &str,
+            _: &oxid_passport_vault_application::PassportVaultContractStateSnapshot,
         ) -> Result<PassportVaultCallCompositionContext, PassportVaultCallPortError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             context()

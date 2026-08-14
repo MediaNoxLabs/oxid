@@ -62,7 +62,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use bech32::{Bech32m, Hrp};
+use bech32::{Bech32m, Hrp, primitives::decode::CheckedHrpstring};
 #[cfg(not(target_arch = "wasm32"))]
 use midnight_serialize::Serializable as _;
 #[cfg(not(target_arch = "wasm32"))]
@@ -145,6 +145,57 @@ pub trait MidnightAccountDeriver: Send + Sync {
         account_index: u32,
         address_index: u32,
     ) -> Result<DerivedChainAccount, WalletAccountPortError>;
+}
+
+/// Public Midnight account values needed to compose a contract call. The
+/// source retains address-codec authority; incoming adapters never provide
+/// these byte payloads.
+#[derive(Clone, PartialEq, Eq)]
+pub struct MidnightPublicCallContext {
+    network_id: ChainNetworkId,
+    coin_public_key: [u8; 32],
+    encryption_public_key: [u8; 32],
+    unshielded_recipient: [u8; 32],
+}
+
+impl std::fmt::Debug for MidnightPublicCallContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MidnightPublicCallContext")
+            .field("network_id", &self.network_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl MidnightPublicCallContext {
+    #[must_use]
+    pub const fn network_id(&self) -> &ChainNetworkId {
+        &self.network_id
+    }
+
+    #[must_use]
+    pub const fn coin_public_key(&self) -> [u8; 32] {
+        self.coin_public_key
+    }
+
+    #[must_use]
+    pub const fn encryption_public_key(&self) -> [u8; 32] {
+        self.encryption_public_key
+    }
+
+    #[must_use]
+    pub const fn unshielded_recipient(&self) -> [u8; 32] {
+        self.unshielded_recipient
+    }
+}
+
+/// Supplies only public, profile-scoped Midnight account context for native
+/// contract composition.
+pub trait MidnightPublicCallContextSource: Send + Sync {
+    fn public_call_context(
+        &self,
+        profile_id: &str,
+    ) -> Result<MidnightPublicCallContext, WalletAccountPortError>;
 }
 
 /// Fail-closed derivation adapter for compositions without protected root material.
@@ -817,6 +868,58 @@ where
     }
 }
 
+impl<S, D> MidnightPublicCallContextSource for MidnightWalletAdapter<S, D>
+where
+    S: MidnightAccountSource,
+    D: Send + Sync,
+{
+    fn public_call_context(
+        &self,
+        profile_id: &str,
+    ) -> Result<MidnightPublicCallContext, WalletAccountPortError> {
+        let profile_id = WalletProfileId::parse(profile_id.to_owned())
+            .map_err(|_| WalletAccountPortError::InvalidData)?;
+        let network_id = self.selected(&profile_id)?;
+        let network =
+            network_by_id(&network_id)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
+        let account = self.source.account(&profile_id, &network)?;
+        if account.network().id() != &network_id {
+            return Err(WalletAccountPortError::InvalidData);
+        }
+        let unshielded = account
+            .addresses()
+            .iter()
+            .filter(|address| address.kind() == ChainAddressKind::Unshielded)
+            .collect::<Vec<_>>();
+        let shielded = account
+            .addresses()
+            .iter()
+            .filter(|address| address.kind() == ChainAddressKind::Shielded)
+            .collect::<Vec<_>>();
+        if unshielded.len() != 1 || shielded.len() != 1 {
+            return Err(WalletAccountPortError::NotFound);
+        }
+        let unshielded_recipient =
+            decode_midnight_address_payload(unshielded[0], &network_id, "addr", 32)?
+                .try_into()
+                .map_err(|_| WalletAccountPortError::InvalidData)?;
+        let shielded_payload =
+            decode_midnight_address_payload(shielded[0], &network_id, "shield-addr", 64)?;
+        let coin_public_key = shielded_payload[..32]
+            .try_into()
+            .map_err(|_| WalletAccountPortError::InvalidData)?;
+        let encryption_public_key = shielded_payload[32..]
+            .try_into()
+            .map_err(|_| WalletAccountPortError::InvalidData)?;
+        Ok(MidnightPublicCallContext {
+            network_id,
+            coin_public_key,
+            encryption_public_key,
+            unshielded_recipient,
+        })
+    }
+}
+
 impl<S, D> WalletAccountReadPort for MidnightWalletAdapter<S, D>
 where
     S: MidnightAccountSource,
@@ -1472,6 +1575,26 @@ fn encode_midnight_address(
     ChainAddress::parse(kind, encoded).map_err(|_| WalletAccountPortError::InvalidData)
 }
 
+fn decode_midnight_address_payload(
+    address: &ChainAddress,
+    network_id: &ChainNetworkId,
+    address_type: &str,
+    expected_bytes: usize,
+) -> Result<Vec<u8>, WalletAccountPortError> {
+    let decoded = CheckedHrpstring::new::<Bech32m>(address.value())
+        .map_err(|_| WalletAccountPortError::InvalidData)?;
+    let expected_hrp = if network_id.as_str() == "mainnet" {
+        format!("mn_{address_type}")
+    } else {
+        format!("mn_{address_type}_{}", network_id.as_str())
+    };
+    let payload = decoded.byte_iter().collect::<Vec<_>>();
+    if decoded.hrp().as_str() != expected_hrp || payload.len() != expected_bytes {
+        return Err(WalletAccountPortError::InvalidData);
+    }
+    Ok(payload)
+}
+
 const fn map_security_error(error: WalletSecurityPortError) -> WalletAccountPortError {
     match error {
         WalletSecurityPortError::NotInitialized => WalletAccountPortError::ProtectionNotInitialized,
@@ -1772,6 +1895,53 @@ mod tests {
                 &network_id("unknown").expect("identifier shape is valid")
             ),
             Err(WalletAccountPortError::UnsupportedNetwork)
+        );
+    }
+
+    #[test]
+    fn public_call_context_decodes_exact_profile_scoped_address_payloads() {
+        let adapter = simulated_midnight_wallet(Arc::new(FixedClock));
+        let context = adapter
+            .public_call_context(profile().as_str())
+            .expect("fixture public context is available");
+
+        assert_eq!(context.network_id().as_str(), "undeployed");
+        assert_eq!(
+            hex::encode(context.coin_public_key()),
+            &FIXTURE_SHIELDED_PAYLOAD[..64]
+        );
+        assert_eq!(
+            hex::encode(context.encryption_public_key()),
+            &FIXTURE_SHIELDED_PAYLOAD[64..]
+        );
+        assert_eq!(
+            hex::encode(context.unshielded_recipient()),
+            FIXTURE_UNSHIELDED_PAYLOAD
+        );
+        let debug = format!("{context:?}");
+        assert!(debug.contains("network_id"));
+        assert!(!debug.contains(FIXTURE_UNSHIELDED_PAYLOAD));
+        assert!(!debug.contains(FIXTURE_SHIELDED_PAYLOAD));
+    }
+
+    #[test]
+    fn public_call_context_rejects_accounts_without_exact_required_addresses() {
+        let adapter = unavailable_midnight_wallet();
+        assert_eq!(
+            adapter.public_call_context(profile().as_str()),
+            Err(WalletAccountPortError::NotFound)
+        );
+        let address = fixture_addresses(&network_id("preprod").expect("network id"))
+            .expect("fixture addresses")
+            .remove(0);
+        assert_eq!(
+            decode_midnight_address_payload(
+                &address,
+                &network_id("undeployed").expect("network id"),
+                "addr",
+                32,
+            ),
+            Err(WalletAccountPortError::InvalidData)
         );
     }
 
