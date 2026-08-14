@@ -19,7 +19,8 @@ use oxid_wallet_domain::{
 };
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
+const LEGACY_SCHEMA_VERSION: u32 = 1;
 const MAX_RECORDS: usize = 128;
 const MAX_FILE_BYTES: u64 = 256 * 1024;
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -87,6 +88,7 @@ pub(crate) struct StoredSubmissionJournalEntry {
     pub(crate) transaction_hash: [u8; 32],
     pub(crate) anchor_block_hash: [u8; 32],
     pub(crate) block_hash: Option<[u8; 32]>,
+    pub(crate) block_height: Option<u64>,
     pub(crate) state: StoredSubmissionState,
     pub(crate) mode: WalletTransferSubmissionMode,
 }
@@ -409,6 +411,8 @@ fn validate_entry(entry: &StoredSubmissionJournalEntry) -> Result<(), Submission
     if entry.transaction_hash == [0; 32]
         || (entry.mode == WalletTransferSubmissionMode::Live && entry.anchor_block_hash == [0; 32])
         || (entry.state == StoredSubmissionState::Included) != entry.block_hash.is_some()
+        || (entry.state != StoredSubmissionState::Included && entry.block_height.is_some())
+        || entry.block_height == Some(0)
     {
         return Err(SubmissionJournalStoreError::InvalidData);
     }
@@ -435,6 +439,8 @@ struct JournalRecord {
     transaction_hash: String,
     anchor_block_hash: String,
     block_hash: Option<String>,
+    #[serde(default)]
+    block_height: Option<u64>,
     state: String,
     mode: String,
 }
@@ -475,7 +481,17 @@ fn decode_document(
 ) -> Result<Vec<StoredSubmissionJournalEntry>, SubmissionJournalStoreError> {
     let document: JournalDocument =
         serde_json::from_slice(bytes).map_err(|_| SubmissionJournalStoreError::InvalidData)?;
-    if document.version != SCHEMA_VERSION || document.records.len() > MAX_RECORDS {
+    if !matches!(document.version, LEGACY_SCHEMA_VERSION | SCHEMA_VERSION)
+        || document.records.len() > MAX_RECORDS
+    {
+        return Err(SubmissionJournalStoreError::InvalidData);
+    }
+    if document.version == LEGACY_SCHEMA_VERSION
+        && document
+            .records
+            .iter()
+            .any(|record| record.block_height.is_some())
+    {
         return Err(SubmissionJournalStoreError::InvalidData);
     }
     let mut keys = BTreeSet::new();
@@ -508,6 +524,7 @@ impl From<&StoredSubmissionJournalEntry> for JournalRecord {
             transaction_hash: hex::encode(entry.transaction_hash),
             anchor_block_hash: hex::encode(entry.anchor_block_hash),
             block_hash: entry.block_hash.map(hex::encode),
+            block_height: entry.block_height,
             state: stored_state_name(entry.state).to_owned(),
             mode: submission_mode_name(entry.mode).to_owned(),
         }
@@ -538,6 +555,7 @@ impl TryFrom<JournalRecord> for StoredSubmissionJournalEntry {
                 .block_hash
                 .map(|value| decode_hash(&value))
                 .transpose()?,
+            block_height: record.block_height,
             state: parse_stored_state(&record.state)?,
             mode: parse_submission_mode(&record.mode)?,
         };
@@ -686,6 +704,7 @@ mod tests {
             transaction_hash: [2; 32],
             anchor_block_hash: [3; 32],
             block_hash: (state == StoredSubmissionState::Included).then_some([4; 32]),
+            block_height: (state == StoredSubmissionState::Included).then_some(11),
             state,
             mode: WalletTransferSubmissionMode::Live,
         }
@@ -716,6 +735,32 @@ mod tests {
                 .expect("fingerprint lookup succeeds"),
             Some(included)
         );
+    }
+
+    #[test]
+    fn journal_reads_schema_one_records_without_a_block_height() {
+        let document = serde_json::json!({
+            "version": 1,
+            "records": [{
+                "profile_id": "profile-test",
+                "network_id": "undeployed",
+                "draft_id": "txdraft-test",
+                "planning_fingerprint": "01".repeat(32),
+                "expires_at_millis": 20,
+                "updated_at_millis": 10,
+                "fee_specks": "42",
+                "transaction_hash": "02".repeat(32),
+                "anchor_block_hash": "03".repeat(32),
+                "block_hash": "04".repeat(32),
+                "state": "included",
+                "mode": "live"
+            }]
+        });
+        let entries =
+            decode_document(&serde_json::to_vec(&document).expect("legacy document serializes"))
+                .expect("legacy schema remains readable");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].block_height, None);
     }
 
     #[test]

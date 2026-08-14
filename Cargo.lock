@@ -5676,6 +5676,7 @@ dependencies = [
 name = "oxid-composition"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "oxid-adapter-did-midnight",
  "oxid-adapter-midnight",
  "oxid-adapter-openid4vci",

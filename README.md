@@ -356,14 +356,17 @@ Zswap/ledger-parameter snapshots, and keeps the unproven transaction in a
 zeroizing private buffer through prepare. Exact authorization then derives the
 generated call's native NIGHT deficit, selects synchronized unshielded inputs,
 returns change, and signs once per input inside protected Midnight custody.
-Withdraw must require no NIGHT funding. This complete retained-only capability
-reports `native_funded_draft`; it rejects claim and administration, keeps
-`settlesOnMidnight` false, and leaves submit unavailable. Protected claim
-composition, combined DUST completion/proving, durable journaling, node
-submission, and reconciliation are not yet composed. Authorization and
-proving/submission use two separate exact intents in both modes. Incoming JSON
-never accepts private credential material, witnesses, signatures, proofs, or
-serialized transactions.
+Withdraw must require no NIGHT funding. The complete native capability reports
+`native_settlement` for create, deposit, and withdraw. It reuses the standalone
+Midnight DUST sync, exact fee balancing, proving, persist-before-broadcast
+journal, node submission, pre-broadcast cancellation, and finalized
+reconciliation path, so `settlesOnMidnight` is true. Configure
+`OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH` for restart-safe public submission
+metadata. Claim and administration remain rejected until protected claim
+composition replaces the prototype's deterministic holder and nonce shortcuts.
+Authorization and proving/submission use two separate exact intents in both
+modes. Incoming JSON never accepts private credential material, witnesses,
+signatures, proofs, or serialized transactions.
 
 For a complete standalone run, DUST replay can also resume from a private
 key-scoped checkpoint:

@@ -26,12 +26,12 @@ use oxid_foundation::{OpaqueId, UnixTimestampMillis};
 use oxid_passport_vault_application::{
     AuthorizePassportVaultCallRequest, MAX_PASSPORT_VAULT_CALL_SUBMISSION_HISTORY,
     MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES, PassportVaultCallAuthorizationChallenge,
-    PassportVaultCallDraftId, PassportVaultCallDraftState, PassportVaultCallOperation,
-    PassportVaultCallPortError, PassportVaultCallPreview, PassportVaultCallStatusFuture,
-    PassportVaultCallSubmissionFuture, PassportVaultCallSubmissionState,
-    PassportVaultCallSubmissionStatus, PassportVaultContractCallPort,
-    PassportVaultContractStateAuthentication, PreparePassportVaultCallRequest,
-    SubmitPassportVaultCallRequest,
+    PassportVaultCallDraftId, PassportVaultCallDraftState, PassportVaultCallInclusion,
+    PassportVaultCallOperation, PassportVaultCallPortError, PassportVaultCallPreview,
+    PassportVaultCallStatusFuture, PassportVaultCallSubmissionFuture,
+    PassportVaultCallSubmissionState, PassportVaultCallSubmissionStatus,
+    PassportVaultContractCallPort, PassportVaultContractStateAuthentication,
+    PreparePassportVaultCallRequest, SubmitPassportVaultCallRequest, SubmittedPassportVaultCall,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -199,6 +199,131 @@ pub trait PassportVaultCallFundingPort: Send + Sync {
         &self,
         request: PassportVaultCallFundingRequest,
     ) -> Result<FundedPassportVaultCall, PassportVaultCallPortError>;
+}
+
+/// Funded call plus public identifiers passed only to the protected Midnight
+/// completion bridge. The transaction remains zeroizing adapter-owned data.
+pub struct PassportVaultCallCompletionRequest {
+    profile_id: String,
+    network_id: String,
+    draft_id: String,
+    planning_fingerprint: [u8; 32],
+    expires_at: UnixTimestampMillis,
+    updated_at: UnixTimestampMillis,
+    transaction: Zeroizing<Vec<u8>>,
+}
+
+impl fmt::Debug for PassportVaultCallCompletionRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PassportVaultCallCompletionRequest")
+            .field("profile_id", &self.profile_id)
+            .field("network_id", &self.network_id)
+            .field("draft_id", &self.draft_id)
+            .field("expires_at", &self.expires_at)
+            .field("updated_at", &self.updated_at)
+            .field("transaction_bytes", &self.transaction.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PassportVaultCallCompletionRequest {
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        String,
+        String,
+        String,
+        [u8; 32],
+        UnixTimestampMillis,
+        UnixTimestampMillis,
+        Zeroizing<Vec<u8>>,
+    ) {
+        (
+            self.profile_id,
+            self.network_id,
+            self.draft_id,
+            self.planning_fingerprint,
+            self.expires_at,
+            self.updated_at,
+            self.transaction,
+        )
+    }
+}
+
+/// Composition-only settlement and recovery boundary for native vault calls.
+pub trait PassportVaultCallCompletionPort: Send + Sync {
+    fn complete(
+        &self,
+        request: PassportVaultCallCompletionRequest,
+    ) -> Result<PassportVaultCallInclusion, PassportVaultCallPortError>;
+
+    fn status(
+        &self,
+        profile_id: &str,
+        draft_id: &str,
+    ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError>;
+
+    fn cancel(
+        &self,
+        profile_id: &str,
+        draft_id: &str,
+    ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError>;
+
+    fn history(
+        &self,
+        profile_id: &str,
+    ) -> Result<Vec<PassportVaultCallSubmissionStatus>, PassportVaultCallPortError>;
+
+    fn reconcile(
+        &self,
+        profile_id: &str,
+        draft_id: &str,
+    ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct UnavailablePassportVaultCallCompletion;
+
+impl PassportVaultCallCompletionPort for UnavailablePassportVaultCallCompletion {
+    fn complete(
+        &self,
+        _: PassportVaultCallCompletionRequest,
+    ) -> Result<PassportVaultCallInclusion, PassportVaultCallPortError> {
+        Err(PassportVaultCallPortError::Unavailable)
+    }
+
+    fn status(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
+        Err(PassportVaultCallPortError::DraftNotFound)
+    }
+
+    fn cancel(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
+        Err(PassportVaultCallPortError::SubmissionNotInProgress)
+    }
+
+    fn history(
+        &self,
+        _: &str,
+    ) -> Result<Vec<PassportVaultCallSubmissionStatus>, PassportVaultCallPortError> {
+        Ok(Vec::new())
+    }
+
+    fn reconcile(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
+        Err(PassportVaultCallPortError::DraftNotFound)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -604,14 +729,16 @@ struct RetainedNativeCall {
     network_id: String,
     preview: PassportVaultCallPreview,
     submission_status: PassportVaultCallSubmissionStatus,
+    inclusion: Option<PassportVaultCallInclusion>,
     unproven_transaction: Zeroizing<Vec<u8>>,
 }
 
 pub struct NativePassportVaultContractCall {
     contexts: Arc<dyn PassportVaultCallCompositionContextSource>,
     funding: Arc<dyn PassportVaultCallFundingPort>,
+    completion: Arc<dyn PassportVaultCallCompletionPort>,
     composer: Arc<dyn PassportVaultCallComposer>,
-    calls: Mutex<BTreeMap<CallKey, RetainedNativeCall>>,
+    calls: Arc<Mutex<BTreeMap<CallKey, RetainedNativeCall>>>,
 }
 
 impl NativePassportVaultContractCall {
@@ -622,8 +749,9 @@ impl NativePassportVaultContractCall {
         Ok(Self {
             contexts,
             funding: Arc::new(UnavailablePassportVaultCallFunding),
+            completion: Arc::new(UnavailablePassportVaultCallCompletion),
             composer: Arc::new(ProcessPassportVaultCallComposer::new(executable)?),
-            calls: Mutex::new(BTreeMap::new()),
+            calls: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
 
@@ -635,8 +763,24 @@ impl NativePassportVaultContractCall {
         Ok(Self {
             contexts,
             funding,
+            completion: Arc::new(UnavailablePassportVaultCallCompletion),
             composer: Arc::new(ProcessPassportVaultCallComposer::new(executable)?),
-            calls: Mutex::new(BTreeMap::new()),
+            calls: Arc::new(Mutex::new(BTreeMap::new())),
+        })
+    }
+
+    pub fn new_with_funding_and_completion(
+        executable: impl AsRef<Path>,
+        contexts: Arc<dyn PassportVaultCallCompositionContextSource>,
+        funding: Arc<dyn PassportVaultCallFundingPort>,
+        completion: Arc<dyn PassportVaultCallCompletionPort>,
+    ) -> Result<Self, PassportVaultCallComposerConfigError> {
+        Ok(Self {
+            contexts,
+            funding,
+            completion,
+            composer: Arc::new(ProcessPassportVaultCallComposer::new(executable)?),
+            calls: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
 
@@ -657,8 +801,25 @@ impl NativePassportVaultContractCall {
         Self {
             contexts,
             funding,
+            completion: Arc::new(UnavailablePassportVaultCallCompletion),
             composer,
-            calls: Mutex::new(BTreeMap::new()),
+            calls: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_composer_funding_and_completion(
+        contexts: Arc<dyn PassportVaultCallCompositionContextSource>,
+        composer: Arc<dyn PassportVaultCallComposer>,
+        funding: Arc<dyn PassportVaultCallFundingPort>,
+        completion: Arc<dyn PassportVaultCallCompletionPort>,
+    ) -> Self {
+        Self {
+            contexts,
+            funding,
+            completion,
+            composer,
+            calls: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 }
@@ -765,6 +926,7 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
                 network_id: context.network_id,
                 preview: preview.clone(),
                 submission_status: empty_status(draft_id),
+                inclusion: None,
                 unproven_transaction,
             },
         );
@@ -825,29 +987,85 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
         request: SubmitPassportVaultCallRequest,
     ) -> PassportVaultCallSubmissionFuture<'a> {
         Box::pin(async move {
-            let mut calls = self
-                .calls
-                .lock()
-                .map_err(|_| PassportVaultCallPortError::Unavailable)?;
-            let retained = calls
-                .get_mut(&(profile_id.clone(), request.draft_id))
-                .ok_or(PassportVaultCallPortError::DraftNotFound)?;
-            expire_if_needed(retained, request.now);
-            match retained.preview.state {
-                PassportVaultCallDraftState::Expired => {
-                    Err(PassportVaultCallPortError::DraftExpired)
+            let key = (profile_id.clone(), request.draft_id.clone());
+            let completion_request = {
+                let mut calls = self
+                    .calls
+                    .lock()
+                    .map_err(|_| PassportVaultCallPortError::Unavailable)?;
+                let retained = calls
+                    .get_mut(&key)
+                    .ok_or(PassportVaultCallPortError::DraftNotFound)?;
+                expire_if_needed(retained, request.now);
+                match retained.preview.state {
+                    PassportVaultCallDraftState::Submitted => {
+                        return Ok(SubmittedPassportVaultCall {
+                            preview: retained.preview.clone(),
+                            inclusion: retained
+                                .inclusion
+                                .clone()
+                                .ok_or(PassportVaultCallPortError::InvalidData)?,
+                        });
+                    }
+                    PassportVaultCallDraftState::Expired => {
+                        return Err(PassportVaultCallPortError::DraftExpired);
+                    }
+                    PassportVaultCallDraftState::Submitting => {
+                        return Err(PassportVaultCallPortError::SubmissionInProgress);
+                    }
+                    PassportVaultCallDraftState::Authorized
+                        if !retained.unproven_transaction.is_empty() => {}
+                    _ => return Err(PassportVaultCallPortError::DraftConflict),
                 }
-                PassportVaultCallDraftState::Authorized
-                    if !retained.unproven_transaction.is_empty() =>
-                {
-                    // The next adapter slice will consume this retained value
-                    // behind protected funding/proving and submission ports.
-                    Err(PassportVaultCallPortError::Unavailable)
+                retained.preview.state = PassportVaultCallDraftState::Submitting;
+                retained.submission_status.state = PassportVaultCallSubmissionState::Running;
+                PassportVaultCallCompletionRequest {
+                    profile_id: profile_id.as_str().to_owned(),
+                    network_id: retained.network_id.clone(),
+                    draft_id: request.draft_id.as_str().to_owned(),
+                    planning_fingerprint: retained.planning_fingerprint,
+                    expires_at: retained.preview.expires_at,
+                    updated_at: request.now,
+                    transaction: Zeroizing::new(retained.unproven_transaction.to_vec()),
                 }
-                PassportVaultCallDraftState::Submitting => {
-                    Err(PassportVaultCallPortError::SubmissionInProgress)
+            };
+
+            let completion = Arc::clone(&self.completion);
+            let worker_completion = Arc::clone(&completion);
+            let calls = Arc::clone(&self.calls);
+            let worker_key = key.clone();
+            let worker_profile = profile_id.as_str().to_owned();
+            let worker_draft = request.draft_id.as_str().to_owned();
+            let (sender, receiver) = futures::channel::oneshot::channel();
+            let spawn = thread::Builder::new()
+                .name("oxid-passport-vault-submit".to_owned())
+                .spawn(move || {
+                    let result = worker_completion.complete(completion_request);
+                    let result = finish_native_submission(
+                        calls.as_ref(),
+                        &worker_key,
+                        &worker_profile,
+                        &worker_draft,
+                        worker_completion.as_ref(),
+                        result,
+                    );
+                    let _ = sender.send(result);
+                });
+            if spawn.is_err() {
+                restore_native_authorized(self.calls.as_ref(), &key)?;
+                return Err(PassportVaultCallPortError::Unavailable);
+            }
+            let mut cancel_on_drop = CancelNativeSubmissionOnDrop::new(
+                completion,
+                profile_id.as_str().to_owned(),
+                request.draft_id.as_str().to_owned(),
+            );
+            match receiver.await {
+                Ok(result) => {
+                    cancel_on_drop.disarm();
+                    result
                 }
-                _ => Err(PassportVaultCallPortError::DraftConflict),
+                Err(_) => Err(PassportVaultCallPortError::SubmissionOutcomeUnknown),
             }
         })
     }
@@ -874,12 +1092,23 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
         profile_id: &OpaqueId,
         draft_id: &PassportVaultCallDraftId,
     ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
-        self.calls
-            .lock()
-            .map_err(|_| PassportVaultCallPortError::Unavailable)?
-            .get(&(profile_id.clone(), draft_id.clone()))
-            .map(|retained| retained.submission_status.clone())
-            .ok_or(PassportVaultCallPortError::DraftNotFound)
+        match self
+            .completion
+            .status(profile_id.as_str(), draft_id.as_str())
+        {
+            Ok(status) => {
+                update_native_from_status(self.calls.as_ref(), profile_id, draft_id, &status)?;
+                Ok(status)
+            }
+            Err(PassportVaultCallPortError::DraftNotFound) => self
+                .calls
+                .lock()
+                .map_err(|_| PassportVaultCallPortError::Unavailable)?
+                .get(&(profile_id.clone(), draft_id.clone()))
+                .map(|retained| retained.submission_status.clone())
+                .ok_or(PassportVaultCallPortError::DraftNotFound),
+            Err(error) => Err(error),
+        }
     }
 
     fn cancel_submission(
@@ -887,22 +1116,33 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
         profile_id: &OpaqueId,
         draft_id: &PassportVaultCallDraftId,
     ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
-        self.submission_status(profile_id, draft_id)?;
-        Err(PassportVaultCallPortError::SubmissionNotInProgress)
+        let status = self
+            .completion
+            .cancel(profile_id.as_str(), draft_id.as_str())?;
+        update_native_from_status(self.calls.as_ref(), profile_id, draft_id, &status)?;
+        Ok(status)
     }
 
     fn submission_history(
         &self,
         profile_id: &OpaqueId,
     ) -> Result<Vec<PassportVaultCallSubmissionStatus>, PassportVaultCallPortError> {
-        Ok(self
+        let mut statuses = self.completion.history(profile_id.as_str())?;
+        let calls = self
             .calls
             .lock()
-            .map_err(|_| PassportVaultCallPortError::Unavailable)?
-            .iter()
-            .filter(|((stored_profile_id, _), _)| stored_profile_id == profile_id)
-            .map(|(_, retained)| retained.submission_status.clone())
-            .collect())
+            .map_err(|_| PassportVaultCallPortError::Unavailable)?;
+        for ((stored_profile_id, draft_id), retained) in calls.iter() {
+            if stored_profile_id == profile_id
+                && !statuses.iter().any(|status| &status.draft_id == draft_id)
+            {
+                if statuses.len() == MAX_PASSPORT_VAULT_CALL_SUBMISSION_HISTORY {
+                    statuses.pop();
+                }
+                statuses.insert(0, retained.submission_status.clone());
+            }
+        }
+        Ok(statuses)
     }
 
     fn reconcile_submission<'a>(
@@ -911,10 +1151,232 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
         draft_id: &'a PassportVaultCallDraftId,
     ) -> PassportVaultCallStatusFuture<'a> {
         Box::pin(async move {
-            self.submission_status(profile_id, draft_id)?;
-            Err(PassportVaultCallPortError::SubmissionNotInProgress)
+            let completion = Arc::clone(&self.completion);
+            let profile = profile_id.as_str().to_owned();
+            let draft = draft_id.as_str().to_owned();
+            let (sender, receiver) = futures::channel::oneshot::channel();
+            thread::Builder::new()
+                .name("oxid-passport-vault-reconcile".to_owned())
+                .spawn(move || {
+                    let _ = sender.send(completion.reconcile(&profile, &draft));
+                })
+                .map_err(|_| PassportVaultCallPortError::Unavailable)?;
+            let status = receiver
+                .await
+                .unwrap_or(Err(PassportVaultCallPortError::Unavailable))?;
+            update_native_from_status(self.calls.as_ref(), profile_id, draft_id, &status)?;
+            Ok(status)
         })
     }
+}
+
+struct CancelNativeSubmissionOnDrop {
+    completion: Arc<dyn PassportVaultCallCompletionPort>,
+    profile_id: String,
+    draft_id: String,
+    armed: bool,
+}
+
+impl CancelNativeSubmissionOnDrop {
+    fn new(
+        completion: Arc<dyn PassportVaultCallCompletionPort>,
+        profile_id: String,
+        draft_id: String,
+    ) -> Self {
+        Self {
+            completion,
+            profile_id,
+            draft_id,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CancelNativeSubmissionOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.completion.cancel(&self.profile_id, &self.draft_id);
+        }
+    }
+}
+
+fn restore_native_authorized(
+    calls: &Mutex<BTreeMap<CallKey, RetainedNativeCall>>,
+    key: &CallKey,
+) -> Result<(), PassportVaultCallPortError> {
+    let mut calls = calls
+        .lock()
+        .map_err(|_| PassportVaultCallPortError::Unavailable)?;
+    let retained = calls
+        .get_mut(key)
+        .ok_or(PassportVaultCallPortError::DraftNotFound)?;
+    retained.preview.state = PassportVaultCallDraftState::Authorized;
+    retained.submission_status = empty_status(retained.preview.draft_id.clone());
+    Ok(())
+}
+
+fn finish_native_submission(
+    calls: &Mutex<BTreeMap<CallKey, RetainedNativeCall>>,
+    key: &CallKey,
+    profile_id: &str,
+    draft_id: &str,
+    completion: &dyn PassportVaultCallCompletionPort,
+    result: Result<PassportVaultCallInclusion, PassportVaultCallPortError>,
+) -> Result<SubmittedPassportVaultCall, PassportVaultCallPortError> {
+    match result {
+        Ok(inclusion) => {
+            let mut retained_calls = calls
+                .lock()
+                .map_err(|_| PassportVaultCallPortError::Unavailable)?;
+            let retained = retained_calls
+                .get_mut(key)
+                .ok_or(PassportVaultCallPortError::DraftNotFound)?;
+            retained.preview.state = PassportVaultCallDraftState::Submitted;
+            retained.preview.fee_atomic_units = Some(inclusion.fee_atomic_units);
+            retained.submission_status = status_from_inclusion(
+                retained.preview.draft_id.clone(),
+                PassportVaultCallSubmissionState::Included,
+                &inclusion,
+            );
+            retained.inclusion = Some(inclusion.clone());
+            retained.unproven_transaction.zeroize();
+            Ok(SubmittedPassportVaultCall {
+                preview: retained.preview.clone(),
+                inclusion,
+            })
+        }
+        Err(PassportVaultCallPortError::SubmissionCancelled) => {
+            let mut retained_calls = calls
+                .lock()
+                .map_err(|_| PassportVaultCallPortError::Unavailable)?;
+            let retained = retained_calls
+                .get_mut(key)
+                .ok_or(PassportVaultCallPortError::DraftNotFound)?;
+            retained.preview.state = PassportVaultCallDraftState::Authorized;
+            retained.submission_status = empty_status(retained.preview.draft_id.clone());
+            retained.submission_status.state = PassportVaultCallSubmissionState::Cancelled;
+            Err(PassportVaultCallPortError::SubmissionCancelled)
+        }
+        Err(PassportVaultCallPortError::DraftExpired) => {
+            let mut retained_calls = calls
+                .lock()
+                .map_err(|_| PassportVaultCallPortError::Unavailable)?;
+            let retained = retained_calls
+                .get_mut(key)
+                .ok_or(PassportVaultCallPortError::DraftNotFound)?;
+            retained.preview.state = PassportVaultCallDraftState::Expired;
+            retained.submission_status = empty_status(retained.preview.draft_id.clone());
+            retained.submission_status.state = PassportVaultCallSubmissionState::Expired;
+            retained.unproven_transaction.zeroize();
+            Err(PassportVaultCallPortError::DraftExpired)
+        }
+        Err(PassportVaultCallPortError::SubmissionRejected) => {
+            calls
+                .lock()
+                .map_err(|_| PassportVaultCallPortError::Unavailable)?
+                .remove(key);
+            Err(PassportVaultCallPortError::SubmissionRejected)
+        }
+        Err(PassportVaultCallPortError::SubmissionOutcomeUnknown) => {
+            let status = completion.status(profile_id, draft_id).unwrap_or(
+                PassportVaultCallSubmissionStatus {
+                    draft_id: key.1.clone(),
+                    state: PassportVaultCallSubmissionState::OutcomeUnknown,
+                    transaction_hash_hex: None,
+                    block_hash_hex: None,
+                    block_height: None,
+                    fee_atomic_units: None,
+                    mode: None,
+                },
+            );
+            let mut retained_calls = calls
+                .lock()
+                .map_err(|_| PassportVaultCallPortError::Unavailable)?;
+            if let Some(retained) = retained_calls.get_mut(key) {
+                retained.submission_status = status;
+                retained.unproven_transaction.zeroize();
+            }
+            Err(PassportVaultCallPortError::SubmissionOutcomeUnknown)
+        }
+        Err(error) => {
+            restore_native_authorized(calls, key)?;
+            Err(error)
+        }
+    }
+}
+
+fn status_from_inclusion(
+    draft_id: PassportVaultCallDraftId,
+    state: PassportVaultCallSubmissionState,
+    inclusion: &PassportVaultCallInclusion,
+) -> PassportVaultCallSubmissionStatus {
+    PassportVaultCallSubmissionStatus {
+        draft_id,
+        state,
+        transaction_hash_hex: Some(inclusion.transaction_hash_hex.clone()),
+        block_hash_hex: Some(inclusion.block_hash_hex.clone()),
+        block_height: Some(inclusion.block_height),
+        fee_atomic_units: Some(inclusion.fee_atomic_units),
+        mode: Some(inclusion.mode.clone()),
+    }
+}
+
+fn update_native_from_status(
+    calls: &Mutex<BTreeMap<CallKey, RetainedNativeCall>>,
+    profile_id: &OpaqueId,
+    draft_id: &PassportVaultCallDraftId,
+    status: &PassportVaultCallSubmissionStatus,
+) -> Result<(), PassportVaultCallPortError> {
+    let mut calls = calls
+        .lock()
+        .map_err(|_| PassportVaultCallPortError::Unavailable)?;
+    let Some(retained) = calls.get_mut(&(profile_id.clone(), draft_id.clone())) else {
+        return Ok(());
+    };
+    retained.submission_status = status.clone();
+    match status.state {
+        PassportVaultCallSubmissionState::Included => {
+            let inclusion = PassportVaultCallInclusion {
+                transaction_hash_hex: status
+                    .transaction_hash_hex
+                    .clone()
+                    .ok_or(PassportVaultCallPortError::InvalidData)?,
+                block_hash_hex: status
+                    .block_hash_hex
+                    .clone()
+                    .ok_or(PassportVaultCallPortError::InvalidData)?,
+                block_height: status
+                    .block_height
+                    .ok_or(PassportVaultCallPortError::InvalidData)?,
+                fee_atomic_units: status
+                    .fee_atomic_units
+                    .ok_or(PassportVaultCallPortError::InvalidData)?,
+                mode: status
+                    .mode
+                    .clone()
+                    .ok_or(PassportVaultCallPortError::InvalidData)?,
+            };
+            retained.preview.state = PassportVaultCallDraftState::Submitted;
+            retained.preview.fee_atomic_units = Some(inclusion.fee_atomic_units);
+            retained.inclusion = Some(inclusion);
+            retained.unproven_transaction.zeroize();
+        }
+        PassportVaultCallSubmissionState::Broadcasting
+        | PassportVaultCallSubmissionState::OutcomeUnknown
+        | PassportVaultCallSubmissionState::Rejected
+        | PassportVaultCallSubmissionState::Expired => {
+            retained.unproven_transaction.zeroize();
+        }
+        PassportVaultCallSubmissionState::NotStarted
+        | PassportVaultCallSubmissionState::Running
+        | PassportVaultCallSubmissionState::CancellationRequested
+        | PassportVaultCallSubmissionState::Cancelled => {}
+    }
+    Ok(())
 }
 
 fn validate_unproven_transaction(
@@ -1172,6 +1634,65 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct IncludedCompletion {
+        calls: AtomicUsize,
+    }
+
+    impl PassportVaultCallCompletionPort for IncludedCompletion {
+        fn complete(
+            &self,
+            request: PassportVaultCallCompletionRequest,
+        ) -> Result<PassportVaultCallInclusion, PassportVaultCallPortError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let (profile, network, draft, fingerprint, expires_at, updated_at, transaction) =
+                request.into_parts();
+            assert_eq!(profile, "profile_native_vault");
+            assert_eq!(network, "undeployed");
+            assert_eq!(draft, hex::encode(fingerprint));
+            assert!(expires_at.value() > updated_at.value());
+            assert!(!transaction.is_empty());
+            Ok(PassportVaultCallInclusion {
+                transaction_hash_hex: "55".repeat(32),
+                block_hash_hex: "66".repeat(32),
+                block_height: 46,
+                fee_atomic_units: 17,
+                mode: "live".to_owned(),
+            })
+        }
+
+        fn status(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
+            Err(PassportVaultCallPortError::DraftNotFound)
+        }
+
+        fn cancel(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
+            Err(PassportVaultCallPortError::SubmissionNotInProgress)
+        }
+
+        fn history(
+            &self,
+            _: &str,
+        ) -> Result<Vec<PassportVaultCallSubmissionStatus>, PassportVaultCallPortError> {
+            Ok(Vec::new())
+        }
+
+        fn reconcile(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
+            Err(PassportVaultCallPortError::DraftNotFound)
+        }
+    }
+
     fn profile() -> OpaqueId {
         OpaqueId::parse("profile_native_vault").expect("profile")
     }
@@ -1254,6 +1775,30 @@ mod tests {
         )
     }
 
+    fn adapter_with_completion() -> (NativePassportVaultContractCall, Arc<IncludedCompletion>) {
+        let contexts = Arc::new(ContextSource {
+            calls: AtomicUsize::new(0),
+        });
+        let composer = Arc::new(Composer {
+            calls: AtomicUsize::new(0),
+        });
+        let funding = Arc::new(RecordingFunding {
+            calls: AtomicUsize::new(0),
+            requires_night_funding: Mutex::new(Vec::new()),
+            failure: None,
+        });
+        let completion = Arc::new(IncludedCompletion::default());
+        (
+            NativePassportVaultContractCall::with_composer_funding_and_completion(
+                contexts,
+                composer,
+                funding,
+                completion.clone(),
+            ),
+            completion,
+        )
+    }
+
     #[test]
     fn retains_a_native_composed_draft_without_claiming_submission() {
         let (adapter, contexts, composer) = adapter();
@@ -1306,6 +1851,53 @@ mod tests {
                 .expect("status")
                 .state,
             PassportVaultCallSubmissionState::NotStarted
+        );
+    }
+
+    #[test]
+    fn native_completion_returns_only_public_inclusion_and_erases_the_retained_transaction() {
+        let (adapter, completion) = adapter_with_completion();
+        let prepared = adapter
+            .prepare(request(create_operation()))
+            .expect("prepare");
+        let authorized = adapter
+            .authorize(
+                &profile(),
+                AuthorizePassportVaultCallRequest {
+                    draft_id: prepared.draft_id.clone(),
+                    authorization_challenge: prepared.authorization_challenge,
+                    now: UnixTimestampMillis::new(1_000),
+                },
+            )
+            .expect("authorize");
+        let submitted = block_on(adapter.submit(
+            &profile(),
+            SubmitPassportVaultCallRequest {
+                draft_id: authorized.draft_id.clone(),
+                now: UnixTimestampMillis::new(2_000),
+            },
+        ))
+        .expect("completion succeeds");
+
+        assert_eq!(completion.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            submitted.preview.state,
+            PassportVaultCallDraftState::Submitted
+        );
+        assert_eq!(submitted.inclusion.transaction_hash_hex, "55".repeat(32));
+        assert_eq!(submitted.inclusion.block_height, 46);
+        assert_eq!(submitted.inclusion.fee_atomic_units, 17);
+        let status = adapter
+            .submission_status(&profile(), &authorized.draft_id)
+            .expect("included status remains available");
+        assert_eq!(status.state, PassportVaultCallSubmissionState::Included);
+        let retained = adapter.calls.lock().expect("retained calls");
+        assert!(
+            retained
+                .get(&(profile(), authorized.draft_id))
+                .expect("retained public result")
+                .unproven_transaction
+                .is_empty()
         );
     }
 

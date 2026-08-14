@@ -319,6 +319,7 @@ async fn reconcile_live_submission(
             return match (succeeded, failed) {
                 (true, false) => Ok(MidnightSubmissionReconciliation::Included {
                     block_hash: block.hash().0,
+                    block_height: u64::from(block.header().number),
                 }),
                 (false, true) => Ok(MidnightSubmissionReconciliation::Rejected),
                 _ => Err(WalletTransactionPortError::InvalidChainState),
@@ -485,7 +486,7 @@ where
         return Err(WalletTransactionPortError::InvalidData);
     }
     ensure_submission_active(&cancellation)?;
-    let (transaction_hash, block_hash) = submit_unsigned(
+    let (transaction_hash, block_hash, block_height) = submit_unsigned(
         config.node_websocket_url(),
         transaction_bytes,
         &request,
@@ -496,6 +497,7 @@ where
         fee_specks,
         transaction_hash,
         block_hash,
+        block_height,
         mode: WalletTransferSubmissionMode::Live,
     })
 }
@@ -1170,7 +1172,7 @@ async fn submit_unsigned(
     transaction: Vec<u8>,
     request: &MidnightCompletionRequest,
     fee_specks: u128,
-) -> Result<([u8; 32], [u8; 32]), WalletTransactionPortError> {
+) -> Result<([u8; 32], [u8; 32], u64), WalletTransactionPortError> {
     let client = timeout(
         CONNECT_TIMEOUT,
         OnlineClient::<SubstrateConfig>::from_insecure_url(endpoint),
@@ -1236,7 +1238,20 @@ async fn submit_unsigned(
                         }
                     }
                     return match (succeeded, failed) {
-                        (true, false) => Ok((transaction_hash, in_block.block_hash().0)),
+                        (true, false) => {
+                            let finalized = client
+                                .blocks()
+                                .at(in_block.block_hash())
+                                .await
+                                .map_err(|_| {
+                                    WalletTransactionPortError::SubmissionOutcomeUnknown
+                                })?;
+                            Ok((
+                                transaction_hash,
+                                in_block.block_hash().0,
+                                u64::from(finalized.header().number),
+                            ))
+                        }
                         (false, true) => Err(WalletTransactionPortError::SubmissionRejected),
                         _ => Err(WalletTransactionPortError::SubmissionOutcomeUnknown),
                     };

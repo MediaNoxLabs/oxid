@@ -84,17 +84,17 @@ leaves submit unavailable. ADR-0061 now supplies that context only in the
 complete standalone composition: the Midnight adapter decodes exact
 profile-scoped public address payloads, canonical replay must match the
 node-anchored indexer action and state byte-for-byte, and the composition root
-joins the ports when the immutable packaged composer is configured. It reports
-`native_composed_draft` without claiming settlement. ADR-0062 now funds an
+joins the ports when the immutable packaged composer is configured. ADR-0062 funds an
 exactly authorized native create/deposit draft from synchronized unshielded
 NIGHT UTXOs inside protected Midnight custody, returns change, verifies the
 opaque Schnorr authorization, and supplies one signature per input. Withdraw
 must require no NIGHT funding. Complete standalone composition reports
 `native_funded_draft` while retaining the funded transaction only in zeroizing
-adapter custody.
-Live settlement and production composition still fail closed without protected
-claim composition, combined DUST completion/proving, durable submission, and
-reconciliation.
+adapter custody. ADR-0063 routes native create/deposit/withdraw through the
+existing protected DUST, proving, persist-before-broadcast, finalized node
+submission, cancellation, and reconciliation machinery. Complete standalone
+composition now reports `native_settlement` and `settlesOnMidnight: true` for
+those three operations. Protected claim composition remains fail-closed.
 An authenticated replay cache and optional durable standalone state also remain
 issue #31. Live protocol transport and production/mobile presentation proving
 remain deferred.
@@ -706,8 +706,9 @@ standalone stack and labels the resulting prepare/authorize-only capability
 call through a composition-only protected Midnight funding port. It derives the
 exact native NIGHT deficit from ledger balance semantics, selects synchronized
 bounded UTXOs, creates change, signs every input, and relabels the retained-only
-capability `native_funded_draft`; it does not add DUST proof, broadcast, or
-outcome authority.
+capability `native_funded_draft`. ADR-0063 adds the DUST proof, broadcast,
+public journal, and finalized outcome authority for native
+create/deposit/withdraw while keeping claim closed.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -740,7 +741,7 @@ Current package ownership:
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
-| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing retained native create/deposit/withdraw composition; live context/completion/submission remains closed. |
+| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing native create/deposit/withdraw composition through protected Midnight funding, DUST proving, finalized submission, cancellation, and public-journal recovery; protected claim remains closed. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
@@ -783,8 +784,8 @@ also require the non-zero untrusted hint
 `OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT`; it is rejected outside the complete
 standalone stack. With canonical replay enabled,
 `OXID_PASSPORT_VAULT_COMPOSER` optionally installs the packaged retained native
-composer plus protected NIGHT funding bridge; present reports
-`native_funded_draft`, missing keeps `native_pending`, while an invalid
+composer plus protected NIGHT funding and settlement bridge; present reports
+`native_settlement`, missing keeps `native_pending`, while an invalid
 configured path fails startup. `compose_in_memory()` uses the development
 adapters for tests. Never change `compose()` to select `storage-dev`, simulation,
 or environment-derived indexer, node, or proof configuration. Headless
@@ -878,10 +879,10 @@ call-service constructor may admit the other's class. Claim input contains only 
 incoming method accepts credential bytes, openings, holder keys, witness data,
 proofs, signatures, or serialized transactions. The native retained adapter is
 composed with fresh replay-matched public Midnight context and protected NIGHT
-funding in the complete standalone stack. It reports `native_funded_draft` only
-when the packaged composer is present; otherwise explicit live discovery uses
-`native_pending`. Submit remains fail-closed because DUST completion/proving,
-journaling, broadcast, and reconciliation are not composed.
+funding in the complete standalone stack. When the packaged composer is
+present, ADR-0063 reports `native_settlement` and submits create/deposit/withdraw
+through protected DUST proving plus finalized reconciliation; otherwise
+explicit live discovery uses `native_pending`. Native claim remains unavailable.
 Zero-configuration headless/development
 composition uses the fixed simulator address published by `system.capabilities`;
 its mode is `deterministic_simulation`, result mode is
@@ -1308,6 +1309,17 @@ to silence the shell probe.
   funded serialized transactions zeroizing and composition-private. A failure
   must preserve the prepared draft for explicit retry. `native_funded_draft`
   still means prepare/authorize only and must keep `settlesOnMidnight: false`.
+- ADR-0063 composes native Passport Vault create/deposit/withdraw with the same
+  protected DUST, proving, persist-before-broadcast, node submission,
+  cancellation, and finalized reconciliation path as ordinary transfers. The
+  public journal schema is version 2 with optional finalized block height and
+  backward-compatible version-1 reads. Vault records use a domain-separated
+  profile key plus `vault-` draft prefix so they never appear in transfer
+  history. `native_settlement` may report `settlesOnMidnight: true`; claim must
+  stay absent until managed holder custody and fresh presentation randomness
+  replace the prototype's public-derived holder scalar and fixed nonce 17.
+  Configure `OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH` for restart-safe public
+  status; never persist transactions, proofs, signatures, witnesses, or keys.
 - The Midnight checkpoint file contains public replay state only and supports
   one process writer. It must not be merged into the profile document or used
   as proof that cached inputs are fresh enough to spend.

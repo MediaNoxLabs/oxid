@@ -58,7 +58,11 @@ pub use submission_journal::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use transaction::{
-    FundedMidnightContractCall, MidnightContractCallFundingPort, MidnightContractCallFundingRequest,
+    FundedMidnightContractCall, MidnightContractCallFundingPort,
+    MidnightContractCallFundingRequest, MidnightContractCallSubmissionMode,
+    MidnightContractCallSubmissionOutcome, MidnightContractCallSubmissionPort,
+    MidnightContractCallSubmissionRequest, MidnightContractCallSubmissionState,
+    MidnightContractCallSubmissionStatus,
 };
 
 use std::{
@@ -376,6 +380,8 @@ pub struct MidnightWalletAdapter<S, D = UnavailableMidnightAccountDeriver> {
             >,
         >,
     >,
+    #[cfg(not(target_arch = "wasm32"))]
+    contract_call_submissions: transaction::RetainedContractCallSubmissions,
 }
 
 impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
@@ -401,6 +407,7 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -428,6 +435,7 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -455,6 +463,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -484,6 +493,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -508,6 +518,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             ),
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -531,6 +542,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             ),
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

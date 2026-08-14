@@ -84,6 +84,7 @@ ADR status and delivery state answer different questions:
 | [0060](0060-retain-native-passport-vault-composed-drafts.md) Retain native Passport Vault composed drafts | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault completion flow, and issue #31 | Canonical-replay create/deposit/withdraw composition is retained behind the native application port with zeroizing transaction custody; fresh Midnight context, claim custody, funding, proving, submission, and reconciliation remain pending |
 | [0061](0061-compose-finalized-passport-vault-call-context.md) Compose finalized Passport Vault call context | Accepted | §§3–8, 12–13, 16–18, 21, prototype wallet/indexer context flow, and issue #31 | Complete standalone composition joins exact profile public addresses with replay-matched bounded chain context and enables retained native create/deposit/withdraw drafts; claim, funding, proving, submission, and reconciliation remain pending |
 | [0062](0062-fund-passport-vault-calls-inside-protected-midnight-custody.md) Fund Passport Vault calls inside protected Midnight custody | Accepted | §§3–8, 12–13, 16–18, 21, prototype wallet funding flow, and issue #31 | Exact authorization triggers protected synchronized NIGHT input selection, change, per-input signing, and zeroizing retention for native create/deposit; claim, DUST completion, proving, submission, and reconciliation remain pending |
+| [0063](0063-settle-passport-vault-calls-through-the-midnight-submission-lifecycle.md) Settle Passport Vault calls through the Midnight submission lifecycle | Accepted | §§3–8, 12–13, 16–18, 21, prototype proving/submission flow, and issue #31 | Native create/deposit/withdraw reuse protected DUST proving, persist-before-broadcast, finalized submission, cancellation, and restart reconciliation; protected claim remains pending |
 
 ## Current boundaries
 
@@ -220,3 +221,10 @@ input inside Midnight custody. Complete standalone composition now reports
 `native_funded_draft` when the packaged composer is present. Claim, DUST
 completion, proving, submission, and reconciliation remain closed, so
 `settlesOnMidnight` remains false.
+ADR-0063 reuses the ordinary Midnight DUST, proving, persist-before-broadcast,
+submission, cancellation, and finalized reconciliation machinery through a
+composition-only contract-call port. The shared public journal adds finalized
+block height while keeping schema-one reads compatible and namespaces Passport
+Vault records away from transfer history. Complete standalone native
+create/deposit/withdraw calls now report `native_settlement` and
+`settlesOnMidnight: true`; protected claim remains closed.

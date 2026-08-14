@@ -299,7 +299,7 @@ impl HeadlessWallet {
                 "passportVaultContractCalls": {
                     "mode": self.application.passport_vault_call_mode(),
                     "contractAddressHex": self.application.passport_vault_call_contract_address_hex(),
-                    "settlesOnMidnight": false
+                    "settlesOnMidnight": self.application.passport_vault_call_mode() == "native_settlement"
                 },
                 "custodyMode": "development_only",
                 "compatibilityAliases": ["quit", "exit"]
@@ -4995,10 +4995,33 @@ fn capability_manifest(
         } else {
             "canonical_finalized_replay"
         };
-    let passport_vault_call_status = if passport_vault_call_mode == "deterministic_simulation" {
+    let passport_vault_call_status = if matches!(
+        passport_vault_call_mode,
+        "deterministic_simulation" | "native_settlement"
+    ) {
         "ready"
     } else {
         "composition_dependent"
+    };
+    let passport_vault_call_operations = if passport_vault_call_mode == "deterministic_simulation" {
+        vec![
+            "create_lock",
+            "deposit_to_lock",
+            "claim_from_lock",
+            "withdraw_from_lock",
+        ]
+    } else {
+        vec!["create_lock", "deposit_to_lock", "withdraw_from_lock"]
+    };
+    let passport_vault_history_persistence = if passport_vault_call_mode == "native_settlement" {
+        "public_metadata_only"
+    } else {
+        "process_local_public_metadata"
+    };
+    let passport_vault_reconciliation_scope = if passport_vault_call_mode == "native_settlement" {
+        "finalized_chain"
+    } else {
+        "adapter_status"
     };
     json!([
         { "method": "system.capabilities", "status": "ready" },
@@ -5047,15 +5070,15 @@ fn capability_manifest(
         { "method": "vault.locks.list", "status": "ready", "mode": "standalone", "state": "process_local" },
         { "method": "vault.contract_state.decode", "status": "ready", "mode": "native", "source": "pinned_layout_tagged_midnight_state", "mutates": false },
         { "method": "vault.contract_state.read", "status": "composition_dependent", "mode": "native", "sources": ["deterministic_simulation", "node_anchored_indexer", "finalized_node_replay"], "stateAuthentication": ["deterministic_simulation", "indexer_supplied_not_proven", "canonical_finalized_replay"], "mutates": false },
-        { "method": "vault.contract_call.prepare", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "operations": ["create_lock", "deposit_to_lock", "claim_from_lock", "withdraw_from_lock"], "requiresStateAuthentication": passport_vault_call_authentication, "privateMaterialExposed": false },
+        { "method": "vault.contract_call.prepare", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "operations": passport_vault_call_operations, "requiresStateAuthentication": passport_vault_call_authentication, "privateMaterialExposed": false },
         { "method": "vault.contract_call.authorize", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "confirmationRequired": true, "intent": AUTHORIZE_PASSPORT_VAULT_CALL_INTENT },
         { "method": "vault.contract_call.draft", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "serializedTransactionExposed": false },
         { "method": "vault.contract_call.submit", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "confirmationRequired": true, "intent": SUBMIT_PASSPORT_VAULT_CALL_INTENT },
         { "method": "vault.contract_call.start_submission", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "execution": "adapter_worker" },
         { "method": "vault.contract_call.submission_status", "status": passport_vault_call_status, "mode": passport_vault_call_mode },
-        { "method": "vault.contract_call.submission_history", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "persistence": "process_local_public_metadata" },
+        { "method": "vault.contract_call.submission_history", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "persistence": passport_vault_history_persistence },
         { "method": "vault.contract_call.cancel_submission", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "boundary": "pre_broadcast_only" },
-        { "method": "vault.contract_call.reconcile_submission", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "scope": "adapter_status" },
+        { "method": "vault.contract_call.reconcile_submission", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "scope": passport_vault_reconciliation_scope },
         { "method": "vault.credentials.list", "status": "ready", "mode": "standalone", "aliasFor": "credential.list" },
         { "method": "vault.lock.create", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": CREATE_LOCK_INTENT },
         { "method": "vault.deposit", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": DEPOSIT_INTENT },
@@ -5281,6 +5304,31 @@ mod tests {
                         "withdraw_from_lock"
                     ])
         }));
+    }
+
+    #[test]
+    fn native_settlement_manifest_excludes_unimplemented_claim_and_reports_recovery() {
+        let methods = capability_manifest(false, "native_settlement");
+        let methods = methods.as_array().expect("capability array");
+        let prepare = methods
+            .iter()
+            .find(|capability| capability["method"] == "vault.contract_call.prepare")
+            .expect("prepare capability");
+        assert_eq!(prepare["status"], "ready");
+        assert_eq!(
+            prepare["operations"],
+            json!(["create_lock", "deposit_to_lock", "withdraw_from_lock"])
+        );
+        let history = methods
+            .iter()
+            .find(|capability| capability["method"] == "vault.contract_call.submission_history")
+            .expect("history capability");
+        assert_eq!(history["persistence"], "public_metadata_only");
+        let reconcile = methods
+            .iter()
+            .find(|capability| capability["method"] == "vault.contract_call.reconcile_submission")
+            .expect("reconciliation capability");
+        assert_eq!(reconcile["scope"], "finalized_chain");
     }
 
     #[test]

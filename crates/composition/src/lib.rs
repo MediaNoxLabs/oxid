@@ -28,7 +28,12 @@ use oxid_adapter_midnight::{
     protected_standalone_midnight_wallet_with_dust_checkpoints,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use oxid_adapter_midnight::{MidnightContractCallFundingPort, MidnightContractCallFundingRequest};
+use oxid_adapter_midnight::{
+    MidnightContractCallFundingPort, MidnightContractCallFundingRequest,
+    MidnightContractCallSubmissionMode, MidnightContractCallSubmissionPort,
+    MidnightContractCallSubmissionRequest, MidnightContractCallSubmissionState,
+    MidnightContractCallSubmissionStatus,
+};
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 use oxid_adapter_openid4vci::{
     DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
@@ -39,7 +44,8 @@ use oxid_adapter_passport_vault::{
     AuthenticatedPassportVaultStateConfigError, AuthenticatedPassportVaultStateSource,
     FundedPassportVaultCall, NativePassportVaultContractCall,
     NativePassportVaultContractStateDecoder, NodeAnchoredPassportVaultStateSource,
-    PassportVaultCallChainContextSource, PassportVaultCallComposerConfigError,
+    PassportVaultCallChainContextSource, PassportVaultCallCompletionPort,
+    PassportVaultCallCompletionRequest, PassportVaultCallComposerConfigError,
     PassportVaultCallCompositionContext, PassportVaultCallCompositionContextSource,
     PassportVaultCallFundingPort, PassportVaultCallFundingRequest,
     SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX, SimulatedPassportVaultContractCall,
@@ -127,7 +133,9 @@ use oxid_passport_vault_application::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_passport_vault_application::{
-    PassportVaultCallPortError, PassportVaultContractStateSnapshot,
+    PassportVaultCallDraftId, PassportVaultCallInclusion, PassportVaultCallPortError,
+    PassportVaultCallSubmissionState, PassportVaultCallSubmissionStatus,
+    PassportVaultContractStateSnapshot,
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CredentialPresentationProtocolPort,
@@ -169,10 +177,16 @@ use oxid_wallet_application::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-trait NativeMidnightCompositionCapability: MidnightContractCallFundingPort {}
+trait NativeMidnightCompositionCapability:
+    MidnightContractCallFundingPort + MidnightContractCallSubmissionPort
+{
+}
 
 #[cfg(not(target_arch = "wasm32"))]
-impl<T> NativeMidnightCompositionCapability for T where T: MidnightContractCallFundingPort {}
+impl<T> NativeMidnightCompositionCapability for T where
+    T: MidnightContractCallFundingPort + MidnightContractCallSubmissionPort
+{
+}
 
 #[cfg(target_arch = "wasm32")]
 trait NativeMidnightCompositionCapability {}
@@ -186,6 +200,8 @@ pub struct ApplicationServices {
     midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource>,
     #[cfg(not(target_arch = "wasm32"))]
     midnight_contract_call_funding: Arc<dyn MidnightContractCallFundingPort>,
+    #[cfg(not(target_arch = "wasm32"))]
+    midnight_contract_call_submission: Arc<dyn MidnightContractCallSubmissionPort>,
     create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
@@ -1655,6 +1671,133 @@ impl PassportVaultCallFundingPort for ComposedPassportVaultCallFunding {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+struct ComposedPassportVaultCallCompletion {
+    midnight: Arc<dyn MidnightContractCallSubmissionPort>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PassportVaultCallCompletionPort for ComposedPassportVaultCallCompletion {
+    fn complete(
+        &self,
+        request: PassportVaultCallCompletionRequest,
+    ) -> Result<PassportVaultCallInclusion, PassportVaultCallPortError> {
+        let (
+            profile_id,
+            network_id,
+            draft_id,
+            planning_fingerprint,
+            expires_at,
+            updated_at,
+            transaction,
+        ) = request.into_parts();
+        let outcome = self
+            .midnight
+            .complete_contract_call(MidnightContractCallSubmissionRequest::new(
+                profile_id,
+                network_id,
+                draft_id,
+                planning_fingerprint,
+                expires_at,
+                updated_at,
+                transaction,
+            ))
+            .map_err(map_wallet_transaction_error)?;
+        Ok(PassportVaultCallInclusion {
+            transaction_hash_hex: hex::encode(outcome.transaction_hash),
+            block_hash_hex: hex::encode(outcome.block_hash),
+            block_height: outcome.block_height,
+            fee_atomic_units: outcome.fee_specks,
+            mode: midnight_submission_mode(outcome.mode).to_owned(),
+        })
+    }
+
+    fn status(
+        &self,
+        profile_id: &str,
+        draft_id: &str,
+    ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
+        self.midnight
+            .contract_call_submission_status(profile_id, draft_id)
+            .map_err(map_wallet_transaction_error)
+            .and_then(map_midnight_contract_call_status)
+    }
+
+    fn cancel(
+        &self,
+        profile_id: &str,
+        draft_id: &str,
+    ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
+        self.midnight
+            .cancel_contract_call_submission(profile_id, draft_id)
+            .map_err(map_wallet_transaction_error)
+            .and_then(map_midnight_contract_call_status)
+    }
+
+    fn history(
+        &self,
+        profile_id: &str,
+    ) -> Result<Vec<PassportVaultCallSubmissionStatus>, PassportVaultCallPortError> {
+        self.midnight
+            .contract_call_submission_history(profile_id)
+            .map_err(map_wallet_transaction_error)?
+            .into_iter()
+            .map(map_midnight_contract_call_status)
+            .collect()
+    }
+
+    fn reconcile(
+        &self,
+        profile_id: &str,
+        draft_id: &str,
+    ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
+        self.midnight
+            .reconcile_contract_call_submission(profile_id, draft_id)
+            .map_err(map_wallet_transaction_error)
+            .and_then(map_midnight_contract_call_status)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn map_midnight_contract_call_status(
+    status: MidnightContractCallSubmissionStatus,
+) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError> {
+    let draft_id = PassportVaultCallDraftId::parse(status.draft_id)
+        .map_err(|_| PassportVaultCallPortError::InvalidData)?;
+    let state = match status.state {
+        MidnightContractCallSubmissionState::Running => PassportVaultCallSubmissionState::Running,
+        MidnightContractCallSubmissionState::CancellationRequested => {
+            PassportVaultCallSubmissionState::CancellationRequested
+        }
+        MidnightContractCallSubmissionState::Broadcasting => {
+            PassportVaultCallSubmissionState::Broadcasting
+        }
+        MidnightContractCallSubmissionState::Included => PassportVaultCallSubmissionState::Included,
+        MidnightContractCallSubmissionState::Rejected => PassportVaultCallSubmissionState::Rejected,
+        MidnightContractCallSubmissionState::Expired => PassportVaultCallSubmissionState::Expired,
+        MidnightContractCallSubmissionState::OutcomeUnknown => {
+            PassportVaultCallSubmissionState::OutcomeUnknown
+        }
+    };
+    Ok(PassportVaultCallSubmissionStatus {
+        draft_id,
+        state,
+        transaction_hash_hex: status.transaction_hash.map(hex::encode),
+        block_hash_hex: status.block_hash.map(hex::encode),
+        block_height: status.block_height,
+        fee_atomic_units: status.fee_specks,
+        mode: status.mode.map(midnight_submission_mode).map(str::to_owned),
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+const fn midnight_submission_mode(mode: MidnightContractCallSubmissionMode) -> &'static str {
+    match mode {
+        MidnightContractCallSubmissionMode::Simulated => "simulated",
+        MidnightContractCallSubmissionMode::Live => "live",
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 const fn map_wallet_transaction_error(
     error: oxid_wallet_application::WalletTransactionPortError,
 ) -> PassportVaultCallPortError {
@@ -1713,11 +1856,17 @@ fn with_native_passport_vault_calls(
         Arc::new(ComposedPassportVaultCallFunding {
             midnight: Arc::clone(&services.midnight_contract_call_funding),
         });
+    let completion: Arc<dyn PassportVaultCallCompletionPort> =
+        Arc::new(ComposedPassportVaultCallCompletion {
+            midnight: Arc::clone(&services.midnight_contract_call_submission),
+        });
     let calls = Arc::new(PassportVaultContractCallService::new(
         state_source,
-        Arc::new(NativePassportVaultContractCall::new_with_funding(
-            composer, contexts, funding,
-        )?),
+        Arc::new(
+            NativePassportVaultContractCall::new_with_funding_and_completion(
+                composer, contexts, funding, completion,
+            )?,
+        ),
         Arc::new(SystemClock),
         Arc::new(OsRandom),
     ));
@@ -1729,7 +1878,7 @@ fn with_native_passport_vault_calls(
     services.cancel_passport_vault_call_submission = calls.clone();
     services.list_passport_vault_call_submissions = calls.clone();
     services.reconcile_passport_vault_call_submission = calls;
-    services.passport_vault_call_mode = "native_funded_draft";
+    services.passport_vault_call_mode = "native_settlement";
     Ok(services)
 }
 
@@ -1900,6 +2049,9 @@ where
     let midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource> = midnight.clone();
     #[cfg(not(target_arch = "wasm32"))]
     let midnight_contract_call_funding: Arc<dyn MidnightContractCallFundingPort> = midnight.clone();
+    #[cfg(not(target_arch = "wasm32"))]
+    let midnight_contract_call_submission: Arc<dyn MidnightContractCallSubmissionPort> =
+        midnight.clone();
     let networks = Arc::new(WalletNetworkService::new(Arc::clone(&midnight)));
     let account_derivation = Arc::new(WalletAccountDerivationService::new(Arc::clone(&midnight)));
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
@@ -2176,6 +2328,8 @@ where
         midnight_public_call_context,
         #[cfg(not(target_arch = "wasm32"))]
         midnight_contract_call_funding,
+        #[cfg(not(target_arch = "wasm32"))]
+        midnight_contract_call_submission,
         create_wallet_profile,
         list_wallet_profiles,
         select_wallet_profile,
@@ -2415,7 +2569,7 @@ mod tests {
             composer,
         )
         .expect("native adapter wiring");
-        assert_eq!(services.passport_vault_call_mode(), "native_funded_draft");
+        assert_eq!(services.passport_vault_call_mode(), "native_settlement");
     }
 
     #[test]
