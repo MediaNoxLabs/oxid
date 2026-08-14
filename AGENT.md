@@ -124,7 +124,7 @@ test evidence only; do not relabel it as a real-node broadcast. Keep real-node
 and device resource fixtures explicit backlog items.
 ADR-0067 connects the typed contract-state and retained vault-call lifecycle to
 Dioxus without WebView/iframe/JavaScript bridges. The page must keep the
-process-local standalone ledger, `deterministic_simulation`, and
+standalone ledger, `deterministic_simulation`, and
 `native_settlement` visibly distinct; require prepare, exact authorization, and
 separate prove/submit stages; permit cancellation only before broadcast; and
 route any non-authorized failed submission to reconciliation rather than a
@@ -138,11 +138,23 @@ complete typed lifecycle; terminal copy preserves the adapter's
 simulation-only qualifier. Those simulator checks are not real-node or device
 resource-baseline evidence. Device real-node fixtures and resource baselines
 remain backlog.
+ADR-0068 persists only the separate standalone Passport Vault conformance
+ledger. Native headless/mobile composition uses a schema-one, 8 MiB-bounded,
+owner-private atomic `private/passport-vault.json` beside the profile store or
+the normalized absolute `OXID_PASSPORT_VAULT_STORE_PATH`. Domain restore checks
+contiguous lock IDs, totals, per-lock accounting, at most 4,096 locks and
+16,384 consumed credential fingerprints, exact claim count, and replay-set
+references. Corruption, permissive permissions, symlinks, and invalid explicit
+paths fail closed; no fallback may erase replay evidence. The file is
+`standalone` state only and can never source canonical replay, authorize a
+native call, or imply Midnight settlement. In-memory/WASM composition remains
+truthfully `process_local`; iOS, Android, and headless process-restart tests
+cover durable standalone accounting and claim replay.
 The finalized node's timestamp extrinsic is milliseconds and is normalized to
 seconds by canonical history collection; the indexer GraphQL `block.timestamp`
 is already Unix seconds and must not be divided again.
-An authenticated replay cache and optional durable standalone state also remain
-issue #31. Live protocol transport and production/mobile presentation proving
+An authenticated replay cache remains issue #31. Live protocol transport and
+production/mobile presentation proving
 remain deferred.
 Standalone presentation now reauthorizes the exact statement with the
 credential-bound method's current managed protected key, runs the authenticated
@@ -714,10 +726,12 @@ challenge-signing oracle, and it still leaves ZK proving/verification closed.
 ADR-0050 adds exact native headless Compact proving and an independently
 reconstructed verifier behind authenticated Nix artifacts. ADR-0051 isolates
 Passport Vault policy and accounting in a product-specific hexagon. Its
-standalone repository is bounded and process-local, its credential adapter
-rechecks the exact Compact Digital Passport and pinned development trust
-anchor, and its incoming surfaces never label local state movement as a chain
-submission. ADR-0052 authenticates the exact Passport Vault/VC/toolchain inputs,
+standalone repository began as bounded process-local state and is now
+owner-private and restart-durable on supported native targets under ADR-0068;
+its credential adapter rechecks the exact Compact Digital Passport and pinned
+development trust anchor, and its incoming surfaces never label local state
+movement as a chain submission. ADR-0052 authenticates the exact Passport
+Vault/VC/toolchain inputs,
 composes all five contract circuits, and decodes the 15-field version-1 tagged
 ledger natively with bounded integrity checks. Valid decoding alone is not
 proof of address authenticity, finality, or freshness. Issue #31 owns the
@@ -787,7 +801,7 @@ Current package ownership:
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
-| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing authorization-bound settlement for create/deposit/claim/withdraw; managed-custody claim conformance is exercised through composition. |
+| `crates/adapters/passport-vault` | Product-specific bounded in-memory plus owner-private atomic standalone repositories, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing authorization-bound settlement for create/deposit/claim/withdraw; managed-custody claim conformance is exercised through composition. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
@@ -908,11 +922,13 @@ Passport Vault standalone composition follows the same exception. Its headless
 methods are `vault.total_locked`, `vault.locks.list`,
 `vault.credentials.list`, `vault.lock.create`, `vault.deposit`, `vault.claim`,
 and `vault.withdraw`. State-changing calls require their exact declared intent.
-The repository is process-local: restart clears locks, and all views must retain
-the `standalone` source label. Production composition wires unavailable vault
-ports. Never add a hard-coded contract address, JavaScript bridge, iframe,
-ambient companion-repository lookup, or generated artifact to make it appear
-live; issue #31 is the reviewed live boundary.
+Native headless/mobile state uses an owner-private atomic file and survives
+restart; in-memory/WASM state remains `process_local`. All views retain the
+`standalone` source label and capability discovery reports the independent
+persistence mode. Production composition wires unavailable vault ports. Never
+add a hard-coded contract address, JavaScript bridge, iframe, ambient
+companion-repository lookup, or generated artifact to make it appear live;
+issue #31 is the reviewed live boundary.
 
 The staged chain-call harness is the `vault.contract_call.*` family:
 `prepare`, `authorize`, `draft`, `submit`, `start_submission`,

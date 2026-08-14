@@ -3,6 +3,9 @@
 #![forbid(unsafe_code)]
 
 #[cfg(not(target_arch = "wasm32"))]
+mod durable_repository;
+
+#[cfg(not(target_arch = "wasm32"))]
 mod authenticated_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod compact_artifacts;
@@ -34,6 +37,10 @@ pub use compact_artifacts::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use contract_state::NativePassportVaultContractStateDecoder;
+#[cfg(not(target_arch = "wasm32"))]
+pub use durable_repository::{
+    JsonPassportVaultRepository, PassportVaultStoreConfig, PassportVaultStoreConfigError,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use finalized_history::{
     FinalizedMidnightHistory, FinalizedMidnightHistoryCollector,

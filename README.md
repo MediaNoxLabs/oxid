@@ -109,6 +109,11 @@ key lifecycle is explicitly `development_only`, process-local, and ephemeral;
 it is useful for conformance testing, not custody. Profile metadata persists in the
 platform application-data directory by default; set
 `OXID_PROFILE_STORE_PATH` to isolate an automation run.
+The standalone Passport Vault ledger is a separate owner-private bounded file
+at `private/passport-vault.json` beside that profile store. It preserves local
+lock accounting and claim replay across restarts without becoming chain state;
+set `OXID_PASSPORT_VAULT_STORE_PATH` to a normalized absolute file path when an
+isolated harness route is required.
 
 The implemented account methods are `wallet.network.list`,
 `wallet.network.select`, `wallet.account.derive`, `wallet.account.get`, `wallet.address.list`,
@@ -348,22 +353,24 @@ Explicit live composition requires canonical replay state. It remains
 `native_pending` until the complete standalone routes, deployment height, and
 packaged composer are configured. The Nix closure's generated client, exact ABI, four wallet
 circuit keys/IR, and degree-10/11/17 parameters are authenticated at runtime.
-The separate Nix composer now executes typed `createLock`, `depositToLock`, and
-`withdrawFromLock` calls and its output round-trips through the pinned Rust
-ledger codec. The native retained adapter now accepts only canonical-replay
+The separate Nix composer executes typed `createLock`, `depositToLock`, and
+`withdrawFromLock` calls plus the authorization-gated protected
+`claimFromLock` schema; its output round-trips through the pinned Rust ledger
+codec. The native retained adapter accepts only canonical-replay
 state plus fresh bounded public Midnight context, requires real serialized
 Zswap/ledger-parameter snapshots, and keeps the unproven transaction in a
 zeroizing private buffer through prepare. Exact authorization then derives the
 generated call's native NIGHT deficit, selects synchronized unshielded inputs,
 returns change, and signs once per input inside protected Midnight custody.
 Withdraw must require no NIGHT funding. The complete native capability reports
-`native_settlement` for create, deposit, and withdraw. It reuses the standalone
+`native_settlement` for all four wallet operations. It reuses the standalone
 Midnight DUST sync, exact fee balancing, proving, persist-before-broadcast
 journal, node submission, pre-broadcast cancellation, and finalized
 reconciliation path, so `settlesOnMidnight` is true. Configure
 `OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH` for restart-safe public submission
-metadata. Claim and administration remain rejected until protected claim
-composition replaces the prototype's deterministic holder and nonce shortcuts.
+metadata. Claim composition re-verifies the exact stored credential and uses
+managed holder custody plus fresh randomness only after exact authorization;
+the administrative circuit remains rejected.
 Authorization and proving/submission use two separate exact intents in both
 modes. Incoming JSON never accepts private credential material, witnesses,
 signatures, proofs, or serialized transactions.
@@ -456,8 +463,9 @@ just ios-run
 The repository iOS and Android launch scripts explicitly enable
 `oxid-app/standalone-development`. Native builds select the same
 environment-aware composition as the headless harness: with no live variables,
-public profiles persist, protected roots and drafts are process-local, no chain
-service is contacted, and the UI labels simulated results. A complete reviewed
+public profiles plus the standalone Passport Vault ledger persist, protected
+roots and drafts are process-local, no chain service is contacted, and the UI
+labels simulated results. A complete reviewed
 standalone configuration selects authenticated native settlement; partial or
 invalid configuration fails startup. A normal `cargo run -p oxid-app` does not
 enable this feature and stays fail-closed.
@@ -486,7 +494,8 @@ complete a consented self-issued DID login,
 read the truthfully labelled Passport Vault contract state, complete an exact
 prepare/authorize/prove/submit call lifecycle,
 restart the process, and assert public-profile, submission, DID-inventory, and
-encrypted credential restoration:
+encrypted credential restoration plus standalone Passport Vault accounting and
+claim-replay restoration:
 
 ```bash
 just ios-smoke

@@ -10,6 +10,7 @@ use std::{
 
 pub const MAX_VAULT_ACTOR_CHARACTERS: usize = 128;
 pub const MAX_VAULT_LOCKS: usize = 4_096;
+pub const MAX_VAULT_CONSUMED_CLAIMS: usize = 16_384;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VaultActorId(String);
@@ -175,6 +176,153 @@ pub struct PassportVaultClaimReceipt {
     pub remaining: u128,
 }
 
+/// Adapter-neutral snapshot of one standalone lock.
+///
+/// Persistence adapters may encode this type, but must reconstruct live state
+/// through [`PassportVaultState::restore`] so every accounting invariant is
+/// checked again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassportVaultLockSnapshot {
+    id: VaultLockId,
+    creator: VaultActorId,
+    policy: PassportVaultPolicy,
+    total_deposited: u128,
+    total_released: u128,
+}
+
+impl PassportVaultLockSnapshot {
+    #[must_use]
+    pub fn new(
+        id: VaultLockId,
+        creator: VaultActorId,
+        policy: PassportVaultPolicy,
+        total_deposited: u128,
+        total_released: u128,
+    ) -> Self {
+        Self {
+            id,
+            creator,
+            policy,
+            total_deposited,
+            total_released,
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> VaultLockId {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn creator(&self) -> &VaultActorId {
+        &self.creator
+    }
+
+    #[must_use]
+    pub const fn policy(&self) -> &PassportVaultPolicy {
+        &self.policy
+    }
+
+    #[must_use]
+    pub const fn total_deposited(&self) -> u128 {
+        self.total_deposited
+    }
+
+    #[must_use]
+    pub const fn total_released(&self) -> u128 {
+        self.total_released
+    }
+}
+
+/// One replay-prevention entry retained by the standalone conformance ledger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PassportVaultConsumedClaimSnapshot {
+    lock_id: VaultLockId,
+    credential: CredentialFingerprint,
+}
+
+impl PassportVaultConsumedClaimSnapshot {
+    #[must_use]
+    pub const fn new(lock_id: VaultLockId, credential: CredentialFingerprint) -> Self {
+        Self {
+            lock_id,
+            credential,
+        }
+    }
+
+    #[must_use]
+    pub const fn lock_id(self) -> VaultLockId {
+        self.lock_id
+    }
+
+    #[must_use]
+    pub const fn credential(self) -> CredentialFingerprint {
+        self.credential
+    }
+}
+
+/// Complete standalone state suitable for a bounded outgoing repository.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassportVaultStateSnapshot {
+    next_lock_id: u64,
+    locks: Vec<PassportVaultLockSnapshot>,
+    consumed_claims: Vec<PassportVaultConsumedClaimSnapshot>,
+    total_deposited: u128,
+    total_released: u128,
+    claim_count: u64,
+}
+
+impl PassportVaultStateSnapshot {
+    #[must_use]
+    pub fn new(
+        next_lock_id: u64,
+        locks: Vec<PassportVaultLockSnapshot>,
+        consumed_claims: Vec<PassportVaultConsumedClaimSnapshot>,
+        total_deposited: u128,
+        total_released: u128,
+        claim_count: u64,
+    ) -> Self {
+        Self {
+            next_lock_id,
+            locks,
+            consumed_claims,
+            total_deposited,
+            total_released,
+            claim_count,
+        }
+    }
+
+    #[must_use]
+    pub const fn next_lock_id(&self) -> u64 {
+        self.next_lock_id
+    }
+
+    #[must_use]
+    pub fn locks(&self) -> &[PassportVaultLockSnapshot] {
+        &self.locks
+    }
+
+    #[must_use]
+    pub fn consumed_claims(&self) -> &[PassportVaultConsumedClaimSnapshot] {
+        &self.consumed_claims
+    }
+
+    #[must_use]
+    pub const fn total_deposited(&self) -> u128 {
+        self.total_deposited
+    }
+
+    #[must_use]
+    pub const fn total_released(&self) -> u128 {
+        self.total_released
+    }
+
+    #[must_use]
+    pub const fn claim_count(&self) -> u64 {
+        self.claim_count
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PassportVaultState {
     next_lock_id: u64,
@@ -186,6 +334,99 @@ pub struct PassportVaultState {
 }
 
 impl PassportVaultState {
+    #[must_use]
+    pub fn snapshot(&self) -> PassportVaultStateSnapshot {
+        PassportVaultStateSnapshot::new(
+            self.next_lock_id,
+            self.locks
+                .values()
+                .map(|lock| {
+                    PassportVaultLockSnapshot::new(
+                        lock.id,
+                        lock.creator.clone(),
+                        lock.policy.clone(),
+                        lock.total_deposited,
+                        lock.total_released,
+                    )
+                })
+                .collect(),
+            self.consumed_claims
+                .iter()
+                .map(|(lock_id, credential)| {
+                    PassportVaultConsumedClaimSnapshot::new(*lock_id, *credential)
+                })
+                .collect(),
+            self.total_deposited,
+            self.total_released,
+            self.claim_count,
+        )
+    }
+
+    pub fn restore(snapshot: PassportVaultStateSnapshot) -> Result<Self, PassportVaultError> {
+        if snapshot.locks.len() > MAX_VAULT_LOCKS
+            || snapshot.consumed_claims.len() > MAX_VAULT_CONSUMED_CLAIMS
+            || snapshot.claim_count != snapshot.consumed_claims.len() as u64
+            || snapshot.next_lock_id != snapshot.locks.len() as u64
+        {
+            return Err(PassportVaultError::InvalidState);
+        }
+
+        let mut locks = BTreeMap::new();
+        let mut total_deposited = 0_u128;
+        let mut total_released = 0_u128;
+        for (expected_id, lock) in snapshot.locks.into_iter().enumerate() {
+            if lock.id.value() != expected_id as u64 || lock.total_released > lock.total_deposited {
+                return Err(PassportVaultError::InvalidState);
+            }
+            total_deposited = total_deposited
+                .checked_add(lock.total_deposited)
+                .ok_or(PassportVaultError::InvalidState)?;
+            total_released = total_released
+                .checked_add(lock.total_released)
+                .ok_or(PassportVaultError::InvalidState)?;
+            let id = lock.id;
+            if locks
+                .insert(
+                    id,
+                    PassportVaultLock {
+                        id,
+                        creator: lock.creator,
+                        policy: lock.policy,
+                        total_deposited: lock.total_deposited,
+                        total_released: lock.total_released,
+                    },
+                )
+                .is_some()
+            {
+                return Err(PassportVaultError::InvalidState);
+            }
+        }
+        if total_deposited != snapshot.total_deposited
+            || total_released != snapshot.total_released
+            || total_released > total_deposited
+        {
+            return Err(PassportVaultError::InvalidState);
+        }
+
+        let mut consumed_claims = BTreeSet::new();
+        for claim in snapshot.consumed_claims {
+            if !locks.contains_key(&claim.lock_id)
+                || !consumed_claims.insert((claim.lock_id, claim.credential))
+            {
+                return Err(PassportVaultError::InvalidState);
+            }
+        }
+
+        Ok(Self {
+            next_lock_id: snapshot.next_lock_id,
+            locks,
+            consumed_claims,
+            total_deposited,
+            total_released,
+            claim_count: snapshot.claim_count,
+        })
+    }
+
     pub fn create_lock(
         &mut self,
         creator: VaultActorId,
@@ -289,6 +530,9 @@ impl PassportVaultState {
         if self.consumed_claims.contains(&(lock_id, credential)) {
             return Err(PassportVaultError::CredentialAlreadyClaimed);
         }
+        if self.consumed_claims.len() >= MAX_VAULT_CONSUMED_CLAIMS {
+            return Err(PassportVaultError::CapacityExceeded);
+        }
         let next_total = self
             .total_released
             .checked_add(amount)
@@ -355,6 +599,7 @@ pub enum PassportVaultError {
     InvalidPolicy,
     InvalidAmount,
     InvalidCredentialEvidence,
+    InvalidState,
     CapacityExceeded,
     LockNotFound,
     NotLockCreator,
@@ -372,6 +617,7 @@ impl fmt::Display for PassportVaultError {
             Self::InvalidPolicy => "vault policy is invalid",
             Self::InvalidAmount => "vault amount must be positive",
             Self::InvalidCredentialEvidence => "credential evidence is invalid",
+            Self::InvalidState => "vault state failed integrity validation",
             Self::CapacityExceeded => "vault lock capacity was exceeded",
             Self::LockNotFound => "vault lock was not found",
             Self::NotLockCreator => "only the lock creator may perform this operation",
@@ -444,6 +690,56 @@ mod tests {
         assert_eq!(
             CredentialFingerprint::new([0; 32]),
             Err(PassportVaultError::InvalidCredentialEvidence)
+        );
+    }
+
+    #[test]
+    fn restores_only_complete_accounting_and_replay_snapshots() {
+        let mut vault = PassportVaultState::default();
+        let creator = actor("profile_creator");
+        let lock = vault
+            .create_lock(creator.clone(), policy(), 100)
+            .expect("lock");
+        vault.deposit(&creator, lock, 20).expect("deposit");
+        vault
+            .claim(
+                lock,
+                CredentialFingerprint::new([9; 32]).expect("credential"),
+                40,
+                20_000,
+            )
+            .expect("claim");
+
+        let snapshot = vault.snapshot();
+        assert_eq!(
+            PassportVaultState::restore(snapshot.clone())
+                .expect("valid snapshot")
+                .snapshot(),
+            snapshot
+        );
+        let bad_total = PassportVaultStateSnapshot::new(
+            snapshot.next_lock_id(),
+            snapshot.locks().to_vec(),
+            snapshot.consumed_claims().to_vec(),
+            snapshot.total_deposited() + 1,
+            snapshot.total_released(),
+            snapshot.claim_count(),
+        );
+        assert_eq!(
+            PassportVaultState::restore(bad_total),
+            Err(PassportVaultError::InvalidState)
+        );
+        let duplicate_claim = PassportVaultStateSnapshot::new(
+            snapshot.next_lock_id(),
+            snapshot.locks().to_vec(),
+            vec![snapshot.consumed_claims()[0], snapshot.consumed_claims()[0]],
+            snapshot.total_deposited(),
+            snapshot.total_released(),
+            2,
+        );
+        assert_eq!(
+            PassportVaultState::restore(duplicate_claim),
+            Err(PassportVaultError::InvalidState)
         );
     }
 }

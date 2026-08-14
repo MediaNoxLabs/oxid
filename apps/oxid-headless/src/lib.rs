@@ -295,7 +295,13 @@ impl HeadlessWallet {
                 "methods": capability_manifest(
                     self.application.compact_presentation_proof_available(),
                     self.application.passport_vault_call_mode(),
+                    self.application.passport_vault_state_persistence(),
                 ),
+                "passportVaultState": {
+                    "mode": "standalone",
+                    "persistence": self.application.passport_vault_state_persistence(),
+                    "settlesOnMidnight": false,
+                },
                 "passportVaultContractCalls": {
                     "mode": self.application.passport_vault_call_mode(),
                     "contractAddressHex": self.application.passport_vault_call_contract_address_hex(),
@@ -4989,6 +4995,7 @@ fn passport_vault_call_port_error(
 fn capability_manifest(
     compact_presentation_proof_available: bool,
     passport_vault_call_mode: &str,
+    passport_vault_state_persistence: &str,
 ) -> Value {
     let passport_vault_call_authentication =
         if passport_vault_call_mode == "deterministic_simulation" {
@@ -5070,8 +5077,8 @@ fn capability_manifest(
         { "method": "wallet.shielded.sync.status", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached", "unavailable"] },
         { "method": "wallet.shielded.sync.start", "status": "ready", "mode": "standalone", "execution": "adapter_worker" },
         { "method": "wallet.shielded.sync.cancel", "status": "ready", "mode": "standalone", "checkpoint": "resumable" },
-        { "method": "vault.total_locked", "status": "ready", "mode": "standalone", "state": "process_local" },
-        { "method": "vault.locks.list", "status": "ready", "mode": "standalone", "state": "process_local" },
+        { "method": "vault.total_locked", "status": "ready", "mode": "standalone", "state": passport_vault_state_persistence, "settlesOnMidnight": false },
+        { "method": "vault.locks.list", "status": "ready", "mode": "standalone", "state": passport_vault_state_persistence, "settlesOnMidnight": false },
         { "method": "vault.contract_state.decode", "status": "ready", "mode": "native", "source": "pinned_layout_tagged_midnight_state", "mutates": false },
         { "method": "vault.contract_state.read", "status": "composition_dependent", "mode": "native", "sources": ["deterministic_simulation", "node_anchored_indexer", "finalized_node_replay"], "stateAuthentication": ["deterministic_simulation", "indexer_supplied_not_proven", "canonical_finalized_replay"], "mutates": false },
         { "method": "vault.contract_call.prepare", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "operations": passport_vault_call_operations, "requiresStateAuthentication": passport_vault_call_authentication, "privateMaterialExposed": false },
@@ -5198,6 +5205,14 @@ mod tests {
             responses[0]["result"]["passportVaultContractCalls"]["settlesOnMidnight"],
             false
         );
+        assert_eq!(
+            responses[0]["result"]["passportVaultState"]["persistence"],
+            "process_local"
+        );
+        assert_eq!(
+            responses[0]["result"]["passportVaultState"]["settlesOnMidnight"],
+            false
+        );
         let methods = responses[0]["result"]["methods"]
             .as_array()
             .expect("methods should be an array");
@@ -5312,7 +5327,7 @@ mod tests {
 
     #[test]
     fn native_settlement_manifest_includes_conformant_claim_and_reports_recovery() {
-        let methods = capability_manifest(false, "native_settlement");
+        let methods = capability_manifest(false, "native_settlement", "owner_private_atomic_file");
         let methods = methods.as_array().expect("capability array");
         let prepare = methods
             .iter()

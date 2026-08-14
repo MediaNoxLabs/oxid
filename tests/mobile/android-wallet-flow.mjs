@@ -308,6 +308,13 @@ try {
 
     await clickButton("Vault");
     await waitFor(
+      "document.body.innerText.includes('Owner-private durable conformance ledger') && document.body.innerText.includes('survives app restart')",
+      "durable standalone Passport Vault state label",
+    );
+    const vaultStatePersistent = await evaluate(
+      "document.body.innerText.includes('Owner-private durable conformance ledger') && document.body.innerText.includes('no on-chain transaction submitted')",
+    );
+    await waitFor(
       "document.body.innerText.includes('Deterministic simulation') && document.body.innerText.includes('no node broadcast occurs')",
       "truthfully labelled deterministic vault-call mode",
     );
@@ -399,8 +406,8 @@ try {
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow) {
+    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -438,9 +445,17 @@ try {
     const credentialRestored = await evaluate(
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
     );
-    const restored = { ...walletRestored, credentialRestored, didRestored, managedDidRestored };
-    if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored || !restored.credentialRestored || !restored.didRestored || !restored.managedDidRestored) {
-      throw new Error("Android restart did not restore public profile and submission metadata");
+    await clickButton("Vault");
+    await waitFor(
+      "document.body.innerText.includes('90 base units remaining') && document.body.innerText.includes('Claims 1') && document.body.innerText.includes('Owner-private durable conformance ledger')",
+      "restored standalone Passport Vault accounting",
+    );
+    const vaultRestored = await evaluate(
+      "document.body.innerText.includes('90 base units remaining') && document.body.innerText.includes('Claims 1') && document.body.innerText.includes('survives app restart')",
+    );
+    const restored = { ...walletRestored, credentialRestored, didRestored, managedDidRestored, vaultRestored };
+    if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored || !restored.credentialRestored || !restored.didRestored || !restored.managedDidRestored || !restored.vaultRestored) {
+      throw new Error("Android restart did not restore the expected public and owner-private state");
     }
     process.stdout.write(`${JSON.stringify(restored)}\n`);
   }

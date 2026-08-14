@@ -8,7 +8,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/vault`
 - Contract reference: `midnight-identity-solution-examples` commit `e4a92a6be2cc6dc34f68261f10c19c9312043807`, `packages/contracts/vault/src/passport-vault.compact`, SHA-256 `2ebc5b34dd440bc9a9736408f29f5003e7a78f26a564b392be2af36de69102f4`
 - Related: ADR-0001, ADR-0003, ADR-0004, ADR-0006, ADR-0013, ADR-0015, ADR-0017, ADR-0020, ADR-0021, ADR-0024, ADR-0038, ADR-0042, ADR-0045, ADR-0050, issues #2 and #31
-- Implementation state: the exact public multi-lock behavior, Compact Digital Passport policy verification, standalone product adapter, headless flow, and Dioxus mobile journey are implemented; live Compact state and transactions plus durable standalone state remain issue #31
+- Implementation state: the exact public multi-lock behavior, Compact Digital Passport policy verification, standalone product adapter, owner-private durable standalone ledger, headless flow, and Dioxus mobile journey are implemented; live Compact state and transactions remain issue #31
 
 ## Context
 
@@ -55,11 +55,14 @@ credential fingerprint and verifier-controlled day to the vault application;
 claim values, openings, proof bytes, and credential roots never enter incoming
 views or logs.
 
-Standalone composition uses a bounded process-local repository and the exact
-credential-policy adapter. It labels the source `standalone` and never reports
-creation, deposit, claim, or withdrawal as an on-chain submission. Production
-composition wires unavailable ports and fails closed. The headless protocol and
-Dioxus mobile UI call the same use cases.
+Standalone composition originally used a bounded process-local repository.
+ADR-0068 supersedes that repository choice for native headless/mobile
+composition with a bounded owner-private atomic file while preserving the
+exact credential-policy adapter. In-memory and WASM composition remains
+process-local. Every composition labels the source `standalone` and never
+reports creation, deposit, claim, or withdrawal as an on-chain submission.
+Production composition wires unavailable ports and fails closed. The headless
+protocol and Dioxus mobile UI call the same use cases.
 
 A live adapter is a separate issue #31 delivery. It must authenticate immutable
 Compact sources/artifacts through Nix, decode native state in Rust, and route
@@ -89,8 +92,9 @@ blindly.
   packages.
 - Headless and mobile flows can exercise complete accounting, policy, consent,
   and replay behavior without a chain or foreign runtime.
-- Process restart deliberately clears standalone locks until the separately
-  reviewed durable store in issue #31 is implemented.
+- Native standalone state and consumed-credential replay evidence survive
+  restart in the separately reviewed ADR-0068 store; in-memory and WASM
+  composition remain process-local.
 - Live parity is not claimed by the standalone adapter; source and state mode
   remain explicit at every incoming boundary.
 

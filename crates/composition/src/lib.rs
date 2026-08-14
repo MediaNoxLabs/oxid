@@ -42,14 +42,14 @@ use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpen
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_passport_vault::{
     AuthenticatedPassportVaultStateConfigError, AuthenticatedPassportVaultStateSource,
-    FundedPassportVaultCall, NativePassportVaultContractCall,
+    FundedPassportVaultCall, JsonPassportVaultRepository, NativePassportVaultContractCall,
     NativePassportVaultContractStateDecoder, NodeAnchoredPassportVaultStateSource,
     PassportVaultCallChainContextSource, PassportVaultCallCompletionPort,
     PassportVaultCallCompletionRequest, PassportVaultCallComposerConfigError,
     PassportVaultCallCompositionContext, PassportVaultCallCompositionContextSource,
-    PassportVaultCallFundingPort, PassportVaultCallFundingRequest,
-    SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX, SimulatedPassportVaultContractCall,
-    SimulatedPassportVaultStateSource,
+    PassportVaultCallFundingPort, PassportVaultCallFundingRequest, PassportVaultStoreConfig,
+    PassportVaultStoreConfigError, SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX,
+    SimulatedPassportVaultContractCall, SimulatedPassportVaultStateSource,
 };
 use oxid_adapter_passport_vault::{
     InMemoryPassportVaultRepository, StandalonePassportVaultCredential,
@@ -284,6 +284,7 @@ pub struct ApplicationServices {
     reconcile_passport_vault_call_submission: Arc<dyn ReconcilePassportVaultCallSubmissionUseCase>,
     passport_vault_call_mode: &'static str,
     passport_vault_call_contract_address_hex: Option<&'static str>,
+    passport_vault_state_persistence: &'static str,
     compact_presentation_proof_available: bool,
 }
 
@@ -319,6 +320,27 @@ struct IdentityAdapters {
     credential_issuance: CredentialIssuanceComposition,
     self_issued_authentication: SelfIssuedAuthenticationComposition,
     credential_presentation: CredentialPresentationComposition,
+}
+
+struct PassportVaultRepositoryComposition {
+    repository: Arc<dyn PassportVaultRepository>,
+    persistence: &'static str,
+}
+
+impl PassportVaultRepositoryComposition {
+    fn unavailable() -> Self {
+        Self {
+            repository: Arc::new(UnavailablePassportVaultRepository),
+            persistence: "unavailable",
+        }
+    }
+
+    fn process_local() -> Self {
+        Self {
+            repository: Arc::new(InMemoryPassportVaultRepository::default()),
+            persistence: "process_local",
+        }
+    }
 }
 
 impl ApplicationServices {
@@ -747,6 +769,13 @@ impl ApplicationServices {
         self.passport_vault_call_contract_address_hex
     }
 
+    /// Reports only how the standalone conformance ledger is retained. This
+    /// never describes native contract state or contract-call history.
+    #[must_use]
+    pub const fn passport_vault_state_persistence(&self) -> &'static str {
+        self.passport_vault_state_persistence
+    }
+
     /// Reports whether an authenticated Compact prover and an independent
     /// verifier are connected to this composition.
     #[must_use]
@@ -775,6 +804,7 @@ pub fn compose() -> ApplicationServices {
             self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
             credential_presentation: CredentialPresentationComposition::Unavailable,
         },
+        PassportVaultRepositoryComposition::unavailable(),
     )
 }
 
@@ -882,6 +912,9 @@ pub const DID_STORE_PATH_ENV: &str = "OXID_DID_STORE_PATH";
 pub const CREDENTIAL_STORE_PATH_ENV: &str = "OXID_CREDENTIAL_STORE_PATH";
 /// Environment variable holding the development-only credential wrapping key.
 pub const CREDENTIAL_KEY_PATH_ENV: &str = "OXID_CREDENTIAL_KEY_PATH";
+/// Environment variable holding the owner-private standalone Passport Vault file.
+#[cfg(not(target_arch = "wasm32"))]
+pub const PASSPORT_VAULT_STORE_PATH_ENV: &str = "OXID_PASSPORT_VAULT_STORE_PATH";
 
 /// Safe startup failures for optional standalone-indexer composition.
 #[cfg(not(target_arch = "wasm32"))]
@@ -900,6 +933,7 @@ pub enum HeadlessCompositionError {
     InvalidPassportVaultDeploymentHeight,
     InvalidPassportVaultHistoryConfiguration(AuthenticatedPassportVaultStateConfigError),
     InvalidPassportVaultComposerConfiguration(PassportVaultCallComposerConfigError),
+    InvalidPassportVaultStoreConfiguration(PassportVaultStoreConfigError),
     PassportVaultHistoryRequiresStandalone,
     InvalidCompactPresentationRuntime(CompactPresentationRuntimeError),
     IncompleteCredentialStoreConfiguration,
@@ -934,6 +968,7 @@ impl std::fmt::Display for HeadlessCompositionError {
             }
             Self::InvalidPassportVaultHistoryConfiguration(error) => return error.fmt(formatter),
             Self::InvalidPassportVaultComposerConfiguration(error) => return error.fmt(formatter),
+            Self::InvalidPassportVaultStoreConfiguration(error) => return error.fmt(formatter),
             Self::PassportVaultHistoryRequiresStandalone => {
                 "Passport Vault canonical replay requires the complete standalone Midnight routes"
             }
@@ -974,6 +1009,10 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
     if matches!(credential_paths, (Some(_), None) | (None, Some(_))) {
         return Err(HeadlessCompositionError::IncompleteCredentialStoreConfiguration);
     }
+    read_optional_environment(PASSPORT_VAULT_STORE_PATH_ENV)?
+        .map(PassportVaultStoreConfig::new)
+        .transpose()
+        .map_err(HeadlessCompositionError::InvalidPassportVaultStoreConfiguration)?;
     read_optional_environment(MIDNIGHT_DID_RESOLVER_URL_ENV)?
         .map(HttpDidResolverConfig::new)
         .transpose()
@@ -1532,6 +1571,7 @@ fn compose_in_memory_with_presentation(
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
             credential_presentation,
         },
+        PassportVaultRepositoryComposition::process_local(),
     );
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -1999,6 +2039,7 @@ where
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
             credential_presentation,
         },
+        headless_passport_vault_repository(),
     )
 }
 
@@ -2007,6 +2048,7 @@ fn compose_with_identity_adapters<R, S, M>(
     security: Arc<S>,
     midnight: Arc<M>,
     identity_adapters: IdentityAdapters,
+    passport_vault_repository: PassportVaultRepositoryComposition,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository + 'static,
@@ -2211,11 +2253,7 @@ where
         };
     let self_issued_authentication =
         Arc::new(SelfIssuedAuthenticationService::new(self_issued_protocol));
-    let passport_vault_repository: Arc<dyn PassportVaultRepository> = if standalone_passport_vault {
-        Arc::new(InMemoryPassportVaultRepository::default())
-    } else {
-        Arc::new(UnavailablePassportVaultRepository)
-    };
+    let passport_vault_state_persistence = passport_vault_repository.persistence;
     let passport_vault_credential: Arc<dyn PassportVaultCredentialPort> =
         if standalone_passport_vault {
             Arc::new(StandalonePassportVaultCredential::new(
@@ -2227,7 +2265,7 @@ where
             Arc::new(UnavailablePassportVaultCredential)
         };
     let passport_vault = Arc::new(PassportVaultService::new(
-        passport_vault_repository,
+        passport_vault_repository.repository,
         passport_vault_credential,
         random.clone(),
     ));
@@ -2441,6 +2479,7 @@ where
         reconcile_passport_vault_call_submission,
         passport_vault_call_mode: "unavailable",
         passport_vault_call_contract_address_hex: None,
+        passport_vault_state_persistence,
         compact_presentation_proof_available,
     }
 }
@@ -2488,6 +2527,30 @@ fn headless_did_repository() -> Arc<dyn DidRecordRepository> {
         || Arc::new(UnavailableDidRecordRepository) as Arc<dyn DidRecordRepository>,
         |path| Arc::new(JsonDidRecordRepository::new(path)) as Arc<dyn DidRecordRepository>,
     )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn headless_passport_vault_repository() -> PassportVaultRepositoryComposition {
+    let path = std::env::var_os(PASSPORT_VAULT_STORE_PATH_ENV)
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            JsonWalletProfileRepository::at_default_location()
+                .configured_path()
+                .and_then(std::path::Path::parent)
+                .map(|directory| directory.join("private/passport-vault.json"))
+        });
+    path.and_then(|path| PassportVaultStoreConfig::new(path).ok())
+        .map_or_else(PassportVaultRepositoryComposition::unavailable, |config| {
+            PassportVaultRepositoryComposition {
+                repository: Arc::new(JsonPassportVaultRepository::new(config)),
+                persistence: "owner_private_atomic_file",
+            }
+        })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn headless_passport_vault_repository() -> PassportVaultRepositoryComposition {
+    PassportVaultRepositoryComposition::process_local()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -3068,6 +3131,7 @@ mod tests {
                 self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
                 credential_presentation: CredentialPresentationComposition::Unavailable,
             },
+            PassportVaultRepositoryComposition::unavailable(),
         );
         let status = services
             .get_wallet_security_status()

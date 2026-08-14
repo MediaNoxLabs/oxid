@@ -138,6 +138,7 @@ pub struct WalletUiServices {
     deposit_passport_vault_lock: Arc<dyn DepositPassportVaultLockUseCase>,
     claim_passport_vault_lock: Arc<dyn ClaimPassportVaultLockUseCase>,
     withdraw_passport_vault_lock: Arc<dyn WithdrawPassportVaultLockUseCase>,
+    passport_vault_state_persistence: String,
     passport_vault_contract_calls: PassportVaultContractCallUiServices,
 }
 
@@ -148,6 +149,7 @@ pub struct PassportVaultUiServices {
     deposit: Arc<dyn DepositPassportVaultLockUseCase>,
     claim: Arc<dyn ClaimPassportVaultLockUseCase>,
     withdraw: Arc<dyn WithdrawPassportVaultLockUseCase>,
+    state_persistence: String,
     contract_calls: PassportVaultContractCallUiServices,
 }
 
@@ -159,6 +161,7 @@ impl PassportVaultUiServices {
         deposit: Arc<dyn DepositPassportVaultLockUseCase>,
         claim: Arc<dyn ClaimPassportVaultLockUseCase>,
         withdraw: Arc<dyn WithdrawPassportVaultLockUseCase>,
+        state_persistence: impl Into<String>,
         contract_calls: PassportVaultContractCallUiServices,
     ) -> Self {
         Self {
@@ -167,6 +170,7 @@ impl PassportVaultUiServices {
             deposit,
             claim,
             withdraw,
+            state_persistence: state_persistence.into(),
             contract_calls,
         }
     }
@@ -753,6 +757,7 @@ impl WalletUiServices {
             deposit_passport_vault_lock: vault.deposit,
             claim_passport_vault_lock: vault.claim,
             withdraw_passport_vault_lock: vault.withdraw,
+            passport_vault_state_persistence: vault.state_persistence,
             passport_vault_contract_calls: vault.contract_calls,
         }
     }
@@ -1069,6 +1074,11 @@ impl WalletUiServices {
     #[must_use]
     pub fn passport_vault_contract_calls(&self) -> PassportVaultContractCallUiServices {
         self.passport_vault_contract_calls.clone()
+    }
+
+    #[must_use]
+    pub fn passport_vault_state_persistence(&self) -> String {
+        self.passport_vault_state_persistence.clone()
     }
 }
 
@@ -4560,6 +4570,7 @@ fn poll_passport_vault_cancellation(
 #[component]
 fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let state_persistence = services.passport_vault_state_persistence();
     let mut page = use_signal(|| PassportVaultPageState::Loading);
     let mut minimum_age = use_signal(|| "18".to_owned());
     let mut maximum_claim = use_signal(|| "40".to_owned());
@@ -4607,6 +4618,15 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
             busy,
             operation_error,
         } => {
+            let persistence_note = match state_persistence.as_str() {
+                "owner_private_atomic_file" => {
+                    "Owner-private durable conformance ledger · survives app restart · no on-chain transaction submitted"
+                }
+                "process_local" => {
+                    "Process-local conformance ledger · no on-chain transaction submitted"
+                }
+                _ => "Standalone conformance ledger · no on-chain transaction submitted",
+            };
             let profile_id = active_profile.id.clone();
             let create_services = services.clone();
             let create_profile = profile_id.clone();
@@ -4639,7 +4659,7 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                             span { "Released {vault.total_released}" }
                             span { "Claims {vault.claim_count}" }
                         }
-                        p { class: "trust-line", "Process-local conformance ledger · no on-chain transaction submitted" }
+                        p { class: "trust-line", "{persistence_note}" }
                     }
 
                     if let Some(message) = operation_error {

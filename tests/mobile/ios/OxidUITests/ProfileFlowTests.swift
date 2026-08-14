@@ -218,6 +218,10 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(vault.waitForExistence(timeout: 5))
         vault.tap()
         XCTAssertTrue(
+            application.staticTexts["Owner-private durable conformance ledger · survives app restart · no on-chain transaction submitted"]
+                .waitForExistence(timeout: 5)
+        )
+        XCTAssertTrue(
             application.staticTexts["Deterministic simulation"].waitForExistence(timeout: 5)
         )
         let readContractState = application.buttons["Read contract state"]
@@ -282,6 +286,13 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertFalse(application.staticTexts["Alice"].exists)
         XCTAssertFalse(application.staticTexts["Example"].exists)
         XCTAssertTrue(application.buttons["Reverify"].waitForExistence(timeout: 5))
+        vault.tap()
+        XCTAssertTrue(application.staticTexts["90 base units remaining"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["Claims 1"].waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            application.staticTexts["Owner-private durable conformance ledger · survives app restart · no on-chain transaction submitted"]
+                .waitForExistence(timeout: 5)
+        )
         XCTAssertTrue(application.buttons["Assets"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
     }

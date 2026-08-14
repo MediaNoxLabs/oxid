@@ -6,13 +6,15 @@
 - Date: 2026-08-14
 - Blueprint: §§3–8, 12–13, 16–18, 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/dioxus-wallet/src/app.rs`, `src/bridge.rs`, and `web/src/entry.ts`
-- Related: ADR-0051 through ADR-0066 and issue #31
+- Related: ADR-0051 through ADR-0066, ADR-0068, and issue #31
+- Superseded in part by: ADR-0068 for standalone-ledger persistence only
 - Implementation state: Dioxus exposes the four wallet-facing contract calls through the retained application lifecycle; device resource baselines and real-node fixtures remain backlog work
 
 ## Context
 
-The first Passport Vault mobile slice intentionally exercised only the
-process-local conformance ledger. Native Compact calls later became available
+The first Passport Vault mobile slice intentionally exercised only a
+process-local conformance ledger. ADR-0068 later made that separate standalone
+ledger restart-durable on supported native targets. Native Compact calls became available
 through typed application services and the headless protocol, but the Dioxus
 page still described live submission as a separate adapter and invoked the
 standalone create, deposit, claim, and withdraw use cases directly.

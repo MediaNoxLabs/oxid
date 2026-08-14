@@ -60,6 +60,7 @@ impl ProcessHarness {
             .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
             .env_remove("OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT")
+            .env_remove("OXID_PASSPORT_VAULT_STORE_PATH")
             .env_remove("OXID_PRESENTATION_ARTIFACTS_DIR")
             .env_remove("OXID_CREDENTIAL_STORE_PATH")
             .env_remove("OXID_CREDENTIAL_KEY_PATH");
@@ -775,6 +776,190 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
 }
 
 #[test]
+fn executable_restores_standalone_vault_accounting_and_claim_replay_in_a_new_process() {
+    let store = TestStore::new();
+    let mut first_process = ProcessHarness::spawn(&store.path);
+    let created = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "vault-persist-profile",
+        "method": "wallet.profile.create", "params": { "displayName": "Vault owner" }
+    }));
+    let profile_id = created["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile id")
+        .to_owned();
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1", "id": "vault-persist-select",
+            "method": "wallet.profile.select", "params": { "profileId": profile_id }
+        }))["ok"],
+        true
+    );
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1", "id": "vault-persist-security",
+            "method": "wallet.security.initialize", "params": {}
+        }))["ok"],
+        true
+    );
+    let did_record = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "vault-persist-did",
+        "method": "did.create", "params": {}
+    }));
+    let document = &did_record["result"]["didRecord"]["document"];
+    let holder_did = document["id"].as_str().expect("holder DID");
+    let method_id = document["relationships"]
+        .as_array()
+        .expect("relationships")
+        .iter()
+        .find(|relationship| relationship["relationship"] == "authentication")
+        .and_then(|relationship| relationship["methodIds"][0].as_str())
+        .expect("authentication method");
+    let holder_binding_method_id = document["verificationMethods"]
+        .as_array()
+        .expect("methods")
+        .iter()
+        .find(|method| method["publicKeyJwk"]["crv"] == "Jubjub")
+        .and_then(|method| method["id"].as_str())
+        .expect("Jubjub method");
+    let prepared = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "vault-persist-offer",
+        "method": "credential.issuance.prepare",
+        "params": { "offer": standalone_credential_offer() }
+    }));
+    let issuance_id = prepared["result"]["issuance"]["id"]
+        .as_str()
+        .expect("issuance id");
+    let issued = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "vault-persist-accept",
+        "method": "credential.issuance.accept",
+        "params": {
+            "issuanceId": issuance_id,
+            "holderDid": holder_did,
+            "methodId": method_id,
+            "holderBindingMethodId": holder_binding_method_id,
+            "confirmed": true,
+            "intent": "ACCEPT_CREDENTIAL_ISSUANCE"
+        }
+    }));
+    let credential_id = issued["result"]["issuance"]["credentialId"]
+        .as_str()
+        .expect("credential id")
+        .to_owned();
+
+    let capabilities = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "vault-persist-capabilities",
+        "method": "system.capabilities", "params": {}
+    }));
+    assert_eq!(
+        capabilities["result"]["passportVaultState"]["persistence"],
+        "owner_private_atomic_file"
+    );
+    assert_eq!(
+        capabilities["result"]["passportVaultState"]["settlesOnMidnight"],
+        false
+    );
+
+    let lock = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "vault-persist-create",
+        "method": "vault.lock.create",
+        "params": {
+            "minimumAgeYears": 18,
+            "requiredIssuingState": "US",
+            "requiredDocumentNumber": "AB1234567",
+            "maximumClaimAmount": "40",
+            "initialAmount": "100",
+            "confirmed": true,
+            "intent": "CREATE_PASSPORT_VAULT_LOCK"
+        }
+    }));
+    assert_eq!(lock["result"]["lock"]["lockId"], 0);
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1", "id": "vault-persist-deposit",
+            "method": "vault.deposit",
+            "params": {"lockId": 0, "amount": "20", "confirmed": true, "intent": "DEPOSIT_TO_PASSPORT_VAULT"}
+        }))["result"]["lock"]["remaining"],
+        "120"
+    );
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1", "id": "vault-persist-claim",
+            "method": "vault.claim",
+            "params": {"lockId": 0, "credentialId": credential_id.clone(), "amount": "40", "confirmed": true, "intent": "CLAIM_FROM_PASSPORT_VAULT"}
+        }))["result"]["lock"]["remaining"],
+        "80"
+    );
+    assert_eq!(
+        first_process.request(json!({
+            "protocol": "oxid.headless.v1", "id": "vault-persist-withdraw",
+            "method": "vault.withdraw",
+            "params": {"lockId": 0, "amount": "10", "confirmed": true, "intent": "WITHDRAW_FROM_PASSPORT_VAULT"}
+        }))["result"]["lock"]["remaining"],
+        "70"
+    );
+    first_process.quit();
+
+    let vault_path = store.root.join("private/passport-vault.json");
+    let stored = fs::read_to_string(&vault_path).expect("standalone vault store");
+    assert!(stored.contains("\"schemaVersion\": 1"));
+    assert!(!stored.contains(&credential_id));
+    for forbidden in [
+        "signedBytes",
+        "detachedProof",
+        "privateMaterial",
+        "holderDid",
+    ] {
+        assert!(!stored.contains(forbidden));
+    }
+
+    let mut second_process = ProcessHarness::spawn(&store.path);
+    let restored = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "vault-persist-restored",
+        "method": "vault.locks.list", "params": {}
+    }));
+    assert_eq!(restored["result"]["vault"]["source"], "standalone");
+    assert_eq!(restored["result"]["vault"]["totalDeposited"], "120");
+    assert_eq!(restored["result"]["vault"]["totalReleased"], "50");
+    assert_eq!(restored["result"]["vault"]["totalLocked"], "70");
+    assert_eq!(restored["result"]["vault"]["claimCount"], 1);
+    assert_eq!(restored["result"]["vault"]["locks"][0]["remaining"], "70");
+
+    let replay = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "vault-persist-replay",
+        "method": "vault.claim",
+        "params": {"lockId": 0, "credentialId": credential_id.clone(), "amount": "1", "confirmed": true, "intent": "CLAIM_FROM_PASSPORT_VAULT"}
+    }));
+    assert_eq!(replay["error"]["code"], "conflict");
+    let next_lock = second_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "vault-persist-next-lock",
+        "method": "vault.lock.create",
+        "params": {
+            "minimumAgeYears": 21,
+            "maximumClaimAmount": "5",
+            "initialAmount": "5",
+            "confirmed": true,
+            "intent": "CREATE_PASSPORT_VAULT_LOCK"
+        }
+    }));
+    assert_eq!(next_lock["result"]["lock"]["lockId"], 1);
+    second_process.quit();
+
+    let mut third_process = ProcessHarness::spawn(&store.path);
+    let final_state = third_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "vault-persist-final",
+        "method": "vault.locks.list", "params": {}
+    }));
+    assert_eq!(
+        final_state["result"]["vault"]["locks"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(final_state["result"]["vault"]["claimCount"], 1);
+    third_process.quit();
+}
+
+#[test]
 fn executable_restores_profile_scoped_did_inventory_in_a_new_process() {
     const FIXTURE_DID: &str =
         "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -1149,6 +1334,33 @@ fn executable_fails_startup_on_partial_credential_configuration_without_echoing_
     let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
     assert!(stderr.contains("credential store and key paths must be configured together"));
     assert!(!stderr.contains("do-not-echo-credentials"));
+}
+
+#[test]
+fn executable_rejects_a_relative_vault_store_without_echoing_the_path() {
+    let store = TestStore::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_oxid-headless"))
+        .env("OXID_PROFILE_STORE_PATH", &store.path)
+        .env(
+            "OXID_PASSPORT_VAULT_STORE_PATH",
+            "relative-do-not-echo-passport-vault.json",
+        )
+        .env_remove("OXID_MIDNIGHT_NETWORK_ID")
+        .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
+        .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
+        .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
+        .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
+        .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
+        .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+        .env_remove("OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT")
+        .env_remove("OXID_PRESENTATION_ARTIFACTS_DIR")
+        .output()
+        .expect("headless wallet should report startup failure");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("startup error should be UTF-8");
+    assert!(stderr.contains("must be a normalized absolute file path"));
+    assert!(!stderr.contains("relative-do-not-echo"));
 }
 
 #[test]
