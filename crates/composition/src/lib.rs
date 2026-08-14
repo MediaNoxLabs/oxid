@@ -101,6 +101,7 @@ use oxid_adapter_vc_midnight::{
 use oxid_adapter_vc_midnight::{
     CompactPresentationArtifactsConfig, CompactPresentationRuntimeError,
     NativeCompactPresentationRuntime, NativeCompactPresentationVerifier,
+    ProtectedDigitalPassportPresentationSource,
 };
 use oxid_credential_application::{
     CredentialDisclosurePort, CredentialInboxPort, CredentialRepository, CredentialService,
@@ -202,6 +203,8 @@ pub struct ApplicationServices {
     midnight_contract_call_funding: Arc<dyn MidnightContractCallFundingPort>,
     #[cfg(not(target_arch = "wasm32"))]
     midnight_contract_call_submission: Arc<dyn MidnightContractCallSubmissionPort>,
+    #[cfg(not(target_arch = "wasm32"))]
+    protected_passport_vault_presentations: Option<Arc<ProtectedDigitalPassportPresentationSource>>,
     create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
@@ -1860,13 +1863,23 @@ fn with_native_passport_vault_calls(
         Arc::new(ComposedPassportVaultCallCompletion {
             midnight: Arc::clone(&services.midnight_contract_call_submission),
         });
-    let calls = Arc::new(PassportVaultContractCallService::new(
-        state_source,
-        Arc::new(
+    let native_calls =
+        if let Some(presentations) = services.protected_passport_vault_presentations.clone() {
+            NativePassportVaultContractCall::new_with_protected_claims_and_completion(
+                composer,
+                contexts,
+                funding,
+                completion,
+                presentations,
+            )?
+        } else {
             NativePassportVaultContractCall::new_with_funding_and_completion(
                 composer, contexts, funding, completion,
-            )?,
-        ),
+            )?
+        };
+    let calls = Arc::new(PassportVaultContractCallService::new(
+        state_source,
+        Arc::new(native_calls),
         Arc::new(SystemClock),
         Arc::new(OsRandom),
     ));
@@ -2063,6 +2076,23 @@ where
         did_resolver,
         did_lifecycle,
     ));
+    #[cfg(not(target_arch = "wasm32"))]
+    let protected_passport_vault_presentations = standalone_passport_vault.then(|| {
+        let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
+        let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+        let holder_authorization =
+            Arc::new(ManagedDidJubjubHolderAuthorization::with_challenge_signing(
+                get_did,
+                sign_did,
+                Arc::clone(&did_jubjub_challenge_signing),
+            ));
+        let holder_proof: Arc<dyn CompactHolderProofPort> = holder_authorization.clone();
+        Arc::new(ProtectedDigitalPassportPresentationSource::new(
+            Arc::clone(&vault_credential_repository),
+            holder_authorization,
+            holder_proof,
+        ))
+    });
     let credentials = Arc::new(CredentialService::from_ports(
         credential_repository,
         credential_inbox,
@@ -2330,6 +2360,8 @@ where
         midnight_contract_call_funding,
         #[cfg(not(target_arch = "wasm32"))]
         midnight_contract_call_submission,
+        #[cfg(not(target_arch = "wasm32"))]
+        protected_passport_vault_presentations,
         create_wallet_profile,
         list_wallet_profiles,
         select_wallet_profile,
@@ -2548,6 +2580,7 @@ mod tests {
             action_block_height: 4,
             finalized_head_hash_hex: "44".repeat(32),
             finalized_head_height: 5,
+            finalized_head_time_seconds: 1_700_000_000,
         };
         let context = source
             .context("profile_test", &snapshot)

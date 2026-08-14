@@ -94,7 +94,7 @@ adapter custody. ADR-0063 routes native create/deposit/withdraw through the
 existing protected DUST, proving, persist-before-broadcast, finalized node
 submission, cancellation, and reconciliation machinery. Complete standalone
 composition now reports `native_settlement` and `settlesOnMidnight: true` for
-those three operations. Protected claim composition remains fail-closed.
+those three operations.
 ADR-0064 permits only `vc-midnight` to assemble the sensitive Digital Passport
 claim material. Re-verify the stored credential/proof/private commitments,
 match the issuer DID/method and `persistentHash<JubjubPoint>` against the
@@ -105,6 +105,21 @@ public credential field, reuse nonce `17`, accept lock policy/trust from an
 incoming caller, or expose the zeroizing composer DTO through headless/mobile.
 Keep claim capability absent until the authenticated generated composer and the
 ADR-0063 authorization/funding/proving/submission lifecycle consume it.
+ADR-0065 permits that consumption only inside the native adapter after the
+application has accepted exact `AUTHORIZE_PASSPORT_VAULT_CALL` confirmation.
+Prepare may decode and retain only authenticated public issuer/lock policy,
+finalized-head time, opaque credential ID, and exact Midnight public context;
+it must not read credentials or invoke holder custody/composition. Bind the
+claim authorization challenge to the complete public planning fingerprint.
+Authorize may then assemble the managed presentation, send the fixed zeroizing
+DTO to the one-request generated `claimFromLock` composer, and use ADR-0063's
+funding/settlement path. Failures must discard presentation material and reset
+the in-progress marker; concurrency and expiry fail closed. Keep public claim
+discovery absent until a complete managed-custody generated-client settlement
+conformance run succeeds.
+The finalized node's timestamp extrinsic is milliseconds and is normalized to
+seconds by canonical history collection; the indexer GraphQL `block.timestamp`
+is already Unix seconds and must not be divided again.
 An authenticated replay cache and optional durable standalone state also remain
 issue #31. Live protocol transport and production/mobile presentation proving
 remain deferred.
@@ -751,7 +766,7 @@ Current package ownership:
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
-| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing native create/deposit/withdraw composition through protected Midnight funding, DUST proving, finalized submission, cancellation, and public-journal recovery; protected claim remains closed. |
+| `crates/adapters/passport-vault` | Product-specific bounded process-local repository, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, zeroizing native create/deposit/withdraw settlement, and authorization-bound protected `claimFromLock` composition through the same funding/submission boundary; public claim discovery awaits full managed-custody conformance. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
@@ -1293,9 +1308,11 @@ to silence the shell probe.
   is the startup gate; expand the large claim model only during proof checking.
 - The ADR-0059 composer is one-request and internal. Keep its artifact closure
   fixed by Nix, clear `NODE_OPTIONS`/`NODE_PATH`, retain exact object schemas and
-  canonical bounds, and never add claim material, private state, arbitrary
-  circuit names/arguments, or administration. Its unproven transaction output
-  is adapter-owned and cannot appear in headless/mobile output or logs.
+  canonical bounds. ADR-0065 permits claim material/private state only through
+  the owned zeroizing DTO produced after exact call authorization; never accept
+  those fields from headless/mobile, add arbitrary circuit names/arguments, or
+  expose administration. Its unproven transaction output is adapter-owned and
+  cannot appear in headless/mobile output or logs.
 - ADR-0060 native preparation accepts only canonical replay and a fresh public
   context source with real non-empty bounded Zswap state and ledger parameters.
   Never decode those values from an incoming UI address, let callers supply
@@ -1325,9 +1342,10 @@ to silence the shell probe.
   public journal schema is version 2 with optional finalized block height and
   backward-compatible version-1 reads. Vault records use a domain-separated
   profile key plus `vault-` draft prefix so they never appear in transfer
-  history. `native_settlement` may report `settlesOnMidnight: true`; claim must
-  stay absent until managed holder custody and fresh presentation randomness
-  replace the prototype's public-derived holder scalar and fixed nonce 17.
+  history. `native_settlement` may report `settlesOnMidnight: true`; native
+  claim discovery must stay absent until ADR-0065's managed-custody generated
+  composition and complete settlement path pass end-to-end conformance. Never
+  reintroduce the prototype's public-derived holder scalar or fixed nonce 17.
   Configure `OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH` for restart-safe public
   status; never persist transactions, proofs, signatures, witnesses, or keys.
 - The Midnight checkpoint file contains public replay state only and supports

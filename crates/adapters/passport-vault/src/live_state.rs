@@ -45,6 +45,7 @@ query OxidPassportVaultState($address: HexEncoded!, $height: Int!) {
   block(offset: { height: $height }) {
     hash
     height
+    timestamp
     ledgerParameters
   }
   contractAction(
@@ -102,6 +103,7 @@ pub struct PassportVaultCallChainContext {
     action_block_height: u64,
     finalized_head_hash_hex: String,
     finalized_head_height: u64,
+    finalized_head_time_seconds: u64,
     contract_state_digest: [u8; 32],
     zswap_chain_state: Vec<u8>,
     ledger_parameters: Vec<u8>,
@@ -114,6 +116,10 @@ impl fmt::Debug for PassportVaultCallChainContext {
             .field("contract_address_hex", &self.contract_address_hex)
             .field("action_block_height", &self.action_block_height)
             .field("finalized_head_height", &self.finalized_head_height)
+            .field(
+                "finalized_head_time_seconds",
+                &self.finalized_head_time_seconds,
+            )
             .field("zswap_chain_state_bytes", &self.zswap_chain_state.len())
             .field("ledger_parameters_bytes", &self.ledger_parameters.len())
             .finish_non_exhaustive()
@@ -137,6 +143,7 @@ impl PassportVaultCallChainContext {
             || normalize_hex_32(&snapshot.finalized_head_hash_hex).as_deref()
                 != Some(snapshot.finalized_head_hash_hex.as_str())
             || snapshot.action_block_height > snapshot.finalized_head_height
+            || snapshot.finalized_head_time_seconds == 0
         {
             return Err(PassportVaultContractStateSourceError::InvalidResponse);
         }
@@ -155,6 +162,7 @@ impl PassportVaultCallChainContext {
             action_block_height: snapshot.action_block_height,
             finalized_head_hash_hex: snapshot.finalized_head_hash_hex.clone(),
             finalized_head_height: snapshot.finalized_head_height,
+            finalized_head_time_seconds: snapshot.finalized_head_time_seconds,
             contract_state_digest: Sha256::digest(&snapshot.serialized_contract_state).into(),
             zswap_chain_state,
             ledger_parameters,
@@ -177,6 +185,7 @@ impl PassportVaultCallChainContext {
             && self.action_block_hash_hex == snapshot.action_block_hash_hex
             && self.action_block_height == snapshot.action_block_height
             && self.finalized_head_height >= snapshot.finalized_head_height
+            && self.finalized_head_time_seconds == snapshot.finalized_head_time_seconds
             && (self.finalized_head_height != snapshot.finalized_head_height
                 || self.finalized_head_hash_hex == snapshot.finalized_head_hash_hex)
             && self.contract_state_digest
@@ -457,6 +466,7 @@ struct GraphqlBlock {
 struct GraphqlFinalizedBlock {
     hash: String,
     height: i64,
+    timestamp: i64,
     ledger_parameters: String,
 }
 
@@ -493,8 +503,11 @@ fn decode_indexer_response(
         .ok_or(PassportVaultContractStateSourceError::InvalidResponse)?;
     let returned_finalized_height = u64::try_from(finalized_block.height)
         .map_err(|_| PassportVaultContractStateSourceError::InvalidResponse)?;
+    let finalized_head_time_seconds = u64::try_from(finalized_block.timestamp)
+        .map_err(|_| PassportVaultContractStateSourceError::InvalidResponse)?;
     if returned_finalized_hash != finalized_head_hash_hex
         || returned_finalized_height != finalized_head_height
+        || finalized_head_time_seconds == 0
     {
         return Err(PassportVaultContractStateSourceError::FinalityMismatch);
     }
@@ -527,6 +540,7 @@ fn decode_indexer_response(
         action_block_height,
         finalized_head_hash_hex,
         finalized_head_height,
+        finalized_head_time_seconds,
     };
     let context = PassportVaultCallChainContext::from_snapshot(
         &snapshot,
@@ -642,6 +656,7 @@ mod tests {
                 "block": {
                     "hash": finalized_hash,
                     "height": 42,
+                    "timestamp": 1_700_000_000_i64,
                     "ledgerParameters": "0506"
                 },
                 "contractAction": {
@@ -662,6 +677,7 @@ mod tests {
         assert_eq!(snapshot.serialized_contract_state, [1, 2]);
         assert_eq!(snapshot.action_block_height, 41);
         assert_eq!(snapshot.finalized_head_hash_hex, finalized_hash);
+        assert_eq!(snapshot.finalized_head_time_seconds, 1_700_000_000);
         assert_eq!(context.zswap_chain_state(), [3, 4]);
         assert_eq!(context.ledger_parameters(), [5, 6]);
         assert!(context.matches_snapshot(&snapshot));
@@ -676,6 +692,7 @@ mod tests {
                     "block": {
                         "hash": "44".repeat(32),
                         "height": 5,
+                        "timestamp": 1_700_000_000_i64,
                         "ledgerParameters": "05"
                     },
                     "contractAction": {

@@ -46,6 +46,7 @@ impl SimulatedPassportVaultStateSource {
                 action_block_height: SIMULATED_ACTION_BLOCK_HEIGHT,
                 finalized_head_hash_hex: SIMULATED_FINALIZED_HEAD_HASH_HEX.to_owned(),
                 finalized_head_height: SIMULATED_FINALIZED_HEAD_HEIGHT,
+                finalized_head_time_seconds: 1_700_000_000,
             }),
         })
     }

@@ -162,6 +162,7 @@ fn packaged_composer_emits_a_rust_compatible_unproven_call_when_configured() {
                 action_block_height: 10,
                 finalized_head_hash_hex: "33".repeat(32),
                 finalized_head_height: 12,
+                finalized_head_time_seconds: 1_700_000_000,
             },
             operation: PassportVaultCallOperation::CreateLock {
                 policy: PassportVaultPolicy::new(18, None, None, 40, [1; 32]).expect("policy"),

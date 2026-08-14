@@ -4769,6 +4769,7 @@ fn passport_vault_value(vault: &PassportVaultView) -> Value {
             "actionBlockHeight": anchor.action_block_height,
             "finalizedHeadHashHex": anchor.finalized_head_hash_hex,
             "finalizedHeadHeight": anchor.finalized_head_height,
+            "finalizedHeadTimeSeconds": anchor.finalized_head_time_seconds,
             "stateAuthentication": anchor.state_authentication,
         })),
         "contract": vault.contract.as_ref().map(|contract| json!({
@@ -5568,6 +5569,7 @@ mod tests {
                     action_block_height: 40,
                     finalized_head_hash_hex: "44".repeat(32),
                     finalized_head_height: 42,
+                    finalized_head_time_seconds: 1_700_000_000,
                     state_authentication: "indexer_supplied_not_proven".to_owned(),
                 },
             ),
@@ -5585,6 +5587,10 @@ mod tests {
         );
         assert_eq!(value["chainAnchor"]["actionBlockHeight"], 40);
         assert_eq!(value["chainAnchor"]["finalizedHeadHeight"], 42);
+        assert_eq!(
+            value["chainAnchor"]["finalizedHeadTimeSeconds"],
+            1_700_000_000_u64
+        );
     }
 
     #[test]

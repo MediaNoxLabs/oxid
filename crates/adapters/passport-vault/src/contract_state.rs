@@ -49,6 +49,19 @@ type LockRecord = (
     u128,
 );
 
+/// Exact authenticated policy material needed to construct a protected claim.
+/// Unlike the public display view, fixed-width policy values remain bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PassportVaultProtectedClaimContext {
+    pub trusted_issuer_did_contract: [u8; 32],
+    pub trusted_issuer_method: [u8; 32],
+    pub trusted_issuer_public_key_hash: [u8; 32],
+    pub minimum_age_years: u8,
+    pub required_issuing_state: Option<[u8; 32]>,
+    pub required_document_number: Option<[u8; 32]>,
+    pub verifier_challenge_hash: [u8; 32],
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativePassportVaultContractStateDecoder;
 
@@ -180,6 +193,77 @@ fn decode_contract_state(
         total_released: total_released.to_string(),
         total_locked: total_locked.to_string(),
         claim_count,
+    })
+}
+
+pub(crate) fn decode_protected_claim_context(
+    serialized_contract_state: &[u8],
+    lock_id: u64,
+    requested_amount: u128,
+) -> Result<PassportVaultProtectedClaimContext, PassportVaultContractStateError> {
+    if requested_amount == 0 {
+        return Err(PassportVaultContractStateError::Integrity);
+    }
+    let mut cursor = Cursor::new(serialized_contract_state);
+    let contract: ContractState<midnight_storage::DefaultDB> = tagged_deserialize(&mut cursor)
+        .map_err(|_| PassportVaultContractStateError::InvalidEncoding)?;
+    if cursor.position() != serialized_contract_state.len() as u64 {
+        return Err(PassportVaultContractStateError::InvalidEncoding);
+    }
+    let fields = match contract.data.get_ref() {
+        StateValue::Array(fields) if fields.len() == PASSPORT_VAULT_LEDGER_FIELDS => fields,
+        _ => return Err(PassportVaultContractStateError::LayoutMismatch),
+    };
+    if decode_cell::<u32>(fields.get(CONTRACT_VERSION_INDEX))? != PASSPORT_VAULT_CONTRACT_VERSION {
+        return Err(PassportVaultContractStateError::UnsupportedVersion);
+    }
+    let lock_count = decode_cell::<u64>(fields.get(LOCK_COUNT_INDEX))?;
+    if lock_count > MAX_PASSPORT_VAULT_LOCKS || lock_id >= lock_count {
+        return Err(PassportVaultContractStateError::LayoutMismatch);
+    }
+    let locks = match fields.get(LOCKS_INDEX) {
+        Some(StateValue::Map(locks)) if locks.size() == lock_count as usize => locks,
+        _ => return Err(PassportVaultContractStateError::LayoutMismatch),
+    };
+    let record = locks
+        .get(&AlignedValue::from(lock_id))
+        .ok_or(PassportVaultContractStateError::LayoutMismatch)?;
+    let (
+        _,
+        minimum_age_years,
+        require_issuing_state,
+        required_issuing_state,
+        require_document_number,
+        required_document_number,
+        maximum_claim,
+        verifier_challenge_hash,
+        total_deposited,
+        total_released,
+    ) = decode_lock_record(Some(&*record))?;
+    let remaining = total_deposited
+        .checked_sub(total_released)
+        .ok_or(PassportVaultContractStateError::Integrity)?;
+    if requested_amount > maximum_claim || requested_amount > remaining {
+        return Err(PassportVaultContractStateError::Integrity);
+    }
+    let (trusted_issuer_did_contract, trusted_issuer_method) =
+        decode_two_bytes32(fields.get(TRUSTED_ISSUER_INDEX))?;
+    let trusted_issuer_public_key_hash = decode_bytes32(fields.get(TRUSTED_ISSUER_KEY_HASH_INDEX))?;
+    if trusted_issuer_did_contract == [0; 32]
+        || trusted_issuer_method == [0; 32]
+        || trusted_issuer_public_key_hash == [0; 32]
+        || verifier_challenge_hash == [0; 32]
+    {
+        return Err(PassportVaultContractStateError::Integrity);
+    }
+    Ok(PassportVaultProtectedClaimContext {
+        trusted_issuer_did_contract,
+        trusted_issuer_method,
+        trusted_issuer_public_key_hash,
+        minimum_age_years,
+        required_issuing_state: require_issuing_state.then_some(required_issuing_state),
+        required_document_number: require_document_number.then_some(required_document_number),
+        verifier_challenge_hash,
     })
 }
 

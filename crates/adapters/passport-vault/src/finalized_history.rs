@@ -113,6 +113,7 @@ pub struct FinalizedMidnightHistory {
     pub deployment_block_height: u64,
     pub finalized_head_hash: [u8; 32],
     pub finalized_head_height: u64,
+    pub finalized_head_time_seconds: u64,
 }
 
 /// Native finalized-node collector. The deployment height is an untrusted,
@@ -337,6 +338,7 @@ impl CanonicalHistoryBuilder {
                 deployment_block_height: self.deployment_height,
                 finalized_head_hash: self.finalized_head_hash,
                 finalized_head_height: self.finalized_head_height,
+                finalized_head_time_seconds: self.previous_timestamp_seconds,
             }),
             _ => Err(FinalizedMidnightHistoryError::DuplicateDeployment),
         }

@@ -183,6 +183,7 @@ fn validate_indexed_anchor(
         || indexed.transaction_hash_hex != canonical.transaction_hash_hex
         || indexed.action_block_hash_hex != canonical.action_block_hash_hex
         || indexed.action_block_height != canonical.action_block_height
+        || indexed.finalized_head_time_seconds != canonical.finalized_head_time_seconds
         || indexed.finalized_head_height < canonical.finalized_head_height
         || (indexed.finalized_head_height == canonical.finalized_head_height
             && indexed.finalized_head_hash_hex != canonical.finalized_head_hash_hex)
@@ -213,6 +214,7 @@ fn snapshot_from_history(
         action_block_height: replayed.latest_block_height,
         finalized_head_hash_hex: hex::encode(history.finalized_head_hash),
         finalized_head_height: history.finalized_head_height,
+        finalized_head_time_seconds: history.finalized_head_time_seconds,
     })
 }
 
@@ -327,6 +329,7 @@ mod tests {
                 deployment_block_height: 3,
                 finalized_head_hash: [5; 32],
                 finalized_head_height: 5,
+                finalized_head_time_seconds: 1_700_000_012,
             },
         )
     }
@@ -342,6 +345,7 @@ mod tests {
         assert_eq!(snapshot.contract_address_hex, hex::encode(address));
         assert_eq!(snapshot.action_block_height, 3);
         assert_eq!(snapshot.finalized_head_height, 5);
+        assert_eq!(snapshot.finalized_head_time_seconds, 1_700_000_012);
         assert_eq!(snapshot.finalized_head_hash_hex, hex::encode([5; 32]));
     }
 

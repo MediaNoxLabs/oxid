@@ -22,6 +22,10 @@ use midnight_ledger::structure::{ProofPreimageMarker, Transaction};
 use midnight_serialize::tagged_deserialize;
 use midnight_storage::DefaultDB;
 use midnight_transient_crypto::commitment::PedersenRandomness;
+use oxid_adapter_vc_midnight::{
+    PreparedDigitalPassportPresentation, ProtectedDigitalPassportPresentationError,
+    ProtectedDigitalPassportPresentationRequest, ProtectedDigitalPassportPresentationSource,
+};
 use oxid_foundation::{OpaqueId, UnixTimestampMillis};
 use oxid_passport_vault_application::{
     AuthorizePassportVaultCallRequest, MAX_PASSPORT_VAULT_CALL_SUBMISSION_HISTORY,
@@ -36,6 +40,8 @@ use oxid_passport_vault_application::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
+
+use crate::contract_state::{PassportVaultProtectedClaimContext, decode_protected_claim_context};
 
 const MAX_ZSWAP_CHAIN_STATE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LEDGER_PARAMETERS_BYTES: usize = 512 * 1024;
@@ -378,6 +384,15 @@ trait PassportVaultCallComposer: Send + Sync {
         request: &PreparePassportVaultCallRequest,
         context: &PassportVaultCallCompositionContext,
     ) -> Result<Zeroizing<Vec<u8>>, PassportVaultCallPortError>;
+
+    fn compose_claim(
+        &self,
+        _: &PreparePassportVaultCallRequest,
+        _: &PassportVaultCallCompositionContext,
+        _: PreparedDigitalPassportPresentation,
+    ) -> Result<Zeroizing<Vec<u8>>, PassportVaultCallPortError> {
+        Err(PassportVaultCallPortError::Unavailable)
+    }
 }
 
 struct ProcessPassportVaultCallComposer {
@@ -407,19 +422,17 @@ impl ProcessPassportVaultCallComposer {
             executable: canonical,
         })
     }
-}
 
-impl PassportVaultCallComposer for ProcessPassportVaultCallComposer {
-    fn compose(
+    fn compose_request(
         &self,
         request: &PreparePassportVaultCallRequest,
-        context: &PassportVaultCallCompositionContext,
+        composer_request: ComposerRequest,
     ) -> Result<Zeroizing<Vec<u8>>, PassportVaultCallPortError> {
-        let composer_request = ComposerRequest::from_call(request, context)?;
         let body = Zeroizing::new(
             serde_json::to_vec(&composer_request)
                 .map_err(|_| PassportVaultCallPortError::InvalidData)?,
         );
+        drop(composer_request);
         if body.is_empty() || body.len() > MAX_COMPOSER_REQUEST_BYTES {
             return Err(PassportVaultCallPortError::InvalidData);
         }
@@ -470,6 +483,27 @@ impl PassportVaultCallComposer for ProcessPassportVaultCallComposer {
     }
 }
 
+impl PassportVaultCallComposer for ProcessPassportVaultCallComposer {
+    fn compose(
+        &self,
+        request: &PreparePassportVaultCallRequest,
+        context: &PassportVaultCallCompositionContext,
+    ) -> Result<Zeroizing<Vec<u8>>, PassportVaultCallPortError> {
+        let composer_request = ComposerRequest::from_call(request, context)?;
+        self.compose_request(request, composer_request)
+    }
+
+    fn compose_claim(
+        &self,
+        request: &PreparePassportVaultCallRequest,
+        context: &PassportVaultCallCompositionContext,
+        presentation: PreparedDigitalPassportPresentation,
+    ) -> Result<Zeroizing<Vec<u8>>, PassportVaultCallPortError> {
+        let composer_request = ComposerRequest::from_claim(request, context, presentation)?;
+        self.compose_request(request, composer_request)
+    }
+}
+
 struct ComposerOutput {
     status: ExitStatus,
     stdout: Zeroizing<Vec<u8>>,
@@ -478,7 +512,7 @@ struct ComposerOutput {
 
 fn run_composer(
     executable: &Path,
-    request: Zeroizing<Vec<u8>>,
+    mut request: Zeroizing<Vec<u8>>,
 ) -> Result<ComposerOutput, PassportVaultCallPortError> {
     let mut child = Command::new(executable)
         .env_remove("NODE_OPTIONS")
@@ -508,6 +542,7 @@ fn run_composer(
                 .and_then(|()| stdin.flush())
                 .map_err(|_| PassportVaultCallPortError::Unavailable)
         });
+    request.zeroize();
     if let Err(error) = write_result {
         let _ = child.kill();
         let _ = child.wait();
@@ -635,6 +670,39 @@ impl ComposerRequest {
             },
         })
     }
+
+    fn from_claim(
+        request: &PreparePassportVaultCallRequest,
+        context: &PassportVaultCallCompositionContext,
+        material: PreparedDigitalPassportPresentation,
+    ) -> Result<Self, PassportVaultCallPortError> {
+        let PassportVaultCallOperation::ClaimFromLock {
+            lock_id, amount, ..
+        } = &request.operation
+        else {
+            return Err(PassportVaultCallPortError::InvalidData);
+        };
+        Ok(Self {
+            schema_version: 1,
+            operation: ComposerOperation::Claim {
+                lock_id: lock_id.to_string(),
+                amount: amount.to_string(),
+                recipient_address_hex: hex::encode(context.unshielded_recipient),
+                material: Box::new(material),
+            },
+            chain: ComposerChain {
+                contract_state_hex: hex::encode(&request.contract_state.serialized_contract_state),
+                contract_address_hex: request.contract_state.contract_address_hex.clone(),
+                zswap_chain_state_hex: hex::encode(&context.zswap_chain_state),
+                ledger_parameters_hex: hex::encode(&context.ledger_parameters),
+                network_id: context.network_id.clone(),
+            },
+            wallet: ComposerWallet {
+                coin_public_key_hex: hex::encode(context.coin_public_key),
+                encryption_public_key_hex: hex::encode(context.encryption_public_key),
+            },
+        })
+    }
 }
 
 #[derive(Serialize)]
@@ -658,6 +726,14 @@ enum ComposerOperation {
         lock_id: String,
         amount: String,
         recipient_address_hex: String,
+    },
+    #[serde(rename = "claim_from_lock")]
+    #[serde(rename_all = "camelCase")]
+    Claim {
+        lock_id: String,
+        amount: String,
+        recipient_address_hex: String,
+        material: Box<PreparedDigitalPassportPresentation>,
     },
 }
 
@@ -724,6 +800,97 @@ fn map_composer_error(code: &str) -> PassportVaultCallPortError {
     }
 }
 
+trait PassportVaultProtectedClaimComposer: Send + Sync {
+    fn compose_after_authorization(
+        &self,
+        request: &PreparePassportVaultCallRequest,
+        context: &PassportVaultCallCompositionContext,
+        policy: &PassportVaultProtectedClaimContext,
+    ) -> Result<Zeroizing<Vec<u8>>, PassportVaultCallPortError>;
+}
+
+struct UnavailablePassportVaultProtectedClaimComposer;
+
+impl PassportVaultProtectedClaimComposer for UnavailablePassportVaultProtectedClaimComposer {
+    fn compose_after_authorization(
+        &self,
+        _: &PreparePassportVaultCallRequest,
+        _: &PassportVaultCallCompositionContext,
+        _: &PassportVaultProtectedClaimContext,
+    ) -> Result<Zeroizing<Vec<u8>>, PassportVaultCallPortError> {
+        Err(PassportVaultCallPortError::Unavailable)
+    }
+}
+
+struct ManagedPassportVaultProtectedClaimComposer {
+    presentations: Arc<ProtectedDigitalPassportPresentationSource>,
+    composer: ProcessPassportVaultCallComposer,
+}
+
+impl PassportVaultProtectedClaimComposer for ManagedPassportVaultProtectedClaimComposer {
+    fn compose_after_authorization(
+        &self,
+        request: &PreparePassportVaultCallRequest,
+        context: &PassportVaultCallCompositionContext,
+        policy: &PassportVaultProtectedClaimContext,
+    ) -> Result<Zeroizing<Vec<u8>>, PassportVaultCallPortError> {
+        let PassportVaultCallOperation::ClaimFromLock { credential_id, .. } = &request.operation
+        else {
+            return Err(PassportVaultCallPortError::InvalidData);
+        };
+        let presentation = futures::executor::block_on(self.presentations.prepare(
+            ProtectedDigitalPassportPresentationRequest {
+                profile_id: request.profile_id.as_str().to_owned(),
+                credential_id: credential_id.as_str().to_owned(),
+                verifier: format!(
+                    "midnight:passport-vault:{}",
+                    request.contract_state.contract_address_hex
+                ),
+                verifier_challenge_hash: policy.verifier_challenge_hash,
+                trusted_issuer_did_contract: policy.trusted_issuer_did_contract,
+                trusted_issuer_method: policy.trusted_issuer_method,
+                trusted_issuer_public_key_hash: policy.trusted_issuer_public_key_hash,
+                minimum_age_years: policy.minimum_age_years,
+                required_issuing_state: policy.required_issuing_state,
+                required_document_number: policy.required_document_number,
+                finalized_time_seconds: request.contract_state.finalized_head_time_seconds,
+            },
+        ))
+        .map_err(map_protected_presentation_error)?;
+        self.composer.compose_claim(request, context, presentation)
+    }
+}
+
+const fn map_protected_presentation_error(
+    error: ProtectedDigitalPassportPresentationError,
+) -> PassportVaultCallPortError {
+    match error {
+        ProtectedDigitalPassportPresentationError::ProtectionLocked => {
+            PassportVaultCallPortError::ProtectionLocked
+        }
+        ProtectedDigitalPassportPresentationError::Unavailable => {
+            PassportVaultCallPortError::Unavailable
+        }
+        ProtectedDigitalPassportPresentationError::InvalidRequest
+        | ProtectedDigitalPassportPresentationError::NotFound
+        | ProtectedDigitalPassportPresentationError::InvalidCredential
+        | ProtectedDigitalPassportPresentationError::IssuerNotTrusted
+        | ProtectedDigitalPassportPresentationError::Expired
+        | ProtectedDigitalPassportPresentationError::PolicyNotSatisfied
+        | ProtectedDigitalPassportPresentationError::HolderNotManaged
+        | ProtectedDigitalPassportPresentationError::Rejected => {
+            PassportVaultCallPortError::InvalidData
+        }
+    }
+}
+
+#[derive(Clone)]
+struct PendingProtectedClaim {
+    request: PreparePassportVaultCallRequest,
+    context: PassportVaultCallCompositionContext,
+    policy: PassportVaultProtectedClaimContext,
+}
+
 struct RetainedNativeCall {
     planning_fingerprint: [u8; 32],
     network_id: String,
@@ -731,6 +898,8 @@ struct RetainedNativeCall {
     submission_status: PassportVaultCallSubmissionStatus,
     inclusion: Option<PassportVaultCallInclusion>,
     unproven_transaction: Zeroizing<Vec<u8>>,
+    pending_protected_claim: Option<PendingProtectedClaim>,
+    authorization_in_progress: bool,
 }
 
 pub struct NativePassportVaultContractCall {
@@ -738,6 +907,7 @@ pub struct NativePassportVaultContractCall {
     funding: Arc<dyn PassportVaultCallFundingPort>,
     completion: Arc<dyn PassportVaultCallCompletionPort>,
     composer: Arc<dyn PassportVaultCallComposer>,
+    protected_claim_composer: Arc<dyn PassportVaultProtectedClaimComposer>,
     calls: Arc<Mutex<BTreeMap<CallKey, RetainedNativeCall>>>,
 }
 
@@ -751,6 +921,7 @@ impl NativePassportVaultContractCall {
             funding: Arc::new(UnavailablePassportVaultCallFunding),
             completion: Arc::new(UnavailablePassportVaultCallCompletion),
             composer: Arc::new(ProcessPassportVaultCallComposer::new(executable)?),
+            protected_claim_composer: Arc::new(UnavailablePassportVaultProtectedClaimComposer),
             calls: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
@@ -765,6 +936,7 @@ impl NativePassportVaultContractCall {
             funding,
             completion: Arc::new(UnavailablePassportVaultCallCompletion),
             composer: Arc::new(ProcessPassportVaultCallComposer::new(executable)?),
+            protected_claim_composer: Arc::new(UnavailablePassportVaultProtectedClaimComposer),
             calls: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
@@ -780,6 +952,29 @@ impl NativePassportVaultContractCall {
             funding,
             completion,
             composer: Arc::new(ProcessPassportVaultCallComposer::new(executable)?),
+            protected_claim_composer: Arc::new(UnavailablePassportVaultProtectedClaimComposer),
+            calls: Arc::new(Mutex::new(BTreeMap::new())),
+        })
+    }
+
+    pub fn new_with_protected_claims_and_completion(
+        executable: impl AsRef<Path>,
+        contexts: Arc<dyn PassportVaultCallCompositionContextSource>,
+        funding: Arc<dyn PassportVaultCallFundingPort>,
+        completion: Arc<dyn PassportVaultCallCompletionPort>,
+        presentations: Arc<ProtectedDigitalPassportPresentationSource>,
+    ) -> Result<Self, PassportVaultCallComposerConfigError> {
+        let composer = ProcessPassportVaultCallComposer::new(executable.as_ref())?;
+        let protected_composer = ProcessPassportVaultCallComposer::new(executable)?;
+        Ok(Self {
+            contexts,
+            funding,
+            completion,
+            composer: Arc::new(composer),
+            protected_claim_composer: Arc::new(ManagedPassportVaultProtectedClaimComposer {
+                presentations,
+                composer: protected_composer,
+            }),
             calls: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
@@ -803,6 +998,7 @@ impl NativePassportVaultContractCall {
             funding,
             completion: Arc::new(UnavailablePassportVaultCallCompletion),
             composer,
+            protected_claim_composer: Arc::new(UnavailablePassportVaultProtectedClaimComposer),
             calls: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -819,6 +1015,24 @@ impl NativePassportVaultContractCall {
             funding,
             completion,
             composer,
+            protected_claim_composer: Arc::new(UnavailablePassportVaultProtectedClaimComposer),
+            calls: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_composers_and_funding(
+        contexts: Arc<dyn PassportVaultCallCompositionContextSource>,
+        composer: Arc<dyn PassportVaultCallComposer>,
+        protected_claim_composer: Arc<dyn PassportVaultProtectedClaimComposer>,
+        funding: Arc<dyn PassportVaultCallFundingPort>,
+    ) -> Self {
+        Self {
+            contexts,
+            funding,
+            completion: Arc::new(UnavailablePassportVaultCallCompletion),
+            composer,
+            protected_claim_composer,
             calls: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -840,15 +1054,23 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
             || !valid_hex_32(&request.contract_state.finalized_head_hash_hex)
             || request.contract_state.action_block_height
                 > request.contract_state.finalized_head_height
+            || request.contract_state.finalized_head_time_seconds == 0
         {
             return Err(PassportVaultCallPortError::InvalidChainState);
         }
-        if matches!(
-            request.operation,
-            PassportVaultCallOperation::ClaimFromLock { .. }
-        ) {
-            return Err(PassportVaultCallPortError::Unavailable);
-        }
+        let claim_policy = match &request.operation {
+            PassportVaultCallOperation::ClaimFromLock {
+                lock_id, amount, ..
+            } => Some(
+                decode_protected_claim_context(
+                    &request.contract_state.serialized_contract_state,
+                    *lock_id,
+                    *amount,
+                )
+                .map_err(|_| PassportVaultCallPortError::InvalidChainState)?,
+            ),
+            _ => None,
+        };
         let context = self
             .contexts
             .context(request.profile_id.as_str(), &request.contract_state)?;
@@ -873,15 +1095,33 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
             }
         }
 
-        let unproven_transaction = self.composer.compose(&request, &context)?;
-        validate_unproven_transaction(&unproven_transaction, &context.network_id)?;
+        let unproven_transaction = if claim_policy.is_some() {
+            Zeroizing::new(Vec::new())
+        } else {
+            let transaction = self.composer.compose(&request, &context)?;
+            validate_unproven_transaction(&transaction, &context.network_id)?;
+            transaction
+        };
         let draft_id = PassportVaultCallDraftId::parse(hex::encode(planning_fingerprint))
             .map_err(|_| PassportVaultCallPortError::InvalidData)?;
-        let authorization_challenge = authorization_challenge(
-            &draft_id,
-            &request.contract_state.action_block_hash_hex,
-            &unproven_transaction,
-        )?;
+        let authorization_challenge = if claim_policy.is_some() {
+            claim_authorization_challenge(
+                &draft_id,
+                &request.contract_state.action_block_hash_hex,
+                planning_fingerprint,
+            )?
+        } else {
+            authorization_challenge(
+                &draft_id,
+                &request.contract_state.action_block_hash_hex,
+                &unproven_transaction,
+            )?
+        };
+        let pending_protected_claim = claim_policy.map(|policy| PendingProtectedClaim {
+            request: request.clone(),
+            context: context.clone(),
+            policy,
+        });
         let preview = PassportVaultCallPreview {
             draft_id: draft_id.clone(),
             authorization_challenge,
@@ -928,6 +1168,8 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
                 submission_status: empty_status(draft_id),
                 inclusion: None,
                 unproven_transaction,
+                pending_protected_claim,
+                authorization_in_progress: false,
             },
         );
         Ok(preview)
@@ -938,47 +1180,119 @@ impl PassportVaultContractCallPort for NativePassportVaultContractCall {
         profile_id: &OpaqueId,
         request: AuthorizePassportVaultCallRequest,
     ) -> Result<PassportVaultCallPreview, PassportVaultCallPortError> {
+        let key = (profile_id.clone(), request.draft_id.clone());
+        let claim_work = {
+            let mut calls = self
+                .calls
+                .lock()
+                .map_err(|_| PassportVaultCallPortError::Unavailable)?;
+            let retained = calls
+                .get_mut(&key)
+                .ok_or(PassportVaultCallPortError::DraftNotFound)?;
+            expire_if_needed(retained, request.now);
+            if retained.preview.state == PassportVaultCallDraftState::Expired {
+                return Err(PassportVaultCallPortError::DraftExpired);
+            }
+            if retained.preview.authorization_challenge != request.authorization_challenge {
+                return Err(PassportVaultCallPortError::AuthorizationChallengeMismatch);
+            }
+            match retained.preview.state {
+                PassportVaultCallDraftState::Prepared => {
+                    if let Some(pending) = retained.pending_protected_claim.clone() {
+                        if retained.authorization_in_progress {
+                            return Err(PassportVaultCallPortError::DraftConflict);
+                        }
+                        retained.authorization_in_progress = true;
+                        Some((
+                            pending,
+                            retained.planning_fingerprint,
+                            retained.preview.expires_at,
+                        ))
+                    } else {
+                        let requires_night_funding = matches!(
+                            &retained.preview.operation,
+                            PassportVaultCallOperation::CreateLock { .. }
+                                | PassportVaultCallOperation::DepositToLock { .. }
+                        );
+                        let funded = self.funding.fund(PassportVaultCallFundingRequest {
+                            profile_id: profile_id.as_str().to_owned(),
+                            network_id: retained.network_id.clone(),
+                            expires_at_seconds: retained.preview.expires_at.value() / 1_000,
+                            requires_night_funding,
+                            transaction: Zeroizing::new(retained.unproven_transaction.to_vec()),
+                        })?;
+                        let transaction = funded.into_transaction();
+                        validate_funded_transaction(&transaction, &retained.network_id)?;
+                        retained.unproven_transaction = transaction;
+                        retained.preview.state = PassportVaultCallDraftState::Authorized;
+                        return Ok(retained.preview.clone());
+                    }
+                }
+                PassportVaultCallDraftState::Authorized => return Ok(retained.preview.clone()),
+                PassportVaultCallDraftState::Submitting
+                | PassportVaultCallDraftState::Submitted
+                | PassportVaultCallDraftState::Expired => {
+                    return Err(PassportVaultCallPortError::DraftConflict);
+                }
+            }
+        };
+
+        let (pending, expected_fingerprint, expires_at) =
+            claim_work.ok_or(PassportVaultCallPortError::InvalidData)?;
+        let transaction = (|| {
+            let transaction = self.protected_claim_composer.compose_after_authorization(
+                &pending.request,
+                &pending.context,
+                &pending.policy,
+            )?;
+            validate_unproven_transaction(&transaction, &pending.context.network_id)?;
+            let funded = self.funding.fund(PassportVaultCallFundingRequest {
+                profile_id: profile_id.as_str().to_owned(),
+                network_id: pending.context.network_id.clone(),
+                expires_at_seconds: expires_at.value() / 1_000,
+                requires_night_funding: false,
+                transaction,
+            })?;
+            let transaction = funded.into_transaction();
+            validate_funded_transaction(&transaction, &pending.context.network_id)?;
+            Ok(transaction)
+        })();
+        let transaction = match transaction {
+            Ok(transaction) => transaction,
+            Err(error) => {
+                if let Ok(mut calls) = self.calls.lock()
+                    && let Some(retained) = calls.get_mut(&key)
+                    && retained.planning_fingerprint == expected_fingerprint
+                    && retained.preview.state == PassportVaultCallDraftState::Prepared
+                {
+                    retained.authorization_in_progress = false;
+                }
+                return Err(error);
+            }
+        };
         let mut calls = self
             .calls
             .lock()
             .map_err(|_| PassportVaultCallPortError::Unavailable)?;
         let retained = calls
-            .get_mut(&(profile_id.clone(), request.draft_id))
+            .get_mut(&key)
             .ok_or(PassportVaultCallPortError::DraftNotFound)?;
         expire_if_needed(retained, request.now);
         if retained.preview.state == PassportVaultCallDraftState::Expired {
             return Err(PassportVaultCallPortError::DraftExpired);
         }
-        if retained.preview.authorization_challenge != request.authorization_challenge {
-            return Err(PassportVaultCallPortError::AuthorizationChallengeMismatch);
+        if retained.planning_fingerprint != expected_fingerprint
+            || retained.preview.authorization_challenge != request.authorization_challenge
+            || retained.preview.state != PassportVaultCallDraftState::Prepared
+            || !retained.authorization_in_progress
+        {
+            return Err(PassportVaultCallPortError::DraftConflict);
         }
-        match retained.preview.state {
-            PassportVaultCallDraftState::Prepared => {
-                let requires_night_funding = matches!(
-                    &retained.preview.operation,
-                    PassportVaultCallOperation::CreateLock { .. }
-                        | PassportVaultCallOperation::DepositToLock { .. }
-                );
-                let funded = self.funding.fund(PassportVaultCallFundingRequest {
-                    profile_id: profile_id.as_str().to_owned(),
-                    network_id: retained.network_id.clone(),
-                    expires_at_seconds: retained.preview.expires_at.value() / 1_000,
-                    requires_night_funding,
-                    transaction: Zeroizing::new(retained.unproven_transaction.to_vec()),
-                })?;
-                let transaction = funded.into_transaction();
-                validate_funded_transaction(&transaction, &retained.network_id)?;
-                retained.unproven_transaction = transaction;
-                retained.preview.state = PassportVaultCallDraftState::Authorized;
-                Ok(retained.preview.clone())
-            }
-            PassportVaultCallDraftState::Authorized => Ok(retained.preview.clone()),
-            PassportVaultCallDraftState::Submitting
-            | PassportVaultCallDraftState::Submitted
-            | PassportVaultCallDraftState::Expired => {
-                Err(PassportVaultCallPortError::DraftConflict)
-            }
-        }
+        retained.unproven_transaction = transaction;
+        retained.pending_protected_claim = None;
+        retained.authorization_in_progress = false;
+        retained.preview.state = PassportVaultCallDraftState::Authorized;
+        Ok(retained.preview.clone())
     }
 
     fn submit<'a>(
@@ -1423,23 +1737,47 @@ fn planning_fingerprint(
     context: &PassportVaultCallCompositionContext,
 ) -> [u8; 32] {
     let mut digest = Sha256::new();
-    digest.update(b"oxid:native-passport-vault-plan:v1\0");
-    digest.update(request.profile_id.as_str().as_bytes());
-    digest.update([0]);
+    digest.update(b"oxid:native-passport-vault-plan:v2\0");
+    update_length_prefixed(&mut digest, request.profile_id.as_str().as_bytes());
     digest.update(request.contract_state.contract_address_hex.as_bytes());
     digest.update(request.contract_state.transaction_hash_hex.as_bytes());
     digest.update(request.contract_state.action_block_hash_hex.as_bytes());
     digest.update(request.contract_state.action_block_height.to_be_bytes());
-    digest.update(request.contract_state.serialized_contract_state.as_slice());
+    digest.update(request.contract_state.finalized_head_hash_hex.as_bytes());
+    digest.update(request.contract_state.finalized_head_height.to_be_bytes());
+    digest.update(
+        request
+            .contract_state
+            .finalized_head_time_seconds
+            .to_be_bytes(),
+    );
+    update_length_prefixed(
+        &mut digest,
+        request.contract_state.serialized_contract_state.as_slice(),
+    );
     digest.update(request.expires_at.value().to_be_bytes());
     update_operation_digest(&mut digest, &request.operation);
-    digest.update(context.network_id.as_bytes());
-    digest.update(context.zswap_chain_state.as_slice());
-    digest.update(context.ledger_parameters.as_slice());
+    update_length_prefixed(&mut digest, context.network_id.as_bytes());
+    update_length_prefixed(&mut digest, context.zswap_chain_state.as_slice());
+    update_length_prefixed(&mut digest, context.ledger_parameters.as_slice());
     digest.update(context.coin_public_key);
     digest.update(context.encryption_public_key);
     digest.update(context.unshielded_recipient);
     digest.finalize().into()
+}
+
+fn claim_authorization_challenge(
+    draft_id: &PassportVaultCallDraftId,
+    anchor_block_hash_hex: &str,
+    planning_fingerprint: [u8; 32],
+) -> Result<PassportVaultCallAuthorizationChallenge, PassportVaultCallPortError> {
+    let mut digest = Sha256::new();
+    digest.update(b"oxid:native-passport-vault-claim-authorization:v1\0");
+    digest.update(draft_id.as_str().as_bytes());
+    digest.update(anchor_block_hash_hex.as_bytes());
+    digest.update(planning_fingerprint);
+    PassportVaultCallAuthorizationChallenge::parse(hex::encode(digest.finalize()))
+        .map_err(|_| PassportVaultCallPortError::InvalidData)
 }
 
 fn authorization_challenge(
@@ -1483,7 +1821,7 @@ fn update_operation_digest(digest: &mut Sha256, operation: &PassportVaultCallOpe
             digest.update([2]);
             digest.update(lock_id.to_be_bytes());
             digest.update(amount.to_be_bytes());
-            digest.update(credential_id.as_str().as_bytes());
+            update_length_prefixed(digest, credential_id.as_str().as_bytes());
         }
         PassportVaultCallOperation::WithdrawFromLock { lock_id, amount } => {
             digest.update([3]);
@@ -1491,6 +1829,11 @@ fn update_operation_digest(digest: &mut Sha256, operation: &PassportVaultCallOpe
             digest.update(amount.to_be_bytes());
         }
     }
+}
+
+fn update_length_prefixed(digest: &mut Sha256, value: &[u8]) {
+    digest.update(value.len().to_be_bytes());
+    digest.update(value);
 }
 
 fn update_optional_bytes(digest: &mut Sha256, value: Option<[u8; 32]>) {
@@ -1538,6 +1881,8 @@ fn expire_if_needed(retained: &mut RetainedNativeCall, now: UnixTimestampMillis)
         retained.preview.state = PassportVaultCallDraftState::Expired;
         retained.submission_status.state = PassportVaultCallSubmissionState::Expired;
         retained.unproven_transaction.zeroize();
+        retained.pending_protected_claim = None;
+        retained.authorization_in_progress = false;
     }
 }
 
@@ -1558,10 +1903,15 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use futures::executor::block_on;
-    use midnight_base_crypto::{schnorr::Signature, time::Timestamp};
+    use midnight_base_crypto::{fab::AlignedValue, schnorr::Signature, time::Timestamp};
     use midnight_ledger::structure::{Intent, ProofPreimageMarker, StandardTransaction};
+    use midnight_onchain_runtime::state::{ChargedState, ContractState, StateValue};
     use midnight_serialize::tagged_serialize;
-    use midnight_storage::{DefaultDB, storage::HashMap as LedgerHashMap};
+    use midnight_storage::{
+        DefaultDB,
+        arena::Sp,
+        storage::{Array, HashMap as LedgerHashMap},
+    };
     use midnight_transient_crypto::commitment::PedersenRandomness;
     use oxid_passport_vault_domain::PassportVaultPolicy;
     use rand::rngs::OsRng;
@@ -1607,6 +1957,29 @@ mod tests {
             tagged_serialize(&transaction, &mut bytes)
                 .map_err(|_| PassportVaultCallPortError::InvalidData)?;
             Ok(Zeroizing::new(bytes))
+        }
+    }
+
+    struct ProtectedClaimComposer {
+        calls: AtomicUsize,
+        fail_first: bool,
+    }
+
+    impl PassportVaultProtectedClaimComposer for ProtectedClaimComposer {
+        fn compose_after_authorization(
+            &self,
+            _: &PreparePassportVaultCallRequest,
+            context: &PassportVaultCallCompositionContext,
+            _: &PassportVaultProtectedClaimContext,
+        ) -> Result<Zeroizing<Vec<u8>>, PassportVaultCallPortError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail_first && call == 0 {
+                return Err(PassportVaultCallPortError::Unavailable);
+            }
+            Composer {
+                calls: AtomicUsize::new(0),
+            }
+            .compose(&request(create_operation()), context)
         }
     }
 
@@ -1720,10 +2093,46 @@ mod tests {
                 action_block_height: 42,
                 finalized_head_hash_hex: "44".repeat(32),
                 finalized_head_height: 45,
+                finalized_head_time_seconds: 1_700_000_000,
             },
             operation,
             expires_at: UnixTimestampMillis::new(10_000),
         }
+    }
+
+    fn claim_ready_request() -> PreparePassportVaultCallRequest {
+        const FIXTURE: &str =
+            include_str!("../../../../fixtures/passport-vault/contract-state-v1.hex");
+        let mut cursor = Cursor::new(hex::decode(FIXTURE.trim()).expect("fixture bytes"));
+        let mut contract: ContractState<DefaultDB> =
+            tagged_deserialize(&mut cursor).expect("fixture state");
+        let StateValue::Array(fields) = contract.data.get_ref() else {
+            panic!("fixture ledger fields");
+        };
+        let mut fields: Vec<StateValue<DefaultDB>> = fields.iter_deref().cloned().collect();
+        let locks = match &fields[4] {
+            StateValue::Map(locks) => locks.clone(),
+            _ => panic!("fixture locks"),
+        };
+        let record = (
+            [9_u8; 32], 18_u8, false, [0_u8; 32], false, [0_u8; 32], 40_u128, [5_u8; 32], 100_u128,
+            0_u128,
+        );
+        fields[4] = StateValue::Map(locks.insert(
+            AlignedValue::from(0_u64),
+            StateValue::Cell(Sp::new(AlignedValue::from(record))),
+        ));
+        fields[7] = StateValue::Cell(Sp::new(AlignedValue::from(100_u128)));
+        contract.data = ChargedState::new(StateValue::Array(Array::new_from_slice(&fields)));
+        let mut serialized_contract_state = Vec::new();
+        tagged_serialize(&contract, &mut serialized_contract_state).expect("claim-ready state");
+        let mut request = request(PassportVaultCallOperation::ClaimFromLock {
+            lock_id: 0,
+            amount: 1,
+            credential_id: OpaqueId::parse("credential_1").expect("credential"),
+        });
+        request.contract_state.serialized_contract_state = serialized_contract_state;
+        request
     }
 
     fn create_operation() -> PassportVaultCallOperation {
@@ -2048,7 +2457,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_claims_and_unauthenticated_state_before_public_context_or_composition() {
+    fn rejects_invalid_claim_state_and_unauthenticated_state_before_composition() {
         let (adapter, contexts, composer) = adapter();
         let claim = PassportVaultCallOperation::ClaimFromLock {
             lock_id: 1,
@@ -2057,7 +2466,7 @@ mod tests {
         };
         assert_eq!(
             adapter.prepare(request(claim)),
-            Err(PassportVaultCallPortError::Unavailable)
+            Err(PassportVaultCallPortError::InvalidChainState)
         );
         let mut unauthenticated = request(create_operation());
         unauthenticated.contract_state.authentication =
@@ -2068,6 +2477,129 @@ mod tests {
         );
         assert_eq!(contexts.calls.load(Ordering::SeqCst), 0);
         assert_eq!(composer.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn protected_claim_composition_starts_only_after_exact_authorization() {
+        let contexts = Arc::new(ContextSource {
+            calls: AtomicUsize::new(0),
+        });
+        let public_composer = Arc::new(Composer {
+            calls: AtomicUsize::new(0),
+        });
+        let protected_composer = Arc::new(ProtectedClaimComposer {
+            calls: AtomicUsize::new(0),
+            fail_first: false,
+        });
+        let funding = Arc::new(RecordingFunding {
+            calls: AtomicUsize::new(0),
+            requires_night_funding: Mutex::new(Vec::new()),
+            failure: None,
+        });
+        let adapter = NativePassportVaultContractCall::with_composers_and_funding(
+            contexts,
+            public_composer.clone(),
+            protected_composer.clone(),
+            funding.clone(),
+        );
+        let prepared = adapter.prepare(claim_ready_request()).expect("claim plan");
+        assert_eq!(prepared.state, PassportVaultCallDraftState::Prepared);
+        assert_eq!(public_composer.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(protected_composer.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(funding.calls.load(Ordering::SeqCst), 0);
+
+        let wrong = PassportVaultCallAuthorizationChallenge::parse("00".repeat(32))
+            .expect("wrong challenge");
+        assert_eq!(
+            adapter.authorize(
+                &profile(),
+                AuthorizePassportVaultCallRequest {
+                    draft_id: prepared.draft_id.clone(),
+                    authorization_challenge: wrong,
+                    now: UnixTimestampMillis::new(1_000),
+                },
+            ),
+            Err(PassportVaultCallPortError::AuthorizationChallengeMismatch)
+        );
+        assert_eq!(protected_composer.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(funding.calls.load(Ordering::SeqCst), 0);
+
+        let authorized = adapter
+            .authorize(
+                &profile(),
+                AuthorizePassportVaultCallRequest {
+                    draft_id: prepared.draft_id,
+                    authorization_challenge: prepared.authorization_challenge,
+                    now: UnixTimestampMillis::new(1_001),
+                },
+            )
+            .expect("authorized protected claim");
+        assert_eq!(authorized.state, PassportVaultCallDraftState::Authorized);
+        assert_eq!(protected_composer.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(funding.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            funding
+                .requires_night_funding
+                .lock()
+                .expect("funding observation")
+                .as_slice(),
+            &[false]
+        );
+    }
+
+    #[test]
+    fn protected_claim_composition_failure_leaves_the_plan_retryable() {
+        let contexts = Arc::new(ContextSource {
+            calls: AtomicUsize::new(0),
+        });
+        let public_composer = Arc::new(Composer {
+            calls: AtomicUsize::new(0),
+        });
+        let protected_composer = Arc::new(ProtectedClaimComposer {
+            calls: AtomicUsize::new(0),
+            fail_first: true,
+        });
+        let funding = Arc::new(RecordingFunding {
+            calls: AtomicUsize::new(0),
+            requires_night_funding: Mutex::new(Vec::new()),
+            failure: None,
+        });
+        let adapter = NativePassportVaultContractCall::with_composers_and_funding(
+            contexts,
+            public_composer,
+            protected_composer.clone(),
+            funding.clone(),
+        );
+        let prepared = adapter.prepare(claim_ready_request()).expect("claim plan");
+        let authorization = AuthorizePassportVaultCallRequest {
+            draft_id: prepared.draft_id.clone(),
+            authorization_challenge: prepared.authorization_challenge,
+            now: UnixTimestampMillis::new(1_000),
+        };
+
+        assert_eq!(
+            adapter.authorize(&profile(), authorization.clone()),
+            Err(PassportVaultCallPortError::Unavailable)
+        );
+        assert_eq!(
+            adapter
+                .get(
+                    &profile(),
+                    &prepared.draft_id,
+                    UnixTimestampMillis::new(1_001)
+                )
+                .expect("retryable claim plan")
+                .state,
+            PassportVaultCallDraftState::Prepared
+        );
+        assert_eq!(funding.calls.load(Ordering::SeqCst), 0);
+
+        let authorized = adapter
+            .authorize(&profile(), authorization)
+            .expect("claim retry authorizes");
+        assert_eq!(authorized.state, PassportVaultCallDraftState::Authorized);
+        assert_eq!(protected_composer.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(funding.calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

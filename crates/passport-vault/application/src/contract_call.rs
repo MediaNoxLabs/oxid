@@ -1293,6 +1293,7 @@ mod tests {
                     action_block_height: 40,
                     finalized_head_hash_hex: "66".repeat(32),
                     finalized_head_height: 42,
+                    finalized_head_time_seconds: 1_700_000_000,
                 })
             })
         }

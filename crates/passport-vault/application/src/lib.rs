@@ -198,6 +198,7 @@ pub struct PassportVaultChainAnchorView {
     pub action_block_height: u64,
     pub finalized_head_hash_hex: String,
     pub finalized_head_height: u64,
+    pub finalized_head_time_seconds: u64,
     pub state_authentication: String,
 }
 
@@ -373,6 +374,7 @@ pub struct PassportVaultContractStateSnapshot {
     pub action_block_height: u64,
     pub finalized_head_hash_hex: String,
     pub finalized_head_height: u64,
+    pub finalized_head_time_seconds: u64,
 }
 
 /// Trust boundary established by the state-source adapter. These variants are
@@ -537,6 +539,7 @@ impl ReadPassportVaultContractStateUseCase for PassportVaultContractStateService
                 action_block_height: snapshot.action_block_height,
                 finalized_head_hash_hex: snapshot.finalized_head_hash_hex,
                 finalized_head_height: snapshot.finalized_head_height,
+                finalized_head_time_seconds: snapshot.finalized_head_time_seconds,
                 state_authentication: snapshot.authentication.authentication_name().to_owned(),
             });
             Ok(view)
@@ -566,7 +569,9 @@ fn validate_snapshot(
     {
         return Err(PassportVaultContractStateSourceError::InvalidResponse);
     }
-    if snapshot.action_block_height > snapshot.finalized_head_height {
+    if snapshot.action_block_height > snapshot.finalized_head_height
+        || snapshot.finalized_head_time_seconds == 0
+    {
         return Err(PassportVaultContractStateSourceError::FinalityMismatch);
     }
     Ok(())
@@ -1102,6 +1107,7 @@ mod tests {
                 action_block_height: 40,
                 finalized_head_hash_hex: "44".repeat(32),
                 finalized_head_height: 42,
+                finalized_head_time_seconds: 1_700_000_000,
             })),
         );
         let view = ready(ReadPassportVaultContractStateUseCase::execute(
@@ -1116,6 +1122,7 @@ mod tests {
         assert_eq!(anchor.contract_address_hex, address);
         assert_eq!(anchor.action_block_height, 40);
         assert_eq!(anchor.finalized_head_height, 42);
+        assert_eq!(anchor.finalized_head_time_seconds, 1_700_000_000);
         assert_eq!(anchor.state_authentication, "indexer_supplied_not_proven");
     }
 
@@ -1133,6 +1140,7 @@ mod tests {
                 action_block_height: 40,
                 finalized_head_hash_hex: "44".repeat(32),
                 finalized_head_height: 42,
+                finalized_head_time_seconds: 1_700_000_000,
             })),
         );
 

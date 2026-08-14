@@ -19,6 +19,9 @@ const NETWORK_ID = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
 const MAX_U64 = (1n << 64n) - 1n;
 const MAX_U128 = (1n << 128n) - 1n;
+const MAX_U16 = (1n << 16n) - 1n;
+const MAX_U32 = (1n << 32n) - 1n;
+const MAX_FIELD_ENCODING = (1n << 256n) - 1n;
 const MAX_CONTRACT_STATE_HEX = 32 * 1024 * 1024;
 const MAX_ZSWAP_STATE_HEX = 4 * 1024 * 1024;
 const MAX_LEDGER_PARAMETERS_HEX = 1024 * 1024;
@@ -98,6 +101,228 @@ function parseOptionalPolicyValue(value) {
   return { required: true, bytes: parseHex32(value, false) };
 }
 
+function parseByteArray(value, length) {
+  if (
+    !Array.isArray(value) ||
+    value.length !== length ||
+    value.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)
+  ) {
+    throw invalidRequest();
+  }
+  return new Uint8Array(value);
+}
+
+function parseInteger(value, maximum) {
+  if (!Number.isInteger(value) || value < 0 || BigInt(value) > maximum) {
+    throw invalidRequest();
+  }
+  return BigInt(value);
+}
+
+function parseBoolean(value) {
+  if (typeof value !== "boolean") {
+    throw invalidRequest();
+  }
+  return value;
+}
+
+function littleEndianBigInt(bytes) {
+  let value = 0n;
+  for (let index = bytes.length - 1; index >= 0; index -= 1) {
+    value = (value << 8n) | BigInt(bytes[index]);
+  }
+  if (value > MAX_FIELD_ENCODING) {
+    throw invalidRequest();
+  }
+  return value;
+}
+
+function parseMethod(value) {
+  const method = assertObject(value);
+  assertExactKeys(method, ["didContractAddress", "methodId"]);
+  return {
+    didContractAddress: { bytes: parseByteArray(method.didContractAddress, 32) },
+    methodId: parseByteArray(method.methodId, 32),
+  };
+}
+
+function parseSchema(value) {
+  const schema = assertObject(value);
+  assertExactKeys(schema, ["packageId", "schemaId", "majorVersion", "minorVersion"]);
+  return {
+    packageId: parseByteArray(schema.packageId, 32),
+    schemaId: parseByteArray(schema.schemaId, 32),
+    majorVersion: parseInteger(schema.majorVersion, MAX_U16),
+    minorVersion: parseInteger(schema.minorVersion, MAX_U16),
+  };
+}
+
+function parsePoint(value) {
+  const point = assertObject(value);
+  assertExactKeys(point, ["xLe", "yLe"]);
+  return {
+    x: littleEndianBigInt(parseByteArray(point.xLe, 32)),
+    y: littleEndianBigInt(parseByteArray(point.yLe, 32)),
+  };
+}
+
+function parseProof(value) {
+  const proof = assertObject(value);
+  assertExactKeys(proof, [
+    "signer",
+    "createdAt",
+    "challengeHash",
+    "publicKey",
+    "announcement",
+    "responseLe",
+  ]);
+  return {
+    signerVerificationMethodRef: parseMethod(proof.signer),
+    createdAt: parseDecimal(proof.createdAt, MAX_U64, true),
+    challengeHash: parseByteArray(proof.challengeHash, 32),
+    publicKey: parsePoint(proof.publicKey),
+    signature: {
+      r: parsePoint(proof.announcement),
+      s: littleEndianBigInt(parseByteArray(proof.responseLe, 32)),
+    },
+  };
+}
+
+function parseCredential(value) {
+  const credential = assertObject(value);
+  assertExactKeys(credential, [
+    "version",
+    "packageId",
+    "schemaId",
+    "majorVersion",
+    "minorVersion",
+    "issuer",
+    "holder",
+    "issuedAt",
+    "hasExpiration",
+    "expiresAt",
+    "firstNameCommitment",
+    "lastNameCommitment",
+    "dateOfBirthCommitment",
+    "documentNumberCommitment",
+    "issuingStateCommitment",
+    "claimRoot",
+  ]);
+  return {
+    version: parseInteger(credential.version, MAX_U16),
+    schema: parseSchema({
+      packageId: credential.packageId,
+      schemaId: credential.schemaId,
+      majorVersion: credential.majorVersion,
+      minorVersion: credential.minorVersion,
+    }),
+    issuerVerificationMethodRef: parseMethod(credential.issuer),
+    holderBinding: { holderVerificationMethodRef: parseMethod(credential.holder) },
+    statusBinding: {},
+    issuedAt: parseDecimal(credential.issuedAt, MAX_U64, true),
+    hasExpiration: parseBoolean(credential.hasExpiration),
+    expiresAt: parseDecimal(credential.expiresAt, MAX_U64, true),
+    claims: {},
+    claimCommitments: {
+      firstNameCommitment: parseByteArray(credential.firstNameCommitment, 32),
+      lastNameCommitment: parseByteArray(credential.lastNameCommitment, 32),
+      dateOfBirthCommitment: parseByteArray(credential.dateOfBirthCommitment, 32),
+      documentNumberCommitment: parseByteArray(credential.documentNumberCommitment, 32),
+      issuingStateCommitment: parseByteArray(credential.issuingStateCommitment, 32),
+    },
+    claimRoot: parseByteArray(credential.claimRoot, 32),
+  };
+}
+
+function parseDisclosures(value) {
+  const disclosures = assertObject(value);
+  assertExactKeys(disclosures, [
+    "revealFirstName",
+    "firstNameValuePadded",
+    "firstNameOpening",
+    "revealLastName",
+    "lastNameValuePadded",
+    "lastNameOpening",
+    "proveAgeOverThreshold",
+    "ageThresholdYears",
+    "revealDocumentNumber",
+    "documentNumberValue",
+    "documentNumberOpening",
+    "revealIssuingState",
+    "issuingStateValue",
+    "issuingStateOpening",
+  ]);
+  return {
+    revealFirstName: parseBoolean(disclosures.revealFirstName),
+    firstNameValuePadded: parseByteArray(disclosures.firstNameValuePadded, 64),
+    firstNameOpening: parseByteArray(disclosures.firstNameOpening, 32),
+    revealLastName: parseBoolean(disclosures.revealLastName),
+    lastNameValuePadded: parseByteArray(disclosures.lastNameValuePadded, 64),
+    lastNameOpening: parseByteArray(disclosures.lastNameOpening, 32),
+    proveAgeOverThreshold: parseBoolean(disclosures.proveAgeOverThreshold),
+    ageThresholdYears: parseInteger(disclosures.ageThresholdYears, 120n),
+    revealDocumentNumber: parseBoolean(disclosures.revealDocumentNumber),
+    documentNumberValue: parseByteArray(disclosures.documentNumberValue, 32),
+    documentNumberOpening: parseByteArray(disclosures.documentNumberOpening, 32),
+    revealIssuingState: parseBoolean(disclosures.revealIssuingState),
+    issuingStateValue: parseByteArray(disclosures.issuingStateValue, 32),
+    issuingStateOpening: parseByteArray(disclosures.issuingStateOpening, 32),
+  };
+}
+
+function parsePresentation(value) {
+  const presentation = assertObject(value);
+  assertExactKeys(presentation, [
+    "version",
+    "packageId",
+    "schemaId",
+    "majorVersion",
+    "minorVersion",
+    "credentialClaimRoot",
+    "issuer",
+    "holder",
+    "disclosures",
+  ]);
+  return {
+    version: parseInteger(presentation.version, MAX_U16),
+    schema: parseSchema({
+      packageId: presentation.packageId,
+      schemaId: presentation.schemaId,
+      majorVersion: presentation.majorVersion,
+      minorVersion: presentation.minorVersion,
+    }),
+    credentialClaimRoot: parseByteArray(presentation.credentialClaimRoot, 32),
+    issuerVerificationMethodRef: parseMethod(presentation.issuer),
+    holderBinding: { holderVerificationMethodRef: parseMethod(presentation.holder) },
+    disclosed: parseDisclosures(presentation.disclosures),
+  };
+}
+
+function parseClaimMaterial(value) {
+  const material = assertObject(value);
+  assertExactKeys(material, [
+    "credential",
+    "credentialProof",
+    "presentation",
+    "presentationProof",
+    "currentDay",
+    "witness",
+  ]);
+  const witness = assertObject(material.witness);
+  assertExactKeys(witness, ["holderDateOfBirthDays", "holderDateOfBirthOpening"]);
+  return {
+    credential: parseCredential(material.credential),
+    credentialProof: parseProof(material.credentialProof),
+    presentation: parsePresentation(material.presentation),
+    presentationProof: parseProof(material.presentationProof),
+    currentDay: parseInteger(material.currentDay, MAX_U32),
+    privateState: {
+      holderDateOfBirthDays: parseInteger(witness.holderDateOfBirthDays, MAX_U32),
+      holderDateOfBirthOpening: parseByteArray(witness.holderDateOfBirthOpening, 32),
+    },
+  };
+}
+
 function parseOperation(value) {
   const operation = assertObject(value);
   if (typeof operation.kind !== "string") {
@@ -159,11 +384,31 @@ function parseOperation(value) {
           { bytes: parseHex32(operation.recipientAddressHex) },
         ],
       };
-    case "claim_from_lock":
-      throw new ComposerError(
-        "claim_requires_protected_custody",
-        "Passport Vault claims require the protected credential composer",
-      );
+    case "claim_from_lock": {
+      assertExactKeys(operation, [
+        "kind",
+        "lockId",
+        "amount",
+        "recipientAddressHex",
+        "material",
+      ]);
+      const material = parseClaimMaterial(operation.material);
+      return {
+        kind: operation.kind,
+        circuitId: "claimFromLock",
+        args: [
+          parseDecimal(operation.lockId, MAX_U64, true),
+          material.credential,
+          material.credentialProof,
+          material.presentation,
+          material.presentationProof,
+          material.currentDay,
+          parseDecimal(operation.amount, MAX_U128, false),
+          { bytes: parseHex32(operation.recipientAddressHex) },
+        ],
+        privateState: material.privateState,
+      };
+    }
     case "set_trusted_issuer":
       throw new ComposerError(
         "administrative_circuit_forbidden",
@@ -267,17 +512,17 @@ async function executePassportVaultCall(value) {
   const generated = await loadContractModule();
   const artifacts = artifactRoot();
   const witnesses = {
-    holderDateOfBirthDays() {
-      throw new ComposerError(
-        "claim_requires_protected_custody",
-        "Passport Vault claims require the protected credential composer",
-      );
+    holderDateOfBirthDays({ privateState }) {
+      if (typeof privateState?.holderDateOfBirthDays !== "bigint") {
+        throw invalidRequest();
+      }
+      return [privateState, privateState.holderDateOfBirthDays];
     },
-    holderDateOfBirthOpening() {
-      throw new ComposerError(
-        "claim_requires_protected_custody",
-        "Passport Vault claims require the protected credential composer",
-      );
+    holderDateOfBirthOpening({ privateState }) {
+      if (!(privateState?.holderDateOfBirthOpening instanceof Uint8Array)) {
+        throw invalidRequest();
+      }
+      return [privateState, privateState.holderDateOfBirthOpening];
     },
   };
   const compiledContract = CompiledContract.make("passport-vault", generated.Contract).pipe(
@@ -308,7 +553,7 @@ async function executePassportVaultCall(value) {
         initialContractState: contractState,
         initialZswapChainState: zswapChainState,
         ledgerParameters,
-        initialPrivateState: {},
+        initialPrivateState: request.operation.privateState ?? {},
       },
       request.encryptionPublicKeyHex,
     );

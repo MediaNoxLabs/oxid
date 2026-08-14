@@ -26,7 +26,7 @@ before migrating later work.
 | `wallet-core/oid4vp_client` | Self-issued DID authentication mislabeled alongside an unimplemented OID4VP presentation action | `protocol/domain`, `protocol/application`, `adapters/siopv2`; `presentation/domain`, `presentation/application`, `adapters/openid4vp` | SIOPv2 draft-13 login implemented by issue #25/ADR-0040; issue #27/ADR-0043 adds strict Final-shaped DCQL request preview, consent, and replay protection; ADR-0048 adds current-holder authorization and ADR-0050 adds explicit native headless Compact proof plus independent `vp_token` verification |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification, protected Digital Passport values/openings | `credential/domain`, `credential/application`, `adapters/vc-midnight`, protected credential storage | Profile-scoped protected inventory and strict phase-1 verification implemented by issue #23/ADR-0038; issue #26/ADR-0041/0042 adds atomic opaque material, commitment-bound five-claim Digital Passport interpretation, safe local planning/reveal, restart/deletion, and mobile coverage; Compact presentation proofs, status/schema/trust policy, and native wrapping remain pending |
 | `wallet-core/oid4vci_client` and `oid4vci_issuance_e2e` | Pre-authorized offer, token/nonce, holder proof, credential request/store flow | `protocol/domain`, `protocol/application`, `adapters/openid4vci`, existing DID custody and verified credential sink | OpenID4VCI 1.0 Final embedded-offer standalone flow plus separate authentication and managed Jubjub holder-binding methods implemented by issue #24 and ADR-0039/0047; production transport/discovery and additional grant/response variants pending |
-| `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | `passport-vault/domain`, `passport-vault/application`, product adapter, not generic wallet core | ADR-0051 delivers exact standalone multi-lock behavior; ADR-0052 adds the immutable five-circuit artifact closure and native tagged-state decoding; ADR-0054/0055 authenticate canonical history/state; ADR-0056/0057 add the retained call harness and explicit simulator; ADR-0058 authenticates the generated client/four wallet proof circuits; ADR-0059 through ADR-0063 add closed-schema create/deposit/withdraw composition, exact finalized public context, protected NIGHT funding, DUST proving, finalized submission, cancellation, and restart recovery while protected claim custody remains issue #31 |
+| `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | `passport-vault/domain`, `passport-vault/application`, product adapter, not generic wallet core | ADR-0051 delivers exact standalone multi-lock behavior; ADR-0052 adds the immutable five-circuit artifact closure and native tagged-state decoding; ADR-0054/0055 authenticate canonical history/state; ADR-0056/0057 add the retained call harness and explicit simulator; ADR-0058 authenticates the generated client/four wallet proof circuits; ADR-0059 through ADR-0063 add closed-schema create/deposit/withdraw composition, exact finalized public context, protected NIGHT funding, DUST proving, finalized submission, cancellation, and restart recovery; ADR-0064/0065 add authorization-bound protected claim composition while full native claim conformance remains issue #31 |
 | `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, protected development activation, staged transfer, DID lifecycle, protected credential inventory/verification, standalone issuance, consented self-issued DID authentication, Digital Passport local reveal/age plan, OpenID4VP request/consent proof gate, and the standalone Passport Vault journey are reimplemented; mobile proving and native bridges remain deferred |
 | `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, wallet/identity flows, claim-free Digital Passport planning, Final-shaped OpenID4VP proof/verification, and complete standalone Passport Vault create/deposit/claim/replay/withdraw accounting are implemented while credential/proof private material stays hidden |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
@@ -350,19 +350,22 @@ ZKIR degrees, and implements Midnight's native resolver/parameter traits for
 through the wallet capability. ADR-0059 now packages the generated client as a
 one-request, closed-schema composer and proves that `createLock`,
 `depositToLock`, and `withdrawFromLock` produce transactions accepted by the
-pinned Rust ledger codec. It rejects claims until protected credential custody
-and fresh presentation randomness are available, excludes administration, and
-does not expose raw circuit arguments. ADR-0060 installs the composer behind a
-native retained application-port adapter. That path requires canonical replay
+pinned Rust ledger codec. Its original public schema rejects claims, excludes
+administration, and does not expose raw circuit arguments. ADR-0060 installs
+the composer behind a native retained application-port adapter. That path
+requires canonical replay
 plus real bounded serialized Zswap/ledger-parameter state, retains transaction
 bytes only in a zeroizing adapter buffer, and supports truthful
 prepare/authorize behavior. ADR-0061 supplies its exact replay-matched public
 Midnight context. ADR-0062 then derives the native NIGHT deficit from the
 generated call only after exact authorization, selects synchronized unshielded
 UTXOs, returns change, and signs every input inside protected custody. Submit
-remains unavailable, so claim composition, DUST proof provision, durable
-journaling, node submission, and reconciliation are the next issue #31
-increments.
+was completed by ADR-0063 through the shared DUST proof, durable journal, node
+submission, and reconciliation path. ADR-0064/0065 now add a distinct protected
+claim schema: preparation retains authenticated public plan inputs only, while
+exact call authorization triggers credential re-verification, managed holder
+authorization/signing, generated `claimFromLock` composition, and the same
+funding/settlement path.
 
 The standalone adapter implements bounded multi-lock creation, deposit,
 credential-policy claim, creator withdrawal, total accounting, exact consent,
@@ -413,7 +416,7 @@ and finalized reconciliation path. Capability discovery reports
 `native_settlement` and `settlesOnMidnight: true` for those three native
 operations; a configured submission journal restores public status across
 process restarts. Protected claim composition and optional authenticated state
-caching remain issue #31 adapter work. ADR-0064 now replaces the prototype's
+conformance plus optional authenticated state caching remain issue #31 adapter work. ADR-0064 now replaces the prototype's
 unsafe claim-presentation construction with a protected `vc-midnight` source:
 it re-verifies the exact credential/private material and contract issuer anchor,
 derives policy time from finalized chain time, reauthorizes the current managed
@@ -421,7 +424,14 @@ holder method, obtains a fresh custody-backed Jubjub proof, independently
 verifies it, and returns a zeroizing fixed-shape composer DTO. Claim capability
 remains closed until the authenticated generated composer and ADR-0063
 settlement lifecycle consume that DTO. WebView JavaScript, iframe origins,
-hard-coded addresses, and relative workspace paths remain excluded.
+hard-coded addresses, and relative workspace paths remain excluded. ADR-0065
+now consumes the DTO only after exact `AUTHORIZE_PASSPORT_VAULT_CALL`
+confirmation. It obtains byte-exact issuer/lock policy and finalized time from
+canonical replay, binds them with the credential ID and Midnight public context
+in a claim-plan challenge, and invokes the fixed generated schema only during
+authorization. Failures retain no presentation; concurrency and expiry fail
+closed. Public claim discovery remains off until a complete managed-custody
+generated-client settlement conformance run passes.
 The prototype claim composer also derives a holder scalar from the public
 credential claim root and fixes the presentation nonce to `17`; Oxid requires
 opaque managed holder custody and fresh randomness instead of migrating either

@@ -236,3 +236,12 @@ holder reauthorization, custody-owned fresh proof signing, independent proof
 verification, and zeroizing fixed-shape output. It deliberately leaves the
 public claim capability closed until the authenticated generated composer and
 existing settlement lifecycle consume that output.
+ADR-0065 consumes that protected output only after the existing exact
+`AUTHORIZE_PASSPORT_VAULT_CALL` confirmation. Preparation binds a public plan
+to byte-exact policy and trust decoded from canonical replay plus its finalized
+timestamp; authorization then performs managed presentation assembly,
+one-request generated `claimFromLock` composition, funding, and the shared
+settlement lifecycle. Concurrent authorization and stale/invalid plans fail
+closed, failures retain no presentation, and public claim discovery remains
+off until a complete managed-custody generated-client settlement conformance
+test passes.
