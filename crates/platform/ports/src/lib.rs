@@ -110,6 +110,7 @@ pub trait RandomPort: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::task::{Context, Poll, Waker};
 
     #[test]
     fn scanned_payload_is_bounded_and_redacted() {
@@ -126,8 +127,12 @@ mod tests {
 
     #[test]
     fn unavailable_scanner_fails_with_a_payload_free_error() {
-        let error = futures::executor::block_on(UnavailableQrScanner.scan())
-            .expect_err("scanner must fail closed");
+        let mut context = Context::from_waker(Waker::noop());
+        let mut scan = UnavailableQrScanner.scan();
+        let error = match scan.as_mut().poll(&mut context) {
+            Poll::Ready(result) => result.expect_err("scanner must fail closed"),
+            Poll::Pending => panic!("unavailable scanner must resolve immediately"),
+        };
         assert_eq!(error, QrScanError::Unavailable);
         assert_eq!(
             error.to_string(),

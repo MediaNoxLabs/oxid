@@ -5891,7 +5891,6 @@ version = "0.1.0"
 name = "oxid-platform-ports"
 version = "0.1.0"
 dependencies = [
- "futures",
  "oxid-foundation",
 ]
 
