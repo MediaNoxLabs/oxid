@@ -338,10 +338,11 @@ Development and OS-wrapped mobile custody can restore an exact root, generated
 keys, derivation paths, and opaque references only into an empty destination;
 mobile export forces fresh native authorization. ADR-0075 now transfers only
 the encrypted package through fixed-name, user-selected iOS/Android document
-pickers and exposes exact-confirmation custody-only Settings UX. Staged
-all-store profile/DID/credential association recovery, Android picker
-interaction, and physical-device evidence remain issue #33 work and are not
-represented as complete parity.
+pickers and exposes exact-confirmation custody-only Settings UX. ADR-0076 adds
+the authenticated all-store archive, custody-last coordinator, complete
+Settings export, fresh-install recovery, and in-process standalone round trip.
+Complete iOS/Android document-picker round trips and physical-device resource
+evidence remain issue #33 work and are not represented as release parity.
 
 [Issue #2](https://github.com/MediaNoxLabs/oxid/issues/2), ADR-0051, and
 [issue #31](https://github.com/MediaNoxLabs/oxid/issues/31) migrate the
@@ -491,6 +492,17 @@ existing preview/consent flow. `PublicTextExportPort` has no generic string
 method, so credential, proof, protocol, and secret material cannot be exported
 through it. A single repository-owned Manganis package avoids the selected
 Dioxus 0.7.10 iOS multiple-framework embedding limitation.
+
+ADR-0077 retains the prototype's deliberate heavy-operation worker separation
+without migrating its aggregate `WorkMsg` wallet facade, thread-local outcome
+router, seed/controller-secret messages, or UI coupling. Native Oxid Dioxus
+dispatches the high-risk profile/account persistence, custody, derivation,
+transfer and Passport Vault authorization, managed-DID, and backup operations
+to a private named 8 MiB thread and receives only the existing typed application
+result over a one-shot. Dioxus signals remain on the UI executor, busy state
+prevents duplicate dispatch, and worker failures expose no adapter or payload
+detail. The remaining synchronous UI call-site classification is tracked by
+issue #42.
 
 The prototype claim composer also derives a holder scalar from the public
 credential claim root and fixes the presentation nonce to `17`; Oxid requires

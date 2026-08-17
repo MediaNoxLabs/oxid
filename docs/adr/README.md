@@ -98,6 +98,7 @@ ADR status and delivery state answer different questions:
 | [0074](0074-package-portable-custody-for-one-shot-recovery.md) Package portable custody for one-shot recovery | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Versioned Argon2id/XChaCha20-Poly1305 custody packages restore exact keys only into empty development/mobile vaults; ADR-0075 adds native file UX and ADR-0076 composes custody into complete wallet recovery |
 | [0075](0075-transfer-wallet-backups-through-native-document-pickers.md) Transfer wallet backups through native document pickers | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Capability-selected fixed filenames and bounded iOS/Android document pickers serve complete export/fresh-install recovery plus the legacy custody-only importer; physical-device recovery remains #33 |
 | [0076](0076-recover-complete-wallet-state-as-one-transaction.md) Recover complete wallet state as one transaction | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#33 | One-envelope journaled all-store recovery, fresh-install Dioxus UX, and an exact standalone composition round trip are implemented; complete mobile document-round-trip/resource evidence remains #33 |
+| [0077](0077-run-blocking-wallet-work-off-the-dioxus-executor.md) Run blocking wallet work off the Dioxus executor | Accepted | §§3, 6–7, 12–13, 16, 18, prototype mobile worker, and issues #2/#42 | High-risk native custody, derivation, backup, profile/account, managed-DID, and Passport Vault authorization paths use an executor-neutral 8 MiB worker; remaining synchronous call sites await classification in #42 |
 
 ## Current boundaries
 
@@ -167,6 +168,16 @@ first-run Dioxus recovers it without a caller-supplied profile, and the
 standalone composition round trip verifies exact account, DID, credential, and
 custody restoration. Complete mobile picker round trips and physical-device
 resource evidence remain issue #33.
+ADR-0077 retains the prototype worker's useful Android stack/thread separation
+without copying its aggregate secret-bearing message facade. Dioxus must publish
+busy state, send owned commands and cloned capability ports to the private 8 MiB
+native worker, and apply typed results only after the one-shot returns. Native
+authorization, key derivation/signing, Passport Vault call authorization,
+backup KDF/recovery, and their surrounding profile/account/DID persistence paths
+use that boundary. Worker failures expose one payload-free message; browser
+in-memory fallback is not authorization for production Web UI blocking. Issue
+#42 remains open until every other synchronous Dioxus call is classified as
+bounded fast-local or moved behind the worker.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a

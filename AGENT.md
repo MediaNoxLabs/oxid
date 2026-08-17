@@ -1364,6 +1364,25 @@ the account read can correctly return `ProtectionNotInitialized`; the Dioxus
 Assets page must retain a public, unavailable placeholder so reactivation stays
 reachable rather than collapsing into a terminal account-load error.
 
+ADR-0077 preserves the reviewed prototype's useful UI-worker separation without
+its aggregate secret-bearing worker messages. On native targets,
+`ui-dioxus::run_ui_blocking` owns one named 8 MiB thread and one-shot result for
+each admitted synchronous operation; Dioxus signals never cross that boundary.
+Profile/account persistence, wallet initialization/unlock/lock, account
+derivation, transfer preparation/authorization, Passport Vault call
+authorization, managed-DID persistence and custody, and complete/legacy backup
+KDF/recovery use it. Publish busy state before dispatch, keep worker failures
+payload-free, and do not claim cancellation after work starts. The WASM branch
+is only for current in-memory Tier-2 adapters; a production browser adapter
+needs a reviewed Web Worker. Issue #42 remains open until all other synchronous
+Dioxus calls are classified or migrated.
+
+The iOS XCUITest `scrollTo` helper must require content controls to finish at
+least 90 points above the application frame bottom before tapping. WKWebView can
+otherwise report a control as hittable when only a sliver is exposed above the
+fixed Oxid navigation, causing the synthesized tap to miss without invoking the
+wallet operation.
+
 `OXID_MOBILE_CUSTODY=development|native` selects the standalone mobile
 composition; development is the default. Native mode combines production
 custody with deterministic wallet/SSI adapters and must keep simulated

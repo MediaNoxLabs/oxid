@@ -6046,6 +6046,7 @@ name = "oxid-ui-dioxus"
 version = "0.1.0"
 dependencies = [
  "dioxus",
+ "futures",
  "oxid-credential-application",
  "oxid-identity-application",
  "oxid-identity-domain",

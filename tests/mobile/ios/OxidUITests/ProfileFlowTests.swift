@@ -9,10 +9,17 @@ final class ProfileFlowTests: XCTestCase {
 
     @MainActor
     private func scrollTo(_ element: XCUIElement, in application: XCUIApplication) {
-        for _ in 0..<20 where !element.isHittable {
+        // WKWebView can report a control as hittable when only a tiny strip is
+        // visible above Oxid's fixed bottom navigation. Keep content controls
+        // clear of that navigation before tapping them.
+        let safeBottom = application.frame.maxY - 90
+        for _ in 0..<20
+            where !element.isHittable || element.frame.maxY > safeBottom
+        {
             application.swipeUp()
         }
         XCTAssertTrue(element.isHittable)
+        XCTAssertLessThanOrEqual(element.frame.maxY, safeBottom)
     }
 
     @MainActor

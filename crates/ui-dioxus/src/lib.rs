@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::{sync::Arc, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
 use oxid_credential_application::{
@@ -90,6 +90,57 @@ use oxid_wallet_application::{
 use zeroize::Zeroizing;
 
 const STYLES: &str = include_str!("../assets/styles.css");
+#[cfg(not(target_arch = "wasm32"))]
+const UI_BLOCKING_TASK_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UiBlockingTaskError {
+    WorkerUnavailable,
+    WorkerFailed,
+}
+
+impl fmt::Display for UiBlockingTaskError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("background wallet operation failed")
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn run_ui_blocking<Output, Operation>(
+    operation: Operation,
+) -> Result<Output, UiBlockingTaskError>
+where
+    Output: Send + 'static,
+    Operation: FnOnce() -> Output + Send + 'static,
+{
+    let (sender, receiver) = futures::channel::oneshot::channel();
+    std::thread::Builder::new()
+        .name("oxid-ui-blocking".to_owned())
+        .stack_size(UI_BLOCKING_TASK_STACK_BYTES)
+        .spawn(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation));
+            let _ = sender.send(outcome);
+        })
+        .map_err(|_| UiBlockingTaskError::WorkerUnavailable)?;
+
+    match receiver.await {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(_)) | Err(_) => Err(UiBlockingTaskError::WorkerFailed),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn run_ui_blocking<Output, Operation>(
+    operation: Operation,
+) -> Result<Output, UiBlockingTaskError>
+where
+    Operation: FnOnce() -> Output,
+{
+    // Browser composition has no native authorization bridge or filesystem
+    // worker. Its in-memory adapters remain synchronous until Tier-2 gains a
+    // reviewed Web Worker boundary.
+    Ok(operation())
+}
 
 /// Incoming capabilities made available to Dioxus by the composition root.
 #[derive(Clone)]
@@ -1238,6 +1289,7 @@ const PRIMARY_DESTINATIONS: [Destination; 6] = [
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CreationState {
     Idle,
+    Working,
     Created(WalletProfileView),
     Failed(String),
 }
@@ -1340,6 +1392,7 @@ enum PassportVaultContractPanelState {
     Editing,
     Preparing,
     Prepared(Box<PassportVaultCallPreviewView>),
+    Authorizing(Box<PassportVaultCallPreviewView>),
     Authorized(Box<PassportVaultCallPreviewView>),
     Submitting(Box<PassportVaultCallPreviewView>),
     Cancelling(Box<PassportVaultCallPreviewView>),
@@ -1420,7 +1473,9 @@ enum SubmissionRecoveryPaneState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TransferPanelState {
     Editing,
+    Preparing,
     Prepared(Box<WalletTransferPreviewView>),
+    Authorizing(Box<WalletTransferPreviewView>),
     Authorized(Box<WalletTransferPreviewView>),
     Submitting(Box<WalletTransferPreviewView>),
     Cancelling(Box<WalletTransferPreviewView>),
@@ -1455,7 +1510,14 @@ pub fn App() -> Element {
     let identity_link_wake = use_signal(|| 0_u64);
     let services_for_load = services.clone();
     use_effect(move || {
-        profile_session.set(load_profile_session(&services_for_load));
+        let services = services_for_load.clone();
+        spawn(async move {
+            profile_session.set(
+                run_ui_blocking(move || load_profile_session(&services))
+                    .await
+                    .unwrap_or_else(|error| ProfileSessionState::Failed(error.to_string())),
+            );
+        });
     });
 
     #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -1496,7 +1558,17 @@ pub fn App() -> Element {
                     active_destination.set(Destination::Assets);
                 },
                 on_retry: move |_| {
-                    profile_session.set(load_profile_session(&services));
+                    let services = services.clone();
+                    profile_session.set(ProfileSessionState::Loading);
+                    spawn(async move {
+                        profile_session.set(
+                            run_ui_blocking(move || load_profile_session(&services))
+                                .await
+                                .unwrap_or_else(|error| {
+                                    ProfileSessionState::Failed(error.to_string())
+                                }),
+                        );
+                    });
                 },
             }
         };
@@ -1914,18 +1986,36 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
                     spawn(async move {
                         let imported = services.portable_wallet_backup_documents.import().await;
                         let recovered = match imported {
-                            Ok(backup) => services.recover_complete_wallet_backup.execute(
-                                RecoverCompleteWalletBackupCommand {
-                                    expected_profile_id: None,
-                                    backup,
-                                    recovery_secret: secret,
-                                    confirmation: SensitiveOperationConfirmation {
-                                        title: RECOVER_COMPLETE_WALLET_BACKUP_TITLE.to_owned(),
-                                        summary: RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY.to_owned(),
-                                        confirmed: true,
-                                    },
-                                },
-                            ).map_err(|error| error.to_string()),
+                            Ok(backup) => {
+                                let services = services.clone();
+                                match run_ui_blocking(move || {
+                                    let summary = services
+                                        .recover_complete_wallet_backup
+                                        .execute(RecoverCompleteWalletBackupCommand {
+                                            expected_profile_id: None,
+                                            backup,
+                                            recovery_secret: secret,
+                                            confirmation: SensitiveOperationConfirmation {
+                                                title: RECOVER_COMPLETE_WALLET_BACKUP_TITLE
+                                                    .to_owned(),
+                                                summary: RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY
+                                                    .to_owned(),
+                                                confirmed: true,
+                                            },
+                                        })
+                                        .map_err(|error| error.to_string())?;
+                                    let active_profile = services
+                                        .get_active_wallet_profile
+                                        .execute()
+                                        .map_err(|error| error.to_string())?;
+                                    Ok::<_, String>((summary, active_profile))
+                                })
+                                .await
+                                {
+                                    Ok(result) => result,
+                                    Err(error) => Err(error.to_string()),
+                                }
+                            }
                             Err(PortableWalletBackupDocumentError::Cancelled) => {
                                 recovery_state.set(PortableBackupUiState::Cancelled);
                                 return;
@@ -1933,18 +2023,15 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
                             Err(error) => Err(error.to_string()),
                         };
                         match recovered {
-                            Ok(summary) => match services.get_active_wallet_profile.execute() {
-                                Ok(Some(profile)) if profile.id == summary.profile_id => {
+                            Ok((summary, active_profile)) => match active_profile {
+                                Some(profile) if profile.id == summary.profile_id => {
                                     recovery_state.set(PortableBackupUiState::Succeeded(
                                         complete_recovery_message(&summary),
                                     ));
                                     on_recovered.call(profile);
                                 }
-                                Ok(_) => recovery_state.set(PortableBackupUiState::Failed(
+                                _ => recovery_state.set(PortableBackupUiState::Failed(
                                     "Recovered wallet did not become the active profile.".to_owned(),
-                                )),
-                                Err(error) => recovery_state.set(PortableBackupUiState::Failed(
-                                    error.to_string(),
                                 )),
                             },
                             Err(error) => recovery_state.set(PortableBackupUiState::Failed(error)),
@@ -1978,11 +2065,18 @@ fn ProfileManager(
     let mut profile_list = use_signal(|| profiles);
     let mut display_name = use_signal(|| "My wallet".to_owned());
     let mut state = use_signal(|| CreationState::Idle);
-    let can_submit = !display_name.read().trim().is_empty();
+    let busy = matches!(*state.read(), CreationState::Working);
+    let can_submit = !busy && !display_name.read().trim().is_empty();
 
     let feedback = match state.read().clone() {
         CreationState::Idle => rsx! {
             p { class: "form-hint", "Only public profile metadata is stored here. Protected key operations remain a separate capability." }
+        },
+        CreationState::Working => rsx! {
+            section { class: "result", role: "status", aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                p { "Updating the private profile store…" }
+            }
         },
         CreationState::Created(profile) => rsx! {
             section { class: "result success", role: "status", aria_live: "polite",
@@ -2028,13 +2122,28 @@ fn ProfileManager(
                                         class: "secondary-action",
                                         r#type: "button",
                                         aria_label: "Use {profile.display_name}",
+                                        disabled: busy,
                                         onclick: move |_| {
-                                            match select.execute(SelectWalletProfileCommand {
-                                                profile_id: profile_id.clone(),
-                                            }) {
-                                                Ok(selected) => on_selected.call(selected),
-                                                Err(error) => state.set(CreationState::Failed(error.to_string())),
-                                            }
+                                            let select = Arc::clone(&select);
+                                            let profile_id = profile_id.clone();
+                                            state.set(CreationState::Working);
+                                            spawn(async move {
+                                                let selected = run_ui_blocking(move || {
+                                                    select.execute(SelectWalletProfileCommand {
+                                                        profile_id,
+                                                    })
+                                                })
+                                                .await;
+                                                match selected {
+                                                    Ok(Ok(selected)) => on_selected.call(selected),
+                                                    Ok(Err(error)) => state.set(
+                                                        CreationState::Failed(error.to_string()),
+                                                    ),
+                                                    Err(error) => state.set(
+                                                        CreationState::Failed(error.to_string()),
+                                                    ),
+                                                }
+                                            });
                                         },
                                         "Use profile"
                                     }
@@ -2065,21 +2174,34 @@ fn ProfileManager(
                     let command = CreateWalletProfileCommand {
                         display_name: display_name.read().clone(),
                     };
-                    match create_for_button.execute(command) {
-                        Ok(created) => {
-                            profile_list.write().push(created.clone());
-                            match select_for_button.execute(SelectWalletProfileCommand {
-                                profile_id: created.id,
-                            }) {
-                                Ok(selected) => {
-                                    state.set(CreationState::Created(selected.clone()));
-                                    on_selected.call(selected);
-                                }
-                                Err(error) => state.set(CreationState::Failed(error.to_string())),
+                    let create = Arc::clone(&create_for_button);
+                    let select = Arc::clone(&select_for_button);
+                    state.set(CreationState::Working);
+                    spawn(async move {
+                        let result = run_ui_blocking(move || {
+                            let created = create
+                                .execute(command)
+                                .map_err(|error| error.to_string())?;
+                            let selected = select
+                                .execute(SelectWalletProfileCommand {
+                                    profile_id: created.id.clone(),
+                                })
+                                .map_err(|error| error.to_string())?;
+                            Ok::<_, String>((created, selected))
+                        })
+                        .await;
+                        match result {
+                            Ok(Ok((created, selected))) => {
+                                profile_list.write().push(created);
+                                state.set(CreationState::Created(selected.clone()));
+                                on_selected.call(selected);
+                            }
+                            Ok(Err(error)) => state.set(CreationState::Failed(error)),
+                            Err(error) => {
+                                state.set(CreationState::Failed(error.to_string()));
                             }
                         }
-                        Err(error) => state.set(CreationState::Failed(error.to_string())),
-                    }
+                    });
                 },
                 if onboarding && profile_list.read().is_empty() { "Create and continue" } else { "Create and use profile" }
             }
@@ -2095,7 +2217,15 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
     let profile_id = active_profile.id.clone();
     let services_for_load = services.clone();
     use_effect(move || {
-        state.set(load_account_page(&services_for_load, &profile_id));
+        let services = services_for_load.clone();
+        let profile_id = profile_id.clone();
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || load_account_page(&services, &profile_id))
+                    .await
+                    .unwrap_or_else(|error| AccountPageState::Failed(error.to_string())),
+            );
+        });
     });
 
     match state.read().clone() {
@@ -2124,7 +2254,22 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                 button {
                     class: "secondary-action",
                     r#type: "button",
-                    onclick: move |_| state.set(load_account_page(&services, &active_profile.id)),
+                    onclick: move |_| {
+                        let services = services.clone();
+                        let profile_id = active_profile.id.clone();
+                        state.set(AccountPageState::Loading);
+                        spawn(async move {
+                            state.set(
+                                run_ui_blocking(move || {
+                                    load_account_page(&services, &profile_id)
+                                })
+                                .await
+                                .unwrap_or_else(|error| {
+                                    AccountPageState::Failed(error.to_string())
+                                }),
+                            );
+                        });
+                    },
                     "Retry"
                 }
             }
@@ -2213,29 +2358,40 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                         disabled: is_busy,
                         onchange: move |event| {
                             let network_id = event.value();
-                            let result = select_services
-                                .select_wallet_network()
-                                .execute(SelectWalletNetworkCommand {
-                                    profile_id: select_profile_id.clone(),
-                                    network_id,
-                                })
-                                .and_then(|selected| {
-                                    select_services
-                                        .get_wallet_account()
-                                        .execute(WalletAccountQuery {
-                                            profile_id: select_profile_id.clone(),
+                            let services = select_services.clone();
+                            let profile_id = select_profile_id.clone();
+                            select_state.set(AccountPageState::Loading);
+                            spawn(async move {
+                                let result = run_ui_blocking(move || {
+                                    services
+                                        .select_wallet_network()
+                                        .execute(SelectWalletNetworkCommand {
+                                            profile_id: profile_id.clone(),
+                                            network_id,
                                         })
-                                        .map(|account| (selected, account))
-                                });
-                            match result {
-                                Ok((networks, account)) => select_state.set(AccountPageState::Ready {
-                                    networks,
-                                    account: Box::new(account),
-                                    security,
-                                    busy: None,
-                                }),
-                                Err(error) => select_state.set(AccountPageState::Failed(error.to_string())),
-                            }
+                                        .and_then(|selected| {
+                                            services
+                                                .get_wallet_account()
+                                                .execute(WalletAccountQuery { profile_id })
+                                                .map(|account| (selected, account))
+                                        })
+                                })
+                                .await;
+                                match result {
+                                    Ok(Ok((networks, account))) => {
+                                        select_state.set(AccountPageState::Ready {
+                                            networks,
+                                            account: Box::new(account),
+                                            security,
+                                            busy: None,
+                                        });
+                                    }
+                                    Ok(Err(error)) => select_state
+                                        .set(AccountPageState::Failed(error.to_string())),
+                                    Err(error) => select_state
+                                        .set(AccountPageState::Failed(error.to_string())),
+                                }
+                            });
                         },
                         for network in networks.networks.iter() {
                             option {
@@ -2279,10 +2435,12 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                                 let account = activate_account.clone();
                                 spawn(async move {
                                     match activate_protected_account(
-                                        &services,
-                                        &profile_id,
+                                        services.clone(),
+                                        profile_id.clone(),
                                         security,
-                                    ) {
+                                    )
+                                    .await
+                                    {
                                         Ok(updated_security) => {
                                             let service = services.sync_wallet_account();
                                             activate_state.set(AccountPageState::Ready {
@@ -3069,35 +3227,42 @@ fn protected_account_placeholder(networks: &WalletNetworkListView) -> Option<Wal
     })
 }
 
-fn activate_protected_account(
-    services: &WalletUiServices,
-    profile_id: &str,
+async fn activate_protected_account(
+    services: WalletUiServices,
+    profile_id: String,
     current: WalletSecurityStatusView,
 ) -> Result<WalletSecurityStatusView, String> {
-    let command = || WalletProfileSecurityCommand {
-        profile_id: profile_id.to_owned(),
-    };
-    let security = match current.state_name() {
-        "Uninitialized" => services
-            .initialize_wallet_security()
-            .execute(command())
-            .map_err(|error| error.to_string())?,
-        "Locked" => services
-            .unlock_wallet()
-            .execute(command())
-            .map_err(|error| error.to_string())?,
-        "Unlocked" => current,
-        _ => return Err("wallet protection is unavailable".to_owned()),
-    };
-    services
-        .derive_wallet_account()
-        .execute(DeriveWalletAccountCommand {
-            profile_id: profile_id.to_owned(),
-            account_index: 0,
-            address_index: 0,
-        })
-        .map_err(|error| error.to_string())?;
-    Ok(security)
+    match run_ui_blocking(move || {
+        let command = || WalletProfileSecurityCommand {
+            profile_id: profile_id.clone(),
+        };
+        let security = match current.state_name() {
+            "Uninitialized" => services
+                .initialize_wallet_security()
+                .execute(command())
+                .map_err(|error| error.to_string())?,
+            "Locked" => services
+                .unlock_wallet()
+                .execute(command())
+                .map_err(|error| error.to_string())?,
+            "Unlocked" => current,
+            _ => return Err("wallet protection is unavailable".to_owned()),
+        };
+        services
+            .derive_wallet_account()
+            .execute(DeriveWalletAccountCommand {
+                profile_id,
+                account_index: 0,
+                address_index: 0,
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(security)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 fn account_activation_operation(status: WalletSecurityStatusView) -> AccountOperation {
@@ -3259,20 +3424,30 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                         onclick: move |_| {
                             match night_display_to_atomic_units(&amount.read()) {
                                 Ok(amount_atomic_units) => {
-                                    match services.prepare_wallet_transfer().execute(
-                                        PrepareWalletTransferCommand {
-                                            profile_id: profile_id.clone(),
-                                            recipient_address: recipient.read().trim().to_owned(),
-                                            amount_atomic_units,
-                                        },
-                                    ) {
-                                        Ok(preview) => panel.set(TransferPanelState::Prepared(Box::new(preview))),
-                                        Err(error) => panel.set(TransferPanelState::Failed {
-                                            message: error.to_string(),
-                                            retained: None,
-                                            recovery: TransferRecovery::Edit,
-                                        }),
-                                    }
+                                    let service = services.prepare_wallet_transfer();
+                                    let command = PrepareWalletTransferCommand {
+                                        profile_id: profile_id.clone(),
+                                        recipient_address: recipient.read().trim().to_owned(),
+                                        amount_atomic_units,
+                                    };
+                                    panel.set(TransferPanelState::Preparing);
+                                    spawn(async move {
+                                        match run_ui_blocking(move || service.execute(command)).await {
+                                            Ok(Ok(preview)) => panel.set(
+                                                TransferPanelState::Prepared(Box::new(preview)),
+                                            ),
+                                            Ok(Err(error)) => panel.set(TransferPanelState::Failed {
+                                                message: error.to_string(),
+                                                retained: None,
+                                                recovery: TransferRecovery::Edit,
+                                            }),
+                                            Err(error) => panel.set(TransferPanelState::Failed {
+                                                message: error.to_string(),
+                                                retained: None,
+                                                recovery: TransferRecovery::Edit,
+                                            }),
+                                        }
+                                    });
                                 }
                                 Err(error) => panel.set(TransferPanelState::Failed {
                                     message: error.to_owned(),
@@ -3286,6 +3461,16 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                 }
             }
         }
+        TransferPanelState::Preparing => rsx! {
+            article { class: "surface-card transfer-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                div {
+                    p { class: "card-eyebrow", "Preparing" }
+                    h2 { "Building the transfer preview" }
+                    p { "Oxid is validating the recipient, balance, and canonical Midnight transaction inputs." }
+                }
+            }
+        },
         TransferPanelState::Prepared(preview) => {
             let amount_label = format_transfer_asset(&preview.amount);
             let change_label = format_transfer_asset(&preview.change);
@@ -3318,21 +3503,32 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                             r#type: "button",
                             aria_label: "Authorize reviewed NIGHT transfer",
                             onclick: move |_| {
-                                match services.authorize_wallet_transfer().execute(
-                                    AuthorizeWalletTransferCommand {
-                                        profile_id: profile_id.clone(),
-                                        draft_id: draft_id.clone(),
-                                        authorization_challenge: challenge.clone(),
-                                        confirmation: confirmation.clone(),
-                                    },
-                                ) {
-                                    Ok(authorized) => panel.set(TransferPanelState::Authorized(Box::new(authorized))),
-                                    Err(error) => panel.set(TransferPanelState::Failed {
-                                        message: error.to_string(),
-                                        retained: Some(preview.clone()),
-                                        recovery: TransferRecovery::Edit,
-                                    }),
-                                }
+                                let service = services.authorize_wallet_transfer();
+                                let command = AuthorizeWalletTransferCommand {
+                                    profile_id: profile_id.clone(),
+                                    draft_id: draft_id.clone(),
+                                    authorization_challenge: challenge.clone(),
+                                    confirmation: confirmation.clone(),
+                                };
+                                let retained_preview = preview.clone();
+                                panel.set(TransferPanelState::Authorizing(preview.clone()));
+                                spawn(async move {
+                                    match run_ui_blocking(move || service.execute(command)).await {
+                                        Ok(Ok(authorized)) => panel.set(
+                                            TransferPanelState::Authorized(Box::new(authorized)),
+                                        ),
+                                        Ok(Err(error)) => panel.set(TransferPanelState::Failed {
+                                            message: error.to_string(),
+                                            retained: Some(retained_preview.clone()),
+                                            recovery: TransferRecovery::Edit,
+                                        }),
+                                        Err(error) => panel.set(TransferPanelState::Failed {
+                                            message: error.to_string(),
+                                            retained: Some(retained_preview),
+                                            recovery: TransferRecovery::Edit,
+                                        }),
+                                    }
+                                });
                             },
                             "Authorize transfer"
                         }
@@ -3340,6 +3536,16 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                 }
             }
         }
+        TransferPanelState::Authorizing(preview) => rsx! {
+            article { class: "surface-card transfer-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                div {
+                    p { class: "card-eyebrow", "Authorizing" }
+                    h2 { "Confirm {format_transfer_asset(&preview.amount)} with device protection" }
+                    p { "The operating-system authorization prompt can complete without freezing the wallet interface." }
+                }
+            }
+        },
         TransferPanelState::Authorized(preview) => {
             let amount_label = format_transfer_asset(&preview.amount);
             let confirmation = submit_transfer_confirmation(&preview);
@@ -4088,72 +4294,102 @@ fn ManagedDidControls(
                     };
                     let relationship = VerificationRelationship::parse(relationship.read().as_str())
                         .unwrap_or(VerificationRelationship::AssertionMethod);
-                    let result = match operation_name.as_str() {
-                        "sign" => services.sign_did_payload().execute(SignDidPayloadCommand {
-                            profile_id: profile_id.clone(),
-                            did: did.clone(),
-                            method_id: method_or_service,
-                            payload: input_value.into_bytes(),
-                            confirmation: did_confirmation(
-                                "Sign identity challenge",
-                                "Authorize the visible payload with this DID verification method",
-                                confirmed(),
-                            ),
-                        }).map(|signature| {
-                            outcome.set(Some(format!(
-                                "Signed {} bytes with {} using {}.",
-                                signature.signature_bytes.len(), signature.method_id, signature.algorithm
-                            )));
-                            None
-                        }),
-                        "deactivate" => services.deactivate_did().execute(DeactivateDidCommand {
-                            profile_id: profile_id.clone(),
-                            did: did.clone(),
-                            confirmation: did_confirmation(
-                                "Deactivate DID",
-                                "Permanently disable further operations for this DID",
-                                confirmed(),
-                            ),
-                        }).map(Some),
-                        _ => {
-                            let update = match operation_name.as_str() {
-                                "add_alias" => DidUpdate::AddAlsoKnownAs { value: input_value },
-                                "remove_alias" => DidUpdate::RemoveAlsoKnownAs { value: input_value },
-                                "add_method" => DidUpdate::AddVerificationMethod { fragment: method_or_service, algorithm: key_algorithm },
-                                "update_method" => DidUpdate::UpdateVerificationMethod { method_id: method_or_service, algorithm: key_algorithm },
-                                "remove_method" => DidUpdate::RemoveVerificationMethod { method_id: method_or_service },
-                                "add_relationship" => DidUpdate::AddVerificationRelationship { relationship, method_id: method_or_service },
-                                "remove_relationship" => DidUpdate::RemoveVerificationRelationship { relationship, method_id: method_or_service },
-                                "add_service" => DidUpdate::AddService { id: method_or_service, service_type: input_value, endpoint: endpoint_value },
-                                "update_service" => DidUpdate::UpdateService { id: method_or_service, service_type: input_value, endpoint: endpoint_value },
-                                "remove_service" => DidUpdate::RemoveService { id: method_or_service },
-                                _ => DidUpdate::AddAlsoKnownAs { value: input_value },
-                            };
-                            services.update_did().execute(UpdateDidCommand {
-                                profile_id: profile_id.clone(),
-                                did: did.clone(),
-                                operation: update,
-                                confirmation: did_confirmation(
-                                    "Update DID document",
-                                    "Authorize the selected visible change to this managed DID",
-                                    confirmed(),
-                                ),
-                            }).map(Some)
+                    let confirmed = confirmed();
+                    let services = services.clone();
+                    let profile_id = profile_id.clone();
+                    let did = did.clone();
+                    spawn(async move {
+                        let result = run_ui_blocking(move || match operation_name.as_str() {
+                            "sign" => services
+                                .sign_did_payload()
+                                .execute(SignDidPayloadCommand {
+                                    profile_id,
+                                    did,
+                                    method_id: method_or_service,
+                                    payload: input_value.into_bytes(),
+                                    confirmation: did_confirmation(
+                                        "Sign identity challenge",
+                                        "Authorize the visible payload with this DID verification method",
+                                        confirmed,
+                                    ),
+                                })
+                                .map(|signature| {
+                                    (
+                                        None,
+                                        format!(
+                                            "Signed {} bytes with {} using {}.",
+                                            signature.signature_bytes.len(),
+                                            signature.method_id,
+                                            signature.algorithm
+                                        ),
+                                    )
+                                }),
+                            "deactivate" => services
+                                .deactivate_did()
+                                .execute(DeactivateDidCommand {
+                                    profile_id,
+                                    did,
+                                    confirmation: did_confirmation(
+                                        "Deactivate DID",
+                                        "Permanently disable further operations for this DID",
+                                        confirmed,
+                                    ),
+                                })
+                                .map(|record| {
+                                    (Some(record), "DID document deactivated.".to_owned())
+                                }),
+                            _ => {
+                                let update = match operation_name.as_str() {
+                                    "add_alias" => DidUpdate::AddAlsoKnownAs { value: input_value },
+                                    "remove_alias" => DidUpdate::RemoveAlsoKnownAs { value: input_value },
+                                    "add_method" => DidUpdate::AddVerificationMethod { fragment: method_or_service, algorithm: key_algorithm },
+                                    "update_method" => DidUpdate::UpdateVerificationMethod { method_id: method_or_service, algorithm: key_algorithm },
+                                    "remove_method" => DidUpdate::RemoveVerificationMethod { method_id: method_or_service },
+                                    "add_relationship" => DidUpdate::AddVerificationRelationship { relationship, method_id: method_or_service },
+                                    "remove_relationship" => DidUpdate::RemoveVerificationRelationship { relationship, method_id: method_or_service },
+                                    "add_service" => DidUpdate::AddService { id: method_or_service, service_type: input_value, endpoint: endpoint_value },
+                                    "update_service" => DidUpdate::UpdateService { id: method_or_service, service_type: input_value, endpoint: endpoint_value },
+                                    "remove_service" => DidUpdate::RemoveService { id: method_or_service },
+                                    _ => DidUpdate::AddAlsoKnownAs { value: input_value },
+                                };
+                                services
+                                    .update_did()
+                                    .execute(UpdateDidCommand {
+                                        profile_id,
+                                        did,
+                                        operation: update,
+                                        confirmation: did_confirmation(
+                                            "Update DID document",
+                                            "Authorize the selected visible change to this managed DID",
+                                            confirmed,
+                                        ),
+                                    })
+                                    .map(|record| {
+                                        (Some(record), "DID document updated.".to_owned())
+                                    })
+                            }
+                        })
+                        .await;
+                        working.set(false);
+                        match result {
+                            Ok(Ok((updated, message))) => {
+                                outcome.set(Some(message));
+                                if let Some(updated) = updated {
+                                    on_record.call(Ok(updated));
+                                }
+                            }
+                            Ok(Err(error)) => {
+                                let message = did_operation_message(error);
+                                outcome.set(Some(message.clone()));
+                                on_record.call(Err(message));
+                            }
+                            Err(error) => {
+                                let message = error.to_string();
+                                outcome.set(Some(message.clone()));
+                                on_record.call(Err(message));
+                            }
                         }
-                    };
-                    working.set(false);
-                    match result {
-                        Ok(Some(updated)) => {
-                            outcome.set(Some("DID document updated.".to_owned()));
-                            on_record.call(Ok(updated));
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            let message = did_operation_message(error);
-                            outcome.set(Some(message.clone()));
-                            on_record.call(Err(message));
-                        }
-                    }
+                    });
                 },
                 if working() { "Working…" } else if operation_name == "sign" { "Sign payload" } else if operation_name == "deactivate" { "Deactivate DID" } else { "Apply DID update" }
             }
@@ -4640,25 +4876,50 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                                 onclick: {
                                     let authorize = calls.authorize.clone();
                                     let profile_id = profile_id.clone();
-                                    move |_| match authorize.execute(AuthorizePassportVaultCallCommand {
-                                        profile_id: profile_id.clone(),
-                                        draft_id: draft_id.clone(),
-                                        authorization_challenge: challenge.clone(),
-                                        confirmed: true,
-                                        intent: AUTHORIZE_PASSPORT_VAULT_CALL_INTENT.to_owned(),
-                                    }) {
-                                        Ok(authorized) => panel.set(PassportVaultContractPanelState::Authorized(Box::new(authorized))),
-                                        Err(error) => panel.set(PassportVaultContractPanelState::Failed {
-                                            message: error.to_string(),
-                                            retained: Some(preview.clone()),
-                                            recovery: PassportVaultCallRecovery::Edit,
-                                        }),
+                                    move |_| {
+                                        let authorize = authorize.clone();
+                                        let command = AuthorizePassportVaultCallCommand {
+                                            profile_id: profile_id.clone(),
+                                            draft_id: draft_id.clone(),
+                                            authorization_challenge: challenge.clone(),
+                                            confirmed: true,
+                                            intent: AUTHORIZE_PASSPORT_VAULT_CALL_INTENT.to_owned(),
+                                        };
+                                        let retained = preview.clone();
+                                        panel.set(PassportVaultContractPanelState::Authorizing(
+                                            preview.clone(),
+                                        ));
+                                        spawn(async move {
+                                            match run_ui_blocking(move || authorize.execute(command)).await {
+                                                Ok(Ok(authorized)) => panel.set(
+                                                    PassportVaultContractPanelState::Authorized(Box::new(authorized)),
+                                                ),
+                                                Ok(Err(error)) => panel.set(PassportVaultContractPanelState::Failed {
+                                                    message: error.to_string(),
+                                                    retained: Some(retained.clone()),
+                                                    recovery: PassportVaultCallRecovery::Edit,
+                                                }),
+                                                Err(error) => panel.set(PassportVaultContractPanelState::Failed {
+                                                    message: error.to_string(),
+                                                    retained: Some(retained),
+                                                    recovery: PassportVaultCallRecovery::Edit,
+                                                }),
+                                            }
+                                        });
                                     }
                                 },
                                 "Authorize exact call"
                             }
                         }
                     }
+                }
+            },
+            PassportVaultContractPanelState::Authorizing(preview) => rsx! {
+                PassportVaultCallPreviewCard { preview: preview.clone() }
+                article { class: "info-card", role: "status", aria_busy: "true",
+                    p { class: "card-eyebrow", "Authorizing" }
+                    h2 { "Confirming the exact call with protected custody" }
+                    p { "Native NIGHT funding, holder authorization, and device protection can complete without blocking the wallet interface." }
                 }
             },
             PassportVaultContractPanelState::Authorized(preview) => {
@@ -5374,7 +5635,17 @@ fn DidsPage(
     let profile_id = active_profile.id.clone();
     let load_services = services.clone();
     let load_profile = profile_id.clone();
-    use_effect(move || state.set(load_did_page(&load_services, &load_profile)));
+    use_effect(move || {
+        let services = load_services.clone();
+        let profile_id = load_profile.clone();
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || load_did_page(&services, &profile_id))
+                    .await
+                    .unwrap_or_else(|error| DidPageState::Failed(error.to_string())),
+            );
+        });
+    });
 
     let state_snapshot = state.read().clone();
     match state_snapshot {
@@ -5397,7 +5668,22 @@ fn DidsPage(
                 p { "{message}" }
                 button {
                     class: "secondary-action", r#type: "button",
-                    onclick: move |_| state.set(load_did_page(&services, &profile_id)),
+                    onclick: move |_| {
+                        let services = services.clone();
+                        let profile_id = profile_id.clone();
+                        state.set(DidPageState::Loading);
+                        spawn(async move {
+                            state.set(
+                                run_ui_blocking(move || {
+                                    load_did_page(&services, &profile_id)
+                                })
+                                .await
+                                .unwrap_or_else(|error| {
+                                    DidPageState::Failed(error.to_string())
+                                }),
+                            );
+                        });
+                    },
                     "Retry"
                 }
             }
@@ -5431,22 +5717,35 @@ fn DidsPage(
                         class: "primary-action", r#type: "button", disabled: resolving,
                         onclick: move |_| {
                             state.set(DidPageState::Ready { records: create_records.clone(), resolving: true, operation_error: None });
-                            match create_services.create_did().execute(CreateDidCommand {
-                                profile_id: create_profile.clone(),
-                                network: "undeployed".to_owned(),
-                            }) {
-                                Ok(record) => {
-                                    let mut updated = create_records.clone();
-                                    updated.retain(|existing| existing.document.id != record.document.id);
-                                    updated.push(record);
-                                    updated.sort_by(|left, right| left.document.id.cmp(&right.document.id));
-                                    state.set(DidPageState::Ready { records: updated, resolving: false, operation_error: None });
+                            let service = create_services.create_did();
+                            let profile_id = create_profile.clone();
+                            let records = create_records.clone();
+                            spawn(async move {
+                                let result = run_ui_blocking(move || {
+                                    service.execute(CreateDidCommand {
+                                        profile_id,
+                                        network: "undeployed".to_owned(),
+                                    })
+                                })
+                                .await;
+                                match result {
+                                    Ok(Ok(record)) => {
+                                        let mut updated = records;
+                                        updated.retain(|existing| existing.document.id != record.document.id);
+                                        updated.push(record);
+                                        updated.sort_by(|left, right| left.document.id.cmp(&right.document.id));
+                                        state.set(DidPageState::Ready { records: updated, resolving: false, operation_error: None });
+                                    }
+                                    Ok(Err(error)) => state.set(DidPageState::Ready {
+                                        records, resolving: false,
+                                        operation_error: Some(did_operation_message(error)),
+                                    }),
+                                    Err(error) => state.set(DidPageState::Ready {
+                                        records, resolving: false,
+                                        operation_error: Some(error.to_string()),
+                                    }),
                                 }
-                                Err(error) => state.set(DidPageState::Ready {
-                                    records: create_records.clone(), resolving: false,
-                                    operation_error: Some(did_operation_message(error)),
-                                }),
-                            }
+                            });
                         },
                         if resolving { "Working…" } else { "Create standalone DID" }
                     }
@@ -5706,10 +6005,38 @@ fn DidsPage(
                                             class: "secondary-action", r#type: "button",
                                             aria_label: "Forget saved DID {did}",
                                             onclick: move |_| {
-                                                match forget_services.forget_did().execute(DidRecordQuery { profile_id: forget_profile.clone(), did: forget_did.clone() }) {
-                                                    Ok(()) => state.set(DidPageState::Ready { records: retained.iter().filter(|record| record.document.id != forget_did).cloned().collect(), resolving: false, operation_error: None }),
-                                                    Err(error) => state.set(DidPageState::Ready { records: retained.clone(), resolving: false, operation_error: Some(did_operation_message(error)) }),
-                                                }
+                                                let service = forget_services.forget_did();
+                                                let profile_id = forget_profile.clone();
+                                                let did = forget_did.clone();
+                                                let target = did.clone();
+                                                let records = retained.clone();
+                                                state.set(DidPageState::Ready { records: records.clone(), resolving: true, operation_error: None });
+                                                spawn(async move {
+                                                    let result = run_ui_blocking(move || {
+                                                        service.execute(DidRecordQuery {
+                                                            profile_id,
+                                                            did,
+                                                        })
+                                                    })
+                                                    .await;
+                                                    match result {
+                                                        Ok(Ok(())) => state.set(DidPageState::Ready {
+                                                            records: records.iter().filter(|record| record.document.id != target).cloned().collect(),
+                                                            resolving: false,
+                                                            operation_error: None,
+                                                        }),
+                                                        Ok(Err(error)) => state.set(DidPageState::Ready {
+                                                            records,
+                                                            resolving: false,
+                                                            operation_error: Some(did_operation_message(error)),
+                                                        }),
+                                                        Err(error) => state.set(DidPageState::Ready {
+                                                            records,
+                                                            resolving: false,
+                                                            operation_error: Some(error.to_string()),
+                                                        }),
+                                                    }
+                                                });
                                             },
                                             "Forget from profile"
                                         }
@@ -6832,17 +7159,23 @@ fn SettingsPage(
     let profile_id = active_profile.id.clone();
     let services_for_load = services.clone();
     use_effect(move || {
-        security.set(
-            services_for_load
-                .get_wallet_security_status()
-                .execute(WalletProfileSecurityCommand {
-                    profile_id: profile_id.clone(),
-                })
-                .map_or_else(
+        let services = services_for_load.clone();
+        let profile_id = profile_id.clone();
+        spawn(async move {
+            let result = run_ui_blocking(move || {
+                services
+                    .get_wallet_security_status()
+                    .execute(WalletProfileSecurityCommand { profile_id })
+            })
+            .await;
+            security.set(match result {
+                Ok(result) => result.map_or_else(
                     |error| SecurityCapabilityState::Failed(error.to_string()),
                     SecurityCapabilityState::Ready,
                 ),
-        );
+                Err(error) => SecurityCapabilityState::Failed(error.to_string()),
+            });
+        });
     });
     let security_card = match security.read().clone() {
         SecurityCapabilityState::Loading => rsx! {
@@ -6891,18 +7224,38 @@ fn SettingsPage(
                                 let services = security_services.clone();
                                 security_state.set(SecurityCapabilityState::Loading);
                                 spawn(async move {
-                                    let result = match status.state_name() {
-                                        "Uninitialized" => services
-                                            .initialize_wallet_security()
-                                            .execute(command),
-                                        "Locked" => services.unlock_wallet().execute(command),
-                                        "Unlocked" => services.lock_wallet().execute(command),
-                                        _ => return,
-                                    };
-                                    security_state.set(result.map_or_else(
-                                        |error| SecurityCapabilityState::Failed(error.to_string()),
-                                        SecurityCapabilityState::Ready,
-                                    ));
+                                    let state = status.state_name();
+                                    let result = run_ui_blocking(move || {
+                                        match state {
+                                            "Uninitialized" => Some(
+                                                services
+                                                    .initialize_wallet_security()
+                                                    .execute(command),
+                                            ),
+                                            "Locked" => {
+                                                Some(services.unlock_wallet().execute(command))
+                                            }
+                                            "Unlocked" => {
+                                                Some(services.lock_wallet().execute(command))
+                                            }
+                                            _ => None,
+                                        }
+                                    })
+                                    .await;
+                                    security_state.set(match result {
+                                        Ok(Some(result)) => result.map_or_else(
+                                            |error| {
+                                                SecurityCapabilityState::Failed(error.to_string())
+                                            },
+                                            SecurityCapabilityState::Ready,
+                                        ),
+                                        Ok(None) => SecurityCapabilityState::Failed(
+                                            "wallet protection is unavailable".to_owned(),
+                                        ),
+                                        Err(error) => {
+                                            SecurityCapabilityState::Failed(error.to_string())
+                                        }
+                                    });
                                 });
                             },
                             "{security_action_label(status)}"
@@ -7029,19 +7382,23 @@ fn SettingsPage(
                                             "Authorizing and encrypting the complete wallet",
                                         ));
                                         spawn(async move {
-                                            let package = services.export_complete_wallet_backup.execute(
-                                                ExportCompleteWalletBackupCommand {
-                                                    profile_id,
-                                                    recovery_secret: secret,
-                                                    confirmation: SensitiveOperationConfirmation {
-                                                        title: EXPORT_COMPLETE_WALLET_BACKUP_TITLE.to_owned(),
-                                                        summary: EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY.to_owned(),
-                                                        confirmed: true,
-                                                    },
-                                                },
-                                            );
+                                            let worker_services = services.clone();
+                                            let package = run_ui_blocking(move || {
+                                                worker_services
+                                                    .export_complete_wallet_backup
+                                                    .execute(ExportCompleteWalletBackupCommand {
+                                                        profile_id,
+                                                        recovery_secret: secret,
+                                                        confirmation: SensitiveOperationConfirmation {
+                                                            title: EXPORT_COMPLETE_WALLET_BACKUP_TITLE.to_owned(),
+                                                            summary: EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY.to_owned(),
+                                                            confirmed: true,
+                                                        },
+                                                    })
+                                            })
+                                            .await;
                                             let next = match package {
-                                                Ok(package) => match services
+                                                Ok(Ok(package)) => match services
                                                     .portable_wallet_backup_documents
                                                     .export(
                                                         PortableWalletBackupDocumentKind::CompleteWallet,
@@ -7059,6 +7416,9 @@ fn SettingsPage(
                                                         error.to_string(),
                                                     ),
                                                 },
+                                                Ok(Err(error)) => PortableBackupUiState::Failed(
+                                                    error.to_string(),
+                                                ),
                                                 Err(error) => PortableBackupUiState::Failed(
                                                     error.to_string(),
                                                 ),
@@ -7129,18 +7489,36 @@ fn SettingsPage(
                                                 .import()
                                                 .await;
                                             let recovered = match imported {
-                                                Ok(backup) => services.recover_portable_wallet_backup.execute(
-                                                    RecoverPortableWalletBackupCommand {
-                                                        profile_id: profile_id.clone(),
-                                                        backup,
-                                                        recovery_secret: secret,
-                                                        confirmation: SensitiveOperationConfirmation {
-                                                            title: RECOVER_PORTABLE_WALLET_BACKUP_TITLE.to_owned(),
-                                                            summary: RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY.to_owned(),
-                                                            confirmed: true,
-                                                        },
-                                                    },
-                                                ).map_err(|error| error.to_string()),
+                                                Ok(backup) => {
+                                                    let services = services.clone();
+                                                    match run_ui_blocking(move || {
+                                                        let summary = services
+                                                            .recover_portable_wallet_backup
+                                                            .execute(RecoverPortableWalletBackupCommand {
+                                                                profile_id: profile_id.clone(),
+                                                                backup,
+                                                                recovery_secret: secret,
+                                                                confirmation: SensitiveOperationConfirmation {
+                                                                    title: RECOVER_PORTABLE_WALLET_BACKUP_TITLE.to_owned(),
+                                                                    summary: RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY.to_owned(),
+                                                                    confirmed: true,
+                                                                },
+                                                            })
+                                                            .map_err(|error| error.to_string())?;
+                                                        let status = services
+                                                            .get_wallet_security_status
+                                                            .execute(WalletProfileSecurityCommand {
+                                                                profile_id,
+                                                            })
+                                                            .map_err(|error| error.to_string())?;
+                                                        Ok::<_, String>((summary, status))
+                                                    })
+                                                    .await
+                                                    {
+                                                        Ok(result) => result,
+                                                        Err(error) => Err(error.to_string()),
+                                                    }
+                                                }
                                                 Err(PortableWalletBackupDocumentError::Cancelled) => {
                                                     backup_state.set(PortableBackupUiState::Cancelled);
                                                     return;
@@ -7148,7 +7526,7 @@ fn SettingsPage(
                                                 Err(error) => Err(error.to_string()),
                                             };
                                             match recovered {
-                                                Ok(summary) => {
+                                                Ok((summary, status)) => {
                                                     backup_state.set(PortableBackupUiState::Succeeded(
                                                         format!(
                                                             "Recovered custody with {} protected key(s).",
@@ -7156,12 +7534,7 @@ fn SettingsPage(
                                                         ),
                                                     ));
                                                     security_state.set(
-                                                        services.get_wallet_security_status.execute(
-                                                            WalletProfileSecurityCommand { profile_id },
-                                                        ).map_or_else(
-                                                            |error| SecurityCapabilityState::Failed(error.to_string()),
-                                                            SecurityCapabilityState::Ready,
-                                                        ),
+                                                        SecurityCapabilityState::Ready(status),
                                                     );
                                                 }
                                                 Err(error) => backup_state.set(
@@ -7299,6 +7672,36 @@ const LUCIDE_SETTINGS_2: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn blocking_wallet_operations_execute_off_the_caller_thread() {
+        let caller = std::thread::current().id();
+
+        let (worker, worker_name) = futures::executor::block_on(run_ui_blocking(|| {
+            (
+                std::thread::current().id(),
+                std::thread::current().name().map(str::to_owned),
+            )
+        }))
+        .expect("worker operation");
+
+        assert_ne!(worker, caller);
+        assert_eq!(worker_name.as_deref(), Some("oxid-ui-blocking"));
+        assert_eq!(UI_BLOCKING_TASK_STACK_BYTES, 8 * 1024 * 1024);
+    }
+
+    #[test]
+    fn blocking_worker_failures_have_one_payload_free_ui_message() {
+        assert_eq!(
+            UiBlockingTaskError::WorkerUnavailable.to_string(),
+            "background wallet operation failed"
+        );
+        assert_eq!(
+            UiBlockingTaskError::WorkerFailed.to_string(),
+            "background wallet operation failed"
+        );
+    }
 
     #[test]
     fn primary_navigation_matches_the_reviewed_wallet_shell() {
