@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3–7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/store/backup.rs`, `mobile-bench/wallet-core/src/service/backup_service.rs`, and `mobile-bench/dioxus-wallet/src/session_persist.rs`
 - Tracking: issues #2 and #33
-- Implementation state: public Midnight account associations, strict profile/DID/credential snapshot codecs, and exact restored-DID key rebinding are implemented; the version-2 authenticated archive, recovery journal, fresh-install Dioxus entry point, and complete iOS/Android recovery evidence remain issue #33 work
+- Implementation state: public Midnight account associations, strict profile/DID/credential snapshot codecs, exact restored-DID key rebinding, the version-2 authenticated archive, and the journaled all-store coordinator are implemented; the fresh-install Dioxus entry point and complete iOS/Android recovery evidence remain issue #33 work
 
 ## Context
 

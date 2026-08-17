@@ -109,7 +109,7 @@ class OxidMobilePlugin(private val activity: Activity) {
 private object BackupDocumentCoordinator {
     private const val EXPORT_REQUEST_CODE = 0x0A72
     private const val IMPORT_REQUEST_CODE = 0x0A73
-    private const val MAX_PACKAGE_BYTES = 1024 * 1024
+    private const val MAX_PACKAGE_BYTES = 80 * 1024 * 1024
     private const val EXPECTED_FILE_NAME = "oxid-wallet-custody.oxidbak"
     private var status = "idle"
     private var resultPayload: String? = null

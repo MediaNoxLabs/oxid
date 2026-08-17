@@ -1,0 +1,33 @@
+[package]
+name = "oxid-adapter-backup-complete"
+description = "Journaled complete-wallet backup and recovery coordinator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+oxid-adapter-backup-portable.workspace = true
+oxid-adapter-storage-credential-json.workspace = true
+oxid-adapter-storage-identity-json.workspace = true
+oxid-adapter-storage-json.workspace = true
+oxid-credential-application.workspace = true
+oxid-credential-domain.workspace = true
+oxid-identity-application.workspace = true
+oxid-identity-domain.workspace = true
+oxid-platform-ports.workspace = true
+oxid-wallet-application.workspace = true
+oxid-wallet-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+oxid-adapter-storage-dev.workspace = true
+oxid-adapter-storage-memory.workspace = true
+oxid-foundation.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

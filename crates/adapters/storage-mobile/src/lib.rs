@@ -17,8 +17,8 @@ use std::{
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use oxid_adapter_backup_portable::{
-    PortableCustodyKey, PortableCustodyVault, PortableKeyMaterialRef, open_portable_custody,
-    seal_portable_custody,
+    PortableCustodyKey, PortableCustodyVault, PortableCustodyVaultPort, PortableKeyMaterialRef,
+    open_portable_custody, seal_portable_custody,
 };
 use oxid_adapter_custody_software::{
     derive_bip32_secret, public_key_from_secret, sign_jubjub_challenge_with_secret,
@@ -602,6 +602,94 @@ where
     }
 }
 
+impl<C, N, B> PortableCustodyVaultPort for MobileWalletSecurity<C, N, B>
+where
+    C: ClockPort,
+    N: RandomPort,
+    B: SealedVaultPort,
+{
+    fn export_custody_vault(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<PortableCustodyVault, WalletPortableBackupPortError> {
+        let _gate = self.gate().map_err(map_backup_security_error)?;
+        // Export always asks the native backend for a new authorization. An
+        // existing unlocked session is intentionally not sufficient.
+        let plaintext = self
+            .backend
+            .unlock(profile_id, PORTABLE_BACKUP_EXPORT_REASON)
+            .map_err(map_backup_vault_error)?;
+        let vault = decode_vault(profile_id, &plaintext).map_err(map_backup_security_error)?;
+        let exported_at_millis = self
+            .clock
+            .now()
+            .map_err(|_| WalletPortableBackupPortError::Unavailable)?
+            .value();
+        portable_vault_from_mobile(profile_id, exported_at_millis, &vault)
+    }
+
+    fn preflight_custody_recovery(
+        &self,
+        portable: &PortableCustodyVault,
+    ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
+        let _gate = self.gate().map_err(map_backup_security_error)?;
+        match self
+            .backend
+            .inspect(portable.profile_id())
+            .map_err(map_backup_vault_error)?
+        {
+            SealedVaultState::Uninitialized => {}
+            SealedVaultState::Locked(_) | SealedVaultState::Unlocked(_) => {
+                return Err(WalletPortableBackupPortError::AlreadyInitialized);
+            }
+            SealedVaultState::Unavailable => {
+                return Err(WalletPortableBackupPortError::Unavailable);
+            }
+        }
+        let vault = mobile_vault_from_portable(portable)?;
+        Ok(WalletPortableRecoverySummary {
+            restored_key_count: vault.keys.len(),
+        })
+    }
+
+    fn recover_custody_vault(
+        &self,
+        portable: &PortableCustodyVault,
+    ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
+        self.preflight_custody_recovery(portable)?;
+        let vault = mobile_vault_from_portable(portable)?;
+        let restored_key_count = vault.keys.len();
+        let plaintext = encode_vault(&vault).map_err(map_backup_security_error)?;
+        // Native initialization is the one-shot, fresh platform authorization
+        // boundary and refuses any existing destination state.
+        self.backend
+            .initialize(portable.profile_id(), &plaintext)
+            .map_err(map_backup_vault_error)?;
+        Ok(WalletPortableRecoverySummary { restored_key_count })
+    }
+
+    fn verify_recovered_custody(
+        &self,
+        portable: &PortableCustodyVault,
+    ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
+        let _gate = self.gate().map_err(map_backup_security_error)?;
+        let current = self
+            .load_vault(portable.profile_id())
+            .map_err(map_backup_security_error)?;
+        let current = portable_vault_from_mobile(
+            portable.profile_id(),
+            portable.exported_at_millis(),
+            &current,
+        )?;
+        if !current.matches_recovered_state(portable) {
+            return Err(WalletPortableBackupPortError::Conflict);
+        }
+        Ok(WalletPortableRecoverySummary {
+            restored_key_count: current.keys().len(),
+        })
+    }
+}
+
 impl<C, N, B> WalletPortableBackupPort for MobileWalletSecurity<C, N, B>
 where
     C: ClockPort,
@@ -613,46 +701,7 @@ where
         profile_id: &WalletProfileId,
         recovery_secret: &WalletRecoverySecret,
     ) -> Result<PortableWalletBackup, WalletPortableBackupPortError> {
-        let _gate = self.gate().map_err(map_backup_security_error)?;
-        // Export always asks the native backend for a new authorization. An
-        // existing unlocked session is intentionally not sufficient.
-        let plaintext = self
-            .backend
-            .unlock(profile_id, PORTABLE_BACKUP_EXPORT_REASON)
-            .map_err(map_backup_vault_error)?;
-        let vault = decode_vault(profile_id, &plaintext).map_err(map_backup_security_error)?;
-        let keys = vault
-            .keys
-            .iter()
-            .map(|stored| {
-                let descriptor = stored
-                    .descriptor_with_root(&vault.root_seed)
-                    .map_err(map_backup_security_error)?;
-                match &stored.material {
-                    StoredKeyMaterial::Generated { secret } => {
-                        Ok(PortableCustodyKey::generated(descriptor, *secret))
-                    }
-                    StoredKeyMaterial::Derived { .. } => Ok(PortableCustodyKey::derived(
-                        descriptor,
-                        stored
-                            .path()
-                            .map_err(map_backup_security_error)?
-                            .ok_or(WalletPortableBackupPortError::InvalidPackage)?,
-                    )),
-                }
-            })
-            .collect::<Result<Vec<_>, WalletPortableBackupPortError>>()?;
-        let exported_at_millis = self
-            .clock
-            .now()
-            .map_err(|_| WalletPortableBackupPortError::Unavailable)?
-            .value();
-        let portable = PortableCustodyVault::new(
-            profile_id.clone(),
-            exported_at_millis,
-            vault.root_seed,
-            keys,
-        )?;
+        let portable = self.export_custody_vault(profile_id)?;
         seal_portable_custody(&portable, recovery_secret, self.random.as_ref())
     }
 
@@ -662,73 +711,8 @@ where
         backup: &PortableWalletBackup,
         recovery_secret: &WalletRecoverySecret,
     ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
-        let _gate = self.gate().map_err(map_backup_security_error)?;
-        match self
-            .backend
-            .inspect(profile_id)
-            .map_err(map_backup_vault_error)?
-        {
-            SealedVaultState::Uninitialized => {}
-            SealedVaultState::Locked(_) | SealedVaultState::Unlocked(_) => {
-                return Err(WalletPortableBackupPortError::AlreadyInitialized);
-            }
-            SealedVaultState::Unavailable => {
-                return Err(WalletPortableBackupPortError::Unavailable);
-            }
-        }
-
         let portable = open_portable_custody(backup, recovery_secret, profile_id)?;
-        let mut keys = Vec::with_capacity(portable.keys().len());
-        for key in portable.keys() {
-            let descriptor = key.descriptor();
-            let (public_key, material) = match key.material() {
-                PortableKeyMaterialRef::Generated(secret) => (
-                    public_key_from_secret(descriptor.algorithm(), secret)
-                        .map_err(map_backup_security_error)?,
-                    StoredKeyMaterial::Generated { secret: *secret },
-                ),
-                PortableKeyMaterialRef::Derived(path) => {
-                    if descriptor.algorithm() != WalletKeyAlgorithm::Secp256k1Schnorr {
-                        return Err(WalletPortableBackupPortError::InvalidPackage);
-                    }
-                    let secret = derive_bip32_secret(portable.root_seed(), path)
-                        .map_err(map_backup_security_error)?;
-                    (
-                        public_key_from_secret(descriptor.algorithm(), &secret)
-                            .map_err(map_backup_security_error)?,
-                        StoredKeyMaterial::Derived {
-                            path: stored_path(path),
-                        },
-                    )
-                }
-            };
-            if descriptor.public_key() != &public_key {
-                return Err(WalletPortableBackupPortError::InvalidPackage);
-            }
-            keys.push(StoredKey {
-                reference: descriptor.reference().as_str().to_owned(),
-                label: descriptor.label().as_str().to_owned(),
-                algorithm: algorithm_name(descriptor.algorithm()).to_owned(),
-                purpose: purpose_name(descriptor.purpose()).to_owned(),
-                created_at_millis: descriptor.created_at().value(),
-                material,
-            });
-        }
-        let restored_key_count = keys.len();
-        let vault = MobileVault {
-            version: VAULT_VERSION,
-            profile_id: profile_id.as_str().to_owned(),
-            root_seed: *portable.root_seed(),
-            keys,
-        };
-        validate_vault(profile_id, &vault).map_err(map_backup_security_error)?;
-        let plaintext = encode_vault(&vault).map_err(map_backup_security_error)?;
-        // Native initialization is the one-shot, fresh platform authorization
-        // boundary and refuses any existing destination state.
-        self.backend
-            .initialize(profile_id, &plaintext)
-            .map_err(map_backup_vault_error)?;
-        Ok(WalletPortableRecoverySummary { restored_key_count })
+        self.recover_custody_vault(&portable)
     }
 }
 
@@ -884,6 +868,89 @@ fn validate_vault(
         }
     }
     Ok(())
+}
+
+fn mobile_vault_from_portable(
+    portable: &PortableCustodyVault,
+) -> Result<MobileVault, WalletPortableBackupPortError> {
+    let mut keys = Vec::with_capacity(portable.keys().len());
+    for key in portable.keys() {
+        let descriptor = key.descriptor();
+        let (public_key, material) = match key.material() {
+            PortableKeyMaterialRef::Generated(secret) => (
+                public_key_from_secret(descriptor.algorithm(), secret)
+                    .map_err(map_backup_security_error)?,
+                StoredKeyMaterial::Generated { secret: *secret },
+            ),
+            PortableKeyMaterialRef::Derived(path) => {
+                if descriptor.algorithm() != WalletKeyAlgorithm::Secp256k1Schnorr {
+                    return Err(WalletPortableBackupPortError::InvalidPackage);
+                }
+                let secret = derive_bip32_secret(portable.root_seed(), path)
+                    .map_err(map_backup_security_error)?;
+                (
+                    public_key_from_secret(descriptor.algorithm(), &secret)
+                        .map_err(map_backup_security_error)?,
+                    StoredKeyMaterial::Derived {
+                        path: stored_path(path),
+                    },
+                )
+            }
+        };
+        if descriptor.public_key() != &public_key {
+            return Err(WalletPortableBackupPortError::InvalidPackage);
+        }
+        keys.push(StoredKey {
+            reference: descriptor.reference().as_str().to_owned(),
+            label: descriptor.label().as_str().to_owned(),
+            algorithm: algorithm_name(descriptor.algorithm()).to_owned(),
+            purpose: purpose_name(descriptor.purpose()).to_owned(),
+            created_at_millis: descriptor.created_at().value(),
+            material,
+        });
+    }
+    let vault = MobileVault {
+        version: VAULT_VERSION,
+        profile_id: portable.profile_id().as_str().to_owned(),
+        root_seed: *portable.root_seed(),
+        keys,
+    };
+    validate_vault(portable.profile_id(), &vault).map_err(map_backup_security_error)?;
+    Ok(vault)
+}
+
+fn portable_vault_from_mobile(
+    profile_id: &WalletProfileId,
+    exported_at_millis: u64,
+    vault: &MobileVault,
+) -> Result<PortableCustodyVault, WalletPortableBackupPortError> {
+    let keys = vault
+        .keys
+        .iter()
+        .map(|stored| {
+            let descriptor = stored
+                .descriptor_with_root(&vault.root_seed)
+                .map_err(map_backup_security_error)?;
+            match &stored.material {
+                StoredKeyMaterial::Generated { secret } => {
+                    Ok(PortableCustodyKey::generated(descriptor, *secret))
+                }
+                StoredKeyMaterial::Derived { .. } => Ok(PortableCustodyKey::derived(
+                    descriptor,
+                    stored
+                        .path()
+                        .map_err(map_backup_security_error)?
+                        .ok_or(WalletPortableBackupPortError::InvalidPackage)?,
+                )),
+            }
+        })
+        .collect::<Result<Vec<_>, WalletPortableBackupPortError>>()?;
+    PortableCustodyVault::new(
+        profile_id.clone(),
+        exported_at_millis,
+        vault.root_seed,
+        keys,
+    )
 }
 
 fn stored_path(path: &WalletHdPath) -> Vec<StoredPathComponent> {

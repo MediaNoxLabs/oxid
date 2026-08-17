@@ -12,8 +12,8 @@ use bip32::{ChildNumber, XPrv};
 use ed25519_dalek::{Signer as _, SigningKey as Ed25519SigningKey};
 use k256::schnorr::{SigningKey as Secp256k1SchnorrSigningKey, signature::Signer as _};
 use oxid_adapter_backup_portable::{
-    PortableCustodyKey, PortableCustodyVault, PortableKeyMaterialRef, open_portable_custody,
-    seal_portable_custody,
+    PortableCustodyKey, PortableCustodyVault, PortableCustodyVaultPort, PortableKeyMaterialRef,
+    open_portable_custody, seal_portable_custody,
 };
 use oxid_platform_ports::{ClockPort, RandomPort};
 use oxid_wallet_application::{
@@ -288,6 +288,45 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
                 Ok((DevelopmentKeyMaterial::Jubjub(signing_key), public_key))
             }
         }
+    }
+
+    fn restored_profile(
+        vault: &PortableCustodyVault,
+    ) -> Result<DevelopmentProfile, WalletPortableBackupPortError> {
+        let mut restored_keys = BTreeMap::new();
+        for key in vault.keys() {
+            let descriptor = key.descriptor().clone();
+            let (material, public_key, derivation) = match key.material() {
+                PortableKeyMaterialRef::Generated(secret) => {
+                    let (material, public_key) =
+                        Self::material_from_secret(descriptor.algorithm(), *secret)
+                            .map_err(map_backup_security_error)?;
+                    (material, public_key, None)
+                }
+                PortableKeyMaterialRef::Derived(path) => {
+                    let (material, public_key) =
+                        Self::derive_material(vault.root_seed(), path, descriptor.algorithm())
+                            .map_err(map_backup_security_error)?;
+                    (material, public_key, Some(path.clone()))
+                }
+            };
+            if descriptor.public_key() != &public_key {
+                return Err(WalletPortableBackupPortError::InvalidPackage);
+            }
+            restored_keys.insert(
+                descriptor.reference().as_str().to_owned(),
+                StoredDevelopmentKey {
+                    descriptor,
+                    material,
+                    derivation,
+                },
+            );
+        }
+        Ok(DevelopmentProfile {
+            state: WalletProtectionState::Unlocked,
+            root_seed: Zeroizing::new(*vault.root_seed()),
+            keys: restored_keys,
+        })
     }
 }
 
@@ -579,16 +618,15 @@ where
     }
 }
 
-impl<C, N> WalletPortableBackupPort for DevelopmentWalletSecurity<C, N>
+impl<C, N> PortableCustodyVaultPort for DevelopmentWalletSecurity<C, N>
 where
     C: ClockPort,
     N: RandomPort,
 {
-    fn export_portable_backup(
+    fn export_custody_vault(
         &self,
         profile_id: &WalletProfileId,
-        recovery_secret: &WalletRecoverySecret,
-    ) -> Result<PortableWalletBackup, WalletPortableBackupPortError> {
+    ) -> Result<PortableCustodyVault, WalletPortableBackupPortError> {
         let profiles = self.profiles().map_err(map_backup_security_error)?;
         let profile =
             Self::unlocked_profile(&profiles, profile_id).map_err(map_backup_security_error)?;
@@ -619,12 +657,66 @@ where
             .now()
             .map_err(|_| WalletPortableBackupPortError::Unavailable)?
             .value();
-        let vault = PortableCustodyVault::new(
+        PortableCustodyVault::new(
             profile_id.clone(),
             exported_at_millis,
             *profile.root_seed,
             keys,
-        )?;
+        )
+    }
+
+    fn preflight_custody_recovery(
+        &self,
+        vault: &PortableCustodyVault,
+    ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
+        let profiles = self.profiles().map_err(map_backup_security_error)?;
+        if profiles.contains_key(vault.profile_id().as_str()) {
+            return Err(WalletPortableBackupPortError::AlreadyInitialized);
+        }
+        let restored_key_count = Self::restored_profile(vault)?.keys.len();
+        Ok(WalletPortableRecoverySummary { restored_key_count })
+    }
+
+    fn recover_custody_vault(
+        &self,
+        vault: &PortableCustodyVault,
+    ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
+        self.preflight_custody_recovery(vault)?;
+        let restored = Self::restored_profile(vault)?;
+        let restored_key_count = restored.keys.len();
+        let mut profiles = self.profiles().map_err(map_backup_security_error)?;
+        if profiles.contains_key(vault.profile_id().as_str()) {
+            return Err(WalletPortableBackupPortError::Conflict);
+        }
+        profiles.insert(vault.profile_id().as_str().to_owned(), restored);
+        Ok(WalletPortableRecoverySummary { restored_key_count })
+    }
+
+    fn verify_recovered_custody(
+        &self,
+        vault: &PortableCustodyVault,
+    ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
+        let current = self.export_custody_vault(vault.profile_id())?;
+        if !current.matches_recovered_state(vault) {
+            return Err(WalletPortableBackupPortError::Conflict);
+        }
+        Ok(WalletPortableRecoverySummary {
+            restored_key_count: current.keys().len(),
+        })
+    }
+}
+
+impl<C, N> WalletPortableBackupPort for DevelopmentWalletSecurity<C, N>
+where
+    C: ClockPort,
+    N: RandomPort,
+{
+    fn export_portable_backup(
+        &self,
+        profile_id: &WalletProfileId,
+        recovery_secret: &WalletRecoverySecret,
+    ) -> Result<PortableWalletBackup, WalletPortableBackupPortError> {
+        let vault = self.export_custody_vault(profile_id)?;
         seal_portable_custody(&vault, recovery_secret, self.random.as_ref())
     }
 
@@ -641,49 +733,7 @@ where
             }
         }
         let vault = open_portable_custody(backup, recovery_secret, profile_id)?;
-        let mut restored_keys = BTreeMap::new();
-        for key in vault.keys() {
-            let descriptor = key.descriptor().clone();
-            let (material, public_key, derivation) = match key.material() {
-                PortableKeyMaterialRef::Generated(secret) => {
-                    let (material, public_key) =
-                        Self::material_from_secret(descriptor.algorithm(), *secret)
-                            .map_err(map_backup_security_error)?;
-                    (material, public_key, None)
-                }
-                PortableKeyMaterialRef::Derived(path) => {
-                    let (material, public_key) =
-                        Self::derive_material(vault.root_seed(), path, descriptor.algorithm())
-                            .map_err(map_backup_security_error)?;
-                    (material, public_key, Some(path.clone()))
-                }
-            };
-            if descriptor.public_key() != &public_key {
-                return Err(WalletPortableBackupPortError::InvalidPackage);
-            }
-            restored_keys.insert(
-                descriptor.reference().as_str().to_owned(),
-                StoredDevelopmentKey {
-                    descriptor,
-                    material,
-                    derivation,
-                },
-            );
-        }
-        let restored_key_count = restored_keys.len();
-        let mut profiles = self.profiles().map_err(map_backup_security_error)?;
-        if profiles.contains_key(profile_id.as_str()) {
-            return Err(WalletPortableBackupPortError::Conflict);
-        }
-        profiles.insert(
-            profile_id.as_str().to_owned(),
-            DevelopmentProfile {
-                state: WalletProtectionState::Unlocked,
-                root_seed: Zeroizing::new(*vault.root_seed()),
-                keys: restored_keys,
-            },
-        );
-        Ok(WalletPortableRecoverySummary { restored_key_count })
+        self.recover_custody_vault(&vault)
     }
 }
 
@@ -775,6 +825,36 @@ impl WalletDerivedSecretUsePort for UnavailableWalletSecurity {
         _: &mut dyn FnMut(&[u8; 32]) -> Result<(), WalletSecurityPortError>,
     ) -> Result<(), WalletSecurityPortError> {
         Err(WalletSecurityPortError::Unavailable)
+    }
+}
+
+impl PortableCustodyVaultPort for UnavailableWalletSecurity {
+    fn export_custody_vault(
+        &self,
+        _: &WalletProfileId,
+    ) -> Result<PortableCustodyVault, WalletPortableBackupPortError> {
+        Err(WalletPortableBackupPortError::Unavailable)
+    }
+
+    fn preflight_custody_recovery(
+        &self,
+        _: &PortableCustodyVault,
+    ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
+        Err(WalletPortableBackupPortError::Unavailable)
+    }
+
+    fn recover_custody_vault(
+        &self,
+        _: &PortableCustodyVault,
+    ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
+        Err(WalletPortableBackupPortError::Unavailable)
+    }
+
+    fn verify_recovered_custody(
+        &self,
+        _: &PortableCustodyVault,
+    ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
+        Err(WalletPortableBackupPortError::Unavailable)
     }
 }
 

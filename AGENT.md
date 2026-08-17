@@ -1344,9 +1344,12 @@ retain only selected network plus bounded account/address indices—never
 addresses, key references, endpoints, balances, or history. Reconstruct DID
 control after restart only by a unique exact algorithm/public-JWK match against
 authorized custody; never persist opaque DID key references in the public store.
-The association/rebinding foundations and strict store snapshot codecs exist;
-the version-2 envelope, journal coordinator, fresh-install UI, and complete
-mobile evidence remain issue #33 work and must not be claimed complete.
+The association/rebinding foundations, strict store snapshot codecs, version-2
+single authenticated envelope, and journaled custody-last recovery coordinator
+exist. The encrypted package boundary is 80 MiB and both native document
+plugins enforce the same bound; physical-device peak-memory measurement remains
+a release gate. The fresh-install Dioxus entry point and complete mobile
+recovery evidence remain issue #33 work and must not be claimed complete.
 
 `OXID_MOBILE_CUSTODY=development|native` selects the standalone mobile
 composition; development is the default. Native mode combines production

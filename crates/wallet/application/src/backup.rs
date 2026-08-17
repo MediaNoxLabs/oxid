@@ -13,7 +13,11 @@ use oxid_wallet_domain::WalletProfileId;
 use crate::{SensitiveOperationConfirmation, SensitiveWalletOperationError, validate_confirmation};
 
 /// Maximum encrypted package accepted at the application boundary.
-pub const MAX_PORTABLE_WALLET_BACKUP_BYTES: usize = 1024 * 1024;
+///
+/// Complete-wallet archives can contain the bounded credential repository in
+/// addition to public profile/DID state and custody. Native transports retain
+/// the same bound and must measure peak-memory behavior on physical devices.
+pub const MAX_PORTABLE_WALLET_BACKUP_BYTES: usize = 80 * 1024 * 1024;
 /// Minimum recovery-secret length. This is an application guard, not an entropy estimate.
 pub const MIN_WALLET_RECOVERY_SECRET_CHARACTERS: usize = 12;
 /// Maximum recovery-secret length accepted from an incoming adapter.
@@ -29,6 +33,14 @@ pub const RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY: &str =
     "Initialize this empty profile from one encrypted, profile-bound wallet backup.";
 /// Fixed, capability-specific filename suggested to the operating-system document exporter.
 pub const PORTABLE_WALLET_BACKUP_FILE_NAME: &str = "oxid-wallet-custody.oxidbak";
+pub const EXPORT_COMPLETE_WALLET_BACKUP_TITLE: &str = "Export complete wallet backup";
+pub const EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY: &str =
+    "Create one encrypted, profile-bound backup containing the complete wallet.";
+pub const RECOVER_COMPLETE_WALLET_BACKUP_TITLE: &str = "Recover complete wallet backup";
+pub const RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY: &str =
+    "Recover one complete wallet into an empty destination.";
+/// Fixed filename for the complete-wallet successor to custody-only backups.
+pub const COMPLETE_WALLET_BACKUP_FILE_NAME: &str = "oxid-wallet.oxidbak";
 
 /// Validated recovery secret. Formatting and logging never expose its contents.
 pub struct WalletRecoverySecret(Vec<u8>);
@@ -269,6 +281,32 @@ pub trait WalletPortableBackupPort: Send + Sync {
     ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError>;
 }
 
+/// Stable, non-secret outcome from complete-wallet recovery.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompleteWalletRecoverySummary {
+    pub profile_id: String,
+    pub restored_key_count: usize,
+    pub restored_did_count: usize,
+    pub restored_credential_count: usize,
+}
+
+/// Outgoing boundary for one authenticated all-store archive. Decrypted state
+/// remains inside its adapter and never crosses an incoming application port.
+pub trait CompleteWalletBackupPort: Send + Sync {
+    fn export_complete_wallet_backup(
+        &self,
+        profile_id: &WalletProfileId,
+        recovery_secret: &WalletRecoverySecret,
+    ) -> Result<PortableWalletBackup, WalletPortableBackupPortError>;
+
+    fn recover_complete_wallet_backup(
+        &self,
+        expected_profile_id: Option<&WalletProfileId>,
+        backup: &PortableWalletBackup,
+        recovery_secret: &WalletRecoverySecret,
+    ) -> Result<CompleteWalletRecoverySummary, WalletPortableBackupPortError>;
+}
+
 pub struct ExportPortableWalletBackupCommand {
     pub profile_id: String,
     pub recovery_secret: WalletRecoverySecret,
@@ -277,6 +315,22 @@ pub struct ExportPortableWalletBackupCommand {
 
 pub struct RecoverPortableWalletBackupCommand {
     pub profile_id: String,
+    pub backup: PortableWalletBackup,
+    pub recovery_secret: WalletRecoverySecret,
+    pub confirmation: SensitiveOperationConfirmation,
+}
+
+pub struct ExportCompleteWalletBackupCommand {
+    pub profile_id: String,
+    pub recovery_secret: WalletRecoverySecret,
+    pub confirmation: SensitiveOperationConfirmation,
+}
+
+/// Fresh-install recovery leaves `expected_profile_id` empty. An existing-
+/// profile entry point supplies an exact identifier to prevent cross-profile
+/// import after archive authentication.
+pub struct RecoverCompleteWalletBackupCommand {
+    pub expected_profile_id: Option<String>,
     pub backup: PortableWalletBackup,
     pub recovery_secret: WalletRecoverySecret,
     pub confirmation: SensitiveOperationConfirmation,
@@ -294,6 +348,20 @@ pub trait RecoverPortableWalletBackupUseCase: Send + Sync {
         &self,
         command: RecoverPortableWalletBackupCommand,
     ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupUseCaseError>;
+}
+
+pub trait ExportCompleteWalletBackupUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: ExportCompleteWalletBackupCommand,
+    ) -> Result<PortableWalletBackup, WalletPortableBackupUseCaseError>;
+}
+
+pub trait RecoverCompleteWalletBackupUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: RecoverCompleteWalletBackupCommand,
+    ) -> Result<CompleteWalletRecoverySummary, WalletPortableBackupUseCaseError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -323,6 +391,17 @@ impl Error for WalletPortableBackupUseCaseError {}
 
 pub struct WalletPortableBackupService<P> {
     port: Arc<P>,
+}
+
+pub struct CompleteWalletBackupService<P> {
+    port: Arc<P>,
+}
+
+impl<P> CompleteWalletBackupService<P> {
+    #[must_use]
+    pub const fn new(port: Arc<P>) -> Self {
+        Self { port }
+    }
 }
 
 impl<P> WalletPortableBackupService<P> {
@@ -374,6 +453,55 @@ where
     }
 }
 
+impl<P> ExportCompleteWalletBackupUseCase for CompleteWalletBackupService<P>
+where
+    P: CompleteWalletBackupPort + 'static,
+{
+    fn execute(
+        &self,
+        command: ExportCompleteWalletBackupCommand,
+    ) -> Result<PortableWalletBackup, WalletPortableBackupUseCaseError> {
+        validate_exact_confirmation(
+            &command.confirmation,
+            EXPORT_COMPLETE_WALLET_BACKUP_TITLE,
+            EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
+        )?;
+        let profile_id = WalletProfileId::parse(command.profile_id)
+            .map_err(WalletPortableBackupUseCaseError::InvalidProfileIdentifier)?;
+        self.port
+            .export_complete_wallet_backup(&profile_id, &command.recovery_secret)
+            .map_err(WalletPortableBackupUseCaseError::Operation)
+    }
+}
+
+impl<P> RecoverCompleteWalletBackupUseCase for CompleteWalletBackupService<P>
+where
+    P: CompleteWalletBackupPort + 'static,
+{
+    fn execute(
+        &self,
+        command: RecoverCompleteWalletBackupCommand,
+    ) -> Result<CompleteWalletRecoverySummary, WalletPortableBackupUseCaseError> {
+        validate_exact_confirmation(
+            &command.confirmation,
+            RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
+            RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY,
+        )?;
+        let expected_profile_id = command
+            .expected_profile_id
+            .map(WalletProfileId::parse)
+            .transpose()
+            .map_err(WalletPortableBackupUseCaseError::InvalidProfileIdentifier)?;
+        self.port
+            .recover_complete_wallet_backup(
+                expected_profile_id.as_ref(),
+                &command.backup,
+                &command.recovery_secret,
+            )
+            .map_err(WalletPortableBackupUseCaseError::Operation)
+    }
+}
+
 fn validate_exact_confirmation(
     confirmation: &SensitiveOperationConfirmation,
     expected_title: &str,
@@ -420,6 +548,33 @@ mod tests {
             *self.0.lock().expect("recording mutex should be available") += 1;
             Ok(WalletPortableRecoverySummary {
                 restored_key_count: 3,
+            })
+        }
+    }
+
+    impl CompleteWalletBackupPort for RecordingPort {
+        fn export_complete_wallet_backup(
+            &self,
+            _: &WalletProfileId,
+            _: &WalletRecoverySecret,
+        ) -> Result<PortableWalletBackup, WalletPortableBackupPortError> {
+            *self.0.lock().expect("recording mutex should be available") += 1;
+            PortableWalletBackup::parse(vec![2])
+                .map_err(|_| WalletPortableBackupPortError::InvalidOperation)
+        }
+
+        fn recover_complete_wallet_backup(
+            &self,
+            _: Option<&WalletProfileId>,
+            _: &PortableWalletBackup,
+            _: &WalletRecoverySecret,
+        ) -> Result<CompleteWalletRecoverySummary, WalletPortableBackupPortError> {
+            *self.0.lock().expect("recording mutex should be available") += 1;
+            Ok(CompleteWalletRecoverySummary {
+                profile_id: "profile_test".to_owned(),
+                restored_key_count: 3,
+                restored_did_count: 2,
+                restored_credential_count: 1,
             })
         }
     }
@@ -498,6 +653,32 @@ mod tests {
         )
         .expect("exact recovery intent should dispatch");
         assert_eq!(summary.restored_key_count, 3);
+        assert_eq!(
+            *port.0.lock().expect("recording mutex should be available"),
+            1
+        );
+    }
+
+    #[test]
+    fn fresh_install_complete_recovery_authenticates_before_profile_selection() {
+        let port = Arc::new(RecordingPort::default());
+        let service = CompleteWalletBackupService::new(Arc::clone(&port));
+        let summary = RecoverCompleteWalletBackupUseCase::execute(
+            &service,
+            RecoverCompleteWalletBackupCommand {
+                expected_profile_id: None,
+                backup: PortableWalletBackup::parse(vec![2]).expect("backup should be valid"),
+                recovery_secret: secret(),
+                confirmation: SensitiveOperationConfirmation {
+                    title: RECOVER_COMPLETE_WALLET_BACKUP_TITLE.to_owned(),
+                    summary: RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY.to_owned(),
+                    confirmed: true,
+                },
+            },
+        )
+        .expect("fresh install recovery should dispatch");
+        assert_eq!(summary.profile_id, "profile_test");
+        assert_eq!(summary.restored_did_count, 2);
         assert_eq!(
             *port.0.lock().expect("recording mutex should be available"),
             1

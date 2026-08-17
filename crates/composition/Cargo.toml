@@ -14,6 +14,8 @@ mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
 
 [dependencies]
 hex.workspace = true
+oxid-adapter-backup-complete.workspace = true
+oxid-adapter-backup-portable.workspace = true
 oxid-adapter-did-midnight.workspace = true
 oxid-adapter-backup-document-mobile.workspace = true
 oxid-adapter-identity-ingress.workspace = true

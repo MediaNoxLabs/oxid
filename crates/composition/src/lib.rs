@@ -4,8 +4,14 @@
 
 use std::sync::Arc;
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+use oxid_adapter_backup_complete::InMemoryRecoveryJournal;
+use oxid_adapter_backup_complete::{CompleteWalletBackupAdapter, RecoveryJournalPort};
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_adapter_backup_complete::{FileRecoveryJournal, UnavailableRecoveryJournal};
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_backup_document_mobile::NativePortableWalletBackupDocuments;
+use oxid_adapter_backup_portable::PortableCustodyVaultPort;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_did_midnight::{
     HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
@@ -177,25 +183,27 @@ use oxid_protocol_application::{
 use oxid_wallet_application::UnavailablePortableWalletBackupDocuments;
 use oxid_wallet_application::{
     AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
-    CancelWalletTransferSubmissionUseCase, CreateWalletProfileService, CreateWalletProfileUseCase,
-    DeleteWalletKeyUseCase, DeriveWalletAccountUseCase, ExportPortableWalletBackupUseCase,
-    GenerateWalletKeyUseCase, GetActiveWalletProfileService, GetActiveWalletProfileUseCase,
-    GetWalletAccountUseCase, GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    CancelWalletTransferSubmissionUseCase, CompleteWalletBackupService, CreateWalletProfileService,
+    CreateWalletProfileUseCase, DeleteWalletKeyUseCase, DeriveWalletAccountUseCase,
+    ExportCompleteWalletBackupUseCase, ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase,
+    GetActiveWalletProfileService, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
+    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
     ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
     ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
     PortableWalletBackupDocumentPort, PrepareWalletTransferUseCase,
-    ReconcileWalletTransferSubmissionUseCase, RecoverPortableWalletBackupUseCase,
-    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectWalletProfileUseCase,
-    SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
-    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
-    WalletAccountService, WalletDustSyncPort, WalletDustSyncService,
+    ReconcileWalletTransferSubmissionUseCase, RecoverCompleteWalletBackupUseCase,
+    RecoverPortableWalletBackupUseCase, SelectWalletNetworkUseCase, SelectWalletProfileService,
+    SelectWalletProfileUseCase, SignWalletDataUseCase, StartWalletDustSyncUseCase,
+    StartWalletShieldedSyncUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
+    WalletAccountReadPort, WalletAccountService, WalletDustSyncPort, WalletDustSyncService,
     WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
     WalletNetworkService, WalletPortableBackupPort, WalletPortableBackupService,
-    WalletProfileRepository, WalletProtectionPort, WalletProtectionService, WalletShieldedSyncPort,
-    WalletShieldedSyncService, WalletTransactionPort, WalletTransactionService,
+    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
+    WalletProtectionService, WalletShieldedSyncPort, WalletShieldedSyncService,
+    WalletTransactionPort, WalletTransactionService,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -241,6 +249,8 @@ pub struct ApplicationServices {
     lock_wallet: Arc<dyn LockWalletUseCase>,
     export_portable_wallet_backup: Arc<dyn ExportPortableWalletBackupUseCase>,
     recover_portable_wallet_backup: Arc<dyn RecoverPortableWalletBackupUseCase>,
+    export_complete_wallet_backup: Arc<dyn ExportCompleteWalletBackupUseCase>,
+    recover_complete_wallet_backup: Arc<dyn RecoverCompleteWalletBackupUseCase>,
     generate_wallet_key: Arc<dyn GenerateWalletKeyUseCase>,
     list_wallet_keys: Arc<dyn ListWalletKeysUseCase>,
     sign_wallet_data: Arc<dyn SignWalletDataUseCase>,
@@ -445,6 +455,16 @@ impl ApplicationServices {
     #[must_use]
     pub fn recover_portable_wallet_backup(&self) -> Arc<dyn RecoverPortableWalletBackupUseCase> {
         Arc::clone(&self.recover_portable_wallet_backup)
+    }
+
+    #[must_use]
+    pub fn export_complete_wallet_backup(&self) -> Arc<dyn ExportCompleteWalletBackupUseCase> {
+        Arc::clone(&self.export_complete_wallet_backup)
+    }
+
+    #[must_use]
+    pub fn recover_complete_wallet_backup(&self) -> Arc<dyn RecoverCompleteWalletBackupUseCase> {
+        Arc::clone(&self.recover_complete_wallet_backup)
     }
 
     #[must_use]
@@ -845,6 +865,24 @@ impl ApplicationServices {
     pub const fn compact_presentation_proof_available(&self) -> bool {
         self.compact_presentation_proof_available
     }
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort> {
+    JsonWalletProfileRepository::at_default_location()
+        .configured_path()
+        .and_then(std::path::Path::parent)
+        .map(|directory| directory.join("private/complete-wallet-recovery.json"))
+        .and_then(|path| FileRecoveryJournal::new(path).ok())
+        .map_or_else(
+            || Arc::new(UnavailableRecoveryJournal) as Arc<dyn RecoveryJournalPort>,
+            |journal| Arc::new(journal) as Arc<dyn RecoveryJournalPort>,
+        )
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort> {
+    Arc::new(InMemoryRecoveryJournal::default())
 }
 
 /// Wires the application with persistent public-profile metadata storage.
@@ -2103,11 +2141,12 @@ fn compose_with_adapters<R, S, M>(
     midnight: Arc<M>,
 ) -> ApplicationServices
 where
-    R: WalletProfileRepository + 'static,
+    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
+        + PortableCustodyVaultPort
         + 'static,
     M: WalletNetworkPort
         + WalletAccountReadPort
@@ -2134,11 +2173,12 @@ fn compose_with_adapters_and_presentation<R, S, M>(
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices
 where
-    R: WalletProfileRepository + 'static,
+    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
+        + PortableCustodyVaultPort
         + 'static,
     M: WalletNetworkPort
         + WalletAccountReadPort
@@ -2195,11 +2235,12 @@ fn compose_with_identity_adapters<R, S, M>(
     passport_vault_repository: PassportVaultRepositoryComposition,
 ) -> ApplicationServices
 where
-    R: WalletProfileRepository + 'static,
+    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
+        + PortableCustodyVaultPort
         + 'static,
     M: WalletNetworkPort
         + WalletAccountReadPort
@@ -2283,6 +2324,20 @@ where
     let compact_presentation_proof_available = false;
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
+    let complete_custody: Arc<dyn PortableCustodyVaultPort> = security.clone();
+    let complete_profiles: Arc<dyn WalletProfileRepository> = repository.clone();
+    let complete_associations: Arc<dyn WalletProfileAssociationRepository> = repository.clone();
+    let complete_random: Arc<dyn oxid_platform_ports::RandomPort> = random.clone();
+    let complete_backup_adapter = Arc::new(CompleteWalletBackupAdapter::new(
+        complete_custody,
+        complete_profiles,
+        did_repository.clone(),
+        credential_repository.clone(),
+        complete_associations,
+        complete_random,
+        complete_wallet_recovery_journal(),
+    ));
+    let complete_backup = Arc::new(CompleteWalletBackupService::new(complete_backup_adapter));
     let create_wallet_profile = Arc::new(CreateWalletProfileService::new(
         Arc::clone(&repository),
         Arc::clone(&clock),
@@ -2489,6 +2544,10 @@ where
         portable_backup.clone();
     let recover_portable_wallet_backup: Arc<dyn RecoverPortableWalletBackupUseCase> =
         portable_backup;
+    let export_complete_wallet_backup: Arc<dyn ExportCompleteWalletBackupUseCase> =
+        complete_backup.clone();
+    let recover_complete_wallet_backup: Arc<dyn RecoverCompleteWalletBackupUseCase> =
+        complete_backup;
     let generate_wallet_key: Arc<dyn GenerateWalletKeyUseCase> = keys.clone();
     let list_wallet_keys: Arc<dyn ListWalletKeysUseCase> = keys.clone();
     let sign_wallet_data: Arc<dyn SignWalletDataUseCase> = keys.clone();
@@ -2612,6 +2671,8 @@ where
         lock_wallet,
         export_portable_wallet_backup,
         recover_portable_wallet_backup,
+        export_complete_wallet_backup,
+        recover_complete_wallet_backup,
         generate_wallet_key,
         list_wallet_keys,
         sign_wallet_data,
@@ -3158,6 +3219,8 @@ mod tests {
         drop(services.lock_wallet());
         drop(services.export_portable_wallet_backup());
         drop(services.recover_portable_wallet_backup());
+        drop(services.export_complete_wallet_backup());
+        drop(services.recover_complete_wallet_backup());
         drop(services.portable_wallet_backup_documents());
         drop(services.generate_wallet_key());
         drop(services.list_wallet_keys());

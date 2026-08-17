@@ -87,7 +87,7 @@ private final class BackupDocumentCoordinator: NSObject, UIDocumentPickerDelegat
     }
 
     private let lock = NSLock()
-    private let maximumPackageBytes = 1024 * 1024
+    private let maximumPackageBytes = 80 * 1024 * 1024
     private let expectedFileName = "oxid-wallet-custody.oxidbak"
     private var operation: Operation?
     private var status = "idle"
