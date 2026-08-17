@@ -1,6 +1,6 @@
 [package]
-name = "oxid-adapter-storage-mobile"
-description = "User-present OS-wrapped mobile wallet custody adapter"
+name = "oxid-adapter-backup-portable"
+description = "Bounded authenticated portable wallet custody package adapter"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,10 +9,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-base64.workspace = true
-oxid-adapter-backup-portable.workspace = true
-oxid-adapter-custody-software.workspace = true
-oxid-adapter-mobile-native.workspace = true
+argon2.workspace = true
+chacha20poly1305.workspace = true
 oxid-foundation.workspace = true
 oxid-platform-ports.workspace = true
 oxid-wallet-application.workspace = true
@@ -20,9 +18,6 @@ oxid-wallet-domain.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zeroize.workspace = true
-
-[dev-dependencies]
-ed25519-dalek.workspace = true
 
 [lints]
 workspace = true

@@ -14,6 +14,7 @@ ed25519-dalek.workspace = true
 k256.workspace = true
 midnight-serialize.workspace = true
 midnight-transient-crypto.workspace = true
+oxid-adapter-backup-portable.workspace = true
 oxid-foundation.workspace = true
 oxid-platform-ports.workspace = true
 oxid-wallet-application.workspace = true

@@ -18,6 +18,7 @@ Current reviews and source policies:
 - [jni 0.21 and ndk-context 0.1](jni-ndk-context.md)
 - [qrcode 0.14](qrcode-0.14.md)
 - [chacha20poly1305 0.11](chacha20poly1305-0.11.md)
+- [argon2 0.5](argon2-0.5.md)
 - [RustCrypto development signing stack](rustcrypto-development-signing.md)
 - [Serde and serde_json](serde-json.md)
 - [url 2.5](url-2.5.md)

@@ -1293,6 +1293,22 @@ The selected Manganis 0.7.10 bridge requires one bounded JSON argument for
 custody because its generated Swift FFI mishandles the needed multi-string
 signature. Never log that request/response or widen the public native API.
 
+ADR-0074 adds portable custody without making native sealed-vault ciphertext
+portable. `oxid-adapter-backup-portable` owns exact `OXIDBAK1` version 1:
+Argon2id v1.3 at 19,456 KiB/t=2/p=1 with a 16-byte random salt, then
+XChaCha20-Poly1305 with a 24-byte random nonce and the complete fixed header as
+AAD. Reject any version/algorithm/parameter/length change before the KDF;
+wrong-secret and tamper failures must remain indistinguishable. Packages are
+1 MiB maximum, profile-bound, limited to 256 exact keys, and contain the root,
+generated secrets, or public derivation paths needed to reconstruct and verify
+every public key. They may initialize only an empty destination after full
+validation. Mobile export must always call native unlock with the dedicated
+backup reason even during an active session; recovery must use native
+initialize for fresh authorization. Do not add recovery to `oxid.headless.v1`,
+copy raw secrets to UI/clipboard/logs, accept arbitrary paths, reuse device-vault
+ciphertext, or claim all-store recovery until profile/DID/credential records are
+staged atomically. Native document transfer and Dioxus Settings UX remain #33.
+
 `OXID_MOBILE_CUSTODY=development|native` selects the standalone mobile
 composition; development is the default. Native mode combines production
 custody with deterministic wallet/SSI adapters and must keep simulated

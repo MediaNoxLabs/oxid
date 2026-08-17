@@ -328,6 +328,18 @@ credential: the exact issuer DID assertion method must resolve to the detached
 proof's Jubjub key, issuance/proof/expiry times must be current, and the pinned
 standalone trust anchor must match. Revocation remains visibly not checked.
 
+ADR-0074 begins the prototype backup migration without copying its unsafe
+storage boundary. The reviewed `WalletBackupCard` and
+`wallet-core/src/store/backup.rs` reuse live-store ciphertext/password state,
+accept arbitrary paths, overwrite conflicts, and can continue after partial
+record failures. Oxid instead has one versioned, bounded, profile-bound
+Argon2id/XChaCha20-Poly1305 custody package behind an application-owned port.
+Development and OS-wrapped mobile custody can restore an exact root, generated
+keys, derivation paths, and opaque references only into an empty destination;
+mobile export forces fresh native authorization. Explicit OS file transfer,
+Dioxus Settings UX, and staged all-store profile/DID/credential association
+recovery remain issue #33 work and are not represented as complete parity.
+
 [Issue #2](https://github.com/MediaNoxLabs/oxid/issues/2), ADR-0051, and
 [issue #31](https://github.com/MediaNoxLabs/oxid/issues/31) migrate the
 prototype's Passport Vault as a product-specific hexagon. The reviewed wallet

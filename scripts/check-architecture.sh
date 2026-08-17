@@ -94,12 +94,16 @@ check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-identity-application oxid-identity-domain \
   oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-dev \
-  oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
+  oxid-adapter-backup-portable oxid-foundation oxid-platform-ports \
+  oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-custody-software \
   oxid-wallet-application oxid-wallet-domain
+check_workspace_dependencies oxid-adapter-backup-portable \
+  oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-mobile \
-  oxid-adapter-custody-software oxid-adapter-mobile-native oxid-foundation \
-  oxid-platform-ports oxid-wallet-application oxid-wallet-domain
+  oxid-adapter-backup-portable oxid-adapter-custody-software \
+  oxid-adapter-mobile-native oxid-foundation oxid-platform-ports \
+  oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-json \
   oxid-foundation oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-mobile-native

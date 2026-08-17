@@ -95,6 +95,7 @@ ADR status and delivery state answer different questions:
 | [0071](0071-wrap-mobile-custody-with-device-user-presence.md) Wrap mobile custody with device user presence | Accepted | §§3, 7, 12–13, 16–18, prototype secret storage, and issues #2/#29/#30 | Normal mobile composition uses a bounded OS-wrapped sealed vault; Android credential/restart and iOS capability/fail-closed simulator evidence exist, while physical-device and mobile-prover gates remain open |
 | [0072](0072-embed-authenticated-compact-artifacts-for-mobile-measurement.md) Embed authenticated Compact artifacts for mobile measurement | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | Opt-in native-custody mobile builds embed and authenticate the exact runtime-minimal Nix closure; proof execution, lifecycle/resource budgets, and Dioxus success remain gated |
 | [0073](0073-anchor-standalone-compact-credential-policy.md) Anchor standalone Compact credential policy | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#29/#34 | Standalone composition resolves and authorizes the exact issuer Jubjub method, enforces current-time/expiry policy, and requires a pinned trust anchor; status remains not checked and production remains unavailable |
+| [0074](0074-package-portable-custody-for-one-shot-recovery.md) Package portable custody for one-shot recovery | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Versioned Argon2id/XChaCha20-Poly1305 custody packages restore exact keys only into empty development/mobile vaults; native file UX and all-store recovery remain pending #33 |
 
 ## Current boundaries
 
@@ -141,6 +142,13 @@ clock, and pinned trust anchor. Exact DID controller, assertion relationship,
 and Jubjub proof-key binding plus issuance/proof/expiry rules must pass before a
 new standalone Compact credential is valid. Status stays `not_checked`, and
 normal production composition receives none of the standalone trust policy.
+ADR-0074 replaces the prototype's live-store JSON copy with a bounded,
+profile-bound authenticated custody package. It restores the root and generated
+keys only after complete validation and refuses existing destinations. Mobile
+export forces a fresh native authorization and recovery uses authorized native
+vault initialization. The format is not exposed through headless; explicit OS
+document transfer, Dioxus Settings UX, and atomic profile/DID/credential
+association recovery remain issue #33 work.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a

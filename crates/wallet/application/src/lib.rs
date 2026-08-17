@@ -8,12 +8,14 @@ use oxid_foundation::OpaqueIdError;
 use oxid_platform_ports::{ClockPort, PlatformError, RandomPort};
 use oxid_wallet_domain::{ProfileName, ProfileNameError, WalletProfile, WalletProfileId};
 
+mod backup;
 mod chain;
 mod dust;
 mod security;
 mod shielded;
 mod transaction;
 
+pub use backup::*;
 pub use chain::*;
 pub use dust::*;
 pub use security::*;

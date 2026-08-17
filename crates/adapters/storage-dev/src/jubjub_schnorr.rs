@@ -56,6 +56,10 @@ impl SigningKey {
         Ok(bytes)
     }
 
+    pub(crate) fn seed_bytes(&self) -> [u8; 32] {
+        *self.seed
+    }
+
     pub(crate) fn sign(&self, payload: &[u8]) -> Result<Vec<u8>, WalletSecurityPortError> {
         let secret = seed_to_scalar(&self.seed);
         let digest = payload_digest(payload);
