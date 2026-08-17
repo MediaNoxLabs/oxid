@@ -19,6 +19,13 @@ standalone-development = []
 # Explicit simulator/emulator composition using production native custody and
 # deterministic standalone wallet/SSI adapters.
 standalone-native-custody = []
+# Opt-in iOS/Android package-size and startup-authentication harness. This
+# embeds the reviewed Compact artifact closure but deliberately leaves the
+# visible proof path fail-closed until the background lifecycle runner lands.
+standalone-native-proving-artifacts = [
+  "standalone-native-custody",
+  "oxid-composition/mobile-compact-artifacts",
+]
 
 [dependencies]
 dioxus = { workspace = true, features = ["launch"] }

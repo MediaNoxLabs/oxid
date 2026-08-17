@@ -27,6 +27,27 @@ case "$mobile_custody" in
     ;;
 esac
 
+mobile_presentation_proving="${OXID_MOBILE_PRESENTATION_PROVING:-unavailable}"
+presentation_artifacts_dir=""
+case "$mobile_presentation_proving" in
+  unavailable)
+    ;;
+  artifacts)
+    if [ "$mobile_custody" != "native" ]; then
+      echo "OXID_MOBILE_PRESENTATION_PROVING=artifacts requires OXID_MOBILE_CUSTODY=native." >&2
+      exit 1
+    fi
+    mobile_features="$mobile_features,standalone-native-proving-artifacts"
+    presentation_artifacts_dir="$(
+      nix build .#presentation-compact-artifacts --no-link --print-out-paths
+    )"
+    ;;
+  *)
+    echo "OXID_MOBILE_PRESENTATION_PROVING must be 'unavailable' or 'artifacts'." >&2
+    exit 1
+    ;;
+esac
+
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [ -z "$android_sdk" ] && [ "$(uname -s)" = "Darwin" ]; then
   android_sdk="$HOME/Library/Android/sdk"
@@ -118,6 +139,7 @@ dioxus_cli="$dioxus_output/bin/dx"
 ANDROID_HOME="$android_sdk" \
 ANDROID_SDK_ROOT="$android_sdk" \
 ANDROID_NDK_HOME="$android_ndk" \
+OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
 PATH="$rust_toolchain_bin:$android_sdk/platform-tools:/usr/bin:$PATH" \
   "$dioxus_cli" build \
     --android \
@@ -131,6 +153,10 @@ apk="$repository_root/target/dx/oxid-app/debug/android/app/app/build/outputs/apk
 if [ ! -f "$apk" ]; then
   echo "Dioxus did not create the expected APK: $apk" >&2
   exit 1
+fi
+if [ "$mobile_presentation_proving" = "artifacts" ]; then
+  packaged_bytes="$(wc -c < "$apk" | tr -d ' ')"
+  echo "Authenticated Compact artifact measurement APK: $packaged_bytes bytes."
 fi
 
 "$adb_command" -s "$device" install -r "$apk"

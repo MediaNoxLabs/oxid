@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
+
 [dependencies]
 hex.workspace = true
 oxid-adapter-did-midnight.workspace = true

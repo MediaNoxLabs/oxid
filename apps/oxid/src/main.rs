@@ -10,6 +10,19 @@ fn main() {
     compile_error!("select exactly one standalone custody feature");
 
     #[cfg(all(
+        feature = "standalone-native-proving-artifacts",
+        not(any(target_os = "ios", target_os = "android"))
+    ))]
+    compile_error!("standalone-native-proving-artifacts is available only on iOS and Android");
+
+    #[cfg(feature = "standalone-native-proving-artifacts")]
+    let _presentation_artifact_identity =
+        oxid_composition::authenticate_embedded_mobile_compact_presentation_artifacts()
+            .unwrap_or_else(|error| {
+                panic!("embedded Compact presentation artifacts are invalid: {error}")
+            });
+
+    #[cfg(all(
         feature = "standalone-native-custody",
         any(target_os = "ios", target_os = "android")
     ))]

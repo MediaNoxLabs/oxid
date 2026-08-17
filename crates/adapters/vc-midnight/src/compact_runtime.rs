@@ -130,10 +130,10 @@ impl std::error::Error for CompactPresentationRuntimeError {}
 #[derive(Clone)]
 pub struct NativeCompactPresentationRuntime {
     identity: [u8; 32],
-    prover_key: Arc<Vec<u8>>,
-    verifier_key_bytes: Arc<Vec<u8>>,
-    ir_bytes: Arc<Vec<u8>>,
-    parameter_bytes: Arc<Vec<u8>>,
+    prover_key: RuntimeArtifactBytes,
+    verifier_key_bytes: RuntimeArtifactBytes,
+    ir_bytes: RuntimeArtifactBytes,
+    parameter_bytes: RuntimeArtifactBytes,
     ir: IrSource,
     params_prover: Arc<Mutex<Option<ParamsProver>>>,
     params_verifier: Arc<Mutex<Option<ParamsVerifier>>>,
@@ -159,28 +159,20 @@ impl NativeCompactPresentationRuntime {
 
         let mut authenticated = Vec::with_capacity(REQUIRED_ARTIFACTS.len());
         for expected in REQUIRED_ARTIFACTS {
-            let declared = manifest
-                .artifacts
-                .iter()
-                .find(|entry| entry.path == expected.path)
-                .ok_or(CompactPresentationRuntimeError::ArtifactMismatch)?;
-            if declared.bytes != expected.bytes || declared.sha256 != expected.sha256 {
-                return Err(CompactPresentationRuntimeError::ArtifactMismatch);
-            }
             let bytes = read_artifact_file(&artifact_root, expected.path, expected.bytes)?;
-            if u64::try_from(bytes.len()).ok() != Some(expected.bytes)
-                || hex::encode(Sha256::digest(&bytes)) != expected.sha256
-            {
-                return Err(CompactPresentationRuntimeError::ArtifactMismatch);
-            }
-            authenticated.push(bytes);
+            validate_authenticated_artifact(&manifest, expected, &bytes)?;
+            authenticated.push(RuntimeArtifactBytes::owned(bytes));
         }
-        let [prover_key, verifier_key_bytes, ir_bytes, parameter_bytes]: [Vec<u8>; 4] =
-            authenticated
-                .try_into()
-                .map_err(|_| CompactPresentationRuntimeError::ArtifactMismatch)?;
+        let authenticated = authenticated
+            .try_into()
+            .map_err(|_| CompactPresentationRuntimeError::ArtifactMismatch)?;
+        Self::from_authenticated_artifacts(authenticated)
+    }
 
-        let ir = IrSource::load_from_tagged(Cursor::new(&ir_bytes))
+    fn from_authenticated_artifacts(
+        [prover_key, verifier_key_bytes, ir_bytes, parameter_bytes]: [RuntimeArtifactBytes; 4],
+    ) -> Result<Self, CompactPresentationRuntimeError> {
+        let ir = IrSource::load_from_tagged(Cursor::new(ir_bytes.as_slice()))
             .map_err(|_| CompactPresentationRuntimeError::CircuitMismatch)?;
         let model = ir.model();
         if model.k() != EXPECTED_CIRCUIT_K
@@ -201,10 +193,10 @@ impl NativeCompactPresentationRuntime {
 
         Ok(Self {
             identity,
-            prover_key: Arc::new(prover_key),
-            verifier_key_bytes: Arc::new(verifier_key_bytes),
-            ir_bytes: Arc::new(ir_bytes),
-            parameter_bytes: Arc::new(parameter_bytes),
+            prover_key,
+            verifier_key_bytes,
+            ir_bytes,
+            parameter_bytes,
             ir,
             params_prover: Arc::new(Mutex::new(None)),
             params_verifier: Arc::new(Mutex::new(None)),
@@ -332,11 +324,93 @@ impl Resolver for NativeCompactPresentationRuntime {
             return Ok(None);
         }
         Ok(Some(ProvingKeyMaterial {
-            prover_key: self.prover_key.as_ref().clone(),
-            verifier_key: self.verifier_key_bytes.as_ref().clone(),
-            ir_source: self.ir_bytes.as_ref().clone(),
+            prover_key: self.prover_key.to_vec(),
+            verifier_key: self.verifier_key_bytes.to_vec(),
+            ir_source: self.ir_bytes.to_vec(),
         }))
     }
+}
+
+#[derive(Clone)]
+enum RuntimeArtifactBytes {
+    Owned(Arc<Vec<u8>>),
+    #[cfg(feature = "mobile-compact-artifacts")]
+    Embedded(&'static [u8]),
+}
+
+impl RuntimeArtifactBytes {
+    fn owned(bytes: Vec<u8>) -> Self {
+        Self::Owned(Arc::new(bytes))
+    }
+
+    #[cfg(feature = "mobile-compact-artifacts")]
+    const fn embedded(bytes: &'static [u8]) -> Self {
+        Self::Embedded(bytes)
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes.as_slice(),
+            #[cfg(feature = "mobile-compact-artifacts")]
+            Self::Embedded(bytes) => bytes,
+        }
+    }
+
+    fn to_vec(&self) -> Vec<u8> {
+        self.as_slice().to_vec()
+    }
+}
+
+/// Authenticates the runtime-minimal Compact presentation closure embedded in
+/// an explicit mobile measurement build.
+///
+/// The build must provide `OXID_PRESENTATION_ARTIFACTS_DIR` as an immutable Nix
+/// store path. `include_bytes!` copies the reviewed prover, verifier, compiled
+/// ZKIR, and p18 parameter bytes into the application binary, so runtime loading
+/// performs no path discovery, mutable cache lookup, extraction, or network IO.
+#[cfg(feature = "mobile-compact-artifacts")]
+pub fn load_embedded_mobile_compact_presentation_runtime()
+-> Result<NativeCompactPresentationRuntime, CompactPresentationRuntimeError> {
+    const MANIFEST: &[u8] = include_bytes!(concat!(
+        env!("OXID_PRESENTATION_ARTIFACTS_DIR"),
+        "/manifest.json"
+    ));
+    const PROVER_BYTES: &[u8] = include_bytes!(concat!(
+        env!("OXID_PRESENTATION_ARTIFACTS_DIR"),
+        "/artifacts/keys/proveDigitalPassportPresentation.prover"
+    ));
+    const VERIFIER_BYTES: &[u8] = include_bytes!(concat!(
+        env!("OXID_PRESENTATION_ARTIFACTS_DIR"),
+        "/artifacts/keys/proveDigitalPassportPresentation.verifier"
+    ));
+    const IR_BYTES: &[u8] = include_bytes!(concat!(
+        env!("OXID_PRESENTATION_ARTIFACTS_DIR"),
+        "/artifacts/zkir/proveDigitalPassportPresentation.bzkir"
+    ));
+    const PARAMETER_BYTES: &[u8] = include_bytes!(concat!(
+        env!("OXID_PRESENTATION_ARTIFACTS_DIR"),
+        "/artifacts/params/bls_midnight_2p18"
+    ));
+
+    if u64::try_from(MANIFEST.len()).is_err()
+        || MANIFEST.is_empty()
+        || u64::try_from(MANIFEST.len()).is_ok_and(|length| length > MANIFEST_MAX_BYTES)
+    {
+        return Err(CompactPresentationRuntimeError::ArtifactMismatch);
+    }
+    let manifest: ArtifactManifest = serde_json::from_slice(MANIFEST)
+        .map_err(|_| CompactPresentationRuntimeError::ArtifactMismatch)?;
+    validate_manifest(&manifest)?;
+    let embedded = [PROVER_BYTES, VERIFIER_BYTES, IR_BYTES, PARAMETER_BYTES];
+    for (expected, bytes) in REQUIRED_ARTIFACTS.into_iter().zip(embedded) {
+        validate_authenticated_artifact(&manifest, expected, bytes)?;
+    }
+    NativeCompactPresentationRuntime::from_authenticated_artifacts([
+        RuntimeArtifactBytes::embedded(PROVER_BYTES),
+        RuntimeArtifactBytes::embedded(VERIFIER_BYTES),
+        RuntimeArtifactBytes::embedded(IR_BYTES),
+        RuntimeArtifactBytes::embedded(PARAMETER_BYTES),
+    ])
 }
 
 pub(crate) fn encode_zk_proof(proof: &Proof) -> Result<Vec<u8>, CompactPresentationRuntimeError> {
@@ -604,6 +678,26 @@ fn validate_manifest(manifest: &ArtifactManifest) -> Result<(), CompactPresentat
     Ok(())
 }
 
+fn validate_authenticated_artifact(
+    manifest: &ArtifactManifest,
+    expected: ExpectedArtifact,
+    bytes: &[u8],
+) -> Result<(), CompactPresentationRuntimeError> {
+    let declared = manifest
+        .artifacts
+        .iter()
+        .find(|entry| entry.path == expected.path)
+        .ok_or(CompactPresentationRuntimeError::ArtifactMismatch)?;
+    if declared.bytes != expected.bytes
+        || declared.sha256 != expected.sha256
+        || u64::try_from(bytes.len()).ok() != Some(expected.bytes)
+        || hex::encode(Sha256::digest(bytes)) != expected.sha256
+    {
+        return Err(CompactPresentationRuntimeError::ArtifactMismatch);
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 struct ExpectedArtifact {
     path: &'static str,
@@ -672,6 +766,14 @@ mod tests {
             Err(CompactPresentationRuntimeError::InvalidConfiguration)
         );
         assert!(CompactPresentationArtifactsConfig::new("/tmp/artifacts").is_ok());
+    }
+
+    #[cfg(feature = "mobile-compact-artifacts")]
+    #[test]
+    fn embedded_mobile_package_authenticates_without_runtime_discovery() {
+        let runtime = load_embedded_mobile_compact_presentation_runtime()
+            .expect("the Nix-selected embedded artifact package authenticates");
+        assert_eq!(runtime.identity(), artifact_identity());
     }
 
     #[test]

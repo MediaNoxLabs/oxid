@@ -895,6 +895,22 @@ pub fn compose_mobile_native_standalone() -> ApplicationServices {
     with_simulated_passport_vault_calls(services)
 }
 
+/// Authenticates the immutable Compact presentation package selected by an
+/// explicit mobile resource-measurement build without enabling proof creation.
+///
+/// Loading is deliberately separate from mobile composition: Dioxus remains on
+/// the preflight-only proof port until a reviewed background, cancellation, and
+/// process-lifecycle runner exists.
+#[cfg(all(
+    feature = "mobile-compact-artifacts",
+    any(target_os = "ios", target_os = "android")
+))]
+pub fn authenticate_embedded_mobile_compact_presentation_artifacts()
+-> Result<[u8; 32], CompactPresentationRuntimeError> {
+    oxid_adapter_vc_midnight::load_embedded_mobile_compact_presentation_runtime()
+        .map(|runtime| runtime.identity())
+}
+
 /// Wires persistent public profiles with an explicit process-local custody
 /// adapter for the standalone development harness.
 #[must_use]

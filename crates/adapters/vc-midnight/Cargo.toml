@@ -8,6 +8,13 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+# Embeds the exact authenticated runtime-minimal presentation artifact set in
+# an opt-in mobile measurement build. Normal application graphs never select
+# this feature.
+mobile-compact-artifacts = []
+
 [dependencies]
 base64.workspace = true
 ciborium.workspace = true

@@ -37,6 +37,27 @@ case "$mobile_custody" in
     ;;
 esac
 
+mobile_presentation_proving="${OXID_MOBILE_PRESENTATION_PROVING:-unavailable}"
+presentation_artifacts_dir=""
+case "$mobile_presentation_proving" in
+  unavailable)
+    ;;
+  artifacts)
+    if [ "$mobile_custody" != "native" ]; then
+      echo "OXID_MOBILE_PRESENTATION_PROVING=artifacts requires OXID_MOBILE_CUSTODY=native." >&2
+      exit 1
+    fi
+    mobile_features="$mobile_features,standalone-native-proving-artifacts"
+    presentation_artifacts_dir="$(
+      nix build .#presentation-compact-artifacts --no-link --print-out-paths
+    )"
+    ;;
+  *)
+    echo "OXID_MOBILE_PRESENTATION_PROVING must be 'unavailable' or 'artifacts'." >&2
+    exit 1
+    ;;
+esac
+
 case "$(uname -m)" in
   arm64)
     rust_target="aarch64-apple-ios-sim"
@@ -58,6 +79,7 @@ xcode_developer_dir="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p)"
 
 PATH="$rust_toolchain_bin:/usr/bin:$PATH" \
   DEVELOPER_DIR="$xcode_developer_dir" \
+  OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
   env -u SDKROOT \
   "$dioxus_cli" build \
     --ios \
@@ -71,6 +93,10 @@ app_bundle="$repository_root/target/dx/oxid-app/debug/ios/OxidApp.app"
 if [ ! -d "$app_bundle" ]; then
   echo "Dioxus did not create the expected app bundle: $app_bundle" >&2
   exit 1
+fi
+if [ "$mobile_presentation_proving" = "artifacts" ]; then
+  packaged_bytes="$(find "$app_bundle" -type f -exec /usr/bin/stat -f '%z' {} + | awk '{ total += $1 } END { print total + 0 }')"
+  echo "Authenticated Compact artifact measurement bundle: $packaged_bytes uncompressed bytes."
 fi
 
 device="${OXID_IOS_DEVICE:-}"

@@ -93,6 +93,7 @@ ADR status and delivery state answer different questions:
 | [0069](0069-route-native-identity-ingress-through-strict-protocol-links.md) Route native identity ingress through strict protocol links | Accepted | §§3–7, 9–13, 16–18, 21, prototype QR/mobile flow, and issues #2/#32 | Native QR adapters and strict shared routing hand standalone requests to existing preview/consent flows; ADR-0070 adds OS delivery while physical-camera evidence remains #32 |
 | [0070](0070-constrain-mobile-links-and-public-text-export.md) Constrain mobile links and public text export | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#32 | Warm/cold custom-scheme links reuse the strict router and typed public receive addresses alone reach native clipboard/share; universal links, physical-device evidence, discovery, and resource baselines remain #32 |
 | [0071](0071-wrap-mobile-custody-with-device-user-presence.md) Wrap mobile custody with device user presence | Accepted | §§3, 7, 12–13, 16–18, prototype secret storage, and issues #2/#29/#30 | Normal mobile composition uses a bounded OS-wrapped sealed vault; Android credential/restart and iOS capability/fail-closed simulator evidence exist, while physical-device and mobile-prover gates remain open |
+| [0072](0072-embed-authenticated-compact-artifacts-for-mobile-measurement.md) Embed authenticated Compact artifacts for mobile measurement | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | Opt-in native-custody mobile builds embed and authenticate the exact runtime-minimal Nix closure; proof execution, lifecycle/resource budgets, and Dioxus success remain gated |
 
 ## Current boundaries
 
@@ -127,6 +128,12 @@ ADR-0071 replaces normal mobile's unavailable custody with a device-bound
 sealed-vault adapter while retaining an explicit development composition for
 simulator parity. It does not turn software multi-curve secrets into Secure
 Enclave/StrongBox keys or authorize the still-resource-gated mobile prover.
+ADR-0072 selects an executable-embedded, runtime-minimal Compact artifact
+package for explicit native-custody mobile measurement builds. The adapter
+authenticates that Nix-selected package without runtime discovery or extraction,
+but mobile presentation still ends at `proof_unavailable` until a non-UI proof
+worker, cooperative cancellation, physical-device budgets, and the remaining
+ADR-0071 release gate are accepted.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a

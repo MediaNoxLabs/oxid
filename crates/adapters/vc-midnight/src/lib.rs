@@ -26,6 +26,8 @@ mod compact_presentation;
 mod compact_proving;
 #[cfg(not(target_arch = "wasm32"))]
 mod compact_runtime;
+#[cfg(all(not(target_arch = "wasm32"), feature = "mobile-compact-artifacts"))]
+pub use compact_runtime::load_embedded_mobile_compact_presentation_runtime;
 #[cfg(not(target_arch = "wasm32"))]
 pub use compact_runtime::{
     CompactPresentationArtifactsConfig, CompactPresentationRuntimeError,

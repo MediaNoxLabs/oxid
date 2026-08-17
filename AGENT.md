@@ -164,6 +164,37 @@ path only when `OXID_PRESENTATION_ARTIFACTS_DIR` names the immutable Nix
 artifact closure; without it, consent fails closed at `proof_unavailable`.
 Headless views never expose the proof or token.
 
+ADR-0072 adds only the first mobile Compact resource gate. The app feature
+`standalone-native-proving-artifacts` implies native custody and embeds the
+runtime-minimal 135,351,737-byte Nix input (manifest, prover, verifier, compiled
+ZKIR, and p18 parameters) directly in the executable. The adapter authenticates
+the compiled-in source/toolchain/circuit identity, exact sizes, digests,
+circuit, and verifier key without runtime discovery, extraction, cache, or
+network IO. Select it only through
+`OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just
+ios-run|android-run`. This is a package/startup measurement harness: it must not
+set `compact_presentation_proof_available`, and mobile consent must continue to
+return `proof_unavailable` until a dedicated foreground worker, cooperative
+cancellation, process-death/background policy, physical-device budgets, and the
+remaining ADR-0071 release gate are accepted.
+
+The first 2026-08-17 debug package evidence is deliberately non-release: an
+iPhone 17e iOS 26.4 simulator produced a 257,526,696-byte uncompressed bundle
+versus 173,593,496 bytes without the feature (83,933,200-byte debug delta) and
+remained responsive at 455,136 KiB host-reported RSS after startup; the arm64
+Android emulator produced a 539,163,753-byte APK versus 404,307,855 bytes
+without the feature (134,855,898-byte debug delta) and remained responsive at
+310,462 KB PSS / 427,424 KB RSS with no swap. Neither run executed the
+presentation prover. Do not promote these virtual-device debug values into
+budgets or claims about physical-device latency, thermal behavior, installed
+size, or proof memory.
+
+The focused aarch64-darwin release embedded-package test authenticates and
+constructs the checked runtime in 3.92 seconds. macOS `/usr/bin/time -l`
+reports 5.44 seconds wall, 440,074,240 bytes maximum RSS, 211,911,424 bytes peak
+footprint, and no swaps. This is authentication-only host evidence, not mobile
+or proof-execution evidence.
+
 ADR-0017 is accepted. The first M1 security slice separates protection/session
 state from key operations, secret blobs, and native user authorization. The
 standalone harness has a process-local Ed25519/P-256/Jubjub plus
@@ -1383,6 +1414,11 @@ to silence the shell probe.
   proof, public communications commitment, and tagged proof. Never add private
   claims, openings, custody references, scalars, nonces, communications
   randomness, or a serialized `ProofPreimage`.
+- ADR-0072 measurement builds may borrow the exact runtime-minimal Compact
+  artifacts from the signed executable image. Never add runtime artifact-path
+  discovery, APK extraction, a mutable copied cache, or download fallback. A
+  successful startup authentication is not proof-execution or device-budget
+  evidence and must not change the mobile capability label.
 - Passport Vault incoming views may expose public policy and aggregate amounts,
   public contract issuer anchors, and redacted public audit fields, but never
   credential roots, openings, claim values, detached proof bytes, private

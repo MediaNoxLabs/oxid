@@ -113,6 +113,20 @@ OXID_MOBILE_CUSTODY=native just ios-run
 OXID_MOBILE_CUSTODY=native just android-run
 ```
 
+An opt-in resource-measurement build embeds and authenticates the exact Compact
+presentation runtime package without enabling proof execution in Dioxus:
+
+```bash
+OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just ios-run
+OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just android-run
+```
+
+The launchers resolve the artifact package from the pinned Nix derivation and
+print the resulting app/APK byte count. Presentation consent still fails closed
+at `proof_unavailable`; this mode is for packaging and startup-authentication
+evidence only. The ordinary `just ios-run` and `just android-run` paths remain
+unchanged.
+
 `just ios-native-custody-smoke` accepts either a supported passcode-bound
 Keychain capability or a truthful fail-closed simulator result. The Android
 counterpart performs the full system-credential and restart test, but is
