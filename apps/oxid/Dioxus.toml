@@ -1,10 +1,14 @@
 [application]
 name = "oxid"
 default_platform = "desktop"
+android_main_activity = "android/MainActivity.kt"
 
 [bundle]
 identifier = "io.medianox.oxid"
 publisher = "MediaNoxLabs"
+
+[deep_links]
+schemes = ["openid-credential-offer", "openid4vp"]
 
 [ios]
 deployment_target = "15.0"

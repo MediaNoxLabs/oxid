@@ -89,6 +89,29 @@ run_webview_wallet_flow() {
 
 run_webview_wallet_flow flow
 
+chooser_state="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null || true)"
+if ! rg -q 'ResolverActivity|ChooserActivity|IntentResolverActivity' <<<"$chooser_state"; then
+  echo "Android public receive-address share did not open a native chooser." >&2
+  exit 1
+fi
+"$adb_command" -s "$device" shell input keyevent BACK >/dev/null
+
+credential_offer_uri='openid-credential-offer://?credential_offer=%7B%7D'
+"$adb_command" -s "$device" shell am start -W \
+  -a android.intent.action.VIEW \
+  -d "$credential_offer_uri" \
+  io.medianox.oxid >/dev/null
+sleep 1
+run_webview_wallet_flow app-link
+
+"$adb_command" -s "$device" shell am force-stop io.medianox.oxid
+"$adb_command" -s "$device" shell am start -W \
+  -a android.intent.action.VIEW \
+  -d "$credential_offer_uri" \
+  io.medianox.oxid >/dev/null
+sleep 2
+run_webview_wallet_flow app-link
+
 profile_document=""
 for _attempt in $(seq 1 15); do
   profile_document="$($adb_command -s "$device" shell run-as io.medianox.oxid \
@@ -136,4 +159,4 @@ if [ "$credential_header" != "4f58494456433031" ] || [ "$credential_key_size" !=
   exit 1
 fi
 
-echo "Android protected account, Digital Passport OpenID4VP proof gate/local reveal/disclosure preview/restore, DUST/shielded sync, receive QR, transfer, and profile-restore smoke flow passed on $device."
+echo "Android protected account, Digital Passport OpenID4VP proof gate/local reveal/disclosure preview/restore, DUST/shielded sync, receive QR/copy/share, cold/warm app links, transfer, and profile-restore smoke flow passed on $device."

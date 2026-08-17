@@ -12,6 +12,7 @@ members = [
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
   "crates/adapters/identity-ingress",
+  "crates/adapters/mobile-native-plugin",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
@@ -46,6 +47,7 @@ default-members = [
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
   "crates/adapters/identity-ingress",
+  "crates/adapters/mobile-native-plugin",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
@@ -127,6 +129,7 @@ oxid-adapter-siopv2 = { version = "=0.1.0", path = "crates/adapters/siopv2" }
 oxid-adapter-vc-midnight = { version = "=0.1.0", path = "crates/adapters/vc-midnight" }
 oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-midnight" }
 oxid-adapter-identity-ingress = { version = "=0.1.0", path = "crates/adapters/identity-ingress" }
+oxid-adapter-mobile-native = { version = "=0.1.0", path = "crates/adapters/mobile-native-plugin" }
 oxid-adapter-storage-credential-json = { version = "=0.1.0", path = "crates/adapters/storage-credential-json" }
 oxid-adapter-storage-identity-json = { version = "=0.1.0", path = "crates/adapters/storage-identity-json" }
 oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }

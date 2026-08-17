@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3–7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/qr_scanner.rs`, `mobile-bench/dioxus-wallet/src/identity_centre.rs`, and the Android/iOS QR bridges
 - Tracking: issues #2 and #32
-- Implementation state: strict standalone request routing, native iOS/Android QR adapters, Dioxus handoff, headless conformance, native packaging, and simulator/emulator fail-closed evidence are implemented; physical-camera and OS deep-link evidence remain #32
+- Implementation state: strict standalone request routing, native iOS/Android QR adapters, Dioxus handoff, headless conformance, native packaging, and simulator/emulator fail-closed evidence are implemented; ADR-0070 adds OS link delivery through the same router, while physical-camera evidence remains #32
 
 ## Context
 
@@ -79,8 +79,8 @@ ambiguous failure without requiring camera hardware.
 - Google Code Scanner is a replaceable Android edge dependency, not a wallet or
   identity core dependency. Manual fixtures and headless routing remain
   available where Play services are absent.
-- OS deep/app links must eventually enter through the same bounded router; they
-  may not create a second, looser classification path.
+- ADR-0070 routes OS deep/app links through this same bounded router; they may
+  not create a second, looser classification path.
 
 ## Consequences
 

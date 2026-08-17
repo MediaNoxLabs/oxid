@@ -4,8 +4,16 @@
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use std::time::Duration;
+use std::{collections::VecDeque, sync::Mutex};
 
-use oxid_platform_ports::{QrScanError, QrScanFuture, QrScannerPort, ScannedQrPayload};
+#[cfg(target_os = "android")]
+use oxid_adapter_mobile_native::take_identity_link_json;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_adapter_mobile_native::{NativeBridgeError, start_scan_json, take_scan_result_json};
+use oxid_platform_ports::{
+    IdentityLinkIngressError, IdentityLinkIngressPort, InboundIdentityLink, QrScanError,
+    QrScanFuture, QrScannerPort, ScannedQrPayload,
+};
 use oxid_protocol_application::{
     IdentityRequestKind, IdentityRequestRouterPort, IdentityRequestRoutingError,
 };
@@ -17,6 +25,9 @@ use url::Url;
 const SCAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 #[cfg(any(target_os = "ios", target_os = "android"))]
 const SCAN_POLL_LIMIT: usize = 600;
+// A second request must not replace a consent screen that the holder is
+// already reviewing.
+const IDENTITY_LINK_QUEUE_LIMIT: usize = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RegisteredOpenId4VpRequest {
@@ -162,10 +173,68 @@ impl QrScannerPort for NativeQrScanner {
     }
 }
 
+/// Bounded OS URL ingress. iOS/Tao events enter through `capture`; Android's
+/// repository-owned activity queues VIEW intents in the static Kotlin bridge.
+#[derive(Default)]
+pub struct NativeIdentityLinkIngress {
+    captured: Mutex<VecDeque<InboundIdentityLink>>,
+}
+
+impl IdentityLinkIngressPort for NativeIdentityLinkIngress {
+    fn capture(&self, value: String) -> Result<(), IdentityLinkIngressError> {
+        let link = InboundIdentityLink::new(value)?;
+        let mut captured = self
+            .captured
+            .lock()
+            .map_err(|_| IdentityLinkIngressError::Failed)?;
+        if captured.len() >= IDENTITY_LINK_QUEUE_LIMIT {
+            return Err(IdentityLinkIngressError::QueueFull);
+        }
+        captured.push_back(link);
+        Ok(())
+    }
+
+    fn take_pending(&self) -> Result<Option<InboundIdentityLink>, IdentityLinkIngressError> {
+        if let Some(link) = self
+            .captured
+            .lock()
+            .map_err(|_| IdentityLinkIngressError::Failed)?
+            .pop_front()
+        {
+            return Ok(Some(link));
+        }
+        take_native_identity_link()
+    }
+}
+
+#[cfg(target_os = "android")]
+fn take_native_identity_link() -> Result<Option<InboundIdentityLink>, IdentityLinkIngressError> {
+    let response = take_identity_link_json().map_err(map_identity_link_bridge_error)?;
+    let status: NativeIdentityLinkStatus =
+        serde_json::from_str(&response).map_err(|_| IdentityLinkIngressError::Failed)?;
+    match status.status.as_str() {
+        "empty" => Ok(None),
+        "succeeded" => InboundIdentityLink::new(
+            status
+                .payload
+                .ok_or(IdentityLinkIngressError::InvalidLink)?,
+        )
+        .map(Some),
+        "invalid" => Err(IdentityLinkIngressError::InvalidLink),
+        "queue_full" => Err(IdentityLinkIngressError::QueueFull),
+        "unavailable" => Err(IdentityLinkIngressError::Unavailable),
+        _ => Err(IdentityLinkIngressError::Failed),
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn take_native_identity_link() -> Result<Option<InboundIdentityLink>, IdentityLinkIngressError> {
+    Ok(None)
+}
+
 #[cfg(any(target_os = "ios", target_os = "android"))]
 async fn scan_native() -> Result<ScannedQrPayload, QrScanError> {
-    let plugin = OxidQrScannerPlugin::new().map_err(|_| QrScanError::Unavailable)?;
-    let started = startScanJson(&plugin).map_err(|_| QrScanError::Failed)?;
+    let started = start_scan_json().map_err(map_qr_bridge_error)?;
     let status: NativeScanStatus =
         serde_json::from_str(&started).map_err(|_| QrScanError::Failed)?;
     if status.status != "scanning" {
@@ -174,8 +243,7 @@ async fn scan_native() -> Result<ScannedQrPayload, QrScanError> {
 
     for _ in 0..SCAN_POLL_LIMIT {
         tokio::time::sleep(SCAN_POLL_INTERVAL).await;
-        let plugin = OxidQrScannerPlugin::new().map_err(|_| QrScanError::Failed)?;
-        let response = takeScanResultJson(&plugin).map_err(|_| QrScanError::Failed)?;
+        let response = take_scan_result_json().map_err(map_qr_bridge_error)?;
         let status: NativeScanStatus =
             serde_json::from_str(&response).map_err(|_| QrScanError::Failed)?;
         match status.status.as_str() {
@@ -203,6 +271,15 @@ struct NativeScanStatus {
     payload: Option<String>,
 }
 
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeIdentityLinkStatus {
+    status: String,
+    #[serde(default)]
+    payload: Option<String>,
+}
+
 #[cfg(any(target_os = "ios", target_os = "android"))]
 fn map_native_status(status: &str) -> QrScanError {
     match status {
@@ -213,31 +290,19 @@ fn map_native_status(status: &str) -> QrScanError {
     }
 }
 
-#[cfg(target_os = "ios")]
-use ios_bridge::{OxidQrScannerPlugin, startScanJson, takeScanResultJson};
-
-#[cfg(target_os = "ios")]
-#[allow(non_snake_case)]
-mod ios_bridge {
-    #[manganis::ffi("src/ios/plugin")]
-    extern "Swift" {
-        pub type OxidQrScannerPlugin;
-        pub fn startScanJson(this: &OxidQrScannerPlugin) -> String;
-        pub fn takeScanResultJson(this: &OxidQrScannerPlugin) -> String;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+const fn map_qr_bridge_error(error: NativeBridgeError) -> QrScanError {
+    match error {
+        NativeBridgeError::Unavailable => QrScanError::Unavailable,
+        NativeBridgeError::Failed => QrScanError::Failed,
     }
 }
 
 #[cfg(target_os = "android")]
-use android_bridge::{OxidQrScannerPlugin, startScanJson, takeScanResultJson};
-
-#[cfg(target_os = "android")]
-#[allow(non_snake_case)]
-mod android_bridge {
-    #[manganis::ffi("src/android")]
-    extern "Kotlin" {
-        pub type OxidQrScannerPlugin;
-        pub fn startScanJson(this: &OxidQrScannerPlugin) -> String;
-        pub fn takeScanResultJson(this: &OxidQrScannerPlugin) -> String;
+const fn map_identity_link_bridge_error(error: NativeBridgeError) -> IdentityLinkIngressError {
+    match error {
+        NativeBridgeError::Unavailable => IdentityLinkIngressError::Unavailable,
+        NativeBridgeError::Failed => IdentityLinkIngressError::Failed,
     }
 }
 
@@ -288,6 +353,43 @@ mod tests {
         assert_eq!(
             router().route("openid-credential-offer://?credential_offer=%7B%7D&credential_offer_uri=https%3A%2F%2Fissuer.example"),
             Err(IdentityRequestRoutingError::InvalidRequest)
+        );
+    }
+
+    #[test]
+    fn native_link_ingress_retains_one_consent_request_and_fails_closed() {
+        let ingress = NativeIdentityLinkIngress::default();
+        ingress
+            .capture("openid-credential-offer://?credential_offer=%7B%7D".to_owned())
+            .expect("first link");
+        assert_eq!(
+            ingress.capture(LOGIN.to_owned()),
+            Err(IdentityLinkIngressError::QueueFull)
+        );
+
+        let first = ingress
+            .take_pending()
+            .expect("take first")
+            .expect("first pending");
+        assert!(first.into_inner().starts_with("openid-credential-offer"));
+        ingress.capture(LOGIN.to_owned()).expect("next link");
+        let second = ingress
+            .take_pending()
+            .expect("take second")
+            .expect("second pending");
+        assert_eq!(second.into_inner(), LOGIN);
+        assert_eq!(ingress.take_pending(), Ok(None));
+
+        ingress
+            .capture("openid4vp://authorize?slot=0".to_owned())
+            .expect("queue slot");
+        assert_eq!(
+            ingress.capture("openid4vp://authorize?slot=overflow".to_owned()),
+            Err(IdentityLinkIngressError::QueueFull)
+        );
+        assert_eq!(
+            ingress.capture(" openid4vp://authorize".to_owned()),
+            Err(IdentityLinkIngressError::InvalidLink)
         );
     }
 }

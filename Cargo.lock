@@ -5516,7 +5516,7 @@ dependencies = [
 name = "oxid-adapter-identity-ingress"
 version = "0.1.0"
 dependencies = [
- "manganis",
+ "oxid-adapter-mobile-native",
  "oxid-platform-ports",
  "oxid-protocol-application",
  "serde",
@@ -5556,6 +5556,13 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "zeroize",
+]
+
+[[package]]
+name = "oxid-adapter-mobile-native"
+version = "0.1.0"
+dependencies = [
+ "manganis",
 ]
 
 [[package]]
@@ -5643,6 +5650,7 @@ name = "oxid-adapter-platform-system"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.3.4",
+ "oxid-adapter-mobile-native",
  "oxid-foundation",
  "oxid-platform-ports",
 ]

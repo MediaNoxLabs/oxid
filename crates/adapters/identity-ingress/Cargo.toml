@@ -9,7 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-manganis.workspace = true
+oxid-adapter-mobile-native.workspace = true
 oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
 serde.workspace = true

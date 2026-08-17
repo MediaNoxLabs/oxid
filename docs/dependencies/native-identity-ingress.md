@@ -1,4 +1,4 @@
-# Native identity-ingress dependency review
+# Native mobile bridge dependency review
 
 ## Manganis 0.7.10
 
@@ -18,10 +18,17 @@
   a WebView JavaScript bridge or a manually maintained generated host project
 - Alternatives considered: direct generated-project edits, a generic C ABI,
   WebView JavaScript, and separate Swift/Kotlin applications
-- Adapter boundary: `crates/adapters/identity-ingress`; only payload-free status
-  JSON and the successful bounded string cross the bridge
+- Adapter boundary: `crates/adapters/mobile-native-plugin` owns the single
+  native package; `identity-ingress` and `platform-system` expose only focused
+  Rust ports, payload-free failures, and successful bounded values
 - Exit strategy: replace the adapter or bridge implementation while retaining
-  `QrScannerPort` and the Rust protocol router
+  `QrScannerPort`, `IdentityLinkIngressPort`, `PublicTextExportPort`, and the
+  Rust protocol router
+
+The selected Dioxus iOS bundler compiles multiple discovered Swift packages
+but embeds only its primary framework. Oxid therefore keeps one reviewed mobile
+plugin package for QR, Android link queueing, and public-address copy/share.
+Splitting that package requires a Dioxus upgrade plus native packaging evidence.
 
 ## Google Code Scanner 16.1.0
 
@@ -65,3 +72,24 @@
 - Adapter boundary and exit: confined to the Swift implementation of
   `QrScannerPort`; it can be replaced without changing protocol/application
   code
+
+## Native public text export
+
+- Project: Apple UIKit and Android platform APIs supplied by the selected SDKs
+- Selected surface: `UIPasteboard`, `UIActivityViewController`,
+  `ClipboardManager`, and `ACTION_SEND`
+- License/maintenance: governed and maintained as part of the Apple and Android
+  platform SDKs; no additional Cargo or mobile runtime dependency is added
+- Security/audit evidence: simulator/emulator UI tests assert clipboard success
+  and native activity/chooser presentation; no independent Oxid audit
+- Target support: iOS 15+ and Android API 23+ through the existing mobile host
+- Cryptography: none
+- API stability: platform APIs, isolated behind a replaceable Rust port
+- Reason selected: system surfaces provide expected mobile behavior without a
+  WebView JavaScript bridge
+- Alternatives considered: generic JavaScript clipboard/share APIs, a generic
+  string-export port, or leaving the prototype's no-op clipboard behavior
+- Adapter boundary: only `PublicReceiveAddress` may cross
+  `PublicTextExportPort`; protocol URIs, credentials, proofs, and secrets have no
+  export method
+- Exit strategy: replace the native implementation without widening the port

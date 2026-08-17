@@ -9,9 +9,9 @@ use oxid_adapter_did_midnight::{
     HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
 };
 use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
-#[cfg(any(target_os = "ios", target_os = "android"))]
-use oxid_adapter_identity_ingress::NativeQrScanner;
 use oxid_adapter_identity_ingress::StrictIdentityRequestRouter;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_adapter_identity_ingress::{NativeIdentityLinkIngress, NativeQrScanner};
 use oxid_adapter_midnight::MidnightPublicCallContextSource;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
@@ -87,6 +87,8 @@ pub fn standalone_openid4vp_request() -> String {
 pub const fn simulated_passport_vault_contract_address_hex() -> &'static str {
     SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX
 }
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_adapter_platform_system::NativePublicTextExporter;
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_credential_json::EncryptedJsonCredentialRepository;
 use oxid_adapter_storage_dev::{DevelopmentWalletSecurity, UnavailableWalletSecurity};
@@ -141,9 +143,11 @@ use oxid_passport_vault_application::{
     PassportVaultCallSubmissionState, PassportVaultCallSubmissionStatus,
     PassportVaultContractStateSnapshot,
 };
-use oxid_platform_ports::QrScannerPort;
+use oxid_platform_ports::{IdentityLinkIngressPort, PublicTextExportPort, QrScannerPort};
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
-use oxid_platform_ports::UnavailableQrScanner;
+use oxid_platform_ports::{
+    UnavailableIdentityLinkIngress, UnavailablePublicTextExporter, UnavailableQrScanner,
+};
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CredentialPresentationProtocolPort,
     CredentialPresentationService, GetCredentialPresentationUseCase,
@@ -206,6 +210,8 @@ impl<T> NativeMidnightCompositionCapability for T {}
 #[derive(Clone)]
 pub struct ApplicationServices {
     qr_scanner: Arc<dyn QrScannerPort>,
+    identity_link_ingress: Arc<dyn IdentityLinkIngressPort>,
+    public_text_exporter: Arc<dyn PublicTextExportPort>,
     route_identity_request: Arc<dyn RouteIdentityRequestUseCase>,
     midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -356,6 +362,16 @@ impl ApplicationServices {
     #[must_use]
     pub fn qr_scanner(&self) -> Arc<dyn QrScannerPort> {
         Arc::clone(&self.qr_scanner)
+    }
+
+    #[must_use]
+    pub fn identity_link_ingress(&self) -> Arc<dyn IdentityLinkIngressPort> {
+        Arc::clone(&self.identity_link_ingress)
+    }
+
+    #[must_use]
+    pub fn public_text_exporter(&self) -> Arc<dyn PublicTextExportPort> {
+        Arc::clone(&self.public_text_exporter)
     }
 
     #[must_use]
@@ -2122,6 +2138,17 @@ where
     let qr_scanner: Arc<dyn QrScannerPort> = Arc::new(NativeQrScanner);
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let qr_scanner: Arc<dyn QrScannerPort> = Arc::new(UnavailableQrScanner);
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let identity_link_ingress: Arc<dyn IdentityLinkIngressPort> =
+        Arc::new(NativeIdentityLinkIngress::default());
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let identity_link_ingress: Arc<dyn IdentityLinkIngressPort> =
+        Arc::new(UnavailableIdentityLinkIngress);
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let public_text_exporter: Arc<dyn PublicTextExportPort> = Arc::new(NativePublicTextExporter);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let public_text_exporter: Arc<dyn PublicTextExportPort> =
+        Arc::new(UnavailablePublicTextExporter);
     let presentation_credential_repository = Arc::clone(&credential_repository);
     let vault_credential_repository = Arc::clone(&credential_repository);
     let standalone_passport_vault = matches!(
@@ -2440,6 +2467,8 @@ where
 
     ApplicationServices {
         qr_scanner,
+        identity_link_ingress,
+        public_text_exporter,
         route_identity_request,
         midnight_public_call_context,
         #[cfg(not(target_arch = "wasm32"))]

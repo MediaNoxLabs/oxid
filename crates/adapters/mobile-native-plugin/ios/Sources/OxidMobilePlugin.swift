@@ -4,14 +4,58 @@ import AVFoundation
 import Foundation
 import UIKit
 
-@objc(OxidQrScannerPlugin)
-public final class OxidQrScannerPlugin: NSObject {
+@objc(OxidMobilePlugin)
+public final class OxidMobilePlugin: NSObject {
     @objc public func startScanJson() -> String {
         ScanCoordinator.shared.start()
     }
 
     @objc public func takeScanResultJson() -> String {
         ScanCoordinator.shared.take()
+    }
+
+    @objc public func copyPublicReceiveAddress(_ value: String) -> String {
+        onMain {
+            UIPasteboard.general.string = value
+            return "copied"
+        }
+    }
+
+    @objc public func sharePublicReceiveAddress(_ value: String) -> String {
+        onMain {
+            guard let presenter = Self.topViewController() else { return "unavailable" }
+            let controller = UIActivityViewController(
+                activityItems: [value],
+                applicationActivities: nil
+            )
+            if let popover = controller.popoverPresentationController {
+                popover.sourceView = presenter.view
+                popover.sourceRect = CGRect(
+                    x: presenter.view.bounds.midX,
+                    y: presenter.view.bounds.midY,
+                    width: 1,
+                    height: 1
+                )
+                popover.permittedArrowDirections = []
+            }
+            presenter.present(controller, animated: true)
+            return "presented"
+        }
+    }
+
+    private func onMain(_ operation: @escaping () -> String) -> String {
+        if Thread.isMainThread { return operation() }
+        return DispatchQueue.main.sync(execute: operation)
+    }
+
+    fileprivate static func topViewController() -> UIViewController? {
+        let root = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: { $0.isKeyWindow })?.rootViewController
+        var current = root
+        while let presented = current?.presentedViewController { current = presented }
+        return current
     }
 }
 
@@ -76,7 +120,6 @@ private final class ScanCoordinator: NSObject, AVCaptureMetadataOutputObjectsDel
             finish("unavailable")
             return
         }
-
         let capture = AVCaptureSession()
         guard capture.canAddInput(input) else {
             finish("failed")
@@ -93,7 +136,7 @@ private final class ScanCoordinator: NSObject, AVCaptureMetadataOutputObjectsDel
         output.setMetadataObjectsDelegate(self, queue: .main)
         output.metadataObjectTypes = [.qr]
 
-        guard let presenter = Self.topViewController() else {
+        guard let presenter = OxidMobilePlugin.topViewController() else {
             finish("failed")
             return
         }
@@ -146,16 +189,6 @@ private final class ScanCoordinator: NSObject, AVCaptureMetadataOutputObjectsDel
             return "{\"status\":\"failed\"}"
         }
         return text
-    }
-
-    private static func topViewController() -> UIViewController? {
-        let root = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: { $0.isKeyWindow })?.rootViewController
-        var current = root
-        while let presented = current?.presentedViewController { current = presented }
-        return current
     }
 }
 

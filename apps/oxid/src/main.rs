@@ -41,6 +41,7 @@ fn main() {
             application.derive_wallet_account(),
             application.get_wallet_account(),
             application.sync_wallet_account(),
+            application.public_text_exporter(),
         ),
         oxid_ui_dioxus::WalletOperationalUiServices::new(
             oxid_ui_dioxus::WalletDustSyncUiServices::new(
@@ -135,12 +136,28 @@ fn main() {
             ),
             oxid_ui_dioxus::IdentityIngressUiServices::new(
                 application.qr_scanner(),
+                application.identity_link_ingress(),
                 application.route_identity_request(),
             ),
         ),
     );
 
-    dioxus::LaunchBuilder::new()
-        .with_context(ui)
-        .launch(oxid_ui_dioxus::App);
+    let launcher = dioxus::LaunchBuilder::new().with_context(ui);
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    {
+        let app_links = application.identity_link_ingress();
+        let config =
+            dioxus::mobile::Config::new().with_custom_event_handler(move |event, _target| {
+                if let dioxus::mobile::tao::event::Event::Opened { urls } = event {
+                    for url in urls {
+                        // Fail closed without reproducing secret-bearing URLs in
+                        // logs. The Dioxus UI drains and classifies accepted links.
+                        let _ = app_links.capture(url.as_str().to_owned());
+                    }
+                }
+            });
+        launcher.with_cfg(config).launch(oxid_ui_dioxus::App);
+    }
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    launcher.launch(oxid_ui_dioxus::App);
 }

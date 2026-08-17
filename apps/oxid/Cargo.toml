@@ -11,7 +11,7 @@ publish = false
 [features]
 default = ["desktop"]
 desktop = ["dioxus/desktop"]
-mobile = ["dioxus/mobile"]
+mobile = ["dioxus/mobile", "oxid-ui-dioxus/mobile"]
 web = ["dioxus/web"]
 # Explicit simulator/emulator composition. This never changes the default
 # production-facing composition selected by a normal application build.

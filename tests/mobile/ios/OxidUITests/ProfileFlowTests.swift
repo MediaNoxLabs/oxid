@@ -16,13 +16,19 @@ final class ProfileFlowTests: XCTestCase {
     }
 
     @MainActor
+    private func ensureProfile(in application: XCUIApplication) {
+        application.launch()
+        let createButton = application.buttons["Create and continue"]
+        if createButton.waitForExistence(timeout: 5) {
+            createButton.tap()
+        }
+        XCTAssertTrue(application.buttons["Scan identity QR code"].waitForExistence(timeout: 15))
+    }
+
+    @MainActor
     func testCreatesProfileAndCompletesStandaloneWalletFlow() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
-        application.launch()
-
-        let createButton = application.buttons["Create and continue"]
-        XCTAssertTrue(createButton.waitForExistence(timeout: 15))
-        createButton.tap()
+        ensureProfile(in: application)
 
         let activateButton = application.buttons["Activate protected Midnight account"]
         XCTAssertTrue(activateButton.waitForExistence(timeout: 15))
@@ -320,6 +326,76 @@ final class ProfileFlowTests: XCTestCase {
                 "QR recognized as a credential offer. Review the request before consent."
             ].exists
         )
+    }
+
+    @MainActor
+    func testAppLinksRouteColdAndWarmWithoutConsent() throws {
+        let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
+        ensureProfile(in: application)
+
+        let offer = try XCTUnwrap(URL(
+            string: "openid-credential-offer://?credential_offer=%7B%7D"
+        ))
+        application.open(offer)
+        XCTAssertTrue(
+            application.staticTexts[
+                "App link recognized as a credential offer. Review the request before consent."
+            ].waitForExistence(timeout: 10)
+        )
+        XCTAssertTrue(application.buttons["Dismiss identity request"].exists)
+        XCTAssertTrue(application.staticTexts["Credentials"].exists)
+        application.buttons["Dismiss identity request"].tap()
+
+        let login = try XCTUnwrap(URL(string:
+            "openid4vp://authorize?client_id=http%3A%2F%2F127.0.0.1%3A32192%2Fverifier&request_uri=http%3A%2F%2F127.0.0.1%3A32192%2Fverifier%2Frequest"
+        ))
+        application.open(login)
+        XCTAssertTrue(
+            application.staticTexts[
+                "App link recognized as a DID login. Review the request before consent."
+            ].waitForExistence(timeout: 10)
+        )
+        XCTAssertTrue(application.staticTexts["Your DIDs"].exists)
+        application.buttons["Dismiss identity request"].tap()
+
+        application.terminate()
+        application.open(offer)
+        XCTAssertTrue(
+            application.staticTexts[
+                "App link recognized as a credential offer. Review the request before consent."
+            ].waitForExistence(timeout: 15)
+        )
+        XCTAssertTrue(application.buttons["Dismiss identity request"].exists)
+    }
+
+    @MainActor
+    func testNativePublicAddressCopyAndShare() throws {
+        let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
+        ensureProfile(in: application)
+
+        let activate = application.buttons["Activate protected Midnight account"]
+        if activate.waitForExistence(timeout: 5) {
+            activate.tap()
+        }
+
+        let copy = application.buttons["Copy Unshielded receive address"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 15))
+        scrollTo(copy, in: application)
+        copy.tap()
+        XCTAssertTrue(
+            application.staticTexts[
+                "Public receive address copied to the native clipboard."
+            ].waitForExistence(timeout: 5)
+        )
+
+        let share = application.buttons["Share Unshielded receive address"]
+        XCTAssertTrue(share.exists)
+        share.tap()
+        XCTAssertTrue(
+            application.otherElements["ActivityListView"].waitForExistence(timeout: 5)
+        )
+        let dismiss = application.otherElements["PopoverDismissRegion"]
+        if dismiss.exists { dismiss.tap() }
     }
 
 }

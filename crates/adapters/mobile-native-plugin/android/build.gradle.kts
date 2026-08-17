@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "io.medianox.oxid.identity.ingress"
+    namespace = "io.medianox.oxid.mobile"
     compileSdk = 35
 
     defaultConfig {
@@ -33,5 +33,5 @@ dependencies {
 }
 
 tasks.withType<AbstractArchiveTask>().configureEach {
-    archiveBaseName.set("oxid-identity-ingress")
+    archiveBaseName.set("oxid-mobile-plugin")
 }

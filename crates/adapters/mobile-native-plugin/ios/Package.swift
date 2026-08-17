@@ -4,14 +4,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "OxidQrScannerPlugin",
+    name: "OxidMobilePlugin",
     platforms: [.iOS(.v15)],
     products: [
-        .library(name: "OxidQrScannerPlugin", type: .static, targets: ["OxidQrScannerPlugin"])
+        .library(name: "OxidMobilePlugin", type: .static, targets: ["OxidMobilePlugin"])
     ],
     targets: [
         .target(
-            name: "OxidQrScannerPlugin",
+            name: "OxidMobilePlugin",
             path: "Sources",
             linkerSettings: [
                 .linkedFramework("AVFoundation"),

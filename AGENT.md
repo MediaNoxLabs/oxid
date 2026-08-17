@@ -568,9 +568,19 @@ replay, and verify after runtime restart. The strict Nix-shell gate for this
 iteration reports 78.68% region, 80.22% function, and 80.36% line coverage;
 the real p18 proof tests remain separate ignored release gates so routine
 coverage does not load the 135 MiB artifact closure or its prover state.
-Preserve the
-prototype-compatible `Digital Passport`
-display name for this schema: the current Dioxus claim controls use that
+
+The 2026-08-17 standalone mobile runs add native-edge lifecycle evidence. On an
+iPhone 17 Pro iOS 26.4 simulator, `just ios-smoke` passes all four XCUITests in
+228.205 seconds: the complete wallet journey, warm/cold custom-scheme routing,
+typed public-address clipboard/share, and QR simulator fail-closed behavior. On
+the repository Android arm64 emulator, `just android-smoke` passes the complete
+protected wallet/DID/credential/vault flow plus native clipboard/share chooser,
+warm/cold app links, encrypted storage shape, and process restore. These results
+do not substitute for physical-camera, universal-link, production-discovery,
+or device resource evidence.
+
+Preserve the prototype-compatible `Digital Passport` display name for this
+schema: the current Dioxus claim controls use that
 metadata contract. Replacing the display-name dispatch with an explicit schema
 identifier is follow-up work, not a reason to silently rename issued records.
 
@@ -773,6 +783,10 @@ ADR-0069 keeps QR capture behind a platform port and identity-link
 classification in a strict protocol adapter. Native ingress may navigate only
 to existing preview/consent flows; it cannot execute them. Unknown
 `openid4vp` endpoint pairs remain ambiguous and fail closed.
+ADR-0070 adds warm/cold iOS and Android custom-scheme capture through that same
+router and permits native clipboard/share only for the bounded
+`PublicReceiveAddress` type. Keep one pending identity request until explicit
+dismissal; a new event must never replace active holder review.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -810,12 +824,13 @@ Current package ownership:
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
 | `crates/adapters/identity-ingress` | Strict credential-offer/registered-OpenID4VP classifier plus payload-redacted native iOS/Android QR scanner adapters. |
+| `crates/adapters/mobile-native-plugin` | Single repository-owned Manganis Rust/Swift/Kotlin bridge for QR capture, Android OS-link queueing, and typed public receive-address clipboard/share operations. |
 | `contracts/presentation` | Oxid-owned final Compact presentation compositions; generated artifacts remain Nix-store outputs and never enter Git. |
 | `contracts/passport-vault` | Byte-identical Apache-2.0 Passport Vault Compact source distributed for secret-free public builds; its pinned private-upstream provenance and digest are ADR-0053 review boundaries. |
 | `nix/packages/passport-vault-compact-artifacts.nix` | Immutable Passport Vault client/IR/key/parameter closure from the hash-checked distributed contract plus pinned VC and Compact toolchain revisions. |
 | `nix/packages/passport-vault-call-composer.nix` | One-request Node 24 outgoing adapter package with locked Midnight compatibility dependencies, Nix-fixed authenticated artifacts, closed typed operations, and real generated-client install checks. |
 | `tools/passport-vault-composer` | Internal generated-Compact composition implementation; never an incoming headless/mobile API and never a credential/private-witness bridge. |
-| `crates/adapters/platform-system` | System clock and OS randomness implementations. |
+| `crates/adapters/platform-system` | System clock, OS randomness, and typed public receive-address export implementations. |
 | `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, public receive-QR rendering, standalone Passport Vault UI, and truthfully labelled typed native vault-call review/authorization/submission/cancellation/reconciliation. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
 | `apps/oxid` | Executable shell and platform launch point. |
@@ -1189,29 +1204,43 @@ using an Android SDK/NDK plus a connected device or local AVD. Generated
 Gradle/Xcode output remains under ignored `target/` paths.
 
 ADR-0069 adds the first native identity-request ingress boundary. Manganis
-0.7.10 is kept on the same release as Dioxus 0.7.10 and packages static Swift
-and Kotlin plugins from `adapters/identity-ingress`. iOS uses AVFoundation and
-must return `unavailable` in a simulator; Android uses Google Code Scanner
-16.1.0 in QR-only mode without declaring app camera permission. The native
-plugins capture bytes only. Keep the 32 KiB bound, payload-redacted debug/error
-surface, and strict Rust router between QR/deep-link input and every protocol
-flow. SIOPv2 and credential presentation both use `openid4vp`, so standalone
+0.7.10 is kept on the same release as Dioxus 0.7.10 and packages the single
+static Swift/Kotlin bridge in `adapters/mobile-native-plugin`. iOS uses
+AVFoundation and must return `unavailable` in a simulator; Android uses Google
+Code Scanner 16.1.0 in QR-only mode without declaring app camera permission.
+The native plugins capture bytes only. Keep the 32 KiB bound, payload-redacted
+debug/error surface, and strict Rust router between QR/deep-link input and every
+protocol flow. SIOPv2 and credential presentation both use `openid4vp`, so standalone
 composition classifies only exact registered `client_id`/`request_uri` pairs;
 unknown pairs must stay `ambiguous` until reviewed production discovery exists.
 Scanning only populates the existing page and cannot bypass preview or consent.
-Issue #32 owns physical-device, OS deep-link, copy/share, and resource evidence.
+
+ADR-0070 registers only `openid-credential-offer` and `openid4vp`. The app-level
+Tao handler captures cold iOS events before the component tree exists; the
+repository-owned Android `singleTop` activity captures both `onCreate` and
+`onNewIntent`. Both enter the ADR-0069 router and remain pending until explicit
+dismissal. `PublicTextExportPort` exposes copy/share only for bounded public
+receive addresses; never widen it to arbitrary strings or protocol links.
+Dioxus 0.7.10 compiles multiple Swift packages but embeds only the primary
+framework, so all reviewed native operations must remain in one package until
+an upgrade is proven. Android JNI calls use public methods on the activity
+instance so the application class loader resolves the plugin from Rust worker
+threads. Issue #32 owns physical-camera, universal-link, production-discovery,
+and resource evidence.
 
 `just ios-smoke` generates an ignored XCUITest project from
 `tests/mobile/ios/project.yml`, resets only the installed Oxid simulator data,
 and verifies profile creation, development account activation, receive QR,
+native public-address copy/share, warm/cold identity links without auto-consent,
 staged simulated transfer, OpenID4VCI offer preview/consent/issuance, protected
 Digital Passport verification/restore, hidden-by-default first/last values,
 explicit local reveal/hide, age-predicate preview, consented self-issued DID
 authentication, OpenID4VP/DCQL request preview/exact consent/fail-closed Compact
 proof gate, and profile restore through visible UI elements.
 `just android-smoke` resets only Oxid's Android app data, drives the equivalent
-development flow, validates the durable public JSON document plus authenticated
-credential envelope/key shape, and verifies restart. Both now assert that the
+development flow, asserts the native clipboard/share chooser and warm/cold app
+links, validates the durable public JSON document plus authenticated credential
+envelope/key shape, and verifies restart. Both now assert that the
 included public submission journal and encrypted issued-credential inventory
 survive while development custody and incomplete issuance sessions reset. The
 commands are destructive to the selected simulator's Oxid test profile state;

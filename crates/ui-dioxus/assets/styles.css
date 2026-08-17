@@ -257,6 +257,19 @@ textarea:focus-visible {
   line-height: 1.45;
 }
 
+.identity-ingress-dismiss {
+  margin-left: 0.75rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid rgb(56 213 255 / 34%);
+  border-radius: 0.55rem;
+  background: transparent;
+  color: var(--cyan);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .menu-dropdown {
   position: absolute;
   z-index: 200;
@@ -1057,7 +1070,13 @@ textarea:focus-visible {
   flex-wrap: wrap;
 }
 
-.address-qr-toggle {
+.address-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.address-action {
   min-height: 2.4rem;
   padding: 0 0.75rem;
   border: 1px solid rgb(56 213 255 / 28%);
@@ -1067,6 +1086,13 @@ textarea:focus-visible {
   font-size: 0.7rem;
   font-weight: 800;
   cursor: pointer;
+}
+
+.address-export-notice {
+  margin: 0.35rem 0 0.6rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
 }
 
 .address-qr {

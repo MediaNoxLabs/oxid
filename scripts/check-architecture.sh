@@ -97,14 +97,15 @@ check_workspace_dependencies oxid-adapter-storage-dev \
   oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-storage-json \
   oxid-foundation oxid-wallet-application oxid-wallet-domain
+check_workspace_dependencies oxid-adapter-mobile-native
 check_workspace_dependencies oxid-adapter-platform-system \
-  oxid-foundation oxid-platform-ports
+  oxid-adapter-mobile-native oxid-foundation oxid-platform-ports
 check_workspace_dependencies oxid-adapter-midnight \
   oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-did-midnight \
   oxid-identity-application oxid-identity-domain oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-identity-ingress \
-  oxid-platform-ports oxid-protocol-application
+  oxid-adapter-mobile-native oxid-platform-ports oxid-protocol-application
 check_workspace_dependencies oxid-adapter-storage-identity-json \
   oxid-identity-application oxid-identity-domain
 check_workspace_dependencies oxid-adapter-storage-credential-json \

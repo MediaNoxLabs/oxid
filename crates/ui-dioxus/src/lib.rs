@@ -37,7 +37,10 @@ use oxid_passport_vault_application::{
     SubmitPassportVaultCallCommand, SubmitPassportVaultCallUseCase, WITHDRAW_INTENT,
     WithdrawPassportVaultLockUseCase,
 };
-use oxid_platform_ports::{QrScanError, QrScannerPort};
+use oxid_platform_ports::{
+    IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportError,
+    PublicTextExportPort, QrScanError, QrScannerPort,
+};
 use oxid_presentation_application::{
     AcceptCredentialPresentationCommand, AcceptCredentialPresentationUseCase,
     CredentialPresentationError, CredentialPresentationView, PrepareCredentialPresentationCommand,
@@ -82,6 +85,8 @@ const STYLES: &str = include_str!("../assets/styles.css");
 #[derive(Clone)]
 pub struct WalletUiServices {
     qr_scanner: Arc<dyn QrScannerPort>,
+    identity_link_ingress: Arc<dyn IdentityLinkIngressPort>,
+    public_text_exporter: Arc<dyn PublicTextExportPort>,
     route_identity_request: Arc<dyn RouteIdentityRequestUseCase>,
     create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
@@ -473,6 +478,7 @@ pub struct IdentityUiServices {
 /// Scan and protocol-link routing capabilities shared by the identity pages.
 pub struct IdentityIngressUiServices {
     qr_scanner: Arc<dyn QrScannerPort>,
+    app_links: Arc<dyn IdentityLinkIngressPort>,
     route: Arc<dyn RouteIdentityRequestUseCase>,
 }
 
@@ -480,9 +486,14 @@ impl IdentityIngressUiServices {
     #[must_use]
     pub fn new(
         qr_scanner: Arc<dyn QrScannerPort>,
+        app_links: Arc<dyn IdentityLinkIngressPort>,
         route: Arc<dyn RouteIdentityRequestUseCase>,
     ) -> Self {
-        Self { qr_scanner, route }
+        Self {
+            qr_scanner,
+            app_links,
+            route,
+        }
     }
 }
 
@@ -583,6 +594,7 @@ pub struct WalletAccountUiServices {
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    public_text_exporter: Arc<dyn PublicTextExportPort>,
 }
 
 impl WalletAccountUiServices {
@@ -593,6 +605,7 @@ impl WalletAccountUiServices {
         derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
         get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
         sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+        public_text_exporter: Arc<dyn PublicTextExportPort>,
     ) -> Self {
         Self {
             list_wallet_networks,
@@ -600,6 +613,7 @@ impl WalletAccountUiServices {
             derive_wallet_account,
             get_wallet_account,
             sync_wallet_account,
+            public_text_exporter,
         }
     }
 }
@@ -722,6 +736,8 @@ impl WalletUiServices {
         let ingress = identity.ingress;
         Self {
             qr_scanner: ingress.qr_scanner,
+            identity_link_ingress: ingress.app_links,
+            public_text_exporter: account.public_text_exporter,
             route_identity_request: ingress.route,
             create_wallet_profile: profiles.create_wallet_profile,
             list_wallet_profiles: profiles.list_wallet_profiles,
@@ -791,6 +807,16 @@ impl WalletUiServices {
     #[must_use]
     pub fn qr_scanner(&self) -> Arc<dyn QrScannerPort> {
         Arc::clone(&self.qr_scanner)
+    }
+
+    #[must_use]
+    pub fn identity_link_ingress(&self) -> Arc<dyn IdentityLinkIngressPort> {
+        Arc::clone(&self.identity_link_ingress)
+    }
+
+    #[must_use]
+    pub fn public_text_exporter(&self) -> Arc<dyn PublicTextExportPort> {
+        Arc::clone(&self.public_text_exporter)
     }
 
     #[must_use]
@@ -1368,9 +1394,40 @@ pub fn App() -> Element {
     let mut pending_identity_request = use_signal(|| None::<PendingIdentityRequest>);
     let mut identity_ingress_notice = use_signal(|| None::<String>);
     let mut identity_scan_busy = use_signal(|| false);
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let mut identity_link_wake = use_signal(|| 0_u64);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let identity_link_wake = use_signal(|| 0_u64);
     let services_for_load = services.clone();
     use_effect(move || {
         profile_session.set(load_profile_session(&services_for_load));
+    });
+
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    {
+        dioxus::mobile::use_wry_event_handler(move |event, _target| match event {
+            dioxus::mobile::tao::event::Event::Opened { .. } => {
+                identity_link_wake.set(identity_link_wake().wrapping_add(1));
+            }
+            dioxus::mobile::tao::event::Event::Resumed => {
+                identity_link_wake.set(identity_link_wake().wrapping_add(1));
+            }
+            _ => {}
+        });
+    }
+
+    let services_for_links = services.clone();
+    use_effect(move || {
+        let _wake = identity_link_wake();
+        if matches!(*profile_session.read(), ProfileSessionState::Active(_)) {
+            route_pending_identity_link(
+                &services_for_links,
+                pending_identity_request,
+                active_destination,
+                menu_open,
+                identity_ingress_notice,
+            );
+        }
     });
 
     let session = profile_session.read().clone();
@@ -1392,6 +1449,7 @@ pub fn App() -> Element {
 
     let active = *active_destination.read();
     let profile_monogram = profile_monogram(&active_profile.display_name);
+    let identity_request_waiting = pending_identity_request.read().is_some();
 
     rsx! {
         style { {STYLES} }
@@ -1497,6 +1555,19 @@ pub fn App() -> Element {
             if let Some(message) = identity_ingress_notice.read().as_deref() {
                 div { class: "identity-ingress-notice", role: "status",
                     "{message}"
+                    if identity_request_waiting {
+                        button {
+                            class: "identity-ingress-dismiss",
+                            r#type: "button",
+                            onclick: move |_| {
+                                pending_identity_request.set(None);
+                                identity_ingress_notice.set(Some(
+                                    "Identity request dismissed without consent.".to_owned(),
+                                ));
+                            },
+                            "Dismiss identity request"
+                        }
+                    }
                 }
             }
 
@@ -2096,7 +2167,7 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                                     value: address.value.clone(),
                                 }
                             }
-                            p { "Each QR encodes exactly the public address shown. Native copy/share remains a platform-adapter follow-up." }
+                            p { "Each QR, clipboard copy, and share sheet contains exactly the public receive address shown." }
                         }
                     }
                     article { class: "surface-card",
@@ -2822,8 +2893,14 @@ fn has_protected_account(account: &WalletAccountView) -> bool {
 
 #[component]
 fn ReceiveAddress(kind: String, value: String) -> Element {
+    let services = consume_context::<WalletUiServices>();
     let mut qr_open = use_signal(|| false);
+    let mut export_notice = use_signal(|| None::<String>);
     let qr = render_qr_svg(&value);
+    let copy_exporter = services.public_text_exporter();
+    let copy_value = value.clone();
+    let share_exporter = services.public_text_exporter();
+    let share_value = value.clone();
     rsx! {
         div { class: "address-row",
             div {
@@ -2831,17 +2908,44 @@ fn ReceiveAddress(kind: String, value: String) -> Element {
                 small { "{address_purpose(&kind)}" }
             }
             code { title: "{value}", "{truncate_middle(&value, 18, 8)}" }
-            button {
-                class: "address-qr-toggle",
-                r#type: "button",
-                aria_label: if *qr_open.read() { "Hide receive QR" } else { "Show receive QR" },
-                aria_expanded: if *qr_open.read() { "true" } else { "false" },
-                onclick: move |_| {
-                    let next = !*qr_open.read();
-                    qr_open.set(next);
-                },
-                if *qr_open.read() { "Hide QR" } else { "Show QR" }
+            span { class: "address-actions",
+                button {
+                    class: "address-action",
+                    r#type: "button",
+                    aria_label: "Copy {address_kind_label(&kind)} receive address",
+                    onclick: move |_| {
+                        let result = PublicReceiveAddress::new(copy_value.clone())
+                            .and_then(|address| copy_exporter.copy_receive_address(address));
+                        export_notice.set(Some(public_export_message(result, false)));
+                    },
+                    "Copy"
+                }
+                button {
+                    class: "address-action",
+                    r#type: "button",
+                    aria_label: "Share {address_kind_label(&kind)} receive address",
+                    onclick: move |_| {
+                        let result = PublicReceiveAddress::new(share_value.clone())
+                            .and_then(|address| share_exporter.share_receive_address(address));
+                        export_notice.set(Some(public_export_message(result, true)));
+                    },
+                    "Share"
+                }
+                button {
+                    class: "address-action",
+                    r#type: "button",
+                    aria_label: if *qr_open.read() { "Hide receive QR" } else { "Show receive QR" },
+                    aria_expanded: if *qr_open.read() { "true" } else { "false" },
+                    onclick: move |_| {
+                        let next = !*qr_open.read();
+                        qr_open.set(next);
+                    },
+                    if *qr_open.read() { "Hide QR" } else { "Show QR" }
+                }
             }
+        }
+        if let Some(message) = export_notice.read().as_deref() {
+            p { class: "address-export-notice", role: "status", "{message}" }
         }
         if *qr_open.read() {
             div { class: "address-qr", role: "img", aria_label: "QR code for {address_kind_label(&kind)} receive address",
@@ -2852,6 +2956,22 @@ fn ReceiveAddress(kind: String, value: String) -> Element {
                     p { role: "alert", "This address could not be encoded as a QR code." }
                 }
             }
+        }
+    }
+}
+
+fn public_export_message(result: Result<(), PublicTextExportError>, share: bool) -> String {
+    match result {
+        Ok(()) if share => "Native share sheet opened for this public receive address.".to_owned(),
+        Ok(()) => "Public receive address copied to the native clipboard.".to_owned(),
+        Err(PublicTextExportError::Unavailable) => {
+            "Native copy/share is unavailable on this device.".to_owned()
+        }
+        Err(PublicTextExportError::InvalidPublicText) => {
+            "This receive address is not safe to export.".to_owned()
+        }
+        Err(PublicTextExportError::Failed) => {
+            "The public receive address could not be exported.".to_owned()
         }
     }
 }
@@ -4996,7 +5116,7 @@ fn PassportVaultLockCard(
 #[component]
 fn DidsPage(
     active_profile: WalletProfileView,
-    mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    pending_identity_request: Signal<Option<PendingIdentityRequest>>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| DidPageState::Loading);
@@ -5015,9 +5135,8 @@ fn DidsPage(
             prepared_authentication.set(None);
             authentication_consent.set(false);
             authentication_notice.set(Some(
-                "Scanned login request loaded. Preview it before authenticating.".to_owned(),
+                "Imported login request loaded. Preview it before authenticating.".to_owned(),
             ));
-            pending_identity_request.set(None);
         }
     });
     let profile_id = active_profile.id.clone();
@@ -5422,6 +5541,64 @@ fn identity_request_routing_message(error: IdentityRequestRoutingError) -> Strin
     }
 }
 
+fn route_pending_identity_link(
+    services: &WalletUiServices,
+    mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    mut active_destination: Signal<Destination>,
+    mut menu_open: Signal<bool>,
+    mut notice: Signal<Option<String>>,
+) {
+    if pending_identity_request.read().is_some() {
+        return;
+    }
+    let ingress = services.identity_link_ingress();
+    let link = match ingress.take_pending() {
+        Ok(Some(link)) => link,
+        Ok(None) => return,
+        Err(error) => {
+            notice.set(Some(identity_link_ingress_message(error)));
+            return;
+        }
+    };
+    let request_uri = link.into_inner();
+    match services
+        .route_identity_request()
+        .execute(RouteIdentityRequestCommand {
+            request_uri: request_uri.clone(),
+        }) {
+        Ok(kind) => {
+            pending_identity_request.set(Some(PendingIdentityRequest { kind, request_uri }));
+            active_destination.set(identity_request_destination(kind));
+            menu_open.set(false);
+            notice.set(Some(format!(
+                "App link recognized as {}. Review the request before consent.",
+                identity_request_kind_label(kind)
+            )));
+        }
+        Err(error) => notice.set(Some(identity_request_routing_message(error))),
+    }
+}
+
+fn identity_link_ingress_message(error: IdentityLinkIngressError) -> String {
+    match error {
+        IdentityLinkIngressError::Unavailable => {
+            "Identity app links are unavailable on this device. Paste or scan the request instead."
+                .to_owned()
+        }
+        IdentityLinkIngressError::InvalidLink => {
+            "The operating system delivered an invalid or oversized identity app link."
+                .to_owned()
+        }
+        IdentityLinkIngressError::QueueFull => {
+            "Another identity app link is already waiting for review; finish it before opening a new one."
+                .to_owned()
+        }
+        IdentityLinkIngressError::Failed => {
+            "Identity app-link ingress failed; no request was imported.".to_owned()
+        }
+    }
+}
+
 fn qr_scan_message(error: QrScanError) -> String {
     match error {
         QrScanError::Cancelled => "QR scan cancelled.".to_owned(),
@@ -5451,7 +5628,7 @@ fn credential_presentation_message(error: CredentialPresentationError) -> String
 #[component]
 fn CredentialPresentationPanel(
     profile_id: String,
-    mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    pending_identity_request: Signal<Option<PendingIdentityRequest>>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut request_input = use_signal(String::new);
@@ -5468,9 +5645,8 @@ fn CredentialPresentationPanel(
             preview.set(None);
             consent.set(false);
             notice.set(Some(
-                "Scanned presentation request loaded. Preview it before consenting.".to_owned(),
+                "Imported presentation request loaded. Preview it before consenting.".to_owned(),
             ));
-            pending_identity_request.set(None);
         }
     });
     let demo_request = services.standalone_openid4vp_request();
@@ -5994,7 +6170,7 @@ fn CredentialRecordCard(
 #[component]
 fn CredentialsPage(
     active_profile: WalletProfileView,
-    mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    pending_identity_request: Signal<Option<PendingIdentityRequest>>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| CredentialPageState::Loading);
@@ -6012,9 +6188,8 @@ fn CredentialsPage(
             prepared_issuance.set(None);
             issuance_consent.set(false);
             issuance_notice.set(Some(
-                "Scanned credential offer loaded. Preview it before accepting.".to_owned(),
+                "Imported credential offer loaded. Preview it before accepting.".to_owned(),
             ));
-            pending_identity_request.set(None);
         }
     });
     let profile_id = active_profile.id.clone();

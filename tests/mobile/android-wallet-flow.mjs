@@ -3,8 +3,8 @@
 const endpoint = process.argv[2];
 const mode = process.argv[3] ?? "flow";
 
-if (!endpoint || !["flow", "restored"].includes(mode)) {
-  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored>");
+if (!endpoint || !["flow", "restored", "app-link"].includes(mode)) {
+  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link>");
 }
 
 const socket = new WebSocket(endpoint);
@@ -154,6 +154,15 @@ try {
         row.innerText.includes('Shielded') && row.querySelector('code')?.innerText.startsWith('mn_shield-addr_')
       );
     })()`);
+
+    await clickButtonByLabel("Copy Unshielded receive address");
+    await waitFor(
+      "document.body.innerText.includes('Public receive address copied to the native clipboard.')",
+      "native public-address clipboard confirmation",
+    );
+    const publicAddressCopied = await evaluate(
+      "document.body.innerText.includes('Public receive address copied to the native clipboard.')",
+    );
 
     await clickButton("Use my receive address");
     await setInput("Amount in NIGHT", "1.5");
@@ -407,12 +416,14 @@ try {
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
+    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
+    await clickButton("Assets");
+    await clickButtonByLabel("Share Unshielded receive address");
     process.stdout.write(`${JSON.stringify(result)}\n`);
-  } else {
+  } else if (mode === "restored") {
     await waitForButton("Assets");
     await clickButton("Assets");
     await waitForButton("Activate development wallet");
@@ -459,6 +470,22 @@ try {
       throw new Error("Android restart did not restore the expected public and owner-private state");
     }
     process.stdout.write(`${JSON.stringify(restored)}\n`);
+  } else {
+    await waitFor(
+      "document.body.innerText.includes('App link recognized as a credential offer. Review the request before consent.')",
+      "strictly routed credential-offer app link",
+    );
+    await waitForButton("Dismiss identity request");
+    const routed = await evaluate(`(() => ({
+      credentialsPage: document.body.innerText.includes("Credentials"),
+      consentPending: document.body.innerText.includes("App link recognized as a credential offer. Review the request before consent."),
+      dismissAvailable: Boolean(${buttonExpression("Dismiss identity request")}),
+    }))()`);
+    if (!routed.credentialsPage || !routed.consentPending || !routed.dismissAvailable) {
+      throw new Error(`Android app link did not enter the preview/consent boundary: ${JSON.stringify(routed)}`);
+    }
+    await clickButton("Dismiss identity request");
+    process.stdout.write(`${JSON.stringify(routed)}\n`);
   }
 } finally {
   socket.close();

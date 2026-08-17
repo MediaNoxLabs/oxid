@@ -76,12 +76,176 @@ pub trait QrScannerPort: Send + Sync {
     fn scan<'a>(&'a self) -> QrScanFuture<'a>;
 }
 
+/// Opaque, bounded protocol link delivered by an operating-system URL event.
+///
+/// Debug output deliberately omits the link because credential offers and
+/// OpenID4VP requests commonly carry authorization codes, nonces, and state.
+#[derive(Clone, PartialEq, Eq)]
+pub struct InboundIdentityLink(String);
+
+impl InboundIdentityLink {
+    pub fn new(value: String) -> Result<Self, IdentityLinkIngressError> {
+        if value.is_empty()
+            || value.len() > 32 * 1_024
+            || value.trim() != value
+            || value.chars().any(char::is_control)
+        {
+            return Err(IdentityLinkIngressError::InvalidLink);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Debug for InboundIdentityLink {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InboundIdentityLink")
+            .field("length", &self.0.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Stable, link-free operating-system ingress failures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityLinkIngressError {
+    Unavailable,
+    InvalidLink,
+    QueueFull,
+    Failed,
+}
+
+impl fmt::Display for IdentityLinkIngressError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unavailable => "identity app links are unavailable on this device",
+            Self::InvalidLink => "identity app link is invalid",
+            Self::QueueFull => "identity app-link queue is full",
+            Self::Failed => "identity app-link ingress failed",
+        })
+    }
+}
+
+impl Error for IdentityLinkIngressError {}
+
+/// Receives bounded OS URL events and exposes them one at a time to an incoming
+/// adapter. Implementations must never log or include the raw link in errors.
+pub trait IdentityLinkIngressPort: Send + Sync {
+    fn capture(&self, value: String) -> Result<(), IdentityLinkIngressError>;
+
+    fn take_pending(&self) -> Result<Option<InboundIdentityLink>, IdentityLinkIngressError>;
+}
+
+/// A public receive address explicitly approved for clipboard or
+/// operating-system share export. Callers cannot pass an arbitrary string to
+/// the export port without first opting into this capability-specific type.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PublicReceiveAddress(String);
+
+impl PublicReceiveAddress {
+    pub fn new(value: String) -> Result<Self, PublicTextExportError> {
+        if value.is_empty()
+            || value.len() > 4 * 1_024
+            || value.trim() != value
+            || value.chars().any(char::is_control)
+        {
+            return Err(PublicTextExportError::InvalidPublicText);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for PublicReceiveAddress {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PublicReceiveAddress")
+            .field("length", &self.0.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Stable public-export failures that never reproduce the exported value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublicTextExportError {
+    Unavailable,
+    InvalidPublicText,
+    Failed,
+}
+
+impl fmt::Display for PublicTextExportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unavailable => "public text export is unavailable on this device",
+            Self::InvalidPublicText => "public text is invalid",
+            Self::Failed => "public text export failed",
+        })
+    }
+}
+
+impl Error for PublicTextExportError {}
+
+/// Copies or shares only a typed public receive address. Credential requests,
+/// authorization responses, and other secret-bearing strings have no method on
+/// this port.
+pub trait PublicTextExportPort: Send + Sync {
+    fn copy_receive_address(
+        &self,
+        address: PublicReceiveAddress,
+    ) -> Result<(), PublicTextExportError>;
+
+    fn share_receive_address(
+        &self,
+        address: PublicReceiveAddress,
+    ) -> Result<(), PublicTextExportError>;
+}
+
 /// Fail-closed scanner used by non-mobile and unavailable composition.
 pub struct UnavailableQrScanner;
 
 impl QrScannerPort for UnavailableQrScanner {
     fn scan<'a>(&'a self) -> QrScanFuture<'a> {
         Box::pin(async { Err(QrScanError::Unavailable) })
+    }
+}
+
+/// Fail-closed app-link ingress for targets without an OS URL adapter.
+pub struct UnavailableIdentityLinkIngress;
+
+impl IdentityLinkIngressPort for UnavailableIdentityLinkIngress {
+    fn capture(&self, _value: String) -> Result<(), IdentityLinkIngressError> {
+        Err(IdentityLinkIngressError::Unavailable)
+    }
+
+    fn take_pending(&self) -> Result<Option<InboundIdentityLink>, IdentityLinkIngressError> {
+        Ok(None)
+    }
+}
+
+/// Fail-closed public text exporter for non-mobile compositions.
+pub struct UnavailablePublicTextExporter;
+
+impl PublicTextExportPort for UnavailablePublicTextExporter {
+    fn copy_receive_address(
+        &self,
+        _address: PublicReceiveAddress,
+    ) -> Result<(), PublicTextExportError> {
+        Err(PublicTextExportError::Unavailable)
+    }
+
+    fn share_receive_address(
+        &self,
+        _address: PublicReceiveAddress,
+    ) -> Result<(), PublicTextExportError> {
+        Err(PublicTextExportError::Unavailable)
     }
 }
 
@@ -137,6 +301,50 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "QR scanning is unavailable on this device"
+        );
+    }
+
+    #[test]
+    fn app_links_are_bounded_and_redacted() {
+        let link = InboundIdentityLink::new("openid4vp://authorize?request_uri=private".to_owned())
+            .expect("bounded app link");
+        let debug = format!("{link:?}");
+        assert!(debug.contains("length"));
+        assert!(!debug.contains("request_uri"));
+        assert!(InboundIdentityLink::new(" openid4vp://authorize".to_owned()).is_err());
+        assert!(InboundIdentityLink::new("openid4vp://authorize\n".to_owned()).is_err());
+        assert!(InboundIdentityLink::new("x".repeat(32 * 1_024 + 1)).is_err());
+        assert!(link.into_inner().starts_with("openid4vp"));
+    }
+
+    #[test]
+    fn only_bounded_public_receive_addresses_reach_export_ports() {
+        let address = PublicReceiveAddress::new("mn_addr_undeployed1public".to_owned())
+            .expect("public address");
+        let debug = format!("{address:?}");
+        assert!(debug.contains("length"));
+        assert!(!debug.contains("mn_addr"));
+        assert_eq!(address.as_str(), "mn_addr_undeployed1public");
+        assert!(PublicReceiveAddress::new(String::new()).is_err());
+        assert!(PublicReceiveAddress::new("address\nsecret".to_owned()).is_err());
+        assert!(PublicReceiveAddress::new("x".repeat(4 * 1_024 + 1)).is_err());
+    }
+
+    #[test]
+    fn unavailable_native_edges_fail_closed_without_payloads() {
+        assert_eq!(
+            UnavailableIdentityLinkIngress.capture("openid4vp://private".to_owned()),
+            Err(IdentityLinkIngressError::Unavailable)
+        );
+        assert_eq!(UnavailableIdentityLinkIngress.take_pending(), Ok(None));
+        let address = PublicReceiveAddress::new("mn_addr_public".to_owned()).expect("address");
+        assert_eq!(
+            UnavailablePublicTextExporter.copy_receive_address(address.clone()),
+            Err(PublicTextExportError::Unavailable)
+        );
+        assert_eq!(
+            UnavailablePublicTextExporter.share_receive_address(address),
+            Err(PublicTextExportError::Unavailable)
         );
     }
 }

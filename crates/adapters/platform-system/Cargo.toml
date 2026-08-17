@@ -1,6 +1,6 @@
 [package]
 name = "oxid-adapter-platform-system"
-description = "System clock and operating-system randomness adapters for Oxid"
+description = "System clock, randomness, and native public-text adapters for Oxid"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 getrandom.workspace = true
+oxid-adapter-mobile-native.workspace = true
 oxid-foundation.workspace = true
 oxid-platform-ports.workspace = true
 
