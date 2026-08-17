@@ -3,8 +3,8 @@
 const endpoint = process.argv[2];
 const mode = process.argv[3] ?? "flow";
 
-if (!endpoint || !["flow", "restored", "app-link"].includes(mode)) {
-  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link>");
+if (!endpoint || !["flow", "restored", "app-link", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
+  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link|native-authorize|native-custody|native-restored>");
 }
 
 const socket = new WebSocket(endpoint);
@@ -66,8 +66,8 @@ function buttonExpression(label) {
   return `Array.from(document.querySelectorAll("button")).find((element) => element.textContent.trim() === ${JSON.stringify(label)})`;
 }
 
-async function waitForButton(label) {
-  await waitFor(`Boolean(${buttonExpression(label)})`, `button ${label}`);
+async function waitForButton(label, timeoutMs = 15_000) {
+  await waitFor(`Boolean(${buttonExpression(label)})`, `button ${label}`, timeoutMs);
 }
 
 async function clickButton(label) {
@@ -122,7 +122,7 @@ try {
   if (mode === "flow") {
     await clickButton("Create and continue");
     await clickButtonByLabel("Activate protected Midnight account");
-    await waitForButton("Use my receive address");
+    await waitForButton("Use my receive address", 90_000);
     await waitForButton("Scan QR");
 
     await clickButton("Sync DUST");
@@ -470,6 +470,100 @@ try {
       throw new Error("Android restart did not restore the expected public and owner-private state");
     }
     process.stdout.write(`${JSON.stringify(restored)}\n`);
+  } else if (mode === "native-authorize") {
+    const createProfile = await evaluate(`Boolean(${buttonExpression("Create and continue")})`);
+    if (createProfile) await clickButton("Create and continue");
+    await clickButton("Settings");
+    await waitFor(
+      "document.body.textContent.includes('Wallet protection') && !document.body.textContent.includes('Checking custody capability')",
+      "settled native protection settings card",
+    );
+    const securityAction = await evaluate(`(() => {
+      if (document.querySelector('button[aria-label="Initialize wallet"]')) return 'Initialize wallet';
+      if (document.querySelector('button[aria-label="Unlock wallet"]')) return 'Unlock wallet';
+      if (document.querySelector('button[aria-label="Lock wallet"]')) return 'already unlocked';
+      return '';
+    })()`);
+    if (!securityAction) {
+      throw new Error("native custody did not expose an initialization or unlock action");
+    }
+    if (securityAction !== "already unlocked") {
+      await clickButtonByLabel(securityAction);
+    }
+    process.stdout.write(`${JSON.stringify({ mode, securityAction })}\n`);
+  } else if (mode === "native-custody" || mode === "native-restored") {
+    await clickButton("Assets");
+    await waitFor(
+      "document.body.textContent.includes('Wallet overview')",
+      "Assets page before custody refresh",
+    );
+    await clickButton("Settings");
+    await waitFor(
+      "document.body.textContent.includes('Local controls') && document.body.textContent.includes('Wallet protection') && !document.body.textContent.includes('Checking custody capability')",
+      "refreshed native protection settings card",
+    );
+    const refreshedStatus = await evaluate(`(() => {
+      const card = Array.from(document.querySelectorAll('.settings-card'))
+        .find((element) => element.textContent.includes('Wallet protection'));
+      return card?.textContent.trim() ?? '';
+    })()`);
+    if (!refreshedStatus.includes("Unlocked · Operating system") &&
+        !refreshedStatus.includes("Unlocked · Hardware backed")) {
+      throw new Error(`native custody authorization did not persist: ${refreshedStatus}`);
+    }
+    await clickButton("Assets");
+    await waitFor(
+      "document.body.textContent.includes('Wallet overview')",
+      "Assets page before native account activation",
+    );
+    await clickButtonByLabel("Activate protected Midnight account");
+    await waitFor(
+      `Boolean(${buttonExpression("Use my receive address")}) || Boolean(document.querySelector('[role="alert"]'))`,
+      "native account derivation or a safe failure",
+      90_000,
+    );
+    const accountFailure = await evaluate(
+      "document.querySelector('[role=\"alert\"]')?.textContent.trim() ?? ''",
+    );
+    if (accountFailure) {
+      throw new Error(`native custody account activation failed safely: ${accountFailure}`);
+    }
+    const receiveAddress = await evaluate(`(() => {
+      const row = Array.from(document.querySelectorAll('.address-row'))
+        .find((element) => element.innerText.includes('Unshielded'));
+      return row?.querySelector('code')?.innerText ?? '';
+    })()`);
+    if (!receiveAddress.startsWith("mn_addr_")) {
+      throw new Error("native custody did not derive the expected public Midnight address");
+    }
+    await clickButton("Settings");
+    await waitFor(
+      "document.body.textContent.includes('Wallet protection') && !document.body.textContent.includes('Checking custody capability')",
+      "settled native protection settings card",
+    );
+    const nativeStatus = await evaluate(`(() => {
+      const card = Array.from(document.querySelectorAll('.settings-card'))
+        .find((element) => element.textContent.includes('Wallet protection'));
+      return card?.textContent ?? '';
+    })()`);
+    const protection = nativeStatus.includes('Hardware backed')
+      ? 'hardware_backed'
+      : nativeStatus.includes('Operating system')
+        ? 'operating_system'
+        : '';
+    if (!protection || (!nativeStatus.includes('Unlocked') && !nativeStatus.includes('Locked'))) {
+      throw new Error(`native custody reported an unexpected status: ${nativeStatus}`);
+    }
+    if (mode === "native-custody") {
+      if (nativeStatus.includes('Unlocked')) {
+        await clickButtonByLabel("Lock wallet");
+        await waitFor(
+          "document.body.innerText.includes('Locked · Operating system') || document.body.innerText.includes('Locked · Hardware backed')",
+          "explicitly locked native protection status",
+        );
+      }
+    }
+    process.stdout.write(`${JSON.stringify({ mode, protection, receiveAddress })}\n`);
   } else {
     await waitFor(
       "document.body.innerText.includes('App link recognized as a credential offer. Review the request before consent.')",

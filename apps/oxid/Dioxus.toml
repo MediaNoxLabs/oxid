@@ -15,6 +15,7 @@ deployment_target = "15.0"
 
 [ios.plist]
 NSCameraUsageDescription = "Scan credential offers and identity requests into your Oxid wallet."
+NSFaceIDUsageDescription = "Authorize access to your protected Oxid wallet."
 
 [android]
 min_sdk = 23

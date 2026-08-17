@@ -38,11 +38,17 @@ ios-run:
 ios-smoke:
     ./scripts/test-ios-profile-flow.sh
 
+ios-native-custody-smoke:
+    ./scripts/test-ios-native-custody.sh
+
 android-run:
     ./scripts/run-android-emulator.sh
 
 android-smoke:
     ./scripts/test-android-profile-flow.sh
+
+android-native-custody-smoke:
+    ./scripts/test-android-native-custody.sh
 
 nix-check:
     nix flake check --print-build-logs

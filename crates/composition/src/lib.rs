@@ -91,12 +91,16 @@ pub const fn simulated_passport_vault_contract_address_hex() -> &'static str {
 use oxid_adapter_platform_system::NativePublicTextExporter;
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_credential_json::EncryptedJsonCredentialRepository;
-use oxid_adapter_storage_dev::{DevelopmentWalletSecurity, UnavailableWalletSecurity};
+use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+use oxid_adapter_storage_dev::UnavailableWalletSecurity;
 use oxid_adapter_storage_identity_json::JsonDidRecordRepository;
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
 use oxid_adapter_storage_memory::{
     InMemoryCredentialRepository, InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
 };
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_adapter_storage_mobile::MobileWalletSecurity;
 use oxid_adapter_vc_midnight::{
     CompactHolderProofPort, DigitalPassportDisclosureAdapter, ManagedDidJubjubHolderAuthorization,
     MidnightCredentialVerifier, PreflightOnlyCompactPresentationProof,
@@ -822,9 +826,17 @@ impl ApplicationServices {
 /// Wires the application with persistent public-profile metadata storage.
 #[must_use]
 pub fn compose() -> ApplicationServices {
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let security = {
+        let clock = Arc::new(SystemClock);
+        let random = Arc::new(OsRandom);
+        Arc::new(MobileWalletSecurity::native(clock, random))
+    };
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let security = Arc::new(UnavailableWalletSecurity);
     compose_with_identity_adapters(
         Arc::new(JsonWalletProfileRepository::at_default_location()),
-        Arc::new(UnavailableWalletSecurity),
+        security,
         Arc::new(unavailable_midnight_wallet()),
         IdentityAdapters {
             did_repository: Arc::new(UnavailableDidRecordRepository),
@@ -841,6 +853,46 @@ pub fn compose() -> ApplicationServices {
         },
         PassportVaultRepositoryComposition::unavailable(),
     )
+}
+
+/// Wires the complete standalone simulation through production mobile custody.
+///
+/// This opt-in harness exists so iOS/Android can exercise every wallet and SSI
+/// flow against the same device-bound security adapter selected by normal
+/// mobile composition. It never enables development custody and does not turn
+/// simulated Midnight settlement into a production claim.
+#[cfg(any(target_os = "ios", target_os = "android"))]
+#[must_use]
+pub fn compose_mobile_native_standalone() -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    let security = Arc::new(MobileWalletSecurity::native(
+        Arc::clone(&clock),
+        Arc::clone(&random),
+    ));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let midnight = profiles
+        .configured_path()
+        .and_then(|path| path.parent())
+        .map(|directory| directory.join("private/midnight-submissions.json"))
+        .and_then(|path| MidnightSubmissionJournalConfig::new(path).ok())
+        .map_or_else(
+            || protected_simulated_midnight_wallet(Arc::clone(&clock), Arc::clone(&security)),
+            |journal| {
+                protected_simulated_midnight_wallet_with_submission_journal(
+                    journal,
+                    Arc::clone(&clock),
+                    Arc::clone(&security),
+                )
+            },
+        );
+    let services = compose_with_adapters_and_presentation(
+        profiles,
+        security,
+        Arc::new(midnight),
+        CredentialPresentationComposition::Standalone,
+    );
+    with_simulated_passport_vault_calls(services)
 }
 
 /// Wires persistent public profiles with an explicit process-local custody

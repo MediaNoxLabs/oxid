@@ -26,6 +26,13 @@ class MainActivity : WryActivity() {
         super.onNewIntent(intent)
     }
 
+    @Deprecated("Android activity-result callback required by the device credential prompt")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!OxidMobilePlugin.captureCustodyAuthorizationResult(requestCode, resultCode)) {
+            super.onActivityResult(requestCode, resultCode, data)
+        }
+    }
+
     private fun captureIdentityLink(intent: Intent?) {
         if (intent?.action != Intent.ACTION_VIEW) return
         val scheme = intent.data?.scheme ?: return
@@ -45,4 +52,6 @@ class MainActivity : WryActivity() {
 
     fun oxidSharePublicReceiveAddress(value: String): String =
         oxidMobilePlugin.sharePublicReceiveAddress(value)
+
+    fun oxidCustodyJson(request: String): String = oxidMobilePlugin.custodyJson(request)
 }

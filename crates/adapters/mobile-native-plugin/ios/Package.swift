@@ -15,6 +15,8 @@ let package = Package(
             path: "Sources",
             linkerSettings: [
                 .linkedFramework("AVFoundation"),
+                .linkedFramework("LocalAuthentication"),
+                .linkedFramework("Security"),
                 .linkedFramework("UIKit")
             ]
         )

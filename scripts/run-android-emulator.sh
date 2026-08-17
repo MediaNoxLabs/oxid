@@ -13,6 +13,20 @@ done
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
+mobile_custody="${OXID_MOBILE_CUSTODY:-development}"
+case "$mobile_custody" in
+  development)
+    mobile_features="mobile,standalone-development"
+    ;;
+  native)
+    mobile_features="mobile,standalone-native-custody"
+    ;;
+  *)
+    echo "OXID_MOBILE_CUSTODY must be 'development' or 'native'." >&2
+    exit 1
+    ;;
+esac
+
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [ -z "$android_sdk" ] && [ "$(uname -s)" = "Darwin" ]; then
   android_sdk="$HOME/Library/Android/sdk"
@@ -109,7 +123,7 @@ PATH="$rust_toolchain_bin:$android_sdk/platform-tools:/usr/bin:$PATH" \
     --android \
     --package oxid-app \
     --no-default-features \
-    --features mobile,standalone-development \
+    --features "$mobile_features" \
     --target "$rust_target" \
     --locked
 

@@ -2,6 +2,11 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use serde::Serialize;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use zeroize::Zeroizing;
+
 /// Payload-free failure from the repository-owned native bridge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeBridgeError {
@@ -56,6 +61,123 @@ pub fn share_public_receive_address(value: &str) -> Result<String, NativeBridgeE
 #[cfg(target_os = "android")]
 pub fn share_public_receive_address(value: &str) -> Result<String, NativeBridgeError> {
     call_android_activity_with_string("oxidSharePublicReceiveAddress", value)
+}
+
+#[cfg(target_os = "ios")]
+pub fn inspect_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
+    call_ios_custody("inspect", profile_id, None, None)
+}
+
+#[cfg(target_os = "android")]
+pub fn inspect_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
+    call_android_custody("inspect", profile_id, None, None)
+}
+
+#[cfg(target_os = "ios")]
+pub fn initialize_custody_json(
+    profile_id: &str,
+    payload: &str,
+) -> Result<String, NativeBridgeError> {
+    call_ios_custody("initialize", profile_id, Some(payload), None)
+}
+
+#[cfg(target_os = "android")]
+pub fn initialize_custody_json(
+    profile_id: &str,
+    payload: &str,
+) -> Result<String, NativeBridgeError> {
+    call_android_custody("initialize", profile_id, Some(payload), None)
+}
+
+#[cfg(target_os = "ios")]
+pub fn unlock_custody_json(profile_id: &str, reason: &str) -> Result<String, NativeBridgeError> {
+    call_ios_custody("unlock", profile_id, None, Some(reason))
+}
+
+#[cfg(target_os = "android")]
+pub fn unlock_custody_json(profile_id: &str, reason: &str) -> Result<String, NativeBridgeError> {
+    call_android_custody("unlock", profile_id, None, Some(reason))
+}
+
+#[cfg(target_os = "ios")]
+pub fn load_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
+    call_ios_custody("load", profile_id, None, None)
+}
+
+#[cfg(target_os = "android")]
+pub fn load_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
+    call_android_custody("load", profile_id, None, None)
+}
+
+#[cfg(target_os = "ios")]
+pub fn save_custody_json(profile_id: &str, payload: &str) -> Result<String, NativeBridgeError> {
+    call_ios_custody("save", profile_id, Some(payload), None)
+}
+
+#[cfg(target_os = "android")]
+pub fn save_custody_json(profile_id: &str, payload: &str) -> Result<String, NativeBridgeError> {
+    call_android_custody("save", profile_id, Some(payload), None)
+}
+
+#[cfg(target_os = "ios")]
+pub fn lock_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
+    call_ios_custody("lock", profile_id, None, None)
+}
+
+#[cfg(target_os = "android")]
+pub fn lock_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
+    call_android_custody("lock", profile_id, None, None)
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+#[derive(Serialize)]
+struct NativeCustodyRequest<'a> {
+    operation: &'a str,
+    profile_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn custody_request(
+    operation: &str,
+    profile_id: &str,
+    payload: Option<&str>,
+    reason: Option<&str>,
+) -> Result<Zeroizing<String>, NativeBridgeError> {
+    serde_json::to_string(&NativeCustodyRequest {
+        operation,
+        profile_id,
+        payload,
+        reason,
+    })
+    .map(Zeroizing::new)
+    .map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(target_os = "ios")]
+fn call_ios_custody(
+    operation: &str,
+    profile_id: &str,
+    payload: Option<&str>,
+    reason: Option<&str>,
+) -> Result<String, NativeBridgeError> {
+    let request = custody_request(operation, profile_id, payload, reason)?;
+    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
+    custodyJson(&plugin, request.to_string()).map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(target_os = "android")]
+fn call_android_custody(
+    operation: &str,
+    profile_id: &str,
+    payload: Option<&str>,
+    reason: Option<&str>,
+) -> Result<String, NativeBridgeError> {
+    let request = custody_request(operation, profile_id, payload, reason)?;
+    call_android_activity_with_string("oxidCustodyJson", &request)
 }
 
 #[cfg(target_os = "android")]
@@ -116,8 +238,8 @@ fn android_string<'local>(
 
 #[cfg(target_os = "ios")]
 use ios_bridge::{
-    OxidMobilePlugin, copyPublicReceiveAddress, sharePublicReceiveAddress, startScanJson,
-    takeScanResultJson,
+    OxidMobilePlugin, copyPublicReceiveAddress, custodyJson, sharePublicReceiveAddress,
+    startScanJson, takeScanResultJson,
 };
 
 #[cfg(target_os = "ios")]
@@ -130,6 +252,7 @@ mod ios_bridge {
         pub fn takeScanResultJson(this: &OxidMobilePlugin) -> String;
         pub fn copyPublicReceiveAddress(this: &OxidMobilePlugin, value: String) -> String;
         pub fn sharePublicReceiveAddress(this: &OxidMobilePlugin, value: String) -> String;
+        pub fn custodyJson(this: &OxidMobilePlugin, request: String) -> String;
     }
 }
 

@@ -2079,22 +2079,24 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                                     security,
                                     busy: Some(account_activation_operation(security)),
                                 });
-                                match activate_protected_account(
-                                    &activate_services,
-                                    &activate_profile_id,
-                                    security,
-                                ) {
-                                    Ok(updated_security) => {
-                                        let service = activate_services.sync_wallet_account();
-                                        let profile_id = activate_profile_id.clone();
-                                        let networks = activate_networks.clone();
-                                        activate_state.set(AccountPageState::Ready {
-                                            networks: networks.clone(),
-                                            account: activate_account.clone(),
-                                            security: updated_security,
-                                            busy: Some(AccountOperation::Syncing),
-                                        });
-                                        spawn(async move {
+                                let services = activate_services.clone();
+                                let profile_id = activate_profile_id.clone();
+                                let networks = activate_networks.clone();
+                                let account = activate_account.clone();
+                                spawn(async move {
+                                    match activate_protected_account(
+                                        &services,
+                                        &profile_id,
+                                        security,
+                                    ) {
+                                        Ok(updated_security) => {
+                                            let service = services.sync_wallet_account();
+                                            activate_state.set(AccountPageState::Ready {
+                                                networks: networks.clone(),
+                                                account: account.clone(),
+                                                security: updated_security,
+                                                busy: Some(AccountOperation::Syncing),
+                                            });
                                             match service.execute(WalletAccountQuery { profile_id }).await {
                                                 Ok(account) => activate_state.set(AccountPageState::Ready {
                                                     networks,
@@ -2104,10 +2106,10 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                                                 }),
                                                 Err(error) => activate_state.set(AccountPageState::Failed(error.to_string())),
                                             }
-                                        });
+                                        }
+                                        Err(error) => activate_state.set(AccountPageState::Failed(error)),
                                     }
-                                    Err(error) => activate_state.set(AccountPageState::Failed(error)),
-                                }
+                                });
                             },
                             if is_busy { "Activating…" } else { "Activate development wallet" }
                         }
@@ -6622,18 +6624,22 @@ fn SettingsPage(
                                 let command = WalletProfileSecurityCommand {
                                     profile_id: profile_id.clone(),
                                 };
-                                let result = match status.state_name() {
-                                    "Uninitialized" => security_services
-                                        .initialize_wallet_security()
-                                        .execute(command),
-                                    "Locked" => security_services.unlock_wallet().execute(command),
-                                    "Unlocked" => security_services.lock_wallet().execute(command),
-                                    _ => return,
-                                };
-                                security_state.set(result.map_or_else(
-                                    |error| SecurityCapabilityState::Failed(error.to_string()),
-                                    SecurityCapabilityState::Ready,
-                                ));
+                                let services = security_services.clone();
+                                security_state.set(SecurityCapabilityState::Loading);
+                                spawn(async move {
+                                    let result = match status.state_name() {
+                                        "Uninitialized" => services
+                                            .initialize_wallet_security()
+                                            .execute(command),
+                                        "Locked" => services.unlock_wallet().execute(command),
+                                        "Unlocked" => services.lock_wallet().execute(command),
+                                        _ => return,
+                                    };
+                                    security_state.set(result.map_or_else(
+                                        |error| SecurityCapabilityState::Failed(error.to_string()),
+                                        SecurityCapabilityState::Ready,
+                                    ));
+                                });
                             },
                             "{security_action_label(status)}"
                         }

@@ -3,24 +3,69 @@
 #![forbid(unsafe_code)]
 
 fn main() {
-    #[cfg(all(feature = "standalone-development", not(target_arch = "wasm32")))]
+    #[cfg(all(
+        feature = "standalone-development",
+        feature = "standalone-native-custody"
+    ))]
+    compile_error!("select exactly one standalone custody feature");
+
+    #[cfg(all(
+        feature = "standalone-native-custody",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    let application = oxid_composition::compose_mobile_native_standalone();
+    #[cfg(all(
+        feature = "standalone-native-custody",
+        not(any(target_os = "ios", target_os = "android"))
+    ))]
+    compile_error!("standalone-native-custody is available only on iOS and Android");
+    #[cfg(all(
+        feature = "standalone-development",
+        not(feature = "standalone-native-custody"),
+        not(target_arch = "wasm32")
+    ))]
     let application = oxid_composition::compose_headless_from_environment()
         .unwrap_or_else(|error| panic!("standalone wallet configuration is invalid: {error}"));
-    #[cfg(all(feature = "standalone-development", target_arch = "wasm32"))]
+    #[cfg(all(
+        feature = "standalone-development",
+        not(feature = "standalone-native-custody"),
+        target_arch = "wasm32"
+    ))]
     let application = oxid_composition::compose_headless();
-    #[cfg(not(feature = "standalone-development"))]
+    #[cfg(not(any(
+        feature = "standalone-development",
+        feature = "standalone-native-custody"
+    )))]
     let application = oxid_composition::compose();
-    #[cfg(feature = "standalone-development")]
+    #[cfg(any(
+        feature = "standalone-development",
+        feature = "standalone-native-custody"
+    ))]
     let standalone_credential_offer = Some(oxid_composition::standalone_oid4vci_offer());
-    #[cfg(not(feature = "standalone-development"))]
+    #[cfg(not(any(
+        feature = "standalone-development",
+        feature = "standalone-native-custody"
+    )))]
     let standalone_credential_offer = None;
-    #[cfg(feature = "standalone-development")]
+    #[cfg(any(
+        feature = "standalone-development",
+        feature = "standalone-native-custody"
+    ))]
     let standalone_self_issued_request = Some(oxid_composition::standalone_siopv2_request());
-    #[cfg(not(feature = "standalone-development"))]
+    #[cfg(not(any(
+        feature = "standalone-development",
+        feature = "standalone-native-custody"
+    )))]
     let standalone_self_issued_request = None;
-    #[cfg(feature = "standalone-development")]
+    #[cfg(any(
+        feature = "standalone-development",
+        feature = "standalone-native-custody"
+    ))]
     let standalone_openid4vp_request = Some(oxid_composition::standalone_openid4vp_request());
-    #[cfg(not(feature = "standalone-development"))]
+    #[cfg(not(any(
+        feature = "standalone-development",
+        feature = "standalone-native-custody"
+    )))]
     let standalone_openid4vp_request = None;
     let ui = oxid_ui_dioxus::WalletUiServices::new(
         oxid_ui_dioxus::WalletProfileUiServices::new(

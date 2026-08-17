@@ -23,6 +23,20 @@ fi
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
+mobile_custody="${OXID_MOBILE_CUSTODY:-development}"
+case "$mobile_custody" in
+  development)
+    mobile_features="mobile,standalone-development"
+    ;;
+  native)
+    mobile_features="mobile,standalone-native-custody"
+    ;;
+  *)
+    echo "OXID_MOBILE_CUSTODY must be 'development' or 'native'." >&2
+    exit 1
+    ;;
+esac
+
 case "$(uname -m)" in
   arm64)
     rust_target="aarch64-apple-ios-sim"
@@ -49,7 +63,7 @@ PATH="$rust_toolchain_bin:/usr/bin:$PATH" \
     --ios \
     --package oxid-app \
     --no-default-features \
-    --features mobile,standalone-development \
+    --features "$mobile_features" \
     --target "$rust_target" \
     --locked
 

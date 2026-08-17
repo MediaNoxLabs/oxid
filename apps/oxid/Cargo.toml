@@ -16,6 +16,9 @@ web = ["dioxus/web"]
 # Explicit simulator/emulator composition. This never changes the default
 # production-facing composition selected by a normal application build.
 standalone-development = []
+# Explicit simulator/emulator composition using production native custody and
+# deterministic standalone wallet/SSI adapters.
+standalone-native-custody = []
 
 [dependencies]
 dioxus = { workspace = true, features = ["launch"] }

@@ -1228,9 +1228,39 @@ instance so the application class loader resolves the plugin from Rust worker
 threads. Issue #32 owns physical-camera, universal-link, production-discovery,
 and resource evidence.
 
+ADR-0071 makes normal iOS/Android composition use `storage-mobile`; never add a
+fallback from it to development custody. The adapter stores one bounded,
+profile-bound sealed vault and keeps all multi-curve/HD operations behind the
+existing opaque wallet ports. iOS uses a
+`kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly` Keychain item with
+`userPresence` and reports operating-system protection. Android uses a
+user-authenticated AES-GCM Android Keystore key, requests StrongBox, reports
+hardware backing only from `KeyInfo`, and retains only an authenticated
+protection label plus IV/ciphertext in an atomic digest-named
+`noBackupFilesDir/oxid-custody-v1` record. Both use a
+30-second in-process authorization session; expiry or restart must reauthorize.
+The selected Manganis 0.7.10 bridge requires one bounded JSON argument for
+custody because its generated Swift FFI mishandles the needed multi-string
+signature. Never log that request/response or widen the public native API.
+
+`OXID_MOBILE_CUSTODY=development|native` selects the standalone mobile
+composition; development is the default. Native mode combines production
+custody with deterministic wallet/SSI adapters and must keep simulated
+settlement labels. `just ios-native-custody-smoke` validates native capability
+or fail-closed behavior because iOS Simulator can reject the passcode-bound
+Keychain policy. `just android-native-custody-smoke` exercises a real system
+credential prompt, opaque no-backup ciphertext, restart, and stable root; it
+must remain restricted to a disposable `emulator-*` without an existing
+credential and must clear its temporary PIN/app data on every exit. Physical
+device recovery/resource evidence and issue #30 mobile Compact proving remain
+release gates.
+
 `just ios-smoke` generates an ignored XCUITest project from
 `tests/mobile/ios/project.yml`, resets only the installed Oxid simulator data,
-and verifies profile creation, development account activation, receive QR,
+and must select only `OxidUITests/ProfileFlowTests`; the native-custody harness
+selects only `NativeCustodyTests` so feature-specific assertions never run
+against the other composition. The development suite verifies profile creation,
+development account activation, receive QR,
 native public-address copy/share, warm/cold identity links without auto-consent,
 staged simulated transfer, OpenID4VCI offer preview/consent/issuance, protected
 Digital Passport verification/restore, hidden-by-default first/last values,

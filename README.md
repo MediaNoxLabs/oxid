@@ -29,9 +29,10 @@ than layers bolted onto one chain-specific frontend.
 > commitment-bound protected claims. It reissues that exact bundle to the
 > selected profile's managed Jubjub assertion method, and a native verifier
 > checks the resulting Compact roots and proof before encrypted storage. Exact
-> development Jubjub signing stays behind opaque custody references; issuer
-> trust, presentation-time holder reauthorization, and native custody remain
-> explicit later gates.
+> development Jubjub signing stays behind opaque custody references. Normal
+> mobile composition now seals the same multi-curve vault behind iOS Keychain
+> or Android Keystore user presence; issuer trust, physical-device release
+> evidence, recovery, and mobile Compact proving remain explicit later gates.
 > Headless can inspect a claim-free
 > disclosure plan, while Dioxus explicitly reveals/hides first and last name
 > locally and plans an age predicate without claiming a presentation or proof.
@@ -94,6 +95,31 @@ Launch the desktop shell:
 
 ```bash
 cargo run -p oxid-app
+```
+
+Launch the fully capable standalone mobile application with deterministic,
+process-local development custody:
+
+```bash
+just ios-run
+just android-run
+```
+
+To exercise the same standalone wallet/SSI stack through native device custody,
+select it explicitly:
+
+```bash
+OXID_MOBILE_CUSTODY=native just ios-run
+OXID_MOBILE_CUSTODY=native just android-run
+```
+
+`just ios-native-custody-smoke` accepts either a supported passcode-bound
+Keychain capability or a truthful fail-closed simulator result. The Android
+counterpart performs the full system-credential and restart test, but is
+intentionally restricted to a disposable emulator with no existing PIN:
+
+```bash
+OXID_ANDROID_DEVICE=emulator-5554 just android-native-custody-smoke
 ```
 
 Exercise the same application services through the versioned NDJSON harness:

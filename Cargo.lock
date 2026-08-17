@@ -5491,6 +5491,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "oxid-adapter-custody-software"
+version = "0.1.0"
+dependencies = [
+ "bip32",
+ "ed25519-dalek",
+ "hex",
+ "k256",
+ "midnight-serialize",
+ "midnight-transient-crypto",
+ "oxid-wallet-application",
+ "oxid-wallet-domain",
+ "p256",
+ "sha2 0.10.9",
+ "zeroize",
+]
+
+[[package]]
 name = "oxid-adapter-did-midnight"
 version = "0.1.0"
 dependencies = [
@@ -5563,6 +5580,9 @@ name = "oxid-adapter-mobile-native"
 version = "0.1.0"
 dependencies = [
  "manganis",
+ "serde",
+ "serde_json",
+ "zeroize",
 ]
 
 [[package]]
@@ -5752,6 +5772,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-adapter-storage-mobile"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "oxid-adapter-custody-software",
+ "oxid-adapter-mobile-native",
+ "oxid-foundation",
+ "oxid-platform-ports",
+ "oxid-wallet-application",
+ "oxid-wallet-domain",
+ "serde",
+ "serde_json",
+ "zeroize",
+]
+
+[[package]]
 name = "oxid-adapter-vc-midnight"
 version = "0.1.0"
 dependencies = [
@@ -5815,6 +5852,7 @@ dependencies = [
  "oxid-adapter-storage-identity-json",
  "oxid-adapter-storage-json",
  "oxid-adapter-storage-memory",
+ "oxid-adapter-storage-mobile",
  "oxid-adapter-vc-midnight",
  "oxid-credential-application",
  "oxid-identity-application",
