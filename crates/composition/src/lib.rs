@@ -9,6 +9,9 @@ use oxid_adapter_did_midnight::{
     HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
 };
 use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_adapter_identity_ingress::NativeQrScanner;
+use oxid_adapter_identity_ingress::StrictIdentityRequestRouter;
 use oxid_adapter_midnight::MidnightPublicCallContextSource;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
@@ -138,6 +141,9 @@ use oxid_passport_vault_application::{
     PassportVaultCallSubmissionState, PassportVaultCallSubmissionStatus,
     PassportVaultContractStateSnapshot,
 };
+use oxid_platform_ports::QrScannerPort;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+use oxid_platform_ports::UnavailableQrScanner;
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CredentialPresentationProtocolPort,
     CredentialPresentationService, GetCredentialPresentationUseCase,
@@ -148,10 +154,11 @@ use oxid_presentation_application::{
 use oxid_protocol_application::{
     AcceptCredentialIssuanceUseCase, AcceptSelfIssuedAuthenticationUseCase,
     CredentialIssuanceProtocolPort, CredentialIssuanceService, GetCredentialIssuanceUseCase,
-    GetSelfIssuedAuthenticationUseCase, IssuedCredentialSinkPort, ListCredentialIssuancesUseCase,
-    ListSelfIssuedAuthenticationsUseCase, PrepareCredentialIssuanceUseCase,
-    PrepareSelfIssuedAuthenticationUseCase, RefuseCredentialIssuanceUseCase,
-    RefuseSelfIssuedAuthenticationUseCase, SelfIssuedAuthenticationProtocolPort,
+    GetSelfIssuedAuthenticationUseCase, IdentityRequestRouterPort, IdentityRequestRoutingService,
+    IssuedCredentialSinkPort, ListCredentialIssuancesUseCase, ListSelfIssuedAuthenticationsUseCase,
+    PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationUseCase,
+    RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationUseCase,
+    RouteIdentityRequestUseCase, SelfIssuedAuthenticationProtocolPort,
     SelfIssuedAuthenticationService, UnavailableCredentialIssuanceProtocol,
     UnavailableIssuedCredentialSink, UnavailableSelfIssuedAuthenticationProtocol,
 };
@@ -198,6 +205,8 @@ impl<T> NativeMidnightCompositionCapability for T {}
 /// Application capabilities shared by every incoming adapter.
 #[derive(Clone)]
 pub struct ApplicationServices {
+    qr_scanner: Arc<dyn QrScannerPort>,
+    route_identity_request: Arc<dyn RouteIdentityRequestUseCase>,
     midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource>,
     #[cfg(not(target_arch = "wasm32"))]
     midnight_contract_call_funding: Arc<dyn MidnightContractCallFundingPort>,
@@ -344,6 +353,16 @@ impl PassportVaultRepositoryComposition {
 }
 
 impl ApplicationServices {
+    #[must_use]
+    pub fn qr_scanner(&self) -> Arc<dyn QrScannerPort> {
+        Arc::clone(&self.qr_scanner)
+    }
+
+    #[must_use]
+    pub fn route_identity_request(&self) -> Arc<dyn RouteIdentityRequestUseCase> {
+        Arc::clone(&self.route_identity_request)
+    }
+
     #[must_use]
     pub fn create_wallet_profile(&self) -> Arc<dyn CreateWalletProfileUseCase> {
         Arc::clone(&self.create_wallet_profile)
@@ -2076,6 +2095,33 @@ where
         self_issued_authentication,
         credential_presentation,
     } = identity_adapters;
+    let identity_request_router: Arc<dyn IdentityRequestRouterPort> = if matches!(
+        self_issued_authentication,
+        SelfIssuedAuthenticationComposition::Standalone
+    ) && !matches!(
+        &credential_presentation,
+        CredentialPresentationComposition::Unavailable
+    ) {
+        StrictIdentityRequestRouter::with_registered_openid4vp_requests(
+            &standalone_siopv2_request(),
+            &standalone_openid4vp_request(),
+        )
+        .map_or_else(
+            |_| {
+                Arc::new(StrictIdentityRequestRouter::credential_offers_only())
+                    as Arc<dyn IdentityRequestRouterPort>
+            },
+            |router| Arc::new(router) as Arc<dyn IdentityRequestRouterPort>,
+        )
+    } else {
+        Arc::new(StrictIdentityRequestRouter::credential_offers_only())
+    };
+    let route_identity_request =
+        Arc::new(IdentityRequestRoutingService::new(identity_request_router));
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let qr_scanner: Arc<dyn QrScannerPort> = Arc::new(NativeQrScanner);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let qr_scanner: Arc<dyn QrScannerPort> = Arc::new(UnavailableQrScanner);
     let presentation_credential_repository = Arc::clone(&credential_repository);
     let vault_credential_repository = Arc::clone(&credential_repository);
     let standalone_passport_vault = matches!(
@@ -2393,6 +2439,8 @@ where
     > = passport_vault_contract_calls;
 
     ApplicationServices {
+        qr_scanner,
+        route_identity_request,
         midnight_public_call_context,
         #[cfg(not(target_arch = "wasm32"))]
         midnight_contract_call_funding,

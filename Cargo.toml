@@ -11,6 +11,7 @@ members = [
   "crates/adapters/siopv2",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
+  "crates/adapters/identity-ingress",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
@@ -44,6 +45,7 @@ default-members = [
   "crates/adapters/siopv2",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
+  "crates/adapters/identity-ingress",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
@@ -89,6 +91,7 @@ futures = { version = "=0.3.33", default-features = false, features = ["executor
 getrandom = { version = "=0.3.4", features = ["wasm_js"] }
 hex = { version = "=0.4.3" }
 jni = { version = "=0.21.1" }
+manganis = { version = "=0.7.10" }
 k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
 midnight-base-crypto = { version = "=1.0.0", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-base-crypto" }
 midnight-coin-structure = { version = "=2.0.1", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-coin-structure" }
@@ -123,6 +126,7 @@ oxid-adapter-passport-vault = { version = "=0.1.0", path = "crates/adapters/pass
 oxid-adapter-siopv2 = { version = "=0.1.0", path = "crates/adapters/siopv2" }
 oxid-adapter-vc-midnight = { version = "=0.1.0", path = "crates/adapters/vc-midnight" }
 oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-midnight" }
+oxid-adapter-identity-ingress = { version = "=0.1.0", path = "crates/adapters/identity-ingress" }
 oxid-adapter-storage-credential-json = { version = "=0.1.0", path = "crates/adapters/storage-credential-json" }
 oxid-adapter-storage-identity-json = { version = "=0.1.0", path = "crates/adapters/storage-identity-json" }
 oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }

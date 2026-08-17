@@ -27,11 +27,11 @@ before migrating later work.
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification, protected Digital Passport values/openings | `credential/domain`, `credential/application`, `adapters/vc-midnight`, protected credential storage | Profile-scoped protected inventory and strict phase-1 verification implemented by issue #23/ADR-0038; issue #26/ADR-0041/0042 adds atomic opaque material, commitment-bound five-claim Digital Passport interpretation, safe local planning/reveal, restart/deletion, and mobile coverage; Compact presentation proofs, status/schema/trust policy, and native wrapping remain pending |
 | `wallet-core/oid4vci_client` and `oid4vci_issuance_e2e` | Pre-authorized offer, token/nonce, holder proof, credential request/store flow | `protocol/domain`, `protocol/application`, `adapters/openid4vci`, existing DID custody and verified credential sink | OpenID4VCI 1.0 Final embedded-offer standalone flow plus separate authentication and managed Jubjub holder-binding methods implemented by issue #24 and ADR-0039/0047; production transport/discovery and additional grant/response variants pending |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | `passport-vault/domain`, `passport-vault/application`, product adapter, not generic wallet core | ADR-0051 delivers exact standalone multi-lock behavior; ADR-0052 adds the immutable five-circuit artifact closure and native tagged-state decoding; ADR-0054/0055 authenticate canonical history/state; ADR-0056/0057 add the retained call harness and explicit simulator; ADR-0058 authenticates the generated client/four wallet proof circuits; ADR-0059 through ADR-0063 add closed-schema public-call composition, exact finalized context, protected NIGHT/DUST proving, finalized submission, cancellation, and restart recovery; ADR-0064 through ADR-0066 add authorization-bound managed-custody claim composition and native discovery; ADR-0068 adds durable owner-private standalone accounting/replay state while real-node/mobile live fixtures remain issue #31 |
-| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, protected development activation, staged transfer, DID lifecycle, protected credential inventory/verification, standalone issuance, consented self-issued DID authentication, Digital Passport local reveal/age plan, OpenID4VP request/consent proof gate, standalone Passport Vault journey, and the typed native prepare/authorize/prove/submit/cancel/reconcile vault lifecycle are reimplemented without WebView/iframe bridges; device live-node fixtures and resource baselines remain pending |
-| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, wallet/identity flows, claim-free Digital Passport planning, Final-shaped OpenID4VP proof/verification, and complete standalone Passport Vault create/deposit/claim/replay/withdraw accounting are implemented while credential/proof private material stays hidden |
+| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, protected development activation, staged transfer, DID lifecycle, protected credential inventory/verification, standalone issuance, consented self-issued DID authentication, Digital Passport local reveal/age plan, OpenID4VP request/consent proof gate, standalone Passport Vault journey, typed native vault-call lifecycle, and scan-first identity routing are reimplemented without WebView/iframe bridges; physical-device/OS-link evidence, device live-node fixtures, and resource baselines remain pending |
+| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, wallet/identity flows, claim-free Digital Passport planning, Final-shaped OpenID4VP proof/verification, strict redacted identity-request routing, and complete standalone Passport Vault create/deposit/claim/replay/withdraw accounting are implemented while raw request URIs and credential/proof private material stay hidden |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
 | benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness implemented and measured on iOS/Android; generated artifacts remain uncommitted |
-| Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts | Dioxus-generated hosts build and launch the explicit standalone-development composition through repository scripts; native camera/copy/share/custody bridges remain deferred |
+| Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts plus `adapters/identity-ingress` | Dioxus-generated hosts build and launch explicit standalone composition; static Swift/AVFoundation and Kotlin/Google Code Scanner QR adapters package successfully, simulator unavailability fails closed, and physical camera plus copy/share/deep-link/custody evidence remains deferred |
 
 ## M0 migration decisions
 
@@ -451,15 +451,27 @@ per-lock credential-root replay set across headless and mobile process restarts.
 The file is never a source for canonical replay, native call authorization, or
 Midnight settlement.
 
+ADR-0069 migrates the prototype's scan-first identity entry through a new
+platform port and a separate strict protocol adapter. iOS packages an
+AVFoundation QR scanner, Android packages Google Code Scanner 16.1.0 in QR-only
+mode, and Dioxus routes a successful classification into the existing
+OpenID4VCI, SIOPv2, or OpenID4VP preview/consent journey. The headless
+`identity.request.route` method proves the same three routes without echoing the
+raw request. Because SIOPv2 and presentation share the `openid4vp` scheme,
+standalone classification requires exact registered client/request endpoint
+pairs and unknown links fail closed. Issue #32 owns physical-device scanning,
+OS deep/app links, copy/share, and production discovery.
+
 The prototype claim composer also derives a holder scalar from the public
 credential claim root and fixes the presentation nonce to `17`; Oxid requires
 opaque managed holder custody and fresh randomness instead of migrating either
 shortcut.
 
 Shielded spending, internal/change address management, replacement handling,
-live DID writes, live OpenID4VP response delivery and mobile Compact proving, camera/copy/share
-bridges, production endpoint discovery, durable recovery, and native custody
-remain separate follow-ups.
+live DID writes, live OpenID4VP response delivery and mobile Compact proving,
+physical-camera evidence, OS deep/app links, copy/share bridges, production
+endpoint discovery, durable recovery, and native custody remain separate
+follow-ups.
 
 ## Gate for each later slice
 

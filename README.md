@@ -470,6 +470,14 @@ standalone configuration selects authenticated native settlement; partial or
 invalid configuration fails startup. A normal `cargo run -p oxid-app` does not
 enable this feature and stays fail-closed.
 
+The standalone mobile header includes **Scan QR**. A successful physical-device
+scan strictly routes an OpenID credential offer or one of the registered
+standalone SIOPv2/OpenID4VP requests into its existing preview and consent
+page; it never accepts the request automatically. Apple simulators have no
+camera and therefore show the expected unavailable message. The offer, login,
+and presentation fixture buttons remain available for complete simulator flow
+testing.
+
 Set `OXID_IOS_DEVICE` to a simulator UDID to select a particular device. The
 script obtains the pinned Dioxus CLI from the locked Nix flake but deliberately
 uses the host Xcode and Rustup toolchain for Apple SDK discovery. Generated

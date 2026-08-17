@@ -41,9 +41,10 @@ use oxid_presentation_application::{
 use oxid_protocol_application::{
     AcceptCredentialIssuanceCommand, AcceptSelfIssuedAuthenticationCommand,
     CredentialIssuanceError, CredentialIssuanceProfileQuery, CredentialIssuanceQuery,
-    CredentialIssuanceView, PrepareCredentialIssuanceCommand,
-    PrepareSelfIssuedAuthenticationCommand, RefuseCredentialIssuanceCommand,
-    RefuseSelfIssuedAuthenticationCommand, SelfIssuedAuthenticationError,
+    CredentialIssuanceView, IdentityRequestKind, IdentityRequestRoutingError,
+    PrepareCredentialIssuanceCommand, PrepareSelfIssuedAuthenticationCommand,
+    RefuseCredentialIssuanceCommand, RefuseSelfIssuedAuthenticationCommand,
+    RouteIdentityRequestCommand, SelfIssuedAuthenticationError,
     SelfIssuedAuthenticationProfileQuery, SelfIssuedAuthenticationQuery,
     SelfIssuedAuthenticationView,
 };
@@ -261,6 +262,7 @@ impl HeadlessWallet {
             "credential.presentation.refuse" => self.refuse_credential_presentation(request),
             "credential.presentation.get" => self.get_credential_presentation(request),
             "credential.presentation.list" => self.list_credential_presentations(request),
+            "identity.request.route" => self.route_identity_request(request),
             "identity.login" | "identity.authentication.prepare" => {
                 self.prepare_self_issued_authentication(request)
             }
@@ -2348,6 +2350,42 @@ impl HeadlessWallet {
         }
     }
 
+    fn route_identity_request(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<RouteIdentityRequestParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "identity.request.route requires only a string requestUri field",
+                ));
+            }
+        };
+        match self
+            .application
+            .route_identity_request()
+            .execute(RouteIdentityRequestCommand {
+                request_uri: params.request_uri,
+            }) {
+            Ok(kind) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "route": {
+                        "kind": kind.code(),
+                        "destination": match kind {
+                            IdentityRequestKind::SelfIssuedAuthentication => "dids",
+                            IdentityRequestKind::CredentialIssuance
+                            | IdentityRequestKind::CredentialPresentation => "credentials",
+                        },
+                    }
+                }),
+            )),
+            Err(error) => {
+                Dispatch::continue_with(identity_request_routing_error(request.id, error))
+            }
+        }
+    }
+
     fn accept_credential_issuance(&self, request: Request) -> Dispatch {
         let params = match serde_json::from_value::<AcceptCredentialIssuanceParams>(request.params)
         {
@@ -3048,6 +3086,12 @@ struct DisclosurePredicateParams {
 #[serde(deny_unknown_fields)]
 struct PrepareCredentialIssuanceParams {
     offer: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RouteIdentityRequestParams {
+    request_uri: String,
 }
 
 #[derive(Deserialize)]
@@ -3777,6 +3821,25 @@ fn credential_issuance_value(issuance: &CredentialIssuanceView) -> Value {
         "credentialId": issuance.credential_id,
         "failureCode": issuance.failure_code,
     })
+}
+
+fn identity_request_routing_error(
+    id: Option<String>,
+    error: IdentityRequestRoutingError,
+) -> Response {
+    let message = match error {
+        IdentityRequestRoutingError::InvalidRequest => "identity request is invalid",
+        IdentityRequestRoutingError::UnsupportedRequest => {
+            "identity request protocol is unsupported"
+        }
+        IdentityRequestRoutingError::AmbiguousRequest => {
+            "OpenID4VP endpoint is not registered and cannot be classified safely"
+        }
+        IdentityRequestRoutingError::Unavailable => {
+            "identity request routing capability is unavailable"
+        }
+    };
+    Response::error(id, error.code(), message)
 }
 
 fn credential_issuance_error(id: Option<String>, error: CredentialIssuanceError) -> Response {
@@ -5095,6 +5158,7 @@ fn capability_manifest(
         { "method": "vault.deposit", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": DEPOSIT_INTENT },
         { "method": "vault.claim", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": CLAIM_INTENT, "credentialPolicy": "digital-passport:v1", "replayProtection": "per_lock_credential_root" },
         { "method": "vault.withdraw", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": WITHDRAW_INTENT },
+        { "method": "identity.request.route", "status": "ready", "mode": "standalone", "inputs": ["openid-credential-offer", "registered_openid4vp"], "unknownOpenid4vp": "fail_closed", "requestUriExposed": false },
         { "method": "identity.login", "status": "ready", "mode": "standalone", "aliasFor": "identity.authentication.prepare" },
         { "method": "identity.authentication.prepare", "status": "ready", "mode": "standalone", "standard": "SIOPv2 draft 13", "requestMode": "by_reference", "responseMode": "direct_post", "responseType": "id_token", "secretsExposed": false },
         { "method": "identity.authentication.accept", "status": "ready", "mode": "standalone", "confirmationRequired": true, "algorithms": ["EdDSA", "ES256"], "secretsExposed": false },
@@ -5323,6 +5387,39 @@ mod tests {
                         "withdraw_from_lock"
                     ])
         }));
+    }
+
+    #[test]
+    fn routes_scanned_identity_links_without_echoing_protocol_secrets() {
+        let unknown = "openid4vp://authorize?client_id=https%3A%2F%2Funknown.example&request_uri=https%3A%2F%2Funknown.example%2Frequest";
+        let input = [
+            json!({"protocol": PROTOCOL_VERSION, "id": "route-offer", "method": "identity.request.route", "params": {"requestUri": standalone_credential_offer()}}),
+            json!({"protocol": PROTOCOL_VERSION, "id": "route-login", "method": "identity.request.route", "params": {"requestUri": standalone_self_issued_request()}}),
+            json!({"protocol": PROTOCOL_VERSION, "id": "route-presentation", "method": "identity.request.route", "params": {"requestUri": oxid_composition::standalone_openid4vp_request()}}),
+            json!({"protocol": PROTOCOL_VERSION, "id": "route-unknown", "method": "identity.request.route", "params": {"requestUri": unknown}}),
+        ]
+        .map(|request| request.to_string())
+        .join("\n");
+
+        let responses = execute(&input);
+        assert_eq!(
+            responses[0]["result"]["route"]["kind"],
+            "credential_issuance"
+        );
+        assert_eq!(
+            responses[1]["result"]["route"]["kind"],
+            "self_issued_authentication"
+        );
+        assert_eq!(
+            responses[2]["result"]["route"]["kind"],
+            "credential_presentation"
+        );
+        assert_eq!(responses[3]["error"]["code"], "ambiguous_identity_request");
+
+        let serialized = serde_json::to_string(&responses).expect("responses");
+        assert!(!serialized.contains("credential_offer"));
+        assert!(!serialized.contains("127.0.0.1"));
+        assert!(!serialized.contains("unknown.example"));
     }
 
     #[test]

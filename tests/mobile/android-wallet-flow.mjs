@@ -123,6 +123,7 @@ try {
     await clickButton("Create and continue");
     await clickButtonByLabel("Activate protected Midnight account");
     await waitForButton("Use my receive address");
+    await waitForButton("Scan QR");
 
     await clickButton("Sync DUST");
     await waitFor(

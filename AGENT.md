@@ -769,6 +769,10 @@ bounded UTXOs, creates change, signs every input, and relabels the retained-only
 capability `native_funded_draft`. ADR-0063 adds the DUST proof, broadcast,
 public journal, and finalized outcome authority for native
 create/deposit/withdraw while keeping claim closed.
+ADR-0069 keeps QR capture behind a platform port and identity-link
+classification in a strict protocol adapter. Native ingress may navigate only
+to existing preview/consent flows; it cannot execute them. Unknown
+`openid4vp` endpoint pairs remain ambiguous and fail closed.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -792,7 +796,7 @@ Current package ownership:
 | `crates/presentation/application` | Profile-scoped presentation use cases plus protocol, candidate, current-holder authorization, proof, and independent-verifier ports. |
 | `crates/passport-vault/domain` | Dependency-free product lock policy, creator authorization, checked accounting, and per-lock credential replay invariants. |
 | `crates/passport-vault/application` | Passport Vault list/create/deposit/claim/withdraw use cases plus focused repository, credential-policy, bounded contract-state source, and retained four-operation contract-call ports. |
-| `crates/platform/ports` | Clock and randomness capabilities used by applications. |
+| `crates/platform/ports` | Clock, randomness, and bounded native QR-scanner capabilities used by applications. |
 | `crates/adapters/storage-memory` | Development/test implementations of wallet, DID, and credential persistence ports. |
 | `crates/adapters/storage-json` | Versioned persistence for public profile metadata and active selection only. |
 | `crates/adapters/storage-identity-json` | Strict versioned persistence for validated profile-scoped public DID documents only. |
@@ -805,6 +809,7 @@ Current package ownership:
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
+| `crates/adapters/identity-ingress` | Strict credential-offer/registered-OpenID4VP classifier plus payload-redacted native iOS/Android QR scanner adapters. |
 | `contracts/presentation` | Oxid-owned final Compact presentation compositions; generated artifacts remain Nix-store outputs and never enter Git. |
 | `contracts/passport-vault` | Byte-identical Apache-2.0 Passport Vault Compact source distributed for secret-free public builds; its pinned private-upstream provenance and digest are ADR-0053 review boundaries. |
 | `nix/packages/passport-vault-compact-artifacts.nix` | Immutable Passport Vault client/IR/key/parameter closure from the hash-checked distributed contract plus pinned VC and Compact toolchain revisions. |
@@ -1167,12 +1172,14 @@ its packaging and memory strategy are separately reviewed.
 On macOS with Xcode and Rustup installed, `just ios-run` uses the Dioxus CLI
 from the locked flake and the host Apple/Rust toolchain to build, install, and
 launch the mobile feature. The Nix shell's non-Apple `xcrun` compatibility tool
-must not be used for simulator discovery. The launcher also replaces Nix's
-`DEVELOPER_DIR` and macOS `SDKROOT` with the selected Xcode installation and
-its `iphonesimulator` SDK for the Dioxus build; preserve those overrides so
-`nix develop --command just ios-smoke` remains valid. The XCUITest invocation
-also uses a minimal host environment so Nix compiler/linker variables cannot
-leak into Apple's build system.
+must not be used for simulator discovery. The launcher replaces Nix's
+`DEVELOPER_DIR` with the selected Xcode installation and explicitly removes
+`SDKROOT` for the Dioxus build. SwiftPM must compile its host-side package
+manifest before Xcode selects the simulator SDK; exporting the simulator
+`SDKROOT` globally makes that manifest fail to load. Preserve the host-tool and
+simulator split so `nix develop --command just ios-smoke` remains valid. The
+XCUITest invocation also uses a minimal host environment so Nix compiler/linker
+variables cannot leak into Apple's build system.
 `OXID_IOS_DEVICE=<UDID>` selects a specific simulator. The first verified smoke
 test used an arm64 iPhone simulator. The prototype-derived shell and
 first-launch profile gateway were subsequently built, launched, and visually
@@ -1180,6 +1187,19 @@ verified through the same command.
 `just android-run` performs the equivalent Dioxus build, install, and launch
 using an Android SDK/NDK plus a connected device or local AVD. Generated
 Gradle/Xcode output remains under ignored `target/` paths.
+
+ADR-0069 adds the first native identity-request ingress boundary. Manganis
+0.7.10 is kept on the same release as Dioxus 0.7.10 and packages static Swift
+and Kotlin plugins from `adapters/identity-ingress`. iOS uses AVFoundation and
+must return `unavailable` in a simulator; Android uses Google Code Scanner
+16.1.0 in QR-only mode without declaring app camera permission. The native
+plugins capture bytes only. Keep the 32 KiB bound, payload-redacted debug/error
+surface, and strict Rust router between QR/deep-link input and every protocol
+flow. SIOPv2 and credential presentation both use `openid4vp`, so standalone
+composition classifies only exact registered `client_id`/`request_uri` pairs;
+unknown pairs must stay `ambiguous` until reviewed production discovery exists.
+Scanning only populates the existing page and cannot bypass preview or consent.
+Issue #32 owns physical-device, OS deep-link, copy/share, and resource evidence.
 
 `just ios-smoke` generates an ignored XCUITest project from
 `tests/mobile/ios/project.yml`, resets only the installed Oxid simulator data,

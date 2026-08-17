@@ -103,6 +103,8 @@ check_workspace_dependencies oxid-adapter-midnight \
   oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-did-midnight \
   oxid-identity-application oxid-identity-domain oxid-wallet-application oxid-wallet-domain
+check_workspace_dependencies oxid-adapter-identity-ingress \
+  oxid-platform-ports oxid-protocol-application
 check_workspace_dependencies oxid-adapter-storage-identity-json \
   oxid-identity-application oxid-identity-domain
 check_workspace_dependencies oxid-adapter-storage-credential-json \
@@ -126,17 +128,19 @@ check_workspace_dependencies oxid-adapter-passport-vault \
   oxid-platform-ports
 check_workspace_dependencies oxid-ui-dioxus \
   oxid-credential-application oxid-identity-application oxid-identity-domain \
+  oxid-platform-ports \
   oxid-passport-vault-application oxid-presentation-application \
   oxid-protocol-application oxid-wallet-application
 check_workspace_dependencies oxid-composition \
-  oxid-adapter-did-midnight oxid-adapter-openid4vci oxid-adapter-siopv2 \
+  oxid-adapter-did-midnight oxid-adapter-identity-ingress \
+  oxid-adapter-openid4vci oxid-adapter-siopv2 \
   oxid-adapter-openid4vp oxid-adapter-passport-vault \
   oxid-adapter-platform-system \
   oxid-adapter-storage-credential-json oxid-adapter-storage-json \
   oxid-adapter-storage-identity-json oxid-adapter-vc-midnight \
   oxid-adapter-storage-memory oxid-adapter-storage-dev oxid-adapter-midnight \
   oxid-credential-application oxid-identity-application \
-  oxid-passport-vault-application oxid-presentation-application \
+  oxid-passport-vault-application oxid-platform-ports oxid-presentation-application \
   oxid-protocol-application \
   oxid-wallet-application
 check_workspace_dependencies oxid-app oxid-composition oxid-ui-dioxus

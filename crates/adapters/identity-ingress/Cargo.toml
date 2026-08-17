@@ -1,0 +1,21 @@
+[package]
+name = "oxid-adapter-identity-ingress"
+description = "Strict protocol-link routing and native QR ingress for Oxid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+manganis.workspace = true
+oxid-platform-ports.workspace = true
+oxid-protocol-application.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

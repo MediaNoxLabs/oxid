@@ -90,6 +90,7 @@ ADR status and delivery state answer different questions:
 | [0066](0066-enable-native-vault-claim-discovery-after-managed-conformance.md) Enable native vault claim discovery after managed conformance | Accepted | §§3–7, 9–13, 16–18, 21, standalone issuance/custody/composer flow, and issue #31 | Full managed-DID and holder-bound credential conformance reaches terminal native submission through the packaged composer; `native_settlement` now advertises all four wallet operations |
 | [0067](0067-drive-mobile-vault-settlement-through-typed-application-use-cases.md) Drive mobile vault settlement through typed application use cases | Accepted | §§3–8, 12–13, 16–18, 21, prototype mobile vault surface, and issue #31 | Dioxus reads truthfully labelled contract state and drives all four calls through explicit prepare/authorize/prove/submit/cancel/reconcile stages without WebView or secret-bearing bridges |
 | [0068](0068-persist-the-standalone-passport-vault-ledger.md) Persist the standalone Passport Vault ledger | Accepted | §§3–7, 12–13, 16–18, 21, prototype vault/headless flow, and issues #2/#31 | Owner-private bounded atomic storage preserves standalone accounting and claim replay across headless/mobile restarts without becoming native contract-state authority |
+| [0069](0069-route-native-identity-ingress-through-strict-protocol-links.md) Route native identity ingress through strict protocol links | Accepted | §§3–7, 9–13, 16–18, 21, prototype QR/mobile flow, and issues #2/#32 | Native QR adapters and strict shared routing hand standalone requests to existing preview/consent flows; physical-device and OS-link evidence remains #32 |
 
 ## Current boundaries
 
@@ -266,3 +267,9 @@ bounded owner-private atomic file. Complete domain snapshot validation preserves
 accounting and credential-root replay rejection across process restarts;
 capability/UI copy keeps that persistence distinct from simulated or native
 contract settlement. The file cannot source or authenticate a Midnight call.
+ADR-0069 separates camera capture from protocol classification. Native iOS and
+Android adapters return one bounded opaque QR value to a strict shared router;
+standalone `openid4vp` routes require exact registered endpoint pairs and
+unknown pairs fail closed. Scanning only navigates to the existing preview and
+consent surfaces. Production endpoint discovery, OS link delivery, and physical
+camera evidence remain issue #32.

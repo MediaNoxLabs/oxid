@@ -17,6 +17,7 @@ oxid-identity-domain.workspace = true
 oxid-protocol-application.workspace = true
 oxid-presentation-application.workspace = true
 oxid-passport-vault-application.workspace = true
+oxid-platform-ports.workspace = true
 qrcode.workspace = true
 tokio.workspace = true
 

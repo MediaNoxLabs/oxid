@@ -297,4 +297,29 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertFalse(application.buttons["Create and continue"].exists)
     }
 
+    @MainActor
+    func testSimulatorScannerFailsClosedWithoutImportingARequest() throws {
+        let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
+        application.launch()
+
+        let createButton = application.buttons["Create and continue"]
+        if createButton.waitForExistence(timeout: 5) {
+            createButton.tap()
+        }
+
+        let scanIdentityRequest = application.buttons["Scan identity QR code"]
+        XCTAssertTrue(scanIdentityRequest.waitForExistence(timeout: 15))
+        scanIdentityRequest.tap()
+        XCTAssertTrue(
+            application.staticTexts[
+                "Camera scanning is unavailable here. Paste or load the request in the identity page instead."
+            ].waitForExistence(timeout: 5)
+        )
+        XCTAssertFalse(
+            application.staticTexts[
+                "QR recognized as a credential offer. Review the request before consent."
+            ].exists
+        )
+    }
+
 }

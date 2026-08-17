@@ -99,6 +99,7 @@ button {
 .brand-button:focus-visible,
 .menu-button:focus-visible,
 .profile-shortcut:focus-visible,
+.scan-shortcut:focus-visible,
 .bottom-nav__item:focus-visible,
 .menu-item:focus-visible,
 .primary-action:focus-visible,
@@ -156,6 +157,27 @@ textarea:focus-visible {
 
 .header-actions {
   gap: 0.5rem;
+}
+
+.scan-shortcut {
+  min-height: 2.65rem;
+  padding: 0 0.85rem;
+  border: 1px solid rgb(56 213 255 / 35%);
+  border-radius: 0.9rem;
+  background: rgb(56 213 255 / 10%);
+  color: var(--cyan);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.scan-shortcut:hover {
+  background: rgb(56 213 255 / 17%);
+}
+
+.scan-shortcut:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .profile-shortcut,
@@ -222,6 +244,17 @@ textarea:focus-visible {
 .page-context__title {
   color: var(--text-soft);
   font-weight: 700;
+}
+
+.identity-ingress-notice {
+  margin: -0.35rem 0 1rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid rgb(56 213 255 / 24%);
+  border-radius: 0.75rem;
+  background: rgb(56 213 255 / 7%);
+  color: var(--text-soft);
+  font-size: 0.74rem;
+  line-height: 1.45;
 }
 
 .menu-dropdown {
@@ -1465,6 +1498,10 @@ input:focus-visible {
 }
 
 @media (max-width: 30rem) {
+  .scan-shortcut {
+    padding-inline: 0.6rem;
+  }
+
   .wordmark small {
     display: none;
   }

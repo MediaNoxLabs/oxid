@@ -37,6 +37,7 @@ use oxid_passport_vault_application::{
     SubmitPassportVaultCallCommand, SubmitPassportVaultCallUseCase, WITHDRAW_INTENT,
     WithdrawPassportVaultLockUseCase,
 };
+use oxid_platform_ports::{QrScanError, QrScannerPort};
 use oxid_presentation_application::{
     AcceptCredentialPresentationCommand, AcceptCredentialPresentationUseCase,
     CredentialPresentationError, CredentialPresentationView, PrepareCredentialPresentationCommand,
@@ -46,12 +47,13 @@ use oxid_presentation_application::{
 use oxid_protocol_application::{
     AcceptCredentialIssuanceCommand, AcceptCredentialIssuanceUseCase,
     AcceptSelfIssuedAuthenticationCommand, AcceptSelfIssuedAuthenticationUseCase,
-    CredentialIssuanceError, CredentialIssuanceView, PrepareCredentialIssuanceCommand,
+    CredentialIssuanceError, CredentialIssuanceView, IdentityRequestKind,
+    IdentityRequestRoutingError, PrepareCredentialIssuanceCommand,
     PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationCommand,
     PrepareSelfIssuedAuthenticationUseCase, RefuseCredentialIssuanceCommand,
     RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationCommand,
-    RefuseSelfIssuedAuthenticationUseCase, SelfIssuedAuthenticationError,
-    SelfIssuedAuthenticationView,
+    RefuseSelfIssuedAuthenticationUseCase, RouteIdentityRequestCommand,
+    RouteIdentityRequestUseCase, SelfIssuedAuthenticationError, SelfIssuedAuthenticationView,
 };
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
@@ -79,6 +81,8 @@ const STYLES: &str = include_str!("../assets/styles.css");
 /// Incoming capabilities made available to Dioxus by the composition root.
 #[derive(Clone)]
 pub struct WalletUiServices {
+    qr_scanner: Arc<dyn QrScannerPort>,
+    route_identity_request: Arc<dyn RouteIdentityRequestUseCase>,
     create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
@@ -463,6 +467,23 @@ pub struct IdentityUiServices {
     dids: DidUiServices,
     credentials: CredentialUiServices,
     authentication: SelfIssuedAuthenticationUiServices,
+    ingress: IdentityIngressUiServices,
+}
+
+/// Scan and protocol-link routing capabilities shared by the identity pages.
+pub struct IdentityIngressUiServices {
+    qr_scanner: Arc<dyn QrScannerPort>,
+    route: Arc<dyn RouteIdentityRequestUseCase>,
+}
+
+impl IdentityIngressUiServices {
+    #[must_use]
+    pub fn new(
+        qr_scanner: Arc<dyn QrScannerPort>,
+        route: Arc<dyn RouteIdentityRequestUseCase>,
+    ) -> Self {
+        Self { qr_scanner, route }
+    }
 }
 
 impl IdentityUiServices {
@@ -471,11 +492,13 @@ impl IdentityUiServices {
         dids: DidUiServices,
         credentials: CredentialUiServices,
         authentication: SelfIssuedAuthenticationUiServices,
+        ingress: IdentityIngressUiServices,
     ) -> Self {
         Self {
             dids,
             credentials,
             authentication,
+            ingress,
         }
     }
 }
@@ -696,7 +719,10 @@ impl WalletUiServices {
         let dids = identity.dids;
         let credentials = identity.credentials;
         let authentication = identity.authentication;
+        let ingress = identity.ingress;
         Self {
+            qr_scanner: ingress.qr_scanner,
+            route_identity_request: ingress.route,
             create_wallet_profile: profiles.create_wallet_profile,
             list_wallet_profiles: profiles.list_wallet_profiles,
             select_wallet_profile: profiles.select_wallet_profile,
@@ -760,6 +786,16 @@ impl WalletUiServices {
             passport_vault_state_persistence: vault.state_persistence,
             passport_vault_contract_calls: vault.contract_calls,
         }
+    }
+
+    #[must_use]
+    pub fn qr_scanner(&self) -> Arc<dyn QrScannerPort> {
+        Arc::clone(&self.qr_scanner)
+    }
+
+    #[must_use]
+    pub fn route_identity_request(&self) -> Arc<dyn RouteIdentityRequestUseCase> {
+        Arc::clone(&self.route_identity_request)
     }
 
     #[must_use]
@@ -1172,6 +1208,21 @@ enum CredentialPageState {
     Failed(String),
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct PendingIdentityRequest {
+    kind: IdentityRequestKind,
+    request_uri: String,
+}
+
+fn identity_request_destination(kind: IdentityRequestKind) -> Destination {
+    match kind {
+        IdentityRequestKind::SelfIssuedAuthentication => Destination::Dids,
+        IdentityRequestKind::CredentialIssuance | IdentityRequestKind::CredentialPresentation => {
+            Destination::Credentials
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SecurityCapabilityState {
     Loading,
@@ -1314,6 +1365,9 @@ pub fn App() -> Element {
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
     let mut active_destination = use_signal(|| Destination::Assets);
     let mut menu_open = use_signal(|| false);
+    let mut pending_identity_request = use_signal(|| None::<PendingIdentityRequest>);
+    let mut identity_ingress_notice = use_signal(|| None::<String>);
+    let mut identity_scan_busy = use_signal(|| false);
     let services_for_load = services.clone();
     use_effect(move || {
         profile_session.set(load_profile_session(&services_for_load));
@@ -1360,6 +1414,54 @@ pub fn App() -> Element {
                 }
                 div { class: "header-actions",
                     button {
+                        class: "scan-shortcut",
+                        r#type: "button",
+                        aria_label: "Scan identity QR code",
+                        title: "Scan identity QR code",
+                        disabled: identity_scan_busy(),
+                        onclick: {
+                            let scanner = services.qr_scanner();
+                            let router = services.route_identity_request();
+                            move |_| {
+                                let scanner = scanner.clone();
+                                let router = router.clone();
+                                identity_scan_busy.set(true);
+                                identity_ingress_notice.set(None);
+                                spawn(async move {
+                                    match scanner.scan().await {
+                                        Ok(payload) => {
+                                            let request_uri = payload.into_inner();
+                                            match router.execute(RouteIdentityRequestCommand {
+                                                request_uri: request_uri.clone(),
+                                            }) {
+                                                Ok(kind) => {
+                                                    pending_identity_request.set(Some(PendingIdentityRequest {
+                                                        kind,
+                                                        request_uri,
+                                                    }));
+                                                    active_destination.set(identity_request_destination(kind));
+                                                    menu_open.set(false);
+                                                    identity_ingress_notice.set(Some(format!(
+                                                        "QR recognized as {}. Review the request before consent.",
+                                                        identity_request_kind_label(kind)
+                                                    )));
+                                                }
+                                                Err(error) => {
+                                                    identity_ingress_notice.set(Some(identity_request_routing_message(error)));
+                                                }
+                                            }
+                                        }
+                                        Err(error) => {
+                                            identity_ingress_notice.set(Some(qr_scan_message(error)));
+                                        }
+                                    }
+                                    identity_scan_busy.set(false);
+                                });
+                            }
+                        },
+                        if identity_scan_busy() { "Scanning…" } else { "Scan QR" }
+                    }
+                    button {
                         class: "profile-shortcut",
                         r#type: "button",
                         aria_label: "Open wallet profile",
@@ -1392,6 +1494,12 @@ pub fn App() -> Element {
                 span { class: "page-context__title", "{active.label()}" }
             }
 
+            if let Some(message) = identity_ingress_notice.read().as_deref() {
+                div { class: "identity-ingress-notice", role: "status",
+                    "{message}"
+                }
+            }
+
             if *menu_open.read() {
                 nav { class: "menu-dropdown", aria_label: "All wallet destinations",
                     for destination in [
@@ -1421,8 +1529,18 @@ pub fn App() -> Element {
                 match active {
                     Destination::Assets => rsx! { AssetsPage { active_profile: active_profile.clone() } },
                     Destination::Vault => rsx! { PassportVaultPage { active_profile: active_profile.clone() } },
-                    Destination::Dids => rsx! { DidsPage { active_profile: active_profile.clone() } },
-                    Destination::Credentials => rsx! { CredentialsPage { active_profile: active_profile.clone() } },
+                    Destination::Dids => rsx! {
+                        DidsPage {
+                            active_profile: active_profile.clone(),
+                            pending_identity_request,
+                        }
+                    },
+                    Destination::Credentials => rsx! {
+                        CredentialsPage {
+                            active_profile: active_profile.clone(),
+                            pending_identity_request,
+                        }
+                    },
                     Destination::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
                     Destination::Settings => rsx! {
                         SettingsPage {
@@ -4876,7 +4994,10 @@ fn PassportVaultLockCard(
 }
 
 #[component]
-fn DidsPage(active_profile: WalletProfileView) -> Element {
+fn DidsPage(
+    active_profile: WalletProfileView,
+    mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| DidPageState::Loading);
     let mut did_input = use_signal(|| STANDALONE_DID_FIXTURE.to_owned());
@@ -4885,6 +5006,20 @@ fn DidsPage(active_profile: WalletProfileView) -> Element {
     let mut authentication_consent = use_signal(|| false);
     let mut authentication_busy = use_signal(|| false);
     let mut authentication_notice = use_signal(|| None::<String>);
+    use_effect(move || {
+        let pending = pending_identity_request.read().clone();
+        if let Some(request) = pending
+            && request.kind == IdentityRequestKind::SelfIssuedAuthentication
+        {
+            authentication_input.set(request.request_uri);
+            prepared_authentication.set(None);
+            authentication_consent.set(false);
+            authentication_notice.set(Some(
+                "Scanned login request loaded. Preview it before authenticating.".to_owned(),
+            ));
+            pending_identity_request.set(None);
+        }
+    });
     let profile_id = active_profile.id.clone();
     let load_services = services.clone();
     let load_profile = profile_id.clone();
@@ -5262,6 +5397,45 @@ fn credential_issuance_message(error: CredentialIssuanceError) -> String {
     error.to_string()
 }
 
+fn identity_request_kind_label(kind: IdentityRequestKind) -> &'static str {
+    match kind {
+        IdentityRequestKind::CredentialIssuance => "a credential offer",
+        IdentityRequestKind::SelfIssuedAuthentication => "a DID login",
+        IdentityRequestKind::CredentialPresentation => "a credential presentation",
+    }
+}
+
+fn identity_request_routing_message(error: IdentityRequestRoutingError) -> String {
+    match error {
+        IdentityRequestRoutingError::InvalidRequest => {
+            "The QR code is not a valid bounded identity request.".to_owned()
+        }
+        IdentityRequestRoutingError::UnsupportedRequest => {
+            "This QR code does not contain a supported identity protocol link.".to_owned()
+        }
+        IdentityRequestRoutingError::AmbiguousRequest => {
+            "This OpenID4VP endpoint is not registered, so the wallet will not guess whether it is a login or presentation request.".to_owned()
+        }
+        IdentityRequestRoutingError::Unavailable => {
+            "Identity request routing is unavailable in this wallet composition.".to_owned()
+        }
+    }
+}
+
+fn qr_scan_message(error: QrScanError) -> String {
+    match error {
+        QrScanError::Cancelled => "QR scan cancelled.".to_owned(),
+        QrScanError::Unavailable => {
+            "Camera scanning is unavailable here. Paste or load the request in the identity page instead.".to_owned()
+        }
+        QrScanError::TimedOut => "QR scan timed out; no request was imported.".to_owned(),
+        QrScanError::InvalidPayload => {
+            "The QR payload is empty or exceeds the identity request limit.".to_owned()
+        }
+        QrScanError::Failed => "QR scanning failed; no request was imported.".to_owned(),
+    }
+}
+
 fn credential_presentation_message(error: CredentialPresentationError) -> String {
     match error {
         CredentialPresentationError::Protocol(PresentationProtocolError::HolderNotAuthorized) =>
@@ -5275,13 +5449,30 @@ fn credential_presentation_message(error: CredentialPresentationError) -> String
 }
 
 #[component]
-fn CredentialPresentationPanel(profile_id: String) -> Element {
+fn CredentialPresentationPanel(
+    profile_id: String,
+    mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut request_input = use_signal(String::new);
     let mut preview = use_signal(|| None::<CredentialPresentationView>);
     let mut consent = use_signal(|| false);
     let mut busy = use_signal(|| false);
     let mut notice = use_signal(|| None::<String>);
+    use_effect(move || {
+        let pending = pending_identity_request.read().clone();
+        if let Some(request) = pending
+            && request.kind == IdentityRequestKind::CredentialPresentation
+        {
+            request_input.set(request.request_uri);
+            preview.set(None);
+            consent.set(false);
+            notice.set(Some(
+                "Scanned presentation request loaded. Preview it before consenting.".to_owned(),
+            ));
+            pending_identity_request.set(None);
+        }
+    });
     let demo_request = services.standalone_openid4vp_request();
 
     rsx! {
@@ -5801,7 +5992,10 @@ fn CredentialRecordCard(
 }
 
 #[component]
-fn CredentialsPage(active_profile: WalletProfileView) -> Element {
+fn CredentialsPage(
+    active_profile: WalletProfileView,
+    mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| CredentialPageState::Loading);
     let mut offer_input = use_signal(String::new);
@@ -5809,6 +6003,20 @@ fn CredentialsPage(active_profile: WalletProfileView) -> Element {
     let mut issuance_consent = use_signal(|| false);
     let mut issuance_busy = use_signal(|| false);
     let mut issuance_notice = use_signal(|| None::<String>);
+    use_effect(move || {
+        let pending = pending_identity_request.read().clone();
+        if let Some(request) = pending
+            && request.kind == IdentityRequestKind::CredentialIssuance
+        {
+            offer_input.set(request.request_uri);
+            prepared_issuance.set(None);
+            issuance_consent.set(false);
+            issuance_notice.set(Some(
+                "Scanned credential offer loaded. Preview it before accepting.".to_owned(),
+            ));
+            pending_identity_request.set(None);
+        }
+    });
     let profile_id = active_profile.id.clone();
     let load_services = services.clone();
     let load_profile = profile_id.clone();
@@ -6013,7 +6221,10 @@ fn CredentialsPage(active_profile: WalletProfileView) -> Element {
                         p { class: "form-hint", role: "status", "{message}" }
                     }
                 }
-                CredentialPresentationPanel { profile_id: profile_id.clone() }
+                CredentialPresentationPanel {
+                    profile_id: profile_id.clone(),
+                    pending_identity_request,
+                }
                 article { class: "surface-card credential-receive-card",
                     p { class: "card-eyebrow", "Standalone credential inbox" }
                     h2 { "Receive the public identity fixture" }

@@ -19,8 +19,119 @@ use oxid_protocol_domain::{
 
 pub const MAX_CREDENTIAL_OFFER_BYTES: usize = 32 * 1_024;
 pub const MAX_SELF_ISSUED_REQUEST_BYTES: usize = 32 * 1_024;
+pub const MAX_IDENTITY_REQUEST_URI_BYTES: usize = 32 * 1_024;
 const MAX_DID_CHARACTERS: usize = 8_192;
 const MAX_METHOD_CHARACTERS: usize = 8_192;
+
+/// A safe routing result for an inbound identity protocol link.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityRequestKind {
+    CredentialIssuance,
+    SelfIssuedAuthentication,
+    CredentialPresentation,
+}
+
+impl IdentityRequestKind {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::CredentialIssuance => "credential_issuance",
+            Self::SelfIssuedAuthentication => "self_issued_authentication",
+            Self::CredentialPresentation => "credential_presentation",
+        }
+    }
+}
+
+/// Secret-bearing command whose debug representation never exposes the link.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RouteIdentityRequestCommand {
+    pub request_uri: String,
+}
+
+impl fmt::Debug for RouteIdentityRequestCommand {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RouteIdentityRequestCommand")
+            .field("request_uri_length", &self.request_uri.len())
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityRequestRoutingError {
+    InvalidRequest,
+    UnsupportedRequest,
+    AmbiguousRequest,
+    Unavailable,
+}
+
+impl IdentityRequestRoutingError {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::InvalidRequest => "invalid_identity_request",
+            Self::UnsupportedRequest => "unsupported_identity_request",
+            Self::AmbiguousRequest => "ambiguous_identity_request",
+            Self::Unavailable => "identity_request_routing_unavailable",
+        }
+    }
+}
+
+impl fmt::Display for IdentityRequestRoutingError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.code())
+    }
+}
+
+impl Error for IdentityRequestRoutingError {}
+
+/// Classifies the wire format at the protocol edge.
+pub trait IdentityRequestRouterPort: Send + Sync {
+    fn route(&self, request_uri: &str) -> Result<IdentityRequestKind, IdentityRequestRoutingError>;
+}
+
+pub trait RouteIdentityRequestUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: RouteIdentityRequestCommand,
+    ) -> Result<IdentityRequestKind, IdentityRequestRoutingError>;
+}
+
+pub struct IdentityRequestRoutingService {
+    router: Arc<dyn IdentityRequestRouterPort>,
+}
+
+impl IdentityRequestRoutingService {
+    #[must_use]
+    pub fn new(router: Arc<dyn IdentityRequestRouterPort>) -> Self {
+        Self { router }
+    }
+}
+
+impl RouteIdentityRequestUseCase for IdentityRequestRoutingService {
+    fn execute(
+        &self,
+        command: RouteIdentityRequestCommand,
+    ) -> Result<IdentityRequestKind, IdentityRequestRoutingError> {
+        let request_uri = command.request_uri;
+        if request_uri.is_empty()
+            || request_uri.len() > MAX_IDENTITY_REQUEST_URI_BYTES
+            || request_uri.chars().any(char::is_control)
+            || request_uri.trim() != request_uri
+        {
+            return Err(IdentityRequestRoutingError::InvalidRequest);
+        }
+        self.router.route(&request_uri)
+    }
+}
+
+pub struct UnavailableIdentityRequestRouter;
+
+impl IdentityRequestRouterPort for UnavailableIdentityRequestRouter {
+    fn route(&self, _: &str) -> Result<IdentityRequestKind, IdentityRequestRoutingError> {
+        Err(IdentityRequestRoutingError::Unavailable)
+    }
+}
 
 pub type PrepareIssuancePortFuture<'a> = Pin<
     Box<dyn Future<Output = Result<PreparedCredentialOffer, IssuanceProtocolError>> + Send + 'a>,
@@ -1119,6 +1230,49 @@ impl SelfIssuedAuthenticationProtocolPort for UnavailableSelfIssuedAuthenticatio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct RoutingPort;
+
+    impl IdentityRequestRouterPort for RoutingPort {
+        fn route(
+            &self,
+            request_uri: &str,
+        ) -> Result<IdentityRequestKind, IdentityRequestRoutingError> {
+            assert_eq!(
+                request_uri,
+                "openid-credential-offer://?credential_offer=%7B%7D"
+            );
+            Ok(IdentityRequestKind::CredentialIssuance)
+        }
+    }
+
+    #[test]
+    fn identity_request_routing_bounds_input_and_redacts_debug_output() {
+        let service = IdentityRequestRoutingService::new(Arc::new(RoutingPort));
+        let request_uri = "openid-credential-offer://?credential_offer=%7B%7D".to_owned();
+        let command = RouteIdentityRequestCommand {
+            request_uri: request_uri.clone(),
+        };
+        let debug = format!("{command:?}");
+        assert!(debug.contains("request_uri_length"));
+        assert!(!debug.contains("credential_offer"));
+        assert_eq!(
+            service.execute(command),
+            Ok(IdentityRequestKind::CredentialIssuance)
+        );
+        assert_eq!(
+            service.execute(RouteIdentityRequestCommand {
+                request_uri: format!("{}\n", request_uri),
+            }),
+            Err(IdentityRequestRoutingError::InvalidRequest)
+        );
+        assert_eq!(
+            service.execute(RouteIdentityRequestCommand {
+                request_uri: "x".repeat(MAX_IDENTITY_REQUEST_URI_BYTES + 1),
+            }),
+            Err(IdentityRequestRoutingError::InvalidRequest)
+        );
+    }
 
     #[test]
     fn issued_credential_debug_output_redacts_all_bytes() {

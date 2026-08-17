@@ -133,6 +133,10 @@ fn main() {
                 application.refuse_self_issued_authentication(),
                 standalone_self_issued_request,
             ),
+            oxid_ui_dioxus::IdentityIngressUiServices::new(
+                application.qr_scanner(),
+                application.route_identity_request(),
+            ),
         ),
     );
 
