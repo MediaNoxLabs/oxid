@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3, 7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/store/backup.rs`, `session_persist.rs`, and the Dioxus `WalletBackupCard`
 - Tracking: issues #2 and #33
-- Implementation state: the application boundary, authenticated package codec, and development/mobile custody export and empty-profile recovery are implemented; user-selected native file transfer, Dioxus Settings UX, public profile/DID/credential associations, and Tier-1 export/restore evidence remain issue #33 work
+- Implementation state: the application boundary, authenticated package codec, and development/mobile custody export and empty-profile recovery are implemented; ADR-0075 supplies user-selected native file transfer and custody-only Dioxus Settings UX, while public profile/DID/credential associations and Tier-1 physical-device evidence remain issue #33 work
 
 ## Context
 
@@ -77,11 +77,12 @@ creation boundary. Development recovery similarly inserts only after full
 validation and refuses an existing profile. Neither adapter performs a
 destructive overwrite or partial import.
 
-The application and custody ports do not choose or open filesystem paths. A
-later native adapter must use the OS document exporter/picker, reject symlinks
-and non-regular files, and create one explicitly user-selected file outside the
-device-bound vault. Recovery is intentionally absent from `oxid.headless.v1`;
-headless may expose capability metadata and adapter conformance tests only.
+The application and custody ports do not choose or open filesystem paths.
+ADR-0075 supplies the OS document exporter/picker, symlink/non-regular-file and
+size defenses appropriate to each platform, and one explicitly user-selected
+file outside the device-bound vault. Recovery remains intentionally absent from
+`oxid.headless.v1`; headless may expose capability metadata and adapter
+conformance tests only.
 
 ## Security and privacy consequences
 
@@ -107,14 +108,14 @@ headless may expose capability metadata and adapter conformance tests only.
   DID/credential-holder keys, derived paths, and opaque references. It does not
   yet restore the public profile record, DID documents, encrypted credentials,
   or association records required for full issue #33 acceptance.
-- The next slice must stage all public/private store records, detect conflicts
-  across every store, and commit or roll back the complete recovery as one
-  operation. It must then add the native file picker/exporter and Dioxus
-  Settings warning/confirmation flow.
-- iOS and Android tests must still cover OS document cancellation, app restart,
-  fresh installation recovery, no-backup placement of device ciphertext, and
-  physical-device resource behavior. Simulator/host unit tests are not that
-  evidence.
+- The next recovery slice must stage all public/private store records, detect
+  conflicts across every store, and commit or roll back the complete recovery
+  as one operation. ADR-0075 already adds the native file picker/exporter and
+  Dioxus Settings warning/confirmation flow.
+- Android tests must still cover document cancellation/import/export, and both
+  platforms still require fresh-install native-custody recovery, no-backup
+  placement, and physical-device resource evidence. The iOS development-
+  custody simulator round trip in ADR-0075 is not that release evidence.
 
 ## Rejected alternatives
 

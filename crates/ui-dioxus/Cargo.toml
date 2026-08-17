@@ -23,6 +23,7 @@ oxid-passport-vault-application.workspace = true
 oxid-platform-ports.workspace = true
 qrcode.workspace = true
 tokio.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

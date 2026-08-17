@@ -5,7 +5,7 @@
 //! The encrypted package may cross incoming adapters. Recovery secrets and
 //! decrypted custody material may not.
 
-use std::{error::Error, fmt, sync::Arc};
+use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_wallet_domain::WalletProfileId;
@@ -27,6 +27,8 @@ pub const EXPORT_PORTABLE_WALLET_BACKUP_SUMMARY: &str =
 pub const RECOVER_PORTABLE_WALLET_BACKUP_TITLE: &str = "Recover portable wallet backup";
 pub const RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY: &str =
     "Initialize this empty profile from one encrypted, profile-bound wallet backup.";
+/// Fixed, capability-specific filename suggested to the operating-system document exporter.
+pub const PORTABLE_WALLET_BACKUP_FILE_NAME: &str = "oxid-wallet-custody.oxidbak";
 
 /// Validated recovery secret. Formatting and logging never expose its contents.
 pub struct WalletRecoverySecret(Vec<u8>);
@@ -117,8 +119,14 @@ impl PortableWalletBackup {
     }
 
     #[must_use]
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.0
+    pub fn into_bytes(mut self) -> Vec<u8> {
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl Drop for PortableWalletBackup {
+    fn drop(&mut self) {
+        self.0.fill(0);
     }
 }
 
@@ -147,6 +155,63 @@ impl fmt::Display for PortableWalletBackupError {
 }
 
 impl Error for PortableWalletBackupError {}
+
+/// A bounded future returned by the operating-system backup document adapter.
+pub type PortableWalletBackupDocumentFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, PortableWalletBackupDocumentError>> + Send + 'a>>;
+
+/// Stable, payload-free failures from a user-selected backup document flow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PortableWalletBackupDocumentError {
+    Cancelled,
+    Unavailable,
+    TimedOut,
+    InvalidDocument,
+    Failed,
+}
+
+impl fmt::Display for PortableWalletBackupDocumentError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Cancelled => "wallet backup document selection was cancelled",
+            Self::Unavailable => "wallet backup documents are unavailable on this device",
+            Self::TimedOut => "wallet backup document selection timed out",
+            Self::InvalidDocument => "wallet backup document is invalid",
+            Self::Failed => "wallet backup document operation failed",
+        })
+    }
+}
+
+impl Error for PortableWalletBackupDocumentError {}
+
+/// User-selected document transport for encrypted backup packages only.
+///
+/// Implementations choose files through operating-system UI. No arbitrary
+/// caller-supplied path crosses this boundary.
+pub trait PortableWalletBackupDocumentPort: Send + Sync {
+    fn export<'a>(
+        &'a self,
+        backup: &'a PortableWalletBackup,
+    ) -> PortableWalletBackupDocumentFuture<'a, ()>;
+
+    fn import<'a>(&'a self) -> PortableWalletBackupDocumentFuture<'a, PortableWalletBackup>;
+}
+
+/// Fail-closed document transport used by non-mobile compositions.
+pub struct UnavailablePortableWalletBackupDocuments;
+
+impl PortableWalletBackupDocumentPort for UnavailablePortableWalletBackupDocuments {
+    fn export<'a>(
+        &'a self,
+        _backup: &'a PortableWalletBackup,
+    ) -> PortableWalletBackupDocumentFuture<'a, ()> {
+        Box::pin(async { Err(PortableWalletBackupDocumentError::Unavailable) })
+    }
+
+    fn import<'a>(&'a self) -> PortableWalletBackupDocumentFuture<'a, PortableWalletBackup> {
+        Box::pin(async { Err(PortableWalletBackupDocumentError::Unavailable) })
+    }
+}
 
 /// Stable, non-secret recovery outcome.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

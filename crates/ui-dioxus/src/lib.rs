@@ -62,22 +62,28 @@ use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
     CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
     CreateWalletProfileCommand, CreateWalletProfileUseCase, DeriveWalletAccountCommand,
-    DeriveWalletAccountUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
+    DeriveWalletAccountUseCase, EXPORT_PORTABLE_WALLET_BACKUP_SUMMARY,
+    EXPORT_PORTABLE_WALLET_BACKUP_TITLE, ExportPortableWalletBackupCommand,
+    ExportPortableWalletBackupUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
     GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
     ListWalletNetworksUseCase, ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase,
-    LockWalletUseCase, PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
-    ReconcileWalletTransferSubmissionUseCase, SelectWalletNetworkCommand,
-    SelectWalletNetworkUseCase, SelectWalletProfileCommand, SelectWalletProfileUseCase,
-    SensitiveOperationConfirmation, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase, WalletAccountQuery, WalletAccountView, WalletDustSyncCommand,
-    WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
+    LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS, PortableWalletBackupDocumentError,
+    PortableWalletBackupDocumentPort, PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
+    RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
+    ReconcileWalletTransferSubmissionUseCase, RecoverPortableWalletBackupCommand,
+    RecoverPortableWalletBackupUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
+    SelectWalletProfileCommand, SelectWalletProfileUseCase, SensitiveOperationConfirmation,
+    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase, SubmitWalletTransferCommand,
+    SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountQuery,
+    WalletAccountView, WalletDustSyncCommand, WalletDustSyncView, WalletNetworkListView,
+    WalletProfileSecurityCommand, WalletProfileView, WalletRecoverySecret,
     WalletSecurityStatusView, WalletShieldedSyncCommand, WalletShieldedSyncView,
     WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
     WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
+use zeroize::Zeroizing;
 
 const STYLES: &str = include_str!("../assets/styles.css");
 
@@ -87,6 +93,7 @@ pub struct WalletUiServices {
     qr_scanner: Arc<dyn QrScannerPort>,
     identity_link_ingress: Arc<dyn IdentityLinkIngressPort>,
     public_text_exporter: Arc<dyn PublicTextExportPort>,
+    portable_wallet_backup_documents: Arc<dyn PortableWalletBackupDocumentPort>,
     route_identity_request: Arc<dyn RouteIdentityRequestUseCase>,
     create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
@@ -96,6 +103,8 @@ pub struct WalletUiServices {
     initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
     unlock_wallet: Arc<dyn UnlockWalletUseCase>,
     lock_wallet: Arc<dyn LockWalletUseCase>,
+    export_portable_wallet_backup: Arc<dyn ExportPortableWalletBackupUseCase>,
+    recover_portable_wallet_backup: Arc<dyn RecoverPortableWalletBackupUseCase>,
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
     select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
@@ -568,6 +577,29 @@ pub struct WalletSecurityUiServices {
     initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
     unlock_wallet: Arc<dyn UnlockWalletUseCase>,
     lock_wallet: Arc<dyn LockWalletUseCase>,
+    backup: WalletBackupUiServices,
+}
+
+/// Custody-only portable recovery use cases and native document transport.
+pub struct WalletBackupUiServices {
+    export: Arc<dyn ExportPortableWalletBackupUseCase>,
+    recover: Arc<dyn RecoverPortableWalletBackupUseCase>,
+    documents: Arc<dyn PortableWalletBackupDocumentPort>,
+}
+
+impl WalletBackupUiServices {
+    #[must_use]
+    pub const fn new(
+        export: Arc<dyn ExportPortableWalletBackupUseCase>,
+        recover: Arc<dyn RecoverPortableWalletBackupUseCase>,
+        documents: Arc<dyn PortableWalletBackupDocumentPort>,
+    ) -> Self {
+        Self {
+            export,
+            recover,
+            documents,
+        }
+    }
 }
 
 impl WalletSecurityUiServices {
@@ -577,12 +609,14 @@ impl WalletSecurityUiServices {
         initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
         unlock_wallet: Arc<dyn UnlockWalletUseCase>,
         lock_wallet: Arc<dyn LockWalletUseCase>,
+        backup: WalletBackupUiServices,
     ) -> Self {
         Self {
             get_wallet_security_status,
             initialize_wallet_security,
             unlock_wallet,
             lock_wallet,
+            backup,
         }
     }
 }
@@ -738,6 +772,7 @@ impl WalletUiServices {
             qr_scanner: ingress.qr_scanner,
             identity_link_ingress: ingress.app_links,
             public_text_exporter: account.public_text_exporter,
+            portable_wallet_backup_documents: security.backup.documents,
             route_identity_request: ingress.route,
             create_wallet_profile: profiles.create_wallet_profile,
             list_wallet_profiles: profiles.list_wallet_profiles,
@@ -747,6 +782,8 @@ impl WalletUiServices {
             initialize_wallet_security: security.initialize_wallet_security,
             unlock_wallet: security.unlock_wallet,
             lock_wallet: security.lock_wallet,
+            export_portable_wallet_backup: security.backup.export,
+            recover_portable_wallet_backup: security.backup.recover,
             list_wallet_networks: account.list_wallet_networks,
             select_wallet_network: account.select_wallet_network,
             derive_wallet_account: account.derive_wallet_account,
@@ -1209,6 +1246,15 @@ enum ProfileSessionState {
 enum ProfileListState {
     Loading,
     Ready(Vec<WalletProfileView>),
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PortableBackupUiState {
+    Idle,
+    Working(&'static str),
+    Succeeded(String),
+    Cancelled,
     Failed(String),
 }
 
@@ -6593,6 +6639,12 @@ fn SettingsPage(
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut security = use_signal(|| SecurityCapabilityState::Loading);
+    let mut export_secret = use_signal(|| Zeroizing::new(String::new()));
+    let mut export_secret_confirmation = use_signal(|| Zeroizing::new(String::new()));
+    let mut export_confirmed = use_signal(|| false);
+    let mut recovery_secret = use_signal(|| Zeroizing::new(String::new()));
+    let mut recovery_confirmed = use_signal(|| false);
+    let mut backup_state = use_signal(|| PortableBackupUiState::Idle);
     let profile_id = active_profile.id.clone();
     let services_for_load = services.clone();
     use_effect(move || {
@@ -6687,6 +6739,279 @@ fn SettingsPage(
         },
     };
 
+    let backup_card = match security.read().clone() {
+        SecurityCapabilityState::Ready(status) => {
+            let supported = status.portable_backup_supported;
+            let busy = matches!(*backup_state.read(), PortableBackupUiState::Working(_));
+            let can_export = supported
+                && status.state_name() != "Uninitialized"
+                && !busy
+                && export_confirmed()
+                && !export_secret.read().is_empty()
+                && !export_secret_confirmation.read().is_empty();
+            let can_recover = supported
+                && status.state_name() == "Uninitialized"
+                && !busy
+                && recovery_confirmed()
+                && !recovery_secret.read().is_empty();
+            let export_services = services.clone();
+            let export_profile_id = active_profile.id.clone();
+            let recover_services = services.clone();
+            let recover_profile_id = active_profile.id.clone();
+            rsx! {
+                article { class: "backup-card surface-card",
+                    div { class: "card-heading",
+                        div {
+                            p { class: "card-eyebrow", "Portable custody backup" }
+                            h2 { "Encrypted recovery document" }
+                        }
+                        span {
+                            class: if supported { "status-pill success" } else { "status-pill" },
+                            if supported { "Available" } else { "Fail closed" }
+                        }
+                    }
+                    p { class: "backup-warning",
+                        strong { "Custody-only migration slice. " }
+                        "This document restores the wallet seed and protected generated keys for this exact profile. It does not yet restore profile metadata, DID documents, credentials, associations, or transaction history. Store the recovery secret separately."
+                    }
+                    if supported {
+                        div { class: "backup-actions",
+                            section { class: "backup-action",
+                                h3 { "{EXPORT_PORTABLE_WALLET_BACKUP_TITLE}" }
+                                p { "Choose a new recovery secret. Native custody requires fresh device authorization before the encrypted document can be saved." }
+                                label { r#for: "wallet-backup-secret", "Recovery secret"
+                                    input {
+                                        id: "wallet-backup-secret",
+                                        r#type: "password",
+                                        minlength: 12,
+                                        maxlength: MAX_WALLET_RECOVERY_SECRET_CHARACTERS,
+                                        autocomplete: "new-password",
+                                        spellcheck: false,
+                                        disabled: busy,
+                                        value: export_secret.read().as_str(),
+                                        oninput: move |event| export_secret.set(Zeroizing::new(event.value())),
+                                    }
+                                }
+                                label { r#for: "wallet-backup-secret-confirmation", "Repeat recovery secret"
+                                    input {
+                                        id: "wallet-backup-secret-confirmation",
+                                        r#type: "password",
+                                        minlength: 12,
+                                        maxlength: MAX_WALLET_RECOVERY_SECRET_CHARACTERS,
+                                        autocomplete: "new-password",
+                                        spellcheck: false,
+                                        disabled: busy,
+                                        value: export_secret_confirmation.read().as_str(),
+                                        oninput: move |event| export_secret_confirmation.set(Zeroizing::new(event.value())),
+                                    }
+                                }
+                                label { class: "confirmation-row",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: export_confirmed(),
+                                        disabled: busy,
+                                        onchange: move |event| export_confirmed.set(event.checked()),
+                                    }
+                                    "I understand this is currently a custody-only backup and confirm this exact export."
+                                }
+                                button {
+                                    class: "primary-action",
+                                    r#type: "button",
+                                    disabled: !can_export,
+                                    onclick: move |_| {
+                                        let first = export_secret();
+                                        let second = export_secret_confirmation();
+                                        export_secret.set(Zeroizing::new(String::new()));
+                                        export_secret_confirmation.set(Zeroizing::new(String::new()));
+                                        export_confirmed.set(false);
+                                        if *first != *second {
+                                            backup_state.set(PortableBackupUiState::Failed(
+                                                "Recovery secrets do not match.".to_owned(),
+                                            ));
+                                            return;
+                                        }
+                                        let secret = match WalletRecoverySecret::parse(&*first) {
+                                            Ok(secret) => secret,
+                                            Err(error) => {
+                                                backup_state.set(PortableBackupUiState::Failed(
+                                                    error.to_string(),
+                                                ));
+                                                return;
+                                            }
+                                        };
+                                        let services = export_services.clone();
+                                        let profile_id = export_profile_id.clone();
+                                        backup_state.set(PortableBackupUiState::Working(
+                                            "Authorizing and encrypting custody",
+                                        ));
+                                        spawn(async move {
+                                            let package = services.export_portable_wallet_backup.execute(
+                                                ExportPortableWalletBackupCommand {
+                                                    profile_id,
+                                                    recovery_secret: secret,
+                                                    confirmation: SensitiveOperationConfirmation {
+                                                        title: EXPORT_PORTABLE_WALLET_BACKUP_TITLE.to_owned(),
+                                                        summary: EXPORT_PORTABLE_WALLET_BACKUP_SUMMARY.to_owned(),
+                                                        confirmed: true,
+                                                    },
+                                                },
+                                            );
+                                            let next = match package {
+                                                Ok(package) => match services
+                                                    .portable_wallet_backup_documents
+                                                    .export(&package)
+                                                    .await
+                                                {
+                                                    Ok(()) => PortableBackupUiState::Succeeded(
+                                                        "Encrypted custody backup saved to the selected document.".to_owned(),
+                                                    ),
+                                                    Err(PortableWalletBackupDocumentError::Cancelled) => {
+                                                        PortableBackupUiState::Cancelled
+                                                    }
+                                                    Err(error) => PortableBackupUiState::Failed(
+                                                        error.to_string(),
+                                                    ),
+                                                },
+                                                Err(error) => PortableBackupUiState::Failed(
+                                                    error.to_string(),
+                                                ),
+                                            };
+                                            backup_state.set(next);
+                                        });
+                                    },
+                                    "Choose file and export"
+                                }
+                            }
+                            section { class: "backup-action",
+                                h3 { "{RECOVER_PORTABLE_WALLET_BACKUP_TITLE}" }
+                                p {
+                                    if status.state_name() == "Uninitialized" {
+                                        "Choose an Oxid backup document. Recovery initializes this empty profile only after package authentication and fresh native authorization."
+                                    } else {
+                                        "Recovery is disabled because this profile is already initialized. Oxid never overwrites or merges existing custody."
+                                    }
+                                }
+                                label { r#for: "wallet-recovery-secret", "Recovery secret"
+                                    input {
+                                        id: "wallet-recovery-secret",
+                                        r#type: "password",
+                                        minlength: 12,
+                                        maxlength: MAX_WALLET_RECOVERY_SECRET_CHARACTERS,
+                                        autocomplete: "current-password",
+                                        spellcheck: false,
+                                        disabled: busy || status.state_name() != "Uninitialized",
+                                        value: recovery_secret.read().as_str(),
+                                        oninput: move |event| recovery_secret.set(Zeroizing::new(event.value())),
+                                    }
+                                }
+                                label { class: "confirmation-row",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: recovery_confirmed(),
+                                        disabled: busy || status.state_name() != "Uninitialized",
+                                        onchange: move |event| recovery_confirmed.set(event.checked()),
+                                    }
+                                    "I confirm recovery into this empty profile and understand the current custody-only scope."
+                                }
+                                button {
+                                    class: "secondary-action",
+                                    r#type: "button",
+                                    disabled: !can_recover,
+                                    onclick: move |_| {
+                                        let raw = recovery_secret();
+                                        recovery_secret.set(Zeroizing::new(String::new()));
+                                        recovery_confirmed.set(false);
+                                        let secret = match WalletRecoverySecret::parse(&*raw) {
+                                            Ok(secret) => secret,
+                                            Err(error) => {
+                                                backup_state.set(PortableBackupUiState::Failed(
+                                                    error.to_string(),
+                                                ));
+                                                return;
+                                            }
+                                        };
+                                        let services = recover_services.clone();
+                                        let profile_id = recover_profile_id.clone();
+                                        let mut security_state = security;
+                                        backup_state.set(PortableBackupUiState::Working(
+                                            "Waiting for a backup document",
+                                        ));
+                                        spawn(async move {
+                                            let imported = services
+                                                .portable_wallet_backup_documents
+                                                .import()
+                                                .await;
+                                            let recovered = match imported {
+                                                Ok(backup) => services.recover_portable_wallet_backup.execute(
+                                                    RecoverPortableWalletBackupCommand {
+                                                        profile_id: profile_id.clone(),
+                                                        backup,
+                                                        recovery_secret: secret,
+                                                        confirmation: SensitiveOperationConfirmation {
+                                                            title: RECOVER_PORTABLE_WALLET_BACKUP_TITLE.to_owned(),
+                                                            summary: RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY.to_owned(),
+                                                            confirmed: true,
+                                                        },
+                                                    },
+                                                ).map_err(|error| error.to_string()),
+                                                Err(PortableWalletBackupDocumentError::Cancelled) => {
+                                                    backup_state.set(PortableBackupUiState::Cancelled);
+                                                    return;
+                                                }
+                                                Err(error) => Err(error.to_string()),
+                                            };
+                                            match recovered {
+                                                Ok(summary) => {
+                                                    backup_state.set(PortableBackupUiState::Succeeded(
+                                                        format!(
+                                                            "Recovered custody with {} protected key(s).",
+                                                            summary.restored_key_count,
+                                                        ),
+                                                    ));
+                                                    security_state.set(
+                                                        services.get_wallet_security_status.execute(
+                                                            WalletProfileSecurityCommand { profile_id },
+                                                        ).map_or_else(
+                                                            |error| SecurityCapabilityState::Failed(error.to_string()),
+                                                            SecurityCapabilityState::Ready,
+                                                        ),
+                                                    );
+                                                }
+                                                Err(error) => backup_state.set(
+                                                    PortableBackupUiState::Failed(error),
+                                                ),
+                                            }
+                                        });
+                                    },
+                                    "Choose backup and recover"
+                                }
+                            }
+                        }
+                    }
+                    match backup_state.read().clone() {
+                        PortableBackupUiState::Idle => rsx! {},
+                        PortableBackupUiState::Working(message) => rsx! {
+                            div { class: "result", role: "status", aria_busy: "true",
+                                span { class: "loading-mark", aria_hidden: "true" }
+                                p { "{message}" }
+                            }
+                        },
+                        PortableBackupUiState::Succeeded(message) => rsx! {
+                            div { class: "result", role: "status", p { "{message}" } }
+                        },
+                        PortableBackupUiState::Cancelled => rsx! {
+                            div { class: "result", role: "status", p { "Document selection cancelled. No custody state was changed." } }
+                        },
+                        PortableBackupUiState::Failed(message) => rsx! {
+                            div { class: "result error", role: "alert", p { "{message}" } }
+                        },
+                    }
+                }
+            }
+        }
+        SecurityCapabilityState::Loading | SecurityCapabilityState::Failed(_) => rsx! {},
+    };
+
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Local controls" }
@@ -6707,6 +7032,7 @@ fn SettingsPage(
             }
         }
         {security_card}
+        {backup_card}
         article { class: "settings-card surface-card",
             div {
                 p { class: "card-eyebrow", "Privacy" }

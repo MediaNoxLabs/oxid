@@ -5504,6 +5504,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "oxid-adapter-backup-document-mobile"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures",
+ "oxid-adapter-mobile-native",
+ "oxid-wallet-application",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "oxid-adapter-backup-portable"
 version = "0.1.0"
 dependencies = [
@@ -5869,6 +5883,7 @@ dependencies = [
  "midnight-serialize",
  "midnight-storage",
  "midnight-zswap",
+ "oxid-adapter-backup-document-mobile",
  "oxid-adapter-did-midnight",
  "oxid-adapter-identity-ingress",
  "oxid-adapter-midnight",
@@ -6015,6 +6030,7 @@ dependencies = [
  "oxid-wallet-application",
  "qrcode",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]

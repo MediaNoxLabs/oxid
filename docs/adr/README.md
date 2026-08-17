@@ -95,7 +95,8 @@ ADR status and delivery state answer different questions:
 | [0071](0071-wrap-mobile-custody-with-device-user-presence.md) Wrap mobile custody with device user presence | Accepted | §§3, 7, 12–13, 16–18, prototype secret storage, and issues #2/#29/#30 | Normal mobile composition uses a bounded OS-wrapped sealed vault; Android credential/restart and iOS capability/fail-closed simulator evidence exist, while physical-device and mobile-prover gates remain open |
 | [0072](0072-embed-authenticated-compact-artifacts-for-mobile-measurement.md) Embed authenticated Compact artifacts for mobile measurement | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | Opt-in native-custody mobile builds embed and authenticate the exact runtime-minimal Nix closure; proof execution, lifecycle/resource budgets, and Dioxus success remain gated |
 | [0073](0073-anchor-standalone-compact-credential-policy.md) Anchor standalone Compact credential policy | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#29/#34 | Standalone composition resolves and authorizes the exact issuer Jubjub method, enforces current-time/expiry policy, and requires a pinned trust anchor; status remains not checked and production remains unavailable |
-| [0074](0074-package-portable-custody-for-one-shot-recovery.md) Package portable custody for one-shot recovery | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Versioned Argon2id/XChaCha20-Poly1305 custody packages restore exact keys only into empty development/mobile vaults; native file UX and all-store recovery remain pending #33 |
+| [0074](0074-package-portable-custody-for-one-shot-recovery.md) Package portable custody for one-shot recovery | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Versioned Argon2id/XChaCha20-Poly1305 custody packages restore exact keys only into empty development/mobile vaults; ADR-0075 adds native file UX while all-store recovery remains #33 |
+| [0075](0075-transfer-wallet-backups-through-native-document-pickers.md) Transfer wallet backups through native document pickers | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Fixed-name, bounded iOS/Android document pickers plus exact-confirmation custody-only Settings UX are implemented; all-store and physical-device recovery remain #33 |
 
 ## Current boundaries
 
@@ -147,8 +148,14 @@ profile-bound authenticated custody package. It restores the root and generated
 keys only after complete validation and refuses existing destinations. Mobile
 export forces a fresh native authorization and recovery uses authorized native
 vault initialization. The format is not exposed through headless; explicit OS
-document transfer, Dioxus Settings UX, and atomic profile/DID/credential
-association recovery remain issue #33 work.
+document transfer and Dioxus Settings UX are supplied by ADR-0075; atomic
+profile/DID/credential association recovery remains issue #33 work.
+ADR-0075 keeps arbitrary paths outside the application and UI. A fixed-name,
+1 MiB encrypted package crosses only the native document bridge: iOS uses a
+protected, no-backup temporary export plus regular non-symlink copied imports,
+and Android uses bounded openable content URIs. Cancellation is explicit,
+Settings zeroizes entered recovery-secret state and truthfully labels this as
+custody-only, and recovery remains limited to an empty matching profile.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a

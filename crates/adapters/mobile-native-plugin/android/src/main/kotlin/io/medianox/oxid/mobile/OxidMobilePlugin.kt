@@ -21,6 +21,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -59,6 +60,13 @@ class OxidMobilePlugin(private val activity: Activity) {
 
     fun custodyJson(request: String): String = CustodyCoordinator.dispatch(activity, request)
 
+    fun startBackupExportJson(request: String): String =
+        BackupDocumentCoordinator.startExport(activity, request)
+
+    fun startBackupImportJson(): String = BackupDocumentCoordinator.startImport(activity)
+
+    fun takeBackupDocumentResultJson(): String = BackupDocumentCoordinator.take()
+
     private fun onUiThread(operation: () -> Unit): Boolean {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             return runCatching(operation).isSuccess
@@ -84,6 +92,192 @@ class OxidMobilePlugin(private val activity: Activity) {
         fun captureCustodyAuthorizationResult(requestCode: Int, resultCode: Int): Boolean {
             return CustodyAuthorization.complete(requestCode, resultCode)
         }
+
+        /** Called only by Oxid's repository-owned MainActivity for document-picker results. */
+        @JvmStatic
+        fun captureBackupDocumentResult(
+            activity: Activity,
+            requestCode: Int,
+            resultCode: Int,
+            data: Intent?
+        ): Boolean {
+            return BackupDocumentCoordinator.complete(activity, requestCode, resultCode, data)
+        }
+    }
+}
+
+private object BackupDocumentCoordinator {
+    private const val EXPORT_REQUEST_CODE = 0x0A72
+    private const val IMPORT_REQUEST_CODE = 0x0A73
+    private const val MAX_PACKAGE_BYTES = 1024 * 1024
+    private const val EXPECTED_FILE_NAME = "oxid-wallet-custody.oxidbak"
+    private var status = "idle"
+    private var resultPayload: String? = null
+    private var exportBytes: ByteArray? = null
+
+    @Synchronized
+    fun startExport(activity: Activity, request: String): String {
+        if (status == "exporting" || status == "importing") return json("busy")
+        if (request.isEmpty() || request.length > MAX_PACKAGE_BYTES * 2) return json("invalid")
+        val body = runCatching { JSONObject(request) }.getOrNull() ?: return json("invalid")
+        if (body.keys().asSequence().toSet() != setOf("file_name", "payload") ||
+            body.optString("file_name", "") != EXPECTED_FILE_NAME
+        ) return json("invalid")
+        val encoded = body.optString("payload", "")
+        if (encoded.isEmpty() || encoded.length > ((MAX_PACKAGE_BYTES + 2) / 3) * 4) {
+            return json("invalid")
+        }
+        val bytes = runCatching { Base64.decode(encoded, Base64.NO_WRAP) }.getOrNull()
+            ?: return json("invalid")
+        if (bytes.isEmpty() || bytes.size > MAX_PACKAGE_BYTES ||
+            Base64.encodeToString(bytes, Base64.NO_WRAP) != encoded
+        ) {
+            bytes.fill(0)
+            return json("invalid")
+        }
+        status = "exporting"
+        resultPayload = null
+        exportBytes = bytes
+        activity.runOnUiThread {
+            runCatching {
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/octet-stream"
+                    putExtra(Intent.EXTRA_TITLE, EXPECTED_FILE_NAME)
+                }
+                @Suppress("DEPRECATION")
+                activity.startActivityForResult(intent, EXPORT_REQUEST_CODE)
+            }.onFailure { failStart("unavailable") }
+        }
+        return json("exporting")
+    }
+
+    @Synchronized
+    fun startImport(activity: Activity): String {
+        if (status == "exporting" || status == "importing") return json("busy")
+        status = "importing"
+        resultPayload = null
+        activity.runOnUiThread {
+            runCatching {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/octet-stream"
+                }
+                @Suppress("DEPRECATION")
+                activity.startActivityForResult(intent, IMPORT_REQUEST_CODE)
+            }.onFailure { failStart("unavailable") }
+        }
+        return json("importing")
+    }
+
+    @Synchronized
+    fun take(): String {
+        val result = json(status, resultPayload)
+        if (status != "exporting" && status != "importing") {
+            status = "idle"
+            resultPayload = null
+        }
+        return result
+    }
+
+    fun complete(
+        activity: Activity,
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?
+    ): Boolean {
+        if (requestCode != EXPORT_REQUEST_CODE && requestCode != IMPORT_REQUEST_CODE) return false
+        if (resultCode != Activity.RESULT_OK) {
+            finish("cancelled")
+            return true
+        }
+        val uri = data?.data
+        if (uri == null) {
+            finish("invalid")
+            return true
+        }
+        Thread {
+            if (requestCode == EXPORT_REQUEST_CODE) exportTo(activity, uri)
+            else importFrom(activity, uri)
+        }.start()
+        return true
+    }
+
+    private fun exportTo(activity: Activity, uri: android.net.Uri) {
+        val bytes = synchronized(this) {
+            if (status != "exporting") null else exportBytes?.also { exportBytes = null }
+        }
+        if (bytes == null) {
+            finish("failed")
+            return
+        }
+        try {
+            val succeeded = runCatching {
+                activity.contentResolver.openOutputStream(uri, "wt")?.use { output ->
+                    output.write(bytes)
+                    output.flush()
+                    true
+                } ?: false
+            }.getOrDefault(false)
+            finish(if (succeeded) "exported" else "failed")
+        } finally {
+            bytes.fill(0)
+        }
+    }
+
+    private fun importFrom(activity: Activity, uri: android.net.Uri) {
+        val declaredSize = runCatching {
+            activity.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
+        }.getOrNull()
+        if (declaredSize != null && (declaredSize == 0L || declaredSize > MAX_PACKAGE_BYTES)) {
+            finish("invalid")
+            return
+        }
+        val bytes = runCatching {
+            activity.contentResolver.openInputStream(uri)?.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(16 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    output.write(buffer, 0, read)
+                    if (output.size() > MAX_PACKAGE_BYTES) return@use null
+                }
+                output.toByteArray().takeIf { it.isNotEmpty() }
+            }
+        }.getOrNull()
+        if (bytes == null) {
+            finish("invalid")
+            return
+        }
+        try {
+            finish("imported", Base64.encodeToString(bytes, Base64.NO_WRAP))
+        } finally {
+            bytes.fill(0)
+        }
+    }
+
+    @Synchronized
+    private fun failStart(next: String) {
+        exportBytes?.fill(0)
+        exportBytes = null
+        status = next
+        resultPayload = null
+    }
+
+    @Synchronized
+    private fun finish(next: String, payload: String? = null) {
+        exportBytes?.fill(0)
+        exportBytes = null
+        status = next
+        resultPayload = payload
+    }
+
+    private fun json(value: String, payload: String? = null): String {
+        return JSONObject().apply {
+            put("status", value)
+            if (payload != null) put("payload", payload)
+        }.toString()
     }
 }
 

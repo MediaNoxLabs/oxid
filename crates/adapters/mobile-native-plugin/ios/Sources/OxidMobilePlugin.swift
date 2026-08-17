@@ -5,6 +5,7 @@ import Foundation
 import LocalAuthentication
 import Security
 import UIKit
+import UniformTypeIdentifiers
 
 @objc(OxidMobilePlugin)
 public final class OxidMobilePlugin: NSObject {
@@ -45,6 +46,18 @@ public final class OxidMobilePlugin: NSObject {
         }
     }
 
+    @objc public func startBackupExportJson(_ request: String) -> String {
+        onMain { BackupDocumentCoordinator.shared.startExport(request: request) }
+    }
+
+    @objc public func startBackupImportJson() -> String {
+        onMain { BackupDocumentCoordinator.shared.startImport() }
+    }
+
+    @objc public func takeBackupDocumentResultJson() -> String {
+        BackupDocumentCoordinator.shared.take()
+    }
+
     @objc public func custodyJson(_ request: String) -> String {
         CustodyCoordinator.shared.dispatch(request: request)
     }
@@ -62,6 +75,190 @@ public final class OxidMobilePlugin: NSObject {
         var current = root
         while let presented = current?.presentedViewController { current = presented }
         return current
+    }
+}
+
+private final class BackupDocumentCoordinator: NSObject, UIDocumentPickerDelegate {
+    static let shared = BackupDocumentCoordinator()
+
+    private enum Operation {
+        case export
+        case importFile
+    }
+
+    private let lock = NSLock()
+    private let maximumPackageBytes = 1024 * 1024
+    private let expectedFileName = "oxid-wallet-custody.oxidbak"
+    private var operation: Operation?
+    private var status = "idle"
+    private var payload: String?
+    private var temporaryDirectory: URL?
+
+    func startExport(request: String) -> String {
+        guard request.utf8.count <= maximumPackageBytes * 2,
+              let requestData = request.data(using: .utf8),
+              let body = try? JSONSerialization.jsonObject(with: requestData) as? [String: Any],
+              Set(body.keys) == Set(["file_name", "payload"]),
+              let fileName = body["file_name"] as? String,
+              fileName == expectedFileName,
+              let encoded = body["payload"] as? String,
+              encoded.utf8.count <= ((maximumPackageBytes + 2) / 3) * 4,
+              let bytes = Data(base64Encoded: encoded),
+              !bytes.isEmpty,
+              bytes.count <= maximumPackageBytes,
+              bytes.base64EncodedString() == encoded else {
+            return Self.json(status: "invalid")
+        }
+        lock.lock()
+        guard operation == nil else {
+            lock.unlock()
+            return Self.json(status: "busy")
+        }
+        operation = .export
+        status = "exporting"
+        payload = nil
+        lock.unlock()
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("oxid-backup-\(UUID().uuidString)", isDirectory: true)
+        let file = directory.appendingPathComponent(expectedFileName, isDirectory: false)
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try bytes.write(to: file, options: [.atomic, .completeFileProtection])
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            var protectedFile = file
+            try protectedFile.setResourceValues(values)
+            lock.lock()
+            temporaryDirectory = directory
+            lock.unlock()
+            guard let presenter = OxidMobilePlugin.topViewController() else {
+                finish("unavailable")
+                return Self.json(status: "unavailable")
+            }
+            let picker = UIDocumentPickerViewController(forExporting: [file], asCopy: true)
+            picker.delegate = self
+            presenter.present(picker, animated: true)
+            return Self.json(status: "exporting")
+        } catch {
+            finish("failed")
+            return Self.json(status: "failed")
+        }
+    }
+
+    func startImport() -> String {
+        lock.lock()
+        guard operation == nil else {
+            lock.unlock()
+            return Self.json(status: "busy")
+        }
+        operation = .importFile
+        status = "importing"
+        payload = nil
+        lock.unlock()
+        guard let presenter = OxidMobilePlugin.topViewController() else {
+            finish("unavailable")
+            return Self.json(status: "unavailable")
+        }
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [.data],
+            asCopy: true
+        )
+        picker.allowsMultipleSelection = false
+        picker.delegate = self
+        presenter.present(picker, animated: true)
+        return Self.json(status: "importing")
+    }
+
+    func take() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        let result = Self.json(status: status, payload: payload)
+        if status != "exporting" && status != "importing" {
+            status = "idle"
+            payload = nil
+        }
+        return result
+    }
+
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        finish("cancelled")
+    }
+
+    func documentPicker(
+        _ controller: UIDocumentPickerViewController,
+        didPickDocumentsAt urls: [URL]
+    ) {
+        lock.lock()
+        let current = operation
+        lock.unlock()
+        switch current {
+        case .export:
+            finish(urls.count == 1 ? "exported" : "failed")
+        case .importFile:
+            guard urls.count == 1 else {
+                finish("invalid")
+                return
+            }
+            importDocument(urls[0])
+        case .none:
+            finish("failed")
+        }
+    }
+
+    private func importDocument(_ url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let values = try url.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isSymbolicLinkKey,
+                .fileSizeKey
+            ])
+            guard values.isRegularFile == true,
+                  values.isSymbolicLink != true,
+                  let fileSize = values.fileSize,
+                  fileSize > 0,
+                  fileSize <= maximumPackageBytes else {
+                finish("invalid")
+                return
+            }
+            let bytes = try Data(contentsOf: url, options: .uncached)
+            guard !bytes.isEmpty, bytes.count <= maximumPackageBytes else {
+                finish("invalid")
+                return
+            }
+            finish("imported", payload: bytes.base64EncodedString())
+        } catch {
+            finish("failed")
+        }
+    }
+
+    private func finish(_ next: String, payload nextPayload: String? = nil) {
+        lock.lock()
+        status = next
+        payload = nextPayload
+        operation = nil
+        let directory = temporaryDirectory
+        temporaryDirectory = nil
+        lock.unlock()
+        if let directory {
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
+    private static func json(status: String, payload: String? = nil) -> String {
+        var body: [String: String] = ["status": status]
+        if let payload { body["payload"] = payload }
+        guard let data = try? JSONSerialization.data(withJSONObject: body),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{\"status\":\"failed\"}"
+        }
+        return text
     }
 }
 

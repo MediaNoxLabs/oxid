@@ -1307,7 +1307,28 @@ backup reason even during an active session; recovery must use native
 initialize for fresh authorization. Do not add recovery to `oxid.headless.v1`,
 copy raw secrets to UI/clipboard/logs, accept arbitrary paths, reuse device-vault
 ciphertext, or claim all-store recovery until profile/DID/credential records are
-staged atomically. Native document transfer and Dioxus Settings UX remain #33.
+staged atomically. ADR-0075 supplies native document transfer and the
+custody-only Dioxus Settings UX; all-store recovery remains #33.
+
+ADR-0075 fixes portable-backup document authority at the OS boundary.
+`PortableWalletBackupDocumentPort` transports only the bounded encrypted
+package and exposes explicit cancellation/unavailable/timeout/invalid/failure;
+callers receive no path and may suggest only
+`oxid-wallet-custody.oxidbak`. `oxid-adapter-backup-document-mobile` polls the
+single repository-owned Manganis plugin for at most five minutes. iOS uses a
+complete-file-protected, no-backup temporary export removed after
+`UIDocumentPickerViewController` completion and requires one copied regular
+non-symlink import no larger than 1 MiB. Android uses only
+`ACTION_CREATE_DOCUMENT`/`ACTION_OPEN_DOCUMENT` openable content URIs and
+enforces the same bound before and during streaming. Keep the encrypted package
+out of clipboard/share/app-link/WebView/headless surfaces. Settings recovery is
+available only for an uninitialized matching profile, uses zeroizing Rust input
+state and exact confirmations, and must continue to say that profile metadata,
+DID documents, credentials, associations, and transaction history are not yet
+restored. iOS simulator conformance exported, restarted process-local custody,
+restored one key, and reconnected the deterministic 5 NIGHT account; Android
+assembly/install/launch passed, but Android picker interaction and physical-
+device evidence remain #33.
 
 `OXID_MOBILE_CUSTODY=development|native` selects the standalone mobile
 composition; development is the default. Native mode combines production

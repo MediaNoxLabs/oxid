@@ -336,9 +336,12 @@ record failures. Oxid instead has one versioned, bounded, profile-bound
 Argon2id/XChaCha20-Poly1305 custody package behind an application-owned port.
 Development and OS-wrapped mobile custody can restore an exact root, generated
 keys, derivation paths, and opaque references only into an empty destination;
-mobile export forces fresh native authorization. Explicit OS file transfer,
-Dioxus Settings UX, and staged all-store profile/DID/credential association
-recovery remain issue #33 work and are not represented as complete parity.
+mobile export forces fresh native authorization. ADR-0075 now transfers only
+the encrypted package through fixed-name, user-selected iOS/Android document
+pickers and exposes exact-confirmation custody-only Settings UX. Staged
+all-store profile/DID/credential association recovery, Android picker
+interaction, and physical-device evidence remain issue #33 work and are not
+represented as complete parity.
 
 [Issue #2](https://github.com/MediaNoxLabs/oxid/issues/2), ADR-0051, and
 [issue #31](https://github.com/MediaNoxLabs/oxid/issues/31) migrate the

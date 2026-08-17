@@ -92,6 +92,11 @@ fn main() {
             application.initialize_wallet_security(),
             application.unlock_wallet(),
             application.lock_wallet(),
+            oxid_ui_dioxus::WalletBackupUiServices::new(
+                application.export_portable_wallet_backup(),
+                application.recover_portable_wallet_backup(),
+                application.portable_wallet_backup_documents(),
+            ),
         ),
         oxid_ui_dioxus::WalletAccountUiServices::new(
             application.list_wallet_networks(),

@@ -909,6 +909,14 @@ textarea:focus-visible {
   line-height: 1.4;
 }
 
+.confirmation-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 1rem;
+  min-height: 1rem;
+  margin: 0.1rem 0 0;
+  padding: 0;
+}
+
 .danger-action {
   min-height: 3.2rem;
   padding: 0 1rem;
@@ -951,6 +959,83 @@ textarea:focus-visible {
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 0.8rem;
+}
+
+.backup-card {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+}
+
+.backup-card .card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.backup-warning {
+  margin: 0;
+  padding: 0.8rem;
+  border: 1px solid rgb(251 191 36 / 28%);
+  border-radius: 0.85rem;
+  background: rgb(251 191 36 / 8%);
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.backup-warning strong {
+  color: var(--warning);
+}
+
+.backup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.backup-action {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface-4);
+}
+
+.backup-action h3,
+.backup-action p {
+  margin: 0;
+}
+
+.backup-action h3 {
+  color: var(--text-strong);
+  font-size: 0.9rem;
+}
+
+.backup-action p,
+.backup-action label:not(.confirmation-row) {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.backup-action label:not(.confirmation-row) {
+  display: grid;
+  gap: 0.4rem;
+  font-weight: 700;
+}
+
+.backup-action input:not([type="checkbox"]) {
+  min-height: 2.8rem;
+}
+
+@media (max-width: 720px) {
+  .backup-actions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .status-pill.success {

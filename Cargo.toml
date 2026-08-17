@@ -14,6 +14,7 @@ members = [
   "crates/adapters/identity-ingress",
   "crates/adapters/custody-software",
   "crates/adapters/backup-portable",
+  "crates/adapters/backup-document-mobile",
   "crates/adapters/mobile-native-plugin",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
@@ -52,6 +53,7 @@ default-members = [
   "crates/adapters/identity-ingress",
   "crates/adapters/custody-software",
   "crates/adapters/backup-portable",
+  "crates/adapters/backup-document-mobile",
   "crates/adapters/mobile-native-plugin",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
@@ -138,6 +140,7 @@ oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-mi
 oxid-adapter-identity-ingress = { version = "=0.1.0", path = "crates/adapters/identity-ingress" }
 oxid-adapter-custody-software = { version = "=0.1.0", path = "crates/adapters/custody-software" }
 oxid-adapter-backup-portable = { version = "=0.1.0", path = "crates/adapters/backup-portable" }
+oxid-adapter-backup-document-mobile = { version = "=0.1.0", path = "crates/adapters/backup-document-mobile" }
 oxid-adapter-mobile-native = { version = "=0.1.0", path = "crates/adapters/mobile-native-plugin" }
 oxid-adapter-storage-credential-json = { version = "=0.1.0", path = "crates/adapters/storage-credential-json" }
 oxid-adapter-storage-identity-json = { version = "=0.1.0", path = "crates/adapters/storage-identity-json" }

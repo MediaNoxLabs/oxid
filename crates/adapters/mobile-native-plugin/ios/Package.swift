@@ -17,7 +17,8 @@ let package = Package(
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("LocalAuthentication"),
                 .linkedFramework("Security"),
-                .linkedFramework("UIKit")
+                .linkedFramework("UIKit"),
+                .linkedFramework("UniformTypeIdentifiers")
             ]
         )
     ]

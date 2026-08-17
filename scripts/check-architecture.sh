@@ -100,6 +100,8 @@ check_workspace_dependencies oxid-adapter-custody-software \
   oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-backup-portable \
   oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
+check_workspace_dependencies oxid-adapter-backup-document-mobile \
+  oxid-adapter-mobile-native oxid-wallet-application
 check_workspace_dependencies oxid-adapter-storage-mobile \
   oxid-adapter-backup-portable oxid-adapter-custody-software \
   oxid-adapter-mobile-native oxid-foundation oxid-platform-ports \
@@ -142,7 +144,7 @@ check_workspace_dependencies oxid-ui-dioxus \
   oxid-passport-vault-application oxid-presentation-application \
   oxid-protocol-application oxid-wallet-application
 check_workspace_dependencies oxid-composition \
-  oxid-adapter-did-midnight oxid-adapter-identity-ingress \
+  oxid-adapter-backup-document-mobile oxid-adapter-did-midnight oxid-adapter-identity-ingress \
   oxid-adapter-openid4vci oxid-adapter-siopv2 \
   oxid-adapter-openid4vp oxid-adapter-passport-vault \
   oxid-adapter-platform-system \

@@ -64,6 +64,64 @@ pub fn share_public_receive_address(value: &str) -> Result<String, NativeBridgeE
 }
 
 #[cfg(target_os = "ios")]
+pub fn start_backup_export_json(
+    file_name: &str,
+    payload: &str,
+) -> Result<String, NativeBridgeError> {
+    let request = backup_export_request(file_name, payload)?;
+    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
+    startBackupExportJson(&plugin, request.to_string()).map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(target_os = "android")]
+pub fn start_backup_export_json(
+    file_name: &str,
+    payload: &str,
+) -> Result<String, NativeBridgeError> {
+    let request = backup_export_request(file_name, payload)?;
+    call_android_activity_with_string("oxidStartBackupExportJson", &request)
+}
+
+#[cfg(target_os = "ios")]
+pub fn start_backup_import_json() -> Result<String, NativeBridgeError> {
+    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
+    startBackupImportJson(&plugin).map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(target_os = "android")]
+pub fn start_backup_import_json() -> Result<String, NativeBridgeError> {
+    call_android_activity("oxidStartBackupImportJson")
+}
+
+#[cfg(target_os = "ios")]
+pub fn take_backup_document_result_json() -> Result<String, NativeBridgeError> {
+    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
+    takeBackupDocumentResultJson(&plugin).map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(target_os = "android")]
+pub fn take_backup_document_result_json() -> Result<String, NativeBridgeError> {
+    call_android_activity("oxidTakeBackupDocumentResultJson")
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+#[derive(Serialize)]
+struct NativeBackupExportRequest<'a> {
+    file_name: &'a str,
+    payload: &'a str,
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn backup_export_request(
+    file_name: &str,
+    payload: &str,
+) -> Result<Zeroizing<String>, NativeBridgeError> {
+    serde_json::to_string(&NativeBackupExportRequest { file_name, payload })
+        .map(Zeroizing::new)
+        .map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(target_os = "ios")]
 pub fn inspect_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
     call_ios_custody("inspect", profile_id, None, None)
 }
@@ -239,7 +297,8 @@ fn android_string<'local>(
 #[cfg(target_os = "ios")]
 use ios_bridge::{
     OxidMobilePlugin, copyPublicReceiveAddress, custodyJson, sharePublicReceiveAddress,
-    startScanJson, takeScanResultJson,
+    startBackupExportJson, startBackupImportJson, startScanJson, takeBackupDocumentResultJson,
+    takeScanResultJson,
 };
 
 #[cfg(target_os = "ios")]
@@ -252,6 +311,9 @@ mod ios_bridge {
         pub fn takeScanResultJson(this: &OxidMobilePlugin) -> String;
         pub fn copyPublicReceiveAddress(this: &OxidMobilePlugin, value: String) -> String;
         pub fn sharePublicReceiveAddress(this: &OxidMobilePlugin, value: String) -> String;
+        pub fn startBackupExportJson(this: &OxidMobilePlugin, request: String) -> String;
+        pub fn startBackupImportJson(this: &OxidMobilePlugin) -> String;
+        pub fn takeBackupDocumentResultJson(this: &OxidMobilePlugin) -> String;
         pub fn custodyJson(this: &OxidMobilePlugin, request: String) -> String;
     }
 }
