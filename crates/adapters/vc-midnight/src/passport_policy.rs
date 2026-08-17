@@ -39,6 +39,17 @@ impl DigitalPassportIssuerTrustAnchor {
     pub const fn public_key_hash(&self) -> [u8; 32] {
         self.public_key_hash
     }
+
+    pub(crate) fn matches(
+        &self,
+        issuer_did: &str,
+        method_id: &[u8; 32],
+        public_key: &[u8; 64],
+    ) -> bool {
+        self.issuer_did == issuer_did
+            && &self.method_id == method_id
+            && &self.public_key == public_key
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

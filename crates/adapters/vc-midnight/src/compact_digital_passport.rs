@@ -24,11 +24,14 @@ use oxid_credential_domain::{
     VerificationReport, VerificationStage, VerificationStageName, VerificationStageStatus,
 };
 use oxid_foundation::UnixTimestampMillis;
-use oxid_platform_ports::ClockPort;
+use oxid_identity_application::{DidResolutionPort, DidResolutionPortError};
+use oxid_identity_domain::{JwkCurve, JwkKeyType, MidnightDid, VerificationRelationship};
+use oxid_platform_ports::{ClockPort, PlatformError};
 use std::sync::Arc;
 
 use crate::credential_id;
 use crate::digital_passport::{DigitalPassportCommitments, PACKAGE_ID, SCHEMA_ID};
+use crate::passport_policy::DigitalPassportIssuerTrustAnchor;
 
 const MCV1_MAGIC: &[u8; 4] = b"MCV1";
 const CREDENTIAL_CHUNKS: usize = 18;
@@ -39,8 +42,33 @@ const ISSUANCE_CONTEXT: &[u8] = b"midnight:vc:issuance";
 const STANDALONE_PUBLIC_ISSUER_SCALAR: u64 = 123_456_789;
 const STANDALONE_PUBLIC_NONCE_SCALAR: u64 = 11;
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct MidnightCompactCredentialVerifier;
+#[derive(Clone, Default)]
+pub struct MidnightCompactCredentialVerifier {
+    policy: Option<Arc<CompactCredentialPolicy>>,
+}
+
+struct CompactCredentialPolicy {
+    resolver: Arc<dyn DidResolutionPort>,
+    clock: Arc<dyn ClockPort>,
+    trust_anchor: DigitalPassportIssuerTrustAnchor,
+}
+
+impl MidnightCompactCredentialVerifier {
+    #[must_use]
+    pub fn with_policy(
+        resolver: Arc<dyn DidResolutionPort>,
+        clock: Arc<dyn ClockPort>,
+        trust_anchor: DigitalPassportIssuerTrustAnchor,
+    ) -> Self {
+        Self {
+            policy: Some(Arc::new(CompactCredentialPolicy {
+                resolver,
+                clock,
+                trust_anchor,
+            })),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct StandaloneBoundCompactCredentialIssuer {
@@ -74,7 +102,16 @@ impl CredentialVerificationPort for MidnightCompactCredentialVerifier {
         signed_bytes: &'a [u8],
         detached_proof: Option<&'a [u8]>,
     ) -> CredentialInspectionFuture<'a> {
-        Box::pin(async move { inspect(signed_bytes, detached_proof) })
+        Box::pin(async move {
+            let inspection = inspect(signed_bytes, detached_proof)?;
+            let Some(policy) = self.policy.as_deref() else {
+                return Ok(inspection);
+            };
+            if inspection.verification.outcome() != VerificationOutcome::Valid {
+                return Ok(inspection);
+            }
+            inspect_policy(signed_bytes, detached_proof, inspection, policy).await
+        })
     }
 }
 
@@ -259,6 +296,256 @@ fn compact_report(
         .map_err(|_| CredentialVerificationError::InvalidCredential)?;
     VerificationReport::new(outcome, stages)
         .map_err(|_| CredentialVerificationError::InvalidCredential)
+}
+
+async fn inspect_policy(
+    credential_bytes: &[u8],
+    detached_proof: Option<&[u8]>,
+    inspection: CredentialInspection,
+    policy: &CompactCredentialPolicy,
+) -> Result<CredentialInspection, CredentialVerificationError> {
+    let credential = parse_credential(credential_bytes)?;
+    let proof = parse_proof(detached_proof.ok_or(CredentialVerificationError::InvalidCredential)?)?;
+    let issuer_did_value = did_from_contract_address(credential.issuer.did_contract_address);
+    let issuer_did = MidnightDid::parse(issuer_did_value.clone())
+        .map_err(|_| CredentialVerificationError::InvalidCredential)?;
+    let method_fragment = method_fragment(&credential.issuer.method_id)
+        .ok_or(CredentialVerificationError::InvalidCredential)?;
+    let canonical_method = format!("{}{method_fragment}", issuer_did.as_str());
+    let resolution = match policy.resolver.resolve(&issuer_did).await {
+        Ok(resolution) => resolution,
+        Err(error) => {
+            let reason = match error {
+                DidResolutionPortError::NotFound => "issuer_not_found",
+                DidResolutionPortError::InvalidDid => "invalid_issuer_did",
+                DidResolutionPortError::MethodNotSupported => "issuer_method_unsupported",
+                DidResolutionPortError::Unavailable
+                | DidResolutionPortError::InvalidResponse
+                | DidResolutionPortError::Rejected => "issuer_resolution_error",
+            };
+            return policy_failure(
+                inspection,
+                VerificationOutcome::Error,
+                VerificationStageName::Issuer,
+                reason,
+            );
+        }
+    };
+    if resolution.document().id() != &issuer_did {
+        return policy_failure(
+            inspection,
+            VerificationOutcome::Invalid,
+            VerificationStageName::Issuer,
+            "issuer_subject_mismatch",
+        );
+    }
+    let Some(method) = resolution
+        .document()
+        .verification_methods()
+        .iter()
+        .find(|method| method.id() == canonical_method)
+    else {
+        return policy_failure(
+            inspection,
+            VerificationOutcome::Invalid,
+            VerificationStageName::Issuer,
+            "verification_method_missing",
+        );
+    };
+    let assertion_authorized = resolution
+        .document()
+        .relationships()
+        .iter()
+        .any(|relationship| {
+            relationship.relationship() == VerificationRelationship::AssertionMethod
+                && relationship
+                    .method_ids()
+                    .iter()
+                    .any(|id| id == &canonical_method || id == method_fragment)
+        });
+    if !assertion_authorized {
+        return policy_failure(
+            inspection,
+            VerificationOutcome::Invalid,
+            VerificationStageName::Issuer,
+            "method_not_assertion_authorized",
+        );
+    }
+    if method.controller() != &issuer_did {
+        return policy_failure(
+            inspection,
+            VerificationOutcome::Invalid,
+            VerificationStageName::Issuer,
+            "method_controller_mismatch",
+        );
+    }
+    let proof_key =
+        point_bytes(proof.public_key).ok_or(CredentialVerificationError::InvalidCredential)?;
+    if !jwk_matches_proof(method.public_key_jwk(), &proof_key) {
+        return policy_failure(
+            inspection,
+            VerificationOutcome::Invalid,
+            VerificationStageName::Issuer,
+            "issuer_key_mismatch",
+        );
+    }
+
+    let now = policy
+        .clock
+        .now()
+        .map_err(|error| match error {
+            PlatformError::ClockUnavailable | PlatformError::RandomnessUnavailable => {
+                CredentialVerificationError::Unavailable
+            }
+        })?
+        .value()
+        / 1_000;
+    let temporal_failure = if credential.issued_at > now {
+        Some("issuance_in_future")
+    } else if proof.created_at < credential.issued_at {
+        Some("proof_before_issuance")
+    } else if proof.created_at > now {
+        Some("proof_in_future")
+    } else if credential.has_expiration && proof.created_at >= credential.expires_at {
+        Some("proof_after_expiration")
+    } else if credential.has_expiration && now >= credential.expires_at {
+        Some("credential_expired")
+    } else {
+        None
+    };
+    if let Some(reason) = temporal_failure {
+        return policy_failure(
+            inspection,
+            VerificationOutcome::Invalid,
+            VerificationStageName::Temporal,
+            reason,
+        );
+    }
+
+    if !policy
+        .trust_anchor
+        .matches(&issuer_did_value, &credential.issuer.method_id, &proof_key)
+    {
+        return policy_failure(
+            inspection,
+            VerificationOutcome::Invalid,
+            VerificationStageName::Trust,
+            "issuer_not_trusted",
+        );
+    }
+
+    Ok(CredentialInspection {
+        id: inspection.id,
+        metadata: inspection.metadata,
+        verification: policy_report(VerificationOutcome::Valid, None)?,
+    })
+}
+
+fn policy_failure(
+    inspection: CredentialInspection,
+    outcome: VerificationOutcome,
+    stage: VerificationStageName,
+    reason: &'static str,
+) -> Result<CredentialInspection, CredentialVerificationError> {
+    Ok(CredentialInspection {
+        id: inspection.id,
+        metadata: inspection.metadata,
+        verification: policy_report(outcome, Some((stage, reason)))?,
+    })
+}
+
+fn policy_report(
+    outcome: VerificationOutcome,
+    failure: Option<(VerificationStageName, &'static str)>,
+) -> Result<VerificationReport, CredentialVerificationError> {
+    let stages = VerificationStageName::ALL
+        .into_iter()
+        .map(|name| {
+            let passed = match failure.map(|(stage, _)| stage) {
+                None => matches!(
+                    name,
+                    VerificationStageName::Structural
+                        | VerificationStageName::Issuer
+                        | VerificationStageName::Proof
+                        | VerificationStageName::Temporal
+                        | VerificationStageName::Schema
+                        | VerificationStageName::Trust
+                ),
+                Some(VerificationStageName::Issuer) => name == VerificationStageName::Structural,
+                Some(VerificationStageName::Temporal) => matches!(
+                    name,
+                    VerificationStageName::Structural
+                        | VerificationStageName::Issuer
+                        | VerificationStageName::Proof
+                        | VerificationStageName::Schema
+                ),
+                Some(VerificationStageName::Trust) => matches!(
+                    name,
+                    VerificationStageName::Structural
+                        | VerificationStageName::Issuer
+                        | VerificationStageName::Proof
+                        | VerificationStageName::Temporal
+                        | VerificationStageName::Schema
+                ),
+                Some(_) => false,
+            };
+            let (status, reason) = if failure.is_some_and(|(stage, _)| stage == name) {
+                (
+                    VerificationStageStatus::Failed,
+                    failure.map(|(_, reason)| reason.to_owned()),
+                )
+            } else if passed {
+                (VerificationStageStatus::Passed, None)
+            } else {
+                (VerificationStageStatus::NotChecked, None)
+            };
+            VerificationStage::new(name, status, reason)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| CredentialVerificationError::InvalidCredential)?;
+    VerificationReport::new(outcome, stages)
+        .map_err(|_| CredentialVerificationError::InvalidCredential)
+}
+
+fn method_fragment(method_id: &[u8; 32]) -> Option<&str> {
+    let end = method_id
+        .iter()
+        .rposition(|byte| *byte != 0)
+        .map_or(0, |index| index + 1);
+    let value = std::str::from_utf8(&method_id[..end]).ok()?;
+    let fragment = value.strip_prefix('#')?;
+    if fragment.is_empty()
+        || !fragment.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b':' | b'%')
+        })
+    {
+        return None;
+    }
+    Some(value)
+}
+
+fn point_bytes(point: EmbeddedGroupAffine) -> Option<[u8; 64]> {
+    let mut bytes = [0_u8; 64];
+    bytes[..32].copy_from_slice(&point.x()?.as_le_bytes());
+    bytes[32..].copy_from_slice(&point.y()?.as_le_bytes());
+    Some(bytes)
+}
+
+fn jwk_matches_proof(jwk: &oxid_identity_domain::PublicJwk, proof_key: &[u8; 64]) -> bool {
+    if jwk.key_type() != JwkKeyType::Ec || jwk.curve() != JwkCurve::Jubjub {
+        return false;
+    }
+    let Some(y) = jwk.y() else {
+        return false;
+    };
+    let decode = |value: &str| {
+        general_purpose::URL_SAFE_NO_PAD
+            .decode(value)
+            .ok()
+            .filter(|bytes| bytes.len() == 32)
+            .filter(|bytes| general_purpose::URL_SAFE_NO_PAD.encode(bytes) == value)
+    };
+    matches!((decode(jwk.x()), decode(y)), (Some(x), Some(y)) if x == proof_key[..32] && y == proof_key[32..])
 }
 
 pub(crate) fn parse_credential(
@@ -691,6 +978,19 @@ const fn padded<const N: usize>(value: &[u8]) -> [u8; N] {
 #[cfg(test)]
 mod tests {
     use base64::{Engine as _, engine::general_purpose};
+    use oxid_identity_application::{DidResolutionPort, DidResolutionPortFuture};
+    use oxid_identity_domain::{
+        DID_CONTEXT, DidDocument, DidDocumentMetadata, DidDocumentParts, DidResolution,
+        DidResolutionMetadata, DidResolutionSource, JWK_CONTEXT, PublicJwk, VerificationMethod,
+        VerificationRelationshipEntry,
+    };
+    use oxid_platform_ports::PlatformError;
+    use std::{
+        future::Future,
+        pin::Pin,
+        sync::Arc,
+        task::{Context, Poll, Waker},
+    };
 
     use super::*;
 
@@ -719,6 +1019,140 @@ mod tests {
             public_key_y: general_purpose::URL_SAFE_NO_PAD
                 .encode(holder_key.y().expect("holder y").as_le_bytes()),
         }
+    }
+
+    #[derive(Clone, Copy)]
+    struct FixedClock(u64);
+
+    impl ClockPort for FixedClock {
+        fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
+            Ok(UnixTimestampMillis::new(self.0.saturating_mul(1_000)))
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum ResolverMode {
+        Valid,
+        MissingMethod,
+        NotAssertionAuthorized,
+        WrongKey,
+        Unavailable,
+    }
+
+    struct PolicyResolver(ResolverMode);
+
+    impl DidResolutionPort for PolicyResolver {
+        fn resolve<'a>(&'a self, did: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
+            let did = did.clone();
+            let mode = self.0;
+            Box::pin(async move {
+                if matches!(mode, ResolverMode::Unavailable) {
+                    return Err(DidResolutionPortError::Unavailable);
+                }
+                let (methods, relationships) = if matches!(mode, ResolverMode::MissingMethod) {
+                    (Vec::new(), Vec::new())
+                } else {
+                    let proof = parse_proof(&super::super::standalone_compact_proof())
+                        .expect("standalone proof");
+                    let coordinates = point_bytes(proof.public_key).expect("issuer key");
+                    let x = if matches!(mode, ResolverMode::WrongKey) {
+                        [7_u8; 32]
+                    } else {
+                        coordinates[..32].try_into().expect("x")
+                    };
+                    let y = if matches!(mode, ResolverMode::WrongKey) {
+                        [9_u8; 32]
+                    } else {
+                        coordinates[32..].try_into().expect("y")
+                    };
+                    let method = VerificationMethod::new(
+                        &did,
+                        "#issuer-key-1",
+                        did.clone(),
+                        PublicJwk::new(
+                            JwkKeyType::Ec,
+                            JwkCurve::Jubjub,
+                            general_purpose::URL_SAFE_NO_PAD.encode(x),
+                            Some(general_purpose::URL_SAFE_NO_PAD.encode(y)),
+                        )
+                        .expect("JWK"),
+                    )
+                    .expect("method");
+                    let relationship = if matches!(mode, ResolverMode::NotAssertionAuthorized) {
+                        VerificationRelationship::Authentication
+                    } else {
+                        VerificationRelationship::AssertionMethod
+                    };
+                    (
+                        vec![method],
+                        vec![VerificationRelationshipEntry::new(
+                            relationship,
+                            vec!["#issuer-key-1".to_owned()],
+                        )],
+                    )
+                };
+                let document = DidDocument::new(DidDocumentParts {
+                    contexts: vec![DID_CONTEXT.to_owned(), JWK_CONTEXT.to_owned()],
+                    id: did.clone(),
+                    controllers: vec![did],
+                    also_known_as: Vec::new(),
+                    verification_methods: methods,
+                    relationships,
+                    services: Vec::new(),
+                })
+                .expect("document");
+                Ok(DidResolution::new(
+                    document,
+                    DidDocumentMetadata::default(),
+                    DidResolutionMetadata::default(),
+                    DidResolutionSource::Standalone,
+                ))
+            })
+        }
+    }
+
+    fn policy_verifier(mode: ResolverMode, now: u64) -> MidnightCompactCredentialVerifier {
+        MidnightCompactCredentialVerifier::with_policy(
+            Arc::new(PolicyResolver(mode)),
+            Arc::new(FixedClock(now)),
+            super::super::standalone_digital_passport_issuer_trust_anchor(),
+        )
+    }
+
+    fn poll<T>(future: Pin<Box<dyn Future<Output = T> + Send + '_>>) -> T {
+        let mut context = Context::from_waker(Waker::noop());
+        let mut future = future;
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(output) => output,
+            Poll::Pending => panic!("test future unexpectedly pending"),
+        }
+    }
+
+    fn signed_proof(credential: &CompactCredential, created_at: u64) -> CompactProof {
+        let secret = EmbeddedFr::from(STANDALONE_PUBLIC_ISSUER_SCALAR);
+        let nonce = EmbeddedFr::from(STANDALONE_PUBLIC_NONCE_SCALAR);
+        let template = parse_proof(&super::super::standalone_compact_proof()).expect("proof");
+        let mut proof = CompactProof {
+            signer: credential.issuer,
+            created_at,
+            challenge_hash: template.challenge_hash,
+            public_key: EmbeddedGroupAffine::generator() * secret,
+            announcement: EmbeddedGroupAffine::generator() * nonce,
+            response: Fr::from(0_u64),
+        };
+        let challenge = issuance_challenge(credential, &proof);
+        let response = nonce + EmbeddedFr::try_from(challenge).expect("challenge") * secret;
+        proof.response = Fr::from_le_bytes(&response.as_le_bytes()).expect("response");
+        proof
+    }
+
+    fn stage(inspection: &CredentialInspection, name: VerificationStageName) -> &VerificationStage {
+        inspection
+            .verification
+            .stages()
+            .iter()
+            .find(|stage| stage.name() == name)
+            .expect("stage")
     }
 
     #[test]
@@ -753,6 +1187,138 @@ mod tests {
             };
             assert_eq!(stage.status(), expected, "{:?}", stage.name());
         }
+    }
+
+    #[test]
+    fn standalone_policy_anchors_issuer_time_and_trust_but_not_status() {
+        let issued_at = 1_700_000_000;
+        let issued = issue_bound_standalone_credential(&bound_request(), issued_at).expect("issue");
+        let verifier = policy_verifier(ResolverMode::Valid, issued_at + 1);
+        let inspection =
+            poll(verifier.inspect(&issued.signed_bytes, issued.detached_proof.as_deref()))
+                .expect("inspect");
+        assert_eq!(
+            inspection.verification.outcome(),
+            VerificationOutcome::Valid
+        );
+        for name in [
+            VerificationStageName::Issuer,
+            VerificationStageName::Temporal,
+            VerificationStageName::Trust,
+        ] {
+            assert_eq!(
+                stage(&inspection, name).status(),
+                VerificationStageStatus::Passed
+            );
+        }
+        assert_eq!(
+            stage(&inspection, VerificationStageName::Status).status(),
+            VerificationStageStatus::NotChecked
+        );
+    }
+
+    #[test]
+    fn standalone_policy_rejects_missing_wrong_or_unavailable_issuer_evidence() {
+        let issued_at = 1_700_000_000;
+        let issued = issue_bound_standalone_credential(&bound_request(), issued_at).expect("issue");
+        for (mode, outcome, reason) in [
+            (
+                ResolverMode::MissingMethod,
+                VerificationOutcome::Invalid,
+                "verification_method_missing",
+            ),
+            (
+                ResolverMode::WrongKey,
+                VerificationOutcome::Invalid,
+                "issuer_key_mismatch",
+            ),
+            (
+                ResolverMode::NotAssertionAuthorized,
+                VerificationOutcome::Invalid,
+                "method_not_assertion_authorized",
+            ),
+            (
+                ResolverMode::Unavailable,
+                VerificationOutcome::Error,
+                "issuer_resolution_error",
+            ),
+        ] {
+            let inspection = poll(
+                policy_verifier(mode, issued_at + 1)
+                    .inspect(&issued.signed_bytes, issued.detached_proof.as_deref()),
+            )
+            .expect("inspection result");
+            assert_eq!(inspection.verification.outcome(), outcome);
+            assert_eq!(
+                stage(&inspection, VerificationStageName::Issuer).reason_code(),
+                Some(reason)
+            );
+        }
+    }
+
+    #[test]
+    fn standalone_policy_rejects_future_expired_and_invalid_proof_times() {
+        let issued_at = 1_700_000_000;
+        let issued = issue_bound_standalone_credential(&bound_request(), issued_at).expect("issue");
+        let future = poll(
+            policy_verifier(ResolverMode::Valid, issued_at - 1)
+                .inspect(&issued.signed_bytes, issued.detached_proof.as_deref()),
+        )
+        .expect("future inspection");
+        assert_eq!(
+            stage(&future, VerificationStageName::Temporal).reason_code(),
+            Some("issuance_in_future")
+        );
+
+        let credential = parse_credential(&issued.signed_bytes).expect("credential");
+        let expired = poll(
+            policy_verifier(ResolverMode::Valid, credential.expires_at)
+                .inspect(&issued.signed_bytes, issued.detached_proof.as_deref()),
+        )
+        .expect("expired inspection");
+        assert_eq!(
+            stage(&expired, VerificationStageName::Temporal).reason_code(),
+            Some("credential_expired")
+        );
+
+        let proof = signed_proof(&credential, credential.issued_at - 1);
+        let proof_bytes = encode_proof(&proof).expect("encode proof");
+        let invalid_time = poll(
+            policy_verifier(ResolverMode::Valid, issued_at + 1)
+                .inspect(&issued.signed_bytes, Some(&proof_bytes)),
+        )
+        .expect("proof-time inspection");
+        assert_eq!(
+            stage(&invalid_time, VerificationStageName::Temporal).reason_code(),
+            Some("proof_before_issuance")
+        );
+    }
+
+    #[test]
+    fn standalone_policy_rejects_a_valid_but_untrusted_issuer() {
+        let issued_at = 1_700_000_000;
+        let issued = issue_bound_standalone_credential(&bound_request(), issued_at).expect("issue");
+        let mut credential = parse_credential(&issued.signed_bytes).expect("credential");
+        credential.issuer.did_contract_address = [0x22; 32];
+        let credential_bytes = encode_credential(&credential).expect("encode credential");
+        let proof_bytes = encode_proof(&signed_proof(&credential, issued_at)).expect("proof");
+        let inspection = poll(
+            policy_verifier(ResolverMode::Valid, issued_at + 1)
+                .inspect(&credential_bytes, Some(&proof_bytes)),
+        )
+        .expect("inspect");
+        assert_eq!(
+            inspection.verification.outcome(),
+            VerificationOutcome::Invalid
+        );
+        assert_eq!(
+            stage(&inspection, VerificationStageName::Trust).reason_code(),
+            Some("issuer_not_trusted")
+        );
+        assert_eq!(
+            stage(&inspection, VerificationStageName::Status).status(),
+            VerificationStageStatus::NotChecked
+        );
     }
 
     #[test]

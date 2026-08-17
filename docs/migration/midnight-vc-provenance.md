@@ -66,7 +66,7 @@ dependency on the three identity repositories.
 | Private values can be attached to an unrelated signed credential | Parse exact bounded private parts and recompute each official Midnight `persistentCommit` plus the signed domain-separated claim root before candidates or local values are available. |
 | Disclosure planning can be mistaken for verifier proof | Headless returns claim-free candidates/plans only; Dioxus labels reveal as local and reports `presentationGenerated: false`; no OpenID4VP or Compact proof is constructed. |
 | Compact body, detached issuance proof, and private openings can be collapsed or confused | Keep three separately bounded, debug-redacted record fields; route exact `MCV1` only; reject proof data for CBOR; never reuse an issuance signature as a presentation proof. |
-| A self-contained Compact proof can be mistaken for issuer trust | Mark only structural/proof/schema stages passed; issuer method anchoring, current-time policy, status, and trust stay `not_checked`. |
+| A self-contained Compact proof can be mistaken for issuer trust | Keep proof-only conformance distinct from active-wallet policy; standalone composition additionally requires exact issuer DID method/key binding, current-time validity, and the pinned trust anchor while status stays `not_checked`. |
 | Prototype presentation derives a holder scalar from public claim data | Do not copy that shortcut into normal/mobile composition. ADR-0046 keeps exact Jubjub signing behind profile-scoped opaque development custody; ADR-0047 binds standalone issuance to the selected managed DID method; ADR-0048 reauthorizes the exact statement with the current managed protected key and discards the separately verified custody signature. |
 
 The standalone fixture contains only public conformance material. Its issuer
@@ -114,10 +114,15 @@ The public standalone vectors are exact reference-package outputs:
 - reconstructed body root:
   `b42f1115042cefecbd5380a0a630c0ef5f18bb13e7615cb1de9d36256f100432`.
 
-The verifier proves internal issuer-signature consistency. The proof embeds its
-public key; Oxid does not yet resolve and authorize that key through a Jubjub
-DID method. Issuer, temporal-current-time, status, and trust stages therefore
-remain `not_checked` rather than fabricated success.
+The proof-only verifier proves internal issuer-signature consistency and leaves
+issuer, temporal-current-time, status, and trust `not_checked`; immutable
+historical vectors use that mode. ADR-0073 gives active standalone composition
+an explicit policy. It resolves the exact issuer DID method, requires the DID
+controller and `assertionMethod` relationship, matches the method's canonical
+Jubjub coordinates to the proof key, enforces issuance/proof/expiry chronology
+against the current clock, and requires the pinned standalone trust anchor.
+Status remains `not_checked` because the reviewed credential carries no status
+reference and Oxid has no reviewed revocation resolver for this format.
 
 Standalone issuance parses this exact static body, replaces only its holder DID
 and method with the selected managed Jubjub assertion reference, canonically
@@ -174,14 +179,18 @@ surfaces without widening the current UI. Headless never reveals a value.
 - Live OpenID4VP response delivery, mobile proving, ecosystem interoperability,
   live SIOP verifier transport, and browser/native bridge ingress remain later
   adapters.
-- Status/revocation, temporal policy, schema validation, and issuer trust remain
-  visible `not_checked` stages rather than fabricated success.
+- Active standalone Compact verification now passes issuer, temporal, schema,
+  and trust only after ADR-0073's explicit checks. Status/revocation remains
+  visibly `not_checked`; the proof-only conformance constructor also keeps
+  issuer/current-time/trust unchecked for immutable historical vectors.
 - Exact process-local Jubjub generation/signing is implemented by ADR-0046 and
   cross-checked against the 0.5.0 Midnight DID package. ADR-0047 implements
   selected-DID/public-key validation and credential holder binding for
   standalone issuance. ADR-0048 implements presentation-time current-control
-  authorization with explicit same-method rotation semantics. Issuer-method
-  anchoring and native custody remain tracked by issue #29. The
+  authorization with explicit same-method rotation semantics. ADR-0073 anchors
+  the separate standalone issuer proof key through its exact DID assertion
+  method, current-time policy, and pinned trust input. Production issuer/status
+  policy and native custody remain tracked separately. The
   prototype's public claim-root-derived holder scalar must not enter normal or
   mobile composition.
 - The development key file is not backup, recovery, biometric authorization,
@@ -201,7 +210,7 @@ surfaces without widening the current UI. Headless never reveals a value.
 | Filesystem redirection | Direct symlinks and non-files are rejected; owner-private directories/files and same-directory atomic writes are used. Existing shared directories fail closed instead of being re-permissioned. |
 | CBOR parser exhaustion | 1 MiB credential bound, depth 32, definite lengths, checked offsets, exact end-of-input. |
 | Signature confusion | Standard-base64 proof signature, base64url JWK coordinates, curve-specific key construction, assertion relationship, and controller checks. |
-| Cryptographic validity mistaken for trust | Temporal/status/schema/trust are explicit `not_checked` stages. |
+| Cryptographic validity mistaken for trust | Proof-only conformance leaves policy stages unchecked; active standalone verification separately requires issuer-key anchoring, current-time validity, schema, and the pinned trust anchor, while status remains explicitly `not_checked`. |
 | Malicious credential offer or metadata | Strict duplicate-rejecting bounded JSON; exact embedded-offer parameter; issuer/authorization metadata separation; HTTPS-only production endpoint policy; explicit loopback exception only for standalone. |
 | Pre-authorized code replay or disclosure | Single-use adapter session; code/token/nonce never cross the protocol port or incoming DTO and are zeroized when retained. |
 | Holder-key substitution | OpenID authentication requires active profile scope, a non-deactivated managed authentication method, exact controller, DID URL `kid`, supported curve, issuer audience, and nonce-bound typed JWS. Credential holder binding separately requires an active managed assertion method, exact controller, canonical EC/Jubjub coordinates, and a holder reference regenerated under the issuer proof. Presentation reloads that exact reference, requires current managed assertion authority, signs the exact statement through protected custody, independently verifies and discards the custody attestation, and emits no token until the distinct credential-family proof verifies. |

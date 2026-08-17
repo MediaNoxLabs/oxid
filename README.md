@@ -31,8 +31,12 @@ than layers bolted onto one chain-specific frontend.
 > checks the resulting Compact roots and proof before encrypted storage. Exact
 > development Jubjub signing stays behind opaque custody references. Normal
 > mobile composition now seals the same multi-curve vault behind iOS Keychain
-> or Android Keystore user presence; issuer trust, physical-device release
-> evidence, recovery, and mobile Compact proving remain explicit later gates.
+> or Android Keystore user presence. Active standalone verification now binds
+> the exact issuer DID assertion key to the Compact proof, enforces current
+> issuance/expiry policy, and requires the pinned standalone trust anchor while
+> revocation remains explicitly not checked. Production issuer/status policy,
+> physical-device release evidence, recovery, and mobile Compact proving remain
+> explicit later gates.
 > Headless can inspect a claim-free
 > disclosure plan, while Dioxus explicitly reveals/hides first and last name
 > locally and plans an age predicate without claiming a presentation or proof.

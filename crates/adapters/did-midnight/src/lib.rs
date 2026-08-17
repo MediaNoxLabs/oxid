@@ -23,6 +23,8 @@ pub const STANDALONE_FIXTURE_DID: &str =
     "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 pub const STANDALONE_PASSPORT_ISSUER_DID: &str =
     "did:midnight:undeployed:1111111111111111111111111111111111111111111111111111111111111111";
+pub const STANDALONE_COMPACT_PASSPORT_ISSUER_DID: &str =
+    "did:midnight:undeployed:a4c9483a0c7cdd808056a93334ab97207b38b4363d1da5cbfb78ad256cd689f0";
 const MAX_RESPONSE_BYTES: usize = 512 * 1_024;
 const MAX_JSON_DEPTH: usize = 16;
 const MAX_METADATA_TEXT: usize = 2_048;
@@ -45,10 +47,53 @@ impl DidResolutionPort for StandaloneDidResolver {
                 "#assertion-1",
                 "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
             ),
+            STANDALONE_COMPACT_PASSPORT_ISSUER_DID => standalone_compact_issuer_resolution(),
             _ => Err(DidResolutionPortError::NotFound),
         };
         Box::pin(async move { result })
     }
+}
+
+fn standalone_compact_issuer_resolution() -> Result<DidResolution, DidResolutionPortError> {
+    let did = MidnightDid::parse(STANDALONE_COMPACT_PASSPORT_ISSUER_DID)
+        .map_err(|_| DidResolutionPortError::InvalidResponse)?;
+    let signing = VerificationMethod::new(
+        &did,
+        "#issuer-key-1",
+        did.clone(),
+        PublicJwk::new(
+            JwkKeyType::Ec,
+            JwkCurve::Jubjub,
+            "r3S3KuAV2Y2wviagxqTsKNuUFmqHlVjfWwQvZaV_pQA",
+            Some("b8GewrvMw5hldx4dBHZSAqBhYb_p7bVdcVqC2FU08mM".to_owned()),
+        )
+        .map_err(|_| DidResolutionPortError::InvalidResponse)?,
+    )
+    .map_err(|_| DidResolutionPortError::InvalidResponse)?;
+    let document = DidDocument::new(DidDocumentParts {
+        contexts: vec![DID_CONTEXT.to_owned(), JWK_CONTEXT.to_owned()],
+        id: did.clone(),
+        controllers: vec![did],
+        also_known_as: Vec::new(),
+        verification_methods: vec![signing],
+        relationships: vec![VerificationRelationshipEntry::new(
+            VerificationRelationship::AssertionMethod,
+            vec!["#issuer-key-1".to_owned()],
+        )],
+        services: Vec::new(),
+    })
+    .map_err(|_| DidResolutionPortError::InvalidResponse)?;
+    Ok(DidResolution::new(
+        document,
+        DidDocumentMetadata {
+            version_id: Some("standalone-compact-issuer-v1".to_owned()),
+            ..DidDocumentMetadata::default()
+        },
+        DidResolutionMetadata {
+            content_type: Some("application/did+ld+json".to_owned()),
+        },
+        DidResolutionSource::Standalone,
+    ))
 }
 
 #[cfg(test)]
@@ -751,6 +796,29 @@ mod tests {
         let fixture = MidnightDid::parse(STANDALONE_FIXTURE_DID).expect("fixture DID");
         let resolved = futures::executor::block_on(resolver.resolve(&fixture)).expect("resolve");
         assert_eq!(resolved.document().verification_methods().len(), 2);
+        let compact_issuer =
+            MidnightDid::parse(STANDALONE_COMPACT_PASSPORT_ISSUER_DID).expect("Compact issuer DID");
+        let compact =
+            futures::executor::block_on(resolver.resolve(&compact_issuer)).expect("resolve issuer");
+        let method = &compact.document().verification_methods()[0];
+        assert_eq!(
+            method.id(),
+            format!("{STANDALONE_COMPACT_PASSPORT_ISSUER_DID}#issuer-key-1")
+        );
+        assert_eq!(method.public_key_jwk().curve(), JwkCurve::Jubjub);
+        assert!(
+            compact
+                .document()
+                .relationships()
+                .iter()
+                .any(|relationship| {
+                    relationship.relationship() == VerificationRelationship::AssertionMethod
+                        && relationship
+                            .method_ids()
+                            .iter()
+                            .any(|id| id == "#issuer-key-1")
+                })
+        );
         let unknown =
             MidnightDid::parse(format!("did:midnight:undeployed:{}", "f".repeat(64))).expect("DID");
         assert_eq!(

@@ -43,7 +43,11 @@ OpenID4VP request, matching, and consent are functional and the real Compact
 presentation artifact set is reproducible. Standalone OpenID4VCI now issues,
 encrypts, restores, and natively verifies the prototype's exact Compact
 credential shape plus a detached issuance proof dynamically bound to the
-selected profile's managed Jubjub assertion method. ADR-0051 now delivers the
+selected profile's managed Jubjub assertion method. ADR-0073 additionally
+requires active standalone verification to resolve the exact issuer DID
+assertion method, match its Jubjub key to the detached proof, enforce current
+issuance/proof/expiry time policy, and match the pinned standalone trust anchor;
+status remains explicitly `not_checked`. ADR-0051 now delivers the
 Passport Vault as a separate standalone product hexagon with exact multi-lock
 accounting, Digital Passport claim policy, replay rejection, a headless flow,
 and a Dioxus mobile journey. It is visibly process-local and never an on-chain
@@ -404,13 +408,13 @@ proof stripping and Ed25519/P-256 issuer assertion verification;
 XChaCha20-Poly1305. Its separate owner-private key file is development-only,
 not native custody. Standalone headless and mobile flows receive, list,
 reverify, confirmation-delete, and restore the public fixture without exposing
-the signed body. Normal `compose()` remains unavailable pending native
-Keychain/Keystore wrapping. Live OID4VCI/OpenID4VP transport, mobile proving,
-status/trust policy, issuer-anchored Compact verification, and native custody
-remain later slices. ADR-0045 adds
-exact detached Compact issuance-proof verification without claiming issuer
-trust or presentation proof generation; ADR-0046 adds the exact development
-signing primitive, and ADR-0047 binds standalone issuance to the selected
+the signed body. Normal `compose()` remains unavailable. Live
+OID4VCI/OpenID4VP transport, mobile proving, status/revocation, production
+issuer trust, and native release evidence remain later slices. ADR-0045 adds
+exact detached Compact issuance-proof verification without treating proof
+validity alone as issuer trust or presentation proof generation; ADR-0073 adds
+explicit standalone issuer/current-time/trust policy. ADR-0046 adds the exact
+development signing primitive, and ADR-0047 binds standalone issuance to the selected
 managed Jubjub DID method. ADR-0048 reauthorizes that exact reference against
 the current managed protected method before proof execution; ADR-0049 now
 constructs and independently checks the distinct credential-family holder
@@ -561,9 +565,12 @@ optional private material. `MidnightCredentialVerifier` routes only `MCV1` to
 the native Compact verifier and rejects detached-proof confusion for CBOR. The
 verifier exactly reconstructs the 18-chunk credential, 9-chunk issuance proof,
 Digital Passport claim/body/payload roots, canonical Jubjub points/scalars, and
-Schnorr equation, including identity-point and tamper rejection. It marks only
-structural/proof/schema passed; issuer method anchoring, current-time policy,
-status, and trust remain `not_checked`.
+Schnorr equation, including identity-point and tamper rejection. Its proof-only
+default marks structural/proof/schema passed and leaves issuer/current-time/
+status/trust `not_checked` for immutable conformance vectors. ADR-0073's active
+standalone composition additionally requires exact issuer DID/controller/
+assertion-method key binding, current issuance/proof/expiry validity, and the
+pinned trust anchor; status alone remains `not_checked` after success.
 
 The public exact fixtures are
 `standalone-digital-passport-compact-{body,proof}.b64`. Raw-byte SHA-256 values
@@ -752,7 +759,7 @@ derivation, and artifact digest manifest without opening that runtime gate.
 ADR-0045 adds explicit `midnight_compact_vc` body/proof/private-material
 separation, native detached issuance-proof verification, encrypted schema-v3
 migration, and exact headless restart conformance without opening the
-presentation gate or claiming issuer trust/selected-DID native Jubjub custody.
+presentation gate or treating self-contained proof validity as issuer trust.
 ADR-0046 adds exact 0.5.0-compatible Jubjub generation/signing to the
 development custody adapter. It exposes only a compressed public point, opaque
 key reference, and 96-byte signature.
@@ -824,6 +831,12 @@ ADR-0070 adds warm/cold iOS and Android custom-scheme capture through that same
 router and permits native clipboard/share only for the bounded
 `PublicReceiveAddress` type. Keep one pending identity request until explicit
 dismissal; a new event must never replace active holder review.
+ADR-0073 keeps historical Compact conformance proof-only but requires active
+standalone wallet composition to receive an explicit issuer resolver, clock,
+and pinned trust anchor. The exact issuer-controlled assertion method must be
+EC/Jubjub and equal the detached proof key; current-time rules must pass; status
+must remain `not_checked`. Never compose the standalone trust anchor into normal
+production.
 ADR-0017 records the accepted platform-custody split.
 ADR status
 and delivery state are deliberately separate: an accepted future boundary is
@@ -854,8 +867,8 @@ Current package ownership:
 | `crates/adapters/storage-credential-json` | Development-only authenticated encryption for bounded profile-scoped credential records, original signed bytes, detached proofs, and opaque format-private material. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256/Jubjub generation plus protected BIP32/secp256k1-Schnorr derivation, one-shot signing, and atomic fresh-nonce Jubjub challenge completion. |
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
-| `crates/adapters/did-midnight` | Single-fixture standalone and explicit bounded native Midnight DID resolution plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
-| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification and standalone holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
+| `crates/adapters/did-midnight` | Standalone fixture and exact public Compact-issuer documents, explicit bounded native Midnight DID resolution, plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
+| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification, explicit standalone issuer/current-time/trust policy, holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
 | `crates/adapters/passport-vault` | Product-specific bounded in-memory plus owner-private atomic standalone repositories, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing authorization-bound settlement for create/deposit/claim/withdraw; managed-custody claim conformance is exercised through composition. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
@@ -1425,6 +1438,12 @@ to silence the shell probe.
   discovery, APK extraction, a mutable copied cache, or download fallback. A
   successful startup authentication is not proof-execution or device-budget
   evidence and must not change the mobile capability label.
+- ADR-0073 standalone credential policy must keep resolver, clock, and trust
+  inputs explicit. A detached proof key is not issuer authority by itself;
+  require exact DID controller/assertion authorization and canonical Jubjub
+  coordinate equality. Never mark status passed without a reviewed status
+  reference and resolver, and never reuse the standalone trust anchor in normal
+  production composition.
 - Passport Vault incoming views may expose public policy and aggregate amounts,
   public contract issuer anchors, and redacted public audit fields, but never
   credential roots, openings, claim values, detached proof bytes, private

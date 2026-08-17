@@ -164,6 +164,11 @@ final class ProfileFlowTests: XCTestCase {
             application.staticTexts["Credential issued, verified, and stored in the protected inventory."]
                 .waitForExistence(timeout: 10)
         )
+        XCTAssertTrue(
+            application.staticTexts[
+                "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
+            ].waitForExistence(timeout: 10)
+        )
         let verifierRequest = application.buttons["Use standalone verifier request"]
         XCTAssertTrue(verifierRequest.waitForExistence(timeout: 5))
         scrollTo(verifierRequest, in: application)

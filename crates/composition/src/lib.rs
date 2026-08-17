@@ -105,6 +105,7 @@ use oxid_adapter_vc_midnight::{
     CompactHolderProofPort, DigitalPassportDisclosureAdapter, ManagedDidJubjubHolderAuthorization,
     MidnightCredentialVerifier, PreflightOnlyCompactPresentationProof,
     StandaloneBoundCompactCredentialIssuer, StandaloneCredentialInbox,
+    standalone_digital_passport_issuer_trust_anchor,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_vc_midnight::{
@@ -1666,9 +1667,12 @@ fn compose_in_memory_with_presentation(
             did_jubjub_challenge_signing,
             credential_repository: Arc::new(InMemoryCredentialRepository::new()),
             credential_inbox: Arc::new(StandaloneCredentialInbox),
-            credential_verifier: Arc::new(MidnightCredentialVerifier::new(Arc::new(
-                StandaloneDidResolver,
-            ))),
+            credential_verifier: Arc::new(MidnightCredentialVerifier::with_compact_policy(
+                Arc::new(StandaloneDidResolver),
+                Arc::new(StandaloneDidResolver),
+                clock.clone(),
+                standalone_digital_passport_issuer_trust_anchor(),
+            )),
             credential_disclosure: Arc::new(DigitalPassportDisclosureAdapter),
             credential_issuance: CredentialIssuanceComposition::Standalone,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
@@ -2124,7 +2128,12 @@ where
     let did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort> = did_lifecycle;
     let did_resolver = headless_did_resolver();
     let verifier: Arc<dyn CredentialVerificationPort> =
-        Arc::new(MidnightCredentialVerifier::new(Arc::clone(&did_resolver)));
+        Arc::new(MidnightCredentialVerifier::with_compact_policy(
+            Arc::clone(&did_resolver),
+            Arc::new(StandaloneDidResolver),
+            Arc::new(SystemClock),
+            standalone_digital_passport_issuer_trust_anchor(),
+        ));
     compose_with_identity_adapters(
         repository,
         security,

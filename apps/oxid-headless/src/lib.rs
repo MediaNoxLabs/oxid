@@ -5169,7 +5169,7 @@ fn capability_manifest(
         { "method": "credential.request", "status": "ready", "mode": "standalone", "aliasFor": "credential.receive" },
         { "method": "credential.list", "status": "ready", "mode": "standalone", "scope": "active_profile" },
         { "method": "credential.get", "status": "ready", "mode": "standalone", "scope": "active_profile", "rawCredentialExposed": false },
-        { "method": "credential.reverify", "status": "ready", "mode": "standalone", "stages": ["structural", "issuer", "proof", "temporal", "status", "schema", "trust"] },
+        { "method": "credential.reverify", "status": "ready", "mode": "standalone", "stages": ["structural", "issuer", "proof", "temporal", "status", "schema", "trust"], "compactPolicy": { "issuer": "did_assertion_method_and_jubjub_key", "temporal": "current_time_and_expiry", "trust": "pinned_standalone_anchor", "status": "not_checked" } },
         { "method": "credential.verify", "status": "ready", "mode": "standalone", "aliasFor": "credential.reverify" },
         { "method": "credential.delete", "status": "ready", "mode": "standalone", "confirmationRequired": true },
         { "method": "credential.disclosure.candidates", "status": "ready", "mode": "standalone", "claimValuesExposed": false },
@@ -5323,7 +5323,12 @@ mod tests {
                 && capability["sources"] == json!(["standalone", "live"])
         }));
         assert!(methods.iter().any(|capability| {
-            capability["method"] == "credential.reverify" && capability["status"] == "ready"
+            capability["method"] == "credential.reverify"
+                && capability["status"] == "ready"
+                && capability["compactPolicy"]["issuer"] == "did_assertion_method_and_jubjub_key"
+                && capability["compactPolicy"]["temporal"] == "current_time_and_expiry"
+                && capability["compactPolicy"]["trust"] == "pinned_standalone_anchor"
+                && capability["compactPolicy"]["status"] == "not_checked"
         }));
         assert!(methods.iter().any(|capability| {
             capability["method"] == "credential.disclosure.preview"
@@ -6042,6 +6047,19 @@ mod tests {
             inventories[1]["result"]["credentials"][0]["subjectDid"],
             did
         );
+        let stages = inventories[1]["result"]["credentials"][0]["verification"]["stages"]
+            .as_array()
+            .expect("verification stages");
+        let stage_status = |name: &str| {
+            stages
+                .iter()
+                .find(|stage| stage["name"] == name)
+                .and_then(|stage| stage["status"].as_str())
+        };
+        assert_eq!(stage_status("issuer"), Some("passed"));
+        assert_eq!(stage_status("temporal"), Some("passed"));
+        assert_eq!(stage_status("trust"), Some("passed"));
+        assert_eq!(stage_status("status"), Some("not_checked"));
         let issued_inventory = inventories[1].to_string();
         assert!(!issued_inventory.contains("signedBytes"));
         assert!(!issued_inventory.contains("detachedProof"));

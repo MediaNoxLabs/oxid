@@ -315,6 +315,9 @@ try {
     const credentialVerified = await evaluate(
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid')",
     );
+    const credentialPolicyChecked = await evaluate(
+      "document.body.innerText.includes('Credential policy · issuer passed · time passed · trust passed · revocation not checked')",
+    );
 
     await clickButton("Vault");
     await waitFor(
@@ -416,8 +419,8 @@ try {
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, claimsHiddenByDefault, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
+    const result = { ...walletResult, claimsHiddenByDefault, credentialPolicyChecked, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialPolicyChecked || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
     await clickButton("Assets");
@@ -455,7 +458,7 @@ try {
       "restored protected disclosure preview",
     );
     const credentialRestored = await evaluate(
-      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
+      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && document.body.innerText.includes('Credential policy · issuer passed · time passed · trust passed · revocation not checked') && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
     );
     await clickButton("Vault");
     await waitFor(

@@ -24,7 +24,7 @@ before migrating later work.
 | `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017/0046/0048/0071 accepted; process-local development custody remains the deterministic harness, while normal mobile uses a passcode/user-presence-bound iOS Keychain or Android Keystore sealed vault with restart restoration; durable recovery and physical-device release evidence remain pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | `identity/domain`, `identity/application`, `adapters/did-midnight`, separate public record storage | Current 0.5.0-shaped resolution, profile inventory/persistence, and standalone Ed25519/P-256/Jubjub create/update/deactivate/signing implemented by issues #21–22 and ADR-0036/0037/0047; live Compact writes pending |
 | `wallet-core/oid4vp_client` | Self-issued DID authentication mislabeled alongside an unimplemented OID4VP presentation action | `protocol/domain`, `protocol/application`, `adapters/siopv2`; `presentation/domain`, `presentation/application`, `adapters/openid4vp` | SIOPv2 draft-13 login implemented by issue #25/ADR-0040; issue #27/ADR-0043 adds strict Final-shaped DCQL request preview, consent, and replay protection; ADR-0048 adds current-holder authorization and ADR-0050 adds explicit native headless Compact proof plus independent `vp_token` verification |
-| `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification, protected Digital Passport values/openings | `credential/domain`, `credential/application`, `adapters/vc-midnight`, protected credential storage | Profile-scoped protected inventory and strict phase-1 verification implemented by issue #23/ADR-0038; issue #26/ADR-0041/0042 adds atomic opaque material, commitment-bound five-claim Digital Passport interpretation, safe local planning/reveal, restart/deletion, and mobile coverage; Compact presentation proofs, status/schema/trust policy, and native wrapping remain pending |
+| `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification, protected Digital Passport values/openings | `credential/domain`, `credential/application`, `adapters/vc-midnight`, protected credential storage | Profile-scoped protected inventory and strict phase-1 verification implemented by issue #23/ADR-0038; issue #26/ADR-0041/0042 adds atomic opaque material, commitment-bound five-claim Digital Passport interpretation, safe local planning/reveal, restart/deletion, and mobile coverage; ADR-0073 adds active standalone Compact issuer-key, current-time, and pinned-trust policy while status/revocation, production trust, mobile presentation proofs, and remaining native release evidence stay pending |
 | `wallet-core/oid4vci_client` and `oid4vci_issuance_e2e` | Pre-authorized offer, token/nonce, holder proof, credential request/store flow | `protocol/domain`, `protocol/application`, `adapters/openid4vci`, existing DID custody and verified credential sink | OpenID4VCI 1.0 Final embedded-offer standalone flow plus separate authentication and managed Jubjub holder-binding methods implemented by issue #24 and ADR-0039/0047; production transport/discovery and additional grant/response variants pending |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | `passport-vault/domain`, `passport-vault/application`, product adapter, not generic wallet core | ADR-0051 delivers exact standalone multi-lock behavior; ADR-0052 adds the immutable five-circuit artifact closure and native tagged-state decoding; ADR-0054/0055 authenticate canonical history/state; ADR-0056/0057 add the retained call harness and explicit simulator; ADR-0058 authenticates the generated client/four wallet proof circuits; ADR-0059 through ADR-0063 add closed-schema public-call composition, exact finalized context, protected NIGHT/DUST proving, finalized submission, cancellation, and restart recovery; ADR-0064 through ADR-0066 add authorization-bound managed-custody claim composition and native discovery; ADR-0068 adds durable owner-private standalone accounting/replay state while real-node/mobile live fixtures remain issue #31 |
 | `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, account-aware Assets page, receive QR, typed native public-address copy/share, protected development activation, staged transfer, DID lifecycle, protected credential inventory/verification, standalone issuance, consented self-issued DID authentication, Digital Passport local reveal/age plan, OpenID4VP request/consent proof gate, standalone Passport Vault journey, typed native vault-call lifecycle, and scan/app-link identity routing are reimplemented without WebView/iframe bridges; physical-device camera, universal links, device live-node fixtures, and resource baselines remain pending |
@@ -323,6 +323,10 @@ method, requires current managed assertion authority, signs and independently
 verifies a disposable authorization over the exact statement, and applies
 explicit same-method rotation semantics. ADR-0050 wires credential-family proof
 execution and an independent proof verifier for native headless mode only.
+ADR-0073 separately hardens acceptance of each newly issued standalone Compact
+credential: the exact issuer DID assertion method must resolve to the detached
+proof's Jubjub key, issuance/proof/expiry times must be current, and the pinned
+standalone trust anchor must match. Revocation remains visibly not checked.
 
 [Issue #2](https://github.com/MediaNoxLabs/oxid/issues/2), ADR-0051, and
 [issue #31](https://github.com/MediaNoxLabs/oxid/issues/31) migrate the
@@ -480,9 +484,10 @@ shortcut.
 
 Shielded spending, internal/change address management, replacement handling,
 live DID writes, live OpenID4VP response delivery and mobile Compact proving,
-physical-camera and native-custody physical-device evidence, universal HTTPS
-links, production endpoint discovery, durable recovery, and device resource
-baselines remain separate follow-ups.
+credential status/revocation plus production issuer trust, physical-camera and
+native-custody physical-device evidence, universal HTTPS links, production
+endpoint discovery, durable recovery, and device resource baselines remain
+separate follow-ups.
 
 ## Gate for each later slice
 

@@ -6064,6 +6064,7 @@ fn CredentialRecordCard(
     let verify_profile = profile_id.clone();
     let delete_profile = profile_id.clone();
     let issuer = truncate_middle(&credential.issuer_did, 20, 12);
+    let policy_summary = compact_credential_policy_summary(&credential);
     let outcome = credential.verification_outcome.clone();
     let status_class = if outcome == "valid" {
         "status-pill success"
@@ -6095,6 +6096,9 @@ fn CredentialRecordCard(
                         "Not supplied"
                     }
                 } }
+            }
+            if let Some(summary) = policy_summary {
+                p { class: "form-hint credential-policy-summary", role: "status", "{summary}" }
             }
             if credential.display_name == "Digital Passport" {
                 DigitalPassportClaims {
@@ -6167,6 +6171,30 @@ fn CredentialRecordCard(
             }
         }
     }
+}
+
+fn compact_credential_policy_summary(credential: &CredentialView) -> Option<String> {
+    if credential.format != "midnight_compact_vc" {
+        return None;
+    }
+    let status = |name: &str| {
+        credential
+            .verification_stages
+            .iter()
+            .find(|stage| stage.name == name)
+            .map_or("not checked", |stage| match stage.status.as_str() {
+                "passed" => "passed",
+                "failed" => "failed",
+                _ => "not checked",
+            })
+    };
+    Some(format!(
+        "Credential policy · issuer {} · time {} · trust {} · revocation {}",
+        status("issuer"),
+        status("temporal"),
+        status("trust"),
+        status("status")
+    ))
 }
 
 #[component]
@@ -6808,6 +6836,45 @@ mod tests {
     fn profile_monogram_uses_the_first_visible_character() {
         assert_eq!(profile_monogram("  primary"), "P");
         assert_eq!(profile_monogram("---"), "O");
+    }
+
+    #[test]
+    fn compact_policy_summary_keeps_revocation_truthful() {
+        let credential = CredentialView {
+            id: "credential_test".to_owned(),
+            display_name: "Digital Passport".to_owned(),
+            issuer_did: "did:midnight:undeployed:issuer".to_owned(),
+            subject_did: None,
+            format: "midnight_compact_vc".to_owned(),
+            issued_at_ms: Some(42),
+            verification_outcome: "valid".to_owned(),
+            verification_stages: [
+                ("issuer", "passed"),
+                ("temporal", "passed"),
+                ("trust", "passed"),
+                ("status", "not_checked"),
+            ]
+            .into_iter()
+            .map(
+                |(name, status)| oxid_credential_application::VerificationStageView {
+                    name: name.to_owned(),
+                    status: status.to_owned(),
+                    reason_code: None,
+                },
+            )
+            .collect(),
+        };
+
+        assert_eq!(
+            compact_credential_policy_summary(&credential).as_deref(),
+            Some(
+                "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
+            )
+        );
+
+        let mut cbor = credential;
+        cbor.format = "midnight_cbor_v1".to_owned();
+        assert_eq!(compact_credential_policy_summary(&cbor), None);
     }
 
     #[test]

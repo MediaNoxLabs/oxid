@@ -715,6 +715,19 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         reverified["result"]["credential"]["format"],
         "midnight_compact_vc"
     );
+    let stages = reverified["result"]["credential"]["verification"]["stages"]
+        .as_array()
+        .expect("verification stages");
+    let stage_status = |name: &str| {
+        stages
+            .iter()
+            .find(|stage| stage["name"] == name)
+            .and_then(|stage| stage["status"].as_str())
+    };
+    assert_eq!(stage_status("issuer"), Some("passed"));
+    assert_eq!(stage_status("temporal"), Some("passed"));
+    assert_eq!(stage_status("trust"), Some("passed"));
+    assert_eq!(stage_status("status"), Some("not_checked"));
     assert!(!reverified.to_string().contains("detachedProof"));
     let restored_presentation = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-presentation-restored",

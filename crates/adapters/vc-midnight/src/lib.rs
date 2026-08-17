@@ -18,6 +18,7 @@ use oxid_credential_domain::{
 use oxid_foundation::UnixTimestampMillis;
 use oxid_identity_application::{DidResolutionPort, DidResolutionPortError};
 use oxid_identity_domain::{JwkCurve, MidnightDid, VerificationRelationship};
+use oxid_platform_ports::ClockPort;
 use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256Key};
 use sha2::{Digest as _, Sha256};
 
@@ -119,7 +120,24 @@ impl MidnightCredentialVerifier {
     pub fn new(resolver: Arc<dyn DidResolutionPort>) -> Self {
         Self {
             cbor: MidnightCborCredentialVerifier::new(resolver),
-            compact: MidnightCompactCredentialVerifier,
+            compact: MidnightCompactCredentialVerifier::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_compact_policy(
+        cbor_resolver: Arc<dyn DidResolutionPort>,
+        compact_issuer_resolver: Arc<dyn DidResolutionPort>,
+        clock: Arc<dyn ClockPort>,
+        trust_anchor: DigitalPassportIssuerTrustAnchor,
+    ) -> Self {
+        Self {
+            cbor: MidnightCborCredentialVerifier::new(cbor_resolver),
+            compact: MidnightCompactCredentialVerifier::with_policy(
+                compact_issuer_resolver,
+                clock,
+                trust_anchor,
+            ),
         }
     }
 }

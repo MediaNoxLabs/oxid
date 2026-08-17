@@ -94,6 +94,7 @@ ADR status and delivery state answer different questions:
 | [0070](0070-constrain-mobile-links-and-public-text-export.md) Constrain mobile links and public text export | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#32 | Warm/cold custom-scheme links reuse the strict router and typed public receive addresses alone reach native clipboard/share; universal links, physical-device evidence, discovery, and resource baselines remain #32 |
 | [0071](0071-wrap-mobile-custody-with-device-user-presence.md) Wrap mobile custody with device user presence | Accepted | §§3, 7, 12–13, 16–18, prototype secret storage, and issues #2/#29/#30 | Normal mobile composition uses a bounded OS-wrapped sealed vault; Android credential/restart and iOS capability/fail-closed simulator evidence exist, while physical-device and mobile-prover gates remain open |
 | [0072](0072-embed-authenticated-compact-artifacts-for-mobile-measurement.md) Embed authenticated Compact artifacts for mobile measurement | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | Opt-in native-custody mobile builds embed and authenticate the exact runtime-minimal Nix closure; proof execution, lifecycle/resource budgets, and Dioxus success remain gated |
+| [0073](0073-anchor-standalone-compact-credential-policy.md) Anchor standalone Compact credential policy | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#29/#34 | Standalone composition resolves and authorizes the exact issuer Jubjub method, enforces current-time/expiry policy, and requires a pinned trust anchor; status remains not checked and production remains unavailable |
 
 ## Current boundaries
 
@@ -134,6 +135,12 @@ authenticates that Nix-selected package without runtime discovery or extraction,
 but mobile presentation still ends at `proof_unavailable` until a non-UI proof
 worker, cooperative cancellation, physical-device budgets, and the remaining
 ADR-0071 release gate are accepted.
+ADR-0073 preserves ADR-0045's proof-only constructor for immutable conformance
+vectors and gives active standalone composition an explicit issuer resolver,
+clock, and pinned trust anchor. Exact DID controller, assertion relationship,
+and Jubjub proof-key binding plus issuance/proof/expiry rules must pass before a
+new standalone Compact credential is valid. Status stays `not_checked`, and
+normal production composition receives none of the standalone trust policy.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a
@@ -169,8 +176,8 @@ preflight reconstruction. ADR-0045
 separately replaces standalone issuance's synthetic Digital Passport with the
 prototype's exact Compact body, detached issuer proof, and private openings. It
 verifies and persists that issuance bundle without confusing it with a
-presentation proof or claiming issuer trust; protected holder Jubjub custody
-and issuer-method anchoring remain explicit gates.
+presentation proof. ADR-0073 now supplies the separate active-standalone issuer,
+temporal, and trust policy; status and production trust remain explicit gates.
 ADR-0048 separately requires current protected control of the credential-bound
 holder method before proof execution, permits rotation only while preserving
 the exact method identifier and assertion relationship, and keeps the generic
