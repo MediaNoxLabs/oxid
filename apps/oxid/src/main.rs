@@ -93,8 +93,9 @@ fn main() {
             application.unlock_wallet(),
             application.lock_wallet(),
             oxid_ui_dioxus::WalletBackupUiServices::new(
-                application.export_portable_wallet_backup(),
                 application.recover_portable_wallet_backup(),
+                application.export_complete_wallet_backup(),
+                application.recover_complete_wallet_backup(),
                 application.portable_wallet_backup_documents(),
             ),
         ),

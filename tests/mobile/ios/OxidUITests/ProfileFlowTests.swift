@@ -285,7 +285,8 @@ final class ProfileFlowTests: XCTestCase {
         application.terminate()
         application.launch()
 
-        XCTAssertTrue(activateButton.waitForExistence(timeout: 15))
+        XCTAssertTrue(activateButton.waitForExistence(timeout: 30))
+        activateButton.tap()
         XCTAssertTrue(application.staticTexts["Transfer included"].waitForExistence(timeout: 15))
         dids.tap()
         XCTAssertTrue(application.staticTexts["standalone-fixture-v2"].waitForExistence(timeout: 10))

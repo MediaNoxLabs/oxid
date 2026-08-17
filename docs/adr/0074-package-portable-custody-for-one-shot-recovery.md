@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3, 7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/store/backup.rs`, `session_persist.rs`, and the Dioxus `WalletBackupCard`
 - Tracking: issues #2 and #33
-- Implementation state: the application boundary, authenticated package codec, and development/mobile custody export and empty-profile recovery are implemented; ADR-0075 supplies user-selected native file transfer and custody-only Dioxus Settings UX, while public profile/DID/credential associations and Tier-1 physical-device evidence remain issue #33 work
+- Implementation state: the application boundary, authenticated package codec, and development/mobile custody export and empty-profile recovery are implemented; ADR-0075 supplies user-selected native file transfer and the legacy custody-only Dioxus recovery path, while ADR-0076 composes profile, account associations, DID records, credentials, and custody into complete export and fresh-install recovery; Tier-1 physical-device evidence remains issue #33 work
 
 ## Context
 

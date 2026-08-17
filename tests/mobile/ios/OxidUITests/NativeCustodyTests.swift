@@ -12,7 +12,13 @@ final class NativeCustodyTests: XCTestCase {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         application.launch()
         let createButton = application.buttons["Create and continue"]
-        if createButton.waitForExistence(timeout: 5) { createButton.tap() }
+        if createButton.waitForExistence(timeout: 5) {
+            XCTAssertTrue(
+                application.buttons["Choose complete wallet backup and recover"].exists,
+                "a fresh installation must expose complete-wallet recovery before profile creation"
+            )
+            createButton.tap()
+        }
 
         let settings = application.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 15))
@@ -21,6 +27,10 @@ final class NativeCustodyTests: XCTestCase {
         let unavailable = application.staticTexts["Unavailable · Not connected"]
         let capabilityPresent = uninitialized.waitForExistence(timeout: 10)
         XCTAssertTrue(capabilityPresent || unavailable.exists)
+        XCTAssertTrue(
+            application.staticTexts["One encrypted wallet document"].exists,
+            "settings must expose the complete-wallet export surface"
+        )
 
         if !capabilityPresent {
             XCTAssertFalse(

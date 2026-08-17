@@ -1308,27 +1308,30 @@ initialize for fresh authorization. Do not add recovery to `oxid.headless.v1`,
 copy raw secrets to UI/clipboard/logs, accept arbitrary paths, reuse device-vault
 ciphertext, or claim all-store recovery until profile/DID/credential records are
 staged atomically. ADR-0075 supplies native document transfer and the
-custody-only Dioxus Settings UX; all-store recovery remains #33.
+legacy custody-only Dioxus recovery path; ADR-0076 adds the all-store archive
+and complete export/fresh-install recovery UX.
 
 ADR-0075 fixes portable-backup document authority at the OS boundary.
 `PortableWalletBackupDocumentPort` transports only the bounded encrypted
 package and exposes explicit cancellation/unavailable/timeout/invalid/failure;
-callers receive no path and may suggest only
-`oxid-wallet-custody.oxidbak`. `oxid-adapter-backup-document-mobile` polls the
+callers receive no path and choose only a closed document kind. Custody-only
+exports use `oxid-wallet-custody.oxidbak`; complete exports use
+`oxid-wallet.oxidbak`. `oxid-adapter-backup-document-mobile` polls the
 single repository-owned Manganis plugin for at most five minutes. iOS uses a
 complete-file-protected, no-backup temporary export removed after
 `UIDocumentPickerViewController` completion and requires one copied regular
-non-symlink import no larger than 1 MiB. Android uses only
+non-symlink import no larger than the 80 MiB outer application bound. Android uses only
 `ACTION_CREATE_DOCUMENT`/`ACTION_OPEN_DOCUMENT` openable content URIs and
-enforces the same bound before and during streaming. Keep the encrypted package
+enforces the same bound before and during streaming; the version-1 codec still
+enforces its smaller custody-only framing. Keep the encrypted package
 out of clipboard/share/app-link/WebView/headless surfaces. Settings recovery is
 available only for an uninitialized matching profile, uses zeroizing Rust input
-state and exact confirmations, and must continue to say that profile metadata,
-DID documents, credentials, associations, and transaction history are not yet
-restored. iOS simulator conformance exported, restarted process-local custody,
-restored one key, and reconnected the deterministic 5 NIGHT account; Android
-assembly/install/launch passed, but Android picker interaction and physical-
-device evidence remain #33.
+state and exact confirmations, and remains explicitly labelled as the legacy
+custody-only path. Complete export uses the same document port; first-run
+Dioxus recovery authenticates the archive before learning or selecting its
+profile. iOS UI smoke verifies both complete entry points. Complete mobile
+picker round trips, Android picker interaction, and physical-device evidence
+remain #33.
 
 ADR-0076 is the accepted all-store recovery boundary. A complete backup is one
 profile-scoped authenticated archive containing domain snapshots for the public
@@ -1346,10 +1349,20 @@ control after restart only by a unique exact algorithm/public-JWK match against
 authorized custody; never persist opaque DID key references in the public store.
 The association/rebinding foundations, strict store snapshot codecs, version-2
 single authenticated envelope, and journaled custody-last recovery coordinator
-exist. The encrypted package boundary is 80 MiB and both native document
-plugins enforce the same bound; physical-device peak-memory measurement remains
-a release gate. The fresh-install Dioxus entry point and complete mobile
-recovery evidence remain issue #33 work and must not be claimed complete.
+exist. Settings exports version 2; the empty-profile Dioxus gateway recovers it
+without a caller-selected identifier and preserves a legacy version-1 importer.
+The in-process standalone composition test creates a profile, exact Midnight
+account association, managed DID, holder-bound private credential, and custody,
+then recovers all of them into a fresh composition. Keep the recovery methods
+absent from `oxid.headless.v1`. Both headless and in-memory standalone Midnight
+adapters must stay connected to their profile association repository or exact
+account rebinding silently disappears. The encrypted package boundary is 80 MiB
+and both native document plugins enforce the same bound; complete mobile picker
+round trips and physical-device peak-memory measurement remain release gates.
+When a persisted account association outlives process-local development custody,
+the account read can correctly return `ProtectionNotInitialized`; the Dioxus
+Assets page must retain a public, unavailable placeholder so reactivation stays
+reachable rather than collapsing into a terminal account-load error.
 
 `OXID_MOBILE_CUSTODY=development|native` selects the standalone mobile
 composition; development is the default. Native mode combines production

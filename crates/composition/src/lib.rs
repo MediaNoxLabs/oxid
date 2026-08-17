@@ -1003,12 +1003,13 @@ fn compose_headless_with_presentation(
                     Arc::clone(&security),
                 )
             },
-        );
+        )
+        .with_profile_association_repository(profiles.clone());
     #[cfg(target_arch = "wasm32")]
-    let midnight = Arc::new(protected_simulated_midnight_wallet(
-        Arc::clone(&clock),
-        Arc::clone(&security),
-    ));
+    let midnight = Arc::new(
+        protected_simulated_midnight_wallet(Arc::clone(&clock), Arc::clone(&security))
+            .with_profile_association_repository(profiles.clone()),
+    );
     #[cfg(not(target_arch = "wasm32"))]
     let midnight = Arc::new(midnight);
     let services = compose_with_adapters_and_presentation(
@@ -1706,10 +1707,11 @@ fn compose_in_memory_with_presentation(
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let midnight = Arc::new(protected_simulated_midnight_wallet(
-        Arc::clone(&clock),
-        Arc::clone(&security),
-    ));
+    let profiles = Arc::new(InMemoryWalletProfileRepository::new());
+    let midnight = Arc::new(
+        protected_simulated_midnight_wallet(Arc::clone(&clock), Arc::clone(&security))
+            .with_profile_association_repository(profiles.clone()),
+    );
     let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
     let challenge_signing: Arc<dyn WalletJubjubChallengeSigningPort> = security.clone();
     let did_lifecycle = Arc::new(StandaloneDidLifecycle::with_jubjub_challenge_signing(
@@ -1719,7 +1721,7 @@ fn compose_in_memory_with_presentation(
     let did_lifecycle_port: Arc<dyn DidLifecyclePort> = did_lifecycle.clone();
     let did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort> = did_lifecycle;
     let services = compose_with_identity_adapters(
-        Arc::new(InMemoryWalletProfileRepository::new()),
+        profiles,
         security,
         midnight,
         IdentityAdapters {
@@ -2871,8 +2873,12 @@ mod tests {
         AcceptCredentialIssuanceCommand, PrepareCredentialIssuanceCommand,
     };
     use oxid_wallet_application::{
-        CreateWalletProfileCommand, DeriveWalletAccountCommand, WalletAccountQuery,
-        WalletDustSyncCommand, WalletProfileSecurityCommand, WalletShieldedSyncCommand,
+        CreateWalletProfileCommand, DeriveWalletAccountCommand,
+        EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY, EXPORT_COMPLETE_WALLET_BACKUP_TITLE,
+        ExportCompleteWalletBackupCommand, RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY,
+        RECOVER_COMPLETE_WALLET_BACKUP_TITLE, RecoverCompleteWalletBackupCommand,
+        SensitiveOperationConfirmation, WalletAccountQuery, WalletDustSyncCommand,
+        WalletProfileSecurityCommand, WalletRecoverySecret, WalletShieldedSyncCommand,
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -3010,6 +3016,148 @@ mod tests {
                 .execute()
                 .expect("composed query should succeed"),
             vec![result]
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn standalone_composition_recovers_a_complete_wallet_into_a_fresh_instance() {
+        let source = compose_in_memory();
+        let profile = source
+            .create_wallet_profile()
+            .execute(CreateWalletProfileCommand {
+                display_name: "Portable standalone wallet".to_owned(),
+            })
+            .expect("source profile");
+        source
+            .initialize_wallet_security()
+            .execute(WalletProfileSecurityCommand {
+                profile_id: profile.id.clone(),
+            })
+            .expect("source custody");
+        let account = source
+            .derive_wallet_account()
+            .execute(DeriveWalletAccountCommand {
+                profile_id: profile.id.clone(),
+                account_index: 0,
+                address_index: 0,
+            })
+            .expect("source account");
+        let did = source
+            .create_did()
+            .execute(CreateDidCommand {
+                profile_id: profile.id.clone(),
+                network: "undeployed".to_owned(),
+            })
+            .expect("source DID");
+        let authentication_method = did
+            .document
+            .relationships
+            .iter()
+            .find(|relationship| relationship.relationship == "authentication")
+            .and_then(|relationship| relationship.method_ids.first())
+            .cloned()
+            .expect("authentication method");
+        let holder_method = did
+            .document
+            .verification_methods
+            .iter()
+            .find(|method| method.public_key_jwk.curve == "Jubjub")
+            .map(|method| method.id.clone())
+            .expect("holder method");
+        let issuance = block_on(source.prepare_credential_issuance().execute(
+            PrepareCredentialIssuanceCommand {
+                profile_id: profile.id.clone(),
+                offer: standalone_oid4vci_offer(),
+            },
+        ))
+        .expect("issuance plan");
+        block_on(
+            source
+                .accept_credential_issuance()
+                .execute(AcceptCredentialIssuanceCommand {
+                    profile_id: profile.id.clone(),
+                    issuance_id: issuance.id,
+                    holder_did: did.document.id.clone(),
+                    method_id: authentication_method,
+                    holder_binding_method_id: holder_method,
+                    confirmed: true,
+                    intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
+                }),
+        )
+        .expect("source credential");
+
+        let backup = source
+            .export_complete_wallet_backup()
+            .execute(ExportCompleteWalletBackupCommand {
+                profile_id: profile.id.clone(),
+                recovery_secret: WalletRecoverySecret::parse("standalone complete recovery secret")
+                    .expect("recovery secret"),
+                confirmation: SensitiveOperationConfirmation {
+                    title: EXPORT_COMPLETE_WALLET_BACKUP_TITLE.to_owned(),
+                    summary: EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY.to_owned(),
+                    confirmed: true,
+                },
+            })
+            .expect("complete backup");
+
+        let destination = compose_in_memory();
+        let summary = destination
+            .recover_complete_wallet_backup()
+            .execute(RecoverCompleteWalletBackupCommand {
+                expected_profile_id: None,
+                backup,
+                recovery_secret: WalletRecoverySecret::parse("standalone complete recovery secret")
+                    .expect("recovery secret"),
+                confirmation: SensitiveOperationConfirmation {
+                    title: RECOVER_COMPLETE_WALLET_BACKUP_TITLE.to_owned(),
+                    summary: RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY.to_owned(),
+                    confirmed: true,
+                },
+            })
+            .expect("fresh-instance recovery");
+
+        assert_eq!(summary.profile_id, profile.id);
+        assert!(summary.restored_key_count >= 4);
+        assert_eq!(summary.restored_did_count, 1);
+        assert_eq!(summary.restored_credential_count, 1);
+        assert_eq!(
+            destination
+                .get_active_wallet_profile()
+                .execute()
+                .expect("active profile")
+                .expect("recovered profile"),
+            profile
+        );
+        assert!(
+            destination
+                .get_wallet_account()
+                .execute(WalletAccountQuery {
+                    profile_id: summary.profile_id.clone(),
+                })
+                .expect("recovered account")
+                .addresses
+                .contains(&account.receive_address)
+        );
+        assert_eq!(
+            destination
+                .list_did_records()
+                .execute(ListDidRecordsQuery {
+                    profile_id: summary.profile_id.clone(),
+                })
+                .expect("recovered DIDs")
+                .len(),
+            1
+        );
+        assert_eq!(
+            destination
+                .list_credentials()
+                .execute(CredentialProfileQuery {
+                    profile_id: summary.profile_id,
+                })
+                .expect("recovered credentials")
+                .len(),
+            1
         );
     }
 

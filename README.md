@@ -34,9 +34,12 @@ than layers bolted onto one chain-specific frontend.
 > or Android Keystore user presence. Active standalone verification now binds
 > the exact issuer DID assertion key to the Compact proof, enforces current
 > issuance/expiry policy, and requires the pinned standalone trust anchor while
-> revocation remains explicitly not checked. Production issuer/status policy,
-> physical-device release evidence, recovery, and mobile Compact proving remain
-> explicit later gates.
+> revocation remains explicitly not checked. One authenticated complete-wallet
+> archive now restores the profile, Midnight association, DIDs, credentials,
+> and custody into an empty installation through standalone composition and
+> first-run Dioxus. Production issuer/status policy, complete mobile picker and
+> physical-device recovery evidence, and mobile Compact proving remain explicit
+> later gates.
 > Headless can inspect a claim-free
 > disclosure plan, while Dioxus explicitly reveals/hides first and last name
 > locally and plans an age predicate without claiming a presentation or proof.
@@ -139,6 +142,32 @@ intentionally restricted to a disposable emulator with no existing PIN:
 ```bash
 OXID_ANDROID_DEVICE=emulator-5554 just android-native-custody-smoke
 ```
+
+Run the complete-wallet transaction without exposing recovery material through
+the NDJSON protocol:
+
+```bash
+just standalone-recovery-smoke
+```
+
+That in-process standalone harness creates an exact Midnight account, managed
+DID, holder-bound private credential, and protected custody; exports one v2
+archive; and recovers all stores into a fresh composition. The public
+`oxid.headless.v1` protocol intentionally has no backup or recovery method.
+
+To exercise the same complete export/recovery UI with process-local standalone
+custody on iOS Simulator, launch a clean development build:
+
+```bash
+OXID_IOS_RESET_DATA=1 OXID_MOBILE_CUSTODY=development just ios-run
+```
+
+Create and exercise the wallet, then use **Settings → Export complete wallet
+backup** and save `oxid-wallet.oxidbak` through Files. Run the same clean-launch
+command again and choose **Restore your complete wallet** on the first screen.
+The recovery secret is never stored in the app. Resetting app data is
+destructive to the selected simulator's local Oxid state, so keep the exported
+document outside the app container before doing so.
 
 Exercise the same application services through the versioned NDJSON harness:
 

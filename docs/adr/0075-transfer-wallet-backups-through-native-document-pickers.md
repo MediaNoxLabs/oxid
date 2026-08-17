@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3, 7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, Dioxus `WalletBackupCard`, and `mobile-bench/wallet-core/src/store/backup.rs`
 - Tracking: issues #2 and #33
-- Implementation state: iOS and Android document transport plus custody-only Dioxus Settings UX are implemented; all-store recovery, Android picker interaction evidence, and physical-device evidence remain issue #33 work
+- Implementation state: iOS and Android document transport, complete-wallet Settings export and first-run recovery, and an explicit legacy custody-only importer are implemented; complete Android/iOS picker round trips and physical-device evidence remain issue #33 work
 
 ## Context
 
@@ -25,16 +25,20 @@ not reach the clipboard, logs, app links, WebView messages, or headless NDJSON.
 The wallet application owns `PortableWalletBackupDocumentPort`. It transports
 only the bounded `PortableWalletBackup` type and exposes asynchronous export and
 import operations with stable payload-free cancellation, unavailable, timeout,
-invalid-document, and failure categories. The application supplies the single
-fixed suggested filename `oxid-wallet-custody.oxidbak`; callers never supply a
-path. Non-mobile composition fails closed.
+invalid-document, and failure categories. The application supplies a closed
+document kind: version-1 custody-only files use
+`oxid-wallet-custody.oxidbak`, while version-2 complete files use
+`oxid-wallet.oxidbak`. Callers never supply a path or arbitrary filename.
+Non-mobile composition fails closed.
 
 `oxid-adapter-backup-document-mobile` encodes only encrypted package bytes for
-the repository-owned native bridge, accepts at most a 1 MiB decoded package and
-a correspondingly bounded native response, polls at 100 ms for at most five
-minutes, treats cancellation separately from failure, and clears transient
-encrypted package buffers on drop/completion. It neither parses nor decrypts
-custody plaintext. Because Dioxus/Manganis 0.7.10 embeds only the
+the repository-owned native bridge, accepts at most the 80 MiB complete-archive
+application bound and a correspondingly bounded native response, polls at 100
+ms for at most five minutes, treats cancellation separately from failure, and
+clears transient encrypted package buffers on drop/completion. The version-1
+codec independently retains its smaller custody-only bound. The document
+adapter neither parses nor decrypts wallet plaintext. Because Dioxus/Manganis
+0.7.10 embeds only the
 primary native framework, these methods remain in the already reviewed mobile
 plugin rather than adding a second Swift/Kotlin package.
 
@@ -43,24 +47,25 @@ marking it excluded from backup, and presenting
 `UIDocumentPickerViewController(forExporting:asCopy:)`. Completion or
 cancellation removes the temporary directory. Import uses the system document
 picker as a copy, requires exactly one regular non-symlink document with a
-known non-zero size no greater than 1 MiB, then reads and returns only its
-encrypted bytes.
+known non-zero size no greater than the application bound, then reads and
+returns only its encrypted bytes.
 
-Android exports with `ACTION_CREATE_DOCUMENT`, `CATEGORY_OPENABLE`, the fixed
-filename, and `application/octet-stream`; it writes only after the user returns
+Android exports with `ACTION_CREATE_DOCUMENT`, `CATEGORY_OPENABLE`, the
+kind-selected fixed filename, and `application/octet-stream`; it writes only after the user returns
 a content URI. Import uses `ACTION_OPEN_DOCUMENT` and `ContentResolver`, rejects
-known empty or oversized documents before reading, and enforces the 1 MiB limit
+known empty or oversized documents before reading, and enforces the application limit
 again while streaming when a provider reports an unknown length. Retained
 encrypted byte arrays are cleared after export/import completion. The
 repository-owned `MainActivity` forwards only the two reserved result codes.
 
-Dioxus Settings exposes the ADR-0074 use cases only when the composed custody
-adapter reports portable-backup support. Password fields use zeroizing Rust
-state, export requires two matching values, and both operations require their
-exact explicit confirmation. The UI says prominently that this migration slice
-restores custody only and excludes profile metadata, DID documents,
-credentials, associations, and transaction history. Recovery is enabled only
-for an uninitialized active profile and never offers overwrite or merge.
+Dioxus Settings exposes complete export when the composed custody adapter
+reports portable-backup support. Password fields use zeroizing Rust state,
+export requires two matching values, and every operation requires its exact
+explicit confirmation. The first-run profile gateway exposes complete recovery
+only while the installation has no profile; its destination identifier comes
+from the authenticated archive. Settings keeps version-1 recovery only as an
+explicit legacy custody-only path for an uninitialized exact profile. Neither
+path offers overwrite or merge.
 
 ## Security and privacy consequences
 
@@ -86,10 +91,10 @@ adapter assembles, installs, and launches on `emulator-5554`; interactive
 Android document cancellation/export/import and physical-device coverage remain
 release evidence rather than inferred parity.
 
-This does not complete issue #33. A later decision must stage public profile,
-DID, credential, and association records with the custody package and commit or
-roll back the complete destination atomically. It must also define fresh-install
-profile selection when no matching public profile exists.
+ADR-0076 supplies the complete authenticated archive, custody-last transaction,
+fresh-install profile selection, and retry reconciliation. Complete picker
+round trips on both mobile platforms and physical-device peak-memory evidence
+remain issue #33 release work.
 
 ## Rejected alternatives
 

@@ -61,27 +61,31 @@ use oxid_protocol_application::{
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
     CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
-    CreateWalletProfileCommand, CreateWalletProfileUseCase, DeriveWalletAccountCommand,
-    DeriveWalletAccountUseCase, EXPORT_PORTABLE_WALLET_BACKUP_SUMMARY,
-    EXPORT_PORTABLE_WALLET_BACKUP_TITLE, ExportPortableWalletBackupCommand,
-    ExportPortableWalletBackupUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
+    CompleteWalletRecoverySummary, CreateWalletProfileCommand, CreateWalletProfileUseCase,
+    DeriveWalletAccountCommand, DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
+    EXPORT_COMPLETE_WALLET_BACKUP_TITLE, ExportCompleteWalletBackupCommand,
+    ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
     GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
     ListWalletNetworksUseCase, ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase,
     LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS, PortableWalletBackupDocumentError,
-    PortableWalletBackupDocumentPort, PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
+    PortableWalletBackupDocumentKind, PortableWalletBackupDocumentPort,
+    PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
+    RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY, RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
     RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
-    ReconcileWalletTransferSubmissionUseCase, RecoverPortableWalletBackupCommand,
+    ReconcileWalletTransferSubmissionUseCase, RecoverCompleteWalletBackupCommand,
+    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupCommand,
     RecoverPortableWalletBackupUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
     SelectWalletProfileCommand, SelectWalletProfileUseCase, SensitiveOperationConfirmation,
     StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase, SubmitWalletTransferCommand,
-    SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountQuery,
-    WalletAccountView, WalletDustSyncCommand, WalletDustSyncView, WalletNetworkListView,
-    WalletProfileSecurityCommand, WalletProfileView, WalletRecoverySecret,
-    WalletSecurityStatusView, WalletShieldedSyncCommand, WalletShieldedSyncView,
-    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
-    WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
+    SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountError,
+    WalletAccountPortError, WalletAccountQuery, WalletAccountView, WalletDustSyncCommand,
+    WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
+    WalletRecoverySecret, WalletSecurityStatusView, WalletShieldedSyncCommand,
+    WalletShieldedSyncView, WalletSyncStatusView, WalletTransferDraftQuery,
+    WalletTransferPreviewView, WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
+    WalletTransferSubmissionView,
 };
 use zeroize::Zeroizing;
 
@@ -103,8 +107,9 @@ pub struct WalletUiServices {
     initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
     unlock_wallet: Arc<dyn UnlockWalletUseCase>,
     lock_wallet: Arc<dyn LockWalletUseCase>,
-    export_portable_wallet_backup: Arc<dyn ExportPortableWalletBackupUseCase>,
     recover_portable_wallet_backup: Arc<dyn RecoverPortableWalletBackupUseCase>,
+    export_complete_wallet_backup: Arc<dyn ExportCompleteWalletBackupUseCase>,
+    recover_complete_wallet_backup: Arc<dyn RecoverCompleteWalletBackupUseCase>,
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
     select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
@@ -580,23 +585,26 @@ pub struct WalletSecurityUiServices {
     backup: WalletBackupUiServices,
 }
 
-/// Custody-only portable recovery use cases and native document transport.
+/// Complete and legacy custody-only backup use cases plus native document transport.
 pub struct WalletBackupUiServices {
-    export: Arc<dyn ExportPortableWalletBackupUseCase>,
-    recover: Arc<dyn RecoverPortableWalletBackupUseCase>,
+    recover_custody: Arc<dyn RecoverPortableWalletBackupUseCase>,
+    export_complete: Arc<dyn ExportCompleteWalletBackupUseCase>,
+    recover_complete: Arc<dyn RecoverCompleteWalletBackupUseCase>,
     documents: Arc<dyn PortableWalletBackupDocumentPort>,
 }
 
 impl WalletBackupUiServices {
     #[must_use]
     pub const fn new(
-        export: Arc<dyn ExportPortableWalletBackupUseCase>,
-        recover: Arc<dyn RecoverPortableWalletBackupUseCase>,
+        recover_custody: Arc<dyn RecoverPortableWalletBackupUseCase>,
+        export_complete: Arc<dyn ExportCompleteWalletBackupUseCase>,
+        recover_complete: Arc<dyn RecoverCompleteWalletBackupUseCase>,
         documents: Arc<dyn PortableWalletBackupDocumentPort>,
     ) -> Self {
         Self {
-            export,
-            recover,
+            recover_custody,
+            export_complete,
+            recover_complete,
             documents,
         }
     }
@@ -782,8 +790,9 @@ impl WalletUiServices {
             initialize_wallet_security: security.initialize_wallet_security,
             unlock_wallet: security.unlock_wallet,
             lock_wallet: security.lock_wallet,
-            export_portable_wallet_backup: security.backup.export,
-            recover_portable_wallet_backup: security.backup.recover,
+            recover_portable_wallet_backup: security.backup.recover_custody,
+            export_complete_wallet_backup: security.backup.export_complete,
+            recover_complete_wallet_backup: security.backup.recover_complete,
             list_wallet_networks: account.list_wallet_networks,
             select_wallet_network: account.select_wallet_network,
             derive_wallet_account: account.derive_wallet_account,
@@ -1759,13 +1768,16 @@ fn ProfileGateway(
             section { class: "page-heading onboarding-heading",
                 p { class: "eyebrow", "Welcome to Oxid" }
                 h1 { "Create your wallet profile" }
-                p { "A profile is a public local label for wallet state. It never contains a seed, private key, credential, or recovery phrase." }
+                p { "Create a new wallet or recover one complete encrypted Oxid backup." }
             }
             ProfileManager {
                 profiles: Vec::new(),
                 active_profile_id: None,
                 onboarding: true,
                 on_selected,
+            }
+            FreshInstallRecovery {
+                on_recovered: move |profile| on_selected.call(profile),
             }
         },
         ProfileSessionState::Choosing(profiles) => rsx! {
@@ -1815,6 +1827,142 @@ fn ProfileGateway(
             main { class: "page-content", {content} }
         }
     }
+}
+
+#[component]
+fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut recovery_secret = use_signal(|| Zeroizing::new(String::new()));
+    let mut recovery_confirmed = use_signal(|| false);
+    let mut recovery_state = use_signal(|| PortableBackupUiState::Idle);
+    let busy = matches!(*recovery_state.read(), PortableBackupUiState::Working(_));
+    let can_recover = !busy && recovery_confirmed() && !recovery_secret.read().is_empty();
+    let feedback = match recovery_state.read().clone() {
+        PortableBackupUiState::Idle => rsx! {},
+        PortableBackupUiState::Working(message) => rsx! {
+            div { class: "result", role: "status", aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                p { "{message}" }
+            }
+        },
+        PortableBackupUiState::Succeeded(message) => rsx! {
+            div { class: "result success", role: "status", p { "{message}" } }
+        },
+        PortableBackupUiState::Cancelled => rsx! {
+            div { class: "result", role: "status",
+                p { "Document selection cancelled. No recovery was started." }
+            }
+        },
+        PortableBackupUiState::Failed(message) => rsx! {
+            div { class: "result error", role: "alert", p { "{message}" } }
+        },
+    };
+
+    rsx! {
+        section { class: "profile-card surface-card complete-recovery-card",
+            p { class: "card-eyebrow", "Existing wallet" }
+            h2 { "Restore your complete wallet" }
+            p {
+                "Choose an encrypted Oxid complete-wallet backup. The profile, Midnight account associations, DID records, credentials, and protected keys are authenticated before this empty installation becomes active."
+            }
+            p { class: "backup-warning",
+                strong { "Empty-install recovery only. " }
+                "Oxid never merges this archive into existing local wallet state. Chain-derived caches and transaction history rebuild from their authoritative sources."
+            }
+            label { r#for: "onboarding-recovery-secret", "Recovery secret"
+                input {
+                    id: "onboarding-recovery-secret",
+                    r#type: "password",
+                    minlength: 12,
+                    maxlength: MAX_WALLET_RECOVERY_SECRET_CHARACTERS,
+                    autocomplete: "current-password",
+                    spellcheck: false,
+                    disabled: busy,
+                    value: recovery_secret.read().as_str(),
+                    oninput: move |event| recovery_secret.set(Zeroizing::new(event.value())),
+                }
+            }
+            label { class: "confirmation-row",
+                input {
+                    r#type: "checkbox",
+                    checked: recovery_confirmed(),
+                    disabled: busy,
+                    onchange: move |event| recovery_confirmed.set(event.checked()),
+                }
+                "I confirm complete recovery into this empty Oxid installation."
+            }
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                aria_label: "Choose complete wallet backup and recover",
+                disabled: !can_recover,
+                onclick: move |_| {
+                    let raw = recovery_secret();
+                    recovery_secret.set(Zeroizing::new(String::new()));
+                    recovery_confirmed.set(false);
+                    let secret = match WalletRecoverySecret::parse(&*raw) {
+                        Ok(secret) => secret,
+                        Err(error) => {
+                            recovery_state.set(PortableBackupUiState::Failed(error.to_string()));
+                            return;
+                        }
+                    };
+                    let services = services.clone();
+                    recovery_state.set(PortableBackupUiState::Working(
+                        "Waiting for a complete wallet backup",
+                    ));
+                    spawn(async move {
+                        let imported = services.portable_wallet_backup_documents.import().await;
+                        let recovered = match imported {
+                            Ok(backup) => services.recover_complete_wallet_backup.execute(
+                                RecoverCompleteWalletBackupCommand {
+                                    expected_profile_id: None,
+                                    backup,
+                                    recovery_secret: secret,
+                                    confirmation: SensitiveOperationConfirmation {
+                                        title: RECOVER_COMPLETE_WALLET_BACKUP_TITLE.to_owned(),
+                                        summary: RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY.to_owned(),
+                                        confirmed: true,
+                                    },
+                                },
+                            ).map_err(|error| error.to_string()),
+                            Err(PortableWalletBackupDocumentError::Cancelled) => {
+                                recovery_state.set(PortableBackupUiState::Cancelled);
+                                return;
+                            }
+                            Err(error) => Err(error.to_string()),
+                        };
+                        match recovered {
+                            Ok(summary) => match services.get_active_wallet_profile.execute() {
+                                Ok(Some(profile)) if profile.id == summary.profile_id => {
+                                    recovery_state.set(PortableBackupUiState::Succeeded(
+                                        complete_recovery_message(&summary),
+                                    ));
+                                    on_recovered.call(profile);
+                                }
+                                Ok(_) => recovery_state.set(PortableBackupUiState::Failed(
+                                    "Recovered wallet did not become the active profile.".to_owned(),
+                                )),
+                                Err(error) => recovery_state.set(PortableBackupUiState::Failed(
+                                    error.to_string(),
+                                )),
+                            },
+                            Err(error) => recovery_state.set(PortableBackupUiState::Failed(error)),
+                        }
+                    });
+                },
+                "Choose backup and recover"
+            }
+            {feedback}
+        }
+    }
+}
+
+fn complete_recovery_message(summary: &CompleteWalletRecoverySummary) -> String {
+    format!(
+        "Recovered {} protected key(s), {} DID record(s), and {} credential(s).",
+        summary.restored_key_count, summary.restored_did_count, summary.restored_credential_count,
+    )
 }
 
 #[component]
@@ -2864,10 +3012,6 @@ fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPa
         Ok(networks) => networks,
         Err(error) => return AccountPageState::Failed(error.to_string()),
     };
-    let account = match services.get_wallet_account().execute(query) {
-        Ok(account) => account,
-        Err(error) => return AccountPageState::Failed(error.to_string()),
-    };
     let security =
         match services
             .get_wallet_security_status()
@@ -2877,12 +3021,52 @@ fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPa
             Ok(security) => security,
             Err(error) => return AccountPageState::Failed(error.to_string()),
         };
+    let account = match services.get_wallet_account().execute(query) {
+        Ok(account) => account,
+        Err(WalletAccountError::Port(
+            WalletAccountPortError::ProtectionNotInitialized
+            | WalletAccountPortError::ProtectionLocked,
+        )) if matches!(security.state_name(), "Uninitialized" | "Locked") => {
+            let Some(account) = protected_account_placeholder(&networks) else {
+                return AccountPageState::Failed(
+                    "selected Midnight network is unavailable".to_owned(),
+                );
+            };
+            account
+        }
+        Err(error) => return AccountPageState::Failed(error.to_string()),
+    };
     AccountPageState::Ready {
         networks,
         account: Box::new(account),
         security,
         busy: None,
     }
+}
+
+fn protected_account_placeholder(networks: &WalletNetworkListView) -> Option<WalletAccountView> {
+    let network = networks
+        .networks
+        .iter()
+        .find(|network| network.network_id == networks.selected_network_id)?;
+    Some(WalletAccountView {
+        chain: network.chain.clone(),
+        network_id: network.network_id.clone(),
+        network_name: network.display_name.clone(),
+        network_environment: network.environment.clone(),
+        account_id: None,
+        source: "unavailable".to_owned(),
+        addresses: Vec::new(),
+        balances: Vec::new(),
+        sync: WalletSyncStatusView {
+            state: "unavailable".to_owned(),
+            current_cursor: None,
+            target_cursor: None,
+            chain_tip_height: None,
+            updated_at_millis: None,
+        },
+        transactions: Vec::new(),
+    })
 }
 
 fn activate_protected_account(
@@ -6762,8 +6946,8 @@ fn SettingsPage(
                 article { class: "backup-card surface-card",
                     div { class: "card-heading",
                         div {
-                            p { class: "card-eyebrow", "Portable custody backup" }
-                            h2 { "Encrypted recovery document" }
+                            p { class: "card-eyebrow", "Portable complete backup" }
+                            h2 { "One encrypted wallet document" }
                         }
                         span {
                             class: if supported { "status-pill success" } else { "status-pill" },
@@ -6771,14 +6955,14 @@ fn SettingsPage(
                         }
                     }
                     p { class: "backup-warning",
-                        strong { "Custody-only migration slice. " }
-                        "This document restores the wallet seed and protected generated keys for this exact profile. It does not yet restore profile metadata, DID documents, credentials, associations, or transaction history. Store the recovery secret separately."
+                        strong { "Store the recovery secret separately. " }
+                        "This document contains the profile, Midnight account associations, DID records, complete credentials, and protected custody state. Chain-derived caches and transaction history are intentionally rebuilt instead of copied."
                     }
                     if supported {
                         div { class: "backup-actions",
                             section { class: "backup-action",
-                                h3 { "{EXPORT_PORTABLE_WALLET_BACKUP_TITLE}" }
-                                p { "Choose a new recovery secret. Native custody requires fresh device authorization before the encrypted document can be saved." }
+                                h3 { "{EXPORT_COMPLETE_WALLET_BACKUP_TITLE}" }
+                                p { "Choose a new recovery secret. Native custody requires fresh device authorization before the complete encrypted document can be saved." }
                                 label { r#for: "wallet-backup-secret", "Recovery secret"
                                     input {
                                         id: "wallet-backup-secret",
@@ -6812,7 +6996,7 @@ fn SettingsPage(
                                         disabled: busy,
                                         onchange: move |event| export_confirmed.set(event.checked()),
                                     }
-                                    "I understand this is currently a custody-only backup and confirm this exact export."
+                                    "I confirm this complete wallet export and will store its recovery secret separately."
                                 }
                                 button {
                                     class: "primary-action",
@@ -6842,16 +7026,16 @@ fn SettingsPage(
                                         let services = export_services.clone();
                                         let profile_id = export_profile_id.clone();
                                         backup_state.set(PortableBackupUiState::Working(
-                                            "Authorizing and encrypting custody",
+                                            "Authorizing and encrypting the complete wallet",
                                         ));
                                         spawn(async move {
-                                            let package = services.export_portable_wallet_backup.execute(
-                                                ExportPortableWalletBackupCommand {
+                                            let package = services.export_complete_wallet_backup.execute(
+                                                ExportCompleteWalletBackupCommand {
                                                     profile_id,
                                                     recovery_secret: secret,
                                                     confirmation: SensitiveOperationConfirmation {
-                                                        title: EXPORT_PORTABLE_WALLET_BACKUP_TITLE.to_owned(),
-                                                        summary: EXPORT_PORTABLE_WALLET_BACKUP_SUMMARY.to_owned(),
+                                                        title: EXPORT_COMPLETE_WALLET_BACKUP_TITLE.to_owned(),
+                                                        summary: EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY.to_owned(),
                                                         confirmed: true,
                                                     },
                                                 },
@@ -6859,11 +7043,14 @@ fn SettingsPage(
                                             let next = match package {
                                                 Ok(package) => match services
                                                     .portable_wallet_backup_documents
-                                                    .export(&package)
+                                                    .export(
+                                                        PortableWalletBackupDocumentKind::CompleteWallet,
+                                                        &package,
+                                                    )
                                                     .await
                                                 {
                                                     Ok(()) => PortableBackupUiState::Succeeded(
-                                                        "Encrypted custody backup saved to the selected document.".to_owned(),
+                                                        "Encrypted complete wallet backup saved to the selected document.".to_owned(),
                                                     ),
                                                     Err(PortableWalletBackupDocumentError::Cancelled) => {
                                                         PortableBackupUiState::Cancelled
@@ -6883,12 +7070,12 @@ fn SettingsPage(
                                 }
                             }
                             section { class: "backup-action",
-                                h3 { "{RECOVER_PORTABLE_WALLET_BACKUP_TITLE}" }
+                                h3 { "Legacy · {RECOVER_PORTABLE_WALLET_BACKUP_TITLE}" }
                                 p {
                                     if status.state_name() == "Uninitialized" {
-                                        "Choose an Oxid backup document. Recovery initializes this empty profile only after package authentication and fresh native authorization."
+                                        "Choose an older custody-only Oxid backup. This compatibility path restores protected keys into this exact empty profile; complete-wallet recovery is available on the first-run screen."
                                     } else {
-                                        "Recovery is disabled because this profile is already initialized. Oxid never overwrites or merges existing custody."
+                                        "Legacy recovery is disabled because this profile is already initialized. Oxid never overwrites or merges existing custody."
                                     }
                                 }
                                 label { r#for: "wallet-recovery-secret", "Recovery secret"
@@ -6911,7 +7098,7 @@ fn SettingsPage(
                                         disabled: busy || status.state_name() != "Uninitialized",
                                         onchange: move |event| recovery_confirmed.set(event.checked()),
                                     }
-                                    "I confirm recovery into this empty profile and understand the current custody-only scope."
+                                    "I confirm legacy custody-only recovery into this exact empty profile."
                                 }
                                 button {
                                     class: "secondary-action",
@@ -7156,6 +7343,45 @@ mod tests {
             profile_session_route(Some(profile.clone()), vec![profile.clone()]),
             ProfileSessionState::Active(profile)
         );
+    }
+
+    #[test]
+    fn locked_account_placeholder_keeps_reactivation_reachable() {
+        let networks = WalletNetworkListView {
+            selected_network_id: "undeployed".to_owned(),
+            networks: vec![oxid_wallet_application::WalletNetworkView {
+                chain: "midnight".to_owned(),
+                network_id: "undeployed".to_owned(),
+                display_name: "Midnight undeployed".to_owned(),
+                environment: "development".to_owned(),
+                selected: true,
+            }],
+        };
+
+        let account = protected_account_placeholder(&networks).expect("selected network");
+
+        assert_eq!(account.network_id, "undeployed");
+        assert_eq!(account.source, "unavailable");
+        assert!(account.account_id.is_none());
+        assert!(account.addresses.is_empty());
+        assert_eq!(account.sync.state, "unavailable");
+        assert!(!has_protected_account(&account));
+    }
+
+    #[test]
+    fn complete_recovery_feedback_reports_only_bounded_counts() {
+        let summary = CompleteWalletRecoverySummary {
+            profile_id: "profile_test".to_owned(),
+            restored_key_count: 3,
+            restored_did_count: 2,
+            restored_credential_count: 1,
+        };
+
+        assert_eq!(
+            complete_recovery_message(&summary),
+            "Recovered 3 protected key(s), 2 DID record(s), and 1 credential(s)."
+        );
+        assert!(!complete_recovery_message(&summary).contains("profile_test"));
     }
 
     #[test]

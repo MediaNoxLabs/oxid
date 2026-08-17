@@ -14,11 +14,9 @@ use oxid_adapter_mobile_native::{
 };
 #[cfg(any(target_os = "ios", target_os = "android", test))]
 use oxid_wallet_application::MAX_PORTABLE_WALLET_BACKUP_BYTES;
-#[cfg(any(target_os = "ios", target_os = "android"))]
-use oxid_wallet_application::PORTABLE_WALLET_BACKUP_FILE_NAME;
 use oxid_wallet_application::{
     PortableWalletBackup, PortableWalletBackupDocumentError, PortableWalletBackupDocumentFuture,
-    PortableWalletBackupDocumentPort,
+    PortableWalletBackupDocumentKind, PortableWalletBackupDocumentPort,
 };
 #[cfg(any(target_os = "ios", target_os = "android", test))]
 use serde::Deserialize;
@@ -40,9 +38,10 @@ pub struct NativePortableWalletBackupDocuments;
 impl PortableWalletBackupDocumentPort for NativePortableWalletBackupDocuments {
     fn export<'a>(
         &'a self,
+        kind: PortableWalletBackupDocumentKind,
         backup: &'a PortableWalletBackup,
     ) -> PortableWalletBackupDocumentFuture<'a, ()> {
-        Box::pin(async move { export_native(backup).await })
+        Box::pin(async move { export_native(kind, backup).await })
     }
 
     fn import<'a>(&'a self) -> PortableWalletBackupDocumentFuture<'a, PortableWalletBackup> {
@@ -60,17 +59,18 @@ struct NativeDocumentStatus {
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
 async fn export_native(
+    kind: PortableWalletBackupDocumentKind,
     backup: &PortableWalletBackup,
 ) -> Result<(), PortableWalletBackupDocumentError> {
     let payload = Zeroizing::new(STANDARD.encode(backup.as_bytes()));
-    let started = start_backup_export_json(PORTABLE_WALLET_BACKUP_FILE_NAME, &payload)
-        .map_err(map_bridge_error)?;
+    let started = start_backup_export_json(kind.file_name(), &payload).map_err(map_bridge_error)?;
     require_started(&started, "exporting")?;
     poll_document(false).await.map(|_| ())
 }
 
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 async fn export_native(
+    _kind: PortableWalletBackupDocumentKind,
     _backup: &PortableWalletBackup,
 ) -> Result<(), PortableWalletBackupDocumentError> {
     Err(PortableWalletBackupDocumentError::Unavailable)
@@ -217,6 +217,8 @@ mod tests {
         adapter: &NativePortableWalletBackupDocuments,
         backup: &PortableWalletBackup,
     ) -> Result<(), PortableWalletBackupDocumentError> {
-        futures::executor::block_on(adapter.export(backup))
+        futures::executor::block_on(
+            adapter.export(PortableWalletBackupDocumentKind::CompleteWallet, backup),
+        )
     }
 }

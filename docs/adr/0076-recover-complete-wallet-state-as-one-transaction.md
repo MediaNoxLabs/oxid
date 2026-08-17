@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3–7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/store/backup.rs`, `mobile-bench/wallet-core/src/service/backup_service.rs`, and `mobile-bench/dioxus-wallet/src/session_persist.rs`
 - Tracking: issues #2 and #33
-- Implementation state: public Midnight account associations, strict profile/DID/credential snapshot codecs, exact restored-DID key rebinding, the version-2 authenticated archive, and the journaled all-store coordinator are implemented; the fresh-install Dioxus entry point and complete iOS/Android recovery evidence remain issue #33 work
+- Implementation state: public Midnight account associations, strict profile/DID/credential snapshot codecs, exact restored-DID key rebinding, the version-2 authenticated archive, the journaled all-store coordinator, fresh-install Dioxus recovery, complete Settings export, and an all-store standalone composition round trip are implemented; complete iOS/Android document-round-trip and physical-device resource evidence remain issue #33 work
 
 ## Context
 
@@ -74,11 +74,12 @@ Recovery uses a prepared transaction owned by the outgoing backup adapter:
    remove the journal.
 
 Any failure before custody initialization removes records inserted by this
-transaction and restores the prior active profile. A restart reconciles the
-journal: an uninitialized vault rolls staged records back; an initialized vault
-must match every journaled identifier and completes the public commit; ambiguous
-or inconsistent state fails closed for explicit repair. Recovery never merges,
-overwrites, or silently chooses among profiles.
+transaction and restores the prior active profile. A later retry with the same
+authenticated archive reconciles the journal: an uninitialized vault rolls
+staged records back; an initialized vault must match every journaled identifier
+and completes the public commit; ambiguous or inconsistent state fails closed
+for explicit repair. Recovery never merges, overwrites, or silently chooses
+among profiles.
 
 Fresh-install recovery therefore accepts no caller-selected destination profile.
 The authenticated profile identifier becomes the destination only after archive
@@ -109,8 +110,8 @@ public DID store or archive association section.
 - Custody-last commit avoids publishing restored identity/credential state when
   native initialization is denied. The recovery journal handles process death at
   the remaining cross-store boundary without containing protected material.
-- Existing version-1 custody files remain importable only through their truthful
-  custody-only behavior until the UI offers an explicit legacy path.
+- Existing version-1 custody files remain importable only through the explicit,
+  truthfully labelled legacy custody-only Settings path.
 
 ## Rejected alternatives
 

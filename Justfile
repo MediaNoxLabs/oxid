@@ -32,6 +32,9 @@ run:
 headless:
     cargo run -p oxid-headless
 
+standalone-recovery-smoke:
+    cargo test -p oxid-composition standalone_composition_recovers_a_complete_wallet_into_a_fresh_instance
+
 ios-run:
     ./scripts/run-ios-simulator.sh
 

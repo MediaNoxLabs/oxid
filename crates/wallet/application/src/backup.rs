@@ -172,6 +172,25 @@ impl Error for PortableWalletBackupError {}
 pub type PortableWalletBackupDocumentFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, PortableWalletBackupDocumentError>> + Send + 'a>>;
 
+/// Closed set of encrypted backup documents that the native picker can export.
+///
+/// Callers choose a capability, never a filesystem path or arbitrary filename.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PortableWalletBackupDocumentKind {
+    CustodyOnly,
+    CompleteWallet,
+}
+
+impl PortableWalletBackupDocumentKind {
+    #[must_use]
+    pub const fn file_name(self) -> &'static str {
+        match self {
+            Self::CustodyOnly => PORTABLE_WALLET_BACKUP_FILE_NAME,
+            Self::CompleteWallet => COMPLETE_WALLET_BACKUP_FILE_NAME,
+        }
+    }
+}
+
 /// Stable, payload-free failures from a user-selected backup document flow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PortableWalletBackupDocumentError {
@@ -203,6 +222,7 @@ impl Error for PortableWalletBackupDocumentError {}
 pub trait PortableWalletBackupDocumentPort: Send + Sync {
     fn export<'a>(
         &'a self,
+        kind: PortableWalletBackupDocumentKind,
         backup: &'a PortableWalletBackup,
     ) -> PortableWalletBackupDocumentFuture<'a, ()>;
 
@@ -215,6 +235,7 @@ pub struct UnavailablePortableWalletBackupDocuments;
 impl PortableWalletBackupDocumentPort for UnavailablePortableWalletBackupDocuments {
     fn export<'a>(
         &'a self,
+        _kind: PortableWalletBackupDocumentKind,
         _backup: &'a PortableWalletBackup,
     ) -> PortableWalletBackupDocumentFuture<'a, ()> {
         Box::pin(async { Err(PortableWalletBackupDocumentError::Unavailable) })
@@ -682,6 +703,18 @@ mod tests {
         assert_eq!(
             *port.0.lock().expect("recording mutex should be available"),
             1
+        );
+    }
+
+    #[test]
+    fn native_document_kinds_have_fixed_distinct_filenames() {
+        assert_eq!(
+            PortableWalletBackupDocumentKind::CustodyOnly.file_name(),
+            "oxid-wallet-custody.oxidbak"
+        );
+        assert_eq!(
+            PortableWalletBackupDocumentKind::CompleteWallet.file_name(),
+            "oxid-wallet.oxidbak"
         );
     }
 }
