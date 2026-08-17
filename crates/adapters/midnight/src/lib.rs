@@ -77,10 +77,12 @@ use midnight_serialize::Serializable as _;
 use midnight_zswap::keys::{SecretKeys as ZswapSecretKeys, Seed as ZswapSeed};
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
-    DeriveProtectedKeyRequest, WalletAccountDerivationPort, WalletAccountPortError,
-    WalletAccountPortFuture, WalletAccountReadPort, WalletDerivedSecretUsePort, WalletDustSyncPort,
-    WalletDustSyncPortError, WalletHdPath, WalletHdPathComponent, WalletKeyDerivationPort,
-    WalletKeyOperationPort, WalletNetworkPort, WalletSecurityPortError, WalletShieldedSyncPort,
+    DeriveProtectedKeyRequest, WalletAccountAssociation, WalletAccountDerivationPort,
+    WalletAccountPortError, WalletAccountPortFuture, WalletAccountReadPort,
+    WalletDerivedSecretUsePort, WalletDustSyncPort, WalletDustSyncPortError, WalletHdPath,
+    WalletHdPathComponent, WalletKeyDerivationPort, WalletKeyOperationPort, WalletNetworkPort,
+    WalletProfileAssociationRepository, WalletProfileAssociationRepositoryError,
+    WalletProfileAssociations, WalletSecurityPortError, WalletShieldedSyncPort,
     WalletShieldedSyncPortError,
 };
 use oxid_wallet_domain::{
@@ -356,7 +358,9 @@ pub struct MidnightWalletAdapter<S, D = UnavailableMidnightAccountDeriver> {
     source: S,
     deriver: D,
     selections: Mutex<HashMap<WalletProfileId, ChainNetworkId>>,
-    account_indices: Mutex<HashMap<(WalletProfileId, ChainNetworkId), u32>>,
+    account_coordinates: Mutex<HashMap<(WalletProfileId, ChainNetworkId), (u32, u32)>>,
+    hydrated_profiles: Mutex<HashSet<WalletProfileId>>,
+    association_repository: Option<Arc<dyn WalletProfileAssociationRepository>>,
     default_network: Option<ChainNetworkId>,
     #[cfg(not(target_arch = "wasm32"))]
     completer: Arc<dyn transaction::MidnightTransactionCompleter>,
@@ -391,7 +395,9 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             source,
             deriver: UnavailableMidnightAccountDeriver,
             selections: Mutex::new(HashMap::new()),
-            account_indices: Mutex::new(HashMap::new()),
+            account_coordinates: Mutex::new(HashMap::new()),
+            hydrated_profiles: Mutex::new(HashSet::new()),
+            association_repository: None,
             default_network: None,
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
@@ -419,7 +425,9 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             source,
             deriver: UnavailableMidnightAccountDeriver,
             selections: Mutex::new(HashMap::new()),
-            account_indices: Mutex::new(HashMap::new()),
+            account_coordinates: Mutex::new(HashMap::new()),
+            hydrated_profiles: Mutex::new(HashSet::new()),
+            association_repository: None,
             default_network: Some(default_network),
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
@@ -441,13 +449,100 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
 }
 
 impl<S, D> MidnightWalletAdapter<S, D> {
+    /// Persists only public, derivable profile/account coordinates. Protected
+    /// key handles and rendered addresses remain in custody and read models.
+    #[must_use]
+    pub fn with_profile_association_repository(
+        mut self,
+        repository: Arc<dyn WalletProfileAssociationRepository>,
+    ) -> Self {
+        self.association_repository = Some(repository);
+        self
+    }
+
+    fn hydrate_associations(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<(), WalletAccountPortError> {
+        if self
+            .hydrated_profiles
+            .lock()
+            .map_err(|_| WalletAccountPortError::Unavailable)?
+            .contains(profile_id)
+        {
+            return Ok(());
+        }
+        let Some(repository) = &self.association_repository else {
+            return Ok(());
+        };
+        let associations = repository
+            .load_associations(profile_id)
+            .map_err(map_association_error)?;
+        if let Some(associations) = associations {
+            self.selections
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?
+                .entry(profile_id.clone())
+                .or_insert_with(|| associations.selected_network_id().clone());
+            let mut coordinates = self
+                .account_coordinates
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?;
+            for account in associations.accounts() {
+                coordinates
+                    .entry((profile_id.clone(), account.network_id().clone()))
+                    .or_insert((account.account_index(), account.address_index()));
+            }
+        }
+        self.hydrated_profiles
+            .lock()
+            .map_err(|_| WalletAccountPortError::Unavailable)?
+            .insert(profile_id.clone());
+        Ok(())
+    }
+
+    fn persist_associations(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<(), WalletAccountPortError> {
+        let Some(repository) = &self.association_repository else {
+            return Ok(());
+        };
+        let selected = self
+            .selections
+            .lock()
+            .map_err(|_| WalletAccountPortError::Unavailable)?
+            .get(profile_id)
+            .cloned()
+            .or_else(|| self.default_network.clone())
+            .map_or_else(|| network_id(DEFAULT_NETWORK_ID), Ok)?;
+        let accounts = self
+            .account_coordinates
+            .lock()
+            .map_err(|_| WalletAccountPortError::Unavailable)?
+            .iter()
+            .filter(|((profile, _), _)| profile == profile_id)
+            .map(|((_, network), (account_index, address_index))| {
+                WalletAccountAssociation::new(network.clone(), *account_index, *address_index)
+                    .map_err(|_| WalletAccountPortError::InvalidData)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let associations = WalletProfileAssociations::new(selected, accounts)
+            .map_err(|_| WalletAccountPortError::InvalidData)?;
+        repository
+            .save_associations(profile_id, associations)
+            .map_err(map_association_error)
+    }
+
     #[must_use]
     pub fn with_deriver(source: S, deriver: D) -> Self {
         Self {
             source,
             deriver,
             selections: Mutex::new(HashMap::new()),
-            account_indices: Mutex::new(HashMap::new()),
+            account_coordinates: Mutex::new(HashMap::new()),
+            hydrated_profiles: Mutex::new(HashSet::new()),
+            association_repository: None,
             default_network: None,
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
@@ -477,7 +572,9 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             source,
             deriver,
             selections: Mutex::new(HashMap::new()),
-            account_indices: Mutex::new(HashMap::new()),
+            account_coordinates: Mutex::new(HashMap::new()),
+            hydrated_profiles: Mutex::new(HashSet::new()),
+            association_repository: None,
             default_network: Some(default_network),
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
@@ -508,7 +605,9 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             source,
             deriver,
             selections: Mutex::new(HashMap::new()),
-            account_indices: Mutex::new(HashMap::new()),
+            account_coordinates: Mutex::new(HashMap::new()),
+            hydrated_profiles: Mutex::new(HashSet::new()),
+            association_repository: None,
             default_network: Some(default_network),
             completer,
             dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
@@ -532,7 +631,9 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             source,
             deriver,
             selections: Mutex::new(HashMap::new()),
-            account_indices: Mutex::new(HashMap::new()),
+            account_coordinates: Mutex::new(HashMap::new()),
+            hydrated_profiles: Mutex::new(HashSet::new()),
+            association_repository: None,
             default_network: None,
             completer,
             dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
@@ -550,6 +651,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
         &self,
         profile_id: &WalletProfileId,
     ) -> Result<ChainNetworkId, WalletAccountPortError> {
+        self.hydrate_associations(profile_id)?;
         let selections = self
             .selections
             .lock()
@@ -566,13 +668,15 @@ impl<S, D> MidnightWalletAdapter<S, D> {
         profile_id: &WalletProfileId,
         network_id: &ChainNetworkId,
     ) -> Result<u32, WalletDustSyncPortError> {
-        self.account_indices
+        self.hydrate_associations(profile_id)
+            .map_err(|_| WalletDustSyncPortError::Unavailable)?;
+        self.account_coordinates
             .lock()
             .map_err(|_| WalletDustSyncPortError::Unavailable)
             .map(|indices| {
                 indices
                     .get(&(profile_id.clone(), network_id.clone()))
-                    .copied()
+                    .map(|(account_index, _)| *account_index)
                     .unwrap_or(0)
             })
     }
@@ -582,13 +686,15 @@ impl<S, D> MidnightWalletAdapter<S, D> {
         profile_id: &WalletProfileId,
         network_id: &ChainNetworkId,
     ) -> Result<u32, WalletShieldedSyncPortError> {
-        self.account_indices
+        self.hydrate_associations(profile_id)
+            .map_err(|_| WalletShieldedSyncPortError::Unavailable)?;
+        self.account_coordinates
             .lock()
             .map_err(|_| WalletShieldedSyncPortError::Unavailable)
             .map(|indices| {
                 indices
                     .get(&(profile_id.clone(), network_id.clone()))
-                    .copied()
+                    .map(|(account_index, _)| *account_index)
                     .unwrap_or(0)
             })
     }
@@ -876,18 +982,60 @@ where
         if network_by_id(network_id)?.is_none() {
             return Err(WalletAccountPortError::UnsupportedNetwork);
         }
-        self.selections
+        self.hydrate_associations(profile_id)?;
+        let previous = self
+            .selections
             .lock()
             .map_err(|_| WalletAccountPortError::Unavailable)?
             .insert(profile_id.clone(), network_id.clone());
+        if let Err(error) = self.persist_associations(profile_id) {
+            let mut selections = self
+                .selections
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?;
+            if let Some(previous) = previous {
+                selections.insert(profile_id.clone(), previous);
+            } else {
+                selections.remove(profile_id);
+            }
+            return Err(error);
+        }
         Ok(network_id.clone())
+    }
+}
+
+impl<S, D> MidnightWalletAdapter<S, D>
+where
+    S: MidnightAccountSource,
+    D: MidnightAccountDeriver,
+{
+    fn ensure_associated_account(
+        &self,
+        profile_id: &WalletProfileId,
+        network: &ChainNetwork,
+    ) -> Result<(), WalletAccountPortError> {
+        self.hydrate_associations(profile_id)?;
+        let coordinates = self
+            .account_coordinates
+            .lock()
+            .map_err(|_| WalletAccountPortError::Unavailable)?
+            .get(&(profile_id.clone(), network.id().clone()))
+            .copied();
+        let Some((account_index, address_index)) = coordinates else {
+            return Ok(());
+        };
+        let derived = self
+            .deriver
+            .derive(profile_id, network, account_index, address_index)?;
+        self.source
+            .bind_derived_account(profile_id, network, &derived)
     }
 }
 
 impl<S, D> MidnightPublicCallContextSource for MidnightWalletAdapter<S, D>
 where
     S: MidnightAccountSource,
-    D: Send + Sync,
+    D: MidnightAccountDeriver,
 {
     fn public_call_context(
         &self,
@@ -898,6 +1046,7 @@ where
         let network_id = self.selected(&profile_id)?;
         let network =
             network_by_id(&network_id)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
+        self.ensure_associated_account(&profile_id, &network)?;
         let account = self.source.account(&profile_id, &network)?;
         if account.network().id() != &network_id {
             return Err(WalletAccountPortError::InvalidData);
@@ -939,7 +1088,7 @@ where
 impl<S, D> WalletAccountReadPort for MidnightWalletAdapter<S, D>
 where
     S: MidnightAccountSource,
-    D: Send + Sync,
+    D: MidnightAccountDeriver,
 {
     fn account(
         &self,
@@ -948,6 +1097,7 @@ where
         let selected = self.selected(profile_id)?;
         let network =
             network_by_id(&selected)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
+        self.ensure_associated_account(profile_id, &network)?;
         self.source.account(profile_id, &network)
     }
 
@@ -956,6 +1106,7 @@ where
             let selected = self.selected(profile_id)?;
             let network =
                 network_by_id(&selected)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
+            self.ensure_associated_account(profile_id, &network)?;
             self.source.sync(profile_id, &network).await
         })
     }
@@ -978,12 +1129,27 @@ where
         let derived = self
             .deriver
             .derive(profile_id, &network, account_index, address_index)?;
-        self.source
-            .bind_derived_account(profile_id, &network, &derived)?;
-        self.account_indices
+        self.hydrate_associations(profile_id)?;
+        let key = (profile_id.clone(), selected);
+        let previous = self
+            .account_coordinates
             .lock()
             .map_err(|_| WalletAccountPortError::Unavailable)?
-            .insert((profile_id.clone(), selected), account_index);
+            .insert(key.clone(), (account_index, address_index));
+        if let Err(error) = self.persist_associations(profile_id) {
+            let mut coordinates = self
+                .account_coordinates
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)?;
+            if let Some(previous) = previous {
+                coordinates.insert(key, previous);
+            } else {
+                coordinates.remove(&key);
+            }
+            return Err(error);
+        }
+        self.source
+            .bind_derived_account(profile_id, &network, &derived)?;
         Ok(derived)
     }
 }
@@ -1625,6 +1791,15 @@ const fn map_security_error(error: WalletSecurityPortError) -> WalletAccountPort
     }
 }
 
+const fn map_association_error(
+    error: WalletProfileAssociationRepositoryError,
+) -> WalletAccountPortError {
+    match error {
+        WalletProfileAssociationRepositoryError::Integrity => WalletAccountPortError::InvalidData,
+        WalletProfileAssociationRepositoryError::Unavailable => WalletAccountPortError::Unavailable,
+    }
+}
+
 fn simulated_ledger_state(
     now: oxid_foundation::UnixTimestampMillis,
 ) -> Result<(Vec<AssetBalance>, Vec<WalletTransaction>), WalletAccountPortError> {
@@ -1718,6 +1893,53 @@ mod tests {
     }
 
     struct WalletSdkVectorKeys;
+
+    #[derive(Default)]
+    struct TestAssociationRepository(Mutex<HashMap<WalletProfileId, WalletProfileAssociations>>);
+
+    impl WalletProfileAssociationRepository for TestAssociationRepository {
+        fn load_associations(
+            &self,
+            profile_id: &WalletProfileId,
+        ) -> Result<
+            Option<WalletProfileAssociations>,
+            oxid_wallet_application::WalletProfileAssociationRepositoryError,
+        > {
+            self.0
+                .lock()
+                .map(|records| records.get(profile_id).cloned())
+                .map_err(|_| {
+                    oxid_wallet_application::WalletProfileAssociationRepositoryError::Unavailable
+                })
+        }
+
+        fn save_associations(
+            &self,
+            profile_id: &WalletProfileId,
+            associations: WalletProfileAssociations,
+        ) -> Result<(), oxid_wallet_application::WalletProfileAssociationRepositoryError> {
+            self.0
+                .lock()
+                .map_err(|_| {
+                    oxid_wallet_application::WalletProfileAssociationRepositoryError::Unavailable
+                })?
+                .insert(profile_id.clone(), associations);
+            Ok(())
+        }
+
+        fn remove_associations(
+            &self,
+            profile_id: &WalletProfileId,
+        ) -> Result<(), oxid_wallet_application::WalletProfileAssociationRepositoryError> {
+            self.0
+                .lock()
+                .map_err(|_| {
+                    oxid_wallet_application::WalletProfileAssociationRepositoryError::Unavailable
+                })?
+                .remove(profile_id);
+            Ok(())
+        }
+    }
 
     impl WalletKeyDerivationPort for WalletSdkVectorKeys {
         fn derive(
@@ -1911,6 +2133,44 @@ mod tests {
                 &network_id("unknown").expect("identifier shape is valid")
             ),
             Err(WalletAccountPortError::UnsupportedNetwork)
+        );
+    }
+
+    #[test]
+    fn rebinds_the_exact_derived_account_from_persisted_public_coordinates() {
+        let repository = Arc::new(TestAssociationRepository::default());
+        let devnet = network_id("devnet").expect("network is valid");
+        let first = MidnightWalletAdapter::with_deriver(
+            SimulatedMidnightAccountSource::new(Arc::new(FixedClock)),
+            ProtectedMidnightAccountDeriver::new(Arc::new(WalletSdkVectorKeys)),
+        )
+        .with_profile_association_repository(repository.clone());
+        first
+            .select_network(&profile(), &devnet)
+            .expect("selection persists");
+        let derived = first
+            .derive_account(&profile(), 0, 0)
+            .expect("account derives");
+        let expected_address = derived.receive_address().clone();
+        drop(first);
+
+        let reopened = MidnightWalletAdapter::with_deriver(
+            SimulatedMidnightAccountSource::new(Arc::new(FixedClock)),
+            ProtectedMidnightAccountDeriver::new(Arc::new(WalletSdkVectorKeys)),
+        )
+        .with_profile_association_repository(repository);
+        assert_eq!(
+            reopened
+                .selected_network(&profile())
+                .expect("selection reloads"),
+            devnet
+        );
+        assert_eq!(
+            reopened
+                .account(&profile())
+                .expect("account rebinds")
+                .addresses()[0],
+            expected_address
         );
     }
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
+use std::{collections::BTreeSet, error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_wallet_domain::{
@@ -45,6 +45,142 @@ impl fmt::Display for WalletAccountPortError {
 }
 
 impl Error for WalletAccountPortError {}
+
+/// Public, derivable coordinates retained for one Midnight account.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletAccountAssociation {
+    network_id: ChainNetworkId,
+    account_index: u32,
+    address_index: u32,
+}
+
+impl WalletAccountAssociation {
+    pub fn new(
+        network_id: ChainNetworkId,
+        account_index: u32,
+        address_index: u32,
+    ) -> Result<Self, WalletAccountAssociationError> {
+        if account_index > MAX_HD_CHILD_INDEX {
+            return Err(WalletAccountAssociationError::AccountIndexOutOfBounds);
+        }
+        if address_index > MAX_HD_CHILD_INDEX {
+            return Err(WalletAccountAssociationError::AddressIndexOutOfBounds);
+        }
+        Ok(Self {
+            network_id,
+            account_index,
+            address_index,
+        })
+    }
+
+    #[must_use]
+    pub const fn network_id(&self) -> &ChainNetworkId {
+        &self.network_id
+    }
+
+    #[must_use]
+    pub const fn account_index(&self) -> u32 {
+        self.account_index
+    }
+
+    #[must_use]
+    pub const fn address_index(&self) -> u32 {
+        self.address_index
+    }
+}
+
+/// Complete public association state required to reconnect derivable accounts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletProfileAssociations {
+    selected_network_id: ChainNetworkId,
+    accounts: Vec<WalletAccountAssociation>,
+}
+
+impl WalletProfileAssociations {
+    pub fn new(
+        selected_network_id: ChainNetworkId,
+        mut accounts: Vec<WalletAccountAssociation>,
+    ) -> Result<Self, WalletAccountAssociationError> {
+        accounts.sort_by(|left, right| left.network_id().cmp(right.network_id()));
+        let unique = accounts
+            .iter()
+            .map(WalletAccountAssociation::network_id)
+            .collect::<BTreeSet<_>>();
+        if unique.len() != accounts.len() {
+            return Err(WalletAccountAssociationError::DuplicateNetwork);
+        }
+        Ok(Self {
+            selected_network_id,
+            accounts,
+        })
+    }
+
+    #[must_use]
+    pub const fn selected_network_id(&self) -> &ChainNetworkId {
+        &self.selected_network_id
+    }
+
+    #[must_use]
+    pub fn accounts(&self) -> &[WalletAccountAssociation] {
+        &self.accounts
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletAccountAssociationError {
+    AccountIndexOutOfBounds,
+    AddressIndexOutOfBounds,
+    DuplicateNetwork,
+}
+
+impl fmt::Display for WalletAccountAssociationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::AccountIndexOutOfBounds => "wallet account association index is out of bounds",
+            Self::AddressIndexOutOfBounds => "wallet address association index is out of bounds",
+            Self::DuplicateNetwork => "wallet account associations contain a duplicate network",
+        })
+    }
+}
+
+impl Error for WalletAccountAssociationError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletProfileAssociationRepositoryError {
+    Integrity,
+    Unavailable,
+}
+
+impl fmt::Display for WalletProfileAssociationRepositoryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Integrity => "wallet account association storage failed integrity validation",
+            Self::Unavailable => "wallet account association storage is unavailable",
+        })
+    }
+}
+
+impl Error for WalletProfileAssociationRepositoryError {}
+
+/// Durable public profile-to-account coordinates. No address, key reference,
+/// endpoint, balance, transaction, or protected material belongs here.
+pub trait WalletProfileAssociationRepository: Send + Sync {
+    fn load_associations(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<Option<WalletProfileAssociations>, WalletProfileAssociationRepositoryError>;
+
+    fn save_associations(
+        &self,
+        profile_id: &WalletProfileId,
+        associations: WalletProfileAssociations,
+    ) -> Result<(), WalletProfileAssociationRepositoryError>;
+
+    fn remove_associations(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<(), WalletProfileAssociationRepositoryError>;
+}
 
 /// Focused outgoing port for network catalog and selection state.
 pub trait WalletNetworkPort: Send + Sync {

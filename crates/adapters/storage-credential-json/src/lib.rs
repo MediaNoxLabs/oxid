@@ -188,6 +188,38 @@ impl EncryptedJsonCredentialRepository {
     }
 }
 
+/// Canonical decrypted credential snapshot used only inside the separately
+/// authenticated portable wallet archive. Callers must retain it in zeroizing
+/// storage and never expose it to an incoming adapter.
+pub fn encode_portable_credential_snapshot(
+    records: &[CredentialRecord],
+) -> Result<Zeroizing<Vec<u8>>, CredentialRepositoryError> {
+    if records.len() > MAX_RECORDS {
+        return Err(CredentialRepositoryError::CapacityExceeded);
+    }
+    let document = StoreDocument::from_domain(records);
+    let bytes = Zeroizing::new(
+        serde_json::to_vec(&document).map_err(|_| CredentialRepositoryError::Integrity)?,
+    );
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_DOCUMENT_BYTES {
+        return Err(CredentialRepositoryError::CapacityExceeded);
+    }
+    Ok(bytes)
+}
+
+/// Strictly decodes and revalidates every credential record in an authenticated
+/// wallet archive.
+pub fn decode_portable_credential_snapshot(
+    bytes: &[u8],
+) -> Result<Vec<CredentialRecord>, CredentialRepositoryError> {
+    if bytes.is_empty() || u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_DOCUMENT_BYTES {
+        return Err(CredentialRepositoryError::Integrity);
+    }
+    let document: StoreDocument =
+        serde_json::from_slice(bytes).map_err(|_| CredentialRepositoryError::Integrity)?;
+    document.to_domain()
+}
+
 impl CredentialRepository for EncryptedJsonCredentialRepository {
     fn upsert(&self, record: CredentialRecord) -> Result<(), CredentialRepositoryError> {
         let _guard = self
@@ -628,6 +660,15 @@ mod tests {
             .list(&CredentialProfileId::parse("profile_one").expect("profile"))
             .expect("list");
         assert_eq!(records, vec![record()]);
+    }
+
+    #[test]
+    fn portable_credential_snapshot_round_trips_complete_private_records() {
+        let original = record();
+        let encoded = encode_portable_credential_snapshot(std::slice::from_ref(&original))
+            .expect("snapshot encodes");
+        let decoded = decode_portable_credential_snapshot(&encoded).expect("snapshot decodes");
+        assert_eq!(decoded, vec![original]);
     }
 
     #[test]

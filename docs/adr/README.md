@@ -97,6 +97,7 @@ ADR status and delivery state answer different questions:
 | [0073](0073-anchor-standalone-compact-credential-policy.md) Anchor standalone Compact credential policy | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#29/#34 | Standalone composition resolves and authorizes the exact issuer Jubjub method, enforces current-time/expiry policy, and requires a pinned trust anchor; status remains not checked and production remains unavailable |
 | [0074](0074-package-portable-custody-for-one-shot-recovery.md) Package portable custody for one-shot recovery | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Versioned Argon2id/XChaCha20-Poly1305 custody packages restore exact keys only into empty development/mobile vaults; ADR-0075 adds native file UX while all-store recovery remains #33 |
 | [0075](0075-transfer-wallet-backups-through-native-document-pickers.md) Transfer wallet backups through native document pickers | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Fixed-name, bounded iOS/Android document pickers plus exact-confirmation custody-only Settings UX are implemented; all-store and physical-device recovery remain #33 |
+| [0076](0076-recover-complete-wallet-state-as-one-transaction.md) Recover complete wallet state as one transaction | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#33 | Public account associations, strict store snapshots, and restored-DID key rebinding are implemented; one-envelope staged recovery, crash reconciliation, fresh-install UI, and mobile evidence remain #33 |
 
 ## Current boundaries
 
@@ -156,6 +157,12 @@ protected, no-backup temporary export plus regular non-symlink copied imports,
 and Android uses bounded openable content URIs. Cancellation is explicit,
 Settings zeroizes entered recovery-secret state and truthfully labels this as
 custody-only, and recovery remains limited to an empty matching profile.
+ADR-0076 defines the all-store successor as one profile-scoped authenticated
+archive and a custody-last, journaled transaction. Public Midnight associations
+retain only network/account/address coordinates, and restored DID control is
+reconstructed by unique exact public-key matching rather than persisted opaque
+key handles. The association and rebinding foundations are implemented; the
+version-2 envelope, crash reconciliation, and fresh-install UI remain issue #33.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a

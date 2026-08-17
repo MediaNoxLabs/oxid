@@ -16,11 +16,16 @@ use std::{
 #[cfg(not(target_os = "android"))]
 use directories::ProjectDirs;
 use oxid_foundation::UnixTimestampMillis;
-use oxid_wallet_application::{WalletProfileRepository, WalletProfileRepositoryError};
-use oxid_wallet_domain::{ProfileName, WalletProfile, WalletProfileId};
+use oxid_wallet_application::{
+    WalletAccountAssociation, WalletProfileAssociationRepository,
+    WalletProfileAssociationRepositoryError, WalletProfileAssociations, WalletProfileRepository,
+    WalletProfileRepositoryError,
+};
+use oxid_wallet_domain::{ChainNetworkId, ProfileName, WalletProfile, WalletProfileId};
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
+const LEGACY_SCHEMA_VERSION: u32 = 1;
 const MAX_PROFILE_COUNT: usize = 128;
 const MAX_STORE_BYTES: u64 = 1024 * 1024;
 const STORE_FILE_NAME: &str = "wallet-profiles.json";
@@ -95,9 +100,12 @@ impl JsonWalletProfileRepository {
         if bytes.len() as u64 > MAX_STORE_BYTES {
             return Err(WalletProfileRepositoryError::Unavailable);
         }
-        let document: StoreDocument = serde_json::from_slice(&bytes)
+        let mut document: StoreDocument = serde_json::from_slice(&bytes)
             .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
         validate_document(&document)?;
+        if document.schema_version == LEGACY_SCHEMA_VERSION {
+            document.schema_version = SCHEMA_VERSION;
+        }
 
         Ok(document)
     }
@@ -151,6 +159,55 @@ impl JsonWalletProfileRepository {
 
         Ok(())
     }
+}
+
+/// Canonical, bounded public profile/association snapshot used only inside the
+/// authenticated wallet backup adapter.
+pub fn encode_portable_profile_snapshot(
+    profile: &WalletProfile,
+    associations: Option<&WalletProfileAssociations>,
+) -> Result<Vec<u8>, WalletProfileRepositoryError> {
+    let snapshot = PortableProfileSnapshot {
+        schema_version: 1,
+        profile: ProfileRecord::from(profile),
+        account_associations: associations
+            .map(|value| AssociationRecord::from_domain(profile.id(), value)),
+    };
+    let bytes =
+        serde_json::to_vec(&snapshot).map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+    if bytes.len() as u64 > MAX_STORE_BYTES {
+        return Err(WalletProfileRepositoryError::Unavailable);
+    }
+    Ok(bytes)
+}
+
+/// Strictly decodes the authenticated public profile/association section.
+pub fn decode_portable_profile_snapshot(
+    bytes: &[u8],
+) -> Result<(WalletProfile, Option<WalletProfileAssociations>), WalletProfileRepositoryError> {
+    if bytes.is_empty() || bytes.len() as u64 > MAX_STORE_BYTES {
+        return Err(WalletProfileRepositoryError::Unavailable);
+    }
+    let snapshot: PortableProfileSnapshot =
+        serde_json::from_slice(bytes).map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+    if snapshot.schema_version != 1 {
+        return Err(WalletProfileRepositoryError::Unavailable);
+    }
+    let profile = profile_from_record(&snapshot.profile)?;
+    let associations = snapshot
+        .account_associations
+        .as_ref()
+        .map(AssociationRecord::to_domain)
+        .transpose()
+        .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+    if snapshot
+        .account_associations
+        .as_ref()
+        .is_some_and(|record| record.profile_id != profile.id().as_str())
+    {
+        return Err(WalletProfileRepositoryError::Unavailable);
+    }
+    Ok((profile, associations))
 }
 
 #[cfg(not(target_os = "android"))]
@@ -239,6 +296,28 @@ impl WalletProfileRepository for JsonWalletProfileRepository {
         profiles_from_document(&self.load_document()?)
     }
 
+    fn remove(&self, id: &WalletProfileId) -> Result<(), WalletProfileRepositoryError> {
+        let _guard = self
+            .access
+            .lock()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+        let mut document = self.load_document()?;
+        let before = document.profiles.len();
+        document
+            .profiles
+            .retain(|profile| profile.id != id.as_str());
+        if document.profiles.len() == before {
+            return Err(WalletProfileRepositoryError::NotFound);
+        }
+        document
+            .account_associations
+            .retain(|record| record.profile_id != id.as_str());
+        if document.active_profile_id.as_deref() == Some(id.as_str()) {
+            document.active_profile_id = None;
+        }
+        self.save_document(&document)
+    }
+
     fn set_active(
         &self,
         id: &WalletProfileId,
@@ -276,12 +355,90 @@ impl WalletProfileRepository for JsonWalletProfileRepository {
     }
 }
 
+impl WalletProfileAssociationRepository for JsonWalletProfileRepository {
+    fn load_associations(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<Option<WalletProfileAssociations>, WalletProfileAssociationRepositoryError> {
+        let _guard = self
+            .access
+            .lock()
+            .map_err(|_| WalletProfileAssociationRepositoryError::Unavailable)?;
+        let document = self
+            .load_document()
+            .map_err(map_association_repository_error)?;
+        document
+            .account_associations
+            .iter()
+            .find(|record| record.profile_id == profile_id.as_str())
+            .map(AssociationRecord::to_domain)
+            .transpose()
+    }
+
+    fn save_associations(
+        &self,
+        profile_id: &WalletProfileId,
+        associations: WalletProfileAssociations,
+    ) -> Result<(), WalletProfileAssociationRepositoryError> {
+        let _guard = self
+            .access
+            .lock()
+            .map_err(|_| WalletProfileAssociationRepositoryError::Unavailable)?;
+        let mut document = self
+            .load_document()
+            .map_err(map_association_repository_error)?;
+        if !document
+            .profiles
+            .iter()
+            .any(|profile| profile.id == profile_id.as_str())
+        {
+            return Err(WalletProfileAssociationRepositoryError::Integrity);
+        }
+        document
+            .account_associations
+            .retain(|record| record.profile_id != profile_id.as_str());
+        document
+            .account_associations
+            .push(AssociationRecord::from_domain(profile_id, &associations));
+        self.save_document(&document)
+            .map_err(map_association_repository_error)
+    }
+
+    fn remove_associations(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<(), WalletProfileAssociationRepositoryError> {
+        let _guard = self
+            .access
+            .lock()
+            .map_err(|_| WalletProfileAssociationRepositoryError::Unavailable)?;
+        let mut document = self
+            .load_document()
+            .map_err(map_association_repository_error)?;
+        document
+            .account_associations
+            .retain(|record| record.profile_id != profile_id.as_str());
+        self.save_document(&document)
+            .map_err(map_association_repository_error)
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StoreDocument {
     schema_version: u32,
     profiles: Vec<ProfileRecord>,
     active_profile_id: Option<String>,
+    #[serde(default)]
+    account_associations: Vec<AssociationRecord>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PortableProfileSnapshot {
+    schema_version: u32,
+    profile: ProfileRecord,
+    account_associations: Option<AssociationRecord>,
 }
 
 impl Default for StoreDocument {
@@ -290,7 +447,64 @@ impl Default for StoreDocument {
             schema_version: SCHEMA_VERSION,
             profiles: Vec::new(),
             active_profile_id: None,
+            account_associations: Vec::new(),
         }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AssociationRecord {
+    profile_id: String,
+    selected_network_id: String,
+    accounts: Vec<AccountAssociationRecord>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AccountAssociationRecord {
+    network_id: String,
+    account_index: u32,
+    address_index: u32,
+}
+
+impl AssociationRecord {
+    fn from_domain(profile_id: &WalletProfileId, associations: &WalletProfileAssociations) -> Self {
+        Self {
+            profile_id: profile_id.as_str().to_owned(),
+            selected_network_id: associations.selected_network_id().as_str().to_owned(),
+            accounts: associations
+                .accounts()
+                .iter()
+                .map(|account| AccountAssociationRecord {
+                    network_id: account.network_id().as_str().to_owned(),
+                    account_index: account.account_index(),
+                    address_index: account.address_index(),
+                })
+                .collect(),
+        }
+    }
+
+    fn to_domain(
+        &self,
+    ) -> Result<WalletProfileAssociations, WalletProfileAssociationRepositoryError> {
+        let selected = ChainNetworkId::parse(self.selected_network_id.clone())
+            .map_err(|_| WalletProfileAssociationRepositoryError::Integrity)?;
+        let accounts = self
+            .accounts
+            .iter()
+            .map(|account| {
+                WalletAccountAssociation::new(
+                    ChainNetworkId::parse(account.network_id.clone())
+                        .map_err(|_| WalletProfileAssociationRepositoryError::Integrity)?,
+                    account.account_index,
+                    account.address_index,
+                )
+                .map_err(|_| WalletProfileAssociationRepositoryError::Integrity)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        WalletProfileAssociations::new(selected, accounts)
+            .map_err(|_| WalletProfileAssociationRepositoryError::Integrity)
     }
 }
 
@@ -313,7 +527,12 @@ impl From<&WalletProfile> for ProfileRecord {
 }
 
 fn validate_document(document: &StoreDocument) -> Result<(), WalletProfileRepositoryError> {
-    if document.schema_version != SCHEMA_VERSION || document.profiles.len() > MAX_PROFILE_COUNT {
+    if !matches!(
+        document.schema_version,
+        LEGACY_SCHEMA_VERSION | SCHEMA_VERSION
+    ) || document.profiles.len() > MAX_PROFILE_COUNT
+        || document.account_associations.len() > document.profiles.len()
+    {
         return Err(WalletProfileRepositoryError::Unavailable);
     }
 
@@ -334,27 +553,59 @@ fn validate_document(document: &StoreDocument) -> Result<(), WalletProfileReposi
         return Err(WalletProfileRepositoryError::Unavailable);
     }
 
+    let profile_ids = profiles
+        .iter()
+        .map(|profile| profile.id().as_str())
+        .collect::<BTreeSet<_>>();
+    let association_ids = document
+        .account_associations
+        .iter()
+        .map(|record| record.profile_id.as_str())
+        .collect::<BTreeSet<_>>();
+    if association_ids.len() != document.account_associations.len()
+        || !association_ids.is_subset(&profile_ids)
+        || document
+            .account_associations
+            .iter()
+            .any(|record| record.to_domain().is_err())
+    {
+        return Err(WalletProfileRepositoryError::Unavailable);
+    }
+
     Ok(())
+}
+
+const fn map_association_repository_error(
+    error: WalletProfileRepositoryError,
+) -> WalletProfileAssociationRepositoryError {
+    match error {
+        WalletProfileRepositoryError::Unavailable => {
+            WalletProfileAssociationRepositoryError::Unavailable
+        }
+        WalletProfileRepositoryError::Conflict | WalletProfileRepositoryError::NotFound => {
+            WalletProfileAssociationRepositoryError::Integrity
+        }
+    }
 }
 
 fn profiles_from_document(
     document: &StoreDocument,
 ) -> Result<Vec<WalletProfile>, WalletProfileRepositoryError> {
-    document
-        .profiles
-        .iter()
-        .map(|record| {
-            let id = WalletProfileId::parse(record.id.clone())
-                .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
-            let display_name = ProfileName::parse(&record.display_name)
-                .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
-            Ok(WalletProfile::new(
-                id,
-                display_name,
-                UnixTimestampMillis::new(record.created_at_millis),
-            ))
-        })
-        .collect()
+    document.profiles.iter().map(profile_from_record).collect()
+}
+
+fn profile_from_record(
+    record: &ProfileRecord,
+) -> Result<WalletProfile, WalletProfileRepositoryError> {
+    let id = WalletProfileId::parse(record.id.clone())
+        .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+    let display_name = ProfileName::parse(&record.display_name)
+        .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+    Ok(WalletProfile::new(
+        id,
+        display_name,
+        UnixTimestampMillis::new(record.created_at_millis),
+    ))
 }
 
 fn temporary_path(path: &Path) -> PathBuf {
@@ -435,6 +686,63 @@ mod tests {
     }
 
     #[test]
+    fn reopens_public_midnight_account_associations() {
+        let store = TestStore::new();
+        let profile = profile("profile_associated", "Associated", 42);
+        let profile_id = profile.id().clone();
+        let repository = JsonWalletProfileRepository::new(&store.path);
+        repository.save(profile).expect("save should succeed");
+        let associations = WalletProfileAssociations::new(
+            ChainNetworkId::parse("devnet").expect("network identifier"),
+            vec![
+                WalletAccountAssociation::new(
+                    ChainNetworkId::parse("devnet").expect("network identifier"),
+                    3,
+                    7,
+                )
+                .expect("account coordinates"),
+            ],
+        )
+        .expect("profile associations");
+        repository
+            .save_associations(&profile_id, associations.clone())
+            .expect("associations should save");
+
+        let reopened = JsonWalletProfileRepository::new(&store.path);
+        assert_eq!(
+            reopened
+                .load_associations(&profile_id)
+                .expect("associations should load"),
+            Some(associations)
+        );
+        let serialized =
+            String::from_utf8(fs::read(&store.path).expect("read store")).expect("store is UTF-8");
+        for forbidden in [
+            "address\"",
+            "keyReference",
+            "endpoint",
+            "balance",
+            "history",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn portable_profile_snapshot_round_trips_without_repository_file_state() {
+        let profile = profile("profile_portable", "Portable", 99);
+        let associations = WalletProfileAssociations::new(
+            ChainNetworkId::parse("preprod").expect("network identifier"),
+            vec![],
+        )
+        .expect("profile associations");
+        let encoded = encode_portable_profile_snapshot(&profile, Some(&associations))
+            .expect("snapshot encodes");
+        let decoded = decode_portable_profile_snapshot(&encoded).expect("snapshot decodes");
+        assert_eq!(decoded, (profile, Some(associations)));
+    }
+
+    #[test]
     fn rejects_duplicate_profile_identifiers() {
         let store = TestStore::new();
         let repository = JsonWalletProfileRepository::new(&store.path);
@@ -472,7 +780,7 @@ mod tests {
         fs::create_dir_all(&store.root).expect("test directory should be created");
         fs::write(
             &store.path,
-            br#"{"schemaVersion":2,"profiles":[],"activeProfileId":null}"#,
+            br#"{"schemaVersion":999,"profiles":[],"activeProfileId":null}"#,
         )
         .expect("fixture should be written");
         let repository = JsonWalletProfileRepository::new(&store.path);

@@ -115,6 +115,113 @@ impl StandaloneDidLifecycle {
             )
             .map_err(map_security_error)
     }
+
+    fn rebind_document(
+        &self,
+        profile_id: &IdentityProfileId,
+        current: &DidResolution,
+    ) -> Result<(), DidLifecyclePortError> {
+        let managed_key = (
+            profile_id.as_str().to_owned(),
+            current.document().id().as_str().to_owned(),
+        );
+        if self.managed()?.get(&managed_key).is_some_and(|managed| {
+            current
+                .document()
+                .verification_methods()
+                .iter()
+                .all(|method| managed.methods.contains_key(method.id()))
+        }) {
+            return Ok(());
+        }
+        let descriptors = self
+            .keys
+            .list(&Self::profile(profile_id)?)
+            .map_err(map_rebind_security_error)?;
+        let mut rebound = BTreeMap::new();
+        for method in current.document().verification_methods() {
+            let matches = descriptors
+                .iter()
+                .filter(|descriptor| {
+                    public_jwk(descriptor).is_ok_and(|jwk| &jwk == method.public_key_jwk())
+                })
+                .collect::<Vec<_>>();
+            if matches.len() > 1 {
+                return Err(DidLifecyclePortError::Conflict);
+            }
+            if let Some(descriptor) = matches.first()
+                && let Some(algorithm) = did_algorithm(descriptor.algorithm())
+            {
+                rebound.insert(
+                    method.id().to_owned(),
+                    KeyBinding {
+                        reference: descriptor.reference().clone(),
+                        algorithm,
+                    },
+                );
+            }
+        }
+        if !rebound.is_empty() {
+            self.managed()?
+                .entry(managed_key)
+                .or_insert_with(|| ManagedDid {
+                    methods: BTreeMap::new(),
+                })
+                .methods
+                .extend(rebound);
+        }
+        Ok(())
+    }
+
+    fn rebind_jubjub_method(
+        &self,
+        profile_id: &IdentityProfileId,
+        did: &MidnightDid,
+        method_id: &str,
+        expected_public_key: &[u8; 32],
+    ) -> Result<(), DidLifecyclePortError> {
+        let key = (profile_id.as_str().to_owned(), did.as_str().to_owned());
+        if self
+            .managed()?
+            .get(&key)
+            .is_some_and(|managed| managed.methods.contains_key(method_id))
+        {
+            return Ok(());
+        }
+        let descriptors = self
+            .keys
+            .list(&Self::profile(profile_id)?)
+            .map_err(map_rebind_security_error)?;
+        let matches = descriptors
+            .iter()
+            .filter(|descriptor| {
+                descriptor.algorithm() == WalletKeyAlgorithm::Jubjub
+                    && descriptor.public_key().encoding() == PublicKeyEncoding::JubjubCompressed
+                    && descriptor.public_key().bytes() == expected_public_key
+            })
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(if matches.is_empty() {
+                DidLifecyclePortError::NotManaged
+            } else {
+                DidLifecyclePortError::Conflict
+            });
+        }
+        self.managed()?
+            .entry(key)
+            .or_insert_with(|| ManagedDid {
+                methods: BTreeMap::new(),
+            })
+            .methods
+            .insert(
+                method_id.to_owned(),
+                KeyBinding {
+                    reference: matches[0].reference().clone(),
+                    algorithm: DidKeyAlgorithm::Jubjub,
+                },
+            );
+        Ok(())
+    }
 }
 
 impl DidLifecyclePort for StandaloneDidLifecycle {
@@ -123,6 +230,7 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
         profile_id: &IdentityProfileId,
         current: &DidResolution,
     ) -> Result<Vec<String>, DidLifecyclePortError> {
+        self.rebind_document(profile_id, current)?;
         Ok(self
             .managed()?
             .get(&(
@@ -264,6 +372,7 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
         operation: DidUpdate,
     ) -> Result<DidResolution, DidLifecyclePortError> {
         ensure_active(current)?;
+        self.rebind_document(profile_id, current)?;
         let did = current.document().id();
         let managed_key = (profile_id.as_str().to_owned(), did.as_str().to_owned());
         let mut managed = self.managed()?;
@@ -493,6 +602,7 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
         current: &DidResolution,
     ) -> Result<DidResolution, DidLifecyclePortError> {
         ensure_active(current)?;
+        self.rebind_document(profile_id, current)?;
         let key = (
             profile_id.as_str().to_owned(),
             current.document().id().as_str().to_owned(),
@@ -511,6 +621,7 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
         payload: &[u8],
     ) -> Result<DidLifecycleSignature, DidLifecyclePortError> {
         ensure_active(current)?;
+        self.rebind_document(profile_id, current)?;
         let method_id = canonical_component_id(current.document().id(), method_id)?;
         if !current
             .document()
@@ -551,9 +662,11 @@ impl DidJubjubChallengeSigningPort for StandaloneDidLifecycle {
         profile_id: &IdentityProfileId,
         did: &MidnightDid,
         method_id: &str,
+        expected_public_key: &[u8; 32],
         derive_challenge: &mut DidJubjubChallengeDeriver<'_>,
     ) -> Result<DidJubjubChallengeSignature, DidLifecyclePortError> {
         let method_id = canonical_component_id(did, method_id)?;
+        self.rebind_jubjub_method(profile_id, did, &method_id, expected_public_key)?;
         let key = (profile_id.as_str().to_owned(), did.as_str().to_owned());
         let binding = self
             .managed()?
@@ -646,6 +759,15 @@ fn wallet_algorithm(value: DidKeyAlgorithm) -> WalletKeyAlgorithm {
     }
 }
 
+const fn did_algorithm(value: WalletKeyAlgorithm) -> Option<DidKeyAlgorithm> {
+    match value {
+        WalletKeyAlgorithm::Ed25519 => Some(DidKeyAlgorithm::Ed25519),
+        WalletKeyAlgorithm::Jubjub => Some(DidKeyAlgorithm::Jubjub),
+        WalletKeyAlgorithm::P256 => Some(DidKeyAlgorithm::P256),
+        WalletKeyAlgorithm::Secp256k1Schnorr => None,
+    }
+}
+
 fn map_security_error(error: WalletSecurityPortError) -> DidLifecyclePortError {
     match error {
         WalletSecurityPortError::Locked => DidLifecyclePortError::Locked,
@@ -660,6 +782,15 @@ fn map_security_error(error: WalletSecurityPortError) -> DidLifecyclePortError {
         WalletSecurityPortError::AlreadyInitialized
         | WalletSecurityPortError::AuthorizationDenied
         | WalletSecurityPortError::InvalidOperation => DidLifecyclePortError::InvalidOperation,
+    }
+}
+
+fn map_rebind_security_error(error: WalletSecurityPortError) -> DidLifecyclePortError {
+    match error {
+        WalletSecurityPortError::NotInitialized | WalletSecurityPortError::NotFound => {
+            DidLifecyclePortError::NotManaged
+        }
+        other => map_security_error(other),
     }
 }
 
@@ -781,7 +912,9 @@ mod tests {
     use oxid_adapter_platform_system::{OsRandom, SystemClock};
     use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
     use oxid_identity_domain::VerificationRelationship;
-    use oxid_wallet_application::WalletProtectionPort;
+    use oxid_wallet_application::{
+        WalletPortableBackupPort, WalletProtectionPort, WalletRecoverySecret,
+    };
 
     type Security = DevelopmentWalletSecurity<SystemClock, OsRandom>;
 
@@ -824,6 +957,16 @@ mod tests {
             .expect("create DID");
         let did = resolution.document().id();
         let method_id = format!("{}#holder-jubjub-1", did.as_str());
+        let expected_public_key: [u8; 32] = security
+            .list(&WalletProfileId::parse(profile.as_str()).expect("wallet profile"))
+            .expect("keys should list")
+            .into_iter()
+            .find(|descriptor| descriptor.algorithm() == WalletKeyAlgorithm::Jubjub)
+            .expect("Jubjub key exists")
+            .public_key()
+            .bytes()
+            .try_into()
+            .expect("Jubjub public key width");
         let callback_count = std::cell::Cell::new(0);
         let mut derive = |public_key: &[u8; 32], announcement: &[u8; 32]| {
             callback_count.set(callback_count.get() + 1);
@@ -835,7 +978,7 @@ mod tests {
                 .expect("field width"))
         };
         let signature = lifecycle
-            .sign_jubjub_challenge(&profile, did, &method_id, &mut derive)
+            .sign_jubjub_challenge(&profile, did, &method_id, &expected_public_key, &mut derive)
             .expect("protected challenge signature");
         assert_eq!(callback_count.get(), 1);
         assert_eq!(signature.method_id, method_id);
@@ -860,7 +1003,13 @@ mod tests {
             .lock(&WalletProfileId::parse(profile.as_str()).expect("wallet profile"))
             .expect("lock custody");
         assert_eq!(
-            lifecycle.sign_jubjub_challenge(&profile, did, &method_id, &mut derive),
+            lifecycle.sign_jubjub_challenge(
+                &profile,
+                did,
+                &method_id,
+                &expected_public_key,
+                &mut derive,
+            ),
             Err(DidLifecyclePortError::Locked)
         );
     }
@@ -981,6 +1130,41 @@ mod tests {
     }
 
     #[test]
+    fn restored_custody_rebinds_managed_did_methods_by_exact_public_key() {
+        let (security, lifecycle, profile) = setup();
+        let resolution = lifecycle
+            .create(&profile, MidnightNetwork::Undeployed)
+            .expect("create DID");
+        let wallet_profile = WalletProfileId::parse(profile.as_str()).expect("wallet profile");
+        let secret =
+            WalletRecoverySecret::parse("correct horse battery staple").expect("recovery secret");
+        let backup = security
+            .export_portable_backup(&wallet_profile, &secret)
+            .expect("custody exports");
+
+        let restored = Arc::new(DevelopmentWalletSecurity::new(
+            Arc::new(SystemClock),
+            Arc::new(OsRandom),
+        ));
+        restored
+            .recover_portable_backup(&wallet_profile, &backup, &secret)
+            .expect("custody restores");
+        let keys: Arc<dyn WalletKeyOperationPort> = restored;
+        let reopened = StandaloneDidLifecycle::new(keys);
+        assert_eq!(
+            reopened
+                .managed_method_ids(&profile, &resolution)
+                .expect("managed methods rebind")
+                .len(),
+            3
+        );
+        let method_id = resolution.document().verification_methods()[0].id();
+        reopened
+            .sign(&profile, &resolution, method_id, b"restored DID signing")
+            .expect("restored key signs");
+    }
+
+    #[test]
     fn fails_closed_for_live_unmanaged_locked_and_conflicting_operations() {
         let (security, lifecycle, profile) = setup();
         assert_eq!(
@@ -1000,7 +1184,14 @@ mod tests {
             ),
             Err(DidLifecyclePortError::Conflict)
         );
-        let other_keys: Arc<dyn WalletKeyOperationPort> = security.clone();
+        let other_security = Arc::new(DevelopmentWalletSecurity::new(
+            Arc::new(SystemClock),
+            Arc::new(OsRandom),
+        ));
+        other_security
+            .initialize(&WalletProfileId::parse(profile.as_str()).expect("wallet profile"))
+            .expect("initialize unrelated custody");
+        let other_keys: Arc<dyn WalletKeyOperationPort> = other_security;
         let other = StandaloneDidLifecycle::new(other_keys);
         assert_eq!(
             other.update(

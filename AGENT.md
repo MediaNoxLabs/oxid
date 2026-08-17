@@ -1330,6 +1330,24 @@ restored one key, and reconnected the deterministic 5 NIGHT account; Android
 assembly/install/launch passed, but Android picker interaction and physical-
 device evidence remain #33.
 
+ADR-0076 is the accepted all-store recovery boundary. A complete backup is one
+profile-scoped authenticated archive containing domain snapshots for the public
+profile/associations, public DID records, complete credential records, and
+portable custody. It is not a copy of repository files or native sealed-vault
+ciphertext. Recovery must fully validate, reject every destination conflict,
+journal only safe identifiers/counts, stage public and credential records,
+initialize custody last, and roll back or reconcile after interruption. Fresh-
+install recovery learns the destination profile only from the authenticated
+archive; an existing-profile flow may additionally bind that exact profile.
+Keep recovery absent from `oxid.headless.v1`. Public Midnight persistence may
+retain only selected network plus bounded account/address indices—never
+addresses, key references, endpoints, balances, or history. Reconstruct DID
+control after restart only by a unique exact algorithm/public-JWK match against
+authorized custody; never persist opaque DID key references in the public store.
+The association/rebinding foundations and strict store snapshot codecs exist;
+the version-2 envelope, journal coordinator, fresh-install UI, and complete
+mobile evidence remain issue #33 work and must not be claimed complete.
+
 `OXID_MOBILE_CUSTODY=development|native` selects the standalone mobile
 composition; development is the default. Native mode combines production
 custody with deterministic wallet/SSI adapters and must keep simulated

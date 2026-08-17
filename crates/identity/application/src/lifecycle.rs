@@ -213,6 +213,7 @@ pub trait DidJubjubChallengeSigningPort: Send + Sync {
         profile_id: &IdentityProfileId,
         did: &MidnightDid,
         method_id: &str,
+        expected_public_key: &[u8; 32],
         derive_challenge: &mut DidJubjubChallengeDeriver<'_>,
     ) -> Result<DidJubjubChallengeSignature, DidLifecyclePortError>;
 }
@@ -296,6 +297,7 @@ impl DidJubjubChallengeSigningPort for UnavailableDidLifecycle {
         _: &IdentityProfileId,
         _: &MidnightDid,
         _: &str,
+        _: &[u8; 32],
         _: &mut DidJubjubChallengeDeriver<'_>,
     ) -> Result<DidJubjubChallengeSignature, DidLifecyclePortError> {
         Err(DidLifecyclePortError::Unavailable)

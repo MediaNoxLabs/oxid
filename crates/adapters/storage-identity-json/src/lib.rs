@@ -168,6 +168,39 @@ impl JsonDidRecordRepository {
     }
 }
 
+/// Canonical public DID snapshot carried only inside an authenticated wallet
+/// archive. It reuses the strict standalone store schema and validation.
+pub fn encode_portable_did_snapshot(
+    records: &[DidRecord],
+) -> Result<Vec<u8>, DidRecordRepositoryError> {
+    if records.len() > MAX_RECORDS {
+        return Err(DidRecordRepositoryError::CapacityExceeded);
+    }
+    let document = StoreDocument {
+        schema_version: SCHEMA_VERSION,
+        records: records.iter().map(StoredRecord::from).collect(),
+    };
+    validate_document(&document)?;
+    let bytes = serde_json::to_vec(&document).map_err(|_| DidRecordRepositoryError::Integrity)?;
+    if bytes.len() as u64 > MAX_STORE_BYTES {
+        return Err(DidRecordRepositoryError::CapacityExceeded);
+    }
+    Ok(bytes)
+}
+
+/// Strictly decodes and revalidates every public DID record in a wallet archive.
+pub fn decode_portable_did_snapshot(
+    bytes: &[u8],
+) -> Result<Vec<DidRecord>, DidRecordRepositoryError> {
+    if bytes.is_empty() || bytes.len() as u64 > MAX_STORE_BYTES {
+        return Err(DidRecordRepositoryError::Integrity);
+    }
+    let document: StoreDocument =
+        serde_json::from_slice(bytes).map_err(|_| DidRecordRepositoryError::Integrity)?;
+    validate_document(&document)?;
+    records_from_document(&document)
+}
+
 fn reject_symlink(path: &Path) -> Result<(), DidRecordRepositoryError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -669,6 +702,24 @@ mod tests {
             .remove(&profile, records[0].resolution().document().id())
             .expect("remove");
         assert!(reopened.list(&profile).expect("list").is_empty());
+    }
+
+    #[test]
+    fn portable_did_snapshot_round_trips_through_strict_domain_validation() {
+        let original = record("profile_portable");
+        let bytes = encode_portable_did_snapshot(std::slice::from_ref(&original))
+            .expect("snapshot encodes");
+        let decoded = decode_portable_did_snapshot(&bytes).expect("snapshot decodes");
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].profile_id(), original.profile_id());
+        assert_eq!(
+            decoded[0].resolution().document(),
+            original.resolution().document()
+        );
+        assert_eq!(
+            decoded[0].resolution().source(),
+            DidResolutionSource::Stored
+        );
     }
 
     #[test]

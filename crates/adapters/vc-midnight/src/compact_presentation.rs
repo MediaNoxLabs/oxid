@@ -13,7 +13,7 @@
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use base64::{Engine as _, engine::general_purpose};
-use midnight_serialize::Deserializable as _;
+use midnight_serialize::{Deserializable as _, Serializable as _};
 use midnight_transient_crypto::{
     curve::{EmbeddedFr, EmbeddedGroupAffine, Fr},
     hash::transient_hash,
@@ -892,6 +892,15 @@ impl CompactHolderProofPort for ManagedDidJubjubHolderAuthorization {
                 .ok_or(CompactHolderProofError::InvalidBinding)?,
         )
         .map_err(|_| CompactHolderProofError::InvalidBinding)?;
+        let expected_public_key_bytes = {
+            let mut bytes = Vec::with_capacity(32);
+            expected_public_key
+                .serialize(&mut bytes)
+                .map_err(|_| CompactHolderProofError::InvalidBinding)?;
+            bytes
+                .try_into()
+                .map_err(|_| CompactHolderProofError::InvalidBinding)?
+        };
         let signer = compact_holder_reference(&request.holder_did, &request.holder_method_id)?;
         let challenge_signing = self
             .challenge_signing
@@ -923,7 +932,13 @@ impl CompactHolderProofPort for ManagedDidJubjubHolderAuthorization {
             Ok(challenge_bytes)
         };
         let signature = challenge_signing
-            .sign_jubjub_challenge(&profile_id, &did, &request.holder_method_id, &mut derive)
+            .sign_jubjub_challenge(
+                &profile_id,
+                &did,
+                &request.holder_method_id,
+                &expected_public_key_bytes,
+                &mut derive,
+            )
             .map_err(map_holder_challenge_error)?;
         let mut proof = unsigned.ok_or(CompactHolderProofError::Rejected)?;
         if signature.method_id != request.holder_method_id

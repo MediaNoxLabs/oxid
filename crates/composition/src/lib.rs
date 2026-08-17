@@ -909,7 +909,8 @@ pub fn compose_mobile_native_standalone() -> ApplicationServices {
                     Arc::clone(&security),
                 )
             },
-        );
+        )
+        .with_profile_association_repository(profiles.clone());
     let services = compose_with_adapters_and_presentation(
         profiles,
         security,

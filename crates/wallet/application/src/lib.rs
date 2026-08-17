@@ -73,6 +73,11 @@ pub trait WalletProfileRepository: Send + Sync {
 
     fn list(&self) -> Result<Vec<WalletProfile>, WalletProfileRepositoryError>;
 
+    /// Removes one public profile record. Recovery adapters use this only to
+    /// roll back a profile that they inserted into a previously non-conflicting
+    /// destination.
+    fn remove(&self, id: &WalletProfileId) -> Result<(), WalletProfileRepositoryError>;
+
     fn set_active(
         &self,
         id: &WalletProfileId,
@@ -355,6 +360,26 @@ mod tests {
                 .lock()
                 .map(|profiles| profiles.clone())
                 .map_err(|_| WalletProfileRepositoryError::Unavailable)
+        }
+
+        fn remove(&self, id: &WalletProfileId) -> Result<(), WalletProfileRepositoryError> {
+            let mut profiles = self
+                .profiles
+                .lock()
+                .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+            let before = profiles.len();
+            profiles.retain(|profile| profile.id() != id);
+            if profiles.len() == before {
+                return Err(WalletProfileRepositoryError::NotFound);
+            }
+            let mut active = self
+                .active_profile_id
+                .lock()
+                .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+            if active.as_deref() == Some(id.as_str()) {
+                *active = None;
+            }
+            Ok(())
         }
 
         fn set_active(

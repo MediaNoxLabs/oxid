@@ -8,7 +8,10 @@ use oxid_credential_application::{CredentialRepository, CredentialRepositoryErro
 use oxid_credential_domain::{CredentialId, CredentialProfileId, CredentialRecord};
 use oxid_identity_application::{DidRecordRepository, DidRecordRepositoryError};
 use oxid_identity_domain::{DidRecord, IdentityProfileId, MidnightDid};
-use oxid_wallet_application::{WalletProfileRepository, WalletProfileRepositoryError};
+use oxid_wallet_application::{
+    WalletProfileAssociationRepository, WalletProfileAssociationRepositoryError,
+    WalletProfileAssociations, WalletProfileRepository, WalletProfileRepositoryError,
+};
 use oxid_wallet_domain::{WalletProfile, WalletProfileId};
 
 /// Process-local profile storage for development, demos, and tests.
@@ -18,6 +21,7 @@ use oxid_wallet_domain::{WalletProfile, WalletProfileId};
 pub struct InMemoryWalletProfileRepository {
     profiles: RwLock<BTreeMap<String, WalletProfile>>,
     active_profile_id: RwLock<Option<String>>,
+    associations: RwLock<BTreeMap<String, WalletProfileAssociations>>,
 }
 
 impl InMemoryWalletProfileRepository {
@@ -46,6 +50,30 @@ impl WalletProfileRepository for InMemoryWalletProfileRepository {
             .read()
             .map(|profiles| profiles.values().cloned().collect())
             .map_err(|_| WalletProfileRepositoryError::Unavailable)
+    }
+
+    fn remove(&self, id: &WalletProfileId) -> Result<(), WalletProfileRepositoryError> {
+        if self
+            .profiles
+            .write()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?
+            .remove(id.as_str())
+            .is_none()
+        {
+            return Err(WalletProfileRepositoryError::NotFound);
+        }
+        let mut active = self
+            .active_profile_id
+            .write()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+        if active.as_deref() == Some(id.as_str()) {
+            *active = None;
+        }
+        self.associations
+            .write()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?
+            .remove(id.as_str());
+        Ok(())
     }
 
     fn set_active(
@@ -86,6 +114,49 @@ impl WalletProfileRepository for InMemoryWalletProfileRepository {
             .cloned()
             .map(Some)
             .ok_or(WalletProfileRepositoryError::NotFound)
+    }
+}
+
+impl WalletProfileAssociationRepository for InMemoryWalletProfileRepository {
+    fn load_associations(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<Option<WalletProfileAssociations>, WalletProfileAssociationRepositoryError> {
+        self.associations
+            .read()
+            .map(|records| records.get(profile_id.as_str()).cloned())
+            .map_err(|_| WalletProfileAssociationRepositoryError::Unavailable)
+    }
+
+    fn save_associations(
+        &self,
+        profile_id: &WalletProfileId,
+        associations: WalletProfileAssociations,
+    ) -> Result<(), WalletProfileAssociationRepositoryError> {
+        if !self
+            .profiles
+            .read()
+            .map_err(|_| WalletProfileAssociationRepositoryError::Unavailable)?
+            .contains_key(profile_id.as_str())
+        {
+            return Err(WalletProfileAssociationRepositoryError::Integrity);
+        }
+        self.associations
+            .write()
+            .map_err(|_| WalletProfileAssociationRepositoryError::Unavailable)?
+            .insert(profile_id.as_str().to_owned(), associations);
+        Ok(())
+    }
+
+    fn remove_associations(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<(), WalletProfileAssociationRepositoryError> {
+        self.associations
+            .write()
+            .map_err(|_| WalletProfileAssociationRepositoryError::Unavailable)?
+            .remove(profile_id.as_str());
+        Ok(())
     }
 }
 
