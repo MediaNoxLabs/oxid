@@ -40,11 +40,14 @@ without a new review.
   does not call this API; `glib 0.18.5` is present only in the Linux GTK3 path.
   The M0 UI handles public profile labels and no secrets. Remove this exception
   as soon as the Dioxus/Wry graph uses `glib >=0.20`.
-- `RUSTSEC-2026-0097` affects `rand 0.7.3` only when a custom logger recursively
-  calls thread RNG while it reseeds. Here it is a build dependency of
-  `phf_codegen -> selectors -> kuchikiki -> Wry`; Oxid neither configures that
-  build dependency nor calls it at runtime. Remove it when Wry's parser graph
-  no longer resolves `rand 0.7`.
+- `RUSTSEC-2026-0097` affects `rand` when a custom logger recursively calls
+  thread RNG while it reseeds. The advisory's affected range also covered
+  `rand 0.7.0-0.8.5`; the workspace's own direct pin sat inside it until the
+  2026-08-19 bump to `=0.8.7` (fixed release), so the exception now scopes
+  only the remaining `rand 0.7.3` occurrence: a build dependency of
+  `phf_codegen -> selectors -> kuchikiki -> Wry` that Oxid neither configures
+  nor calls at runtime. Remove it when Wry's parser graph no longer resolves
+  `rand 0.7`.
 
 ## Other unmaintained transitive crates
 
