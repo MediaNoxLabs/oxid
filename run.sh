@@ -41,11 +41,24 @@ while (($# > 0)); do
 done
 
 run_core() {
+  local run_workspace_tests=true
+  if [[ "${1:-}" == "--skip-workspace-tests" ]]; then
+    run_workspace_tests=false
+  fi
   cargo fmt --all --check
   ./scripts/check-architecture.sh
   ./scripts/check-midnight-sources.sh
   cargo clippy --workspace --all-targets -- -D warnings
-  cargo test --workspace
+  if $run_workspace_tests; then
+    cargo test --workspace
+  fi
+}
+
+run_coverage_excluded_tests() {
+  # The coverage measurement excludes these crates, so the `all` target runs
+  # their tests directly; every other crate's tests execute exactly once under
+  # cargo-llvm-cov instrumentation instead of once plain and once instrumented.
+  cargo test -p oxid-ui-dioxus -p oxid-app -p oxid-headless
 }
 
 run_ui() {
@@ -91,9 +104,10 @@ run_quality() {
 
 case "$target" in
   all)
-    run_core
+    run_core --skip-workspace-tests
     run_ui
     run_headless
+    run_coverage_excluded_tests
     run_coverage
     if ! $light; then
       run_quality

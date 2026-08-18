@@ -36,4 +36,6 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Check Markdown links
-        run: nix develop --command lychee --config .lychee.toml --no-progress --exclude-path LICENSE './**/*.md'
+        # The docs shell carries only lychee: link checking must never realize
+        # the default devshell's compiler and Compact/ZK artifact closure.
+        run: nix develop .#docs --command lychee --config .lychee.toml --no-progress --exclude-path LICENSE './**/*.md'
