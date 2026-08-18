@@ -14,6 +14,14 @@
       ];
     in
     {
+      # Minimal shell for documentation-only checks. It deliberately carries no
+      # compilers and none of the Compact/ZK artifact closure that the default
+      # shell's environment exports pull in, so Markdown-only workflows never
+      # pay for prover-key builds.
+      devShells.docs = pkgs.mkShell {
+        packages = [ pkgs.lychee ];
+      };
+
       devShells.default = pkgs.mkShell {
         packages =
           with pkgs;
@@ -62,7 +70,9 @@
           # Provision pinned project-local Pi packages. Public packages install
           # without credentials; the optional review package is attempted only
           # when a GitHub token is already available in the user's environment.
-          if [ -f .pi/settings.json ]; then
+          # CI never needs Pi tooling, and this block performs unpinned network
+          # installs, so continuous-integration shells skip it entirely.
+          if [ -z "''${CI:-}" ] && [ -f .pi/settings.json ]; then
             if [ -z "''${GITHUB_TOKEN:-}" ]; then
               if [ -n "''${GH_TOKEN:-}" ]; then
                 export GITHUB_TOKEN="''${GH_TOKEN}"
