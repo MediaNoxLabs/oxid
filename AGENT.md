@@ -340,6 +340,29 @@ checkpoint every consistent official-state batch, resume at `cursor + 1`, and
 retry an incompatible cached delta once from zero. Production composition
 remains fail-closed pending durable native custody and endpoint discovery.
 
+[Issue #59](https://github.com/MediaNoxLabs/oxid/issues/59) and ADR-0079 extend
+that boundary to protected shielded spending. Preparation accepts only a fresh
+`Synced` snapshot with equal current/target cursors and no failure, then reopens
+the exact owner-private checkpoint for the same profile, network, role-3 key,
+source, and cursor scope. Note selection, Zswap inputs/output/change, offer,
+witnesses, nullifiers, and serialized transaction remain adapter-private; the
+public preview exposes only recipient kind, lowercase token type, exact amount
+and change, and input count. Authorization promotes the retained official
+Zswap transaction, and submission reuses the protected DUST proving, durable
+journal, cancellation, retry, and reconciliation lifecycle. Only one active
+protected draft may reserve the process-local note set; an identical request is
+idempotent and a competing request fails closed. The public journal may retain
+only a domain-separated one-way fingerprint of the synchronized owned-note
+state. Broadcasting, unknown, or included records must block every new plan
+from that unchanged state until fresh replay advances it; never persist raw
+coins or nullifiers. The standalone fixture owns
+one 5,000,000-atomic-unit zero-token NIGHT note. Headless conformance spends
+1,500,000 with one input and 3,500,000 change; iOS interaction coverage spends
+one whole NIGHT because its simulator keyboard drops the decimal separator.
+Cached, syncing, cancelled, or stalled shielded state must never fund a draft.
+Production still requires native custody and the explicit live stack;
+simulation must remain labelled and must never imply live inclusion.
+
 [Issue #19](https://github.com/MediaNoxLabs/oxid/issues/19) and ADR-0034 expose
 transaction submission status and deliberate pre-broadcast cancellation. The
 Midnight adapter retains a profile/draft-scoped control object and atomically
@@ -1083,7 +1106,15 @@ The headless transaction surface is
 `wallet.transaction.prepare_unshielded`,
 `wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
 `wallet.transaction.submit_unshielded`, and the
-`wallet.transaction.send_unshielded` alias. Controllable attempts add
+`wallet.transaction.send_unshielded` alias. ADR-0079 adds the parallel
+`wallet.transaction.prepare_shielded`,
+`wallet.transaction.authorize_shielded`,
+`wallet.transaction.submit_shielded`, and
+`wallet.transaction.send_shielded` surface. The shielded request accepts only
+the active profile's canonical shielded address, a lowercase 32-byte token
+type, and exact decimal-string atomic units; no checkpoint, coin, opening,
+witness, nullifier, offer, or transaction material crosses the protocol.
+Controllable attempts add
 `wallet.transaction.start_submission`,
 `wallet.transaction.submission_status`, and
 `wallet.transaction.cancel_submission`. Pre-submission previews use
@@ -1228,6 +1259,9 @@ cargo check -p oxid-app
 ./run.sh coverage --strict
 ./scripts/check-architecture.sh
 ./scripts/check-midnight-sources.sh
+nix develop --command just ios-smoke
+nix develop .#docs --command ./scripts/build-docs-site.sh
+nix build --print-build-logs
 nix develop --command cargo test --release -p oxid-adapter-vc-midnight \
   native_runtime_proves_restarts_and_rejects_public_tampering -- --ignored
 nix develop --command cargo test --release -p oxid-headless \
@@ -1456,7 +1490,9 @@ selects only `NativeCustodyTests` so feature-specific assertions never run
 against the other composition. The development suite verifies profile creation,
 development account activation, receive QR,
 native public-address copy/share, warm/cold identity links without auto-consent,
-staged simulated transfer, OpenID4VCI offer preview/consent/issuance, protected
+fresh shielded sync plus a 1 NIGHT protected transfer with explicit privacy
+selection, exact review, authorization, prove/submit, cancellation-safe retry,
+and durable inclusion restoration, OpenID4VCI offer preview/consent/issuance, protected
 Digital Passport verification/restore, hidden-by-default first/last values,
 explicit local reveal/hide, age-predicate preview, consented self-issued DID
 authentication, OpenID4VP/DCQL request preview/exact consent/fail-closed Compact

@@ -81,6 +81,12 @@ final class ProfileFlowTests: XCTestCase {
         )
         application.buttons["Hide receive QR"].firstMatch.tap()
 
+        let shieldedTransfer = application.switches["Use shielded NIGHT transfer"]
+        XCTAssertTrue(shieldedTransfer.waitForExistence(timeout: 5))
+        scrollTo(shieldedTransfer, in: application)
+        shieldedTransfer.tap()
+        XCTAssertTrue(application.staticTexts["Send shielded NIGHT"].waitForExistence(timeout: 5))
+
         scrollTo(useReceiveAddress, in: application)
         useReceiveAddress.tap()
         let amount = application.textFields["Amount in NIGHT"]
@@ -97,6 +103,7 @@ final class ProfileFlowTests: XCTestCase {
 
         let authorize = application.buttons["Authorize reviewed NIGHT transfer"]
         XCTAssertTrue(authorize.waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["Shielded"].exists)
         scrollTo(authorize, in: application)
         authorize.tap()
         let submit = application.buttons["Prove and submit NIGHT transfer"]

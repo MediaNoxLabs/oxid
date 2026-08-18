@@ -12,7 +12,20 @@ use std::{
     thread,
 };
 
-use midnight_zswap::keys::{SecretKeys as ZswapSecretKeys, Seed as ZswapSeed};
+use midnight_base_crypto::{hash::HashOutput, schnorr::Signature};
+use midnight_coin_structure::coin::{
+    Info as CoinInfo, Nonce as CoinNonce, PublicKey as CoinPublicKey, ShieldedTokenType,
+};
+use midnight_ledger::structure::{ProofPreimageMarker, StandardTransaction, Transaction};
+use midnight_storage::{DefaultDB, storage::HashMap as LedgerHashMap};
+use midnight_transient_crypto::{
+    commitment::PedersenRandomness, encryption::PublicKey as EncryptionPublicKey,
+};
+use midnight_zswap::{
+    Offer as ZswapOffer, Output as ZswapOutput,
+    keys::{SecretKeys as ZswapSecretKeys, Seed as ZswapSeed},
+    local::State as ZswapState,
+};
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
     WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent, WalletSecurityPortError,
@@ -22,6 +35,7 @@ use oxid_wallet_domain::{
     ChainNetworkId, WalletProfileId, WalletShieldedSyncFailure, WalletShieldedSyncSnapshot,
     WalletShieldedSyncState, WalletShieldedTokenBalance,
 };
+use sha2::{Digest as _, Sha256};
 
 use crate::{
     BIP44_PURPOSE, MIDNIGHT_COIN_TYPE, ZSWAP_INDEX, ZSWAP_ROLE,
@@ -35,6 +49,29 @@ use crate::{
         synchronize_shielded_with_control,
     },
 };
+
+type UnprovenTransaction =
+    Transaction<Signature, ProofPreimageMarker, PedersenRandomness, DefaultDB>;
+
+/// Adapter-private result of selecting and constructing one canonical Zswap
+/// spend. The transaction and pending local state never cross an application
+/// or incoming-adapter boundary.
+pub(crate) struct MidnightShieldedTransferPlan {
+    pub(crate) transaction: UnprovenTransaction,
+    pub(crate) input_count: u16,
+    pub(crate) change_atomic_units: u128,
+    pub(crate) reservation_fingerprint: [u8; 32],
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct MidnightShieldedTransferRequest {
+    pub(crate) account_index: u32,
+    pub(crate) recipient_coin_public_key: CoinPublicKey,
+    pub(crate) recipient_encryption_public_key: EncryptionPublicKey,
+    pub(crate) token_type: [u8; 32],
+    pub(crate) amount_atomic_units: u128,
+    pub(crate) expires_at_seconds: u64,
+}
 
 const SIMULATED_TARGET_CURSOR: u64 = 2;
 const SIMULATED_TOKEN_TYPE: &str =
@@ -60,6 +97,16 @@ pub(crate) trait MidnightShieldedSyncController: Send + Sync {
         profile_id: &WalletProfileId,
         network_id: &ChainNetworkId,
     ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError>;
+
+    fn prepare_transfer(
+        &self,
+        _: &WalletProfileId,
+        _: &ChainNetworkId,
+        _: MidnightShieldedTransferRequest,
+    ) -> Result<MidnightShieldedTransferPlan, oxid_wallet_application::WalletTransactionPortError>
+    {
+        Err(oxid_wallet_application::WalletTransactionPortError::Unavailable)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -234,6 +281,47 @@ where
         sessions.insert(key, cancelled.clone());
         Ok(cancelled)
     }
+
+    fn prepare_transfer(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &ChainNetworkId,
+        request: MidnightShieldedTransferRequest,
+    ) -> Result<MidnightShieldedTransferPlan, oxid_wallet_application::WalletTransactionPortError>
+    {
+        use oxid_wallet_application::WalletTransactionPortError;
+
+        let current = self
+            .sessions
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?
+            .get(&Self::key(profile_id, network_id))
+            .cloned()
+            .ok_or(WalletTransactionPortError::ShieldedStateNotCurrent)?;
+        ensure_current_shielded_snapshot(&current)?;
+        let path = shielded_path(request.account_index)
+            .map_err(|_| WalletTransactionPortError::InvalidData)?;
+        let mut plan = None;
+        self.keys
+            .use_derived_secret(profile_id, &path, &mut |seed| {
+                let keys = ZswapSecretKeys::from(ZswapSeed::from(*seed));
+                let token_type = ShieldedTokenType(HashOutput(request.token_type));
+                let state = ZswapState::new()
+                    .insert_coin(
+                        &keys,
+                        CoinInfo {
+                            nonce: CoinNonce(HashOutput([0x53; 32])),
+                            type_: token_type,
+                            value: SIMULATED_BALANCE_ATOMIC_UNITS,
+                        },
+                    )
+                    .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+                plan = Some(build_shielded_transfer(state, &keys, network_id, request));
+                Ok(())
+            })
+            .map_err(map_security_to_transaction_error)?;
+        plan.ok_or(WalletTransactionPortError::InvalidData)?
+    }
 }
 
 struct LiveSession {
@@ -399,6 +487,198 @@ where
             session.snapshot.updated_at(),
         )?;
         Ok(session.snapshot.clone())
+    }
+
+    fn prepare_transfer(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &ChainNetworkId,
+        request: MidnightShieldedTransferRequest,
+    ) -> Result<MidnightShieldedTransferPlan, oxid_wallet_application::WalletTransactionPortError>
+    {
+        use oxid_wallet_application::WalletTransactionPortError;
+
+        if network_id != self.config.network_id() {
+            return Err(WalletTransactionPortError::UnsupportedNetwork);
+        }
+        let current = self
+            .sessions
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?
+            .get(&(profile_id.clone(), network_id.clone()))
+            .map(|session| session.snapshot.clone())
+            .ok_or(WalletTransactionPortError::ShieldedStateNotCurrent)?;
+        ensure_current_shielded_snapshot(&current)?;
+
+        let path = shielded_path(request.account_index)
+            .map_err(|_| WalletTransactionPortError::InvalidData)?;
+        let source = source_fingerprint(self.config.websocket_url());
+        let mut plan = None;
+        self.keys
+            .use_derived_secret(profile_id, &path, &mut |seed| {
+                let keys = ZswapSecretKeys::from(ZswapSeed::from(*seed));
+                let checkpoint = self
+                    .checkpoints
+                    .load(network_id, &keys, &source)
+                    .map_err(|_| WalletSecurityPortError::InvalidOperation)?
+                    .ok_or(WalletSecurityPortError::InvalidOperation)?;
+                if Some(checkpoint.current_cursor) != current.current_cursor()
+                    || Some(checkpoint.target_cursor) != current.target_cursor()
+                    || checkpoint.current_cursor != checkpoint.target_cursor
+                {
+                    return Err(WalletSecurityPortError::InvalidOperation);
+                }
+                plan = Some(build_shielded_transfer(
+                    checkpoint.state,
+                    &keys,
+                    network_id,
+                    request,
+                ));
+                Ok(())
+            })
+            .map_err(map_security_to_transaction_error)?;
+        plan.ok_or(WalletTransactionPortError::InvalidData)?
+    }
+}
+
+fn ensure_current_shielded_snapshot(
+    snapshot: &WalletShieldedSyncSnapshot,
+) -> Result<(), oxid_wallet_application::WalletTransactionPortError> {
+    if snapshot.state() != WalletShieldedSyncState::Synced
+        || snapshot.failure().is_some()
+        || snapshot.current_cursor().is_none()
+        || snapshot.current_cursor() != snapshot.target_cursor()
+        || snapshot.updated_at().is_none()
+    {
+        return Err(oxid_wallet_application::WalletTransactionPortError::ShieldedStateNotCurrent);
+    }
+    Ok(())
+}
+
+fn build_shielded_transfer(
+    mut state: ZswapState<DefaultDB>,
+    keys: &ZswapSecretKeys,
+    network_id: &ChainNetworkId,
+    request: MidnightShieldedTransferRequest,
+) -> Result<MidnightShieldedTransferPlan, oxid_wallet_application::WalletTransactionPortError> {
+    use oxid_wallet_application::WalletTransactionPortError;
+
+    if request.amount_atomic_units == 0 || request.expires_at_seconds == 0 {
+        return Err(WalletTransactionPortError::InvalidData);
+    }
+    let token_type = ShieldedTokenType(HashOutput(request.token_type));
+    let mut owned_nullifiers = state
+        .coins
+        .iter()
+        .map(|(nullifier, _)| nullifier.0.0)
+        .collect::<Vec<_>>();
+    owned_nullifiers.sort_unstable();
+    let mut reservation = Sha256::new();
+    reservation.update(b"oxid:midnight:shielded-note-state:v1\0");
+    let owned_count = u64::try_from(owned_nullifiers.len())
+        .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+    reservation.update(owned_count.to_be_bytes());
+    for nullifier in owned_nullifiers {
+        reservation.update(nullifier);
+    }
+    let reservation_fingerprint = reservation.finalize().into();
+    let mut selected = Vec::new();
+    let mut selected_total = 0_u128;
+    for (_, coin) in state.coins.iter() {
+        if coin.type_ != token_type {
+            continue;
+        }
+        selected.push(*coin);
+        selected_total = selected_total
+            .checked_add(coin.value)
+            .ok_or(WalletTransactionPortError::InvalidChainState)?;
+        if selected_total >= request.amount_atomic_units {
+            break;
+        }
+    }
+    if selected_total < request.amount_atomic_units {
+        return Err(WalletTransactionPortError::InsufficientFunds);
+    }
+    let input_count = u16::try_from(selected.len())
+        .ok()
+        .filter(|count| *count > 0 && *count <= oxid_wallet_domain::MAX_WALLET_TRANSFER_INPUTS)
+        .ok_or(WalletTransactionPortError::InvalidData)?;
+    let change_atomic_units = selected_total
+        .checked_sub(request.amount_atomic_units)
+        .ok_or(WalletTransactionPortError::InvalidChainState)?;
+    let mut rng = rand::rngs::OsRng;
+    let mut inputs = Vec::with_capacity(selected.len());
+    for coin in selected {
+        let (next, input) = state
+            .spend(&mut rng, keys, &coin, None)
+            .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
+        state = next;
+        inputs.push(input);
+    }
+    let recipient = CoinInfo {
+        nonce: rand::random(),
+        type_: token_type,
+        value: request.amount_atomic_units,
+    };
+    let mut outputs = vec![
+        ZswapOutput::new(
+            &mut rng,
+            &recipient,
+            None,
+            &request.recipient_coin_public_key,
+            Some(request.recipient_encryption_public_key),
+        )
+        .map_err(|_| WalletTransactionPortError::InvalidRecipient)?,
+    ];
+    if change_atomic_units > 0 {
+        let change = CoinInfo {
+            nonce: rand::random(),
+            type_: token_type,
+            value: change_atomic_units,
+        };
+        outputs.push(
+            ZswapOutput::new(
+                &mut rng,
+                &change,
+                None,
+                &keys.coin_public_key(),
+                Some(keys.enc_public_key()),
+            )
+            .map_err(|_| WalletTransactionPortError::InvalidChainState)?,
+        );
+    }
+    let offer = ZswapOffer::new(inputs, outputs, Vec::new())
+        .ok_or(WalletTransactionPortError::InvalidChainState)?;
+    let transaction = Transaction::Standard(StandardTransaction::new(
+        network_id.as_str(),
+        LedgerHashMap::new(),
+        Some(offer),
+        LedgerHashMap::new(),
+    ));
+    Ok(MidnightShieldedTransferPlan {
+        transaction,
+        input_count,
+        change_atomic_units,
+        reservation_fingerprint,
+    })
+}
+
+const fn map_security_to_transaction_error(
+    error: WalletSecurityPortError,
+) -> oxid_wallet_application::WalletTransactionPortError {
+    use oxid_wallet_application::WalletTransactionPortError;
+    match error {
+        WalletSecurityPortError::NotInitialized => {
+            WalletTransactionPortError::ProtectionNotInitialized
+        }
+        WalletSecurityPortError::Locked => WalletTransactionPortError::ProtectionLocked,
+        WalletSecurityPortError::Unavailable => WalletTransactionPortError::Unavailable,
+        WalletSecurityPortError::AlreadyInitialized
+        | WalletSecurityPortError::NotFound
+        | WalletSecurityPortError::Conflict
+        | WalletSecurityPortError::UnsupportedAlgorithm
+        | WalletSecurityPortError::AuthorizationDenied
+        | WalletSecurityPortError::InvalidOperation => WalletTransactionPortError::InvalidData,
     }
 }
 

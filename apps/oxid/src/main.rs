@@ -119,7 +119,10 @@ fn main() {
                 application.cancel_wallet_shielded_sync(),
             ),
             oxid_ui_dioxus::WalletTransactionUiServices::new(
-                application.prepare_wallet_transfer(),
+                oxid_ui_dioxus::WalletTransactionPreparationUiServices::new(
+                    application.prepare_wallet_transfer(),
+                    application.prepare_shielded_wallet_transfer(),
+                ),
                 application.authorize_wallet_transfer(),
                 application.submit_wallet_transfer(),
                 application.get_wallet_transfer_draft(),

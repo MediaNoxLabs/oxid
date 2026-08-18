@@ -192,13 +192,14 @@ use oxid_wallet_application::{
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
     ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
     ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
-    PortableWalletBackupDocumentPort, PrepareWalletTransferUseCase,
-    ReconcileWalletTransferSubmissionUseCase, RecoverCompleteWalletBackupUseCase,
-    RecoverPortableWalletBackupUseCase, SelectWalletNetworkUseCase, SelectWalletProfileService,
-    SelectWalletProfileUseCase, SignWalletDataUseCase, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
-    WalletAccountReadPort, WalletAccountService, WalletDustSyncPort, WalletDustSyncService,
+    PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferUseCase,
+    PrepareWalletTransferUseCase, ReconcileWalletTransferSubmissionUseCase,
+    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
+    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectWalletProfileUseCase,
+    SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
+    SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
+    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
+    WalletAccountService, WalletDustSyncPort, WalletDustSyncService,
     WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
     WalletNetworkService, WalletPortableBackupPort, WalletPortableBackupService,
     WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
@@ -266,6 +267,7 @@ pub struct ApplicationServices {
     get_wallet_shielded_sync_status: Arc<dyn GetWalletShieldedSyncStatusUseCase>,
     start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase>,
     cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase>,
+    prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase>,
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
@@ -545,6 +547,13 @@ impl ApplicationServices {
     #[must_use]
     pub fn prepare_wallet_transfer(&self) -> Arc<dyn PrepareWalletTransferUseCase> {
         Arc::clone(&self.prepare_wallet_transfer)
+    }
+
+    #[must_use]
+    pub fn prepare_shielded_wallet_transfer(
+        &self,
+    ) -> Arc<dyn PrepareShieldedWalletTransferUseCase> {
+        Arc::clone(&self.prepare_shielded_wallet_transfer)
     }
 
     #[must_use]
@@ -2025,6 +2034,7 @@ const fn map_wallet_transaction_error(
         WalletError::ProtectionLocked => PassportVaultCallPortError::ProtectionLocked,
         WalletError::AccountNotDerived => PassportVaultCallPortError::AccountNotDerived,
         WalletError::AccountNotSynchronized => PassportVaultCallPortError::AccountNotSynchronized,
+        WalletError::ShieldedStateNotCurrent => PassportVaultCallPortError::InvalidChainState,
         WalletError::UnsupportedNetwork => PassportVaultCallPortError::UnsupportedNetwork,
         WalletError::InvalidRecipient | WalletError::RecipientNetworkMismatch => {
             PassportVaultCallPortError::InvalidData
@@ -2566,6 +2576,8 @@ where
         shielded.clone();
     let start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase> = shielded.clone();
     let cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase> = shielded;
+    let prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase> =
+        transactions.clone();
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();
     let authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase> = transactions.clone();
     let submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase> = transactions.clone();
@@ -2690,6 +2702,7 @@ where
         get_wallet_shielded_sync_status,
         start_wallet_shielded_sync,
         cancel_wallet_shielded_sync,
+        prepare_shielded_wallet_transfer,
         prepare_wallet_transfer,
         authorize_wallet_transfer,
         submit_wallet_transfer,

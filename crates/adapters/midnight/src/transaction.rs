@@ -26,18 +26,19 @@ use midnight_serialize::Deserializable;
 use midnight_storage::{DefaultDB, arena::Sp, storage::HashMap as LedgerHashMap};
 use midnight_transient_crypto::commitment::PedersenRandomness;
 use oxid_wallet_application::{
-    AuthorizeWalletTransferRequest, PrepareWalletTransferRequest, SubmitWalletTransferRequest,
-    SubmittedWalletTransfer, WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent,
-    WalletKeyOperationPort, WalletSecurityPortError, WalletTransactionPort,
-    WalletTransactionPortError, WalletTransactionPortFuture, WalletTransactionStatusPortFuture,
+    AuthorizeWalletTransferRequest, PrepareShieldedWalletTransferRequest,
+    PrepareWalletTransferRequest, SubmitWalletTransferRequest, SubmittedWalletTransfer,
+    WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent, WalletKeyOperationPort,
+    WalletSecurityPortError, WalletTransactionPort, WalletTransactionPortError,
+    WalletTransactionPortFuture, WalletTransactionStatusPortFuture,
 };
 use oxid_wallet_domain::{
-    AssetBalance, ChainAddress, ChainBlockId, ChainNetwork, ChainTransactionId,
-    DerivedChainAccount, MAX_WALLET_TRANSFER_INPUTS, PublicKeyEncoding, WalletKeyAlgorithm,
-    WalletProfileId, WalletSignature, WalletTransactionAuthorizationChallenge,
-    WalletTransactionDraftId, WalletTransactionDraftState, WalletTransactionFeeState,
-    WalletTransactionSubmissionState, WalletTransactionSubmissionStatus, WalletTransferPreview,
-    WalletTransferSubmission, WalletTransferSubmissionMode,
+    AssetBalance, AssetSymbol, ChainAddress, ChainAddressKind, ChainAsset, ChainBlockId,
+    ChainNetwork, ChainTransactionId, DerivedChainAccount, MAX_WALLET_TRANSFER_INPUTS,
+    PublicKeyEncoding, WalletKeyAlgorithm, WalletProfileId, WalletSignature,
+    WalletTransactionAuthorizationChallenge, WalletTransactionDraftId, WalletTransactionDraftState,
+    WalletTransactionFeeState, WalletTransactionSubmissionState, WalletTransactionSubmissionStatus,
+    WalletTransferPreview, WalletTransferSubmission, WalletTransferSubmissionMode,
 };
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
@@ -48,6 +49,7 @@ use crate::{
     ProtectedMidnightAccountDeriver, SPECKS_PER_DUST, STARS_PER_NIGHT,
     SimulatedMidnightAccountSource, UnavailableMidnightAccountDeriver,
     UnavailableMidnightAccountSource, midnight_asset, network_by_id,
+    shielded_sync::MidnightShieldedTransferRequest,
     submission_journal::{
         MidnightSubmissionJournalStore, StoredSubmissionJournalEntry, StoredSubmissionState,
         SubmissionJournalStoreError,
@@ -602,6 +604,7 @@ pub(crate) struct RetainedMidnightDraft {
     account: DerivedChainAccount,
     signing_payload: Zeroizing<Vec<u8>>,
     unsigned_intent: LedgerIntent,
+    prepared_shielded_transaction: Option<LedgerTransaction>,
     signed_transaction: Option<LedgerTransaction>,
     submission: Option<WalletTransferSubmission>,
     submission_state: WalletTransactionSubmissionState,
@@ -1523,6 +1526,7 @@ where
             account: spendable.account,
             signing_payload: Zeroizing::new(signing_payload),
             unsigned_intent: intent,
+            prepared_shielded_transaction: None,
             signed_transaction: None,
             submission: None,
             submission_state: WalletTransactionSubmissionState::NotStarted,
@@ -1540,6 +1544,153 @@ where
             return Ok(existing);
         }
         if let Some(existing) = drafts.get(&key) {
+            return if existing.preview == preview {
+                Ok(existing.preview.clone())
+            } else {
+                Err(WalletTransactionPortError::DraftConflict)
+            };
+        }
+        drafts.insert(key, retained);
+        Ok(preview)
+    }
+
+    fn prepare_shielded(
+        &self,
+        profile_id: &WalletProfileId,
+        request: PrepareShieldedWalletTransferRequest,
+    ) -> Result<WalletTransferPreview, WalletTransactionPortError> {
+        let selected = self.selected(profile_id).map_err(map_account_error)?;
+        let network = network_by_id(&selected)
+            .map_err(map_account_error)?
+            .ok_or(WalletTransactionPortError::UnsupportedNetwork)?;
+        let (recipient_coin_public_key, recipient_encryption_public_key) =
+            decode_shielded_recipient(&request.recipient, &selected)?;
+        let token_type = decode_shielded_asset_id(request.asset_id.as_str())?;
+        let spendable = self.source.spendable_account(profile_id, &network)?;
+        validate_account(&spendable.account, &selected)?;
+
+        {
+            let drafts = self
+                .drafts
+                .lock()
+                .map_err(|_| WalletTransactionPortError::Unavailable)?;
+            for ((stored_profile, _), retained) in drafts.iter() {
+                let active_shielded_draft = stored_profile == profile_id
+                    && retained.preview.recipient().kind() == ChainAddressKind::Shielded
+                    && matches!(
+                        retained.preview.state(),
+                        WalletTransactionDraftState::Prepared
+                            | WalletTransactionDraftState::Authorized
+                            | WalletTransactionDraftState::Submitting
+                    );
+                if !active_shielded_draft {
+                    continue;
+                }
+                if retained.preview.recipient() == &request.recipient
+                    && retained.preview.amount().asset().id() == &request.asset_id
+                    && retained.preview.amount().atomic_units() == request.amount_atomic_units
+                {
+                    return Ok(retained.preview.clone());
+                }
+                // The adapter deliberately retains canonical inputs privately,
+                // so it also serializes protected planning per profile. This
+                // prevents two active drafts from selecting the same note.
+                return Err(WalletTransactionPortError::DraftConflict);
+            }
+        }
+
+        let plan = self.shielded_sync.prepare_transfer(
+            profile_id,
+            &selected,
+            MidnightShieldedTransferRequest {
+                account_index: spendable.account.account_index(),
+                recipient_coin_public_key,
+                recipient_encryption_public_key,
+                token_type,
+                amount_atomic_units: request.amount_atomic_units,
+                expires_at_seconds: request.expires_at.value() / 1_000,
+            },
+        )?;
+        let mut transaction_bytes = Zeroizing::new(Vec::new());
+        midnight_serialize::tagged_serialize(&plan.transaction, &mut *transaction_bytes)
+            .map_err(|_| WalletTransactionPortError::InvalidData)?;
+        let planning_fingerprint = shielded_planning_fingerprint(
+            profile_id,
+            &selected,
+            &spendable.account,
+            &plan.reservation_fingerprint,
+        );
+        if let Some(stored) = self
+            .submission_journal
+            .find_planning_fingerprint(profile_id, &planning_fingerprint)
+            .map_err(map_submission_store_error)?
+        {
+            match stored.state {
+                StoredSubmissionState::Broadcasting | StoredSubmissionState::OutcomeUnknown => {
+                    return Err(WalletTransactionPortError::SubmissionOutcomeUnknown);
+                }
+                StoredSubmissionState::Included => {
+                    return Err(WalletTransactionPortError::DraftConflict);
+                }
+                StoredSubmissionState::Rejected | StoredSubmissionState::Expired => {}
+            }
+        }
+        let draft_id = digest_id("txdraft", transaction_bytes.as_slice())?;
+        let challenge = authorization_challenge(&draft_id, transaction_bytes.as_slice())?;
+        let native_night = token_type == [0; 32];
+        let asset = ChainAsset::new(
+            request.asset_id,
+            AssetSymbol::parse(if native_night { "NIGHT" } else { "SHIELDED" })
+                .map_err(|_| WalletTransactionPortError::InvalidData)?,
+            if native_night { 6 } else { 0 },
+        );
+        let preview = WalletTransferPreview::new(
+            draft_id.clone(),
+            challenge,
+            selected,
+            spendable.account.account_id().clone(),
+            request.recipient,
+            AssetBalance::new(asset.clone(), request.amount_atomic_units),
+            AssetBalance::new(asset, plan.change_atomic_units),
+            None,
+            WalletTransactionFeeState::RequiresBalancing,
+            plan.input_count,
+            request.expires_at,
+            WalletTransactionDraftState::Prepared,
+        )
+        .map_err(|_| WalletTransactionPortError::InvalidData)?;
+        let retained = RetainedMidnightDraft {
+            planning_fingerprint,
+            preview: preview.clone(),
+            account: spendable.account,
+            signing_payload: transaction_bytes,
+            unsigned_intent: LedgerIntent::empty(
+                &mut OsRng,
+                Timestamp::from_secs(request.expires_at.value() / 1_000),
+            ),
+            prepared_shielded_transaction: Some(plan.transaction),
+            signed_transaction: None,
+            submission: None,
+            submission_state: WalletTransactionSubmissionState::NotStarted,
+            submission_control: None,
+        };
+        let key = (profile_id.clone(), draft_id);
+        let mut drafts = self
+            .drafts
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        for ((stored_profile, _), existing) in drafts.iter() {
+            if stored_profile != profile_id
+                || existing.preview.recipient().kind() != ChainAddressKind::Shielded
+                || !matches!(
+                    existing.preview.state(),
+                    WalletTransactionDraftState::Prepared
+                        | WalletTransactionDraftState::Authorized
+                        | WalletTransactionDraftState::Submitting
+                )
+            {
+                continue;
+            }
             return if existing.preview == preview {
                 Ok(existing.preview.clone())
             } else {
@@ -1571,6 +1722,7 @@ where
                 .preview
                 .with_state(WalletTransactionDraftState::Expired);
             retained.signing_payload = Zeroizing::new(Vec::new());
+            retained.prepared_shielded_transaction = None;
             retained.signed_transaction = None;
             return Err(WalletTransactionPortError::DraftExpired);
         }
@@ -1580,6 +1732,20 @@ where
                 | WalletTransactionDraftState::Submitting
                 | WalletTransactionDraftState::Submitted
         ) {
+            return Ok(retained.preview.clone());
+        }
+
+        if retained.preview.recipient().kind() == ChainAddressKind::Shielded {
+            retained.signed_transaction = Some(
+                retained
+                    .prepared_shielded_transaction
+                    .take()
+                    .ok_or(WalletTransactionPortError::InvalidData)?,
+            );
+            retained.signing_payload = Zeroizing::new(Vec::new());
+            retained.preview = retained
+                .preview
+                .with_state(WalletTransactionDraftState::Authorized);
             return Ok(retained.preview.clone());
         }
 
@@ -1662,6 +1828,7 @@ where
                         .preview
                         .with_state(WalletTransactionDraftState::Expired);
                     retained.signing_payload = Zeroizing::new(Vec::new());
+                    retained.prepared_shielded_transaction = None;
                     retained.signed_transaction = None;
                     return Err(WalletTransactionPortError::DraftExpired);
                 }
@@ -1781,6 +1948,7 @@ where
                 .preview
                 .with_state(WalletTransactionDraftState::Expired);
             retained.signing_payload = Zeroizing::new(Vec::new());
+            retained.prepared_shielded_transaction = None;
             retained.signed_transaction = None;
         }
         Ok(retained.preview.clone())
@@ -2228,6 +2396,7 @@ fn expire_submission(
             .preview
             .with_state(WalletTransactionDraftState::Expired);
         retained.signing_payload = Zeroizing::new(Vec::new());
+        retained.prepared_shielded_transaction = None;
         retained.signed_transaction = None;
         retained.submission_state = WalletTransactionSubmissionState::NotStarted;
         retained.submission_control = None;
@@ -2320,6 +2489,64 @@ fn decode_recipient(
     Ok(UserAddress(HashOutput(bytes)))
 }
 
+fn decode_shielded_recipient(
+    address: &ChainAddress,
+    network_id: &oxid_wallet_domain::ChainNetworkId,
+) -> Result<
+    (
+        midnight_coin_structure::coin::PublicKey,
+        midnight_transient_crypto::encryption::PublicKey,
+    ),
+    WalletTransactionPortError,
+> {
+    if address.kind() != ChainAddressKind::Shielded {
+        return Err(WalletTransactionPortError::InvalidRecipient);
+    }
+    let decoded = CheckedHrpstring::new::<Bech32m>(address.value())
+        .map_err(|_| WalletTransactionPortError::InvalidRecipient)?;
+    let expected = if network_id.as_str() == "mainnet" {
+        "mn_shield-addr".to_owned()
+    } else {
+        format!("mn_shield-addr_{}", network_id.as_str())
+    };
+    if decoded.hrp().as_str() != expected {
+        return Err(WalletTransactionPortError::RecipientNetworkMismatch);
+    }
+    let payload = decoded.byte_iter().collect::<Vec<_>>();
+    if payload.len() != 64 {
+        return Err(WalletTransactionPortError::InvalidRecipient);
+    }
+    let coin_bytes: [u8; 32] = payload[..32]
+        .try_into()
+        .map_err(|_| WalletTransactionPortError::InvalidRecipient)?;
+    let encryption = midnight_transient_crypto::encryption::PublicKey::deserialize(
+        &mut Cursor::new(&payload[32..]),
+        0,
+    )
+    .map_err(|_| WalletTransactionPortError::InvalidRecipient)?;
+    Ok((
+        midnight_coin_structure::coin::PublicKey(HashOutput(coin_bytes)),
+        encryption,
+    ))
+}
+
+fn decode_shielded_asset_id(value: &str) -> Result<[u8; 32], WalletTransactionPortError> {
+    let encoded = value
+        .strip_prefix("midnight:shielded:")
+        .ok_or(WalletTransactionPortError::InvalidData)?;
+    if encoded.len() != 64
+        || !encoded
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(WalletTransactionPortError::InvalidData);
+    }
+    hex::decode(encoded)
+        .map_err(|_| WalletTransactionPortError::InvalidData)?
+        .try_into()
+        .map_err(|_| WalletTransactionPortError::InvalidData)
+}
+
 fn planning_fingerprint(
     profile_id: &WalletProfileId,
     network_id: &oxid_wallet_domain::ChainNetworkId,
@@ -2343,6 +2570,24 @@ fn planning_fingerprint(
         digest.update(utxo.intent_hash);
         digest.update(utxo.output_index.to_be_bytes());
     }
+    digest.finalize().into()
+}
+
+fn shielded_planning_fingerprint(
+    profile_id: &WalletProfileId,
+    network_id: &oxid_wallet_domain::ChainNetworkId,
+    account: &DerivedChainAccount,
+    reservation_fingerprint: &[u8; 32],
+) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest.update(b"oxid:midnight:shielded-transfer-plan:v1\0");
+    digest.update(profile_id.as_str().as_bytes());
+    digest.update([0]);
+    digest.update(network_id.as_str().as_bytes());
+    digest.update([0]);
+    digest.update(account.account_id().as_str().as_bytes());
+    digest.update([0]);
+    digest.update(reservation_fingerprint);
     digest.finalize().into()
 }
 

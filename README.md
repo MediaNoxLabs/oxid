@@ -169,6 +169,17 @@ The recovery secret is never stored in the app. Resetting app data is
 destructive to the selected simulator's local Oxid state, so keep the exported
 document outside the app container before doing so.
 
+The same standalone simulator build can exercise protected NIGHT spending.
+Create and activate a development wallet, connect the account, run **Sync
+shielded assets** until its state is **Synced**, then choose **Shielded NIGHT**
+in the Assets send card. Select **Use my receive address** to fill the shielded
+receive address, enter an amount no greater than the deterministic 5 NIGHT
+balance, review the
+exact privacy/amount/change preview, authorize, and submit. The resulting
+transaction and block identifiers are standalone simulation evidence, not
+live-chain inclusion. Simulator results do not satisfy the physical-device
+custody, proving latency, memory, lifecycle, or thermal release gates.
+
 Exercise the same application services through the versioned NDJSON harness:
 
 ```bash
@@ -192,8 +203,10 @@ The implemented account methods are `wallet.network.list`,
 `wallet.network.select`, `wallet.account.derive`, `wallet.account.get`, `wallet.address.list`,
 `wallet.address.unshielded`, `wallet.address.shielded`, `wallet.balance.snapshot`,
 `wallet.transaction.history`, `wallet.transaction.prepare_unshielded`,
-`wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
+`wallet.transaction.prepare_shielded`, `wallet.transaction.authorize_unshielded`,
+`wallet.transaction.authorize_shielded`, `wallet.transaction.draft`,
 `wallet.transaction.submit_unshielded`, `wallet.transaction.send_unshielded`,
+`wallet.transaction.submit_shielded`, `wallet.transaction.send_shielded`,
 `wallet.transaction.start_submission`, `wallet.transaction.submission_status`,
 `wallet.transaction.submission_history`, `wallet.transaction.reconcile_submission`,
 `wallet.transaction.cancel_submission`,
@@ -377,9 +390,10 @@ export OXID_MIDNIGHT_PROVING_CACHE_DIR='<absolute-app-private-cache-path>'
 cargo run -p oxid-headless
 ```
 
-The local cache accepts only hash-pinned official DUST artifacts, is bounded to
-8 MiB, and never stores witnesses. To use the remote development alternative,
-unset the cache variable and set the proof-server route instead:
+The local cache accepts only hash-pinned official DUST and Zswap artifacts, is
+bounded to 64 entries and 256 MiB, applies smaller per-artifact bounds, and
+never stores witnesses. To use the remote development alternative, unset the
+cache variable and set the proof-server route instead:
 
 ```bash
 unset OXID_MIDNIGHT_PROVING_CACHE_DIR

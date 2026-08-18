@@ -820,6 +820,7 @@ const fn sync_failure(error: WalletTransactionPortError) -> WalletDustSyncFailur
         }
         WalletTransactionPortError::AccountNotDerived
         | WalletTransactionPortError::AccountNotSynchronized
+        | WalletTransactionPortError::ShieldedStateNotCurrent
         | WalletTransactionPortError::InvalidRecipient
         | WalletTransactionPortError::RecipientNetworkMismatch
         | WalletTransactionPortError::InsufficientFunds

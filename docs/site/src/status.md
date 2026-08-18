@@ -23,6 +23,7 @@ and the repository [issue backlog](https://github.com/MediaNoxLabs/oxid/issues).
 | Accounts, addresses, receive QR | Standalone functional; live subscription via explicit config |
 | Unshielded transfers (prepare → authorize → prove → submit → reconcile) | Standalone functional incl. live node submission path; persist-before-broadcast journal |
 | DUST + shielded sync | Resumable, checkpointed, cancellable; simulated and live-configured variants |
+| Shielded transfers (fresh sync → prepare → authorize → prove → submit) | Standalone functional with adapter-private Zswap notes/witnesses; production mobile gated |
 | Passport Vault contract calls | Typed lifecycle with canonical finalized replay; claim path gated behind consent + funding + settlement review |
 | Portable + complete-wallet encrypted backup/recovery | Functional with hardened v3 KDF policy and native document pickers |
 

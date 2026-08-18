@@ -56,3 +56,28 @@ start/status/cancel shape: cancellation is acknowledged at safe boundaries
 only, and a possibly-broadcast transaction is never made blindly retryable —
 the same fail-closed semantics the UI gets, because both sit on the same
 application ports.
+
+## Protected shielded transfer flow
+
+Protected spending is deliberately staged. First derive and synchronize the
+public account, then run `wallet.shielded.sync.start` and poll
+`wallet.shielded.sync.status` until it reports `synced` with equal current and
+target cursors. Only then call `wallet.transaction.prepare_shielded` with a
+canonical shielded recipient, exactly 64 lowercase hexadecimal token-type
+characters, and a decimal-string atomic amount. Cached or incomplete shielded
+state fails closed.
+
+The response contains an exact public preview with `recipientKind`, amount,
+change, input count, fee state, draft handle, and authorization challenge. It
+never contains notes, nullifiers, Merkle paths, output nonces, ciphertexts,
+proof preimages, keys, or transaction bytes. A profile may have only one active
+shielded draft, preventing concurrent plans from selecting the same private
+note.
+
+Confirm that exact preview through `wallet.transaction.authorize_shielded`,
+then call `wallet.transaction.submit_shielded` (or the prototype-compatible
+`wallet.transaction.send_shielded` alias). Submission status, history,
+cancellation, and reconciliation use the shared `wallet.transaction.*`
+methods. Zero-configuration standalone composition exercises a real official
+Zswap offer and simulated completion; its identifiers are harness evidence,
+not Midnight inclusion claims.

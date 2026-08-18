@@ -51,14 +51,14 @@ use oxid_protocol_application::{
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, CreateWalletProfileCommand, CreateWalletProfileError,
     DeleteWalletKeyCommand, DeriveWalletAccountCommand, DerivedWalletAccountView,
-    GenerateWalletKeyCommand, PrepareWalletTransferCommand, ReadWalletProfilesError,
-    SelectWalletNetworkCommand, SelectWalletProfileCommand, SelectWalletProfileError,
-    SensitiveOperationConfirmation, SensitiveWalletOperationError, SignWalletDataCommand,
-    SubmitWalletTransferCommand, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
-    WalletAccountView, WalletDustSyncCommand, WalletDustSyncError, WalletDustSyncPortError,
-    WalletDustSyncView, WalletKeyError, WalletKeyView, WalletNetworkListView,
-    WalletProfileRepositoryError, WalletProfileSecurityCommand, WalletProfileView,
-    WalletSecurityError, WalletSecurityPortError, WalletSecurityStatusView,
+    GenerateWalletKeyCommand, PrepareShieldedWalletTransferCommand, PrepareWalletTransferCommand,
+    ReadWalletProfilesError, SelectWalletNetworkCommand, SelectWalletProfileCommand,
+    SelectWalletProfileError, SensitiveOperationConfirmation, SensitiveWalletOperationError,
+    SignWalletDataCommand, SubmitWalletTransferCommand, WalletAccountError, WalletAccountPortError,
+    WalletAccountQuery, WalletAccountView, WalletDustSyncCommand, WalletDustSyncError,
+    WalletDustSyncPortError, WalletDustSyncView, WalletKeyError, WalletKeyView,
+    WalletNetworkListView, WalletProfileRepositoryError, WalletProfileSecurityCommand,
+    WalletProfileView, WalletSecurityError, WalletSecurityPortError, WalletSecurityStatusView,
     WalletShieldedSyncCommand, WalletShieldedSyncError, WalletShieldedSyncPortError,
     WalletShieldedSyncView, WalletTransactionError, WalletTransactionPortError,
     WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
@@ -194,8 +194,13 @@ impl HeadlessWallet {
             "wallet.balance.snapshot" => self.balance_snapshot(request),
             "wallet.transaction.history" => self.transaction_history(request),
             "wallet.transaction.prepare_unshielded" => self.prepare_unshielded(request),
+            "wallet.transaction.prepare_shielded" => self.prepare_shielded(request),
             "wallet.transaction.authorize_unshielded" => self.authorize_unshielded(request),
+            "wallet.transaction.authorize_shielded" => self.authorize_unshielded(request),
             "wallet.transaction.submit_unshielded" | "wallet.transaction.send_unshielded" => {
+                self.submit_unshielded(request)
+            }
+            "wallet.transaction.submit_shielded" | "wallet.transaction.send_shielded" => {
                 self.submit_unshielded(request)
             }
             "wallet.transaction.start_submission" => self.start_submission(request),
@@ -1790,6 +1795,37 @@ impl HeadlessWallet {
         }
     }
 
+    fn prepare_shielded(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<PrepareShieldedTransferParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.transaction.prepare_shielded requires only string recipientAddress, tokenType, and amountAtomicUnits fields",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self.application.prepare_shielded_wallet_transfer().execute(
+            PrepareShieldedWalletTransferCommand {
+                profile_id,
+                recipient_address: params.recipient_address,
+                token_type: params.token_type,
+                amount_atomic_units: params.amount_atomic_units,
+            },
+        ) {
+            Ok(preview) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "transfer": transfer_preview_value(&preview) }),
+            )),
+            Err(error) => Dispatch::continue_with(transaction_error(request.id, error)),
+        }
+    }
+
     fn authorize_unshielded(&self, request: Request) -> Dispatch {
         let params = match serde_json::from_value::<AuthorizeTransferParams>(request.params) {
             Ok(params) => params,
@@ -1797,7 +1833,7 @@ impl HeadlessWallet {
                 return Dispatch::continue_with(Response::error(
                     request.id,
                     "invalid_params",
-                    "wallet.transaction.authorize_unshielded requires only string draftId and authorizationChallenge fields plus confirmation",
+                    "wallet transaction authorization requires only string draftId and authorizationChallenge fields plus confirmation",
                 ));
             }
         };
@@ -1859,7 +1895,7 @@ impl HeadlessWallet {
                 return Dispatch::continue_with(Response::error(
                     request.id,
                     "invalid_params",
-                    "wallet.transaction.submit_unshielded requires only a string draftId and confirmation",
+                    "wallet transaction submission requires only a string draftId and confirmation",
                 ));
             }
         };
@@ -2974,6 +3010,14 @@ struct PrepareTransferParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PrepareShieldedTransferParams {
+    recipient_address: String,
+    token_type: String,
+    amount_atomic_units: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AuthorizeTransferParams {
     draft_id: String,
     authorization_challenge: String,
@@ -3664,6 +3708,7 @@ fn transfer_preview_value(preview: &WalletTransferPreviewView) -> Value {
         "networkId": preview.network_id,
         "accountId": preview.account_id,
         "recipientAddress": preview.recipient_address,
+        "recipientKind": preview.recipient_kind,
         "amount": transfer_asset_value(&preview.amount),
         "change": transfer_asset_value(&preview.change),
         "fee": preview.fee.as_ref().map(transfer_asset_value),
@@ -4203,6 +4248,7 @@ fn transaction_error(id: Option<String>, error: WalletTransactionError) -> Respo
         | WalletTransactionError::InvalidAuthorizationChallenge(_)
         | WalletTransactionError::InvalidRecipient(_)
         | WalletTransactionError::InvalidAmount
+        | WalletTransactionError::InvalidTokenType
         | WalletTransactionError::ZeroAmount => Response::error(
             id,
             "invalid_argument",
@@ -4252,6 +4298,11 @@ fn transaction_port_error(id: Option<String>, error: WalletTransactionPortError)
             "failed_precondition",
             "wallet account must be synchronized first",
         ),
+        WalletTransactionPortError::ShieldedStateNotCurrent => Response::error(
+            id,
+            "failed_precondition",
+            "shielded wallet state must finish a fresh synchronization first",
+        ),
         WalletTransactionPortError::UnsupportedNetwork => Response::error(
             id,
             "unsupported_network",
@@ -4268,7 +4319,7 @@ fn transaction_port_error(id: Option<String>, error: WalletTransactionPortError)
         WalletTransactionPortError::InsufficientFunds => Response::error(
             id,
             "insufficient_funds",
-            "wallet has insufficient unshielded NIGHT",
+            "wallet has insufficient funds for the requested transfer",
         ),
         WalletTransactionPortError::DraftNotFound => {
             Response::error(id, "not_found", "transaction draft was not found")
@@ -5124,10 +5175,14 @@ fn capability_manifest(
         { "method": "wallet.balance.snapshot", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
         { "method": "wallet.transaction.history", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
         { "method": "wallet.transaction.prepare_unshielded", "status": "ready", "mode": "development_only", "submissionReady": false },
+        { "method": "wallet.transaction.prepare_shielded", "status": "ready", "mode": "standalone", "requires": "fresh_shielded_sync", "submissionReady": false },
         { "method": "wallet.transaction.authorize_unshielded", "status": "ready", "mode": "development_only", "submissionReady": true },
+        { "method": "wallet.transaction.authorize_shielded", "status": "ready", "mode": "standalone", "submissionReady": true },
         { "method": "wallet.transaction.draft", "status": "ready", "mode": "development_only", "submissionReady": "state_dependent" },
         { "method": "wallet.transaction.submit_unshielded", "status": "ready", "mode": "development_only", "sources": ["simulated", "live"] },
         { "method": "wallet.transaction.send_unshielded", "status": "ready", "mode": "development_only", "aliasFor": "wallet.transaction.submit_unshielded" },
+        { "method": "wallet.transaction.submit_shielded", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
+        { "method": "wallet.transaction.send_shielded", "status": "ready", "mode": "standalone", "aliasFor": "wallet.transaction.submit_shielded" },
         { "method": "wallet.transaction.start_submission", "status": "ready", "mode": "development_only", "execution": "adapter_worker" },
         { "method": "wallet.transaction.submission_status", "status": "ready", "mode": "development_only" },
         { "method": "wallet.transaction.submission_history", "status": "ready", "mode": "standalone", "persistence": "public_metadata_only" },
@@ -7914,7 +7969,6 @@ mod tests {
                 .iter()
                 .all(|response| response["ok"] == true)
         );
-
         let initial_and_cancelled = execute_with_wallet(
             &wallet,
             concat!(
@@ -8010,6 +8064,35 @@ mod tests {
                 .iter()
                 .all(|response| response["ok"] == true)
         );
+        let account = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"shielded-account-sync","method":"wallet.connect","params":{}}"#,
+        );
+        let recipient = account[0]["result"]["account"]["addresses"]
+            .as_array()
+            .and_then(|addresses| {
+                addresses
+                    .iter()
+                    .find(|address| address["kind"] == "shielded")
+            })
+            .and_then(|address| address["value"].as_str())
+            .expect("shielded recipient is returned")
+            .to_owned();
+        let before_sync = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "shielded-transfer-before-sync",
+                "method": "wallet.transaction.prepare_shielded",
+                "params": {
+                    "recipientAddress": recipient,
+                    "tokenType": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "amountAtomicUnits": "1500000"
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(before_sync[0]["error"]["code"], "failed_precondition");
 
         let initial_and_cancelled = execute_with_wallet(
             &wallet,
@@ -8059,5 +8142,113 @@ mod tests {
         assert!(!encoded.contains("seed"));
         assert!(!encoded.contains("private"));
         assert!(!encoded.contains("mnemonic"));
+
+        let prepared = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "shielded-transfer-prepare",
+                "method": "wallet.transaction.prepare_shielded",
+                "params": {
+                    "recipientAddress": recipient,
+                    "tokenType": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "amountAtomicUnits": "1500000"
+                }
+            })
+            .to_string(),
+        );
+        let transfer = &prepared[0]["result"]["transfer"];
+        assert_eq!(transfer["recipientKind"], "shielded");
+        assert_eq!(transfer["amount"]["atomicUnits"], "1500000");
+        assert_eq!(transfer["change"]["atomicUnits"], "3500000");
+        assert_eq!(transfer["inputCount"], 1);
+        let draft_id = transfer["draftId"]
+            .as_str()
+            .expect("shielded draft is returned");
+        let challenge = transfer["authorizationChallenge"]
+            .as_str()
+            .expect("shielded challenge is returned");
+        let competing = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "shielded-transfer-competing-draft",
+                "method": "wallet.transaction.prepare_shielded",
+                "params": {
+                    "recipientAddress": recipient,
+                    "tokenType": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "amountAtomicUnits": "1000000"
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(competing[0]["error"]["code"], "conflict");
+        let authorized = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "shielded-transfer-authorize",
+                "method": "wallet.transaction.authorize_shielded",
+                "params": {
+                    "draftId": draft_id,
+                    "authorizationChallenge": challenge,
+                    "confirmation": {
+                        "title": "Authorize shielded NIGHT transfer",
+                        "summary": "Send 1.5 shielded NIGHT after exact review",
+                        "confirmed": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(authorized[0]["result"]["transfer"]["state"], "authorized");
+        let submitted = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "shielded-transfer-submit",
+                "method": "wallet.transaction.send_shielded",
+                "params": {
+                    "draftId": draft_id,
+                    "confirmation": {
+                        "title": "Prove and submit shielded NIGHT transfer",
+                        "summary": "Prove, balance DUST, and submit the exact shielded transfer",
+                        "confirmed": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(submitted[0]["result"]["submission"]["mode"], "simulated");
+        assert_eq!(
+            submitted[0]["result"]["submission"]["transfer"]["state"],
+            "submitted"
+        );
+        let submitted_json = submitted[0].to_string();
+        for forbidden in [
+            "nullifier",
+            "merkle",
+            "witness",
+            "proofPreimage",
+            "transactionHex",
+            "seed",
+        ] {
+            assert!(!submitted_json.contains(forbidden));
+        }
+        let replay_before_state_advances = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "shielded-transfer-replay-before-sync-advances",
+                "method": "wallet.transaction.prepare_shielded",
+                "params": {
+                    "recipientAddress": recipient,
+                    "tokenType": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "amountAtomicUnits": "1000000"
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(replay_before_state_advances[0]["error"]["code"], "conflict");
     }
 }

@@ -12,6 +12,7 @@ use futures::{Stream, StreamExt as _};
 use midnight_base_crypto::data_provider::{FetchMode, MidnightDataProvider, OutputMode, hexhash};
 use midnight_ledger::{
     dust::{DUST_EXPECTED_FILES, DustResolver},
+    prove::Resolver as LedgerResolver,
     structure::{ProofMarker, ProofPreimageMarker, Transaction},
 };
 use midnight_storage::DefaultDB;
@@ -20,6 +21,7 @@ use midnight_transient_crypto::{
     proofs::Zkir as _,
 };
 use midnight_zkir::{IrSource, LocalProvingProvider};
+use midnight_zswap::{ZSWAP_EXPECTED_FILES, prove::ZswapResolver};
 use oxid_wallet_application::WalletTransactionPortError;
 use rand::{RngCore as _, rngs::OsRng};
 use reqwest::Url;
@@ -32,12 +34,12 @@ const DUST_CIRCUIT_K: u8 = 13;
 const DUST_PARAMETER_NAME: &str = "bls_midnight_2p13";
 const DUST_PARAMETER_HASH: [u8; 32] =
     hexhash(b"d3324910969c4cc54143b8045b649e5c3a4bd5fb7b8f85fe1b770f640ce1c803");
-const MAX_CACHE_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_CACHE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PARAMETER_BYTES: u64 = 2 * 1024 * 1024;
-const MAX_PROVER_KEY_BYTES: u64 = 8 * 1024 * 1024;
-const MAX_VERIFIER_KEY_BYTES: u64 = 1024 * 1024;
-const MAX_IR_BYTES: u64 = 1024 * 1024;
-const MAX_CACHE_ENTRIES: usize = 32;
+const MAX_PROVER_KEY_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_VERIFIER_KEY_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_IR_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_CACHE_ENTRIES: usize = 64;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 type UnprovenTransaction =
@@ -274,18 +276,27 @@ pub(crate) async fn prove_transaction(
     let preparation_elapsed = preparation_started.elapsed();
     ensure_not_cancelled(cancellation)?;
 
+    let expected_data = DUST_EXPECTED_FILES
+        .iter()
+        .chain(ZSWAP_EXPECTED_FILES.iter())
+        .copied()
+        .collect::<Vec<_>>();
     let parameters = MidnightDataProvider {
         fetch_mode: FetchMode::Synchronous,
         base_url: source,
         output_mode: OutputMode::Log,
-        expected_data: DUST_EXPECTED_FILES.to_owned(),
+        expected_data,
         dir: config.cache_directory().to_path_buf(),
     };
-    let resolver = DustResolver(parameters.clone());
+    let resolver = LedgerResolver::new(
+        ZswapResolver(parameters.clone()),
+        DustResolver(parameters.clone()),
+        Box::new(|_| Box::pin(async { Ok(None) })),
+    );
     let provider = LocalProvingProvider {
         rng: OsRng,
         resolver: &resolver,
-        params: &parameters,
+        params: &resolver,
     };
     #[cfg(feature = "proving-bench")]
     eprintln!("local proving: generating DUST proof");
@@ -332,7 +343,10 @@ async fn prepare_cache(
     ensure_cache_directory(directory)?;
     audit_cache(directory)?;
 
-    for &(name, hash, _) in DUST_EXPECTED_FILES {
+    for &(name, hash, _) in DUST_EXPECTED_FILES
+        .iter()
+        .chain(ZSWAP_EXPECTED_FILES.iter())
+    {
         let maximum_bytes = if name.ends_with(".prover") {
             MAX_PROVER_KEY_BYTES
         } else if name.ends_with(".verifier") {

@@ -235,7 +235,10 @@ impl WalletTransferPreview {
         expires_at: UnixTimestampMillis,
         state: WalletTransactionDraftState,
     ) -> Result<Self, WalletTransferPreviewError> {
-        if recipient.kind() != ChainAddressKind::Unshielded {
+        if !matches!(
+            recipient.kind(),
+            ChainAddressKind::Unshielded | ChainAddressKind::Shielded
+        ) {
             return Err(WalletTransferPreviewError::UnsupportedRecipientKind);
         }
         if amount.atomic_units() == 0 {
@@ -425,7 +428,9 @@ pub enum WalletTransferPreviewError {
 impl fmt::Display for WalletTransferPreviewError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
-            Self::UnsupportedRecipientKind => "transfer recipient must be an unshielded address",
+            Self::UnsupportedRecipientKind => {
+                "transfer recipient must be an unshielded or shielded address"
+            }
             Self::ZeroAmount => "transfer amount must be greater than zero",
             Self::ChangeAssetMismatch => "transfer amount and change must use the same asset",
             Self::InvalidInputCount => "transfer input count is outside the supported range",
@@ -496,6 +501,32 @@ mod tests {
             prepared.authorization_challenge()
         );
         assert_eq!(authorized.recipient(), prepared.recipient());
+    }
+
+    #[test]
+    fn preview_accepts_a_shielded_recipient_without_exposing_private_material() {
+        let value = WalletTransferPreview::new(
+            WalletTransactionDraftId::parse("txdraft_shielded").expect("draft id is valid"),
+            WalletTransactionAuthorizationChallenge::parse("txauth_shielded")
+                .expect("challenge is valid"),
+            ChainNetworkId::parse("undeployed").expect("network id is valid"),
+            ChainAccountId::parse("midnight_account_0_0").expect("account id is valid"),
+            ChainAddress::parse(
+                ChainAddressKind::Shielded,
+                "mn_shield-addr_undeployed1recipient",
+            )
+            .expect("address is structurally valid"),
+            AssetBalance::new(night(), 1_000_000),
+            AssetBalance::new(night(), 2_000_000),
+            None,
+            WalletTransactionFeeState::RequiresBalancing,
+            1,
+            UnixTimestampMillis::new(1_700_003_600_000),
+            WalletTransactionDraftState::Prepared,
+        )
+        .expect("shielded preview is valid");
+
+        assert_eq!(value.recipient().kind(), ChainAddressKind::Shielded);
     }
 
     #[test]

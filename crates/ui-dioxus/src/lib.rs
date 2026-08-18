@@ -71,6 +71,7 @@ use oxid_wallet_application::{
     ListWalletNetworksUseCase, ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase,
     LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS, PortableWalletBackupDocumentError,
     PortableWalletBackupDocumentKind, PortableWalletBackupDocumentPort,
+    PrepareShieldedWalletTransferCommand, PrepareShieldedWalletTransferUseCase,
     PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
     RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY, RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
     RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
@@ -195,6 +196,7 @@ pub struct WalletUiServices {
     get_wallet_shielded_sync_status: Arc<dyn GetWalletShieldedSyncStatusUseCase>,
     start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase>,
     cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase>,
+    prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase>,
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
@@ -781,6 +783,7 @@ impl WalletShieldedSyncUiServices {
 /// Transaction use cases consumed by the Assets page.
 pub struct WalletTransactionUiServices {
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
+    prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase>,
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
     get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
@@ -788,6 +791,25 @@ pub struct WalletTransactionUiServices {
     cancel_wallet_transfer_submission: Arc<dyn CancelWalletTransferSubmissionUseCase>,
     list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
     reconcile_wallet_transfer_submission: Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
+}
+
+/// Public and protected transfer preparation use cases consumed by the Assets page.
+pub struct WalletTransactionPreparationUiServices {
+    prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
+    prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase>,
+}
+
+impl WalletTransactionPreparationUiServices {
+    #[must_use]
+    pub const fn new(
+        prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
+        prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase>,
+    ) -> Self {
+        Self {
+            prepare_wallet_transfer,
+            prepare_shielded_wallet_transfer,
+        }
+    }
 }
 
 /// Public submission recovery use cases consumed by the Assets page.
@@ -812,7 +834,7 @@ impl WalletTransactionRecoveryUiServices {
 impl WalletTransactionUiServices {
     #[must_use]
     pub fn new(
-        prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
+        preparation: WalletTransactionPreparationUiServices,
         authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
         submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
         get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
@@ -821,7 +843,8 @@ impl WalletTransactionUiServices {
         recovery: WalletTransactionRecoveryUiServices,
     ) -> Self {
         Self {
-            prepare_wallet_transfer,
+            prepare_wallet_transfer: preparation.prepare_wallet_transfer,
+            prepare_shielded_wallet_transfer: preparation.prepare_shielded_wallet_transfer,
             authorize_wallet_transfer,
             submit_wallet_transfer,
             get_wallet_transfer_draft,
@@ -879,6 +902,7 @@ impl WalletUiServices {
             start_wallet_shielded_sync: shielded.start_wallet_shielded_sync,
             cancel_wallet_shielded_sync: shielded.cancel_wallet_shielded_sync,
             prepare_wallet_transfer: transactions.prepare_wallet_transfer,
+            prepare_shielded_wallet_transfer: transactions.prepare_shielded_wallet_transfer,
             authorize_wallet_transfer: transactions.authorize_wallet_transfer,
             submit_wallet_transfer: transactions.submit_wallet_transfer,
             get_wallet_transfer_draft: transactions.get_wallet_transfer_draft,
@@ -1042,6 +1066,13 @@ impl WalletUiServices {
     #[must_use]
     pub fn prepare_wallet_transfer(&self) -> Arc<dyn PrepareWalletTransferUseCase> {
         Arc::clone(&self.prepare_wallet_transfer)
+    }
+
+    #[must_use]
+    pub fn prepare_shielded_wallet_transfer(
+        &self,
+    ) -> Arc<dyn PrepareShieldedWalletTransferUseCase> {
+        Arc::clone(&self.prepare_shielded_wallet_transfer)
     }
 
     #[must_use]
@@ -2603,9 +2634,15 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                 SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
 
                 if protected_account && protection_unlocked && account.sync.state == "synced" {
-                    SendTransferPanel {
-                        profile_id: active_profile.id.clone(),
-                        receive_address: account.addresses[0].value.clone(),
+                    if let (Some(unshielded), Some(shielded)) = (
+                        account.addresses.iter().find(|address| address.kind == "unshielded"),
+                        account.addresses.iter().find(|address| address.kind == "shielded"),
+                    ) {
+                        SendTransferPanel {
+                            profile_id: active_profile.id.clone(),
+                            unshielded_receive_address: unshielded.value.clone(),
+                            shielded_receive_address: shielded.value.clone(),
+                        }
                     }
                 }
             }
@@ -3518,11 +3555,16 @@ fn public_export_message(result: Result<(), PublicTextExportError>, share: bool)
 }
 
 #[component]
-fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
+fn SendTransferPanel(
+    profile_id: String,
+    unshielded_receive_address: String,
+    shielded_receive_address: String,
+) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut panel = use_signal(|| TransferPanelState::Editing);
     let mut recipient = use_signal(String::new);
     let mut amount = use_signal(String::new);
+    let mut shielded = use_signal(|| false);
 
     match panel.read().clone() {
         TransferPanelState::Editing => {
@@ -3531,8 +3573,39 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
             rsx! {
                 article { class: "surface-card transfer-card",
                     p { class: "card-eyebrow", "Send" }
-                    h2 { "Send unshielded NIGHT" }
-                    p { "The recipient and exact amount are validated before an explicit review and authorization step." }
+                    h2 { if shielded() { "Send shielded NIGHT" } else { "Send unshielded NIGHT" } }
+                    p {
+                        if shielded() {
+                            "A freshly synchronized private note set is required before exact review and authorization."
+                        } else {
+                            "The recipient and exact amount are validated before an explicit review and authorization step."
+                        }
+                    }
+                    span { class: "transfer-field-label", "Transfer privacy" }
+                    div { class: "privacy-choice", role: "group", aria_label: "Transfer privacy",
+                        button {
+                            class: if shielded() { "privacy-choice__option" } else { "privacy-choice__option selected" },
+                            r#type: "button",
+                            aria_label: "Use public NIGHT transfer",
+                            aria_pressed: if shielded() { "false" } else { "true" },
+                            onclick: move |_| {
+                                shielded.set(false);
+                                recipient.set(String::new());
+                            },
+                            "Public NIGHT"
+                        }
+                        button {
+                            class: if shielded() { "privacy-choice__option selected" } else { "privacy-choice__option" },
+                            r#type: "button",
+                            aria_label: "Use shielded NIGHT transfer",
+                            aria_pressed: if shielded() { "true" } else { "false" },
+                            onclick: move |_| {
+                                shielded.set(true);
+                                recipient.set(String::new());
+                            },
+                            "Shielded NIGHT"
+                        }
+                    }
                     label { r#for: "transfer-recipient", "Recipient address" }
                     input {
                         id: "transfer-recipient",
@@ -3546,7 +3619,13 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                     button {
                         class: "inline-action",
                         r#type: "button",
-                        onclick: move |_| recipient.set(receive_address.clone()),
+                        onclick: move |_| {
+                            recipient.set(if shielded() {
+                                shielded_receive_address.clone()
+                            } else {
+                                unshielded_receive_address.clone()
+                            });
+                        },
                         "Use my receive address"
                     }
                     label { r#for: "transfer-amount", "Amount (NIGHT)" }
@@ -3568,15 +3647,44 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                         onclick: move |_| {
                             match night_display_to_atomic_units(&amount.read()) {
                                 Ok(amount_atomic_units) => {
-                                    let service = services.prepare_wallet_transfer();
-                                    let command = PrepareWalletTransferCommand {
-                                        profile_id: profile_id.clone(),
-                                        recipient_address: recipient.read().trim().to_owned(),
-                                        amount_atomic_units,
-                                    };
+                                    let shielded_transfer = shielded();
+                                    let profile_id = profile_id.clone();
+                                    let recipient_address = recipient.read().trim().to_owned();
                                     panel.set(TransferPanelState::Preparing);
-                                    spawn(async move {
-                                        match run_ui_blocking(move || service.execute(command)).await {
+                                    if shielded_transfer {
+                                        let service = services.prepare_shielded_wallet_transfer();
+                                        spawn(async move {
+                                            let command = PrepareShieldedWalletTransferCommand {
+                                                profile_id,
+                                                recipient_address,
+                                                token_type: "0000000000000000000000000000000000000000000000000000000000000000".to_owned(),
+                                                amount_atomic_units,
+                                            };
+                                            match run_ui_blocking(move || service.execute(command)).await {
+                                                Ok(Ok(preview)) => panel.set(
+                                                    TransferPanelState::Prepared(Box::new(preview)),
+                                                ),
+                                                Ok(Err(error)) => panel.set(TransferPanelState::Failed {
+                                                    message: error.to_string(),
+                                                    retained: None,
+                                                    recovery: TransferRecovery::Edit,
+                                                }),
+                                                Err(error) => panel.set(TransferPanelState::Failed {
+                                                    message: error.to_string(),
+                                                    retained: None,
+                                                    recovery: TransferRecovery::Edit,
+                                                }),
+                                            }
+                                        });
+                                    } else {
+                                        let service = services.prepare_wallet_transfer();
+                                        spawn(async move {
+                                            let command = PrepareWalletTransferCommand {
+                                                profile_id,
+                                                recipient_address,
+                                                amount_atomic_units,
+                                            };
+                                            match run_ui_blocking(move || service.execute(command)).await {
                                             Ok(Ok(preview)) => panel.set(
                                                 TransferPanelState::Prepared(Box::new(preview)),
                                             ),
@@ -3591,7 +3699,8 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                                                 recovery: TransferRecovery::Edit,
                                             }),
                                         }
-                                    });
+                                        });
+                                    }
                                 }
                                 Err(error) => panel.set(TransferPanelState::Failed {
                                     message: error.to_owned(),
@@ -3611,7 +3720,7 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                 div {
                     p { class: "card-eyebrow", "Preparing" }
                     h2 { "Building the transfer preview" }
-                    p { "Oxid is validating the recipient, balance, and canonical Midnight transaction inputs." }
+                    p { "Oxid is validating the recipient, synchronized balance, and canonical Midnight transaction inputs." }
                 }
             }
         },
@@ -3629,12 +3738,13 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                     dl { class: "preview-list",
                         div { dt { "Send" } dd { "{amount_label}" } }
                         div { dt { "Recipient" } dd { title: "{preview.recipient_address}", "{recipient_label}" } }
+                        div { dt { "Privacy" } dd { "{transfer_privacy_label(&preview.recipient_kind)}" } }
                         div { dt { "Network" } dd { "{preview.network_id}" } }
                         div { dt { "Change" } dd { "{change_label}" } }
                         div { dt { "Inputs" } dd { "{preview.input_count}" } }
                         div { dt { "DUST fee" } dd { "Calculated during proving" } }
                     }
-                    p { class: "consent-copy", "Authorizing signs only this reviewed transfer. Proving and submission remain a separate action." }
+                    p { class: "consent-copy", "Authorization binds only this reviewed transfer. Proof generation and submission remain a separate action." }
                     div { class: "transfer-actions",
                         button {
                             class: "secondary-action",
@@ -3699,7 +3809,7 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                 article { class: "surface-card transfer-card review-card", aria_label: "Authorized NIGHT transfer",
                     p { class: "card-eyebrow", "Authorized" }
                     h2 { "{amount_label} is ready" }
-                    p { "The protected signature is retained inside the Midnight adapter. Continue to prove, balance the DUST fee, and submit." }
+                    p { "The authorized transaction is retained inside the Midnight adapter. Continue to prove, balance the DUST fee, and submit." }
                     button {
                         class: "primary-action",
                         r#type: "button",
@@ -4035,14 +4145,23 @@ fn format_transfer_asset(asset: &oxid_wallet_application::WalletTransferAssetVie
     )
 }
 
+fn transfer_privacy_label(kind: &str) -> &'static str {
+    if kind == "shielded" {
+        "Shielded"
+    } else {
+        "Unshielded"
+    }
+}
+
 fn authorize_transfer_confirmation(
     preview: &WalletTransferPreviewView,
 ) -> SensitiveOperationConfirmation {
     SensitiveOperationConfirmation {
         title: "Authorize NIGHT transfer".to_owned(),
         summary: format!(
-            "Send {} to {} on {}; DUST fee balancing and proving remain pending",
+            "Send {} as a {} transfer to {} on {}; DUST fee balancing and proving remain pending",
             format_transfer_asset(&preview.amount),
+            transfer_privacy_label(&preview.recipient_kind).to_lowercase(),
             truncate_middle(&preview.recipient_address, 18, 8),
             preview.network_id,
         ),
@@ -4056,8 +4175,9 @@ fn submit_transfer_confirmation(
     SensitiveOperationConfirmation {
         title: "Prove and submit NIGHT transfer".to_owned(),
         summary: format!(
-            "Prove and submit {} to {} on {}",
+            "Prove and submit {} as a {} transfer to {} on {}",
             format_transfer_asset(&preview.amount),
+            transfer_privacy_label(&preview.recipient_kind).to_lowercase(),
             truncate_middle(&preview.recipient_address, 18, 8),
             preview.network_id,
         ),
