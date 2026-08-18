@@ -5,7 +5,7 @@
 - Source: Blueprint §§3, 5–8, 12–13, 16–18 and [issue #17](https://github.com/MediaNoxLabs/oxid/issues/17)
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/dust/syncer.rs` and `mobile-bench/dioxus-wallet/src/app.rs`
 - Amends: ADR-0024 and ADR-0031
-- Implementation state: Oxid-owned status/use cases, simulated and native standalone controllers, v1 headless methods, Assets-page progress/cancellation, and partial checkpoint resume implemented; production mobile custody remains pending
+- Implementation state: Oxid-owned status/use cases, simulated and native standalone controllers, v1 headless methods, Assets-page progress/cancellation, partial checkpoint resume, and native GraphQL-WebSocket worker fixtures implemented; production mobile custody remains pending
 
 ## Context
 
@@ -66,6 +66,14 @@ race-free in the headless harness. The Dioxus Assets page polls the same use
 case while a session is running, renders exact DUST and bounded progress, and
 labels cached/stalled state as non-spend-ready. Normal production composition
 continues to return `unavailable` until approved native custody is composed.
+
+The native controller contract suite uses a fixed internal chain-tip source so
+pure Nix does not depend on HTTP loopback, then exercises the real bounded
+`graphql-transport-ws` path. It verifies an owned official DUST event produces
+the exact 12 DUST projection, a later run subscribes from `cursor + 1`, a
+256-event batch is checkpointed before cancellation, and transport failures
+publish only the stable redacted category. Production construction continues
+to use the existing bounded HTTP chain-tip source.
 
 ## Consequences
 

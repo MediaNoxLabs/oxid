@@ -222,6 +222,13 @@ resumed, and already-current flows; the Assets pane polls the same use cases and
 labels cached or stalled balance as not live enough to spend. Production
 composition remains explicitly unavailable.
 
+The native worker is covered separately from the lower-level replay helper. A
+fixed adapter-private chain-tip source keeps HTTP transport out of pure-Nix
+tests, while the real GraphQL-WebSocket fixture proves owned-event replay to an
+exact 12 DUST balance, `cursor + 1` resume, partial-batch cancellation, durable
+checkpoint publication, and redacted transport failure. Normal construction
+still obtains the chain tip through the bounded explicit HTTP route.
+
 The seven catalog IDs are `mainnet`, `preprod`, `preview`, `testnet`, `qanet`,
 `devnet`, and `undeployed`. They carry identity and environment only. Runtime
 node, indexer, and prover routes belong to future outgoing adapter

@@ -320,6 +320,12 @@ or stalled DUST is display/resume state only and never live spend authority.
 The iOS standalone smoke flow exercises `Sync DUST`, the exact `12 DUST`
 fixture result, and the resulting `Resync DUST` action before transfer checks.
 The Android CDP smoke flow asserts the same DUST result and resync transition.
+The native controller contract suite injects only the already-decoded chain
+tip so pure Nix does not depend on HTTP loopback, then drives the real bounded
+GraphQL-WebSocket worker. It proves an owned event projects exactly 12 DUST,
+resume subscribes from `cursor + 1`, cancellation retains a 256-event partial
+checkpoint, and transport failure publishes only its redacted stable category.
+Production construction still uses the bounded HTTP chain-tip source.
 
 [Issue #18](https://github.com/MediaNoxLabs/oxid/issues/18) and ADR-0033 keep
 shielded Zswap custody, replay, and checkpoints inside the native Midnight
