@@ -1,0 +1,17 @@
+[book]
+title = "Oxid Identity Wallet"
+description = "Documentation for Oxid, the Rust-first wallet in which crypto and self-sovereign identity are peer capabilities."
+authors = ["Oxid contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/MediaNoxLabs/oxid"
+edit-url-template = "https://github.com/MediaNoxLabs/oxid/edit/develop/docs/site/{path}"
+site-url = "/oxid/"
+default-theme = "rust"
+preferred-dark-theme = "navy"

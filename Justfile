@@ -61,3 +61,6 @@ presentation-compact-artifacts:
 
 clean:
     ./run.sh clean
+
+docs-site:
+    ./scripts/build-docs-site.sh

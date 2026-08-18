@@ -36,3 +36,6 @@ node_modules/
 .idea/
 .vscode/
 *.swp
+
+# Documentation site build output
+/docs/site/book/
