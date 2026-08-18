@@ -1472,6 +1472,15 @@ Android profile smoke enables a debug-only throw, verifies an immediate second
 native call, and then completes the standalone wallet flow; this is emulator
 process-liveness evidence, not physical-device or production-custody evidence.
 
+ADR-0082 requires presentation consent to bind an exact visible credential.
+Safe candidate views may include only the bounded opaque credential identifier,
+display name, and issuer. Dioxus may preselect a sole visible match; multiple
+matches must begin unselected, keep consent disabled until a radio-card choice,
+and clear consent whenever the choice changes. Never index or silently fall
+back to the first candidate. Headless keeps requiring the exact previewed
+`credentialId`; no candidate view may expose claim values, openings, proof
+material, protocol state, or tokens.
+
 The iOS XCUITest `scrollTo` helper must require content controls to finish at
 least 90 points above the application frame bottom before tapping. WKWebView can
 otherwise report a control as hittable when only a sliver is exposed above the

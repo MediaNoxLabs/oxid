@@ -320,6 +320,11 @@ verifier, purpose, and exact claim intents without values. Acceptance always
 re-verifies the protected exact Compact bundle, constructs and independently
 checks the generated-circuit public statement, and consumes the session. Without
 an explicit authenticated artifact root it fails with `proof_unavailable`.
+ADR-0082 closes the multi-credential consent gap left by the prototype and the
+first mobile adapter: safe candidate previews now include display name, issuer,
+and opaque reference; Dioxus visibly selects a sole match but requires an exact
+card choice before consent when several credentials match. Headless continues
+to require the exact candidate identifier and never exposes claim values.
 ADR-0048 first reloads the credential-bound Jubjub
 method, requires current managed assertion authority, signs and independently
 verifies a disposable authorization over the exact statement, and applies

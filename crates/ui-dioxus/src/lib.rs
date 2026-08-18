@@ -6659,6 +6659,12 @@ fn credential_presentation_message(error: CredentialPresentationError) -> String
     }
 }
 
+fn initial_credential_presentation_selection(
+    presentation: &CredentialPresentationView,
+) -> Option<String> {
+    (presentation.candidates.len() == 1).then(|| presentation.candidates[0].credential_id.clone())
+}
+
 #[component]
 fn CredentialPresentationPanel(
     profile_id: String,
@@ -6667,6 +6673,7 @@ fn CredentialPresentationPanel(
     let services = consume_context::<WalletUiServices>();
     let mut request_input = use_signal(String::new);
     let mut preview = use_signal(|| None::<CredentialPresentationView>);
+    let mut selected_credential_id = use_signal(|| None::<String>);
     let mut consent = use_signal(|| false);
     let mut busy = use_signal(|| false);
     let mut notice = use_signal(|| None::<String>);
@@ -6677,6 +6684,7 @@ fn CredentialPresentationPanel(
         {
             request_input.set(request.request_uri);
             preview.set(None);
+            selected_credential_id.set(None);
             consent.set(false);
             notice.set(Some(
                 "Imported presentation request loaded. Preview it before consenting.".to_owned(),
@@ -6710,6 +6718,7 @@ fn CredentialPresentationPanel(
                     onclick: move |_| {
                         request_input.set(request.clone());
                         preview.set(None);
+                        selected_credential_id.set(None);
                         consent.set(false);
                         notice.set(Some("Standalone verifier request loaded. Preview it before consenting.".to_owned()));
                     },
@@ -6736,16 +6745,21 @@ fn CredentialPresentationPanel(
                             .await
                             {
                                 Ok(Ok(result)) => {
+                                    selected_credential_id.set(
+                                        initial_credential_presentation_selection(&result),
+                                    );
                                     preview.set(Some(result));
                                     consent.set(false);
                                     notice.set(Some("Request preview ready. Nothing has been presented.".to_owned()));
                                 }
                                 Ok(Err(error)) => {
                                     preview.set(None);
+                                    selected_credential_id.set(None);
                                     notice.set(Some(credential_presentation_message(error)));
                                 }
                                 Err(error) => {
                                     preview.set(None);
+                                    selected_credential_id.set(None);
                                     notice.set(Some(error.to_string()));
                                 }
                             }
@@ -6778,31 +6792,82 @@ fn CredentialPresentationPanel(
                     if presentation.candidates.is_empty() {
                         p { class: "field-error", role: "alert", "No matching Digital Passport is available in this profile." }
                     } else if presentation.state == "awaiting_consent" {
+                        h4 { "Credential to use" }
+                        if presentation.candidates.len() > 1 {
+                            p { class: "form-hint", "Choose the exact credential to present before consenting." }
+                        } else {
+                            p { class: "form-hint", "This is the credential that will be used for the presentation." }
+                        }
+                        fieldset {
+                            class: "presentation-credential-choice",
+                            aria_label: "Matching credentials",
+                            for candidate in presentation.candidates.clone() {
+                                {
+                                    let credential_id = candidate.credential_id.clone();
+                                    let card_credential_id = credential_id.clone();
+                                    let selected = selected_credential_id.read().as_deref()
+                                        == Some(credential_id.as_str());
+                                    let issuer = truncate_middle(&candidate.issuer, 20, 12);
+                                    let reference = truncate_middle(&candidate.credential_id, 12, 8);
+                                    rsx! {
+                                        label {
+                                            key: "{candidate.credential_id}",
+                                            class: if selected { "presentation-credential-option selected" } else { "presentation-credential-option" },
+                                            onclick: move |_| {
+                                                selected_credential_id.set(Some(card_credential_id.clone()));
+                                                consent.set(false);
+                                            },
+                                            input {
+                                                r#type: "radio",
+                                                name: "presentation-credential",
+                                                aria_label: "Use {candidate.display_name} issued by {candidate.issuer}, credential {reference}",
+                                                checked: selected,
+                                                onchange: move |event| {
+                                                    if event.checked() {
+                                                        selected_credential_id.set(Some(credential_id.clone()));
+                                                        consent.set(false);
+                                                    }
+                                                },
+                                            }
+                                            span {
+                                                strong { "{candidate.display_name}" }
+                                                small { title: "{candidate.issuer}", "Issuer {issuer}" }
+                                                code { title: "{candidate.credential_id}", "Reference {reference}" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         label { class: "confirmation-check",
                             input {
                                 id: "credential-presentation-consent",
                                 r#type: "checkbox",
                                 aria_label: "Consent to credential presentation",
+                                disabled: selected_credential_id.read().is_none(),
                                 checked: consent(),
                                 onchange: move |event| consent.set(event.checked()),
                             }
-                            span { "I consent to disclose exactly these claims to this verifier." }
+                            span { "I consent to use the selected credential and disclose exactly these claims to this verifier." }
                         }
                         div { class: "action-row",
                             button {
                                 class: "primary-action",
                                 r#type: "button",
-                                disabled: busy() || !consent(),
+                                disabled: busy() || !consent() || selected_credential_id.read().is_none(),
                                 onclick: {
                                     let service = services.accept_credential_presentation();
                                     let profile_id = profile_id.clone();
                                     let presentation_id = presentation.id.clone();
-                                    let credential_id = presentation.candidates[0].credential_id.clone();
                                     move |_| {
+                                        let Some(credential_id) = selected_credential_id.read().clone() else {
+                                            consent.set(false);
+                                            notice.set(Some("Choose the credential to use before consenting.".to_owned()));
+                                            return;
+                                        };
                                         let service = service.clone();
                                         let profile_id = profile_id.clone();
                                         let presentation_id = presentation_id.clone();
-                                        let credential_id = credential_id.clone();
                                         busy.set(true);
                                         notice.set(None);
                                         spawn(async move {
@@ -8629,6 +8694,48 @@ mod tests {
         let mut cbor = credential;
         cbor.format = "midnight_cbor_v1".to_owned();
         assert_eq!(compact_credential_policy_summary(&cbor), None);
+    }
+
+    fn presentation_candidate(
+        credential_id: &str,
+    ) -> oxid_presentation_application::PresentationCredentialCandidateView {
+        oxid_presentation_application::PresentationCredentialCandidateView {
+            credential_id: credential_id.to_owned(),
+            display_name: "Digital Passport".to_owned(),
+            issuer: "did:midnight:undeployed:issuer".to_owned(),
+        }
+    }
+
+    fn presentation_with_candidates(
+        candidates: Vec<oxid_presentation_application::PresentationCredentialCandidateView>,
+    ) -> CredentialPresentationView {
+        CredentialPresentationView {
+            id: "presentation_one".to_owned(),
+            verifier: "https://verifier.example".to_owned(),
+            purpose: "Prove age".to_owned(),
+            query_id: "digital_passport".to_owned(),
+            candidates,
+            requested_claims: Vec::new(),
+            state: "awaiting_consent".to_owned(),
+            presentation_generated: false,
+            verifier_validated: false,
+            failure_code: None,
+        }
+    }
+
+    #[test]
+    fn presentation_auto_selects_only_an_unambiguous_credential() {
+        let single = presentation_with_candidates(vec![presentation_candidate("vc_one")]);
+        let multiple = presentation_with_candidates(vec![
+            presentation_candidate("vc_one"),
+            presentation_candidate("vc_two"),
+        ]);
+
+        assert_eq!(
+            initial_credential_presentation_selection(&single).as_deref(),
+            Some("vc_one")
+        );
+        assert_eq!(initial_credential_presentation_selection(&multiple), None);
     }
 
     #[test]

@@ -123,6 +123,7 @@ impl PresentationCandidateSourcePort for CredentialDisclosureCandidateSource {
                         PresentationCredentialCandidate::new(
                             credential.id,
                             credential.display_name,
+                            credential.issuer_did,
                         )
                         .map_err(|_| PresentationCandidateError::InvalidQuery)?,
                     );
@@ -985,16 +986,28 @@ mod tests {
             &self,
             _: CredentialProfileQuery,
         ) -> Result<Vec<CredentialView>, CredentialOperationError> {
-            Ok(vec![CredentialView {
-                id: "vc_one".to_owned(),
-                display_name: "Digital Passport".to_owned(),
-                issuer_did: "did:midnight:undeployed:issuer".to_owned(),
-                subject_did: None,
-                format: "midnight_cbor_phase1".to_owned(),
-                issued_at_ms: None,
-                verification_outcome: "valid".to_owned(),
-                verification_stages: Vec::<VerificationStageView>::new(),
-            }])
+            Ok(vec![
+                CredentialView {
+                    id: "vc_one".to_owned(),
+                    display_name: "Digital Passport".to_owned(),
+                    issuer_did: "did:midnight:undeployed:issuer".to_owned(),
+                    subject_did: None,
+                    format: "midnight_cbor_phase1".to_owned(),
+                    issued_at_ms: None,
+                    verification_outcome: "valid".to_owned(),
+                    verification_stages: Vec::<VerificationStageView>::new(),
+                },
+                CredentialView {
+                    id: "vc_two".to_owned(),
+                    display_name: "Digital Passport".to_owned(),
+                    issuer_did: "did:midnight:undeployed:second-issuer".to_owned(),
+                    subject_did: None,
+                    format: "midnight_compact_vc".to_owned(),
+                    issued_at_ms: None,
+                    verification_outcome: "valid".to_owned(),
+                    verification_stages: Vec::<VerificationStageView>::new(),
+                },
+            ])
         }
     }
 
@@ -1048,7 +1061,11 @@ mod tests {
         )
         .expect("prepare");
         assert_eq!(prepared.preview.query_id(), DIGITAL_PASSPORT_QUERY_ID);
-        assert_eq!(prepared.preview.candidates().len(), 1);
+        assert_eq!(prepared.preview.candidates().len(), 2);
+        assert_eq!(
+            prepared.preview.candidates()[1].issuer(),
+            "did:midnight:undeployed:second-issuer"
+        );
         assert_eq!(prepared.preview.requested_claims().len(), 3);
         assert_eq!(prepared.preview.requested_claims()[2].threshold(), Some(18));
         let debug = format!("{prepared:?}");

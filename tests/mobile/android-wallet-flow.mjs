@@ -391,12 +391,65 @@ try {
       "document.body.innerText.includes('Credential issued, verified, and stored in the protected inventory.') && document.body.innerText.includes('valid')",
       "issued and verified OID4VCI credential",
     );
+    // The holder-bound standalone credential ID commits to its issuance
+    // second. Cross that boundary before issuing a second matching passport
+    // so the chooser is exercised with two distinct stored credentials.
+    await evaluate("new Promise((resolve) => setTimeout(resolve, 1200))");
+    await clickButton("Use standalone demo offer");
+    await clickButton("Preview credential offer");
+    await waitFor(
+      "document.body.innerText.includes('Credential offer preview')",
+      "second OID4VCI credential offer preview",
+    );
+    await evaluate(`(() => {
+      const consent = document.querySelector('#credential-issuance-consent');
+      if (!consent) return false;
+      consent.click();
+      return consent.checked;
+    })()`);
+    await clickButton("Accept and issue credential");
+    await waitFor(
+      "document.querySelectorAll('.credential-record').length === 2",
+      "second distinct Digital Passport",
+    );
     await clickButton("Use standalone verifier request");
     await clickButton("Preview presentation request");
     await waitFor(
       "document.body.innerText.includes('Presentation preview') && document.body.innerText.includes('Requested claims') && document.body.innerText.includes('No presentation or vp_token has been generated.')",
       "claim-free OpenID4VP presentation preview",
     );
+    const credentialChooserRequired = await evaluate(`(() => {
+      const choices = Array.from(document.querySelectorAll(
+        '.presentation-credential-option input[type="radio"]'
+      ));
+      const consent = document.querySelector('#credential-presentation-consent');
+      return choices.length === 2 && Boolean(consent && consent.disabled);
+    })()`);
+    if (!credentialChooserRequired) {
+      throw new Error("presentation consent did not require an exact credential selection");
+    }
+    await evaluate(`(() => {
+      const choices = Array.from(document.querySelectorAll(
+        '.presentation-credential-option input[type="radio"]'
+      ));
+      if (choices.length !== 2) return false;
+      choices[1].click();
+      return true;
+    })()`);
+    await waitFor(
+      `(() => {
+        const choices = Array.from(document.querySelectorAll(
+          '.presentation-credential-option input[type="radio"]'
+        ));
+        const consent = document.querySelector('#credential-presentation-consent');
+        return choices.length === 2 && choices[1].checked && Boolean(consent && !consent.disabled);
+      })()`,
+      "explicit second credential selection",
+    );
+    const credentialChooserValidated = true;
+    if (!credentialChooserValidated) {
+      throw new Error("presentation credential chooser did not require an exact selection");
+    }
     await evaluate(`(() => {
       const consent = document.querySelector('#credential-presentation-consent');
       if (!consent) return false;
@@ -554,8 +607,8 @@ try {
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, claimsHiddenByDefault, credentialPolicyChecked, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialPolicyChecked || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
+    const result = { ...walletResult, claimsHiddenByDefault, credentialChooserValidated, credentialPolicyChecked, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialChooserValidated || !result.credentialPolicyChecked || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
     await clickButton("Assets");

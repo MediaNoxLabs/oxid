@@ -15,9 +15,8 @@ program (the two exceptions are called out).
 2. **Labeling layer**: the `label(...)` module with exhaustive matches for
    every user-visible enum/state; lint that fails review on raw
    `snake_case`, epoch-ms, or "base units" in rsx for user-profile surfaces.
-3. **Credential chooser**: replace the silent `candidates[0]` selection in
-   the presentation flow (correctness bug, filed separately — needed
-   regardless of the redesign).
+3. **Credential chooser** (delivered by ADR-0082): the presentation flow shows
+   the exact credential and requires an explicit choice when several match.
 
 ## Phase 1 — Shell & Home
 

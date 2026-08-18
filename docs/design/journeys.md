@@ -98,9 +98,10 @@ profile's drawer (ui-profiles.md).
 
 ## 6. Present / prove (the flagship consent sheet)
 
-**Today:** paste-URI + preview `<dl>` + checkbox with a literal sentence;
-silently uses `candidates[0]` when multiple credentials match
-(lib.rs:6764 — filed as a bug, needs a chooser regardless of redesign).
+**Today:** paste-URI + preview `<dl>` + requested claims + explicit credential
+cards. One match is shown and selected; multiple matches require the user to
+choose a card before the consent checkbox is enabled (ADR-0082). The broader
+four-question sheet below remains redesign work.
 
 **Redesign — one sheet, four questions, in order:**
 1. **WHO**: verified relying-party name + domain, with a registered/verified

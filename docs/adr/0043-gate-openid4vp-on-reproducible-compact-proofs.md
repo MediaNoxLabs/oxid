@@ -7,7 +7,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/oid4vp_client/` and `mobile-bench/dioxus-wallet/`
 - Reference package: `midnight-verifiable-credentials` commit `39b1354212620b396e914b29603e6a38f2656546`
 - Amends: ADR-0007, ADR-0009, ADR-0010, ADR-0013, ADR-0015, ADR-0020, ADR-0021, ADR-0023, ADR-0029, ADR-0040, and ADR-0042
-- Implementation state: strict standalone request-by-reference and DCQL parsing, profile-scoped candidate matching, exact consent, single-use session lifecycle, and headless/mobile preview are implemented; ADR-0050 satisfies this gate for explicit native headless proving and independent `vp_token` verification, while mobile proving and production transport remain fail-closed
+- Implementation state: strict standalone request-by-reference and DCQL parsing, profile-scoped candidate matching, exact consent, single-use session lifecycle, and headless/mobile preview are implemented; ADR-0082 requires visible exact credential selection when several candidates match; ADR-0050 satisfies the proof gate for explicit native headless proving and independent `vp_token` verification, while mobile proving and production transport remain fail-closed
 
 ## Context
 

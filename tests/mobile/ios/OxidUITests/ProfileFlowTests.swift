@@ -23,6 +23,16 @@ final class ProfileFlowTests: XCTestCase {
     }
 
     @MainActor
+    private func scrollBackTo(_ element: XCUIElement, in application: XCUIApplication) {
+        // A completed card can leave a reusable fixture control above the
+        // current viewport. Move toward the document start for that case.
+        for _ in 0..<20 where !element.isHittable {
+            application.swipeDown()
+        }
+        XCTAssertTrue(element.isHittable)
+    }
+
+    @MainActor
     private func ensureProfile(in application: XCUIApplication) {
         application.launch()
         let createButton = application.buttons["Create and continue"]
@@ -183,30 +193,6 @@ final class ProfileFlowTests: XCTestCase {
                 "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
             ].waitForExistence(timeout: 10)
         )
-        let verifierRequest = application.buttons["Use standalone verifier request"]
-        XCTAssertTrue(verifierRequest.waitForExistence(timeout: 5))
-        scrollTo(verifierRequest, in: application)
-        verifierRequest.tap()
-        let previewPresentation = application.buttons["Preview presentation request"]
-        scrollTo(previewPresentation, in: application)
-        previewPresentation.tap()
-        XCTAssertTrue(application.staticTexts["Presentation preview"].waitForExistence(timeout: 10))
-        XCTAssertTrue(application.staticTexts["Requested claims"].exists)
-        XCTAssertTrue(
-            application.staticTexts["No presentation or vp_token has been generated."]
-                .waitForExistence(timeout: 5)
-        )
-        let presentationConsent = application.descendants(matching: .any)["Consent to credential presentation"]
-        XCTAssertTrue(presentationConsent.waitForExistence(timeout: 5))
-        scrollTo(presentationConsent, in: application)
-        presentationConsent.tap()
-        let presentCredential = application.buttons["Consent and present"]
-        scrollTo(presentCredential, in: application)
-        presentCredential.tap()
-        XCTAssertTrue(
-            application.staticTexts["The holder authorized this exact presentation, but Compact proving is unavailable. No presentation or vp_token was generated."]
-                .waitForExistence(timeout: 10)
-        )
         XCTAssertTrue(application.staticTexts["valid"].waitForExistence(timeout: 10))
         XCTAssertFalse(application.staticTexts["Alice"].exists)
         XCTAssertFalse(application.staticTexts["Example"].exists)
@@ -238,6 +224,66 @@ final class ProfileFlowTests: XCTestCase {
         scrollTo(reverify, in: application)
         reverify.tap()
         XCTAssertTrue(reverify.waitForExistence(timeout: 10))
+
+        // The standalone credential ID commits to its issuance second. Issue
+        // another after that boundary so the presentation request has two
+        // distinct matching credentials to choose between.
+        Thread.sleep(forTimeInterval: 1.2)
+        scrollBackTo(demoOffer, in: application)
+        demoOffer.tap()
+        scrollTo(previewOffer, in: application)
+        previewOffer.tap()
+        XCTAssertTrue(
+            application.staticTexts["Credential offer preview"].waitForExistence(timeout: 5)
+        )
+        scrollTo(consent, in: application)
+        consent.tap()
+        scrollTo(issueCredential, in: application)
+        issueCredential.tap()
+        XCTAssertTrue(
+            application.staticTexts["Credential issued, verified, and stored in the protected inventory."]
+                .waitForExistence(timeout: 10)
+        )
+        let verifierRequest = application.buttons["Use standalone verifier request"]
+        XCTAssertTrue(verifierRequest.waitForExistence(timeout: 5))
+        scrollTo(verifierRequest, in: application)
+        verifierRequest.tap()
+        let previewPresentation = application.buttons["Preview presentation request"]
+        scrollTo(previewPresentation, in: application)
+        previewPresentation.tap()
+        XCTAssertTrue(application.staticTexts["Presentation preview"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["Requested claims"].exists)
+        XCTAssertTrue(
+            application.staticTexts["No presentation or vp_token has been generated."]
+                .waitForExistence(timeout: 5)
+        )
+        let presentationConsent = application.descendants(matching: .any)["Consent to credential presentation"]
+        XCTAssertTrue(presentationConsent.waitForExistence(timeout: 5))
+        XCTAssertFalse(presentationConsent.isEnabled)
+        let matchingCredentials = application.descendants(matching: .any).matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Use Digital Passport issued by")
+        )
+        XCTAssertEqual(matchingCredentials.count, 2)
+        let secondCredential = matchingCredentials.element(boundBy: 1)
+        scrollTo(secondCredential, in: application)
+        secondCredential.tap()
+        let consentEnabled = expectation(
+            for: NSPredicate(format: "enabled == true"),
+            evaluatedWith: presentationConsent
+        )
+        wait(for: [consentEnabled], timeout: 5)
+        scrollTo(presentationConsent, in: application)
+        presentationConsent.tap()
+        let presentCredential = application.buttons["Consent and present"]
+        scrollTo(presentCredential, in: application)
+        presentCredential.tap()
+        XCTAssertTrue(
+            application.staticTexts["The holder authorized this exact presentation, but Compact proving is unavailable. No presentation or vp_token was generated."]
+                .waitForExistence(timeout: 10)
+        )
+        XCTAssertTrue(application.staticTexts["valid"].waitForExistence(timeout: 10))
+        XCTAssertFalse(application.staticTexts["Alice"].exists)
+        XCTAssertFalse(application.staticTexts["Example"].exists)
 
         let vault = application.buttons["Vault"]
         XCTAssertTrue(vault.waitForExistence(timeout: 5))

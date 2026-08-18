@@ -144,21 +144,26 @@ impl RequestedPresentationClaim {
 pub struct PresentationCredentialCandidate {
     credential_id: String,
     display_name: String,
+    issuer: String,
 }
 
 impl PresentationCredentialCandidate {
     pub fn new(
         credential_id: impl Into<String>,
         display_name: impl Into<String>,
+        issuer: impl Into<String>,
     ) -> Result<Self, PresentationDomainError> {
         let credential_id = credential_id.into();
         OpaqueId::parse(credential_id.clone())
             .map_err(|_| PresentationDomainError::InvalidCandidate)?;
         let display_name = display_name.into();
         validate_text(&display_name)?;
+        let issuer = issuer.into();
+        validate_text(&issuer)?;
         Ok(Self {
             credential_id,
             display_name,
+            issuer,
         })
     }
 
@@ -170,6 +175,11 @@ impl PresentationCredentialCandidate {
     #[must_use]
     pub fn display_name(&self) -> &str {
         &self.display_name
+    }
+
+    #[must_use]
+    pub fn issuer(&self) -> &str {
+        &self.issuer
     }
 }
 
@@ -339,8 +349,12 @@ mod tests {
             18,
         )
         .expect("predicate");
-        let candidate =
-            PresentationCredentialCandidate::new("vc_one", "Digital Passport").expect("candidate");
+        let candidate = PresentationCredentialCandidate::new(
+            "vc_one",
+            "Digital Passport",
+            "did:midnight:undeployed:issuer",
+        )
+        .expect("candidate");
         let preview = CredentialPresentationPreview::new(
             "https://verifier.example",
             "Prove identity and age.",
@@ -352,12 +366,21 @@ mod tests {
         assert_eq!(preview.requested_claims()[1].threshold(), Some(18));
         assert_eq!(preview.candidates()[0].credential_id(), "vc_one");
         assert_eq!(
+            preview.candidates()[0].issuer(),
+            "did:midnight:undeployed:issuer"
+        );
+        assert_eq!(
             CredentialPresentationPreview::new(
                 "https://verifier.example",
                 "Purpose",
                 "query",
                 vec![
-                    PresentationCredentialCandidate::new("vc_one", "Passport").expect("candidate")
+                    PresentationCredentialCandidate::new(
+                        "vc_one",
+                        "Passport",
+                        "did:midnight:undeployed:issuer",
+                    )
+                    .expect("candidate")
                 ],
                 vec![first.clone(), first],
             ),

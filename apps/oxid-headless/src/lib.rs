@@ -4046,6 +4046,7 @@ fn credential_presentation_value(presentation: &CredentialPresentationView) -> V
         "candidates": presentation.candidates.iter().map(|candidate| json!({
             "credentialId": candidate.credential_id,
             "displayName": candidate.display_name,
+            "issuer": candidate.issuer,
         })).collect::<Vec<_>>(),
         "requestedClaims": presentation.requested_claims.iter().map(|claim| json!({
             "claimPath": claim.claim_path,
@@ -6393,6 +6394,10 @@ mod tests {
             Some(3)
         );
         assert_eq!(presentation["candidates"].as_array().map(Vec::len), Some(1));
+        assert_eq!(
+            presentation["candidates"][0]["issuer"],
+            "did:midnight:undeployed:a4c9483a0c7cdd808056a93334ab97207b38b4363d1da5cbfb78ad256cd689f0"
+        );
         let presentation_id = presentation["id"]
             .as_str()
             .expect("presentation identifier");

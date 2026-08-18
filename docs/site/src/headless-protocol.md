@@ -43,6 +43,11 @@ build can actually do.
 | `credential.*` | inventory, verification reports, disclosure planning |
 | `presentation.*` | OpenID4VP request preview, consent, refusal |
 
+Presentation candidate previews contain only the bounded opaque credential
+identifier, display name, and issuer. They never contain credential claim
+values, openings, proof material, protocol state, or response tokens; accepting
+a presentation requires the exact previewed credential identifier.
+
 ## Secret hygiene, by contract
 
 The protocol never accepts or returns seeds, mnemonics, private keys,

@@ -382,6 +382,7 @@ pub struct RequestedPresentationClaimView {
 pub struct PresentationCredentialCandidateView {
     pub credential_id: String,
     pub display_name: String,
+    pub issuer: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -422,6 +423,7 @@ impl Session {
                 .map(|candidate| PresentationCredentialCandidateView {
                     credential_id: candidate.credential_id().to_owned(),
                     display_name: candidate.display_name().to_owned(),
+                    issuer: candidate.issuer().to_owned(),
                 })
                 .collect(),
             requested_claims: self
@@ -816,7 +818,10 @@ mod tests {
         }
     }
 
-    struct Protocol;
+    #[derive(Default)]
+    struct Protocol {
+        selected_credential_id: Mutex<Option<String>>,
+    }
 
     impl CredentialPresentationProtocolPort for Protocol {
         fn prepare<'a>(
@@ -824,8 +829,18 @@ mod tests {
             request: PrepareCredentialPresentationRequest,
         ) -> PreparePresentationPortFuture<'a> {
             Box::pin(async move {
-                let candidate = PresentationCredentialCandidate::new("vc_one", "Digital Passport")
-                    .expect("candidate");
+                let first_candidate = PresentationCredentialCandidate::new(
+                    "vc_one",
+                    "Digital Passport",
+                    "did:midnight:undeployed:issuer",
+                )
+                .expect("candidate");
+                let second_candidate = PresentationCredentialCandidate::new(
+                    "vc_two",
+                    "Digital Passport",
+                    "did:midnight:undeployed:second-issuer",
+                )
+                .expect("candidate");
                 let claims = vec![
                     RequestedPresentationClaim::reveal(
                         "/credentialSubject/firstName",
@@ -846,7 +861,7 @@ mod tests {
                         "https://verifier.example",
                         format!("Purpose for {}", request.profile_id.as_str()),
                         "digital_passport",
-                        vec![candidate],
+                        vec![first_candidate, second_candidate],
                         claims,
                     )
                     .expect("preview"),
@@ -856,9 +871,15 @@ mod tests {
 
         fn present<'a>(
             &'a self,
-            _: ProtocolPresentCredentialRequest,
+            request: ProtocolPresentCredentialRequest,
         ) -> PresentCredentialPortFuture<'a> {
-            Box::pin(async { Err(PresentationProtocolError::ProofUnavailable) })
+            Box::pin(async move {
+                *self
+                    .selected_credential_id
+                    .lock()
+                    .expect("selected credential lock") = Some(request.credential_id);
+                Err(PresentationProtocolError::ProofUnavailable)
+            })
         }
 
         fn discard(&self, _: &CredentialPresentationId) -> Result<(), PresentationProtocolError> {
@@ -868,7 +889,8 @@ mod tests {
 
     #[test]
     fn exact_consent_is_profile_scoped_and_proof_failure_is_terminal() {
-        let service = CredentialPresentationService::new(Arc::new(Protocol));
+        let protocol = Arc::new(Protocol::default());
+        let service = CredentialPresentationService::new(protocol.clone());
         let prepared = ready(PrepareCredentialPresentationUseCase::execute(
             &service,
             PrepareCredentialPresentationCommand {
@@ -880,6 +902,11 @@ mod tests {
         assert!(!prepared.presentation_generated);
         assert!(!prepared.verifier_validated);
         assert_eq!(prepared.requested_claims[1].threshold, Some(18));
+        assert_eq!(prepared.candidates.len(), 2);
+        assert_eq!(
+            prepared.candidates[1].issuer,
+            "did:midnight:undeployed:second-issuer"
+        );
 
         assert_eq!(
             GetCredentialPresentationUseCase::execute(
@@ -897,7 +924,20 @@ mod tests {
                 AcceptCredentialPresentationCommand {
                     profile_id: "profile_one".to_owned(),
                     presentation_id: prepared.id.clone(),
-                    credential_id: "vc_one".to_owned(),
+                    credential_id: "vc_not_listed".to_owned(),
+                    confirmed: true,
+                    intent: "ACCEPT_CREDENTIAL_PRESENTATION".to_owned(),
+                },
+            )),
+            Err(CredentialPresentationError::InvalidCredential)
+        );
+        assert_eq!(
+            ready(AcceptCredentialPresentationUseCase::execute(
+                &service,
+                AcceptCredentialPresentationCommand {
+                    profile_id: "profile_one".to_owned(),
+                    presentation_id: prepared.id.clone(),
+                    credential_id: "vc_two".to_owned(),
                     confirmed: true,
                     intent: "ACCEPT_CREDENTIAL_PRESENTATION".to_owned(),
                 },
@@ -905,6 +945,14 @@ mod tests {
             Err(CredentialPresentationError::Protocol(
                 PresentationProtocolError::ProofUnavailable
             ))
+        );
+        assert_eq!(
+            protocol
+                .selected_credential_id
+                .lock()
+                .expect("selected credential lock")
+                .as_deref(),
+            Some("vc_two")
         );
         let failed = GetCredentialPresentationUseCase::execute(
             &service,
