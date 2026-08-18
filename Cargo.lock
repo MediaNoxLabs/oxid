@@ -5550,6 +5550,7 @@ dependencies = [
  "oxid-platform-ports",
  "oxid-wallet-application",
  "oxid-wallet-domain",
+ "proptest",
  "serde",
  "serde_json",
  "subtle",

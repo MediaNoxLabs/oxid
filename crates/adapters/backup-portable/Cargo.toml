@@ -20,5 +20,8 @@ serde_json.workspace = true
 subtle.workspace = true
 zeroize.workspace = true
 
+[dev-dependencies]
+proptest.workspace = true
+
 [lints]
 workspace = true
