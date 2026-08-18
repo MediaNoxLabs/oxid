@@ -13,9 +13,11 @@ program (the two exceptions are called out).
    gate, spacing is collapsed to the eight-step scale, and both dark/light
    brand schemas are complete while dark remains the selected scheme. Issue
    #63 previously unified the Vault compatibility vocabulary.
-2. **Labeling layer**: the `label(...)` module with exhaustive matches for
-   every user-visible enum/state; lint that fails review on raw
-   `snake_case`, epoch-ms, or "base units" in rsx for user-profile surfaces.
+2. **Labeling layer** (delivered by ADR-0085 / issue #77): the centralized
+   Dioxus label/format module explicitly names every known user-visible
+   enum/state and hides unknown values; the repository gate rejects direct
+   machine-field interpolation, underscore replacement, cursor prose,
+   epoch-millisecond copy, and raw subunit terminology in user-profile rsx.
 3. **Credential chooser** (delivered by ADR-0082): the presentation flow shows
    the exact credential and requires an explicit choice when several match.
 

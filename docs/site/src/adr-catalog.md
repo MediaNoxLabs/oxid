@@ -110,6 +110,7 @@ ADR status and delivery state answer different questions:
 | [0082](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0082-require-explicit-presentation-credential-selection.md) Require explicit presentation credential selection | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#64 | Claim-free previews name the issuer and opaque credential reference; Dioxus visibly auto-selects only a sole match and requires an explicit card choice before multi-candidate consent |
 | [0083](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0083-run-mobile-compact-proofs-on-a-foreground-worker.md) Run mobile Compact proofs on a foreground worker | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | The explicit native-custody artifact build admits one foreground proof, independently verifies it, and safely reports cancel/background/timeout only after worker completion; physical-device release budgets remain open |
 | [0084](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0084-enforce-two-layer-ui-design-tokens.md) Enforce two-layer UI design tokens | Accepted | §§1, 3–7, 9, 12–13, 16, 18, 21 and issues #2/#65/#67 | Dark/light brand primitives map into one semantic component vocabulary; fixed safety colors and a repository lint prevent brand drift and raw presentation literals |
+| [0085](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0085-centralize-user-facing-machine-labels.md) Centralize user-facing machine labels | Accepted | §§1, 3–7, 9–13, 16, 18, 21 and issues #2/#65/#77 | One Dioxus label/format seam hides unknown values, names capability truth, formats exact assets/dates, and rejects raw machine copy |
 
 ## Current boundaries
 
@@ -383,3 +384,9 @@ consent surfaces. ADR-0070 adds OS link delivery through the same router and a
 separate typed public-address export boundary. Production endpoint discovery,
 universal links, physical-camera evidence, and resource baselines remain issue
 #32.
+ADR-0085 makes product copy a Dioxus-owned truth boundary. Serialized states,
+modes, sources, authentication classes, formats, and reason codes must cross
+one reviewed label module; unknown values are hidden rather than echoed. Exact
+NIGHT/DUST amounts and UTC dates replace internal subunit/timestamp copy, while
+sync cursors remain adapter state instead of user vocabulary. This changes no
+application transition, consent, capability, or settlement authority.

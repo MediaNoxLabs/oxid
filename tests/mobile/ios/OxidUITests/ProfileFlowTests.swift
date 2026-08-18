@@ -66,7 +66,7 @@ final class ProfileFlowTests: XCTestCase {
         scrollTo(syncShielded, in: application)
         syncShielded.tap()
         XCTAssertTrue(application.staticTexts["1 shielded notes"].waitForExistence(timeout: 5))
-        XCTAssertTrue(application.staticTexts["5000000 atomic units"].waitForExistence(timeout: 5))
+        XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 5))
         XCTAssertTrue(application.buttons["Resync shielded assets"].exists)
 
         let showQrButton = application.buttons["Show receive QR"].firstMatch
@@ -193,7 +193,7 @@ final class ProfileFlowTests: XCTestCase {
                 "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
             ].waitForExistence(timeout: 10)
         )
-        XCTAssertTrue(application.staticTexts["valid"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["Valid"].waitForExistence(timeout: 10))
         XCTAssertFalse(application.staticTexts["Alice"].exists)
         XCTAssertFalse(application.staticTexts["Example"].exists)
         let revealFirst = application.buttons["Reveal First name locally"]
@@ -217,7 +217,7 @@ final class ProfileFlowTests: XCTestCase {
         scrollTo(previewDisclosure, in: application)
         previewDisclosure.tap()
         XCTAssertTrue(
-            application.staticTexts["local preview ready · local preview only · no presentation generated"]
+            application.staticTexts["Disclosure preview ready · local preview only · no presentation generated"]
                 .waitForExistence(timeout: 5)
         )
         let reverify = application.buttons["Reverify"]
@@ -281,7 +281,7 @@ final class ProfileFlowTests: XCTestCase {
             application.staticTexts["The holder authorized this exact presentation, but Compact proving is unavailable. No presentation or vp_token was generated."]
                 .waitForExistence(timeout: 10)
         )
-        XCTAssertTrue(application.staticTexts["valid"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["Valid"].waitForExistence(timeout: 10))
         XCTAssertFalse(application.staticTexts["Alice"].exists)
         XCTAssertFalse(application.staticTexts["Example"].exists)
 
@@ -289,18 +289,18 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(vault.waitForExistence(timeout: 5))
         vault.tap()
         XCTAssertTrue(
-            application.staticTexts["Owner-private durable conformance ledger · survives app restart · no on-chain transaction submitted"]
+            application.staticTexts["Owner-private saved conformance ledger · survives app restart · no on-chain transaction submitted"]
                 .waitForExistence(timeout: 5)
         )
         XCTAssertTrue(
-            application.staticTexts["Deterministic simulation"].waitForExistence(timeout: 5)
+            application.staticTexts["Simulated — runs locally, nothing on Midnight"].waitForExistence(timeout: 5)
         )
         let readContractState = application.buttons["Read contract state"]
         scrollTo(readContractState, in: application)
         readContractState.tap()
         application.swipeUp()
         XCTAssertTrue(
-            application.buttons["Refresh simulated contract state"]
+            application.buttons["Refresh contract state"]
                 .waitForExistence(timeout: 10)
         )
         let reviewContractCall = application.buttons["Review contract call"]
@@ -320,26 +320,26 @@ final class ProfileFlowTests: XCTestCase {
         )
         application.swipeDown()
         XCTAssertTrue(
-            application.staticTexts["Mode: simulated · deterministic simulation only. Final DUST fee: 1000000 base units."]
+            application.staticTexts["Mode: Simulated — runs locally, nothing on Midnight. Final DUST fee: 0.000000001 DUST."]
                 .waitForExistence(timeout: 5)
         )
         let createLock = application.buttons["Create confirmed lock"]
         XCTAssertTrue(createLock.waitForExistence(timeout: 5))
         scrollTo(createLock, in: application)
         createLock.tap()
-        XCTAssertTrue(application.staticTexts["100 base units remaining"].waitForExistence(timeout: 5))
+        XCTAssertTrue(application.staticTexts["100 NIGHT remaining"].waitForExistence(timeout: 5))
         let deposit = application.buttons["Deposit"]
         scrollTo(deposit, in: application)
         deposit.tap()
-        XCTAssertTrue(application.staticTexts["110 base units remaining"].waitForExistence(timeout: 5))
+        XCTAssertTrue(application.staticTexts["110 NIGHT remaining"].waitForExistence(timeout: 5))
         let claim = application.buttons["Claim with credential"]
         scrollTo(claim, in: application)
         claim.tap()
-        XCTAssertTrue(application.staticTexts["100 base units remaining"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["100 NIGHT remaining"].waitForExistence(timeout: 10))
         let withdraw = application.buttons["Withdraw"]
         scrollTo(withdraw, in: application)
         withdraw.tap()
-        XCTAssertTrue(application.staticTexts["90 base units remaining"].waitForExistence(timeout: 5))
+        XCTAssertTrue(application.staticTexts["90 NIGHT remaining"].waitForExistence(timeout: 5))
         XCTAssertTrue(application.staticTexts["Claims 1"].exists)
 
         application.terminate()
@@ -359,10 +359,10 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertFalse(application.staticTexts["Example"].exists)
         XCTAssertTrue(application.buttons["Reverify"].waitForExistence(timeout: 5))
         vault.tap()
-        XCTAssertTrue(application.staticTexts["90 base units remaining"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["90 NIGHT remaining"].waitForExistence(timeout: 10))
         XCTAssertTrue(application.staticTexts["Claims 1"].waitForExistence(timeout: 5))
         XCTAssertTrue(
-            application.staticTexts["Owner-private durable conformance ledger · survives app restart · no on-chain transaction submitted"]
+            application.staticTexts["Owner-private saved conformance ledger · survives app restart · no on-chain transaction submitted"]
                 .waitForExistence(timeout: 5)
         )
         XCTAssertTrue(application.buttons["Assets"].exists)
@@ -418,7 +418,7 @@ final class ProfileFlowTests: XCTestCase {
         application.open(login)
         XCTAssertTrue(
             application.staticTexts[
-                "App link recognized as a DID login. Review the request before consent."
+                "App link recognized as a DID login request. Review the request before consent."
             ].waitForExistence(timeout: 10)
         )
         XCTAssertTrue(application.staticTexts["Your DIDs"].exists)

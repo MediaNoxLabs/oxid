@@ -96,9 +96,10 @@ function before rsx: states, modes, sources, formats, authentication labels,
 reason codes. Today's `replace('_', " ")` and raw leaks
 (`deterministic_simulation`, `canonical_finalized_replay`, `outcome_unknown`,
 epoch-ms, cursor numbers, "base units") are all replaced by a single
-`label(...)` module with exhaustive `match` — the compiler then enforces
-that a new enum variant gets a human name. Raw values remain visible in
-Details sheets and the dev profile.
+`label(...)` module with exhaustive `match`. The compiler enforces typed enum
+matches; string-flattened application views use explicit known-value matches,
+a safe unknown label, and the repository copy gate. Raw values remain visible
+only in Details sheets and the dev profile.
 
 **Vocabulary table (excerpt, to be completed in implementation):**
 
@@ -112,6 +113,10 @@ Details sheets and the dev profile.
 | base/atomic units | NIGHT / DUST decimals (existing exact formatter) |
 | epoch millis | "18 Aug 2026, 14:02" / "2 min ago" |
 | `midnight_compact_vc` | Digital Passport (Midnight format) — Details |
+
+ADR-0085 implements this boundary in `crates/ui-dioxus/src/labels.rs`.
+`scripts/check-ui-copy-labels.sh` rejects direct machine-field interpolation
+while exact unit/date tests protect the formatting seam.
 
 **Voice rules.** Conversational, precise, short (word budgets in README).
 EUDI-aligned nouns: *Documents*, "Who's asking", *verified issuer*.

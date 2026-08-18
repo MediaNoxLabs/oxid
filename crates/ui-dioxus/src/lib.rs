@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+mod labels;
+
 use std::{fmt, future::Future, sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
@@ -94,6 +96,8 @@ use oxid_wallet_application::{
     WalletTransferSubmissionView,
 };
 use zeroize::Zeroizing;
+
+use labels as ui;
 
 const STYLES: &str = include_str!("../assets/styles.css");
 #[cfg(not(target_arch = "wasm32"))]
@@ -1751,7 +1755,7 @@ pub fn App() -> Element {
                                                     menu_open.set(false);
                                                     identity_ingress_notice.set(Some(format!(
                                                         "QR recognized as {}. Review the request before consent.",
-                                                        identity_request_kind_label(kind)
+                                                        ui::identity_request_kind(kind)
                                                     )));
                                                 }
                                                 Err(error) => {
@@ -2405,15 +2409,15 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
             busy,
         } => {
             let night = balance_for(&account, "NIGHT")
-                .map(|balance| format_atomic_units(&balance.atomic_units, balance.decimals))
+                .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
                 .unwrap_or_else(|| "—".to_owned());
             let dust = balance_for(&account, "DUST")
-                .map(|balance| format_atomic_units(&balance.atomic_units, balance.decimals))
+                .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
                 .unwrap_or_else(|| "—".to_owned());
             let unavailable = account.source == "unavailable";
             let is_busy = busy.is_some();
             let account_hint = account_hint(&account, busy);
-            let source_label = account_source_label(&account.source);
+            let source_label = ui::account_source(&account.source);
             let protected_account = has_protected_account(&account);
             let protection_available = security.is_available();
             let protection_unlocked = security.state_name() == "Unlocked";
@@ -2467,9 +2471,9 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                         strong { "{active_profile.display_name} · {account.network_name}" }
                         p {
                             if let Some(height) = account.sync.chain_tip_height {
-                                "{sync_status_label(&account.sync.state)} · block {height} · {source_label} source"
+                                "{ui::sync_state(&account.sync.state)} · block {height} · {source_label} source"
                             } else {
-                                "{sync_status_label(&account.sync.state)} · {source_label} source"
+                                "{ui::sync_state(&account.sync.state)} · {source_label} source"
                             }
                         }
                     }
@@ -2667,9 +2671,9 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                             div { class: "activity-list",
                                 for transaction in account.transactions.iter() {
                                     div { class: "activity-row", key: "{transaction.transaction_id}",
-                                        span { class: "activity-row__mark", aria_hidden: "true", "{transaction_mark(&transaction.direction)}" }
+                                        span { class: "activity-row__mark", aria_hidden: "true", "{ui::transaction_mark(&transaction.direction)}" }
                                         div {
-                                            strong { "{transaction_direction_label(&transaction.direction)}" }
+                                            strong { "{ui::transaction_direction(&transaction.direction)}" }
                                             small { "{transaction_status_line(transaction)}" }
                                         }
                                         code { "{truncate_middle(&transaction.transaction_id, 12, 6)}" }
@@ -2770,12 +2774,12 @@ fn SubmissionRecoveryPane(profile_id: String) -> Element {
                     aria_live: "polite",
                     aria_busy: if reconciling { "true" } else { "false" },
                     p { class: "card-eyebrow", "Latest transaction" }
-                    h2 { "{submission_status_heading(&submission.state)}" }
-                    p { "{submission_status_note(&submission.state)}" }
+                    h2 { "{ui::submission_heading(&submission.state)}" }
+                    p { "{ui::submission_note(&submission.state)}" }
                     dl { class: "preview-list",
-                        div { dt { "State" } dd { "{submission_status_label(&submission.state)}" } }
+                        div { dt { "State" } dd { "{ui::submission_state(&submission.state)}" } }
                         if let Some(mode) = submission.mode.as_deref() {
-                            div { dt { "Mode" } dd { "{mode}" } }
+                            div { dt { "Mode" } dd { "{ui::submission_mode(mode)}" } }
                         }
                         if let Some(transaction_id) = submission.transaction_id.as_deref() {
                             div { dt { "Transaction" } dd { title: "{transaction_id}", "{truncate_middle(transaction_id, 16, 8)}" } }
@@ -2913,7 +2917,7 @@ fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
             let balance = status
                 .balance_atomic_units
                 .as_deref()
-                .map(|value| format_atomic_units(value, 15))
+                .map(|value| ui::format_atomic_units(value, ui::DUST_DECIMALS))
                 .unwrap_or_else(|| "—".to_owned());
             let note = dust_sync_note(&status);
             let pill_class = dust_status_pill_class(&status.state);
@@ -2927,7 +2931,7 @@ fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
                             p { class: "card-eyebrow", "DUST index" }
                             h2 { "{balance} DUST" }
                         }
-                        span { class: "{pill_class}", "{dust_sync_state_label(&status.state)}" }
+                        span { class: "{pill_class}", "{ui::sync_state(&status.state)}" }
                     }
                     p { "{note}" }
                     if let Some(message) = operation_error {
@@ -3063,40 +3067,24 @@ fn dust_progress_percent(status: &WalletDustSyncView) -> Option<u64> {
 }
 
 fn dust_sync_note(status: &WalletDustSyncView) -> String {
-    let progress = status
-        .current_cursor
-        .zip(status.target_cursor)
-        .map(|(current, target)| format!("event {current} of {target}"));
     let detail = match status.state.as_str() {
         "never_synced" => "DUST has not been indexed for this protected account.".to_owned(),
-        "syncing" => progress.map_or_else(
-            || "Connecting to the DUST event index…".to_owned(),
-            |progress| format!("Indexing {progress} · {} processed this run.", status.events_processed),
-        ),
-        "synced" => progress.map_or_else(
-            || "DUST is synchronized.".to_owned(),
-            |progress| format!("DUST is current at {progress}."),
-        ),
+        "syncing" if status.events_processed > 0 => {
+            format!("Indexing DUST · {} events processed this run.", status.events_processed)
+        }
+        "syncing" => "Connecting to the DUST event index…".to_owned(),
+        "synced" if status.events_processed > 0 => {
+            format!("DUST is synchronized · {} events processed.", status.events_processed)
+        }
+        "synced" => "DUST is synchronized.".to_owned(),
         "cached" => "Showing a resumable cached DUST checkpoint; spending remains disabled until live catch-up.".to_owned(),
         "cancelled" => "DUST synchronization was cancelled at a consistent checkpoint and can resume.".to_owned(),
         "stalled" => "DUST synchronization stalled; the last consistent checkpoint is retained.".to_owned(),
         _ => "DUST synchronization is not available in this composition.".to_owned(),
     };
     status.failure.as_ref().map_or(detail.clone(), |failure| {
-        format!("{detail} ({})", failure.replace('_', " "))
+        format!("{detail} ({})", ui::sync_failure(failure))
     })
-}
-
-fn dust_sync_state_label(state: &str) -> &'static str {
-    match state {
-        "never_synced" => "Not synced",
-        "syncing" => "Syncing",
-        "synced" => "Synced",
-        "cached" => "Cached",
-        "cancelled" => "Cancelled",
-        "stalled" => "Stalled",
-        _ => "Unavailable",
-    }
 }
 
 fn dust_status_pill_class(state: &str) -> &'static str {
@@ -3188,7 +3176,7 @@ fn ShieldedSyncPane(profile_id: String, can_sync: bool) -> Element {
                             p { class: "card-eyebrow", "Shielded index" }
                             h2 { "{owned_notes} shielded notes" }
                         }
-                        span { class: "{pill_class}", "{dust_sync_state_label(&status.state)}" }
+                        span { class: "{pill_class}", "{ui::sync_state(&status.state)}" }
                     }
                     p { "{note}" }
                     if !status.balances.is_empty() {
@@ -3197,7 +3185,7 @@ fn ShieldedSyncPane(profile_id: String, can_sync: bool) -> Element {
                                 div { class: "activity-row", key: "{balance.token_type_hex}",
                                     span { class: "activity-row__mark", aria_hidden: "true", "◈" }
                                     div {
-                                        strong { "{balance.atomic_units} atomic units" }
+                                        strong { "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
                                         small { title: "{balance.token_type_hex}", "Token {truncate_middle(&balance.token_type_hex, 8, 6)}" }
                                     }
                                 }
@@ -3337,27 +3325,20 @@ fn shielded_progress_percent(status: &WalletShieldedSyncView) -> Option<u64> {
 }
 
 fn shielded_sync_note(status: &WalletShieldedSyncView) -> String {
-    let progress = status
-        .current_cursor
-        .zip(status.target_cursor)
-        .map(|(current, target)| format!("event {current} of {target}"));
     let detail = match status.state.as_str() {
         "never_synced" => {
             "Shielded notes have not been indexed for this protected account.".to_owned()
         }
-        "syncing" => progress.map_or_else(
-            || "Connecting to the shielded event index…".to_owned(),
-            |progress| {
-                format!(
-                    "Indexing {progress} · {} processed this run.",
-                    status.events_processed
-                )
-            },
+        "syncing" if status.events_processed > 0 => format!(
+            "Indexing shielded notes · {} events processed this run.",
+            status.events_processed
         ),
-        "synced" => progress.map_or_else(
-            || "Shielded notes are synchronized.".to_owned(),
-            |progress| format!("Shielded notes are current at {progress}."),
+        "syncing" => "Connecting to the shielded event index…".to_owned(),
+        "synced" if status.events_processed > 0 => format!(
+            "Shielded notes are synchronized · {} events processed.",
+            status.events_processed
         ),
+        "synced" => "Shielded notes are synchronized.".to_owned(),
         "cached" => {
             "Showing a key-scoped cached shielded checkpoint; live catch-up is still required."
                 .to_owned()
@@ -3373,7 +3354,7 @@ fn shielded_sync_note(status: &WalletShieldedSyncView) -> String {
         _ => "Shielded synchronization is not available in this composition.".to_owned(),
     };
     status.failure.as_ref().map_or(detail.clone(), |failure| {
-        format!("{detail} ({})", failure.replace('_', " "))
+        format!("{detail} ({})", ui::sync_failure(failure))
     })
 }
 
@@ -3531,15 +3512,15 @@ fn ReceiveAddress(kind: String, value: String) -> Element {
     rsx! {
         div { class: "address-row",
             div {
-                strong { "{address_kind_label(&kind)}" }
-                small { "{address_purpose(&kind)}" }
+                strong { "{ui::address_kind(&kind)}" }
+                small { "{ui::address_purpose(&kind)}" }
             }
             code { title: "{value}", "{truncate_middle(&value, 18, 8)}" }
             span { class: "address-actions",
                 button {
                     class: "address-action",
                     r#type: "button",
-                    aria_label: "Copy {address_kind_label(&kind)} receive address",
+                    aria_label: "Copy {ui::address_kind(&kind)} receive address",
                     onclick: move |_| {
                         let result = PublicReceiveAddress::new(copy_value.clone())
                             .and_then(|address| copy_exporter.copy_receive_address(address));
@@ -3550,7 +3531,7 @@ fn ReceiveAddress(kind: String, value: String) -> Element {
                 button {
                     class: "address-action",
                     r#type: "button",
-                    aria_label: "Share {address_kind_label(&kind)} receive address",
+                    aria_label: "Share {ui::address_kind(&kind)} receive address",
                     onclick: move |_| {
                         let result = PublicReceiveAddress::new(share_value.clone())
                             .and_then(|address| share_exporter.share_receive_address(address));
@@ -3575,7 +3556,7 @@ fn ReceiveAddress(kind: String, value: String) -> Element {
             p { class: "address-export-notice", role: "status", "{message}" }
         }
         if *qr_open.read() {
-            div { class: "address-qr", role: "img", aria_label: "QR code for {address_kind_label(&kind)} receive address",
+            div { class: "address-qr", role: "img", aria_label: "QR code for {ui::address_kind(&kind)} receive address",
                 if let Some(svg) = qr {
                     div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
                     p { "Scan to receive at the public address shown above." }
@@ -3787,8 +3768,8 @@ fn SendTransferPanel(
                     dl { class: "preview-list",
                         div { dt { "Send" } dd { "{amount_label}" } }
                         div { dt { "Recipient" } dd { title: "{preview.recipient_address}", "{recipient_label}" } }
-                        div { dt { "Privacy" } dd { "{transfer_privacy_label(&preview.recipient_kind)}" } }
-                        div { dt { "Network" } dd { "{preview.network_id}" } }
+                        div { dt { "Privacy" } dd { "{ui::transfer_privacy(&preview.recipient_kind)}" } }
+                        div { dt { "Network" } dd { "{ui::midnight_network(&preview.network_id)}" } }
                         div { dt { "Change" } dd { "{change_label}" } }
                         div { dt { "Inputs" } dd { "{preview.input_count}" } }
                         div { dt { "DUST fee" } dd { "Calculated during proving" } }
@@ -3972,7 +3953,7 @@ fn SendTransferPanel(
             article { class: "surface-card transfer-card submitted-card", role: "status", aria_live: "polite",
                 p { class: "card-eyebrow", "Included" }
                 h2 { "Transfer submitted" }
-                p { "Mode: {submission.mode}. Final DUST fee: {format_transfer_asset(&submission.fee)}." }
+                p { "Mode: {ui::submission_mode(&submission.mode)}. Final DUST fee: {format_transfer_asset(&submission.fee)}." }
                 dl { class: "preview-list",
                     div { dt { "Transaction" } dd { title: "{submission.transaction_id}", "{truncate_middle(&submission.transaction_id, 16, 8)}" } }
                     div { dt { "Block" } dd { title: "{submission.block_id}", "{truncate_middle(&submission.block_id, 16, 8)}" } }
@@ -4099,50 +4080,6 @@ fn post_submission_recovery(retained_state: Option<&str>) -> TransferRecovery {
     }
 }
 
-fn submission_status_heading(state: &str) -> &'static str {
-    match state {
-        "included" => "Transfer included",
-        "broadcasting" => "Transfer broadcast",
-        "outcome_unknown" => "Submission outcome unknown",
-        "rejected" => "Submission rejected",
-        "expired" => "Submission expired",
-        _ => "Submission in progress",
-    }
-}
-
-fn submission_status_label(state: &str) -> &'static str {
-    match state {
-        "included" => "Included",
-        "broadcasting" => "Broadcasting",
-        "outcome_unknown" => "Outcome unknown",
-        "rejected" => "Rejected",
-        "expired" => "Expired",
-        "running" => "Preparing",
-        "cancellation_requested" => "Cancelling",
-        "cancelled" => "Cancelled",
-        _ => "Not started",
-    }
-}
-
-fn submission_status_note(state: &str) -> &'static str {
-    match state {
-        "included" => {
-            "The durable journal confirms this transfer was included in a finalized Midnight block."
-        }
-        "broadcasting" => {
-            "This transaction was durably recorded before broadcast. Reconcile it before preparing a replacement."
-        }
-        "outcome_unknown" => {
-            "The transaction may have reached Midnight. Oxid will not submit a duplicate while its outcome is unknown."
-        }
-        "rejected" => {
-            "Midnight finalized this submission as rejected. Its public record is retained for recovery history."
-        }
-        "expired" => "The submission was not included before its bounded validity window expired.",
-        _ => "Oxid is still preparing this submission and has not crossed the broadcast boundary.",
-    }
-}
-
 fn render_qr_svg(value: &str) -> Option<String> {
     use qrcode::{QrCode, render::svg};
 
@@ -4158,48 +4095,11 @@ fn render_qr_svg(value: &str) -> Option<String> {
 }
 
 fn night_display_to_atomic_units(value: &str) -> Result<String, &'static str> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err("enter a NIGHT amount");
-    }
-    let mut parts = value.split('.');
-    let whole = parts.next().unwrap_or_default();
-    let fraction = parts.next();
-    if parts.next().is_some()
-        || whole.is_empty()
-        || !whole.bytes().all(|byte| byte.is_ascii_digit())
-        || fraction.is_some_and(|part| !part.bytes().all(|byte| byte.is_ascii_digit()))
-    {
-        return Err("NIGHT amount must be a positive decimal number");
-    }
-    let fraction = fraction.unwrap_or_default();
-    if fraction.len() > 6 {
-        return Err("NIGHT supports at most 6 decimal places");
-    }
-    let padded_fraction = format!("{fraction:0<6}");
-    let atomic = format!("{whole}{padded_fraction}")
-        .parse::<u128>()
-        .map_err(|_| "NIGHT amount is too large")?;
-    if atomic == 0 {
-        return Err("NIGHT amount must be greater than zero");
-    }
-    Ok(atomic.to_string())
+    ui::parse_night_amount(value, false)
 }
 
 fn format_transfer_asset(asset: &oxid_wallet_application::WalletTransferAssetView) -> String {
-    format!(
-        "{} {}",
-        format_atomic_units(&asset.atomic_units, asset.decimals),
-        asset.symbol
-    )
-}
-
-fn transfer_privacy_label(kind: &str) -> &'static str {
-    if kind == "shielded" {
-        "Shielded"
-    } else {
-        "Unshielded"
-    }
+    ui::format_asset_amount(&asset.atomic_units, asset.decimals, &asset.symbol)
 }
 
 fn authorize_transfer_confirmation(
@@ -4210,9 +4110,9 @@ fn authorize_transfer_confirmation(
         summary: format!(
             "Send {} as a {} transfer to {} on {}; DUST fee balancing and proving remain pending",
             format_transfer_asset(&preview.amount),
-            transfer_privacy_label(&preview.recipient_kind).to_lowercase(),
+            ui::transfer_privacy(&preview.recipient_kind).to_lowercase(),
             truncate_middle(&preview.recipient_address, 18, 8),
-            preview.network_id,
+            ui::midnight_network(&preview.network_id),
         ),
         confirmed: true,
     }
@@ -4226,9 +4126,9 @@ fn submit_transfer_confirmation(
         summary: format!(
             "Prove and submit {} as a {} transfer to {} on {}",
             format_transfer_asset(&preview.amount),
-            transfer_privacy_label(&preview.recipient_kind).to_lowercase(),
+            ui::transfer_privacy(&preview.recipient_kind).to_lowercase(),
             truncate_middle(&preview.recipient_address, 18, 8),
-            preview.network_id,
+            ui::midnight_network(&preview.network_id),
         ),
         confirmed: true,
     }
@@ -4244,39 +4144,6 @@ fn balance_for<'a>(
         .find(|balance| balance.symbol == symbol)
 }
 
-fn format_atomic_units(atomic_units: &str, decimals: u8) -> String {
-    if atomic_units.is_empty() || !atomic_units.bytes().all(|byte| byte.is_ascii_digit()) {
-        return "—".to_owned();
-    }
-    let atomic_units = atomic_units.trim_start_matches('0');
-    let atomic_units = if atomic_units.is_empty() {
-        "0"
-    } else {
-        atomic_units
-    };
-    if decimals == 0 {
-        return atomic_units.to_owned();
-    }
-    let decimals = usize::from(decimals);
-    let padded = if atomic_units.len() <= decimals {
-        format!(
-            "{}{}",
-            "0".repeat(decimals + 1 - atomic_units.len()),
-            atomic_units
-        )
-    } else {
-        atomic_units.to_owned()
-    };
-    let split = padded.len() - decimals;
-    let whole = &padded[..split];
-    let fraction = padded[split..].trim_end_matches('0');
-    if fraction.is_empty() {
-        whole.to_owned()
-    } else {
-        format!("{whole}.{fraction}")
-    }
-}
-
 fn account_hint(account: &WalletAccountView, busy: Option<AccountOperation>) -> &'static str {
     if let Some(operation) = busy {
         match operation {
@@ -4286,51 +4153,7 @@ fn account_hint(account: &WalletAccountView, busy: Option<AccountOperation>) -> 
             AccountOperation::Syncing => "Synchronizing account state from the configured source…",
         }
     } else {
-        match account.source.as_str() {
-            "unavailable" => {
-                "Native custody and a live Midnight account source are not connected yet."
-            }
-            "simulated" => "Development-only public fixture state; no chain was contacted.",
-            "cached" => "Showing local state from the most recent successful synchronization.",
-            _ => "Live account state reported by the configured Midnight adapter.",
-        }
-    }
-}
-
-fn account_source_label(source: &str) -> &'static str {
-    match source {
-        "live" => "Live",
-        "cached" => "Cached",
-        "simulated" => "Simulated",
-        _ => "Not connected",
-    }
-}
-
-fn sync_status_label(state: &str) -> &'static str {
-    match state {
-        "never_synced" => "Not synced",
-        "syncing" => "Syncing",
-        "synced" => "Synced",
-        "stalled" => "Stalled",
-        _ => "Unavailable",
-    }
-}
-
-fn address_kind_label(kind: &str) -> &'static str {
-    match kind {
-        "unshielded" => "Unshielded",
-        "shielded" => "Shielded",
-        "dust" => "DUST",
-        _ => "Reward",
-    }
-}
-
-fn address_purpose(kind: &str) -> &'static str {
-    match kind {
-        "unshielded" => "Send public NIGHT here",
-        "shielded" => "Private NIGHT receive",
-        "dust" => "Fee-token account",
-        _ => "Reward address",
+        ui::account_source_note(&account.source)
     }
 }
 
@@ -4344,29 +4167,14 @@ fn truncate_middle(value: &str, head: usize, tail: usize) -> String {
     format!("{prefix}…{suffix}")
 }
 
-fn transaction_mark(direction: &str) -> &'static str {
-    match direction {
-        "incoming" => "↓",
-        "outgoing" => "↑",
-        "self_transfer" => "↔",
-        _ => "◇",
-    }
-}
-
-fn transaction_direction_label(direction: &str) -> &'static str {
-    match direction {
-        "incoming" => "Received",
-        "outgoing" => "Sent",
-        "self_transfer" => "Self transfer",
-        _ => "Transaction",
-    }
-}
-
 fn transaction_status_line(transaction: &oxid_wallet_application::WalletTransactionView) -> String {
     let block = transaction
         .block_height
         .map_or_else(|| "—".to_owned(), |height| height.to_string());
-    format!("{} · block {block}", transaction.status)
+    format!(
+        "{} · block {block}",
+        ui::transaction_status(&transaction.status)
+    )
 }
 
 const STANDALONE_DID_FIXTURE: &str =
@@ -4393,7 +4201,12 @@ fn did_operation_message(error: DidOperationError) -> String {
 }
 
 fn self_issued_authentication_message(error: SelfIssuedAuthenticationError) -> String {
-    error.to_string()
+    match error {
+        SelfIssuedAuthenticationError::Protocol(error) => {
+            ui::protocol_failure(error.code()).to_owned()
+        }
+        other => other.to_string(),
+    }
 }
 
 fn active_managed_authentication_method(records: &[DidRecordView]) -> Option<(String, String)> {
@@ -4757,14 +4570,8 @@ fn load_passport_vault_page(
 }
 
 fn parse_vault_amount(value: &str) -> Result<u128, String> {
-    if value.is_empty()
-        || value.len() > 39
-        || !value.bytes().all(|byte| byte.is_ascii_digit())
-        || (value.len() > 1 && value.starts_with('0'))
-    {
-        return Err("Enter a canonical whole-number NIGHT amount in base units.".to_owned());
-    }
-    value
+    ui::parse_night_amount(value, true)
+        .map_err(str::to_owned)?
         .parse()
         .map_err(|_| "The NIGHT amount is outside the supported range.".to_owned())
 }
@@ -4861,76 +4668,10 @@ fn parse_vault_lock_id(value: &str) -> Result<u64, String> {
         .map_err(|_| "The lock identifier is outside the supported range.".to_owned())
 }
 
-fn passport_vault_call_mode_label(mode: &str) -> &'static str {
-    match mode {
-        "native_settlement" => "Midnight live",
-        "deterministic_simulation" => "Deterministic simulation",
-        _ => "Unavailable",
-    }
-}
-
-fn passport_vault_call_mode_note(mode: &str) -> &'static str {
-    match mode {
-        "native_settlement" => {
-            "Calls use authenticated finalized state and the protected Midnight proving, submission, and reconciliation boundary."
-        }
-        "deterministic_simulation" => {
-            "Calls exercise the complete retained lifecycle locally and are always labelled simulated; no node broadcast occurs."
-        }
-        _ => {
-            "Configure the complete standalone Midnight stack and authenticated Passport Vault artifacts to enable contract calls."
-        }
-    }
-}
-
-fn passport_vault_contract_source_label(source: &str) -> &str {
-    match source {
-        "deterministic_simulation" => "simulated",
-        value => value,
-    }
-}
-
-fn passport_vault_submission_mode_label(mode: &str) -> &str {
-    match mode {
-        "deterministic_simulation_only" => "simulated · deterministic simulation only",
-        value => value,
-    }
-}
-
 fn passport_vault_call_recovery(retained_state: Option<&str>) -> PassportVaultCallRecovery {
     match retained_state {
         Some("authorized") => PassportVaultCallRecovery::RetryAuthorized,
         _ => PassportVaultCallRecovery::ReconcileUnknown,
-    }
-}
-
-fn passport_vault_submission_heading(state: &str) -> &'static str {
-    match state {
-        "included" => "Vault call included",
-        "broadcasting" => "Vault call broadcast",
-        "outcome_unknown" => "Vault call outcome unknown",
-        "rejected" => "Vault call rejected",
-        "expired" => "Vault call expired",
-        "cancelled" => "Vault call cancelled",
-        _ => "Vault call in progress",
-    }
-}
-
-fn passport_vault_submission_note(state: &str) -> &'static str {
-    match state {
-        "included" => "Midnight reported finalized public inclusion metadata for this call.",
-        "broadcasting" => {
-            "The broadcast boundary was crossed; cancellation and replacement are disabled."
-        }
-        "outcome_unknown" => {
-            "Oxid will not submit a duplicate. Reconcile this attempt with finalized history."
-        }
-        "rejected" => "Finalized history rejected this attempt; prepare a fresh call if allowed.",
-        "expired" => "The retained authorization expired before safe completion.",
-        "cancelled" => {
-            "The worker stopped before broadcast; the authorized draft may be retryable."
-        }
-        _ => "Proving or submission is still running.",
     }
 }
 
@@ -4959,16 +4700,11 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
         calls.mode.as_str(),
         "native_settlement" | "deterministic_simulation"
     );
-    let mode_label = passport_vault_call_mode_label(&calls.mode);
-    let mode_note = passport_vault_call_mode_note(&calls.mode);
+    let mode_label = ui::vault_call_mode(&calls.mode);
+    let mode_note = ui::vault_call_mode_note(&calls.mode);
     let read_state_button_label = match chain_state.read().clone() {
         PassportVaultContractStatePaneState::Loading => "Reading contract state…".to_owned(),
-        PassportVaultContractStatePaneState::Ready(vault) => {
-            format!(
-                "Refresh {} contract state",
-                passport_vault_contract_source_label(&vault.source)
-            )
-        }
+        PassportVaultContractStatePaneState::Ready(_) => "Refresh contract state".to_owned(),
         PassportVaultContractStatePaneState::Idle
         | PassportVaultContractStatePaneState::Failed(_) => "Read contract state".to_owned(),
     };
@@ -5042,19 +4778,20 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                 },
                 PassportVaultContractStatePaneState::Ready(vault) => {
                     let authentication = vault.chain_anchor.as_ref().map_or(
-                        "simulated_or_unanchored",
-                        |anchor| anchor.state_authentication.as_str(),
+                        ui::vault_state_authentication("simulated_or_unanchored"),
+                        |anchor| ui::vault_state_authentication(&anchor.state_authentication),
                     );
+                    let source = ui::vault_contract_source(&vault.source);
                     rsx! {
                         p { class: "form-hint", aria_live: "polite",
-                            "Contract state loaded from {vault.source}."
+                            "Contract state loaded from {source}."
                         }
                         div { class: "surface-card",
                             p { class: "card-eyebrow", "Contract state" }
                             dl { class: "preview-list",
-                                div { dt { "Source" } dd { "{vault.source}" } }
+                                div { dt { "Source" } dd { "{source}" } }
                                 div { dt { "Authentication" } dd { "{authentication}" } }
-                                div { dt { "Total locked" } dd { "{vault.total_locked} base units" } }
+                                div { dt { "Total locked" } dd { "{ui::format_night_amount(&vault.total_locked)}" } }
                                 div { dt { "Locks" } dd { "{vault.locks.len()}" } }
                                 if let Some(anchor) = vault.chain_anchor.as_ref() {
                                     div { dt { "Finalized height" } dd { "{anchor.finalized_head_height}" } }
@@ -5105,11 +4842,11 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                                 label { "Minimum age"
                                     input { r#type: "number", min: "0", max: "120", value: "{minimum_age}", oninput: move |event| minimum_age.set(event.value()) }
                                 }
-                                label { "Maximum claim (base units)"
-                                    input { inputmode: "numeric", value: "{maximum_claim}", oninput: move |event| maximum_claim.set(event.value()) }
+                                label { "Maximum claim (NIGHT)"
+                                    input { inputmode: "decimal", value: "{maximum_claim}", oninput: move |event| maximum_claim.set(event.value()) }
                                 }
-                                label { "Initial deposit (base units)"
-                                    input { inputmode: "numeric", value: "{initial_amount}", oninput: move |event| initial_amount.set(event.value()) }
+                                label { "Initial deposit (NIGHT)"
+                                    input { inputmode: "decimal", value: "{initial_amount}", oninput: move |event| initial_amount.set(event.value()) }
                                 }
                                 label { "Required issuing state (optional)"
                                     input { maxlength: "32", value: "{required_state}", oninput: move |event| required_state.set(event.value()) }
@@ -5123,8 +4860,8 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                                 label { "Lock ID"
                                     input { inputmode: "numeric", value: "{lock_id}", oninput: move |event| lock_id.set(event.value()) }
                                 }
-                                label { "Amount (base units)"
-                                    input { inputmode: "numeric", value: "{amount}", oninput: move |event| amount.set(event.value()) }
+                                label { "Amount (NIGHT)"
+                                    input { inputmode: "decimal", value: "{amount}", oninput: move |event| amount.set(event.value()) }
                                 }
                             }
                             if selected_operation == "claim_from_lock" {
@@ -5330,7 +5067,7 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                 rsx! {
                     article { class: "info-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
                         p { class: "card-eyebrow", "Submitting" }
-                        h2 { "Proving {preview.operation}" }
+                        h2 { "Proving {ui::vault_operation(&preview.operation)}" }
                         p { "Cancellation is safe only before the broadcast boundary. Oxid never blind-retries an ambiguous outcome." }
                         button {
                             class: "secondary-button",
@@ -5366,7 +5103,7 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
             PassportVaultContractPanelState::Cancelling(preview) => rsx! {
                 article { class: "info-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
                     p { class: "card-eyebrow", "Cancelling" }
-                    h2 { "Stopping {preview.operation} safely" }
+                    h2 { "Stopping {ui::vault_operation(&preview.operation)} safely" }
                     p { "Waiting for the submission worker to acknowledge a pre-broadcast boundary." }
                 }
             },
@@ -5374,9 +5111,9 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                 article { class: "info-card submitted-card", role: "status", aria_live: "polite",
                     p { class: "card-eyebrow", "Included" }
                     h2 { "Passport Vault call completed" }
-                    p { "Mode: {passport_vault_submission_mode_label(&submission.mode)}. Final DUST fee: {submission.fee_atomic_units} base units." }
+                    p { "Mode: {ui::vault_submission_mode(&submission.mode)}. Final DUST fee: {ui::format_dust_amount(&submission.fee_atomic_units)}." }
                     dl { class: "preview-list",
-                        div { dt { "Operation" } dd { "{submission.call.operation}" } }
+                        div { dt { "Operation" } dd { "{ui::vault_operation(&submission.call.operation)}" } }
                         div { dt { "Transaction" } dd { title: "{submission.transaction_hash_hex}", "{truncate_middle(&submission.transaction_hash_hex, 16, 8)}" } }
                         div { dt { "Block" } dd { title: "{submission.block_hash_hex}", "{truncate_middle(&submission.block_hash_hex, 16, 8)}" } }
                         div { dt { "Height" } dd { "{submission.block_height}" } }
@@ -5387,12 +5124,12 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
             PassportVaultContractPanelState::Resolved(submission) => rsx! {
                 article { class: "info-card", role: "status", aria_live: "polite",
                     p { class: "card-eyebrow", "Cancellation resolved" }
-                    h2 { "{passport_vault_submission_heading(&submission.state)}" }
-                    p { "{passport_vault_submission_note(&submission.state)}" }
+                    h2 { "{ui::vault_submission_heading(&submission.state)}" }
+                    p { "{ui::vault_submission_note(&submission.state)}" }
                     dl { class: "preview-list",
-                        div { dt { "State" } dd { "{submission.state}" } }
+                        div { dt { "State" } dd { "{ui::submission_state(&submission.state)}" } }
                         if let Some(mode) = submission.mode.as_deref() {
-                            div { dt { "Mode" } dd { "{passport_vault_submission_mode_label(mode)}" } }
+                            div { dt { "Mode" } dd { "{ui::vault_submission_mode(mode)}" } }
                         }
                         if let Some(transaction) = submission.transaction_hash_hex.as_deref() {
                             div { dt { "Transaction" } dd { title: "{transaction}", "{truncate_middle(transaction, 16, 8)}" } }
@@ -5447,16 +5184,16 @@ fn PassportVaultCallPreviewCard(preview: Box<PassportVaultCallPreviewView>) -> E
     rsx! {
         article { class: "info-card review-card", aria_label: "Reviewed Passport Vault call",
             p { class: "card-eyebrow", "Exact call preview" }
-            h2 { "{preview.operation}" }
+            h2 { "{ui::vault_operation(&preview.operation)}" }
             dl { class: "preview-list",
-                div { dt { "Amount" } dd { "{preview.amount_atomic_units} base units" } }
+                div { dt { "Amount" } dd { "{ui::format_night_amount(&preview.amount_atomic_units)}" } }
                 if let Some(lock_id) = preview.lock_id {
                     div { dt { "Lock" } dd { "#{lock_id}" } }
                 }
                 div { dt { "State height" } dd { "{preview.state_anchor_block_height}" } }
                 div { dt { "State block" } dd { title: "{preview.state_anchor_block_hash_hex}", "{truncate_middle(&preview.state_anchor_block_hash_hex, 16, 8)}" } }
-                div { dt { "Draft state" } dd { "{preview.state}" } }
-                div { dt { "DUST fee" } dd { if let Some(fee) = preview.fee_atomic_units.as_deref() { "{fee} base units" } else { "Calculated during proving" } } }
+                div { dt { "Draft state" } dd { "{ui::vault_draft_state(&preview.state)}" } }
+                div { dt { "DUST fee" } dd { if let Some(fee) = preview.fee_atomic_units.as_deref() { "{ui::format_dust_amount(fee)}" } else { "Calculated during proving" } } }
             }
         }
     }
@@ -5506,12 +5243,12 @@ fn PassportVaultCallRecoveryPane(profile_id: String) -> Element {
             rsx! {
                 article { class: "info-card", role: "status", aria_live: "polite", aria_busy: if reconciling { "true" } else { "false" },
                     p { class: "card-eyebrow", "Latest vault call" }
-                    h2 { "{passport_vault_submission_heading(&submission.state)}" }
-                    p { "{passport_vault_submission_note(&submission.state)}" }
+                    h2 { "{ui::vault_submission_heading(&submission.state)}" }
+                    p { "{ui::vault_submission_note(&submission.state)}" }
                     dl { class: "preview-list",
-                        div { dt { "State" } dd { "{submission.state}" } }
+                        div { dt { "State" } dd { "{ui::submission_state(&submission.state)}" } }
                         if let Some(mode) = submission.mode.as_deref() {
-                            div { dt { "Mode" } dd { "{passport_vault_submission_mode_label(mode)}" } }
+                            div { dt { "Mode" } dd { "{ui::vault_submission_mode(mode)}" } }
                         }
                         if let Some(transaction) = submission.transaction_hash_hex.as_deref() {
                             div { dt { "Transaction" } dd { title: "{transaction}", "{truncate_middle(transaction, 16, 8)}" } }
@@ -5720,15 +5457,7 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
             busy,
             operation_error,
         } => {
-            let persistence_note = match state_persistence.as_str() {
-                "owner_private_atomic_file" => {
-                    "Owner-private durable conformance ledger · survives app restart · no on-chain transaction submitted"
-                }
-                "process_local" => {
-                    "Process-local conformance ledger · no on-chain transaction submitted"
-                }
-                _ => "Standalone conformance ledger · no on-chain transaction submitted",
-            };
+            let persistence_note = ui::vault_persistence_note(&state_persistence);
             let profile_id = active_profile.id.clone();
             let create_services = services.clone();
             let create_profile = profile_id.clone();
@@ -5757,10 +5486,10 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
 
                     article { class: "balance-card",
                         p { class: "card-eyebrow", "Standalone conformance ledger · total locked" }
-                        h2 { "{vault.total_locked} base units" }
+                        h2 { "{ui::format_night_amount(&vault.total_locked)}" }
                         div { class: "balance-breakdown",
-                            span { "Deposited {vault.total_deposited}" }
-                            span { "Released {vault.total_released}" }
+                            span { "Deposited {ui::format_night_amount(&vault.total_deposited)}" }
+                            span { "Released {ui::format_night_amount(&vault.total_released)}" }
                             span { "Claims {vault.claim_count}" }
                         }
                         p { class: "trust-line", "{persistence_note}" }
@@ -5779,11 +5508,11 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                             label { "Minimum age"
                                 input { r#type: "number", min: "0", max: "120", aria_label: "Vault minimum age", value: "{minimum_age}", oninput: move |event| minimum_age.set(event.value()) }
                             }
-                            label { "Maximum claim (base units)"
-                                input { inputmode: "numeric", aria_label: "Vault maximum claim", value: "{maximum_claim}", oninput: move |event| maximum_claim.set(event.value()) }
+                            label { "Maximum claim (NIGHT)"
+                                input { inputmode: "decimal", aria_label: "Vault maximum claim", value: "{maximum_claim}", oninput: move |event| maximum_claim.set(event.value()) }
                             }
-                            label { "Initial deposit (base units)"
-                                input { inputmode: "numeric", aria_label: "Vault initial deposit", value: "{initial_amount}", oninput: move |event| initial_amount.set(event.value()) }
+                            label { "Initial deposit (NIGHT)"
+                                input { inputmode: "decimal", aria_label: "Vault initial deposit", value: "{initial_amount}", oninput: move |event| initial_amount.set(event.value()) }
                             }
                             label { "Required issuing state (optional)"
                                 input { maxlength: "32", aria_label: "Vault required issuing state", value: "{required_state}", placeholder: "US", oninput: move |event| required_state.set(event.value()) }
@@ -5871,8 +5600,8 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                                 }
                             }
                         }
-                        label { "Operation amount (base units)"
-                            input { inputmode: "numeric", aria_label: "Vault operation amount", value: "{operation_amount}", oninput: move |event| operation_amount.set(event.value()) }
+                        label { "Operation amount (NIGHT)"
+                            input { inputmode: "decimal", aria_label: "Vault operation amount", value: "{operation_amount}", oninput: move |event| operation_amount.set(event.value()) }
                         }
                         if credentials.is_empty() {
                             p { class: "field-hint", "Issue or import a verified compact Digital Passport on the Credentials page before claiming." }
@@ -5986,7 +5715,7 @@ fn PassportVaultLockCard(
     let policy_detail = format!(
         "Age {}+ · max {}{}{}",
         lock.minimum_age_years,
-        lock.maximum_claim_amount,
+        ui::format_night_amount(&lock.maximum_claim_amount),
         lock.required_issuing_state
             .as_ref()
             .map_or(String::new(), |value| format!(" · state {value}")),
@@ -5997,11 +5726,11 @@ fn PassportVaultLockCard(
     rsx! {
         article { class: "credential-card",
             div { class: "credential-card__heading",
-                div { p { class: "card-eyebrow", "Lock #{lock.lock_id}" } h2 { "{lock.remaining} base units remaining" } }
+                div { p { class: "card-eyebrow", "Lock #{lock.lock_id}" } h2 { "{ui::format_night_amount(&lock.remaining)} remaining" } }
                 span { class: "status-pill", if creator { "Your lock" } else { "Claimable" } }
             }
             p { "{policy_detail}" }
-            p { class: "field-hint", "Deposited {lock.total_deposited} · released {lock.total_released}" }
+            p { class: "field-hint", "Deposited {ui::format_night_amount(&lock.total_deposited)} · released {ui::format_night_amount(&lock.total_released)}" }
             div { class: "button-row",
                 button {
                     class: "secondary-button", r#type: "button", disabled: busy || !creator,
@@ -6278,7 +6007,7 @@ fn DidsPage(
                             dl { class: "did-record__facts",
                                 div { dt { "Verifier" } dd { title: "{preview.verifier}", "{preview.verifier}" } }
                                 div { dt { "Purpose" } dd { "{preview.purpose}" } }
-                                div { dt { "State" } dd { {preview.state.replace('_', " ")} } }
+                                div { dt { "State" } dd { "{ui::protocol_state(&preview.state)}" } }
                             }
                             if preview.state == "awaiting_consent" {
                                 label { class: "confirmation-check",
@@ -6439,13 +6168,13 @@ fn DidsPage(
                                 let forget_profile = profile_id.clone();
                                 let forget_services = services.clone();
                                 let retained = records.clone();
-                                let source = record.source.clone();
+                                let source = ui::did_source(&record.source);
                                 let version = record.document_metadata.version_id.clone().unwrap_or_else(|| "Unversioned".to_owned());
                                 rsx! {
                                     article { class: "surface-card did-record", key: "{did}",
                                         div { class: "did-record__heading",
                                             div {
-                                                p { class: "card-eyebrow", "{record.document.network} · {source}" }
+                                                p { class: "card-eyebrow", "{ui::midnight_network(&record.document.network)} · {source}" }
                                                 h2 { title: "{did}", "{truncate_middle(&did, 22, 12)}" }
                                             }
                                             span { class: if record.document_metadata.deactivated == Some(true) { "status-pill" } else { "status-pill success" },
@@ -6461,7 +6190,7 @@ fn DidsPage(
                                             ul { class: "did-method-list",
                                                 for method in record.document.verification_methods.clone() {
                                                     li { key: "{method.id}",
-                                                        strong { "{method.public_key_jwk.curve}" }
+                                                        strong { "{ui::key_curve(&method.public_key_jwk.curve)}" }
                                                         code { title: "{method.id}", "{truncate_middle(&method.id, 16, 8)}" }
                                                     }
                                                 }
@@ -6560,14 +6289,9 @@ fn credential_operation_message(error: CredentialOperationError) -> String {
 }
 
 fn credential_issuance_message(error: CredentialIssuanceError) -> String {
-    error.to_string()
-}
-
-fn identity_request_kind_label(kind: IdentityRequestKind) -> &'static str {
-    match kind {
-        IdentityRequestKind::CredentialIssuance => "a credential offer",
-        IdentityRequestKind::SelfIssuedAuthentication => "a DID login",
-        IdentityRequestKind::CredentialPresentation => "a credential presentation",
+    match error {
+        CredentialIssuanceError::Protocol(error) => ui::protocol_failure(error.code()).to_owned(),
+        other => other.to_string(),
     }
 }
 
@@ -6619,7 +6343,7 @@ fn route_pending_identity_link(
             menu_open.set(false);
             notice.set(Some(format!(
                 "App link recognized as {}. Review the request before consent.",
-                identity_request_kind_label(kind)
+                ui::identity_request_kind(kind)
             )));
         }
         Err(error) => notice.set(Some(identity_request_routing_message(error))),
@@ -6676,6 +6400,7 @@ fn credential_presentation_message(error: CredentialPresentationError) -> String
             "The app left the foreground. The proof worker stopped and discarded its result; preview a fresh request to retry.".to_owned(),
         CredentialPresentationError::Protocol(PresentationProtocolError::ProofTimedOut) =>
             "The proof exceeded the standalone time limit. The worker stopped and its result was discarded; preview a fresh request to retry.".to_owned(),
+        CredentialPresentationError::Protocol(error) => ui::protocol_failure(error.code()).to_owned(),
         other => other.to_string(),
     }
 }
@@ -6796,16 +6521,16 @@ fn CredentialPresentationPanel(
                     dl { class: "credential-record__facts",
                         div { dt { "Verifier" } dd { title: "{presentation.verifier}", "{presentation.verifier}" } }
                         div { dt { "Purpose" } dd { "{presentation.purpose}" } }
-                        div { dt { "State" } dd { {presentation.state.replace('_', " ")} } }
+                        div { dt { "State" } dd { "{ui::protocol_state(&presentation.state)}" } }
                     }
                     h4 { "Requested claims" }
                     ul { class: "credential-stage-list", aria_label: "Requested presentation claims",
                         for claim in presentation.requested_claims.clone() {
                             li { key: "{claim.claim_path}",
                                 span { "{claim.label}" }
-                                strong { "{claim.intent}" }
+                                strong { "{ui::claim_intent(&claim.intent)}" }
                                 if let Some(kind) = claim.predicate_kind {
-                                    small { "{kind} {claim.threshold.unwrap_or_default()}" }
+                                    small { "{ui::predicate_kind(&kind)} {claim.threshold.unwrap_or_default()}" }
                                 }
                             }
                         }
@@ -7114,7 +6839,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                 section { class: "passport-claims", aria_label: "Digital Passport protected claims",
                     div { class: "passport-claims__heading",
                         div {
-                            p { class: "card-eyebrow", "{disclosure.schema_id}" }
+                            p { class: "card-eyebrow", "{ui::credential_schema(&disclosure.schema_id)}" }
                             h3 { "Available proofs" }
                         }
                         span { class: "status-pill", "Holder controlled" }
@@ -7125,7 +6850,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                     if let Some(candidate) = first {
                         article { class: "passport-claim",
                             div {
-                                span { class: "passport-claim__tier", "{candidate.privacy_tier}" }
+                                span { class: "passport-claim__tier", "{ui::claim_privacy(&candidate.privacy_tier)}" }
                                 h4 { "{candidate.label}" }
                                 if let Some(value) = revealed_first.read().as_deref() {
                                     p { class: "passport-claim__value", "{value}" }
@@ -7173,7 +6898,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                     if let Some(candidate) = last {
                         article { class: "passport-claim",
                             div {
-                                span { class: "passport-claim__tier", "{candidate.privacy_tier}" }
+                                span { class: "passport-claim__tier", "{ui::claim_privacy(&candidate.privacy_tier)}" }
                                 h4 { "{candidate.label}" }
                                 if let Some(value) = revealed_last.read().as_deref() {
                                     p { class: "passport-claim__value", "{value}" }
@@ -7221,7 +6946,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                     if let Some(candidate) = date_of_birth {
                         article { class: "passport-claim predicate",
                             div {
-                                span { class: "passport-claim__tier predicate", "{candidate.privacy_tier}" }
+                                span { class: "passport-claim__tier predicate", "{ui::claim_privacy(&candidate.privacy_tier)}" }
                                 h4 { "Date of birth" }
                                 p { "Never reveals the date. Plans only an age-over-threshold predicate." }
                             }
@@ -7276,7 +7001,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                                 plan_notice.set(Some(match result {
                                     Ok(Ok(plan)) => format!(
                                         "{} · local preview only · no presentation generated",
-                                        plan.outcome.replace('_', " ")
+                                        ui::disclosure_outcome(&plan.outcome)
                                     ),
                                     Ok(Err(error)) => credential_operation_message(error),
                                     Err(error) => error.to_string(),
@@ -7323,10 +7048,10 @@ fn CredentialRecordCard(
         article { class: "surface-card credential-record", key: "{identifier}",
             div { class: "credential-record__heading",
                 div {
-                    p { class: "card-eyebrow", "{credential.format}" }
+                    p { class: "card-eyebrow", "{ui::credential_format(&credential.format)}" }
                     h2 { "{credential.display_name}" }
                 }
-                span { class: status_class, "{outcome}" }
+                span { class: status_class, "{ui::verification_outcome(&outcome)}" }
             }
             dl { class: "credential-record__facts",
                 div { dt { "Issuer" } dd { title: "{credential.issuer_did}", "{issuer}" } }
@@ -7339,7 +7064,7 @@ fn CredentialRecordCard(
                 } }
                 div { dt { "Issued" } dd {
                     if let Some(timestamp) = credential.issued_at_ms {
-                        "{timestamp} ms"
+                        "{ui::format_epoch_millis(timestamp)}"
                     } else {
                         "Not supplied"
                     }
@@ -7357,11 +7082,11 @@ fn CredentialRecordCard(
             ul { class: "credential-stage-list", aria_label: "Verification stages",
                 for stage in credential.verification_stages.clone() {
                     {
-                        let status_label = stage.status.replace('_', " ");
-                        let reason_label = stage.reason_code.as_deref().map(|reason| reason.replace('_', " "));
+                        let status_label = ui::verification_stage_status(&stage.status);
+                        let reason_label = stage.reason_code.as_deref().map(ui::verification_reason);
                         rsx! {
                             li { key: "{stage.name}",
-                                span { "{stage.name}" }
+                                span { "{ui::verification_stage(&stage.name)}" }
                                 strong { class: if stage.status == "passed" { "stage-passed" } else if stage.status == "failed" { "stage-failed" } else { "stage-pending" },
                                     "{status_label}"
                                 }
@@ -7447,10 +7172,8 @@ fn compact_credential_policy_summary(credential: &CredentialView) -> Option<Stri
             .verification_stages
             .iter()
             .find(|stage| stage.name == name)
-            .map_or("not checked", |stage| match stage.status.as_str() {
-                "passed" => "passed",
-                "failed" => "failed",
-                _ => "not checked",
+            .map_or("not checked", |stage| {
+                ui::verification_policy_status(&stage.status)
             })
     };
     Some(format!(
@@ -7626,7 +7349,7 @@ fn CredentialsPage(
                             dl { class: "credential-record__facts",
                                 div { dt { "Issuer" } dd { title: "{preview.issuer}", "{preview.issuer}" } }
                                 div { dt { "Credential" } dd { {preview.display_names.join(", ")} } }
-                                div { dt { "State" } dd { {preview.state.replace('_', " ")} } }
+                                div { dt { "State" } dd { "{ui::protocol_state(&preview.state)}" } }
                             }
                             if preview.state == "awaiting_consent" {
                                 label { class: "confirmation-check",
@@ -7907,8 +7630,8 @@ fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
                     protection_ready,
                     format!(
                         "{} · {}",
-                        account_source_label(&account.source),
-                        sync_status_label(&account.sync.state)
+                        ui::account_source(&account.source),
+                        ui::sync_state(&account.sync.state)
                     ),
                     midnight_ready,
                     if account.source == "simulated" {
@@ -8813,11 +8536,11 @@ mod tests {
 
     #[test]
     fn atomic_units_are_rendered_without_floating_point_loss() {
-        assert_eq!(format_atomic_units("5000000", 6), "5");
-        assert_eq!(format_atomic_units("12000000000000000", 15), "12");
-        assert_eq!(format_atomic_units("1", 6), "0.000001");
-        assert_eq!(format_atomic_units("000000", 6), "0");
-        assert_eq!(format_atomic_units("not-a-number", 6), "—");
+        assert_eq!(ui::format_atomic_units("5000000", 6), "5");
+        assert_eq!(ui::format_atomic_units("12000000000000000", 15), "12");
+        assert_eq!(ui::format_atomic_units("1", 6), "0.000001");
+        assert_eq!(ui::format_atomic_units("000000", 6), "0");
+        assert_eq!(ui::format_atomic_units("not-a-number", 6), "—");
     }
 
     fn dust_status(state: &str, current: Option<u64>, target: Option<u64>) -> WalletDustSyncView {
@@ -8857,8 +8580,8 @@ mod tests {
         let note = dust_sync_note(&cached);
         assert!(note.contains("cached DUST checkpoint"));
         assert!(note.contains("spending remains disabled"));
-        assert!(note.contains("transport unavailable"));
-        assert_eq!(dust_sync_state_label("stalled"), "Stalled");
+        assert!(note.contains("Midnight connection is unavailable"));
+        assert_eq!(ui::sync_state("stalled"), "Needs attention");
     }
 
     fn shielded_status(
@@ -8895,7 +8618,7 @@ mod tests {
         let note = shielded_sync_note(&cached);
         assert!(note.contains("cached shielded checkpoint"));
         assert!(note.contains("live catch-up"));
-        assert!(note.contains("transport unavailable"));
+        assert!(note.contains("Midnight connection is unavailable"));
         assert!(
             shielded_sync_note(&shielded_status("cancelled", Some(1), Some(2)))
                 .contains("consistent checkpoint")
@@ -8963,14 +8686,14 @@ mod tests {
 
     #[test]
     fn durable_submission_states_have_truthful_mobile_copy() {
-        assert_eq!(submission_status_heading("included"), "Transfer included");
+        assert_eq!(ui::submission_heading("included"), "Transfer included");
         assert_eq!(
-            submission_status_label("outcome_unknown"),
-            "Outcome unknown"
+            ui::submission_state("outcome_unknown"),
+            "Checking with the network…"
         );
-        assert!(submission_status_note("broadcasting").contains("before broadcast"));
-        assert!(submission_status_note("outcome_unknown").contains("not submit a duplicate"));
-        assert!(submission_status_note("expired").contains("expired"));
+        assert!(ui::submission_note("broadcasting").contains("before broadcast"));
+        assert!(ui::submission_note("outcome_unknown").contains("not submit a duplicate"));
+        assert!(ui::submission_note("expired").contains("expired"));
     }
 
     fn vault_contract_inputs(operation: &str) -> PassportVaultContractInputs {
@@ -8996,14 +8719,14 @@ mod tests {
                 maximum_claim_amount,
                 initial_amount,
                 ..
-            }) if maximum_claim_amount == "40" && initial_amount == "100"
+            }) if maximum_claim_amount == "40000000" && initial_amount == "100000000"
         ));
         assert!(matches!(
             vault_contract_inputs("deposit_to_lock").action(),
             Ok(PreparePassportVaultCallAction::DepositToLock {
                 lock_id: 7,
                 amount,
-            }) if amount == "10"
+            }) if amount == "10000000"
         ));
         assert!(matches!(
             vault_contract_inputs("claim_from_lock").action(),
@@ -9011,14 +8734,14 @@ mod tests {
                 lock_id: 7,
                 amount,
                 credential_id,
-            }) if amount == "10" && credential_id == "credential_test"
+            }) if amount == "10000000" && credential_id == "credential_test"
         ));
         assert!(matches!(
             vault_contract_inputs("withdraw_from_lock").action(),
             Ok(PreparePassportVaultCallAction::WithdrawFromLock {
                 lock_id: 7,
                 amount,
-            }) if amount == "10"
+            }) if amount == "10000000"
         ));
         assert!(
             vault_contract_inputs("set_trusted_issuer")
@@ -9045,32 +8768,26 @@ mod tests {
     #[test]
     fn mobile_vault_modes_and_recovery_copy_never_overstate_settlement() {
         assert_eq!(
-            passport_vault_call_mode_label("deterministic_simulation"),
-            "Deterministic simulation"
+            ui::vault_call_mode("deterministic_simulation"),
+            "Simulated — runs locally, nothing on Midnight"
         );
+        assert!(ui::vault_call_mode_note("deterministic_simulation").contains("no node broadcast"));
+        assert_eq!(ui::vault_call_mode("native_settlement"), "Midnight live");
+        assert_eq!(
+            ui::vault_contract_source("deterministic_simulation"),
+            "Simulated — runs locally, nothing on Midnight"
+        );
+        assert_eq!(
+            ui::vault_contract_source("authenticated_node"),
+            "Midnight node"
+        );
+        assert_eq!(
+            ui::vault_submission_mode("deterministic_simulation_only"),
+            "Simulated — runs locally, nothing on Midnight"
+        );
+        assert_eq!(ui::vault_submission_mode("midnight"), "Mode unavailable");
         assert!(
-            passport_vault_call_mode_note("deterministic_simulation").contains("no node broadcast")
-        );
-        assert_eq!(
-            passport_vault_call_mode_label("native_settlement"),
-            "Midnight live"
-        );
-        assert_eq!(
-            passport_vault_contract_source_label("deterministic_simulation"),
-            "simulated"
-        );
-        assert_eq!(
-            passport_vault_contract_source_label("authenticated_node"),
-            "authenticated_node"
-        );
-        assert_eq!(
-            passport_vault_submission_mode_label("deterministic_simulation_only"),
-            "simulated · deterministic simulation only"
-        );
-        assert_eq!(passport_vault_submission_mode_label("midnight"), "midnight");
-        assert!(
-            passport_vault_call_mode_note("native_settlement")
-                .contains("authenticated finalized state")
+            ui::vault_call_mode_note("native_settlement").contains("authenticated finalized state")
         );
         assert_eq!(
             passport_vault_call_recovery(Some("authorized")),
@@ -9080,9 +8797,7 @@ mod tests {
             passport_vault_call_recovery(Some("submitting")),
             PassportVaultCallRecovery::ReconcileUnknown
         );
-        assert!(
-            passport_vault_submission_note("outcome_unknown").contains("not submit a duplicate")
-        );
+        assert!(ui::vault_submission_note("outcome_unknown").contains("not submit a duplicate"));
     }
 
     #[test]

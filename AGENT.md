@@ -936,6 +936,15 @@ colors are not brandable and dark is still the only selected scheme. Keep
 responsive dimensions and safe-area geometry explicit, but put component
 spacing on `--space-1..8`. The Passport Vault compatibility classes remain
 mapped to the shared card/action/form rules; do not add a third vocabulary.
+ADR-0085 makes `crates/ui-dioxus/src/labels.rs` the user-facing machine-value
+boundary. States, modes, sources, formats, authentication labels, protocol and
+verification reasons, network names, and disclosure vocabulary must never be
+interpolated or underscore-normalized directly in rsx. Unknown values use
+neutral unavailable copy and are never echoed. Use exact six-decimal NIGHT,
+fifteen-decimal DUST, and readable UTC timestamp helpers; adapter cursors may
+drive progress but are not user copy. `scripts/check-ui-copy-labels.sh` enforces
+the boundary from `run.sh`; update both the mapping tests and required
+vocabulary when a reviewed public view value is added.
 
 `oxid-composition` exposes UI-neutral `ApplicationServices`. Incoming adapters
 adapt that object at their own boundary; composition must not depend on Dioxus,
