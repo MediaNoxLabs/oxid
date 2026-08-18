@@ -168,9 +168,27 @@ impl FileRecoveryJournal {
             return Err(RecoveryJournalError::Integrity);
         }
         let parent = self.path.parent().ok_or(RecoveryJournalError::Integrity)?;
+        let parent_existed = parent
+            .try_exists()
+            .map_err(|_| RecoveryJournalError::Unavailable)?;
         fs::create_dir_all(parent).map_err(|_| RecoveryJournalError::Unavailable)?;
         reject_symlink(parent)?;
         reject_symlink_if_present(&self.path)?;
+        #[cfg(unix)]
+        {
+            let metadata = fs::metadata(parent).map_err(|_| RecoveryJournalError::Unavailable)?;
+            if !metadata.is_dir() {
+                return Err(RecoveryJournalError::Integrity);
+            }
+            if parent_existed {
+                if metadata.permissions().mode() & 0o077 != 0 {
+                    return Err(RecoveryJournalError::Integrity);
+                }
+            } else {
+                fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+                    .map_err(|_| RecoveryJournalError::Unavailable)?;
+            }
+        }
         let temporary = temporary_path(&self.path);
         remove_stale_temporary(&temporary)?;
         let mut options = OpenOptions::new();
@@ -876,6 +894,7 @@ mod tests {
     };
 
     use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
+    use oxid_adapter_storage_identity_json::JsonDidRecordRepository;
     use oxid_adapter_storage_memory::{
         InMemoryCredentialRepository, InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
     };
@@ -1336,10 +1355,23 @@ mod tests {
         journal.save(&expected).expect("journal save");
         assert_eq!(journal.load().expect("journal load"), Some(expected));
         #[cfg(unix)]
-        assert_eq!(
-            fs::metadata(&path).expect("metadata").permissions().mode() & 0o777,
-            0o600
-        );
+        {
+            assert_eq!(
+                fs::metadata(&path).expect("metadata").permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(path.parent().expect("parent"))
+                    .expect("parent metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
+        JsonDidRecordRepository::new(root.join("private/did-records.json"))
+            .upsert(did_record())
+            .expect("sibling owner-private DID store");
         journal.clear().expect("journal clear");
         assert!(journal.load().expect("journal absent").is_none());
         let _ = fs::remove_dir_all(root);

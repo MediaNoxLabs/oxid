@@ -110,7 +110,10 @@ private object BackupDocumentCoordinator {
     private const val EXPORT_REQUEST_CODE = 0x0A72
     private const val IMPORT_REQUEST_CODE = 0x0A73
     private const val MAX_PACKAGE_BYTES = 80 * 1024 * 1024
-    private const val EXPECTED_FILE_NAME = "oxid-wallet-custody.oxidbak"
+    private val ALLOWED_FILE_NAMES = setOf(
+        "oxid-wallet-custody.oxidbak",
+        "oxid-wallet.oxidbak",
+    )
     private var status = "idle"
     private var resultPayload: String? = null
     private var exportBytes: ByteArray? = null
@@ -120,9 +123,11 @@ private object BackupDocumentCoordinator {
         if (status == "exporting" || status == "importing") return json("busy")
         if (request.isEmpty() || request.length > MAX_PACKAGE_BYTES * 2) return json("invalid")
         val body = runCatching { JSONObject(request) }.getOrNull() ?: return json("invalid")
-        if (body.keys().asSequence().toSet() != setOf("file_name", "payload") ||
-            body.optString("file_name", "") != EXPECTED_FILE_NAME
-        ) return json("invalid")
+        if (body.keys().asSequence().toSet() != setOf("file_name", "payload")) {
+            return json("invalid")
+        }
+        val fileName = body.optString("file_name", "")
+        if (fileName !in ALLOWED_FILE_NAMES) return json("invalid")
         val encoded = body.optString("payload", "")
         if (encoded.isEmpty() || encoded.length > ((MAX_PACKAGE_BYTES + 2) / 3) * 4) {
             return json("invalid")
@@ -143,7 +148,7 @@ private object BackupDocumentCoordinator {
                 val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     type = "application/octet-stream"
-                    putExtra(Intent.EXTRA_TITLE, EXPECTED_FILE_NAME)
+                    putExtra(Intent.EXTRA_TITLE, fileName)
                 }
                 @Suppress("DEPRECATION")
                 activity.startActivityForResult(intent, EXPORT_REQUEST_CODE)

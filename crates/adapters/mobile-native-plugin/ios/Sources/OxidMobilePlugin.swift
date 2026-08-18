@@ -88,7 +88,10 @@ private final class BackupDocumentCoordinator: NSObject, UIDocumentPickerDelegat
 
     private let lock = NSLock()
     private let maximumPackageBytes = 80 * 1024 * 1024
-    private let expectedFileName = "oxid-wallet-custody.oxidbak"
+    private let allowedFileNames = Set([
+        "oxid-wallet-custody.oxidbak",
+        "oxid-wallet.oxidbak",
+    ])
     private var operation: Operation?
     private var status = "idle"
     private var payload: String?
@@ -100,7 +103,7 @@ private final class BackupDocumentCoordinator: NSObject, UIDocumentPickerDelegat
               let body = try? JSONSerialization.jsonObject(with: requestData) as? [String: Any],
               Set(body.keys) == Set(["file_name", "payload"]),
               let fileName = body["file_name"] as? String,
-              fileName == expectedFileName,
+              allowedFileNames.contains(fileName),
               let encoded = body["payload"] as? String,
               encoded.utf8.count <= ((maximumPackageBytes + 2) / 3) * 4,
               let bytes = Data(base64Encoded: encoded),
@@ -121,7 +124,7 @@ private final class BackupDocumentCoordinator: NSObject, UIDocumentPickerDelegat
 
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("oxid-backup-\(UUID().uuidString)", isDirectory: true)
-        let file = directory.appendingPathComponent(expectedFileName, isDirectory: false)
+        let file = directory.appendingPathComponent(fileName, isDirectory: false)
         do {
             try FileManager.default.createDirectory(
                 at: directory,

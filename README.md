@@ -580,8 +580,17 @@ claim-replay restoration:
 
 ```bash
 just ios-smoke
+just ios-backup-smoke
 just android-smoke
 ```
+
+`just ios-backup-smoke` creates and later deletes a disposable iPhone
+simulator. It exports a populated complete wallet through Files, uninstalls the
+app, resets and reboots the simulator, reinstalls the standalone-development
+build, imports the selected document through Files, and verifies the restored
+profile, account association, DID, and credential. This is simulator evidence;
+Android picker interaction and physical-device measurements remain separate
+release gates.
 
 ## Repository layout
 

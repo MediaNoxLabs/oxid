@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3, 7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, Dioxus `WalletBackupCard`, and `mobile-bench/wallet-core/src/store/backup.rs`
 - Tracking: issues #2 and #33
-- Implementation state: iOS and Android document transport, complete-wallet Settings export and first-run recovery, and an explicit legacy custody-only importer are implemented; complete Android/iOS picker round trips and physical-device evidence remain issue #33 work
+- Implementation state: iOS and Android document transport, complete-wallet Settings export and first-run recovery, an explicit legacy custody-only importer, and a fresh-install complete-wallet iOS Simulator picker round trip are implemented; the Android picker round trip and physical-device evidence remain issue #33 work
 
 ## Context
 
@@ -83,18 +83,25 @@ path offers overwrite or merge.
 
 ## Evidence and remaining work
 
-An iPhone 17 Pro simulator exercised Settings rendering, import cancellation,
+The custody-only flow has exercised Settings rendering, import cancellation,
 export to the Files document picker, process restart with development custody
 cleared, import of the 862-byte package, restoration of one protected key, and
-reconnection to the deterministic 5 NIGHT standalone account. The Android
-adapter assembles, installs, and launches on `emulator-5554`; interactive
-Android document cancellation/export/import and physical-device coverage remain
-release evidence rather than inferred parity.
+reconnection to the deterministic standalone account. In addition,
+`just ios-backup-smoke` creates a disposable iPhone simulator and exercises a
+complete-wallet export through Files, app uninstall, keychain reset, simulator
+reboot, clean reinstall, import through Files, and recovery of the profile,
+Standalone account association and receive-address projections, managed DID,
+and Digital Passport credential. No backup bytes or app-container paths are
+injected into either UI test.
+
+The Android adapter assembles, installs, and launches on `emulator-5554`;
+interactive Android document cancellation/export/import and physical-device
+coverage remain release evidence rather than inferred parity.
 
 ADR-0076 supplies the complete authenticated archive, custody-last transaction,
-fresh-install profile selection, and retry reconciliation. Complete picker
-round trips on both mobile platforms and physical-device peak-memory evidence
-remain issue #33 release work.
+fresh-install profile selection, and retry reconciliation. The Android picker
+round trip and physical-device peak-memory evidence remain issue #33 release
+work.
 
 ## Rejected alternatives
 

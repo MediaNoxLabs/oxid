@@ -41,6 +41,9 @@ ios-run:
 ios-smoke:
     ./scripts/test-ios-profile-flow.sh
 
+ios-backup-smoke:
+    ./scripts/test-ios-backup-flow.sh
+
 ios-native-custody-smoke:
     ./scripts/test-ios-native-custody.sh
 

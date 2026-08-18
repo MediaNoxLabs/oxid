@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3–7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/store/backup.rs`, `mobile-bench/wallet-core/src/service/backup_service.rs`, and `mobile-bench/dioxus-wallet/src/session_persist.rs`
 - Tracking: issues #2 and #33
-- Implementation state: public Midnight account associations, strict profile/DID/credential snapshot codecs, exact restored-DID key rebinding, the authenticated complete-wallet archive, the journaled all-store coordinator, fresh-install Dioxus recovery, complete Settings export, and an all-store standalone composition round trip are implemented; ADR-0078 writes the stronger version-3 envelope while retaining version-2 reads; complete iOS/Android document-round-trip and physical-device resource evidence remain issue #33 work
+- Implementation state: public Midnight account associations, strict profile/DID/credential snapshot codecs, exact restored-DID key rebinding, the authenticated complete-wallet archive, the journaled all-store coordinator, fresh-install Dioxus recovery, complete Settings export, an all-store standalone composition round trip, and a complete iOS Simulator document round trip are implemented; ADR-0078 writes the stronger version-3 envelope while retaining version-2 reads; the Android document round trip and physical-device resource evidence remain issue #33 work
 
 ## Context
 
@@ -74,6 +74,12 @@ Recovery uses a prepared transaction owned by the outgoing backup adapter:
 6. verify the committed public/custody shape, select the recovered profile, and
    remove the journal.
 
+The file-backed journal creates its immediate private-store directory with
+owner-only permissions and rejects an existing directory with group or other
+access. This keeps the journal compatible with the sibling JSON DID and
+credential stores, which independently reject an insecure shared private-store
+directory.
+
 Any failure before custody initialization removes records inserted by this
 transaction and restores the prior active profile. A later retry with the same
 authenticated archive reconciles the journal: an uninitialized vault rolls
@@ -113,6 +119,21 @@ public DID store or archive association section.
   the remaining cross-store boundary without containing protected material.
 - Existing version-1 custody files remain importable only through the explicit,
   truthfully labelled legacy custody-only Settings path.
+
+## Evidence and remaining work
+
+`just ios-backup-smoke` exports a populated complete wallet through the native
+Files picker, uninstalls the app, resets the disposable simulator keychain,
+reboots, reinstalls, imports the selected document, and verifies the recovered
+profile, Standalone account association and receive addresses, managed DID, and
+Digital Passport credential. The harness does not inject backup bytes or invoke
+a recovery API directly. Unit coverage also proves that a newly created journal
+directory is mode `0700`, the journal is mode `0600`, and a sibling strict JSON
+DID store can write successfully.
+
+The Android picker round trip and physical-device peak-memory, latency, and
+thermal evidence remain issue #33 release work. Simulator evidence is not a
+physical-device claim.
 
 ## Rejected alternatives
 

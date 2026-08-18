@@ -1341,9 +1341,16 @@ available only for an uninitialized matching profile, uses zeroizing Rust input
 state and exact confirmations, and remains explicitly labelled as the legacy
 custody-only path. Complete export uses the same document port; first-run
 Dioxus recovery authenticates the archive before learning or selecting its
-profile. iOS UI smoke verifies both complete entry points. Complete mobile
-picker round trips, Android picker interaction, and physical-device evidence
-remain #33.
+profile. The Swift and Kotlin bridges must allow exactly the two fixed names
+`oxid-wallet-custody.oxidbak` and `oxid-wallet.oxidbak`; accepting only the
+legacy name makes complete export fail before the picker. `just
+ios-backup-smoke` creates a disposable simulator and proves complete native
+export, app uninstall/keychain reset/reboot/reinstall, native import, and
+restoration of the profile, Standalone account association and both receive
+address projections, managed DID, and Digital Passport credential. The harness
+does not inject backup bytes or call recovery directly. Android picker
+interaction and physical-device evidence remain #33; never turn this simulator
+result into a physical-device claim.
 
 ADR-0076 is the accepted all-store recovery boundary. A complete backup is one
 profile-scoped authenticated archive containing domain snapshots for the public
@@ -1361,6 +1368,11 @@ control after restart only by a unique exact algorithm/public-JWK match against
 authorized custody; never persist opaque DID key references in the public store.
 The association/rebinding foundations, strict store snapshot codecs, single
 authenticated envelope, and journaled custody-last recovery coordinator exist.
+The file recovery journal shares the mobile `private/` directory with strict
+JSON stores: create that immediate parent as owner-only mode `0700`, reject an
+existing parent with any group/other access, and keep the journal itself mode
+`0600`. Otherwise fresh complete recovery stages the profile, then fails when
+the DID store rejects the insecure shared directory and rolls back.
 Settings exports version 3 under ADR-0078; the empty-profile Dioxus gateway
 recovers versions 2 and 3 without a caller-selected identifier and preserves a
 legacy version-1 importer.
@@ -1370,8 +1382,9 @@ then recovers all of them into a fresh composition. Keep the recovery methods
 absent from `oxid.headless.v1`. Both headless and in-memory standalone Midnight
 adapters must stay connected to their profile association repository or exact
 account rebinding silently disappears. The encrypted package boundary is 80 MiB
-and both native document plugins enforce the same bound; complete mobile picker
-round trips and physical-device peak-memory measurement remain release gates.
+and both native document plugins enforce the same bound. The complete iOS
+Simulator picker round trip passes; the Android picker round trip and
+physical-device peak-memory measurement remain release gates.
 When a persisted account association outlives process-local development custody,
 the account read can correctly return `ProtectionNotInitialized`; the Dioxus
 Assets page must retain a public, unavailable placeholder so reactivation stays

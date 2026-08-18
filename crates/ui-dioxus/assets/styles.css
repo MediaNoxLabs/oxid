@@ -69,6 +69,12 @@ button {
     max(1rem, env(safe-area-inset-left));
 }
 
+@media (max-width: 42rem) {
+  .app-shell:has(input:focus, textarea:focus) {
+    padding-bottom: calc(50vh + env(safe-area-inset-bottom));
+  }
+}
+
 .app-header {
   display: flex;
   align-items: center;
