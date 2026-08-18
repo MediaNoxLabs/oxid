@@ -31,9 +31,10 @@ if [ -z "$device" ]; then
 fi
 
 if [ -n "$device" ]; then
-  OXID_ANDROID_DEVICE="$device" "$repository_root/scripts/run-android-emulator.sh"
+  OXID_ANDROID_DEVICE="$device" OXID_ANDROID_JNI_RECOVERY_TEST=1 \
+    "$repository_root/scripts/run-android-emulator.sh"
 else
-  "$repository_root/scripts/run-android-emulator.sh"
+  OXID_ANDROID_JNI_RECOVERY_TEST=1 "$repository_root/scripts/run-android-emulator.sh"
   device="$($adb_command devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
 fi
 if [ -z "$device" ]; then

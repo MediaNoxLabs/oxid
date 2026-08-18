@@ -4,6 +4,16 @@
 
 fn main() {
     #[cfg(all(
+        feature = "android-jni-exception-recovery-test",
+        not(target_os = "android")
+    ))]
+    compile_error!("android-jni-exception-recovery-test is available only on Android");
+
+    #[cfg(all(feature = "android-jni-exception-recovery-test", target_os = "android"))]
+    oxid_composition::verify_android_jni_exception_recovery()
+        .unwrap_or_else(|_| panic!("Android JNI exception recovery smoke probe failed"));
+
+    #[cfg(all(
         feature = "standalone-development",
         feature = "standalone-native-custody"
     ))]

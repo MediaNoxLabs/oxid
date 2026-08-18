@@ -102,6 +102,7 @@ ADR status and delivery state answer different questions:
 | [0078](0078-harden-complete-wallet-backup-derivation.md) Harden complete-wallet backup derivation | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33/#48 | New complete-wallet exports use a strict 64 MiB/t=3 Argon2id version-3 envelope; exact version-2 complete-wallet and version-1 custody policies remain readable without attacker-selected KDF work |
 | [0079](0079-spend-shielded-assets-from-current-adapter-private-state.md) Spend shielded assets from current adapter-private state | Accepted | §§3–8, 12–13, 16–18, 21 and issues #2/#59 | Fresh-sync-gated canonical Zswap planning reuses staged authorization, DUST proving, durable submission recovery, headless, and Dioxus privacy selection; physical-device release gates remain open |
 | [0080](0080-bound-secret-safe-runtime-diagnostics.md) Bound runtime diagnostics to secret-safe closed codes | Accepted | §§3–7, 12–13, 16–18, 21, prototype diagnostics/worker boundaries, and issues #2/#46/#60 | Bounded process-local closed-code snapshots/reset are composed in headless and Dioxus; DUST/Zswap/transfer/vault worker loss is sanitized and cannot wedge active runtime state; persistent logs and telemetry remain excluded |
+| [0081](0081-clear-android-jni-exceptions-at-the-native-boundary.md) Clear Android JNI exceptions at the native boundary | Accepted | §§3–7, 12–13, 16–18, 21 and issues #2/#41 | All fallible shared-plugin JNI conversions clear pending Java exceptions before returning a payload-free failure; the Android smoke injects a debug-only throw and then completes the standalone wallet journey |
 
 ## Current boundaries
 
@@ -199,6 +200,10 @@ but it has no persistence, upload, free-form fields, timestamps, endpoints, or
 process measurements and never participates in wallet authority. DUST and
 shielded worker panics publish terminal sanitized snapshots; retained Passport
 Vault completion unwind always releases its active process reservation.
+ADR-0081 makes pending Java-exception cleanup a mandatory part of every failed
+Android JNI conversion in the shared native plugin. It discards exception
+details, returns the existing closed bridge error, and uses an emulator-only
+throw-then-full-wallet smoke without adding a headless or application API.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a

@@ -990,6 +990,13 @@ pub fn compose_mobile_native_standalone() -> ApplicationServices {
     with_simulated_passport_vault_calls(services)
 }
 
+/// Runs the explicit Android smoke probe for JNI exception recovery.
+#[cfg(all(target_os = "android", feature = "android-jni-exception-recovery-test"))]
+pub fn verify_android_jni_exception_recovery()
+-> Result<(), oxid_adapter_mobile_native::NativeBridgeError> {
+    oxid_adapter_mobile_native::verify_android_jni_exception_recovery()
+}
+
 /// Authenticates the immutable Compact presentation package selected by an
 /// explicit mobile resource-measurement build without enabling proof creation.
 ///

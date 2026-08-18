@@ -5923,6 +5923,7 @@ dependencies = [
  "oxid-adapter-did-midnight",
  "oxid-adapter-identity-ingress",
  "oxid-adapter-midnight",
+ "oxid-adapter-mobile-native",
  "oxid-adapter-openid4vci",
  "oxid-adapter-openid4vp",
  "oxid-adapter-passport-vault",

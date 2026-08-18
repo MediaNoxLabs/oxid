@@ -11,6 +11,10 @@ publish = false
 [features]
 default = []
 mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
+android-jni-exception-recovery-test = [
+  "dep:oxid-adapter-mobile-native",
+  "oxid-adapter-mobile-native/android-jni-exception-recovery-test",
+]
 
 [dependencies]
 hex.workspace = true
@@ -22,6 +26,7 @@ oxid-adapter-diagnostics-memory.workspace = true
 oxid-adapter-identity-ingress.workspace = true
 oxid-adapter-storage-credential-json.workspace = true
 oxid-adapter-midnight.workspace = true
+oxid-adapter-mobile-native = { workspace = true, optional = true }
 oxid-adapter-openid4vci.workspace = true
 oxid-adapter-openid4vp.workspace = true
 oxid-adapter-passport-vault.workspace = true

@@ -27,6 +27,19 @@ case "$mobile_custody" in
     ;;
 esac
 
+android_jni_recovery_test="${OXID_ANDROID_JNI_RECOVERY_TEST:-0}"
+case "$android_jni_recovery_test" in
+  0)
+    ;;
+  1)
+    mobile_features="$mobile_features,android-jni-exception-recovery-test"
+    ;;
+  *)
+    echo "OXID_ANDROID_JNI_RECOVERY_TEST must be '0' or '1'." >&2
+    exit 1
+    ;;
+esac
+
 mobile_presentation_proving="${OXID_MOBILE_PRESENTATION_PROVING:-unavailable}"
 presentation_artifacts_dir=""
 case "$mobile_presentation_proving" in

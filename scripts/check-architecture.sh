@@ -176,7 +176,7 @@ check_workspace_dependencies oxid-composition \
   oxid-adapter-did-midnight oxid-adapter-identity-ingress \
   oxid-adapter-openid4vci oxid-adapter-siopv2 \
   oxid-adapter-openid4vp oxid-adapter-passport-vault \
-  oxid-adapter-platform-system \
+  oxid-adapter-mobile-native oxid-adapter-platform-system \
   oxid-adapter-storage-credential-json oxid-adapter-storage-json \
   oxid-adapter-storage-identity-json oxid-adapter-vc-midnight \
   oxid-adapter-storage-memory oxid-adapter-storage-mobile \

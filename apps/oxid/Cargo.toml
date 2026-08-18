@@ -26,6 +26,11 @@ standalone-native-proving-artifacts = [
   "standalone-native-custody",
   "oxid-composition/mobile-compact-artifacts",
 ]
+# Android smoke-only composition that proves a thrown JNI exception cannot
+# poison subsequent native wallet calls.
+android-jni-exception-recovery-test = [
+  "oxid-composition/android-jni-exception-recovery-test",
+]
 
 [dependencies]
 dioxus = { workspace = true, features = ["launch"] }

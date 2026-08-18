@@ -242,9 +242,8 @@ fn call_android_custody(
 fn call_android_activity(method: &str) -> Result<String, NativeBridgeError> {
     manganis::android::with_activity(|mut environment, activity| {
         let result = (|| {
-            let value = environment
-                .call_method(activity, method, "()Ljava/lang/String;", &[])
-                .map_err(|_| NativeBridgeError::Failed)?;
+            let value = environment.call_method(activity, method, "()Ljava/lang/String;", &[]);
+            let value = android_jni_result(&mut environment, value)?;
             android_string(&mut environment, value)
         })();
         Some(result)
@@ -259,18 +258,16 @@ fn call_android_activity_with_string(
 ) -> Result<String, NativeBridgeError> {
     manganis::android::with_activity(|mut environment, activity| {
         let result = (|| {
-            let value = environment
-                .new_string(value)
-                .map_err(|_| NativeBridgeError::Failed)?;
+            let value = environment.new_string(value);
+            let value = android_jni_result(&mut environment, value)?;
             let argument = manganis::jni::objects::JValue::Object(value.as_ref());
-            let result = environment
-                .call_method(
-                    activity,
-                    method,
-                    "(Ljava/lang/String;)Ljava/lang/String;",
-                    &[argument],
-                )
-                .map_err(|_| NativeBridgeError::Failed)?;
+            let result = environment.call_method(
+                activity,
+                method,
+                "(Ljava/lang/String;)Ljava/lang/String;",
+                &[argument],
+            );
+            let result = android_jni_result(&mut environment, result)?;
             android_string(&mut environment, result)
         })();
         Some(result)
@@ -283,15 +280,45 @@ fn android_string<'local>(
     environment: &mut manganis::jni::JNIEnv<'local>,
     value: manganis::jni::objects::JValueOwned<'local>,
 ) -> Result<String, NativeBridgeError> {
-    let object = value.l().map_err(|_| NativeBridgeError::Failed)?;
+    let object = value.l();
+    let object = android_jni_result(environment, object)?;
     if object.is_null() {
         return Err(NativeBridgeError::Failed);
     }
     let string = manganis::jni::objects::JString::from(object);
-    environment
-        .get_string(&string)
-        .map(Into::into)
-        .map_err(|_| NativeBridgeError::Failed)
+    let string = environment.get_string(&string);
+    android_jni_result(environment, string).map(Into::into)
+}
+
+#[cfg(target_os = "android")]
+fn android_jni_result<T>(
+    environment: &mut manganis::jni::JNIEnv<'_>,
+    result: manganis::jni::errors::Result<T>,
+) -> Result<T, NativeBridgeError> {
+    result.map_err(|_| {
+        clear_pending_android_exception(environment);
+        NativeBridgeError::Failed
+    })
+}
+
+#[cfg(target_os = "android")]
+fn clear_pending_android_exception(environment: &mut manganis::jni::JNIEnv<'_>) {
+    if matches!(environment.exception_check(), Ok(true)) {
+        let _ = environment.exception_clear();
+    }
+}
+
+/// Proves that a thrown activity exception is cleared before the next bridge call.
+///
+/// This is compiled only into the explicit Android smoke-test composition. It
+/// returns the same payload-free failure as every other native bridge error and
+/// never inspects, describes, or logs the Java exception.
+#[cfg(all(target_os = "android", feature = "android-jni-exception-recovery-test"))]
+pub fn verify_android_jni_exception_recovery() -> Result<(), NativeBridgeError> {
+    if call_android_activity("oxidThrowForJniRecoveryTest") != Err(NativeBridgeError::Failed) {
+        return Err(NativeBridgeError::Failed);
+    }
+    call_android_activity("oxidJniRecoveryProbeJson").map(|_| ())
 }
 
 #[cfg(target_os = "ios")]

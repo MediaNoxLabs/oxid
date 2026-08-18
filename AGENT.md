@@ -1465,6 +1465,13 @@ accept attacker-selected ranges. This is stronger offline-file protection, not
 physical-device resource evidence. Issue #33 still gates iOS/Android latency,
 peak memory, low-memory, interruption, and thermal behavior.
 
+ADR-0081 requires every failed Android JNI operation in the shared native
+plugin to check and clear a pending Java exception before returning the closed
+bridge failure. Never inspect, describe, retain, or log the throwable. The
+Android profile smoke enables a debug-only throw, verifies an immediate second
+native call, and then completes the standalone wallet flow; this is emulator
+process-liveness evidence, not physical-device or production-custody evidence.
+
 The iOS XCUITest `scrollTo` helper must require content controls to finish at
 least 90 points above the application frame bottom before tapping. WKWebView can
 otherwise report a control as hittable when only a sliver is exposed above the
@@ -1615,6 +1622,10 @@ to silence the shell probe.
   must always release its active process reservation.
 - Never log secrets, seeds, private identifiers, credential claims, signing
   payloads, or raw external error bodies that may contain them.
+- Every new fallible Android JNI call in `oxid-adapter-mobile-native` must use
+  the ADR-0081 mapper so a Java throw is cleared before the existing
+  payload-free failure returns. Do not call exception describe or expose a
+  throwable through diagnostics.
 - Standalone indexer and proof-server HTTP routes are explicit trust-boundary
   configuration and intentionally ignore ambient process proxy variables.
   Keep their HTTP request/status/body tests client-free and transport-free:

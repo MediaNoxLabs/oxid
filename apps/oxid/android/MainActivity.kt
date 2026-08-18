@@ -68,4 +68,13 @@ class MainActivity : WryActivity() {
         oxidMobilePlugin.takeBackupDocumentResultJson()
 
     fun oxidCustodyJson(request: String): String = oxidMobilePlugin.custodyJson(request)
+
+    /** Smoke-only JNI failure injection; normal builds have no Rust caller for this method. */
+    fun oxidThrowForJniRecoveryTest(): String {
+        if (BuildConfig.DEBUG) throw IllegalStateException()
+        return "{\"status\":\"unavailable\"}"
+    }
+
+    /** Side-effect-free second call for the smoke-only JNI recovery probe. */
+    fun oxidJniRecoveryProbeJson(): String = "{\"status\":\"ready\"}"
 }
