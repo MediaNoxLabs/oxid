@@ -19,7 +19,10 @@
       # shell's environment exports pull in, so Markdown-only workflows never
       # pay for prover-key builds.
       devShells.docs = pkgs.mkShell {
-        packages = [ pkgs.lychee ];
+        packages = [
+          pkgs.lychee
+          pkgs.mdbook
+        ];
       };
 
       devShells.default = pkgs.mkShell {
