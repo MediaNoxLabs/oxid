@@ -53,6 +53,9 @@ android-run:
 android-smoke:
     ./scripts/test-android-profile-flow.sh
 
+android-backup-smoke:
+    ./scripts/test-android-backup-flow.sh
+
 android-native-custody-smoke:
     ./scripts/test-android-native-custody.sh
 

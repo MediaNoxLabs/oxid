@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3, 7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, Dioxus `WalletBackupCard`, and `mobile-bench/wallet-core/src/store/backup.rs`
 - Tracking: issues #2 and #33
-- Implementation state: iOS and Android document transport, complete-wallet Settings export and first-run recovery, an explicit legacy custody-only importer, and a fresh-install complete-wallet iOS Simulator picker round trip are implemented; the Android picker round trip and physical-device evidence remain issue #33 work
+- Implementation state: iOS and Android document transport, complete-wallet Settings export and first-run recovery, an explicit legacy custody-only importer, and fresh-install complete-wallet iOS Simulator and Android emulator picker round trips are implemented; physical-device evidence remains issue #33 work
 
 ## Context
 
@@ -95,13 +95,18 @@ and Digital Passport credential. No backup bytes or app-container paths are
 injected into either UI test.
 
 The Android adapter assembles, installs, and launches on `emulator-5554`;
-interactive Android document cancellation/export/import and physical-device
-coverage remain release evidence rather than inferred parity.
+`just android-backup-smoke` additionally exports through DocumentsUI into a
+unique Downloads directory, uninstalls the app, reboots the emulator,
+reinstalls the exact built APK, imports the selected document through
+DocumentsUI, and verifies the same profile, account, DID, and credential state.
+The harness deletes only its exact filename and validated test directory.
+Interactive cancellation and physical-device coverage remain release evidence
+rather than inferred parity.
 
 ADR-0076 supplies the complete authenticated archive, custody-last transaction,
-fresh-install profile selection, and retry reconciliation. The Android picker
-round trip and physical-device peak-memory evidence remain issue #33 release
-work.
+fresh-install profile selection, and retry reconciliation. Physical-device
+peak-memory, latency, interruption, and thermal evidence remain issue #33
+release work.
 
 ## Rejected alternatives
 

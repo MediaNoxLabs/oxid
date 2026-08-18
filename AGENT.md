@@ -1348,9 +1348,13 @@ ios-backup-smoke` creates a disposable simulator and proves complete native
 export, app uninstall/keychain reset/reboot/reinstall, native import, and
 restoration of the profile, Standalone account association and both receive
 address projections, managed DID, and Digital Passport credential. The harness
-does not inject backup bytes or call recovery directly. Android picker
-interaction and physical-device evidence remain #33; never turn this simulator
-result into a physical-device claim.
+does not inject backup bytes or call recovery directly. Android picker parity
+is proven by `just android-backup-smoke`: it uses DocumentsUI, an isolated
+`OxidBackupSmoke-<pid>` Downloads directory, app uninstall, emulator reboot,
+exact-APK reinstall, and visible import before asserting the same restored
+state. It refuses physical devices and removes only the exact backup file and
+validated test directory. Physical-device evidence remains #33; never turn
+either simulator result into a physical-device claim.
 
 ADR-0076 is the accepted all-store recovery boundary. A complete backup is one
 profile-scoped authenticated archive containing domain snapshots for the public
@@ -1383,8 +1387,9 @@ absent from `oxid.headless.v1`. Both headless and in-memory standalone Midnight
 adapters must stay connected to their profile association repository or exact
 account rebinding silently disappears. The encrypted package boundary is 80 MiB
 and both native document plugins enforce the same bound. The complete iOS
-Simulator picker round trip passes; the Android picker round trip and
-physical-device peak-memory measurement remain release gates.
+Simulator and Android emulator picker round trips pass; physical-device
+peak-memory, latency, interruption, and thermal measurements remain release
+gates.
 When a persisted account association outlives process-local development custody,
 the account read can correctly return `ProtectionNotInitialized`; the Dioxus
 Assets page must retain a public, unavailable placeholder so reactivation stays
@@ -1459,6 +1464,16 @@ survive while development custody and incomplete issuance sessions reset. The
 commands are destructive to the selected simulator's Oxid test profile state;
 protected development roots and transaction drafts are process-local and are
 expected to disappear on restart.
+
+`just android-backup-smoke` is emulator-only and intentionally more
+destructive than the ordinary Android smoke: it exports a populated complete
+wallet through DocumentsUI, uninstalls Oxid, reboots, reinstalls the exact
+development APK, imports through DocumentsUI into an empty install, and checks
+the restored public profile schema/account association, receive-address
+projections, managed DID, and encrypted Digital Passport inventory. The
+recovery secret is test-only. The harness owns only its uniquely named
+Downloads directory and must never broaden cleanup or claim physical-device
+evidence.
 
 The Android profile assertion targets current public store schema v2 and must
 validate the active profile's `undeployed` account association, account index,

@@ -2,9 +2,10 @@
 
 const endpoint = process.argv[2];
 const mode = process.argv[3] ?? "flow";
+const backupRecoverySecret = "oxidandroidbackup2026";
 
-if (!endpoint || !["flow", "restored", "app-link", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
-  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link|native-authorize|native-custody|native-restored>");
+if (!endpoint || !["flow", "restored", "app-link", "backup-export", "backup-recover", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
+  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link|backup-export|backup-recover|native-authorize|native-custody|native-restored>");
 }
 
 const socket = new WebSocket(endpoint);
@@ -115,11 +116,145 @@ async function setInput(label, value) {
   })()`);
 }
 
+async function setInputById(identifier, value) {
+  const selector = `#${identifier}`;
+  await waitFor(`Boolean(document.querySelector(${JSON.stringify(selector)}))`, `input ${identifier}`);
+  await evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    setter.call(element, ${JSON.stringify(value)});
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    return element.value;
+  })()`);
+}
+
+async function clickConfirmation(label) {
+  const expression = `Array.from(document.querySelectorAll("label")).find((element) => element.textContent.includes(${JSON.stringify(label)}))?.querySelector('input[type="checkbox"]')`;
+  await waitFor(`Boolean(${expression})`, `confirmation ${label}`);
+  const checked = await evaluate(`(() => {
+    const element = ${expression};
+    if (!element) return false;
+    if (!element.checked) element.click();
+    return element.checked;
+  })()`);
+  if (!checked) {
+    throw new Error(`confirmation ${label} could not be selected`);
+  }
+}
+
+async function clickCheckboxById(identifier) {
+  const selector = `#${identifier}`;
+  await waitFor(
+    `Boolean(document.querySelector(${JSON.stringify(selector)}))`,
+    `checkbox ${identifier}`,
+  );
+  const checked = await evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element) return false;
+    if (!element.checked) element.click();
+    return element.checked;
+  })()`);
+  if (!checked) {
+    throw new Error(`checkbox ${identifier} could not be selected`);
+  }
+}
+
 try {
   await command("Runtime.enable");
   await waitFor("document.readyState === 'complete'", "Dioxus document");
 
-  if (mode === "flow") {
+  if (mode === "backup-export") {
+    await clickButton("Create and continue");
+    await clickButtonByLabel("Activate protected Midnight account");
+    await waitForButton("Use my receive address", 90_000);
+
+    await clickButton("DIDs");
+    await clickButton("Create standalone DID");
+    await waitFor(
+      "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
+      "managed DID for complete backup",
+      30_000,
+    );
+
+    await clickButton("Credentials");
+    await clickButton("Use standalone demo offer");
+    await clickButton("Preview credential offer");
+    await waitFor(
+      "document.body.innerText.includes('Credential offer preview') && document.body.innerText.includes('Digital Passport')",
+      "Digital Passport offer preview for complete backup",
+    );
+    await clickCheckboxById("credential-issuance-consent");
+    await clickButton("Accept and issue credential");
+    await waitFor(
+      "document.body.innerText.includes('Credential issued, verified, and stored in the protected inventory.')",
+      "issued Digital Passport for complete backup",
+      30_000,
+    );
+
+    await clickButton("Settings");
+    await waitFor(
+      "document.body.innerText.includes('One encrypted wallet document')",
+      "complete wallet backup settings",
+    );
+    await setInputById("wallet-backup-secret", backupRecoverySecret);
+    await setInputById("wallet-backup-secret-confirmation", backupRecoverySecret);
+    await clickConfirmation(
+      "I confirm this complete wallet export and will store its recovery secret separately.",
+    );
+    await clickButton("Choose file and export");
+    await waitFor(
+      "document.body.innerText.includes('Encrypted complete wallet backup saved to the selected document.') || Boolean(document.querySelector('[role=\"alert\"]'))",
+      "complete wallet document export",
+      180_000,
+    );
+    const exportError = await evaluate(
+      "document.querySelector('[role=\"alert\"]')?.textContent.trim() ?? ''",
+    );
+    if (exportError) {
+      throw new Error(`Android complete wallet export failed: ${exportError}`);
+    }
+    process.stdout.write(`${JSON.stringify({ mode, exported: true })}\n`);
+  } else if (mode === "backup-recover") {
+    await waitForButton("Create and continue");
+    await setInputById("onboarding-recovery-secret", backupRecoverySecret);
+    await clickConfirmation("I confirm complete recovery into this empty Oxid installation.");
+    await clickButtonByLabel("Choose complete wallet backup and recover");
+    await waitFor(
+      "document.body.innerText.includes('My wallet · Standalone') || Boolean(document.querySelector('[role=\"alert\"]'))",
+      "fresh-install complete wallet recovery",
+      180_000,
+    );
+    const recoveryError = await evaluate(
+      "document.querySelector('[role=\"alert\"]')?.textContent.trim() ?? ''",
+    );
+    if (recoveryError) {
+      throw new Error(`Android complete wallet recovery failed: ${recoveryError}`);
+    }
+    await waitFor(
+      'Boolean(document.querySelector(\'button[aria-label="Copy Unshielded receive address"]\')) && Boolean(document.querySelector(\'button[aria-label="Copy Shielded receive address"]\'))',
+      "restored Midnight receive addresses",
+      90_000,
+    );
+    await clickButton("DIDs");
+    await waitFor(
+      "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
+      "restored managed DID",
+      30_000,
+    );
+    await clickButton("Credentials");
+    await waitFor(
+      `document.body.innerText.includes('Digital Passport') && Boolean(${buttonExpression("Reverify")})`,
+      "restored Digital Passport",
+      30_000,
+    );
+    process.stdout.write(`${JSON.stringify({
+      mode,
+      profileRestored: true,
+      accountRestored: true,
+      didRestored: true,
+      credentialRestored: true,
+    })}\n`);
+  } else if (mode === "flow") {
     await clickButton("Create and continue");
     await clickButtonByLabel("Activate protected Midnight account");
     await waitForButton("Use my receive address", 90_000);

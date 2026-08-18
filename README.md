@@ -582,6 +582,7 @@ claim-replay restoration:
 just ios-smoke
 just ios-backup-smoke
 just android-smoke
+just android-backup-smoke
 ```
 
 `just ios-backup-smoke` creates and later deletes a disposable iPhone
@@ -589,8 +590,12 @@ simulator. It exports a populated complete wallet through Files, uninstalls the
 app, resets and reboots the simulator, reinstalls the standalone-development
 build, imports the selected document through Files, and verifies the restored
 profile, account association, DID, and credential. This is simulator evidence;
-Android picker interaction and physical-device measurements remain separate
-release gates.
+`just android-backup-smoke` performs the equivalent flow on an Android
+emulator through DocumentsUI. It writes only to a uniquely named directory in
+Downloads, removes and reboots the app, reinstalls the exact built APK, imports
+the selected document, verifies the same restored state, and then removes only
+that test directory. Both commands are simulator/emulator evidence;
+physical-device measurements remain separate release gates.
 
 ## Repository layout
 
