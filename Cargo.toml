@@ -93,7 +93,7 @@ authors = ["Oxid contributors"]
 anyhow = { version = "=1.0.104" }
 argon2 = { version = "=0.5.3", default-features = false, features = ["alloc", "zeroize"] }
 base64 = { version = "=0.22.1" }
-bech32 = { version = "=0.11.0" }
+bech32 = { version = "=0.11.1" }
 chacha20poly1305 = { version = "=0.11.0", features = ["zeroize"] }
 ciborium = { version = "=0.2.2" }
 bip32 = { version = "=0.5.3", default-features = false, features = ["secp256k1", "std"] }
@@ -125,7 +125,7 @@ serde_json = { version = "=1.0.151" }
 sha2 = { version = "=0.10.9", default-features = false }
 subtle = { version = "=2.6.1" }
 rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
-rand = { version = "=0.8.5" }
+rand = { version = "=0.8.7" }
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }
 subxt = { version = "=0.44.3" }
 tokio = { version = "=1.53.1", default-features = false, features = ["net", "rt", "time"] }
