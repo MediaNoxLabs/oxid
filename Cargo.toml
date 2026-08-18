@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "apps/oxid",
   "apps/oxid-headless",
+  "apps/oxid-mcp",
   "crates/brand-build",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
@@ -49,6 +50,7 @@ members = [
 default-members = [
   "apps/oxid",
   "apps/oxid-headless",
+  "apps/oxid-mcp",
   "crates/brand-build",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
