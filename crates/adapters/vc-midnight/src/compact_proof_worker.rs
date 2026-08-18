@@ -73,7 +73,7 @@ impl ForegroundCompactPresentationProofWorker {
     fn admit(
         &self,
         request: &PresentationProofRequest,
-    ) -> Result<Arc<AtomicU8>, PresentationProofError> {
+    ) -> Result<(Arc<AtomicU8>, Instant), PresentationProofError> {
         let mut state = self
             .state
             .lock()
@@ -85,13 +85,14 @@ impl ForegroundCompactPresentationProofWorker {
             return Err(PresentationProofError::Busy);
         }
         let cancellation = Arc::new(AtomicU8::new(NOT_CANCELLED));
+        let started_at = Instant::now();
         state.active = Some(ActiveProof {
             profile_id: request.profile_id.clone(),
             presentation_id: request.presentation_id.clone(),
             cancellation: Arc::clone(&cancellation),
-            started_at: Instant::now(),
+            started_at,
         });
-        Ok(cancellation)
+        Ok((cancellation, started_at))
     }
 
     fn release(&self, cancellation: &Arc<AtomicU8>) {
@@ -112,7 +113,7 @@ impl PresentationProofPort for ForegroundCompactPresentationProofWorker {
         request: PresentationProofRequest,
     ) -> CreatePresentationProofFuture<'a> {
         Box::pin(async move {
-            let cancellation = self.admit(&request)?;
+            let (cancellation, started_at) = self.admit(&request)?;
             let inner = Arc::clone(&self.inner);
             let (sender, receiver) = mpsc::sync_channel(1);
             let spawn = std::thread::Builder::new()
@@ -130,9 +131,26 @@ impl PresentationProofPort for ForegroundCompactPresentationProofWorker {
                 return Err(PresentationProofError::Unavailable);
             }
 
-            let result = match receiver.recv_timeout(self.timeout) {
-                Ok(result) => result,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
+            let remaining = self.timeout.checked_sub(started_at.elapsed());
+            let result = match remaining {
+                Some(remaining) => match receiver.recv_timeout(remaining) {
+                    Ok(result) => result,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        let _ = cancellation.compare_exchange(
+                            NOT_CANCELLED,
+                            CANCELLED_BY_TIMEOUT,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        );
+                        receiver
+                            .recv()
+                            .unwrap_or(Err(PresentationProofError::Unavailable))
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        Err(PresentationProofError::Unavailable)
+                    }
+                },
+                None => {
                     let _ = cancellation.compare_exchange(
                         NOT_CANCELLED,
                         CANCELLED_BY_TIMEOUT,
@@ -142,9 +160,6 @@ impl PresentationProofPort for ForegroundCompactPresentationProofWorker {
                     receiver
                         .recv()
                         .unwrap_or(Err(PresentationProofError::Unavailable))
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    Err(PresentationProofError::Unavailable)
                 }
             };
             let terminal = cancellation.load(Ordering::Acquire);
