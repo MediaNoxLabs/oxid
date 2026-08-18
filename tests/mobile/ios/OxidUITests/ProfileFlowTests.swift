@@ -46,6 +46,7 @@ final class ProfileFlowTests: XCTestCase {
     func testCreatesProfileAndCompletesStandaloneWalletFlow() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         ensureProfile(in: application)
+        application.buttons["Wallet"].tap()
 
         let activateButton = application.buttons["Activate protected Midnight account"]
         XCTAssertTrue(activateButton.waitForExistence(timeout: 15))
@@ -131,9 +132,12 @@ final class ProfileFlowTests: XCTestCase {
         }
         XCTAssertTrue(application.staticTexts["Transfer submitted"].waitForExistence(timeout: 15))
 
-        let dids = application.buttons["DIDs"]
-        XCTAssertTrue(dids.waitForExistence(timeout: 5))
-        dids.tap()
+        let documents = application.buttons["Documents"]
+        XCTAssertTrue(documents.waitForExistence(timeout: 5))
+        documents.tap()
+        let manageIdentities = application.buttons["Manage identities"]
+        XCTAssertTrue(manageIdentities.waitForExistence(timeout: 5))
+        manageIdentities.tap()
         let createDid = application.buttons["Create standalone DID"]
         XCTAssertTrue(createDid.waitForExistence(timeout: 5))
         createDid.tap()
@@ -166,7 +170,7 @@ final class ProfileFlowTests: XCTestCase {
         resolveDid.tap()
         XCTAssertTrue(application.staticTexts["standalone-fixture-v2"].waitForExistence(timeout: 10))
 
-        let credentials = application.buttons["Credentials"]
+        let credentials = application.buttons["Documents"]
         XCTAssertTrue(credentials.waitForExistence(timeout: 5))
         credentials.tap()
         let demoOffer = application.buttons["Use standalone demo offer"]
@@ -285,7 +289,10 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertFalse(application.staticTexts["Alice"].exists)
         XCTAssertFalse(application.staticTexts["Example"].exists)
 
-        let vault = application.buttons["Vault"]
+        let home = application.buttons["Home"]
+        XCTAssertTrue(home.waitForExistence(timeout: 5))
+        home.tap()
+        let vault = application.buttons["Open Passport Vault"]
         XCTAssertTrue(vault.waitForExistence(timeout: 5))
         vault.tap()
         XCTAssertTrue(
@@ -348,7 +355,9 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(activateButton.waitForExistence(timeout: 30))
         activateButton.tap()
         XCTAssertTrue(application.staticTexts["Transfer included"].waitForExistence(timeout: 15))
-        dids.tap()
+        documents.tap()
+        XCTAssertTrue(manageIdentities.waitForExistence(timeout: 5))
+        manageIdentities.tap()
         XCTAssertTrue(application.staticTexts["standalone-fixture-v2"].waitForExistence(timeout: 10))
         XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 10))
         credentials.tap()
@@ -358,6 +367,8 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertFalse(application.staticTexts["Alice"].exists)
         XCTAssertFalse(application.staticTexts["Example"].exists)
         XCTAssertTrue(application.buttons["Reverify"].waitForExistence(timeout: 5))
+        home.tap()
+        XCTAssertTrue(vault.waitForExistence(timeout: 5))
         vault.tap()
         XCTAssertTrue(application.staticTexts["90 NIGHT remaining"].waitForExistence(timeout: 10))
         XCTAssertTrue(application.staticTexts["Claims 1"].waitForExistence(timeout: 5))
@@ -365,7 +376,7 @@ final class ProfileFlowTests: XCTestCase {
             application.staticTexts["Owner-private saved conformance ledger · survives app restart · no on-chain transaction submitted"]
                 .waitForExistence(timeout: 5)
         )
-        XCTAssertTrue(application.buttons["Assets"].exists)
+        XCTAssertTrue(application.buttons["Home"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
     }
 

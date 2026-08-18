@@ -921,7 +921,7 @@ Current package ownership:
 | `nix/packages/passport-vault-call-composer.nix` | One-request Node 24 outgoing adapter package with locked Midnight compatibility dependencies, Nix-fixed authenticated artifacts, closed typed operations, and real generated-client install checks. |
 | `tools/passport-vault-composer` | Internal generated-Compact composition implementation; never an incoming headless/mobile API and never a credential/private-witness bridge. |
 | `crates/adapters/platform-system` | System clock, OS randomness, and typed public receive-address export implementations. |
-| `crates/ui-dioxus` | Dioxus incoming adapter, exact amount/consent presentation state, public receive-QR rendering, standalone Passport Vault UI, and truthfully labelled typed native vault-call review/authorization/submission/cancellation/reconciliation. |
+| `crates/ui-dioxus` | Dioxus incoming adapter, bounded mobile route stack, exact amount/consent presentation state, public receive-QR rendering, standalone Passport Vault UI, and truthfully labelled typed native vault-call review/authorization/submission/cancellation/reconciliation. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
 | `apps/oxid` | Executable shell and platform launch point. |
 | `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |
@@ -945,6 +945,23 @@ fifteen-decimal DUST, and readable UTC timestamp helpers; adapter cursors may
 drive progress but are not user copy. `scripts/check-ui-copy-labels.sh` enforces
 the boundary from `run.sh`; update both the mapping tests and required
 vocabulary when a reviewed public view value is added.
+
+ADR-0086 owns mobile navigation entirely inside the Dioxus incoming adapter.
+The primary order is Home, Wallet, center Scan, Documents, Activity; Scan is an
+action, not a route. The stack always has one primary root, selecting a primary
+clears secondary routes, each secondary route appears at most once, and Back
+pops presentation state only. Dismissing identity ingress also pops its review
+route without consent. Passport Vault
+opens from Home, DID management from Documents, profiles/Settings from the
+avatar sheet, and Diagnostics from Settings. Credential and self-issued app
+links reset the root to Documents and push the corresponding review without
+consent. Phase 1a intentionally renders the complete account view on both Home
+and Wallet until issue #65 Phase 1b splits the Home summary; do not remove that
+compatibility path early or move its behavior into navigation. Do not add a
+router dependency or persist routes without a new concrete URL/history
+requirement and review. The shared Back control does not claim Android system-
+back interception. Secret-mode UI remains absent until its masking and native
+privacy policy is implemented.
 
 `oxid-composition` exposes UI-neutral `ApplicationServices`. Incoming adapters
 adapt that object at their own boundary; composition must not depend on Dioxus,

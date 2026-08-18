@@ -1349,49 +1349,179 @@ impl WalletUiServices {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Destination {
-    Assets,
-    Vault,
-    Dids,
-    Credentials,
-    Diagnostics,
-    Settings,
-    Profile,
+enum PrimaryDestination {
+    Home,
+    Wallet,
+    Documents,
+    Activity,
 }
 
-impl Destination {
+impl PrimaryDestination {
     const fn label(self) -> &'static str {
         match self {
-            Self::Assets => "Assets",
-            Self::Vault => "Vault",
-            Self::Dids => "DIDs",
-            Self::Credentials => "Credentials",
-            Self::Diagnostics => "Diagnostics",
-            Self::Settings => "Settings",
-            Self::Profile => "Wallet profile",
+            Self::Home => "Home",
+            Self::Wallet => "Wallet",
+            Self::Documents => "Documents",
+            Self::Activity => "Activity",
         }
     }
 
     const fn icon(self) -> &'static str {
         match self {
-            Self::Assets => LUCIDE_WALLET,
-            Self::Vault => LUCIDE_LANDMARK,
-            Self::Dids => LUCIDE_FINGERPRINT,
-            Self::Credentials => LUCIDE_BADGE_CHECK,
-            Self::Diagnostics => LUCIDE_ACTIVITY,
-            Self::Settings | Self::Profile => LUCIDE_SETTINGS_2,
+            Self::Home => LUCIDE_HOME,
+            Self::Wallet => LUCIDE_WALLET,
+            Self::Documents => LUCIDE_BADGE_CHECK,
+            Self::Activity => LUCIDE_ACTIVITY,
+        }
+    }
+
+    const fn route(self) -> Route {
+        match self {
+            Self::Home => Route::Home,
+            Self::Wallet => Route::Wallet,
+            Self::Documents => Route::Documents,
+            Self::Activity => Route::Activity,
         }
     }
 }
 
-const PRIMARY_DESTINATIONS: [Destination; 6] = [
-    Destination::Assets,
-    Destination::Vault,
-    Destination::Dids,
-    Destination::Credentials,
-    Destination::Diagnostics,
-    Destination::Settings,
+const PRIMARY_DESTINATIONS: [PrimaryDestination; 4] = [
+    PrimaryDestination::Home,
+    PrimaryDestination::Wallet,
+    PrimaryDestination::Documents,
+    PrimaryDestination::Activity,
 ];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Route {
+    Home,
+    Wallet,
+    Documents,
+    Activity,
+    PassportVault,
+    ManageIdentities,
+    CredentialRequest,
+    DidAuthenticationRequest,
+    Settings,
+    Diagnostics,
+    Profile,
+}
+
+impl Route {
+    const fn title(self) -> &'static str {
+        match self {
+            Self::Home => "Home",
+            Self::Wallet => "Wallet",
+            Self::Documents => "Documents",
+            Self::Activity => "Activity",
+            Self::PassportVault => "Passport Vault",
+            Self::ManageIdentities => "Manage identities",
+            Self::CredentialRequest => "Review document request",
+            Self::DidAuthenticationRequest => "Review login request",
+            Self::Settings => "Settings",
+            Self::Diagnostics => "Diagnostics",
+            Self::Profile => "Wallet profiles",
+        }
+    }
+
+    const fn primary(self) -> Option<PrimaryDestination> {
+        match self {
+            Self::Home => Some(PrimaryDestination::Home),
+            Self::Wallet => Some(PrimaryDestination::Wallet),
+            Self::Documents => Some(PrimaryDestination::Documents),
+            Self::Activity => Some(PrimaryDestination::Activity),
+            Self::PassportVault
+            | Self::ManageIdentities
+            | Self::CredentialRequest
+            | Self::DidAuthenticationRequest
+            | Self::Settings
+            | Self::Diagnostics
+            | Self::Profile => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RouteStack {
+    routes: Vec<Route>,
+}
+
+impl Default for RouteStack {
+    fn default() -> Self {
+        Self {
+            routes: vec![Route::Home],
+        }
+    }
+}
+
+impl RouteStack {
+    fn current(&self) -> Route {
+        self.routes.last().copied().unwrap_or(Route::Home)
+    }
+
+    fn active_primary(&self) -> PrimaryDestination {
+        self.routes
+            .first()
+            .and_then(|route| route.primary())
+            .unwrap_or(PrimaryDestination::Home)
+    }
+
+    fn can_go_back(&self) -> bool {
+        self.routes.len() > 1
+    }
+
+    fn select_primary(&mut self, destination: PrimaryDestination) {
+        self.routes.clear();
+        self.routes.push(destination.route());
+    }
+
+    fn push(&mut self, route: Route) {
+        if let Some(destination) = route.primary() {
+            self.select_primary(destination);
+            return;
+        }
+        if self.current() == route {
+            return;
+        }
+        if let Some(index) = self.routes.iter().position(|candidate| *candidate == route) {
+            self.routes.truncate(index + 1);
+        } else {
+            self.routes.push(route);
+        }
+    }
+
+    fn push_from(&mut self, destination: PrimaryDestination, route: Route) {
+        self.select_primary(destination);
+        self.push(route);
+    }
+
+    fn pop(&mut self) -> bool {
+        if self.can_go_back() {
+            self.routes.pop();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn route_identity_request(&mut self, kind: IdentityRequestKind) {
+        let route = match kind {
+            IdentityRequestKind::SelfIssuedAuthentication => Route::DidAuthenticationRequest,
+            IdentityRequestKind::CredentialIssuance
+            | IdentityRequestKind::CredentialPresentation => Route::CredentialRequest,
+        };
+        self.push_from(PrimaryDestination::Documents, route);
+    }
+
+    fn dismiss_identity_request(&mut self) {
+        if matches!(
+            self.current(),
+            Route::CredentialRequest | Route::DidAuthenticationRequest
+        ) {
+            self.pop();
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CreationState {
@@ -1452,15 +1582,6 @@ enum CredentialPageState {
 struct PendingIdentityRequest {
     kind: IdentityRequestKind,
     request_uri: String,
-}
-
-fn identity_request_destination(kind: IdentityRequestKind) -> Destination {
-    match kind {
-        IdentityRequestKind::SelfIssuedAuthentication => Destination::Dids,
-        IdentityRequestKind::CredentialIssuance | IdentityRequestKind::CredentialPresentation => {
-            Destination::Credentials
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1626,8 +1747,8 @@ enum TransferRecovery {
 pub fn App() -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
-    let mut active_destination = use_signal(|| Destination::Assets);
-    let mut menu_open = use_signal(|| false);
+    let mut navigation = use_signal(RouteStack::default);
+    let mut profile_menu_open = use_signal(|| false);
     let mut pending_identity_request = use_signal(|| None::<PendingIdentityRequest>);
     let mut identity_ingress_notice = use_signal(|| None::<String>);
     let mut identity_scan_busy = use_signal(|| false);
@@ -1667,8 +1788,8 @@ pub fn App() -> Element {
             route_pending_identity_link(
                 &services_for_links,
                 pending_identity_request,
-                active_destination,
-                menu_open,
+                navigation,
+                profile_menu_open,
                 identity_ingress_notice,
             );
         }
@@ -1682,7 +1803,7 @@ pub fn App() -> Element {
                 state: session,
                 on_selected: move |profile| {
                     profile_session.set(ProfileSessionState::Active(profile));
-                    active_destination.set(Destination::Assets);
+                    navigation.write().select_primary(PrimaryDestination::Home);
                 },
                 on_retry: move |_| {
                     let services = services.clone();
@@ -1701,7 +1822,9 @@ pub fn App() -> Element {
         };
     };
 
-    let active = *active_destination.read();
+    let active_route = navigation.read().current();
+    let active_primary = navigation.read().active_primary();
+    let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name);
     let identity_request_waiting = pending_identity_request.read().is_some();
 
@@ -1710,90 +1833,38 @@ pub fn App() -> Element {
         div { class: "app-shell",
             header { class: "app-header",
                 button {
-                    class: "brand-button",
+                    class: if *profile_menu_open.read() { "profile-shortcut active" } else { "profile-shortcut" },
                     r#type: "button",
-                    aria_label: "Open Assets",
-                    onclick: move |_| active_destination.set(Destination::Assets),
-                    span { class: "oxid-mark", aria_hidden: "true",
-                        span { class: "oxid-mark__dot" }
-                        span { class: "oxid-mark__dot" }
-                        span { class: "oxid-mark__dot" }
-                    }
-                    span { class: "wordmark",
-                        strong { "oxid" }
-                        small { "identity wallet" }
-                    }
+                    aria_label: "Open profile menu",
+                    aria_expanded: if *profile_menu_open.read() { "true" } else { "false" },
+                    title: "Profile and settings",
+                    onclick: move |_| {
+                        let next = !*profile_menu_open.read();
+                        profile_menu_open.set(next);
+                    },
+                    "{profile_monogram}"
                 }
-                div { class: "header-actions",
+                div { class: "app-header__title",
+                    strong { "{active_route.title()}" }
+                    small { "oxid identity wallet" }
+                }
+                if can_go_back {
                     button {
-                        class: "scan-shortcut",
+                        class: "back-action",
                         r#type: "button",
-                        aria_label: "Scan identity QR code",
-                        title: "Scan identity QR code",
-                        disabled: identity_scan_busy(),
-                        onclick: {
-                            let scanner = services.qr_scanner();
-                            let router = services.route_identity_request();
-                            move |_| {
-                                let scanner = scanner.clone();
-                                let router = router.clone();
-                                identity_scan_busy.set(true);
-                                identity_ingress_notice.set(None);
-                                spawn(async move {
-                                    match scanner.scan().await {
-                                        Ok(payload) => {
-                                            let request_uri = payload.into_inner();
-                                            match router.execute(RouteIdentityRequestCommand {
-                                                request_uri: request_uri.clone(),
-                                            }) {
-                                                Ok(kind) => {
-                                                    pending_identity_request.set(Some(PendingIdentityRequest {
-                                                        kind,
-                                                        request_uri,
-                                                    }));
-                                                    active_destination.set(identity_request_destination(kind));
-                                                    menu_open.set(false);
-                                                    identity_ingress_notice.set(Some(format!(
-                                                        "QR recognized as {}. Review the request before consent.",
-                                                        ui::identity_request_kind(kind)
-                                                    )));
-                                                }
-                                                Err(error) => {
-                                                    identity_ingress_notice.set(Some(identity_request_routing_message(error)));
-                                                }
-                                            }
-                                        }
-                                        Err(error) => {
-                                            identity_ingress_notice.set(Some(qr_scan_message(error)));
-                                        }
-                                    }
-                                    identity_scan_busy.set(false);
-                                });
-                            }
-                        },
-                        if identity_scan_busy() { "Scanning…" } else { "Scan QR" }
-                    }
-                    button {
-                        class: "profile-shortcut",
-                        r#type: "button",
-                        aria_label: "Open wallet profile",
-                        title: "Wallet profile",
+                        aria_label: "Go back",
                         onclick: move |_| {
-                            active_destination.set(Destination::Profile);
-                            menu_open.set(false);
+                            navigation.write().pop();
+                            profile_menu_open.set(false);
                         },
-                        "{profile_monogram}"
+                        span { aria_hidden: "true", "←" }
+                        span { "Back" }
                     }
-                    button {
-                        class: if *menu_open.read() { "menu-button active" } else { "menu-button" },
-                        r#type: "button",
-                        aria_label: "Open navigation menu",
-                        aria_expanded: if *menu_open.read() { "true" } else { "false" },
-                        onclick: move |_| {
-                            let next = !*menu_open.read();
-                            menu_open.set(next);
-                        },
-                        span { aria_hidden: "true", "≡" }
+                } else {
+                    span { class: "app-header__mark", aria_hidden: "true",
+                        span { class: "oxid-mark__dot" }
+                        span { class: "oxid-mark__dot" }
+                        span { class: "oxid-mark__dot" }
                     }
                 }
             }
@@ -1803,7 +1874,45 @@ pub fn App() -> Element {
                     span { class: "status-dot" }
                     "{active_profile.display_name}"
                 }
-                span { class: "page-context__title", "{active.label()}" }
+                span { class: "page-context__title", "{active_primary.label()}" }
+            }
+
+            if *profile_menu_open.read() {
+                nav { class: "profile-sheet", aria_label: "Profile and settings",
+                    div { class: "profile-sheet__identity",
+                        span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram}" }
+                        div {
+                            strong { "{active_profile.display_name}" }
+                            small { "Active wallet profile" }
+                        }
+                    }
+                    button {
+                        class: "profile-sheet__item",
+                        r#type: "button",
+                        aria_label: "Open wallet profiles",
+                        onclick: move |_| {
+                            navigation.write().push(Route::Profile);
+                            profile_menu_open.set(false);
+                        },
+                        "Wallet profiles"
+                    }
+                    button {
+                        class: "profile-sheet__item",
+                        r#type: "button",
+                        aria_label: "Open settings",
+                        onclick: move |_| {
+                            navigation.write().push(Route::Settings);
+                            profile_menu_open.set(false);
+                        },
+                        "Settings & backup"
+                    }
+                    button {
+                        class: "profile-sheet__dismiss",
+                        r#type: "button",
+                        onclick: move |_| profile_menu_open.set(false),
+                        "Close"
+                    }
+                }
             }
 
             if let Some(message) = identity_ingress_notice.read().as_deref() {
@@ -1815,6 +1924,7 @@ pub fn App() -> Element {
                             r#type: "button",
                             onclick: move |_| {
                                 pending_identity_request.set(None);
+                                navigation.write().dismiss_identity_request();
                                 identity_ingress_notice.set(Some(
                                     "Identity request dismissed without consent.".to_owned(),
                                 ));
@@ -1825,61 +1935,51 @@ pub fn App() -> Element {
                 }
             }
 
-            if *menu_open.read() {
-                nav { class: "menu-dropdown", aria_label: "All wallet destinations",
-                    for destination in [
-                        Destination::Assets,
-                        Destination::Vault,
-                        Destination::Dids,
-                        Destination::Credentials,
-                        Destination::Diagnostics,
-                        Destination::Settings,
-                        Destination::Profile,
-                    ] {
-                        button {
-                            key: "{destination.label()}",
-                            class: if active == destination { "menu-item active" } else { "menu-item" },
-                            r#type: "button",
-                            onclick: move |_| {
-                                active_destination.set(destination);
-                                menu_open.set(false);
-                            },
-                            "{destination.label()}"
-                        }
-                    }
-                }
-            }
-
             main { class: "page-content",
-                match active {
-                    Destination::Assets => rsx! { AssetsPage { active_profile: active_profile.clone() } },
-                    Destination::Vault => rsx! { PassportVaultPage { active_profile: active_profile.clone() } },
-                    Destination::Dids => rsx! {
+                match active_route {
+                    Route::Home => rsx! {
+                        HomePage {
+                            active_profile: active_profile.clone(),
+                            on_open_vault: move |_| navigation.write().push(Route::PassportVault),
+                        }
+                    },
+                    Route::Wallet => rsx! { AssetsPage { active_profile: active_profile.clone() } },
+                    Route::Documents => rsx! {
+                        DocumentsPage {
+                            active_profile: active_profile.clone(),
+                            pending_identity_request,
+                            on_manage_identities: move |_| navigation.write().push(Route::ManageIdentities),
+                        }
+                    },
+                    Route::Activity => rsx! { ActivityPage { active_profile: active_profile.clone() } },
+                    Route::PassportVault => rsx! { PassportVaultPage { active_profile: active_profile.clone() } },
+                    Route::ManageIdentities | Route::DidAuthenticationRequest => rsx! {
                         DidsPage {
                             active_profile: active_profile.clone(),
                             pending_identity_request,
                         }
                     },
-                    Destination::Credentials => rsx! {
+                    Route::CredentialRequest => rsx! {
                         CredentialsPage {
                             active_profile: active_profile.clone(),
                             pending_identity_request,
                         }
                     },
-                    Destination::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
-                    Destination::Settings => rsx! {
+                    Route::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
+                    Route::Settings => rsx! {
                         SettingsPage {
                             active_profile: active_profile.clone(),
                             lifecycle_wake: identity_link_wake,
-                            on_open_profile: move |_| active_destination.set(Destination::Profile),
+                            on_open_profile: move |_| navigation.write().push(Route::Profile),
+                            on_open_diagnostics: move |_| navigation.write().push(Route::Diagnostics),
                         }
                     },
-                    Destination::Profile => rsx! {
+                    Route::Profile => rsx! {
                         ProfilePage {
                             active_profile: active_profile.clone(),
                             on_selected: move |profile| {
                                 profile_session.set(ProfileSessionState::Active(profile));
-                                active_destination.set(Destination::Assets);
+                                navigation.write().select_primary(PrimaryDestination::Home);
                             },
                         }
                     },
@@ -1887,31 +1987,115 @@ pub fn App() -> Element {
             }
 
             nav { class: "bottom-nav", aria_label: "Primary wallet destinations",
-                for destination in PRIMARY_DESTINATIONS {
+                for destination in PRIMARY_DESTINATIONS[..2].iter().copied() {
                     {
-                        let is_active = active == destination;
+                        let is_active = active_primary == destination;
                         rsx! {
-                            button {
+                            PrimaryNavigationButton {
                                 key: "{destination.label()}",
-                                class: if is_active { "bottom-nav__item active" } else { "bottom-nav__item" },
-                                r#type: "button",
-                                aria_label: "{destination.label()}",
-                                aria_current: if is_active { "page" } else { "false" },
-                                onclick: move |_| {
-                                    active_destination.set(destination);
-                                    menu_open.set(false);
+                                destination,
+                                active: is_active,
+                                on_select: move |destination| {
+                                    navigation.write().select_primary(destination);
+                                    profile_menu_open.set(false);
                                 },
-                                span {
-                                    class: "bottom-nav__icon",
-                                    aria_hidden: "true",
-                                    dangerous_inner_html: "{destination.icon()}",
+                            }
+                        }
+                    }
+                }
+                button {
+                    class: "bottom-nav__scan",
+                    r#type: "button",
+                    aria_label: "Scan identity QR code",
+                    title: "Scan identity QR code",
+                    disabled: identity_scan_busy(),
+                    onclick: {
+                        let scanner = services.qr_scanner();
+                        let router = services.route_identity_request();
+                        move |_| {
+                            let scanner = scanner.clone();
+                            let router = router.clone();
+                            identity_scan_busy.set(true);
+                            identity_ingress_notice.set(None);
+                            profile_menu_open.set(false);
+                            spawn(async move {
+                                match scanner.scan().await {
+                                    Ok(payload) => {
+                                        let request_uri = payload.into_inner();
+                                        match router.execute(RouteIdentityRequestCommand {
+                                            request_uri: request_uri.clone(),
+                                        }) {
+                                            Ok(kind) => {
+                                                pending_identity_request.set(Some(PendingIdentityRequest {
+                                                    kind,
+                                                    request_uri,
+                                                }));
+                                                navigation.write().route_identity_request(kind);
+                                                identity_ingress_notice.set(Some(format!(
+                                                    "QR recognized as {}. Review the request before consent.",
+                                                    ui::identity_request_kind(kind)
+                                                )));
+                                            }
+                                            Err(error) => {
+                                                identity_ingress_notice.set(Some(identity_request_routing_message(error)));
+                                            }
+                                        }
+                                    }
+                                    Err(error) => {
+                                        identity_ingress_notice.set(Some(qr_scan_message(error)));
+                                    }
                                 }
-                                span { class: "bottom-nav__label", "{destination.label()}" }
+                                identity_scan_busy.set(false);
+                            });
+                        }
+                    },
+                    span {
+                        class: "bottom-nav__scan-icon",
+                        aria_hidden: "true",
+                        dangerous_inner_html: "{LUCIDE_SCAN_LINE}",
+                    }
+                    span { "Scan" }
+                }
+                for destination in PRIMARY_DESTINATIONS[2..].iter().copied() {
+                    {
+                        let is_active = active_primary == destination;
+                        rsx! {
+                            PrimaryNavigationButton {
+                                key: "{destination.label()}",
+                                destination,
+                                active: is_active,
+                                on_select: move |destination| {
+                                    navigation.write().select_primary(destination);
+                                    profile_menu_open.set(false);
+                                },
                             }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+#[component]
+fn PrimaryNavigationButton(
+    destination: PrimaryDestination,
+    active: bool,
+    on_select: EventHandler<PrimaryDestination>,
+) -> Element {
+    rsx! {
+        button {
+            class: if active { "bottom-nav__item active" } else { "bottom-nav__item" },
+            r#type: "button",
+            aria_label: "{destination.label()}",
+            aria_current: if active { "page" } else { "false" },
+            onclick: move |_| on_select.call(destination),
+            span {
+                class: "bottom-nav__icon",
+                aria_hidden: "true",
+                dangerous_inner_html: "{destination.icon()}",
+            }
+            span { class: "bottom-nav__label", "{destination.label()}" }
         }
     }
 }
@@ -2339,6 +2523,120 @@ fn ProfileManager(
 }
 
 #[component]
+fn HomePage(active_profile: WalletProfileView, on_open_vault: EventHandler<MouseEvent>) -> Element {
+    rsx! {
+        article { class: "home-product-card surface-card",
+            div {
+                p { class: "card-eyebrow", "Wallet product" }
+                h2 { "Passport Vault" }
+                p { "Open the credential-gated NIGHT vault without making it a permanent tab." }
+            }
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                aria_label: "Open Passport Vault",
+                onclick: move |event| on_open_vault.call(event),
+                "Open vault"
+            }
+        }
+        AssetsPage { active_profile }
+    }
+}
+
+#[component]
+fn DocumentsPage(
+    active_profile: WalletProfileView,
+    pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    on_manage_identities: EventHandler<MouseEvent>,
+) -> Element {
+    rsx! {
+        article { class: "documents-identity-card surface-card",
+            div {
+                p { class: "card-eyebrow", "Identity controls" }
+                h2 { "Wallet identities" }
+                p { "DIDs stay available one level below your documents." }
+            }
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                aria_label: "Manage identities",
+                onclick: move |event| on_manage_identities.call(event),
+                "Manage identities"
+            }
+        }
+        CredentialsPage {
+            active_profile,
+            pending_identity_request,
+        }
+    }
+}
+
+#[component]
+fn ActivityPage(active_profile: WalletProfileView) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| AccountPageState::Loading);
+    let profile_id = active_profile.id.clone();
+    let services_for_load = services.clone();
+    use_effect(move || {
+        let services = services_for_load.clone();
+        let profile_id = profile_id.clone();
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || load_account_page(&services, &profile_id))
+                    .await
+                    .unwrap_or_else(|error| AccountPageState::Failed(error.to_string())),
+            );
+        });
+    });
+
+    rsx! {
+        section { class: "page-heading",
+            p { class: "eyebrow", "Wallet history" }
+            h1 { "Activity" }
+            p { "Midnight transfers and recoverable submissions appear here." }
+        }
+        match state.read().clone() {
+            AccountPageState::Loading => rsx! {
+                article { class: "empty-state surface-card", role: "status", aria_busy: "true",
+                    span { class: "loading-mark", aria_hidden: "true" }
+                    h2 { "Loading activity" }
+                }
+            },
+            AccountPageState::Failed(error) => rsx! {
+                article { class: "empty-state surface-card", role: "alert",
+                    h2 { "Activity unavailable" }
+                    p { "{error}" }
+                    button {
+                        class: "secondary-action",
+                        r#type: "button",
+                        onclick: move |_| {
+                            let services = services.clone();
+                            let profile_id = active_profile.id.clone();
+                            state.set(AccountPageState::Loading);
+                            spawn(async move {
+                                state.set(
+                                    run_ui_blocking(move || load_account_page(&services, &profile_id))
+                                        .await
+                                        .unwrap_or_else(|error| AccountPageState::Failed(error.to_string())),
+                                );
+                            });
+                        },
+                        "Retry"
+                    }
+                }
+            },
+            AccountPageState::Ready { account, .. } => {
+                let unavailable = account.source == "unavailable";
+                rsx! {
+                    AccountActivityCard { account: *account, unavailable }
+                    SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
+                }
+            },
+        }
+    }
+}
+
+#[component]
 fn AssetsPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| AccountPageState::Loading);
@@ -2662,26 +2960,7 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                             p { "Each QR, clipboard copy, and share sheet contains exactly the public receive address shown." }
                         }
                     }
-                    article { class: "surface-card",
-                        p { class: "card-eyebrow", "Activity" }
-                        if account.transactions.is_empty() {
-                            h2 { "No synced history" }
-                            p { if unavailable { "A live Midnight account source is not connected." } else { "Connect the account to synchronize transaction history." } }
-                        } else {
-                            div { class: "activity-list",
-                                for transaction in account.transactions.iter() {
-                                    div { class: "activity-row", key: "{transaction.transaction_id}",
-                                        span { class: "activity-row__mark", aria_hidden: "true", "{ui::transaction_mark(&transaction.direction)}" }
-                                        div {
-                                            strong { "{ui::transaction_direction(&transaction.direction)}" }
-                                            small { "{transaction_status_line(transaction)}" }
-                                        }
-                                        code { "{truncate_middle(&transaction.transaction_id, 12, 6)}" }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    AccountActivityCard { account: (*account).clone(), unavailable }
                 }
 
                 SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
@@ -2695,6 +2974,32 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                             profile_id: active_profile.id.clone(),
                             unshielded_receive_address: unshielded.value.clone(),
                             shielded_receive_address: shielded.value.clone(),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element {
+    rsx! {
+        article { class: "surface-card",
+            p { class: "card-eyebrow", "Activity" }
+            if account.transactions.is_empty() {
+                h2 { "No synced history" }
+                p { if unavailable { "A live Midnight account source is not connected." } else { "Connect the account to synchronize transaction history." } }
+            } else {
+                div { class: "activity-list",
+                    for transaction in account.transactions.iter() {
+                        div { class: "activity-row", key: "{transaction.transaction_id}",
+                            span { class: "activity-row__mark", aria_hidden: "true", "{ui::transaction_mark(&transaction.direction)}" }
+                            div {
+                                strong { "{ui::transaction_direction(&transaction.direction)}" }
+                                small { "{transaction_status_line(transaction)}" }
+                            }
+                            code { "{truncate_middle(&transaction.transaction_id, 12, 6)}" }
                         }
                     }
                 }
@@ -6315,8 +6620,8 @@ fn identity_request_routing_message(error: IdentityRequestRoutingError) -> Strin
 fn route_pending_identity_link(
     services: &WalletUiServices,
     mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
-    mut active_destination: Signal<Destination>,
-    mut menu_open: Signal<bool>,
+    mut navigation: Signal<RouteStack>,
+    mut profile_menu_open: Signal<bool>,
     mut notice: Signal<Option<String>>,
 ) {
     if pending_identity_request.read().is_some() {
@@ -6339,8 +6644,8 @@ fn route_pending_identity_link(
         }) {
         Ok(kind) => {
             pending_identity_request.set(Some(PendingIdentityRequest { kind, request_uri }));
-            active_destination.set(identity_request_destination(kind));
-            menu_open.set(false);
+            navigation.write().route_identity_request(kind);
+            profile_menu_open.set(false);
             notice.set(Some(format!(
                 "App link recognized as {}. Review the request before consent.",
                 ui::identity_request_kind(kind)
@@ -7782,6 +8087,7 @@ fn SettingsPage(
     active_profile: WalletProfileView,
     lifecycle_wake: Signal<u64>,
     on_open_profile: EventHandler<MouseEvent>,
+    on_open_diagnostics: EventHandler<MouseEvent>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut security = use_signal(|| SecurityCapabilityState::Loading);
@@ -8237,6 +8543,20 @@ fn SettingsPage(
             }
             span { class: "status-pill success", "Enforced" }
         }
+        article { class: "settings-card surface-card",
+            div {
+                p { class: "card-eyebrow", "About" }
+                h2 { "Diagnostics" }
+                p { "Review composed capabilities and bounded local runtime health without exposing wallet payloads." }
+            }
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                aria_label: "Open diagnostics",
+                onclick: move |event| on_open_diagnostics.call(event),
+                "Open diagnostics"
+            }
+        }
     }
 }
 
@@ -8303,12 +8623,11 @@ fn ProfilePage(
 
 // Inline Lucide icons retained from the reviewed prototype shell. Lucide's ISC
 // notice is reproduced in THIRD_PARTY_NOTICES.md.
+const LUCIDE_HOME: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>"#;
 const LUCIDE_WALLET: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>"#;
-const LUCIDE_LANDMARK: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7"/><path d="M5 10v9"/><path d="M9 10v9"/><path d="M15 10v9"/><path d="M19 10v9"/><path d="M3 19h18"/><path d="M2 22h20"/></svg>"#;
-const LUCIDE_FINGERPRINT: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2c0 .47 0 1.17-.02 2"/></svg>"#;
 const LUCIDE_BADGE_CHECK: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg>"#;
 const LUCIDE_ACTIVITY: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.5.5 0 0 1-.96 0L9.24 2.18a.5.5 0 0 0-.96 0l-2.35 8.36A2 2 0 0 1 4 12H2"/></svg>"#;
-const LUCIDE_SETTINGS_2: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>"#;
+const LUCIDE_SCAN_LINE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>"#;
 
 #[cfg(test)]
 mod tests {
@@ -8358,25 +8677,53 @@ mod tests {
 
     #[test]
     fn primary_navigation_matches_the_reviewed_wallet_shell() {
-        let labels = PRIMARY_DESTINATIONS.map(Destination::label);
+        let labels = PRIMARY_DESTINATIONS.map(PrimaryDestination::label);
 
-        assert_eq!(
-            labels,
-            [
-                "Assets",
-                "Vault",
-                "DIDs",
-                "Credentials",
-                "Diagnostics",
-                "Settings"
-            ]
-        );
+        assert_eq!(labels, ["Home", "Wallet", "Documents", "Activity"]);
     }
 
     #[test]
-    fn profile_remains_an_explicit_non_primary_destination() {
-        assert_eq!(Destination::Profile.label(), "Wallet profile");
-        assert!(!PRIMARY_DESTINATIONS.contains(&Destination::Profile));
+    fn secondary_routes_push_and_primary_selection_resets_the_stack() {
+        let mut navigation = RouteStack::default();
+        navigation.push(Route::PassportVault);
+
+        assert_eq!(navigation.current(), Route::PassportVault);
+        assert_eq!(navigation.active_primary(), PrimaryDestination::Home);
+        assert!(navigation.can_go_back());
+        assert!(navigation.pop());
+        assert_eq!(navigation.current(), Route::Home);
+        assert!(!navigation.pop());
+
+        navigation.push(Route::Settings);
+        navigation.push(Route::Diagnostics);
+        navigation.push(Route::Settings);
+        assert_eq!(navigation.routes, vec![Route::Home, Route::Settings]);
+        navigation.select_primary(PrimaryDestination::Wallet);
+        assert_eq!(navigation.routes, vec![Route::Wallet]);
+    }
+
+    #[test]
+    fn identity_ingress_pushes_a_documents_review_route() {
+        let mut navigation = RouteStack::default();
+        navigation.route_identity_request(IdentityRequestKind::CredentialIssuance);
+        assert_eq!(
+            navigation.routes,
+            vec![Route::Documents, Route::CredentialRequest]
+        );
+
+        navigation.route_identity_request(IdentityRequestKind::SelfIssuedAuthentication);
+        assert_eq!(
+            navigation.routes,
+            vec![Route::Documents, Route::DidAuthenticationRequest]
+        );
+        navigation.dismiss_identity_request();
+        assert_eq!(navigation.routes, vec![Route::Documents]);
+    }
+
+    #[test]
+    fn profile_remains_an_explicit_non_primary_route() {
+        assert_eq!(Route::Profile.title(), "Wallet profiles");
+        assert_eq!(Route::Profile.primary(), None);
     }
 
     #[test]

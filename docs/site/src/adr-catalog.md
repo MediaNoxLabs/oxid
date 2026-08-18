@@ -111,6 +111,7 @@ ADR status and delivery state answer different questions:
 | [0083](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0083-run-mobile-compact-proofs-on-a-foreground-worker.md) Run mobile Compact proofs on a foreground worker | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | The explicit native-custody artifact build admits one foreground proof, independently verifies it, and safely reports cancel/background/timeout only after worker completion; physical-device release budgets remain open |
 | [0084](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0084-enforce-two-layer-ui-design-tokens.md) Enforce two-layer UI design tokens | Accepted | §§1, 3–7, 9, 12–13, 16, 18, 21 and issues #2/#65/#67 | Dark/light brand primitives map into one semantic component vocabulary; fixed safety colors and a repository lint prevent brand drift and raw presentation literals |
 | [0085](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0085-centralize-user-facing-machine-labels.md) Centralize user-facing machine labels | Accepted | §§1, 3–7, 9–13, 16, 18, 21 and issues #2/#65/#77 | One Dioxus label/format seam hides unknown values, names capability truth, formats exact assets/dates, and rejects raw machine copy |
+| [0086](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0086-compose-the-mobile-shell-with-a-bounded-route-stack.md) Compose the mobile shell with a bounded route stack | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1a; issues #2/#65/#78 | Four primary tabs and center Scan use an app-owned root-plus-secondary stack; every migrated page remains reachable without a new router dependency |
 
 ## Current boundaries
 
@@ -390,3 +391,10 @@ one reviewed label module; unknown values are hidden rather than echoed. Exact
 NIGHT/DUST amounts and UTC dates replace internal subunit/timestamp copy, while
 sync cursors remain adapter state instead of user vocabulary. This changes no
 application transition, consent, capability, or settlement authority.
+ADR-0086 replaces the prototype-derived flat destination signal with a bounded
+Dioxus route stack. Home, Wallet, Documents, and Activity are the only primary
+destinations; Scan remains a classified action, while Vault, DID management,
+Settings, Diagnostics, and profiles are explicit secondary routes. Selecting a
+primary clears the secondary stack and Back only pops presentation state. Home
+and Wallet intentionally share the complete account view until Phase 1b splits
+their presentation; no application state machine or adapter boundary moves.

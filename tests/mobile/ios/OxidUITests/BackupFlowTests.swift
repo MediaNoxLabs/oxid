@@ -34,7 +34,7 @@ final class BackupFlowTests: XCTestCase {
             if keyboard.exists {
                 return keyboard.frame.minY - 12
             }
-            let fixedNavigationClearance: CGFloat = application.buttons["Assets"].exists ? 90 : 12
+            let fixedNavigationClearance: CGFloat = application.buttons["Home"].exists ? 90 : 12
             return application.frame.maxY - fixedNavigationClearance
         }
         for _ in 0..<24
@@ -146,19 +146,21 @@ final class BackupFlowTests: XCTestCase {
         let create = application.buttons["Create and continue"]
         XCTAssertTrue(create.waitForExistence(timeout: 15))
         create.tap()
+        application.buttons["Wallet"].tap()
 
         let activate = application.buttons["Activate protected Midnight account"]
         XCTAssertTrue(activate.waitForExistence(timeout: 30))
         activate.tap()
         XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 90))
 
-        application.buttons["DIDs"].tap()
+        application.buttons["Documents"].tap()
+        application.buttons["Manage identities"].tap()
         let createDid = application.buttons["Create standalone DID"]
         XCTAssertTrue(createDid.waitForExistence(timeout: 15))
         createDid.tap()
         XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 30))
 
-        application.buttons["Credentials"].tap()
+        application.buttons["Documents"].tap()
         let offer = application.buttons["Use standalone demo offer"]
         XCTAssertTrue(offer.waitForExistence(timeout: 15))
         offer.tap()
@@ -184,7 +186,8 @@ final class BackupFlowTests: XCTestCase {
         let application = XCUIApplication(bundleIdentifier: applicationIdentifier)
         createCompleteWallet(in: application)
 
-        application.buttons["Settings"].tap()
+        application.buttons["Open profile menu"].tap()
+        application.buttons["Open settings"].tap()
         XCTAssertTrue(application.staticTexts["One encrypted wallet document"].waitForExistence(timeout: 15))
 
         let secret = application.secureTextFields["Recovery secret"].firstMatch
@@ -278,17 +281,17 @@ final class BackupFlowTests: XCTestCase {
             open.tap()
         }
 
-        let assets = application.buttons["Assets"]
+        let home = application.buttons["Home"]
         let recoveryAlert = application.descendants(matching: .any)["alert"].firstMatch
         let deadline = Date().addingTimeInterval(120)
-        while !assets.exists && !recoveryAlert.exists && Date() < deadline {
+        while !home.exists && !recoveryAlert.exists && Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         if recoveryAlert.exists {
             let message = recoveryAlert.staticTexts.firstMatch.label
             XCTFail("complete wallet recovery failed: \(message)")
         }
-        XCTAssertTrue(assets.exists)
+        XCTAssertTrue(home.exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
         XCTAssertTrue(
             application.staticTexts["My wallet · Standalone"]
@@ -303,14 +306,15 @@ final class BackupFlowTests: XCTestCase {
                 .waitForExistence(timeout: 30)
         )
 
-        application.buttons["DIDs"].tap()
+        application.buttons["Documents"].tap()
+        application.buttons["Manage identities"].tap()
         XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 30))
         XCTAssertTrue(
             application.descendants(matching: .any)["Manage this DID"]
                 .waitForExistence(timeout: 10)
         )
 
-        application.buttons["Credentials"].tap()
+        application.buttons["Documents"].tap()
         XCTAssertTrue(application.staticTexts["Digital Passport"].waitForExistence(timeout: 30))
         XCTAssertTrue(application.buttons["Reverify"].waitForExistence(timeout: 10))
     }

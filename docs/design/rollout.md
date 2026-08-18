@@ -23,9 +23,14 @@ program (the two exceptions are called out).
 
 ## Phase 1 — Shell & Home
 
-Route stack; 4-tab + center-Scan shell; Home (hero, action row, card stack,
-security strip, activity preview); Diagnostics folded into Settings; Vault
-re-housed as a Home card + section; avatar sheet.
+1. **Route stack and shell** (delivered by ADR-0086 / issue #78): Dioxus now
+   owns a bounded root-plus-secondary stack; the bottom bar is Home, Wallet,
+   center Scan, Documents, and Activity; the hamburger and primary
+   Vault/Diagnostics/Settings destinations are retired; every migrated flow
+   remains reachable through the reviewed hierarchy.
+2. **Home composition** (pending): hero, action row, card stack, security
+   strip, and activity preview. Phase 1a intentionally keeps the complete
+   Assets view on Home and Wallet until this split lands.
 
 ## Phase 2 — Journey ceremonies
 
@@ -84,7 +89,7 @@ global search across assets/documents/activity, light theme ship.
 
 One epic issue (this spec), then per-phase slices sized like existing
 issues: 0a tokens, 0b labeling layer, 0c credential chooser (bug), 1a route
-stack + shell, 1b Home, 2a send wizard, 2b consent sheet, 2c onboarding +
+stack + shell (delivered by #78), 1b Home, 2a send wizard, 2b consent sheet, 2c onboarding +
 backup, 3 white-label infra, 4a secret mode + native privacy ops, 4b dev/demo
 profiles, 5 per-item. Each slice references the relevant spec section as its
 acceptance criteria, factory-work-item style.

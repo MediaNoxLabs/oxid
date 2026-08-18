@@ -104,6 +104,29 @@ async function clickButtonByLabel(label) {
   }
 }
 
+async function openDocuments() {
+  await clickButton("Documents");
+}
+
+async function openIdentities() {
+  await openDocuments();
+  await clickButton("Manage identities");
+}
+
+async function openSettings() {
+  await clickButtonByLabel("Open profile menu");
+  await clickButtonByLabel("Open settings");
+}
+
+async function openPassportVault() {
+  await clickButton("Home");
+  await clickButtonByLabel("Open Passport Vault");
+}
+
+async function openWallet() {
+  await clickButton("Wallet");
+}
+
 async function setInput(label, value) {
   const selector = `input[aria-label=${JSON.stringify(label)}]`;
   await waitFor(`Boolean(document.querySelector(${JSON.stringify(selector)}))`, `input ${label}`);
@@ -165,10 +188,11 @@ try {
 
   if (mode === "backup-export") {
     await clickButton("Create and continue");
+    await openWallet();
     await clickButtonByLabel("Activate protected Midnight account");
     await waitForButton("Use my receive address", 90_000);
 
-    await clickButton("DIDs");
+    await openIdentities();
     await clickButton("Create standalone DID");
     await waitFor(
       "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
@@ -176,7 +200,7 @@ try {
       30_000,
     );
 
-    await clickButton("Credentials");
+    await openDocuments();
     await clickButton("Use standalone demo offer");
     await clickButton("Preview credential offer");
     await waitFor(
@@ -191,7 +215,7 @@ try {
       30_000,
     );
 
-    await clickButton("Settings");
+    await openSettings();
     await waitFor(
       "document.body.innerText.includes('One encrypted wallet document')",
       "complete wallet backup settings",
@@ -235,13 +259,13 @@ try {
       "restored Midnight receive addresses",
       90_000,
     );
-    await clickButton("DIDs");
+    await openIdentities();
     await waitFor(
       "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
       "restored managed DID",
       30_000,
     );
-    await clickButton("Credentials");
+    await openDocuments();
     await waitFor(
       `document.body.innerText.includes('Digital Passport') && Boolean(${buttonExpression("Reverify")})`,
       "restored Digital Passport",
@@ -256,9 +280,10 @@ try {
     })}\n`);
   } else if (mode === "flow") {
     await clickButton("Create and continue");
+    await openWallet();
     await clickButtonByLabel("Activate protected Midnight account");
     await waitForButton("Use my receive address", 90_000);
-    await waitForButton("Scan QR");
+    await waitForButton("Scan");
 
     await clickButton("Sync DUST");
     await waitFor(
@@ -269,7 +294,7 @@ try {
 
     await clickButton("Sync shielded assets");
     await waitFor(
-      "document.body.innerText.includes('1 shielded notes') && document.body.innerText.includes('5000000 atomic units')",
+      "document.body.innerText.includes('1 shielded notes') && document.body.innerText.includes('5 NIGHT')",
       "exact simulated shielded note and token balance",
     );
     await waitForButton("Resync shielded assets");
@@ -315,12 +340,12 @@ try {
 
     const walletResult = await evaluate(`(() => ({
       submitted: document.body.innerText.includes("Transfer submitted"),
-      simulated: document.body.innerText.includes("Mode: simulated"),
+      simulated: document.body.innerText.includes("Mode: Simulated — runs locally, nothing on Midnight"),
       dustSynced: document.body.innerText.includes("12 DUST"),
       shieldedSynced: document.body.innerText.includes("1 shielded notes")
-        && document.body.innerText.includes("5000000 atomic units"),
+        && document.body.innerText.includes("5 NIGHT"),
     }))()`);
-    await clickButton("DIDs");
+    await openIdentities();
     await waitForButton("Create standalone DID");
     await clickButton("Create standalone DID");
     await waitFor(
@@ -372,7 +397,7 @@ try {
     const didAuthenticated = await evaluate(
       "document.body.innerText.includes('DID authentication succeeded and the standalone verifier independently validated the proof.')",
     );
-    await clickButton("Credentials");
+    await openDocuments();
     await waitForButton("Use standalone demo offer");
     await clickButton("Use standalone demo offer");
     await clickButton("Preview credential offer");
@@ -388,7 +413,7 @@ try {
     })()`);
     await clickButton("Accept and issue credential");
     await waitFor(
-      "document.body.innerText.includes('Credential issued, verified, and stored in the protected inventory.') && document.body.innerText.includes('valid')",
+      "document.body.innerText.includes('Credential issued, verified, and stored in the protected inventory.') && document.body.innerText.includes('Valid')",
       "issued and verified OID4VCI credential",
     );
     // The holder-bound standalone credential ID commits to its issuance
@@ -492,76 +517,76 @@ try {
     );
     await clickButton("Preview disclosure plan");
     await waitFor(
-      "document.body.innerText.includes('local preview ready · local preview only · no presentation generated')",
+      "document.body.innerText.includes('Disclosure preview ready · local preview only · no presentation generated')",
       "claim-free local disclosure preview",
     );
     const disclosurePreviewed = await evaluate(
-      "document.body.innerText.includes('local preview ready · local preview only · no presentation generated')",
+      "document.body.innerText.includes('Disclosure preview ready · local preview only · no presentation generated')",
     );
     await clickButton("Reverify");
     await waitForButton("Reverify");
     const credentialVerified = await evaluate(
-      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid')",
+      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Valid')",
     );
     const credentialPolicyChecked = await evaluate(
       "document.body.innerText.includes('Credential policy · issuer passed · time passed · trust passed · revocation not checked')",
     );
 
-    await clickButton("Vault");
+    await openPassportVault();
     await waitFor(
-      "document.body.innerText.includes('Owner-private durable conformance ledger') && document.body.innerText.includes('survives app restart')",
+      "document.body.innerText.includes('Owner-private saved conformance ledger') && document.body.innerText.includes('survives app restart')",
       "durable standalone Passport Vault state label",
     );
     const vaultStatePersistent = await evaluate(
-      "document.body.innerText.includes('Owner-private durable conformance ledger') && document.body.innerText.includes('no on-chain transaction submitted')",
+      "document.body.innerText.includes('Owner-private saved conformance ledger') && document.body.innerText.includes('no on-chain transaction submitted')",
     );
     await waitFor(
-      "document.body.innerText.includes('Deterministic simulation') && document.body.innerText.includes('no node broadcast occurs')",
+      "document.body.innerText.includes('Simulated — runs locally, nothing on Midnight') && document.body.innerText.includes('no node broadcast occurs')",
       "truthfully labelled deterministic vault-call mode",
     );
     await clickButton("Read contract state");
     await waitFor(
-      "document.body.innerText.includes('Contract state') && document.body.innerText.includes('simulated')",
+      "document.body.innerText.includes('Contract state') && document.body.innerText.includes('Simulated — runs locally, nothing on Midnight')",
       "simulated Passport Vault contract state",
     );
     await clickButton("Review contract call");
     await clickButton("Authorize exact call");
     await clickButton("Prove and submit");
     await waitFor(
-      "document.body.innerText.includes('Passport Vault call completed') && document.body.innerText.includes('Mode: simulated')",
+      "document.body.innerText.includes('Passport Vault call completed') && document.body.innerText.includes('Mode: Simulated — runs locally, nothing on Midnight')",
       "simulated native Passport Vault call lifecycle",
     );
     const nativeVaultCallFlow = await evaluate(
-      "document.body.innerText.includes('Passport Vault call completed') && document.body.innerText.includes('Mode: simulated') && document.body.innerText.includes('Transaction') && document.body.innerText.includes('Block')",
+      "document.body.innerText.includes('Passport Vault call completed') && document.body.innerText.includes('Mode: Simulated — runs locally, nothing on Midnight') && document.body.innerText.includes('Transaction') && document.body.innerText.includes('Block')",
     );
     await waitForButton("Create confirmed lock");
     await setInput("Vault required issuing state", "US");
     await setInput("Vault required document number", "AB1234567");
     await clickButton("Create confirmed lock");
     await waitFor(
-      "document.body.innerText.includes('100 base units remaining') && document.body.innerText.includes('state US') && document.body.innerText.includes('document AB1234567')",
+      "document.body.innerText.includes('100 NIGHT remaining') && document.body.innerText.includes('state US') && document.body.innerText.includes('document AB1234567')",
       "created policy-bound Passport Vault lock",
     );
     await clickButton("Deposit");
     await waitFor(
-      "document.body.innerText.includes('110 base units remaining')",
+      "document.body.innerText.includes('110 NIGHT remaining')",
       "Passport Vault deposit",
     );
     await clickButton("Claim with credential");
     await waitFor(
-      "document.body.innerText.includes('100 base units remaining') && document.body.innerText.includes('Claims 1')",
+      "document.body.innerText.includes('100 NIGHT remaining') && document.body.innerText.includes('Claims 1')",
       "credential-gated Passport Vault claim",
     );
     await clickButton("Withdraw");
     await waitFor(
-      "document.body.innerText.includes('90 base units remaining')",
+      "document.body.innerText.includes('90 NIGHT remaining')",
       "Passport Vault creator withdrawal",
     );
     const vaultFlow = await evaluate(
-      "document.body.innerText.includes('Passport Vault') && document.body.innerText.includes('90 base units remaining') && document.body.innerText.includes('Claims 1')",
+      "document.body.innerText.includes('Passport Vault') && document.body.innerText.includes('90 NIGHT remaining') && document.body.innerText.includes('Claims 1')",
     );
 
-    await clickButton("DIDs");
+    await openIdentities();
     await waitFor(
       "document.body.innerText.includes('standalone-2')",
       "managed DID before deactivation",
@@ -602,28 +627,28 @@ try {
     const didResolved = await evaluate(
       "document.body.innerText.includes('standalone-fixture-v2')",
     );
-    await clickButton("Credentials");
+    await openDocuments();
     await waitFor(
-      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && document.body.innerText.includes('Proof')",
+      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
     const result = { ...walletResult, claimsHiddenByDefault, credentialChooserValidated, credentialPolicyChecked, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
     if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialChooserValidated || !result.credentialPolicyChecked || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
-    await clickButton("Assets");
+    await openWallet();
     await clickButtonByLabel("Share Unshielded receive address");
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } else if (mode === "restored") {
-    await waitForButton("Assets");
-    await clickButton("Assets");
+    await waitForButton("Wallet");
+    await openWallet();
     await waitForButton("Activate development wallet");
     const walletRestored = await evaluate(`(() => ({
       profileRestored: !document.body.innerText.includes("Create your wallet profile"),
       developmentRootReset: document.body.innerText.includes("Activate protected test account"),
       submissionRestored: document.body.innerText.includes("Transfer included"),
     }))()`);
-    await clickButton("DIDs");
+    await openIdentities();
     await waitFor(
       "document.body.innerText.includes('standalone-fixture-v2')",
       "restored DID inventory",
@@ -634,27 +659,27 @@ try {
     const managedDidRestored = await evaluate(
       "document.body.innerText.includes('standalone-3') && document.body.innerText.includes('Deactivated')",
     );
-    await clickButton("Credentials");
+    await openDocuments();
     await waitFor(
-      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && Boolean(document.querySelector('.passport-claims')) && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
+      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Valid') && Boolean(document.querySelector('.passport-claims')) && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
       "restored credential inventory",
     );
     await waitForButton("Reverify");
     await clickButton("Preview disclosure plan");
     await waitFor(
-      "document.body.innerText.includes('local preview ready · local preview only · no presentation generated')",
+      "document.body.innerText.includes('Disclosure preview ready · local preview only · no presentation generated')",
       "restored protected disclosure preview",
     );
     const credentialRestored = await evaluate(
-      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('valid') && document.body.innerText.includes('Credential policy · issuer passed · time passed · trust passed · revocation not checked') && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
+      "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Valid') && document.body.innerText.includes('Credential policy · issuer passed · time passed · trust passed · revocation not checked') && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
     );
-    await clickButton("Vault");
+    await openPassportVault();
     await waitFor(
-      "document.body.innerText.includes('90 base units remaining') && document.body.innerText.includes('Claims 1') && document.body.innerText.includes('Owner-private durable conformance ledger')",
+      "document.body.innerText.includes('90 NIGHT remaining') && document.body.innerText.includes('Claims 1') && document.body.innerText.includes('Owner-private saved conformance ledger')",
       "restored standalone Passport Vault accounting",
     );
     const vaultRestored = await evaluate(
-      "document.body.innerText.includes('90 base units remaining') && document.body.innerText.includes('Claims 1') && document.body.innerText.includes('survives app restart')",
+      "document.body.innerText.includes('90 NIGHT remaining') && document.body.innerText.includes('Claims 1') && document.body.innerText.includes('survives app restart')",
     );
     const restored = { ...walletRestored, credentialRestored, didRestored, managedDidRestored, vaultRestored };
     if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored || !restored.credentialRestored || !restored.didRestored || !restored.managedDidRestored || !restored.vaultRestored) {
@@ -675,7 +700,7 @@ try {
     if (accountLoadFailed) {
       throw new Error("native custody account status failed safely before authorization");
     }
-    await clickButton("Settings");
+    await openSettings();
     await waitFor(
       "document.body.textContent.includes('Wallet protection') && !document.body.textContent.includes('Checking custody capability')",
       "settled native protection settings card",
@@ -705,12 +730,12 @@ try {
     }
     process.stdout.write(`${JSON.stringify({ mode, securityAction })}\n`);
   } else if (mode === "native-custody" || mode === "native-restored") {
-    await clickButton("Assets");
+    await openWallet();
     await waitFor(
       "document.body.textContent.includes('Wallet overview')",
       "Assets page before custody refresh",
     );
-    await clickButton("Settings");
+    await openSettings();
     await waitFor(
       "document.body.textContent.includes('Local controls') && document.body.textContent.includes('Wallet protection') && !document.body.textContent.includes('Checking custody capability')",
       "refreshed native protection settings card",
@@ -724,7 +749,7 @@ try {
         !refreshedStatus.includes("Unlocked · Hardware backed")) {
       throw new Error(`native custody authorization did not persist: ${refreshedStatus}`);
     }
-    await clickButton("Assets");
+    await openWallet();
     await waitFor(
       "document.body.textContent.includes('Wallet overview')",
       "Assets page before native account activation",
@@ -773,7 +798,7 @@ try {
     if (!receiveAddress.startsWith("mn_addr_")) {
       throw new Error("native custody did not derive the expected public Midnight address");
     }
-    await clickButton("Settings");
+    await openSettings();
     await waitFor(
       "document.body.textContent.includes('Wallet protection') && !document.body.textContent.includes('Checking custody capability')",
       "settled native protection settings card",

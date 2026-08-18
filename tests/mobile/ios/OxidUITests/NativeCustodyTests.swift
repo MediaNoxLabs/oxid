@@ -20,7 +20,10 @@ final class NativeCustodyTests: XCTestCase {
             createButton.tap()
         }
 
-        let settings = application.buttons["Settings"]
+        let profileMenu = application.buttons["Open profile menu"]
+        XCTAssertTrue(profileMenu.waitForExistence(timeout: 15))
+        profileMenu.tap()
+        let settings = application.buttons["Open settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 15))
         settings.tap()
         let uninitialized = application.staticTexts["Uninitialized · Operating system"]
@@ -40,7 +43,7 @@ final class NativeCustodyTests: XCTestCase {
             return
         }
 
-        application.buttons["Assets"].tap()
+        application.buttons["Wallet"].tap()
         let activate = application.buttons["Activate protected Midnight account"]
         XCTAssertTrue(activate.waitForExistence(timeout: 10))
         activate.tap()

@@ -1,8 +1,8 @@
 # Information Architecture
 
-## Today's shell, and why it changes
+## Prototype-derived shell, and why it changed
 
-The current shell is a 6-tab bottom bar (Assets, Vault, DIDs, Credentials,
+Before ADR-0086, the shell used a 6-tab bottom bar (Assets, Vault, DIDs, Credentials,
 Diagnostics, Settings) **plus** a hamburger menu duplicating all seven
 destinations **plus** two header shortcuts, with no router, no back stack,
 and every page a long single-column card stack
@@ -11,6 +11,13 @@ convention, two of them (Diagnostics, Settings) are non-jobs for a consumer,
 and the redundant hamburger signals unresolved IA. monobank's own audit
 history warns exactly against this shape: navigation that "isn't scalable"
 and buries key sections.
+
+Phase 1a is now delivered by ADR-0086. The Dioxus adapter owns a bounded route
+stack; Home, Wallet, Documents, and Activity are the primary destinations,
+Scan is the elevated center action, and the former global pages remain
+reachable through secondary routes. Home temporarily retains the complete
+Assets view alongside Wallet so the shell cutover cannot hide behavior. Phase
+1b owns the final Home composition and removes that presentation overlap.
 
 ## The new shell
 
@@ -86,7 +93,7 @@ Order, top to bottom:
 
 ## Screen map (delta from today)
 
-| Today (`Destination`) | Becomes | Notes |
+| Before Phase 1 (`Destination`) | Becomes | Notes |
 | --- | --- | --- |
 | Assets (2288-2651, one giant stack) | Home + Wallet | Hero/actions/cards to Home; sync panes collapse into the account card + a background-sync pattern (journeys.md §Sync); send panel becomes the Send wizard route. |
 | Vault (5616-5925) | Home card → Vault section | Duplicated create-lock forms merged; contract-call lifecycle becomes a stepper (journeys.md §Vault). |
