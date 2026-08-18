@@ -31,7 +31,7 @@ before migrating later work.
 | `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, wallet/identity flows, claim-free Digital Passport planning, Final-shaped OpenID4VP proof/verification, strict redacted identity-request routing, and complete standalone Passport Vault create/deposit/claim/replay/withdraw accounting are implemented while raw request URIs and credential/proof private material stay hidden; recovery stays absent from the JSON protocol, with an in-process standalone composition test covering the all-store round trip |
 | `dioxus-wallet/src/logs.rs`, `telemetry_panel.rs`, `proc_stats.rs`, and worker boundaries | Persistent tracing, free-form fields, HTTP/operation/process measurements, and background worker visibility | `diagnostics/application`, `adapters/diagnostics-memory`, composed closed-code sinks, headless snapshot/reset, and the Dioxus Diagnostics page | ADR-0080 reimplements only bounded payload-free runtime health and worker recovery; storage, upload, tracing strings, endpoints, process statistics, and benchmark telemetry remain excluded |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
-| benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness is measured on iOS/Android; ADR-0072 adds an authenticated executable-embedded presentation artifact measurement package while proof execution and physical-device budgets remain gated; generated artifacts remain uncommitted |
+| benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness is measured on iOS/Android; ADR-0072 adds an authenticated executable-embedded presentation artifact package and ADR-0083 runs it through an explicit foreground worker, while physical-device budgets remain gated; generated artifacts remain uncommitted |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts plus the shared `adapters/mobile-native-plugin` | Dioxus-generated hosts build and launch explicit development or native-custody standalone composition; the single static Swift/Kotlin plugin packages QR, links, typed clipboard/share, device custody, and bounded backup documents; Android JNI failures clear pending Java exceptions without exposing details, and an emulator throw-then-full-wallet regression covers continued bridge use; disposable iOS Simulator and Android emulator flows verify complete native export/reset/import/recovery round trips through their system document pickers, while physical camera/device, universal links, live-node fixtures, and resource baselines remain deferred |
 
 ## M0 migration decisions
@@ -320,6 +320,10 @@ verifier, purpose, and exact claim intents without values. Acceptance always
 re-verifies the protected exact Compact bundle, constructs and independently
 checks the generated-circuit public statement, and consumes the session. Without
 an explicit authenticated artifact root it fails with `proof_unavailable`.
+ADR-0083 reuses the same proof/verification boundary only in the explicit
+native-custody mobile artifact build, behind one foreground worker with
+cancel/background/timeout late-result disposal. Normal mobile remains
+proof-disabled.
 ADR-0082 closes the multi-credential consent gap left by the prototype and the
 first mobile adapter: safe candidate previews now include display name, issuer,
 and opaque reference; Dioxus visibly selects a sole match but requires an exact
@@ -329,7 +333,8 @@ ADR-0048 first reloads the credential-bound Jubjub
 method, requires current managed assertion authority, signs and independently
 verifies a disposable authorization over the exact statement, and applies
 explicit same-method rotation semantics. ADR-0050 wires credential-family proof
-execution and an independent proof verifier for native headless mode only.
+execution and an independent proof verifier for native headless mode; ADR-0083
+reuses them only in the explicit mobile conformance build.
 ADR-0073 separately hardens acceptance of each newly issued standalone Compact
 credential: the exact issuer DID assertion method must resolve to the detached
 proof's Jubjub key, issuance/proof/expiry times must be current, and the pinned

@@ -24,6 +24,8 @@ use sha2::{Digest as _, Sha256};
 
 mod compact_digital_passport;
 mod compact_presentation;
+#[cfg(not(target_arch = "wasm32"))]
+mod compact_proof_worker;
 mod compact_proving;
 #[cfg(not(target_arch = "wasm32"))]
 mod compact_runtime;
@@ -48,6 +50,10 @@ pub use compact_presentation::{
     CompactPresentationError, CompactPresentationPublicInput, DigitalPassportPresentationSelection,
     ManagedDidJubjubHolderAuthorization, PreflightOnlyCompactPresentationProof,
     prepare_public_input,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use compact_proof_worker::{
+    ForegroundCompactPresentationProofWorker, STANDALONE_MOBILE_COMPACT_PROOF_TIMEOUT,
 };
 pub use digital_passport::{
     CLAIM_DATE_OF_BIRTH, CLAIM_DOCUMENT_NUMBER, CLAIM_FIRST_NAME, CLAIM_ISSUING_STATE,

@@ -26,14 +26,14 @@ fn main() {
     compile_error!("standalone-native-proving-artifacts is available only on iOS and Android");
 
     #[cfg(feature = "standalone-native-proving-artifacts")]
-    let _presentation_artifact_identity =
-        oxid_composition::authenticate_embedded_mobile_compact_presentation_artifacts()
+    let application =
+        oxid_composition::compose_mobile_native_standalone_with_compact_presentation()
             .unwrap_or_else(|error| {
-                panic!("embedded Compact presentation artifacts are invalid: {error}")
+                panic!("embedded Compact presentation runtime is invalid: {error}")
             });
-
     #[cfg(all(
         feature = "standalone-native-custody",
+        not(feature = "standalone-native-proving-artifacts"),
         any(target_os = "ios", target_os = "android")
     ))]
     let application = oxid_composition::compose_mobile_native_standalone();
@@ -196,6 +196,7 @@ fn main() {
                 oxid_ui_dioxus::CredentialPresentationUiServices::new(
                     application.prepare_credential_presentation(),
                     application.accept_credential_presentation(),
+                    application.cancel_credential_presentation(),
                     application.refuse_credential_presentation(),
                     standalone_openid4vp_request,
                 ),
@@ -227,14 +228,24 @@ fn main() {
     #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         let app_links = application.identity_link_ingress();
+        let presentation_lifecycle = application.set_credential_presentation_foreground();
         let config =
             dioxus::mobile::Config::new().with_custom_event_handler(move |event, _target| {
-                if let dioxus::mobile::tao::event::Event::Opened { urls } = event {
-                    for url in urls {
-                        // Fail closed without reproducing secret-bearing URLs in
-                        // logs. The Dioxus UI drains and classifies accepted links.
-                        let _ = app_links.capture(url.as_str().to_owned());
+                match event {
+                    dioxus::mobile::tao::event::Event::Opened { urls } => {
+                        for url in urls {
+                            // Fail closed without reproducing secret-bearing URLs in
+                            // logs. The Dioxus UI drains and classifies accepted links.
+                            let _ = app_links.capture(url.as_str().to_owned());
+                        }
                     }
+                    dioxus::mobile::tao::event::Event::Suspended => {
+                        let _ = presentation_lifecycle.execute(false);
+                    }
+                    dioxus::mobile::tao::event::Event::Resumed => {
+                        let _ = presentation_lifecycle.execute(true);
+                    }
+                    _ => {}
                 }
             });
         launcher.with_cfg(config).launch(oxid_ui_dioxus::App);

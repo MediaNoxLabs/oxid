@@ -5872,6 +5872,7 @@ dependencies = [
  "base64 0.22.1",
  "ciborium",
  "ed25519-dalek",
+ "futures",
  "getrandom 0.3.4",
  "hex",
  "midnight-base-crypto",

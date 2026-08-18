@@ -71,7 +71,7 @@ ADR status and delivery state answer different questions:
 | [0047](0047-bind-standalone-compact-credentials-to-managed-jubjub-did-methods.md) Bind standalone Compact credentials to managed Jubjub DID methods | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone DID creation and exact Compact issuance bind a managed Jubjub assertion method; ADR-0048 adds presentation-time re-authorization while native custody, issuer anchoring, and proving remain fail-closed |
 | [0048](0048-reauthorize-compact-holder-methods-at-presentation-time.md) Reauthorize Compact holder methods at presentation time | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone preflight requires current protected control of the exact credential-bound method with explicit same-method rotation semantics; ADR-0050 consumes it in native headless proving while native custody/mobile remain fail-closed |
 | [0049](0049-sign-compact-holder-challenges-inside-opaque-custody.md) Sign Compact holder challenges inside opaque custody | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone custody constructs and independently verifies the exact credential-family holder `Proof` through a synchronous public-transcript callback; ADR-0050 consumes it in native headless proving |
-| [0050](0050-prove-and-independently-verify-compact-presentations.md) Prove and independently verify Compact presentations | Accepted | §§3–7, 9–13, 16–18, 21 and issues #27–29 | Exact generated-runtime/Rust preimage parity, authenticated offline artifacts, checked proving, bounded `MZP1`, independent verification, headless OpenID4VP success, tamper/replay/restart tests, and resource baselines implemented; mobile proving remains gated |
+| [0050](0050-prove-and-independently-verify-compact-presentations.md) Prove and independently verify Compact presentations | Accepted | §§3–7, 9–13, 16–18, 21 and issues #27–29 | Exact generated-runtime/Rust preimage parity, authenticated offline artifacts, checked proving, bounded `MZP1`, independent verification, headless OpenID4VP success, tamper/replay/restart tests, and resource baselines implemented; ADR-0083 enables only the explicit mobile conformance harness while production remains gated |
 | [0051](0051-isolate-passport-vault-as-product-specific-hexagon.md) Isolate Passport Vault as a product-specific hexagon | Accepted | §§3–7, 9–13, 16–18, prototype vault flow, and issues #2/#31 | Standalone multi-lock domain, exact Digital Passport policy adapter, headless flow, mobile journey, and ADR-0068 durable state implemented; real-node/device evidence remains #31 |
 | [0052](0052-authenticate-and-decode-passport-vault-contract-state.md) Authenticate and decode Passport Vault contract state natively | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault bridge, and issue #31 | Immutable five-circuit Nix closure, exact native tagged-state decoder, and headless fixture implemented; authenticated acquisition and contract-call transactions pending #31 |
 | [0053](0053-distribute-passport-vault-source-from-oxid.md) Distribute the reviewed Passport Vault source from Oxid | Accepted | §§3–8, 12–13, 16–18, 21 and issue #31 | Byte-identical Apache-2.0 contract source and digest assertion replace the private upstream flake input so public CI remains secret-free; generated artifacts stay in Nix |
@@ -93,7 +93,7 @@ ADR status and delivery state answer different questions:
 | [0069](0069-route-native-identity-ingress-through-strict-protocol-links.md) Route native identity ingress through strict protocol links | Accepted | §§3–7, 9–13, 16–18, 21, prototype QR/mobile flow, and issues #2/#32 | Native QR adapters and strict shared routing hand standalone requests to existing preview/consent flows; ADR-0070 adds OS delivery while physical-camera evidence remains #32 |
 | [0070](0070-constrain-mobile-links-and-public-text-export.md) Constrain mobile links and public text export | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#32 | Warm/cold custom-scheme links reuse the strict router and typed public receive addresses alone reach native clipboard/share; universal links, physical-device evidence, discovery, and resource baselines remain #32 |
 | [0071](0071-wrap-mobile-custody-with-device-user-presence.md) Wrap mobile custody with device user presence | Accepted | §§3, 7, 12–13, 16–18, prototype secret storage, and issues #2/#29/#30 | Normal mobile composition uses a bounded OS-wrapped sealed vault; locked public reads stay non-interactive and Android explicit-authorization/distinct-process/stable-root plus iOS capability/fail-closed simulator evidence exist, while physical-device and mobile-prover gates remain open |
-| [0072](0072-embed-authenticated-compact-artifacts-for-mobile-measurement.md) Embed authenticated Compact artifacts for mobile measurement | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | Opt-in native-custody mobile builds embed and authenticate the exact runtime-minimal Nix closure; proof execution, lifecycle/resource budgets, and Dioxus success remain gated |
+| [0072](0072-embed-authenticated-compact-artifacts-for-mobile-measurement.md) Embed authenticated Compact artifacts for mobile measurement | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | Opt-in native-custody mobile builds embed and authenticate the exact runtime-minimal Nix closure; ADR-0083 adds standalone worker execution while physical-device lifecycle/resource budgets remain gated |
 | [0073](0073-anchor-standalone-compact-credential-policy.md) Anchor standalone Compact credential policy | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#29/#34 | Standalone composition resolves and authorizes the exact issuer Jubjub method, enforces current-time/expiry policy, and requires a pinned trust anchor; status remains not checked and production remains unavailable |
 | [0074](0074-package-portable-custody-for-one-shot-recovery.md) Package portable custody for one-shot recovery | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Versioned Argon2id/XChaCha20-Poly1305 custody packages restore exact keys only into empty development/mobile vaults; ADR-0075 adds native file UX and ADR-0076 composes custody into complete wallet recovery |
 | [0075](0075-transfer-wallet-backups-through-native-document-pickers.md) Transfer wallet backups through native document pickers | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Capability-selected fixed filenames and bounded iOS/Android document pickers serve complete export/fresh-install recovery plus the legacy custody-only importer; physical-device recovery remains #33 |
@@ -104,6 +104,7 @@ ADR status and delivery state answer different questions:
 | [0080](0080-bound-secret-safe-runtime-diagnostics.md) Bound runtime diagnostics to secret-safe closed codes | Accepted | §§3–7, 12–13, 16–18, 21, prototype diagnostics/worker boundaries, and issues #2/#46/#60 | Bounded process-local closed-code snapshots/reset are composed in headless and Dioxus; DUST/Zswap/transfer/vault worker loss is sanitized and cannot wedge active runtime state; persistent logs and telemetry remain excluded |
 | [0081](0081-clear-android-jni-exceptions-at-the-native-boundary.md) Clear Android JNI exceptions at the native boundary | Accepted | §§3–7, 12–13, 16–18, 21 and issues #2/#41 | All fallible shared-plugin JNI conversions clear pending Java exceptions before returning a payload-free failure; the Android smoke injects a debug-only throw and then completes the standalone wallet journey |
 | [0082](0082-require-explicit-presentation-credential-selection.md) Require explicit presentation credential selection | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#64 | Claim-free previews name the issuer and opaque credential reference; Dioxus visibly auto-selects only a sole match and requires an explicit card choice before multi-candidate consent |
+| [0083](0083-run-mobile-compact-proofs-on-a-foreground-worker.md) Run mobile Compact proofs on a foreground worker | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | The explicit native-custody artifact build admits one foreground proof, independently verifies it, and safely reports cancel/background/timeout only after worker completion; physical-device release budgets remain open |
 
 ## Current boundaries
 
@@ -141,9 +142,9 @@ Enclave/StrongBox keys or authorize the still-resource-gated mobile prover.
 ADR-0072 selects an executable-embedded, runtime-minimal Compact artifact
 package for explicit native-custody mobile measurement builds. The adapter
 authenticates that Nix-selected package without runtime discovery or extraction,
-but mobile presentation still ends at `proof_unavailable` until a non-UI proof
-worker, cooperative cancellation, physical-device budgets, and the remaining
-ADR-0071 release gate are accepted.
+and ADR-0083 connects it to a non-UI, single-proof foreground worker only in the
+explicit conformance build. Normal mobile remains `proof_unavailable`, and
+physical-device budgets plus the remaining ADR-0071 release gate stay open.
 ADR-0073 preserves ADR-0045's proof-only constructor for immutable conformance
 vectors and gives active standalone composition an explicit issuer resolver,
 clock, and pinned trust anchor. Exact DID controller, assertion relationship,
@@ -210,6 +211,13 @@ the Dioxus boundary. A sole matching credential is visible and preselected;
 multiple matches require a radio-card choice before consent, and changing that
 choice clears consent. Preview metadata remains bounded to opaque credential
 identifier, display name, and issuer with no claim values or proof material.
+ADR-0083 connects ADR-0050 proof success only to ADR-0072's explicit native
+mobile artifact build. A dedicated worker admits one foreground proof;
+profile-scoped cancel, background, and timeout signals cause late-result
+disposal and are acknowledged only after the non-interruptible prover stops.
+Retry starts from a fresh single-use OpenID4VP preview and consent. Normal
+production and ordinary standalone builds remain proof-disabled, while
+physical-device custody and resource budgets remain issues #29 and #30.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a

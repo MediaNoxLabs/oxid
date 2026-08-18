@@ -54,6 +54,17 @@ variables) enables process-local development custody, deterministic
 simulations, and the real standalone SSI flows. That is where the demo
 lives; [delivery status](status.md) maps each capability to its mode.
 
+To exercise the authenticated Compact presentation worker in the explicit
+native-custody conformance build, use:
+
+```bash
+OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just ios-run
+OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just android-run
+```
+
+This large build is simulator/emulator conformance evidence, not physical-device
+or production readiness. The ordinary commands remain proof-disabled.
+
 ## Driving the wallet without a UI
 
 ```bash

@@ -120,8 +120,8 @@ OXID_MOBILE_CUSTODY=native just ios-run
 OXID_MOBILE_CUSTODY=native just android-run
 ```
 
-An opt-in resource-measurement build embeds and authenticates the exact Compact
-presentation runtime package without enabling proof execution in Dioxus:
+An opt-in standalone conformance build embeds and authenticates the exact
+Compact presentation runtime package and enables one foreground proof worker:
 
 ```bash
 OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just ios-run
@@ -129,10 +129,13 @@ OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just andro
 ```
 
 The launchers resolve the artifact package from the pinned Nix derivation and
-print the resulting app/APK byte count. Presentation consent still fails closed
-at `proof_unavailable`; this mode is for packaging and startup-authentication
-evidence only. The ordinary `just ios-run` and `just android-run` paths remain
-unchanged.
+print the resulting app/APK byte count. This explicit mode can generate and
+independently verify the standalone OpenID4VP proof. Cancellation,
+backgrounding, and timeout discard the result only after the worker stops; a
+retry requires a fresh preview and consent. It remains an experimental
+simulator/emulator harness, not physical-device or production readiness. The
+ordinary `just ios-run` and `just android-run` paths remain unchanged and
+proof-disabled.
 
 `just ios-native-custody-smoke` accepts either a supported passcode-bound
 Keychain capability or a truthful fail-closed simulator result. The Android
@@ -252,7 +255,9 @@ closed with `proof_unavailable`. A native headless process launched from
 `nix develop` uses the explicit authenticated `OXID_PRESENTATION_ARTIFACTS_DIR`
 closure to create the real k=18 Compact proof, independently verify it, and
 validate an internal `vp_token`; ordinary headless views expose neither proof
-nor token bytes.
+nor token bytes. ADR-0083 composes the same checked proof and independent
+verification only in the explicit native-custody mobile artifact build; normal
+mobile remains fail-closed.
 Standalone self-issued login adds `identity.authentication.prepare`,
 `identity.authentication.accept`, `identity.authentication.refuse`,
 `identity.authentication.get`, and `identity.authentication.list`. Results are

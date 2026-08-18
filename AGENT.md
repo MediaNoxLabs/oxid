@@ -158,8 +158,8 @@ The finalized node's timestamp extrinsic is milliseconds and is normalized to
 seconds by canonical history collection; the indexer GraphQL `block.timestamp`
 is already Unix seconds and must not be divided again.
 An authenticated replay cache remains issue #31. Live protocol transport and
-production/mobile presentation proving
-remain deferred.
+production presentation proving remain deferred; ADR-0083 enables only the
+explicit native-custody mobile conformance build.
 Standalone presentation now reauthorizes the exact statement with the
 credential-bound method's current managed protected key, runs the authenticated
 k=18 Compact circuit, and independently verifies the public `MZP1` envelope
@@ -168,7 +168,7 @@ path only when `OXID_PRESENTATION_ARTIFACTS_DIR` names the immutable Nix
 artifact closure; without it, consent fails closed at `proof_unavailable`.
 Headless views never expose the proof or token.
 
-ADR-0072 adds only the first mobile Compact resource gate. The app feature
+ADR-0072 adds the first mobile Compact resource gate. The app feature
 `standalone-native-proving-artifacts` implies native custody and embeds the
 runtime-minimal 135,351,737-byte Nix input (manifest, prover, verifier, compiled
 ZKIR, and p18 parameters) directly in the executable. The adapter authenticates
@@ -176,11 +176,18 @@ the compiled-in source/toolchain/circuit identity, exact sizes, digests,
 circuit, and verifier key without runtime discovery, extraction, cache, or
 network IO. Select it only through
 `OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just
-ios-run|android-run`. This is a package/startup measurement harness: it must not
-set `compact_presentation_proof_available`, and mobile consent must continue to
-return `proof_unavailable` until a dedicated foreground worker, cooperative
-cancellation, process-death/background policy, physical-device budgets, and the
-remaining ADR-0071 release gate are accepted.
+ios-run|android-run`. ADR-0083 turns only this explicit feature into a
+standalone proof-execution harness: one named worker admits one foreground
+proof, holds admission through independent verification, and sets
+`compact_presentation_proof_available`. Profile-scoped cancellation,
+backgrounding, and the five-minute standalone timeout set a terminal flag but
+do not force-stop the generated non-interruptible prover. The future must wait
+for the worker to stop, discard every late result, and only then publish
+`cancelled`, `backgrounded`, or `timed_out`. Retry requires a fresh OpenID4VP
+preview, exact credential selection, consent, holder authorization, and proof.
+Normal production, ordinary development mobile, and native-custody mobile
+without the artifact feature remain `proof_unavailable`; physical-device
+budgets and the remaining ADR-0071 release gate stay open.
 
 The first 2026-08-17 debug package evidence is deliberately non-release: an
 iPhone 17e iOS 26.4 simulator produced a 257,526,696-byte uncompressed bundle
@@ -188,8 +195,8 @@ versus 173,593,496 bytes without the feature (83,933,200-byte debug delta) and
 remained responsive at 455,136 KiB host-reported RSS after startup; the arm64
 Android emulator produced a 539,163,753-byte APK versus 404,307,855 bytes
 without the feature (134,855,898-byte debug delta) and remained responsive at
-310,462 KB PSS / 427,424 KB RSS with no swap. Neither run executed the
-presentation prover. Do not promote these virtual-device debug values into
+310,462 KB PSS / 427,424 KB RSS with no swap. Those first runs did not execute
+the presentation prover. Do not promote these virtual-device debug values into
 budgets or claims about physical-device latency, thermal behavior, installed
 size, or proof memory.
 
@@ -438,7 +445,7 @@ XChaCha20-Poly1305. Its separate owner-private key file is development-only,
 not native custody. Standalone headless and mobile flows receive, list,
 reverify, confirmation-delete, and restore the public fixture without exposing
 the signed body. Normal `compose()` remains unavailable. Live
-OID4VCI/OpenID4VP transport, mobile proving, status/revocation, production
+OID4VCI/OpenID4VP transport, production mobile proving, status/revocation, production
 issuer trust, and native release evidence remain later slices. ADR-0045 adds
 exact detached Compact issuance-proof verification without treating proof
 validity alone as issuer trust or presentation proof generation; ADR-0073 adds
@@ -562,7 +569,8 @@ atomic Jubjub challenge operation. Wallet custody retains a fresh nonce and
 protected scalar, `did-midnight` binds the current managed key, and
 `vc-midnight` derives the exact presentation-context challenge. The adapter
 constructs, decodes, and independently verifies the reference family's
-nine-chunk holder `Proof`. The native headless-only runtime then constructs a
+nine-chunk holder `Proof`. The native headless runtime, or ADR-0083's explicit
+mobile conformance worker, then constructs a
 generated-runtime-identical `ProofPreimage`, checks it against the authenticated
 binary ZKIR, proves with OS entropy and p18 parameters, and independently
 verifies the public statement before OpenID validates its private response
@@ -580,8 +588,10 @@ consent `5a442aeb83cd3e589bfc27bd029c5e561ed0aca7109ca4e5642780c2f0bd20a3`,
 statement `475caef55fc4b454931beb6b4435688ed36cc1740d33ade45741dcd31214011c`.
 Without the explicit artifact root this remains fail-closed preflight and the
 session ends at `proof_unavailable`; with the authenticated native headless
-runtime, `presentationGenerated` and `verifierValidated` become true only after
-the real proof succeeds. Normal/mobile composition keeps the prover unavailable.
+runtime or ADR-0083's explicit mobile conformance worker,
+`presentationGenerated` and `verifierValidated` become true only after the real
+proof succeeds. Normal production and ordinary mobile composition keep the
+prover unavailable.
 Do not substitute a synthetic boolean, local age calculation, signature, or
 fixture bytes for a proof.
 
@@ -623,7 +633,8 @@ custody, or a public-only restored record fail closed. Native custody and
 issuer-method anchoring remain issue #29 acceptance gates. Detached issuance
 verification, holder authorization, and the exact ADR-0049 holder `Proof` do
 not themselves satisfy the ADR-0043/0044 ZK proof gate; ADR-0050's checked
-prover and independent verifier do so only for explicit native headless mode.
+prover and independent verifier do so for explicit native headless mode and
+ADR-0083's explicit mobile conformance build, not normal production.
 
 The 2026-08-14 `just ios-smoke` and `just android-smoke` runs pass the exact
 Compact OID4VCI bundle through native verification, encrypted schema-v3
@@ -886,7 +897,7 @@ Current package ownership:
 | `crates/protocol/domain` | Dependency-free credential-offer and self-issued-authentication preview/lifecycle invariants. |
 | `crates/protocol/application` | Profile-scoped issuance, explicit public holder-binding, and self-issued-authentication use cases plus protocol/proof/verified-sink ports. |
 | `crates/presentation/domain` | Dependency-free credential-presentation preview, claim-intent, candidate, and lifecycle invariants. |
-| `crates/presentation/application` | Profile-scoped presentation use cases plus protocol, candidate, current-holder authorization, proof, and independent-verifier ports. |
+| `crates/presentation/application` | Profile-scoped presentation use cases plus protocol, candidate, current-holder authorization, proof, proof-control/lifecycle, and independent-verifier ports. |
 | `crates/passport-vault/domain` | Dependency-free product lock policy, creator authorization, checked accounting, and per-lock credential replay invariants. |
 | `crates/passport-vault/application` | Passport Vault list/create/deposit/claim/withdraw use cases plus focused repository, credential-policy, bounded contract-state source, and retained four-operation contract-call ports. |
 | `crates/platform/ports` | Clock, randomness, and bounded native QR-scanner capabilities used by applications. |
@@ -897,11 +908,11 @@ Current package ownership:
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256/Jubjub generation plus protected BIP32/secp256k1-Schnorr derivation, one-shot signing, and atomic fresh-nonce Jubjub challenge completion. |
 | `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Standalone fixture and exact public Compact-issuer documents, explicit bounded native Midnight DID resolution, plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
-| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification, explicit standalone issuer/current-time/trust policy, holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/preflight, current managed Jubjub holder reauthorization, exact credential-family holder-proof construction/verification, and public standalone fixtures. |
+| `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification, explicit standalone issuer/current-time/trust policy, holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/proving/verification, current managed Jubjub holder reauthorization, a single-proof foreground mobile worker, and public standalone fixtures. |
 | `crates/adapters/passport-vault` | Product-specific bounded in-memory plus owner-private atomic standalone repositories, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing authorization-bound settlement for create/deposit/claim/withdraw; managed-custody claim conformance is exercised through composition. |
 | `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
-| `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, and fail-closed Compact proof gate. |
+| `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, fail-closed Compact proof gate, independent verification, and proof-worker completion control. |
 | `crates/adapters/identity-ingress` | Strict credential-offer/registered-OpenID4VP classifier plus payload-redacted native iOS/Android QR scanner adapters. |
 | `crates/adapters/mobile-native-plugin` | Single repository-owned Manganis Rust/Swift/Kotlin bridge for QR capture, Android OS-link queueing, and typed public receive-address clipboard/share operations. |
 | `contracts/presentation` | Oxid-owned final Compact presentation compositions; generated artifacts remain Nix-store outputs and never enter Git. |
@@ -1503,8 +1514,9 @@ Keychain policy. `just android-native-custody-smoke` exercises a real system
 credential prompt, opaque no-backup ciphertext, restart, and stable root; it
 must remain restricted to a disposable `emulator-*` without an existing
 credential and must clear its temporary PIN/app data on every exit. Physical
-device recovery/resource evidence and issue #30 mobile Compact proving remain
-release gates.
+device recovery/resource evidence and issue #30 mobile Compact proving budgets
+remain release gates. Simulator/emulator proof success is conformance evidence
+only.
 
 `just ios-smoke` generates an ignored XCUITest project from
 `tests/mobile/ios/project.yml`, resets only the installed Oxid simulator data,
@@ -1667,11 +1679,18 @@ to silence the shell probe.
   proof, public communications commitment, and tagged proof. Never add private
   claims, openings, custody references, scalars, nonces, communications
   randomness, or a serialized `ProofPreimage`.
-- ADR-0072 measurement builds may borrow the exact runtime-minimal Compact
+- ADR-0072/0083 conformance builds may borrow the exact runtime-minimal Compact
   artifacts from the signed executable image. Never add runtime artifact-path
   discovery, APK extraction, a mutable copied cache, or download fallback. A
-  successful startup authentication is not proof-execution or device-budget
-  evidence and must not change the mobile capability label.
+  successful startup authentication or virtual-device proof is not a physical
+  device budget. Only the explicit artifact feature may change the mobile
+  capability label; normal mobile composition must remain proof-disabled.
+- The ADR-0083 proof-control port is non-blocking and payload-free. A control
+  signal is `cancellation_requested`, never proof cancellation acknowledgement.
+  Do not release the one-proof admission slot or publish a terminal state until
+  the worker has stopped using witness/custody material, independent
+  verification has completed, and any late result has been discarded. Never
+  detach or force-stop the prover thread.
 - ADR-0073 standalone credential policy must keep resolver, clock, and trust
   inputs explicit. A detached proof key is not issuer authority by itself;
   require exact DID controller/assertion authorization and canonical Jubjub

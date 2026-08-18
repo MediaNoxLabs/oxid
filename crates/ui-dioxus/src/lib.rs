@@ -47,6 +47,7 @@ use oxid_platform_ports::{
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationCommand, AcceptCredentialPresentationUseCase,
+    CancelCredentialPresentationCommand, CancelCredentialPresentationUseCase,
     CredentialPresentationError, CredentialPresentationView, PrepareCredentialPresentationCommand,
     PrepareCredentialPresentationUseCase, PresentationProtocolError,
     RefuseCredentialPresentationCommand, RefuseCredentialPresentationUseCase,
@@ -232,6 +233,7 @@ pub struct WalletUiServices {
     standalone_credential_offer: Option<String>,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
+    cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
     refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
     standalone_openid4vp_request: Option<String>,
     prepare_self_issued_authentication: Arc<dyn PrepareSelfIssuedAuthenticationUseCase>,
@@ -422,6 +424,7 @@ pub struct CredentialUiServices {
     standalone_credential_offer: Option<String>,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
+    cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
     refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
     standalone_openid4vp_request: Option<String>,
 }
@@ -466,6 +469,7 @@ pub struct CredentialIssuanceUiServices {
 pub struct CredentialPresentationUiServices {
     prepare: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept: Arc<dyn AcceptCredentialPresentationUseCase>,
+    cancel: Arc<dyn CancelCredentialPresentationUseCase>,
     refuse: Arc<dyn RefuseCredentialPresentationUseCase>,
     standalone_request: Option<String>,
 }
@@ -475,12 +479,14 @@ impl CredentialPresentationUiServices {
     pub fn new(
         prepare: Arc<dyn PrepareCredentialPresentationUseCase>,
         accept: Arc<dyn AcceptCredentialPresentationUseCase>,
+        cancel: Arc<dyn CancelCredentialPresentationUseCase>,
         refuse: Arc<dyn RefuseCredentialPresentationUseCase>,
         standalone_request: Option<String>,
     ) -> Self {
         Self {
             prepare,
             accept,
+            cancel,
             refuse,
             standalone_request,
         }
@@ -574,6 +580,7 @@ impl CredentialUiServices {
             standalone_credential_offer: issuance.standalone_credential_offer,
             prepare_credential_presentation: presentation.prepare,
             accept_credential_presentation: presentation.accept,
+            cancel_credential_presentation: presentation.cancel,
             refuse_credential_presentation: presentation.refuse,
             standalone_openid4vp_request: presentation.standalone_request,
         }
@@ -958,6 +965,7 @@ impl WalletUiServices {
             standalone_credential_offer: credentials.standalone_credential_offer,
             prepare_credential_presentation: credentials.prepare_credential_presentation,
             accept_credential_presentation: credentials.accept_credential_presentation,
+            cancel_credential_presentation: credentials.cancel_credential_presentation,
             refuse_credential_presentation: credentials.refuse_credential_presentation,
             standalone_openid4vp_request: credentials.standalone_openid4vp_request,
             prepare_self_issued_authentication: authentication.prepare,
@@ -1257,6 +1265,11 @@ impl WalletUiServices {
     #[must_use]
     pub fn accept_credential_presentation(&self) -> Arc<dyn AcceptCredentialPresentationUseCase> {
         Arc::clone(&self.accept_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn cancel_credential_presentation(&self) -> Arc<dyn CancelCredentialPresentationUseCase> {
+        Arc::clone(&self.cancel_credential_presentation)
     }
 
     #[must_use]
@@ -6655,6 +6668,14 @@ fn credential_presentation_message(error: CredentialPresentationError) -> String
             "Unlock the wallet and make the bound DID holder method available before presenting. Nothing was presented and no vp_token was generated.".to_owned(),
         CredentialPresentationError::Protocol(PresentationProtocolError::ProofUnavailable) =>
             "The holder authorized this exact presentation, but Compact proving is unavailable. No presentation or vp_token was generated.".to_owned(),
+        CredentialPresentationError::Protocol(PresentationProtocolError::ProofBusy) =>
+            "Another presentation proof is already running. Nothing was presented; preview a fresh request after it finishes.".to_owned(),
+        CredentialPresentationError::Protocol(PresentationProtocolError::ProofCancelled) =>
+            "Proof cancellation completed after the worker stopped. Its result was discarded; preview a fresh request to retry.".to_owned(),
+        CredentialPresentationError::Protocol(PresentationProtocolError::ProofBackgrounded) =>
+            "The app left the foreground. The proof worker stopped and discarded its result; preview a fresh request to retry.".to_owned(),
+        CredentialPresentationError::Protocol(PresentationProtocolError::ProofTimedOut) =>
+            "The proof exceeded the standalone time limit. The worker stopped and its result was discarded; preview a fresh request to retry.".to_owned(),
         other => other.to_string(),
     }
 }
@@ -6859,6 +6880,7 @@ fn CredentialPresentationPanel(
                                     let service = services.accept_credential_presentation();
                                     let profile_id = profile_id.clone();
                                     let presentation_id = presentation.id.clone();
+                                    let presenting_view = presentation.clone();
                                     move |_| {
                                         let Some(credential_id) = selected_credential_id.read().clone() else {
                                             consent.set(false);
@@ -6870,6 +6892,10 @@ fn CredentialPresentationPanel(
                                         let presentation_id = presentation_id.clone();
                                         busy.set(true);
                                         notice.set(None);
+                                        let mut presenting = presenting_view.clone();
+                                        presenting.state = "presenting".to_owned();
+                                        presenting.failure_code = None;
+                                        preview.set(Some(presenting));
                                         spawn(async move {
                                             match run_ui_future(async move {
                                                 service.execute(AcceptCredentialPresentationCommand {
@@ -6890,7 +6916,12 @@ fn CredentialPresentationPanel(
                                                     let failed_view = preview.read().clone();
                                                     if let CredentialPresentationError::Protocol(protocol) = &error
                                                         && let Some(mut failed) = failed_view {
-                                                        failed.state = "failed".to_owned();
+                                                        failed.state = match protocol {
+                                                            PresentationProtocolError::ProofCancelled
+                                                            | PresentationProtocolError::ProofBackgrounded => "cancelled",
+                                                            PresentationProtocolError::ProofTimedOut => "timed_out",
+                                                            _ => "failed",
+                                                        }.to_owned();
                                                         failed.presentation_generated = false;
                                                         failed.verifier_validated = false;
                                                         failed.failure_code = Some(protocol.code().to_owned());
@@ -6944,6 +6975,48 @@ fn CredentialPresentationPanel(
                                 },
                                 "Refuse request"
                             }
+                        }
+                    } else if presentation.state == "presenting"
+                        || presentation.state == "cancellation_requested" {
+                        p { class: "form-hint", role: "status",
+                            if presentation.state == "cancellation_requested" {
+                                "Cancellation requested. Waiting for the proof worker to stop before discarding its result."
+                            } else {
+                                "Compact proving is running on the foreground worker."
+                            }
+                        }
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            disabled: presentation.state == "cancellation_requested",
+                            onclick: {
+                                let service = services.cancel_credential_presentation();
+                                let profile_id = profile_id.clone();
+                                let presentation_id = presentation.id.clone();
+                                move |_| {
+                                    let service = service.clone();
+                                    let profile_id = profile_id.clone();
+                                    let presentation_id = presentation_id.clone();
+                                    spawn(async move {
+                                        let result = run_ui_blocking(move || {
+                                            service.execute(CancelCredentialPresentationCommand {
+                                                profile_id,
+                                                presentation_id,
+                                            })
+                                        })
+                                        .await;
+                                        match result {
+                                            Ok(Ok(result)) => {
+                                                preview.set(Some(result));
+                                                notice.set(Some("Cancellation requested. The result will be discarded after the proof worker stops.".to_owned()));
+                                            }
+                                            Ok(Err(error)) => notice.set(Some(credential_presentation_message(error))),
+                                            Err(error) => notice.set(Some(error.to_string())),
+                                        }
+                                    });
+                                }
+                            },
+                            "Cancel proof"
                         }
                     }
                     if !presentation.presentation_generated {

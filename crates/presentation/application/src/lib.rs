@@ -96,6 +96,17 @@ pub trait CredentialPresentationProtocolPort: Send + Sync {
         &self,
         presentation_id: &CredentialPresentationId,
     ) -> Result<(), PresentationProtocolError>;
+
+    fn cancel(
+        &self,
+        _request: CancelPresentationProofRequest,
+    ) -> Result<(), PresentationProtocolError> {
+        Err(PresentationProtocolError::ProofUnavailable)
+    }
+
+    fn set_foreground(&self, _foreground: bool) -> Result<(), PresentationProtocolError> {
+        Err(PresentationProtocolError::ProofUnavailable)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -115,6 +126,7 @@ pub trait PresentationCandidateSourcePort: Send + Sync {
 #[derive(Clone, PartialEq, Eq)]
 pub struct PresentationProofRequest {
     pub profile_id: PresentationProfileId,
+    pub presentation_id: CredentialPresentationId,
     pub credential_id: String,
     pub verifier: String,
     pub challenge_hash: [u8; 32],
@@ -153,6 +165,7 @@ impl fmt::Debug for PresentationProofRequest {
         formatter
             .debug_struct("PresentationProofRequest")
             .field("profile_id", &self.profile_id)
+            .field("presentation_id", &self.presentation_id)
             .field("credential_id", &self.credential_id)
             .field("verifier", &self.verifier)
             .field("requested_claim_count", &self.requested_claims.len())
@@ -163,6 +176,29 @@ impl fmt::Debug for PresentationProofRequest {
 pub trait PresentationProofPort: Send + Sync {
     fn create<'a>(&'a self, request: PresentationProofRequest)
     -> CreatePresentationProofFuture<'a>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CancelPresentationProofRequest {
+    pub profile_id: PresentationProfileId,
+    pub presentation_id: CredentialPresentationId,
+}
+
+/// Non-blocking control boundary for a proof worker.
+///
+/// Cancellation is a request, not an acknowledgement. The proof future must
+/// resolve only after the worker has stopped using witness and custody
+/// material and has discarded any late result.
+pub trait PresentationProofControlPort: Send + Sync {
+    fn cancel(&self, request: CancelPresentationProofRequest)
+    -> Result<(), PresentationProofError>;
+
+    fn set_foreground(&self, foreground: bool) -> Result<(), PresentationProofError>;
+
+    /// Releases admission after independent verification and returns any
+    /// cancellation/background/timeout reason that arrived after proving.
+    fn finish(&self, request: CancelPresentationProofRequest)
+    -> Result<(), PresentationProofError>;
 }
 
 /// Current-control check for the holder method named by a credential.
@@ -250,6 +286,10 @@ pub enum PresentationProtocolError {
     HolderAuthorizationUnavailable,
     HolderNotAuthorized,
     ProofUnavailable,
+    ProofBusy,
+    ProofCancelled,
+    ProofBackgrounded,
+    ProofTimedOut,
     InvalidProof,
     VerifierRejected,
 }
@@ -267,6 +307,10 @@ impl PresentationProtocolError {
             Self::HolderAuthorizationUnavailable => "holder_authorization_unavailable",
             Self::HolderNotAuthorized => "holder_not_authorized",
             Self::ProofUnavailable => "proof_unavailable",
+            Self::ProofBusy => "proof_busy",
+            Self::ProofCancelled => "proof_cancelled",
+            Self::ProofBackgrounded => "proof_backgrounded",
+            Self::ProofTimedOut => "proof_timed_out",
             Self::InvalidProof => "invalid_proof",
             Self::VerifierRejected => "verifier_rejected",
         }
@@ -282,6 +326,10 @@ pub enum PresentationCandidateError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PresentationProofError {
     Unavailable,
+    Busy,
+    Cancelled,
+    Backgrounded,
+    TimedOut,
     InvalidCredential,
     InvalidSelection,
     HolderAuthorizationUnavailable,
@@ -314,6 +362,10 @@ display_code_error!(PresentationCandidateError, |error| match error {
 });
 display_code_error!(PresentationProofError, |error| match error {
     PresentationProofError::Unavailable => "presentation proof capability is unavailable",
+    PresentationProofError::Busy => "another presentation proof is already running",
+    PresentationProofError::Cancelled => "presentation proof was cancelled",
+    PresentationProofError::Backgrounded => "presentation proof stopped after app backgrounding",
+    PresentationProofError::TimedOut => "presentation proof timed out",
     PresentationProofError::InvalidCredential => "presentation credential is invalid",
     PresentationProofError::InvalidSelection => "presentation selection is invalid",
     PresentationProofError::HolderAuthorizationUnavailable =>
@@ -354,6 +406,12 @@ pub struct AcceptCredentialPresentationCommand {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RefuseCredentialPresentationCommand {
+    pub profile_id: String,
+    pub presentation_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CancelCredentialPresentationCommand {
     pub profile_id: String,
     pub presentation_id: String,
 }
@@ -511,6 +569,19 @@ pub trait RefuseCredentialPresentationUseCase: Send + Sync {
     ) -> Result<CredentialPresentationView, CredentialPresentationError>;
 }
 
+pub trait CancelCredentialPresentationUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: CancelCredentialPresentationCommand,
+    ) -> Result<CredentialPresentationView, CredentialPresentationError>;
+}
+
+/// Applies native foreground/background lifecycle changes to the active proof
+/// worker without exposing proof material to the incoming adapter.
+pub trait SetCredentialPresentationForegroundUseCase: Send + Sync {
+    fn execute(&self, foreground: bool) -> Result<(), CredentialPresentationError>;
+}
+
 pub trait GetCredentialPresentationUseCase: Send + Sync {
     fn execute(
         &self,
@@ -550,14 +621,21 @@ impl CredentialPresentationService {
             .map_err(|_| CredentialPresentationError::Unavailable)
     }
 
-    fn fail(&self, id: &CredentialPresentationId, code: &str) {
+    fn fail(&self, id: &CredentialPresentationId, error: PresentationProtocolError) {
         if let Ok(mut sessions) = self.sessions.lock()
             && let Some(session) = sessions.get_mut(id)
         {
-            session.state = CredentialPresentationState::Failed;
+            session.state = match error {
+                PresentationProtocolError::ProofCancelled
+                | PresentationProtocolError::ProofBackgrounded => {
+                    CredentialPresentationState::Cancelled
+                }
+                PresentationProtocolError::ProofTimedOut => CredentialPresentationState::TimedOut,
+                _ => CredentialPresentationState::Failed,
+            };
             session.presentation_generated = false;
             session.verifier_validated = false;
-            session.failure_code = Some(code.to_owned());
+            session.failure_code = Some(error.code().to_owned());
         }
     }
 }
@@ -659,14 +737,14 @@ impl AcceptCredentialPresentationUseCase for CredentialPresentationService {
             {
                 Ok(outcome) => outcome,
                 Err(error) => {
-                    self.fail(&presentation_id, error.code());
+                    self.fail(&presentation_id, error);
                     return Err(CredentialPresentationError::Protocol(error));
                 }
             };
             if !outcome.verifier_validated {
                 self.fail(
                     &presentation_id,
-                    PresentationProtocolError::VerifierRejected.code(),
+                    PresentationProtocolError::VerifierRejected,
                 );
                 return Err(CredentialPresentationError::Protocol(
                     PresentationProtocolError::VerifierRejected,
@@ -682,6 +760,60 @@ impl AcceptCredentialPresentationUseCase for CredentialPresentationService {
             session.failure_code = None;
             Ok(session.view(&presentation_id))
         })
+    }
+}
+
+impl CancelCredentialPresentationUseCase for CredentialPresentationService {
+    fn execute(
+        &self,
+        command: CancelCredentialPresentationCommand,
+    ) -> Result<CredentialPresentationView, CredentialPresentationError> {
+        let profile_id = profile(command.profile_id)?;
+        let presentation_id = presentation_id(command.presentation_id)?;
+        {
+            let sessions = self.sessions()?;
+            let session = sessions
+                .get(&presentation_id)
+                .ok_or(CredentialPresentationError::NotFound)?;
+            if session.profile_id != profile_id {
+                return Err(CredentialPresentationError::NotFound);
+            }
+            if session.state != CredentialPresentationState::Presenting {
+                return Err(CredentialPresentationError::InvalidState);
+            }
+        }
+        self.protocol
+            .cancel(CancelPresentationProofRequest {
+                profile_id,
+                presentation_id: presentation_id.clone(),
+            })
+            .map_err(CredentialPresentationError::Protocol)?;
+        let mut sessions = self.sessions()?;
+        let session = sessions
+            .get_mut(&presentation_id)
+            .ok_or(CredentialPresentationError::NotFound)?;
+        if session.state == CredentialPresentationState::Presenting {
+            session.state = CredentialPresentationState::CancellationRequested;
+            session.failure_code = None;
+        }
+        Ok(session.view(&presentation_id))
+    }
+}
+
+impl SetCredentialPresentationForegroundUseCase for CredentialPresentationService {
+    fn execute(&self, foreground: bool) -> Result<(), CredentialPresentationError> {
+        self.protocol
+            .set_foreground(foreground)
+            .map_err(CredentialPresentationError::Protocol)?;
+        if !foreground {
+            for session in self.sessions()?.values_mut() {
+                if session.state == CredentialPresentationState::Presenting {
+                    session.state = CredentialPresentationState::CancellationRequested;
+                    session.failure_code = None;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -821,6 +953,8 @@ mod tests {
     #[derive(Default)]
     struct Protocol {
         selected_credential_id: Mutex<Option<String>>,
+        cancelled_presentation_id: Mutex<Option<String>>,
+        foreground_events: Mutex<Vec<bool>>,
     }
 
     impl CredentialPresentationProtocolPort for Protocol {
@@ -883,6 +1017,26 @@ mod tests {
         }
 
         fn discard(&self, _: &CredentialPresentationId) -> Result<(), PresentationProtocolError> {
+            Ok(())
+        }
+
+        fn cancel(
+            &self,
+            request: CancelPresentationProofRequest,
+        ) -> Result<(), PresentationProtocolError> {
+            *self
+                .cancelled_presentation_id
+                .lock()
+                .expect("cancelled presentation lock") =
+                Some(request.presentation_id.as_str().to_owned());
+            Ok(())
+        }
+
+        fn set_foreground(&self, foreground: bool) -> Result<(), PresentationProtocolError> {
+            self.foreground_events
+                .lock()
+                .expect("foreground events lock")
+                .push(foreground);
             Ok(())
         }
     }
@@ -965,6 +1119,99 @@ mod tests {
         assert_eq!(failed.state, "failed");
         assert_eq!(failed.failure_code.as_deref(), Some("proof_unavailable"));
         assert!(!failed.presentation_generated);
+    }
+
+    #[test]
+    fn cancellation_request_is_profile_scoped_and_not_an_acknowledgement() {
+        let protocol = Arc::new(Protocol::default());
+        let service = CredentialPresentationService::new(protocol.clone());
+        let prepared = ready(PrepareCredentialPresentationUseCase::execute(
+            &service,
+            PrepareCredentialPresentationCommand {
+                profile_id: "profile_one".to_owned(),
+                request: "openid4vp://authorize".to_owned(),
+            },
+        ))
+        .expect("prepare");
+        service
+            .sessions
+            .lock()
+            .expect("sessions")
+            .get_mut(
+                &CredentialPresentationId::parse(prepared.id.clone()).expect("presentation id"),
+            )
+            .expect("session")
+            .state = CredentialPresentationState::Presenting;
+
+        assert_eq!(
+            CancelCredentialPresentationUseCase::execute(
+                &service,
+                CancelCredentialPresentationCommand {
+                    profile_id: "profile_two".to_owned(),
+                    presentation_id: prepared.id.clone(),
+                },
+            ),
+            Err(CredentialPresentationError::NotFound)
+        );
+        let cancelling = CancelCredentialPresentationUseCase::execute(
+            &service,
+            CancelCredentialPresentationCommand {
+                profile_id: "profile_one".to_owned(),
+                presentation_id: prepared.id.clone(),
+            },
+        )
+        .expect("request cancellation");
+        assert_eq!(cancelling.state, "cancellation_requested");
+        assert_ne!(cancelling.state, "cancelled");
+        assert_eq!(
+            protocol
+                .cancelled_presentation_id
+                .lock()
+                .expect("cancelled presentation lock")
+                .as_deref(),
+            Some(prepared.id.as_str())
+        );
+    }
+
+    #[test]
+    fn backgrounding_marks_presenting_sessions_as_cancellation_requested() {
+        let protocol = Arc::new(Protocol::default());
+        let service = CredentialPresentationService::new(protocol.clone());
+        let prepared = ready(PrepareCredentialPresentationUseCase::execute(
+            &service,
+            PrepareCredentialPresentationCommand {
+                profile_id: "profile_one".to_owned(),
+                request: "openid4vp://authorize".to_owned(),
+            },
+        ))
+        .expect("prepare");
+        service
+            .sessions
+            .lock()
+            .expect("sessions")
+            .get_mut(
+                &CredentialPresentationId::parse(prepared.id.clone()).expect("presentation id"),
+            )
+            .expect("session")
+            .state = CredentialPresentationState::Presenting;
+
+        SetCredentialPresentationForegroundUseCase::execute(&service, false).expect("background");
+        let view = GetCredentialPresentationUseCase::execute(
+            &service,
+            CredentialPresentationQuery {
+                profile_id: "profile_one".to_owned(),
+                presentation_id: prepared.id,
+            },
+        )
+        .expect("view");
+        assert_eq!(view.state, "cancellation_requested");
+        assert_eq!(
+            *protocol
+                .foreground_events
+                .lock()
+                .expect("foreground events lock"),
+            vec![false]
+        );
     }
 
     #[test]

@@ -263,6 +263,9 @@ impl CredentialPresentationPreview {
 pub enum CredentialPresentationState {
     AwaitingConsent,
     Presenting,
+    CancellationRequested,
+    Cancelled,
+    TimedOut,
     Succeeded,
     Refused,
     Failed,
@@ -274,6 +277,9 @@ impl CredentialPresentationState {
         match self {
             Self::AwaitingConsent => "awaiting_consent",
             Self::Presenting => "presenting",
+            Self::CancellationRequested => "cancellation_requested",
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
             Self::Succeeded => "succeeded",
             Self::Refused => "refused",
             Self::Failed => "failed",

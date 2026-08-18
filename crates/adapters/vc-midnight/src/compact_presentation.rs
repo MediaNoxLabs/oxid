@@ -1919,6 +1919,10 @@ mod tests {
         PresentationProofRequest {
             profile_id: oxid_presentation_domain::PresentationProfileId::parse("profile_one")
                 .expect("profile"),
+            presentation_id: oxid_presentation_domain::CredentialPresentationId::parse(
+                "presentation_one",
+            )
+            .expect("presentation"),
             credential_id,
             verifier: "standalone verifier".to_owned(),
             challenge_hash: [0x11; 32],

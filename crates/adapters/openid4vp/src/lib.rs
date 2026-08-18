@@ -15,13 +15,14 @@ use oxid_credential_application::{
 };
 use oxid_platform_ports::ClockPort;
 use oxid_presentation_application::{
-    CredentialPresentationProtocolPort, FindPresentationCandidatesFuture,
-    PrepareCredentialPresentationRequest, PreparePresentationPortFuture,
-    PreparedCredentialPresentation, PresentCredentialPortFuture, PresentationCandidateError,
-    PresentationCandidateQuery, PresentationCandidateSourcePort, PresentationProofError,
-    PresentationProofPort, PresentationProofRequest, PresentationProtocolError,
-    PresentationProtocolOutcome, PresentationVerificationError, PresentationVerificationRequest,
-    PresentationVerifierPort, ProtocolPresentCredentialRequest,
+    CancelPresentationProofRequest, CredentialPresentationProtocolPort,
+    FindPresentationCandidatesFuture, PrepareCredentialPresentationRequest,
+    PreparePresentationPortFuture, PreparedCredentialPresentation, PresentCredentialPortFuture,
+    PresentationCandidateError, PresentationCandidateQuery, PresentationCandidateSourcePort,
+    PresentationProofControlPort, PresentationProofError, PresentationProofPort,
+    PresentationProofRequest, PresentationProtocolError, PresentationProtocolOutcome,
+    PresentationVerificationError, PresentationVerificationRequest, PresentationVerifierPort,
+    ProtocolPresentCredentialRequest,
 };
 use oxid_presentation_domain::{
     CredentialPresentationId, CredentialPresentationPreview, PresentationClaimIntent,
@@ -152,16 +153,53 @@ struct PreparedRequest {
 
 /// Deterministic Final OpenID4VP/DCQL request and consent boundary.
 ///
-/// The adapter can prepare a complete request today. Acceptance consumes the
-/// session and fails before constructing a `vp_token` while the real Compact
-/// proof port is unavailable (issue #28).
+/// Acceptance consumes the verifier session before calling the configured
+/// proof port. Composition decides whether that port is unavailable or backed
+/// by an authenticated Compact runtime.
 pub struct StandaloneOpenId4VpVerifier {
     candidates: Arc<dyn PresentationCandidateSourcePort>,
     proof: Arc<dyn PresentationProofPort>,
+    proof_control: Option<Arc<dyn PresentationProofControlPort>>,
     verifier: Arc<dyn PresentationVerifierPort>,
     clock: Arc<dyn ClockPort>,
     sessions: Mutex<BTreeMap<String, PreparedRequest>>,
     next_id: std::sync::atomic::AtomicU64,
+}
+
+struct ProofCompletionGuard<'a> {
+    control: Option<&'a dyn PresentationProofControlPort>,
+    request: Option<CancelPresentationProofRequest>,
+}
+
+impl<'a> ProofCompletionGuard<'a> {
+    fn new(
+        control: Option<&'a dyn PresentationProofControlPort>,
+        request: CancelPresentationProofRequest,
+    ) -> Self {
+        Self {
+            control,
+            request: control.map(|_| request),
+        }
+    }
+
+    fn finish(mut self) -> Result<(), PresentationProofError> {
+        let Some(control) = self.control.take() else {
+            return Ok(());
+        };
+        let request = self
+            .request
+            .take()
+            .ok_or(PresentationProofError::Rejected)?;
+        control.finish(request)
+    }
+}
+
+impl Drop for ProofCompletionGuard<'_> {
+    fn drop(&mut self) {
+        if let (Some(control), Some(request)) = (self.control.take(), self.request.take()) {
+            let _ = control.finish(request);
+        }
+    }
 }
 
 impl StandaloneOpenId4VpVerifier {
@@ -175,6 +213,26 @@ impl StandaloneOpenId4VpVerifier {
         Self {
             candidates,
             proof,
+            proof_control: None,
+            verifier,
+            clock,
+            sessions: Mutex::new(BTreeMap::new()),
+            next_id: std::sync::atomic::AtomicU64::new(1),
+        }
+    }
+
+    #[must_use]
+    pub fn with_proof_control(
+        candidates: Arc<dyn PresentationCandidateSourcePort>,
+        proof: Arc<dyn PresentationProofPort>,
+        proof_control: Arc<dyn PresentationProofControlPort>,
+        verifier: Arc<dyn PresentationVerifierPort>,
+        clock: Arc<dyn ClockPort>,
+    ) -> Self {
+        Self {
+            candidates,
+            proof,
+            proof_control: Some(proof_control),
             verifier,
             clock,
             sessions: Mutex::new(BTreeMap::new()),
@@ -302,6 +360,7 @@ impl CredentialPresentationProtocolPort for StandaloneOpenId4VpVerifier {
             }
             let proof_request = PresentationProofRequest {
                 profile_id: request.profile_id.clone(),
+                presentation_id: request.presentation_id.clone(),
                 credential_id: request.credential_id.clone(),
                 verifier: prepared.client_id.clone(),
                 challenge_hash: prepared.challenge_hash,
@@ -313,7 +372,14 @@ impl CredentialPresentationProtocolPort for StandaloneOpenId4VpVerifier {
                 .create(proof_request)
                 .await
                 .map_err(map_proof_error)?;
-            self.verifier
+            let proof_control_request = CancelPresentationProofRequest {
+                profile_id: request.profile_id.clone(),
+                presentation_id: request.presentation_id.clone(),
+            };
+            let proof_completion =
+                ProofCompletionGuard::new(self.proof_control.as_deref(), proof_control_request);
+            let verification = self
+                .verifier
                 .verify(PresentationVerificationRequest {
                     profile_id: request.profile_id,
                     credential_id: request.credential_id,
@@ -323,8 +389,10 @@ impl CredentialPresentationProtocolPort for StandaloneOpenId4VpVerifier {
                     requested_claims: prepared.requested_claims,
                     proof: proof.clone(),
                 })
-                .await
-                .map_err(map_verification_error)?;
+                .await;
+            let proof_completion = proof_completion.finish().map_err(map_proof_error);
+            verification.map_err(map_verification_error)?;
+            proof_completion?;
             let response = json!({
                 "state": prepared.state.as_str(),
                 "vp_token": {
@@ -354,11 +422,34 @@ impl CredentialPresentationProtocolPort for StandaloneOpenId4VpVerifier {
             .map(|_| ())
             .ok_or(PresentationProtocolError::InvalidRequest)
     }
+
+    fn cancel(
+        &self,
+        request: CancelPresentationProofRequest,
+    ) -> Result<(), PresentationProtocolError> {
+        self.proof_control
+            .as_ref()
+            .ok_or(PresentationProtocolError::ProofUnavailable)?
+            .cancel(request)
+            .map_err(map_proof_error)
+    }
+
+    fn set_foreground(&self, foreground: bool) -> Result<(), PresentationProtocolError> {
+        self.proof_control
+            .as_ref()
+            .ok_or(PresentationProtocolError::ProofUnavailable)?
+            .set_foreground(foreground)
+            .map_err(map_proof_error)
+    }
 }
 
 fn map_proof_error(error: PresentationProofError) -> PresentationProtocolError {
     match error {
         PresentationProofError::Unavailable => PresentationProtocolError::ProofUnavailable,
+        PresentationProofError::Busy => PresentationProtocolError::ProofBusy,
+        PresentationProofError::Cancelled => PresentationProtocolError::ProofCancelled,
+        PresentationProofError::Backgrounded => PresentationProtocolError::ProofBackgrounded,
+        PresentationProofError::TimedOut => PresentationProtocolError::ProofTimedOut,
         PresentationProofError::HolderAuthorizationUnavailable => {
             PresentationProtocolError::HolderAuthorizationUnavailable
         }
@@ -972,6 +1063,7 @@ mod tests {
     use oxid_presentation_application::{
         PresentationProofArtifact, UnavailablePresentationProof, UnavailablePresentationVerifier,
     };
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     struct Clock;
     impl ClockPort for Clock {
@@ -1049,6 +1141,69 @@ mod tests {
         )
     }
 
+    struct Proof;
+
+    impl PresentationProofPort for Proof {
+        fn create<'a>(
+            &'a self,
+            _: PresentationProofRequest,
+        ) -> oxid_presentation_application::CreatePresentationProofFuture<'a> {
+            Box::pin(async { PresentationProofArtifact::new(vec![0x42]) })
+        }
+    }
+
+    struct Verifier;
+
+    impl PresentationVerifierPort for Verifier {
+        fn verify<'a>(
+            &'a self,
+            _: PresentationVerificationRequest,
+        ) -> oxid_presentation_application::VerifyPresentationProofFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[derive(Default)]
+    struct ProofControl {
+        finished: AtomicBool,
+    }
+
+    impl PresentationProofControlPort for ProofControl {
+        fn cancel(&self, _: CancelPresentationProofRequest) -> Result<(), PresentationProofError> {
+            Ok(())
+        }
+
+        fn set_foreground(&self, _: bool) -> Result<(), PresentationProofError> {
+            Ok(())
+        }
+
+        fn finish(&self, _: CancelPresentationProofRequest) -> Result<(), PresentationProofError> {
+            self.finished.store(true, Ordering::Release);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn proof_completion_guard_releases_admission_when_dropped() {
+        let control = ProofControl::default();
+        {
+            let _completion = ProofCompletionGuard::new(
+                Some(&control),
+                CancelPresentationProofRequest {
+                    profile_id: oxid_presentation_domain::PresentationProfileId::parse(
+                        "profile_one",
+                    )
+                    .expect("profile"),
+                    presentation_id: oxid_presentation_domain::CredentialPresentationId::parse(
+                        "presentation_one",
+                    )
+                    .expect("presentation"),
+                },
+            );
+        }
+        assert!(control.finished.load(Ordering::Acquire));
+    }
+
     #[test]
     fn strict_final_dcql_preview_matches_candidates_without_values() {
         let adapter = adapter();
@@ -1115,6 +1270,39 @@ mod tests {
             })),
             Err(PresentationProtocolError::InvalidRequest)
         );
+    }
+
+    #[test]
+    fn controlled_proof_releases_admission_only_after_independent_verification() {
+        let credentials = Arc::new(Credentials);
+        let control = Arc::new(ProofControl::default());
+        let adapter = StandaloneOpenId4VpVerifier::with_proof_control(
+            Arc::new(CredentialDisclosureCandidateSource::new(
+                credentials.clone(),
+                credentials,
+            )),
+            Arc::new(Proof),
+            control.clone(),
+            Arc::new(Verifier),
+            Arc::new(Clock),
+        );
+        let profile =
+            oxid_presentation_domain::PresentationProfileId::parse("profile_one").expect("profile");
+        let prepared =
+            futures::executor::block_on(adapter.prepare(PrepareCredentialPresentationRequest {
+                profile_id: profile.clone(),
+                request: standalone_openid4vp_request(),
+            }))
+            .expect("prepare");
+        let outcome =
+            futures::executor::block_on(adapter.present(ProtocolPresentCredentialRequest {
+                profile_id: profile,
+                presentation_id: prepared.id,
+                credential_id: "vc_one".to_owned(),
+            }))
+            .expect("present");
+        assert!(outcome.verifier_validated);
+        assert!(control.finished.load(Ordering::Acquire));
     }
 
     #[test]

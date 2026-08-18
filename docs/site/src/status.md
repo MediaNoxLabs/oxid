@@ -38,7 +38,7 @@ and the repository [issue backlog](https://github.com/MediaNoxLabs/oxid/issues).
 | OpenID4VCI pre-authorized issuance | Standalone functional with exact Compact credential bundles |
 | SIOPv2 self-issued authentication | Standalone functional (draft-13 subset) |
 | Digital Passport disclosure planning + local reveal | Functional; explicitly not a verifier presentation |
-| OpenID4VP presentation with real ZK proof | Functional in native headless composition with authenticated artifacts; mobile proving packaged but gated pending device budgets |
+| OpenID4VP presentation with real ZK proof | Functional in native headless composition and the explicit native-custody mobile conformance build; normal/production mobile remains gated pending physical-device budgets |
 
 ## The road to a shippable MVP
 

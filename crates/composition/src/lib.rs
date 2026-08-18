@@ -110,6 +110,11 @@ use oxid_adapter_storage_memory::{
 };
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_storage_mobile::MobileWalletSecurity;
+#[cfg(all(
+    feature = "mobile-compact-artifacts",
+    any(target_os = "ios", target_os = "android")
+))]
+use oxid_adapter_vc_midnight::ForegroundCompactPresentationProofWorker;
 use oxid_adapter_vc_midnight::{
     CompactHolderProofPort, DigitalPassportDisclosureAdapter, ManagedDidJubjubHolderAuthorization,
     MidnightCredentialVerifier, PreflightOnlyCompactPresentationProof,
@@ -167,12 +172,18 @@ use oxid_platform_ports::{
     UnavailableIdentityLinkIngress, UnavailablePublicTextExporter, UnavailableQrScanner,
 };
 use oxid_presentation_application::{
-    AcceptCredentialPresentationUseCase, CredentialPresentationProtocolPort,
-    CredentialPresentationService, GetCredentialPresentationUseCase,
-    ListCredentialPresentationsUseCase, PrepareCredentialPresentationUseCase,
-    RefuseCredentialPresentationUseCase, UnavailableCredentialPresentationProtocol,
+    AcceptCredentialPresentationUseCase, CancelCredentialPresentationUseCase,
+    CredentialPresentationProtocolPort, CredentialPresentationService,
+    GetCredentialPresentationUseCase, ListCredentialPresentationsUseCase,
+    PrepareCredentialPresentationUseCase, RefuseCredentialPresentationUseCase,
+    SetCredentialPresentationForegroundUseCase, UnavailableCredentialPresentationProtocol,
     UnavailablePresentationVerifier,
 };
+#[cfg(all(
+    feature = "mobile-compact-artifacts",
+    any(target_os = "ios", target_os = "android")
+))]
+use oxid_presentation_application::{PresentationProofControlPort, PresentationProofPort};
 use oxid_protocol_application::{
     AcceptCredentialIssuanceUseCase, AcceptSelfIssuedAuthenticationUseCase,
     CredentialIssuanceProtocolPort, CredentialIssuanceService, GetCredentialIssuanceUseCase,
@@ -312,6 +323,8 @@ pub struct ApplicationServices {
     list_self_issued_authentications: Arc<dyn ListSelfIssuedAuthenticationsUseCase>,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
+    cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
+    set_credential_presentation_foreground: Arc<dyn SetCredentialPresentationForegroundUseCase>,
     refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
     get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase>,
     list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase>,
@@ -354,6 +367,11 @@ enum CredentialPresentationComposition {
     Standalone,
     #[cfg(not(target_arch = "wasm32"))]
     StandaloneZk(Arc<NativeCompactPresentationRuntime>),
+    #[cfg(all(
+        feature = "mobile-compact-artifacts",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    StandaloneMobileZk(Arc<NativeCompactPresentationRuntime>),
 }
 
 struct IdentityAdapters {
@@ -771,6 +789,18 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn cancel_credential_presentation(&self) -> Arc<dyn CancelCredentialPresentationUseCase> {
+        Arc::clone(&self.cancel_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn set_credential_presentation_foreground(
+        &self,
+    ) -> Arc<dyn SetCredentialPresentationForegroundUseCase> {
+        Arc::clone(&self.set_credential_presentation_foreground)
+    }
+
+    #[must_use]
     pub fn refuse_credential_presentation(&self) -> Arc<dyn RefuseCredentialPresentationUseCase> {
         Arc::clone(&self.refuse_credential_presentation)
     }
@@ -958,6 +988,32 @@ pub fn compose() -> ApplicationServices {
 #[cfg(any(target_os = "ios", target_os = "android"))]
 #[must_use]
 pub fn compose_mobile_native_standalone() -> ApplicationServices {
+    compose_mobile_native_standalone_with_presentation(
+        CredentialPresentationComposition::Standalone,
+    )
+}
+
+/// Wires the explicit standalone native-custody mobile harness to the
+/// authenticated embedded Compact runtime through the foreground-only worker.
+/// Normal production and ordinary standalone mobile composition do not call
+/// this constructor.
+#[cfg(all(
+    feature = "mobile-compact-artifacts",
+    any(target_os = "ios", target_os = "android")
+))]
+pub fn compose_mobile_native_standalone_with_compact_presentation()
+-> Result<ApplicationServices, CompactPresentationRuntimeError> {
+    let runtime =
+        Arc::new(oxid_adapter_vc_midnight::load_embedded_mobile_compact_presentation_runtime()?);
+    Ok(compose_mobile_native_standalone_with_presentation(
+        CredentialPresentationComposition::StandaloneMobileZk(runtime),
+    ))
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn compose_mobile_native_standalone_with_presentation(
+    credential_presentation: CredentialPresentationComposition,
+) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(MobileWalletSecurity::native(
@@ -985,7 +1041,7 @@ pub fn compose_mobile_native_standalone() -> ApplicationServices {
         profiles,
         security,
         Arc::new(midnight),
-        CredentialPresentationComposition::Standalone,
+        credential_presentation,
     );
     with_simulated_passport_vault_calls(services)
 }
@@ -998,11 +1054,10 @@ pub fn verify_android_jni_exception_recovery()
 }
 
 /// Authenticates the immutable Compact presentation package selected by an
-/// explicit mobile resource-measurement build without enabling proof creation.
+/// explicit mobile conformance build without changing composition by itself.
 ///
-/// Loading is deliberately separate from mobile composition: Dioxus remains on
-/// the preflight-only proof port until a reviewed background, cancellation, and
-/// process-lifecycle runner exists.
+/// Callers that need proof execution must select
+/// [`compose_mobile_native_standalone_with_compact_presentation`].
 #[cfg(all(
     feature = "mobile-compact-artifacts",
     any(target_os = "ios", target_os = "android")
@@ -2367,10 +2422,15 @@ where
         CredentialIssuanceComposition::Standalone
     );
     #[cfg(not(target_arch = "wasm32"))]
-    let compact_presentation_proof_available = matches!(
-        &credential_presentation,
-        CredentialPresentationComposition::StandaloneZk(_)
-    );
+    let compact_presentation_proof_available = match &credential_presentation {
+        CredentialPresentationComposition::StandaloneZk(_) => true,
+        #[cfg(all(
+            feature = "mobile-compact-artifacts",
+            any(target_os = "ios", target_os = "android")
+        ))]
+        CredentialPresentationComposition::StandaloneMobileZk(_) => true,
+        _ => false,
+    };
     #[cfg(target_arch = "wasm32")]
     let compact_presentation_proof_available = false;
     let clock = Arc::new(SystemClock);
@@ -2532,6 +2592,46 @@ where
                     clock.clone(),
                 ))
             }
+            #[cfg(all(
+                feature = "mobile-compact-artifacts",
+                any(target_os = "ios", target_os = "android")
+            ))]
+            CredentialPresentationComposition::StandaloneMobileZk(runtime) => {
+                let list: Arc<dyn ListCredentialsUseCase> = credentials.clone();
+                let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
+                let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
+                let verifier_get_did = Arc::clone(&get_did);
+                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+                let holder_authorization =
+                    Arc::new(ManagedDidJubjubHolderAuthorization::with_challenge_signing(
+                        get_did,
+                        sign_did,
+                        did_jubjub_challenge_signing,
+                    ));
+                let holder_proof: Arc<dyn CompactHolderProofPort> = holder_authorization.clone();
+                let proof = Arc::new(ForegroundCompactPresentationProofWorker::new(Arc::new(
+                    PreflightOnlyCompactPresentationProof::with_runtime(
+                        presentation_credential_repository,
+                        clock.clone(),
+                        holder_authorization,
+                        holder_proof,
+                        Arc::clone(&runtime),
+                    ),
+                )));
+                let proof_port: Arc<dyn PresentationProofPort> = proof.clone();
+                let proof_control: Arc<dyn PresentationProofControlPort> = proof;
+                Arc::new(StandaloneOpenId4VpVerifier::with_proof_control(
+                    Arc::new(CredentialDisclosureCandidateSource::new(list, disclosure)),
+                    proof_port,
+                    proof_control,
+                    Arc::new(NativeCompactPresentationVerifier::new(
+                        runtime,
+                        clock.clone(),
+                        verifier_get_did,
+                    )),
+                    clock.clone(),
+                ))
+            }
         };
     let credential_presentation =
         Arc::new(CredentialPresentationService::new(presentation_protocol));
@@ -2665,6 +2765,11 @@ where
         credential_presentation.clone();
     let accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase> =
         credential_presentation.clone();
+    let cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase> =
+        credential_presentation.clone();
+    let set_credential_presentation_foreground: Arc<
+        dyn SetCredentialPresentationForegroundUseCase,
+    > = credential_presentation.clone();
     let refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase> =
         credential_presentation.clone();
     let get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase> =
@@ -2781,6 +2886,8 @@ where
         list_self_issued_authentications,
         prepare_credential_presentation,
         accept_credential_presentation,
+        cancel_credential_presentation,
+        set_credential_presentation_foreground,
         refuse_credential_presentation,
         get_credential_presentation,
         list_credential_presentations,
