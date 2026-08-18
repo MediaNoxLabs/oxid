@@ -61,12 +61,14 @@ jobs:
   nix-build:
     name: Locked Nix package and Compact artifacts
     runs-on: ubuntu-24.04
-    # A cold locked Nix package build plus its check phase has reached 59
-    # minutes on GitHub-hosted runners. Keep bounded headroom for transient
-    # action/download throttling without weakening any gate. This job runs in
-    # parallel with the repository gate, so the workflow's wall time is the
-    # slower of the two rather than their sum.
-    timeout-minutes: 75
+    # The per-push package build proves the locked package and Compact
+    # artifacts still build; its sandboxed test re-run (doCheck) moved to the
+    # checked variants exercised by the nightly `nix flake check` workflow,
+    # because the repository gate already executes every test on each push.
+    # This job runs in parallel with the gate, so the workflow's wall time is
+    # the slower of the two rather than their sum. Cold caches have reached
+    # ~40 minutes; keep bounded headroom for download throttling.
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
