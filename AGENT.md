@@ -921,7 +921,7 @@ Current package ownership:
 | `nix/packages/passport-vault-call-composer.nix` | One-request Node 24 outgoing adapter package with locked Midnight compatibility dependencies, Nix-fixed authenticated artifacts, closed typed operations, and real generated-client install checks. |
 | `tools/passport-vault-composer` | Internal generated-Compact composition implementation; never an incoming headless/mobile API and never a credential/private-witness bridge. |
 | `crates/adapters/platform-system` | System clock, OS randomness, and typed public receive-address export implementations. |
-| `crates/ui-dioxus` | Dioxus incoming adapter, bounded mobile route stack, exact amount/consent presentation state, public receive-QR rendering, standalone Passport Vault UI, and truthfully labelled typed native vault-call review/authorization/submission/cancellation/reconciliation. |
+| `crates/ui-dioxus` | Dioxus incoming adapter, bounded mobile route stack, safe read-only Home projection, exact amount/consent presentation state, public receive-QR rendering, standalone Passport Vault UI, and truthfully labelled typed native vault-call review/authorization/submission/cancellation/reconciliation. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
 | `apps/oxid` | Executable shell and platform launch point. |
 | `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |
@@ -956,12 +956,25 @@ opens from Home, DID management from Documents, profiles/Settings from the
 avatar sheet, and Diagnostics from Settings. Credential and self-issued app
 links reset the root to Documents and push the corresponding review without
 consent. Phase 1a intentionally renders the complete account view on both Home
-and Wallet until issue #65 Phase 1b splits the Home summary; do not remove that
-compatibility path early or move its behavior into navigation. Do not add a
-router dependency or persist routes without a new concrete URL/history
-requirement and review. The shared Back control does not claim Android system-
-back interception. Secret-mode UI remains absent until its masking and native
-privacy policy is implemented.
+and Wallet only in commits before ADR-0087. Phase 1b removes that temporary
+overlap: Wallet alone retains network selection, activation, sync, receive,
+send, and submission recovery. Home is a Dioxus-only read projection over the
+existing account/security, shielded-sync, credential-list, and Passport Vault
+use cases. Its optional product reads fail independently with payload-free
+unavailable copy; it never initializes, unlocks, derives, syncs, imports,
+authorizes, proves, submits, reconciles, or changes an application state. Home
+Receive/Send route to Wallet, Present routes to Documents, Scan uses the exact
+shared scanner/classifier starter, Vault opens its existing secondary route,
+the security strip opens Settings, and See all routes to Activity. Do not show
+claims, DIDs, addresses, credential/transaction identifiers, cursors, block
+heights, or epochs on Home. Backup support may be labelled available but never
+completed, and user-presence requirements must not be called biometric
+enrollment. The current recent preview is the existing transaction projection
+only; identity/Vault activity requires a later application interaction-log
+contract. Do not add a router dependency or persist routes without a new
+concrete URL/history requirement and review. The shared Back control does not
+claim Android system-back interception. Secret-mode UI remains absent until its
+masking and native privacy policy is implemented.
 
 `oxid-composition` exposes UI-neutral `ApplicationServices`. Incoming adapters
 adapt that object at their own boundary; composition must not depend on Dioxus,

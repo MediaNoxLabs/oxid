@@ -28,9 +28,11 @@ program (the two exceptions are called out).
    center Scan, Documents, and Activity; the hamburger and primary
    Vault/Diagnostics/Settings destinations are retired; every migrated flow
    remains reachable through the reviewed hierarchy.
-2. **Home composition** (pending): hero, action row, card stack, security
-   strip, and activity preview. Phase 1a intentionally keeps the complete
-   Assets view on Home and Wallet until this split lands.
+2. **Home composition** (delivered by ADR-0087 / issue #79): a safe read-only
+   account hero, four quick actions, horizontally scrollable product cards,
+   truthful security-capability strip, and bounded transaction preview replace
+   the temporary complete-Assets duplication. Wallet retains all operational
+   controls; Home owns no application transition.
 
 ## Phase 2 — Journey ceremonies
 

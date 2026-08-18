@@ -12,12 +12,13 @@ and the redundant hamburger signals unresolved IA. monobank's own audit
 history warns exactly against this shape: navigation that "isn't scalable"
 and buries key sections.
 
-Phase 1a is now delivered by ADR-0086. The Dioxus adapter owns a bounded route
-stack; Home, Wallet, Documents, and Activity are the primary destinations,
-Scan is the elevated center action, and the former global pages remain
-reachable through secondary routes. Home temporarily retains the complete
-Assets view alongside Wallet so the shell cutover cannot hide behavior. Phase
-1b owns the final Home composition and removes that presentation overlap.
+Phase 1a is delivered by ADR-0086 and Phase 1b by ADR-0087. The Dioxus adapter
+owns a bounded route stack; Home, Wallet, Documents, and Activity are the
+primary destinations, Scan is the elevated center action, and the former
+global pages remain reachable through secondary routes. Home now projects safe
+read-only summaries from the existing account, security, shielded, credential,
+and Vault use cases. Wallet alone retains the complete operational account
+surface, so no behavior or authority moved into navigation.
 
 ## The new shell
 
@@ -25,7 +26,7 @@ Assets view alongside Wallet so the shell cutover cannot hide behavior. Phase
 
 ```text
 ┌─────────────────────────────────────────────┐
-│ [avatar ▾]   Home                    [eye]  │  top bar
+│ [avatar ▾]   Home                           │  top bar
 │                                             │
 │                  content                    │
 │                                             │
@@ -48,14 +49,17 @@ Assets view alongside Wallet so the shell cutover cannot hide behavior. Phase
 - **IDs** (user-facing name: *Documents* — EUDI vocabulary) — credential
   cards, DID management behind a secondary "Manage identities" surface,
   issuance entry ("Add document").
-- **Activity** — the unified, filterable feed: transactions, credential
-  issuances, shares/presentations, logins, vault events. Identity wallets
+- **Activity** — the target unified, filterable feed: transactions, credential
+  issuances, shares/presentations, logins, vault events. The delivered Phase 1
+  surface currently projects wallet transactions and submission recovery;
+  identity/Vault events require a later application interaction log. Identity wallets
   are regulator-bound to a complete interaction log (EUDI); monobank's audit
   says users want one history. One feed, typed entries, per-item detail.
 
 **Top bar:** profile avatar (tap = profile/settings sheet: profile switcher,
-security, backup, preferences, diagnostics-when-dev), page title, and the
-**secret-mode eye toggle** (ui-profiles.md) — always one tap away.
+security, backup, preferences, diagnostics-when-dev) and page title. The
+**secret-mode eye toggle** is a Phase 4 target and stays absent until its
+masking and native privacy policy are implemented (`ui-profiles.md`).
 
 **Retired surfaces:**
 - Hamburger menu: deleted (redundant with tabs + avatar sheet).
@@ -66,10 +70,10 @@ security, backup, preferences, diagnostics-when-dev), page title, and the
   section reachable from it), not a permanent global tab — it is one product
   in the stack, monobank-style, present when its capability is composed.
 
-**Navigation mechanics:** introduce a route stack (Dioxus router or the
-existing signal upgraded to a stack) so sub-screens (credential detail, tx
-detail, consent) get native back behavior and deep links from QR ingress
-land on a pushable route instead of mutating a tab. Bottom sheets for
+**Navigation mechanics:** ADR-0086 uses the existing signal as a closed,
+bounded root-plus-secondary stack so sub-screens get explicit back behavior
+and deep links from QR ingress land on a pushable route instead of mutating a
+tab. Bottom sheets for
 transient actions (receive QR, confirm, quick actions); full pages for
 multi-step flows (send wizard, onboarding, backup) — the NN/g sheet-vs-page
 rule adopted verbatim.
@@ -86,10 +90,19 @@ Order, top to bottom:
    card, the shielded card, the newest credential card ("Digital Passport"),
    the Passport Vault card. Each card: product-family color, one primary
    number/status, long-press for contextual quick actions.
-4. **Security status strip** (one line): "Backed up ✓ · Biometrics ✓ ·
-   Standalone mode" — trust signals as a glanceable row, linking to
-   Settings.
-5. **Recent activity** (3 items + "See all").
+4. **Security status strip** (one line): trust signals as a glanceable row,
+   linking to Settings. ADR-0087 renders only observable facts: protection
+   state/class and backup capability. “Backed up” and “Biometrics” remain
+   forbidden until dedicated application facts exist.
+5. **Recent activity** (up to 3 current transaction items + "See all"). The
+   broader identity/Vault feed remains pending its application read model.
+
+Phase 1b routes Receive and Send to the existing Wallet controls, Present to
+Documents, and Scan through the same `QrScannerPort` plus
+`RouteIdentityRequestUseCase` path as the center action. The product cards route
+to Wallet, Documents, or Passport Vault. Home owns no state transition and
+renders no claim, DID, address, opaque credential/transaction identifier,
+cursor, block height, or epoch value.
 
 ## Screen map (delta from today)
 

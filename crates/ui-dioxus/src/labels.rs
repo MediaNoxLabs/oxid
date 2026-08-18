@@ -53,6 +53,34 @@ pub(crate) fn sync_state(value: &str) -> &'static str {
     }
 }
 
+pub(crate) fn wallet_security_state(value: &str) -> &'static str {
+    match value {
+        "Uninitialized" => "Protection not set up",
+        "Locked" => "Wallet locked",
+        "Unlocked" => "Wallet unlocked",
+        "Unavailable" => "Protection unavailable",
+        _ => "Security status unavailable",
+    }
+}
+
+pub(crate) fn wallet_protection(value: &str) -> &'static str {
+    match value {
+        "Development only" => "Standalone custody",
+        "Operating system" => "Device protected",
+        "Hardware backed" => "Hardware backed",
+        "Not connected" => "Custody not connected",
+        _ => "Protection class unavailable",
+    }
+}
+
+pub(crate) const fn backup_capability(supported: bool) -> &'static str {
+    if supported {
+        "Backup available"
+    } else {
+        "Backup unavailable"
+    }
+}
+
 pub(crate) fn sync_failure(value: &str) -> &'static str {
     match value {
         "protection_not_initialized" => "wallet protection is not initialized",

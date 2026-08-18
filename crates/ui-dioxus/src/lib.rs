@@ -1356,6 +1356,49 @@ enum PrimaryDestination {
     Activity,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HomeQuickAction {
+    Receive,
+    Send,
+    Present,
+    Scan,
+}
+
+impl HomeQuickAction {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Receive => "Receive",
+            Self::Send => "Send",
+            Self::Present => "Present",
+            Self::Scan => "Scan",
+        }
+    }
+
+    const fn icon(self) -> &'static str {
+        match self {
+            Self::Receive => LUCIDE_RECEIVE,
+            Self::Send => LUCIDE_SEND,
+            Self::Present => LUCIDE_BADGE_CHECK,
+            Self::Scan => LUCIDE_SCAN_LINE,
+        }
+    }
+
+    const fn destination(self) -> Option<PrimaryDestination> {
+        match self {
+            Self::Receive | Self::Send => Some(PrimaryDestination::Wallet),
+            Self::Present => Some(PrimaryDestination::Documents),
+            Self::Scan => None,
+        }
+    }
+}
+
+const HOME_QUICK_ACTIONS: [HomeQuickAction; 4] = [
+    HomeQuickAction::Receive,
+    HomeQuickAction::Send,
+    HomeQuickAction::Present,
+    HomeQuickAction::Scan,
+];
+
 impl PrimaryDestination {
     const fn label(self) -> &'static str {
         match self {
@@ -1604,6 +1647,28 @@ enum AccountPageState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+enum HomeResource<T> {
+    Ready(T),
+    Unavailable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HomePageProjection {
+    account: Box<WalletAccountView>,
+    security: WalletSecurityStatusView,
+    shielded: HomeResource<WalletShieldedSyncView>,
+    credentials: HomeResource<Vec<CredentialView>>,
+    vault: HomeResource<Box<PassportVaultView>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum HomePageState {
+    Loading,
+    Ready(Box<HomePageProjection>),
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum PassportVaultPageState {
     Loading,
     Ready {
@@ -1751,7 +1816,7 @@ pub fn App() -> Element {
     let mut profile_menu_open = use_signal(|| false);
     let mut pending_identity_request = use_signal(|| None::<PendingIdentityRequest>);
     let mut identity_ingress_notice = use_signal(|| None::<String>);
-    let mut identity_scan_busy = use_signal(|| false);
+    let identity_scan_busy = use_signal(|| false);
     #[cfg(any(target_os = "ios", target_os = "android"))]
     let mut identity_link_wake = use_signal(|| 0_u64);
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
@@ -1827,6 +1892,10 @@ pub fn App() -> Element {
     let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name);
     let identity_request_waiting = pending_identity_request.read().is_some();
+    let home_scanner = services.qr_scanner();
+    let home_router = services.route_identity_request();
+    let navigation_scanner = services.qr_scanner();
+    let navigation_router = services.route_identity_request();
 
     rsx! {
         style { {STYLES} }
@@ -1940,7 +2009,23 @@ pub fn App() -> Element {
                     Route::Home => rsx! {
                         HomePage {
                             active_profile: active_profile.clone(),
+                            on_select_primary: move |destination| {
+                                navigation.write().select_primary(destination);
+                                profile_menu_open.set(false);
+                            },
                             on_open_vault: move |_| navigation.write().push(Route::PassportVault),
+                            on_open_settings: move |_| navigation.write().push(Route::Settings),
+                            on_scan: move |_| {
+                                start_identity_scan(
+                                    Arc::clone(&home_scanner),
+                                    Arc::clone(&home_router),
+                                    identity_scan_busy,
+                                    identity_ingress_notice,
+                                    pending_identity_request,
+                                    navigation,
+                                    profile_menu_open,
+                                );
+                            },
                         }
                     },
                     Route::Wallet => rsx! { AssetsPage { active_profile: active_profile.clone() } },
@@ -2010,43 +2095,18 @@ pub fn App() -> Element {
                     title: "Scan identity QR code",
                     disabled: identity_scan_busy(),
                     onclick: {
-                        let scanner = services.qr_scanner();
-                        let router = services.route_identity_request();
+                        let scanner = Arc::clone(&navigation_scanner);
+                        let router = Arc::clone(&navigation_router);
                         move |_| {
-                            let scanner = scanner.clone();
-                            let router = router.clone();
-                            identity_scan_busy.set(true);
-                            identity_ingress_notice.set(None);
-                            profile_menu_open.set(false);
-                            spawn(async move {
-                                match scanner.scan().await {
-                                    Ok(payload) => {
-                                        let request_uri = payload.into_inner();
-                                        match router.execute(RouteIdentityRequestCommand {
-                                            request_uri: request_uri.clone(),
-                                        }) {
-                                            Ok(kind) => {
-                                                pending_identity_request.set(Some(PendingIdentityRequest {
-                                                    kind,
-                                                    request_uri,
-                                                }));
-                                                navigation.write().route_identity_request(kind);
-                                                identity_ingress_notice.set(Some(format!(
-                                                    "QR recognized as {}. Review the request before consent.",
-                                                    ui::identity_request_kind(kind)
-                                                )));
-                                            }
-                                            Err(error) => {
-                                                identity_ingress_notice.set(Some(identity_request_routing_message(error)));
-                                            }
-                                        }
-                                    }
-                                    Err(error) => {
-                                        identity_ingress_notice.set(Some(qr_scan_message(error)));
-                                    }
-                                }
-                                identity_scan_busy.set(false);
-                            });
+                            start_identity_scan(
+                                Arc::clone(&scanner),
+                                Arc::clone(&router),
+                                identity_scan_busy,
+                                identity_ingress_notice,
+                                pending_identity_request,
+                                navigation,
+                                profile_menu_open,
+                            );
                         }
                     },
                     span {
@@ -2098,6 +2158,49 @@ fn PrimaryNavigationButton(
             span { class: "bottom-nav__label", "{destination.label()}" }
         }
     }
+}
+
+fn start_identity_scan(
+    scanner: Arc<dyn QrScannerPort>,
+    router: Arc<dyn RouteIdentityRequestUseCase>,
+    mut busy: Signal<bool>,
+    mut notice: Signal<Option<String>>,
+    mut pending_request: Signal<Option<PendingIdentityRequest>>,
+    mut navigation: Signal<RouteStack>,
+    mut profile_menu_open: Signal<bool>,
+) {
+    if busy() {
+        return;
+    }
+    busy.set(true);
+    notice.set(None);
+    profile_menu_open.set(false);
+    spawn(async move {
+        match scanner.scan().await {
+            Ok(payload) => {
+                let request_uri = payload.into_inner();
+                match router.execute(RouteIdentityRequestCommand {
+                    request_uri: request_uri.clone(),
+                }) {
+                    Ok(kind) => {
+                        pending_request.set(Some(PendingIdentityRequest { kind, request_uri }));
+                        navigation.write().route_identity_request(kind);
+                        notice.set(Some(format!(
+                            "QR recognized as {}. Review the request before consent.",
+                            ui::identity_request_kind(kind)
+                        )));
+                    }
+                    Err(error) => {
+                        notice.set(Some(identity_request_routing_message(error)));
+                    }
+                }
+            }
+            Err(error) => {
+                notice.set(Some(qr_scan_message(error)));
+            }
+        }
+        busy.set(false);
+    });
 }
 
 fn load_profile_session(services: &WalletUiServices) -> ProfileSessionState {
@@ -2523,23 +2626,359 @@ fn ProfileManager(
 }
 
 #[component]
-fn HomePage(active_profile: WalletProfileView, on_open_vault: EventHandler<MouseEvent>) -> Element {
-    rsx! {
-        article { class: "home-product-card surface-card",
-            div {
-                p { class: "card-eyebrow", "Wallet product" }
-                h2 { "Passport Vault" }
-                p { "Open the credential-gated NIGHT vault without making it a permanent tab." }
+fn HomePage(
+    active_profile: WalletProfileView,
+    on_select_primary: EventHandler<PrimaryDestination>,
+    on_open_vault: EventHandler<MouseEvent>,
+    on_open_settings: EventHandler<MouseEvent>,
+    on_scan: EventHandler<MouseEvent>,
+) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| HomePageState::Loading);
+    let profile_id = active_profile.id.clone();
+    let services_for_load = services.clone();
+    use_effect(move || {
+        let services = services_for_load.clone();
+        let profile_id = profile_id.clone();
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || load_home_page(&services, &profile_id))
+                    .await
+                    .unwrap_or(HomePageState::Failed),
+            );
+        });
+    });
+
+    match state.read().clone() {
+        HomePageState::Loading => rsx! {
+            section { class: "home-hero home-hero--loading", role: "status", aria_busy: "true",
+                p { class: "eyebrow", "Your wallet" }
+                div { class: "home-hero__number-row",
+                    h1 { "…" }
+                    span { "NIGHT" }
+                }
+                p { class: "home-hero__hint", "Loading your wallet overview…" }
             }
-            button {
-                class: "secondary-action",
-                r#type: "button",
-                aria_label: "Open Passport Vault",
-                onclick: move |event| on_open_vault.call(event),
-                "Open vault"
+            HomeQuickActions { on_select_primary, on_scan }
+            section { class: "home-card-stack", aria_label: "Loading wallet products", aria_busy: "true",
+                for label in ["NIGHT account", "Shielded account", "Newest document", "Passport Vault"] {
+                    article { class: "home-card home-card--loading", key: "{label}",
+                        p { class: "card-eyebrow", "{label}" }
+                        span { class: "loading-mark", aria_hidden: "true" }
+                    }
+                }
+            }
+            article { class: "home-security-strip surface-card", aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                span { "Checking wallet security…" }
+            }
+            article { class: "home-activity-preview surface-card", aria_busy: "true",
+                h2 { "Recent activity" }
+                p { "Loading your latest wallet events…" }
+            }
+        },
+        HomePageState::Failed => rsx! {
+            section { class: "home-hero home-hero--unavailable",
+                div { class: "home-hero__heading-row",
+                    p { class: "eyebrow", "Your wallet" }
+                    span { class: "status-pill warning", "Unavailable" }
+                }
+                div { class: "home-hero__number-row",
+                    h1 { "—" }
+                    span { "NIGHT" }
+                }
+                p { class: "home-hero__hint", "Wallet data could not be loaded safely." }
+            }
+            HomeQuickActions { on_select_primary, on_scan }
+            article { class: "empty-state surface-card", role: "alert",
+                h2 { "Home is unavailable" }
+                p { "Your complete wallet and documents are still available from their tabs." }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    onclick: move |_| {
+                        let services = services.clone();
+                        let profile_id = active_profile.id.clone();
+                        state.set(HomePageState::Loading);
+                        spawn(async move {
+                            state.set(
+                                run_ui_blocking(move || load_home_page(&services, &profile_id))
+                                    .await
+                                    .unwrap_or(HomePageState::Failed),
+                            );
+                        });
+                    },
+                    "Retry Home"
+                }
+            }
+        },
+        HomePageState::Ready(projection) => {
+            let HomePageProjection {
+                account,
+                security,
+                shielded,
+                credentials,
+                vault,
+            } = *projection;
+            rsx! {
+                HomeHero { account: (*account).clone() }
+                HomeQuickActions { on_select_primary, on_scan }
+                HomeProductStack {
+                    account: (*account).clone(),
+                    shielded,
+                    credentials,
+                    vault,
+                    on_select_primary,
+                    on_open_vault,
+                }
+                HomeSecurityStrip { security, on_open_settings }
+                HomeActivityPreview { account: *account, on_select_primary }
             }
         }
-        AssetsPage { active_profile }
+    }
+}
+
+#[component]
+fn HomeHero(account: WalletAccountView) -> Element {
+    let night = balance_for(&account, "NIGHT")
+        .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
+        .unwrap_or_else(|| "—".to_owned());
+    let dust = balance_for(&account, "DUST")
+        .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
+        .unwrap_or_else(|| "—".to_owned());
+    let source = ui::account_source(&account.source);
+    let freshness = ui::sync_state(&account.sync.state);
+    let status_class = if matches!(
+        account.source.as_str(),
+        "simulated" | "cached" | "unavailable"
+    ) {
+        "status-pill warning"
+    } else {
+        "status-pill"
+    };
+
+    rsx! {
+        section { class: "home-hero",
+            div { class: "home-hero__heading-row",
+                p { class: "eyebrow", "Your wallet" }
+                span {
+                    class: "{status_class}",
+                    aria_label: "Account source {source}; freshness {freshness}",
+                    "{source} · {freshness}"
+                }
+            }
+            div { class: "home-hero__number-row",
+                h1 { "{night}" }
+                span { "NIGHT" }
+            }
+            div { class: "dust-pill",
+                strong { "{dust}" }
+                span { "DUST" }
+            }
+            p { class: "home-hero__hint", "{ui::account_source_note(&account.source)}" }
+        }
+    }
+}
+
+#[component]
+fn HomeQuickActions(
+    on_select_primary: EventHandler<PrimaryDestination>,
+    on_scan: EventHandler<MouseEvent>,
+) -> Element {
+    rsx! {
+        section { class: "home-quick-actions", aria_label: "Wallet quick actions",
+            for action in HOME_QUICK_ACTIONS {
+                button {
+                    class: "home-quick-action",
+                    key: "{action.label()}",
+                    r#type: "button",
+                    aria_label: "{action.label()}",
+                    onclick: move |event| {
+                        if let Some(destination) = action.destination() {
+                            on_select_primary.call(destination);
+                        } else {
+                            on_scan.call(event);
+                        }
+                    },
+                    span {
+                        class: "home-quick-action__icon",
+                        aria_hidden: "true",
+                        dangerous_inner_html: "{action.icon()}",
+                    }
+                    span { "{action.label()}" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn HomeProductStack(
+    account: WalletAccountView,
+    shielded: HomeResource<WalletShieldedSyncView>,
+    credentials: HomeResource<Vec<CredentialView>>,
+    vault: HomeResource<Box<PassportVaultView>>,
+    on_select_primary: EventHandler<PrimaryDestination>,
+    on_open_vault: EventHandler<MouseEvent>,
+) -> Element {
+    let night = balance_for(&account, "NIGHT")
+        .map(|balance| ui::format_asset_amount(&balance.atomic_units, balance.decimals, "NIGHT"))
+        .unwrap_or_else(|| "Balance unavailable".to_owned());
+
+    rsx! {
+        section { class: "home-section", aria_label: "Wallet products",
+            div { class: "home-section__heading",
+                div {
+                    p { class: "card-eyebrow", "Products" }
+                    h2 { "Everything in one place" }
+                }
+                small { "Swipe" }
+            }
+            div { class: "home-card-stack",
+                button {
+                    class: "home-card home-card--assets",
+                    r#type: "button",
+                    aria_label: "Open Wallet NIGHT account",
+                    onclick: move |_| on_select_primary.call(PrimaryDestination::Wallet),
+                    p { class: "card-eyebrow", "NIGHT account" }
+                    strong { class: "home-card__value", "{night}" }
+                    span { class: "home-card__detail", "{account.network_name} · {ui::sync_state(&account.sync.state)}" }
+                    span { class: "home-card__link", "Open Wallet →" }
+                }
+                button {
+                    class: "home-card home-card--shielded",
+                    r#type: "button",
+                    aria_label: "Open Wallet shielded account",
+                    onclick: move |_| on_select_primary.call(PrimaryDestination::Wallet),
+                    p { class: "card-eyebrow", "Shielded account" }
+                    match shielded {
+                        HomeResource::Ready(status) => rsx! {
+                            strong { class: "home-card__value", "{home_shielded_value(&status)}" }
+                            span { class: "home-card__detail", "{home_shielded_detail(&status)}" }
+                        },
+                        HomeResource::Unavailable => rsx! {
+                            strong { class: "home-card__value", "Unavailable" }
+                            span { class: "home-card__detail", "Open Wallet to activate or retry protected sync." }
+                        },
+                    }
+                    span { class: "home-card__link", "Open Wallet →" }
+                }
+                button {
+                    class: "home-card home-card--identity",
+                    r#type: "button",
+                    aria_label: "Open newest document",
+                    onclick: move |_| on_select_primary.call(PrimaryDestination::Documents),
+                    p { class: "card-eyebrow", "Newest document" }
+                    match credentials {
+                        HomeResource::Ready(credentials) => {
+                            if let Some(credential) = newest_credential(&credentials) {
+                                rsx! {
+                                    strong { class: "home-card__value", "{credential.display_name}" }
+                                    span { class: "home-card__detail", "{ui::credential_format(&credential.format)} · {ui::verification_outcome(&credential.verification_outcome)}" }
+                                }
+                            } else {
+                                rsx! {
+                                    strong { class: "home-card__value", "No documents yet" }
+                                    span { class: "home-card__detail", "Add a verified document from Documents." }
+                                }
+                            }
+                        },
+                        HomeResource::Unavailable => rsx! {
+                            strong { class: "home-card__value", "Documents unavailable" }
+                            span { class: "home-card__detail", "Open Documents to retry the protected inventory." }
+                        },
+                    }
+                    span { class: "home-card__link", "Open Documents →" }
+                }
+                button {
+                    class: "home-card home-card--vault",
+                    r#type: "button",
+                    aria_label: "Open Passport Vault",
+                    onclick: move |event| on_open_vault.call(event),
+                    p { class: "card-eyebrow", "Passport Vault" }
+                    match vault {
+                        HomeResource::Ready(vault) => {
+                            let lock_count = vault.locks.len();
+                            let lock_label = if lock_count == 1 { "active lock" } else { "active locks" };
+                            rsx! {
+                                strong { class: "home-card__value", "{ui::format_night_amount(&vault.total_locked)}" }
+                                span { class: "home-card__detail", "{lock_count} {lock_label} · {ui::vault_contract_source(&vault.source)}" }
+                            }
+                        },
+                        HomeResource::Unavailable => rsx! {
+                            strong { class: "home-card__value", "Vault unavailable" }
+                            span { class: "home-card__detail", "Open Passport Vault to retry its public state." }
+                        },
+                    }
+                    span { class: "home-card__link", "Open Vault →" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn HomeSecurityStrip(
+    security: WalletSecurityStatusView,
+    on_open_settings: EventHandler<MouseEvent>,
+) -> Element {
+    rsx! {
+        button {
+            class: "home-security-strip surface-card",
+            r#type: "button",
+            aria_label: "Open wallet security settings",
+            onclick: move |event| on_open_settings.call(event),
+            span { class: "home-security-strip__mark", aria_hidden: "true", "◇" }
+            span { "{ui::wallet_security_state(security.state_name())}" }
+            span { class: "home-security-strip__separator", aria_hidden: "true", "·" }
+            span { "{ui::wallet_protection(security.protection_name())}" }
+            span { class: "home-security-strip__separator", aria_hidden: "true", "·" }
+            span { "{ui::backup_capability(security.portable_backup_supported)}" }
+            span { class: "home-security-strip__arrow", aria_hidden: "true", "→" }
+        }
+    }
+}
+
+#[component]
+fn HomeActivityPreview(
+    account: WalletAccountView,
+    on_select_primary: EventHandler<PrimaryDestination>,
+) -> Element {
+    rsx! {
+        article { class: "home-activity-preview surface-card",
+            div { class: "home-activity-preview__heading",
+                div {
+                    p { class: "card-eyebrow", "Wallet history" }
+                    h2 { "Recent activity" }
+                }
+                button {
+                    class: "text-action",
+                    r#type: "button",
+                    aria_label: "See all activity",
+                    onclick: move |_| on_select_primary.call(PrimaryDestination::Activity),
+                    "See all"
+                }
+            }
+            if account.transactions.is_empty() {
+                div { class: "home-activity-preview__empty",
+                    strong { "Nothing here yet" }
+                    p { "Your latest Midnight transfers will appear here." }
+                }
+            } else {
+                div { class: "activity-list",
+                    for (index, transaction) in account.transactions.iter().take(3).enumerate() {
+                        div { class: "activity-row", key: "{index}",
+                            span { class: "activity-row__mark", aria_hidden: "true", "{ui::transaction_mark(&transaction.direction)}" }
+                            div {
+                                strong { "{ui::transaction_direction(&transaction.direction)}" }
+                                small { "{ui::transaction_status(&transaction.status)}" }
+                            }
+                            span { class: "home-activity-preview__amount", "{home_transaction_amount(transaction)}" }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3714,6 +4153,41 @@ fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPa
     }
 }
 
+fn load_home_page(services: &WalletUiServices, profile_id: &str) -> HomePageState {
+    let (account, security) = match load_account_page(services, profile_id) {
+        AccountPageState::Ready {
+            account, security, ..
+        } => (account, security),
+        AccountPageState::Loading | AccountPageState::Failed(_) => return HomePageState::Failed,
+    };
+    let shielded = services
+        .get_wallet_shielded_sync_status()
+        .execute(WalletShieldedSyncCommand {
+            profile_id: profile_id.to_owned(),
+        })
+        .map_or(HomeResource::Unavailable, HomeResource::Ready);
+    let credentials = services
+        .list_credentials()
+        .execute(CredentialProfileQuery {
+            profile_id: profile_id.to_owned(),
+        })
+        .map_or(HomeResource::Unavailable, HomeResource::Ready);
+    let vault = services
+        .list_passport_vault_locks()
+        .execute()
+        .map_or(HomeResource::Unavailable, |vault| {
+            HomeResource::Ready(Box::new(vault))
+        });
+
+    HomePageState::Ready(Box::new(HomePageProjection {
+        account,
+        security,
+        shielded,
+        credentials,
+        vault,
+    }))
+}
+
 fn account_read_is_noninteractive(security_state: &str) -> bool {
     !matches!(security_state, "Uninitialized" | "Locked")
 }
@@ -4447,6 +4921,55 @@ fn balance_for<'a>(
         .balances
         .iter()
         .find(|balance| balance.symbol == symbol)
+}
+
+fn newest_credential(credentials: &[CredentialView]) -> Option<&CredentialView> {
+    credentials.iter().max_by(|left, right| {
+        left.issued_at_ms
+            .cmp(&right.issued_at_ms)
+            .then_with(|| left.id.cmp(&right.id))
+    })
+}
+
+fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
+    status
+        .balances
+        .iter()
+        .find(|balance| balance.token_type_hex == "0".repeat(64))
+        .map(|balance| ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units))
+        .unwrap_or_else(|| ui::sync_state(&status.state).to_owned())
+}
+
+fn home_shielded_detail(status: &WalletShieldedSyncView) -> String {
+    let notes = status.owned_note_count.map_or_else(
+        || "Protected note count unavailable".to_owned(),
+        |count| {
+            format!(
+                "{count} protected note{}",
+                if count == 1 { "" } else { "s" }
+            )
+        },
+    );
+    format!("{notes} · {}", ui::sync_state(&status.state))
+}
+
+fn home_transaction_amount(transaction: &oxid_wallet_application::WalletTransactionView) -> String {
+    ["NIGHT", "DUST"]
+        .iter()
+        .find_map(|symbol| {
+            transaction
+                .changes
+                .iter()
+                .find(|change| change.balance.symbol == *symbol)
+                .map(|change| {
+                    ui::format_asset_amount(
+                        &change.balance.atomic_units,
+                        change.balance.decimals,
+                        symbol,
+                    )
+                })
+        })
+        .unwrap_or_else(|| "Amount unavailable".to_owned())
 }
 
 fn account_hint(account: &WalletAccountView, busy: Option<AccountOperation>) -> &'static str {
@@ -8628,6 +9151,8 @@ const LUCIDE_WALLET: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22
 const LUCIDE_BADGE_CHECK: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg>"#;
 const LUCIDE_ACTIVITY: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.5.5 0 0 1-.96 0L9.24 2.18a.5.5 0 0 0-.96 0l-2.35 8.36A2 2 0 0 1 4 12H2"/></svg>"#;
 const LUCIDE_SCAN_LINE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>"#;
+const LUCIDE_RECEIVE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>"#;
+const LUCIDE_SEND: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>"#;
 
 #[cfg(test)]
 mod tests {
@@ -8680,6 +9205,94 @@ mod tests {
         let labels = PRIMARY_DESTINATIONS.map(PrimaryDestination::label);
 
         assert_eq!(labels, ["Home", "Wallet", "Documents", "Activity"]);
+    }
+
+    #[test]
+    fn home_quick_actions_route_to_existing_surfaces() {
+        assert_eq!(
+            HomeQuickAction::Receive.destination(),
+            Some(PrimaryDestination::Wallet)
+        );
+        assert_eq!(
+            HomeQuickAction::Send.destination(),
+            Some(PrimaryDestination::Wallet)
+        );
+        assert_eq!(
+            HomeQuickAction::Present.destination(),
+            Some(PrimaryDestination::Documents)
+        );
+        assert_eq!(HomeQuickAction::Scan.destination(), None);
+    }
+
+    #[test]
+    fn home_selects_only_the_newest_public_credential_summary() {
+        let credential = |id: &str, issued_at_ms| CredentialView {
+            id: id.to_owned(),
+            display_name: "Digital Passport".to_owned(),
+            issuer_did: "did:midnight:undeployed:issuer".to_owned(),
+            subject_did: None,
+            format: "midnight_compact_vc".to_owned(),
+            issued_at_ms,
+            verification_outcome: "valid".to_owned(),
+            verification_stages: Vec::new(),
+        };
+        let credentials = vec![
+            credential("credential_older", Some(10)),
+            credential("credential_newer", Some(20)),
+        ];
+
+        assert_eq!(
+            newest_credential(&credentials).map(|value| value.id.as_str()),
+            Some("credential_newer")
+        );
+        assert_eq!(newest_credential(&[]), None);
+    }
+
+    #[test]
+    fn home_activity_amount_exposes_no_transaction_identifier() {
+        let transaction = oxid_wallet_application::WalletTransactionView {
+            transaction_id: "secret-looking-transaction-identifier".to_owned(),
+            direction: "incoming".to_owned(),
+            status: "confirmed".to_owned(),
+            block_height: Some(99),
+            observed_at_millis: Some(42),
+            changes: vec![oxid_wallet_application::WalletAssetChangeView {
+                direction: "incoming".to_owned(),
+                balance: oxid_wallet_application::WalletAssetBalanceView {
+                    asset_id: "night".to_owned(),
+                    symbol: "NIGHT".to_owned(),
+                    decimals: 6,
+                    atomic_units: "1500000".to_owned(),
+                },
+            }],
+            fee: None,
+        };
+
+        let amount = home_transaction_amount(&transaction);
+        assert_eq!(amount, "1.5 NIGHT");
+        assert!(!amount.contains(&transaction.transaction_id));
+
+        let mut unknown_asset = transaction;
+        unknown_asset.changes[0].balance.symbol = "UNKNOWN".to_owned();
+        assert_eq!(
+            home_transaction_amount(&unknown_asset),
+            "Amount unavailable"
+        );
+    }
+
+    #[test]
+    fn home_security_labels_report_capability_not_completion() {
+        assert_eq!(ui::wallet_security_state("Unlocked"), "Wallet unlocked");
+        assert_eq!(
+            ui::wallet_protection("Development only"),
+            "Standalone custody"
+        );
+        assert_eq!(ui::backup_capability(true), "Backup available");
+        assert_ne!(ui::backup_capability(true), "Backed up");
+        assert_eq!(
+            ui::wallet_protection("unexpected"),
+            "Protection class unavailable"
+        );
     }
 
     #[test]

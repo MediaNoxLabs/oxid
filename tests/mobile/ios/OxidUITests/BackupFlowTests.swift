@@ -297,6 +297,7 @@ final class BackupFlowTests: XCTestCase {
             application.staticTexts["My wallet · Standalone"]
                 .waitForExistence(timeout: 30)
         )
+        application.buttons["Wallet"].tap()
         XCTAssertTrue(
             application.buttons["Copy Unshielded receive address"]
                 .waitForExistence(timeout: 30)

@@ -43,10 +43,47 @@ final class ProfileFlowTests: XCTestCase {
     }
 
     @MainActor
+    private func assertHomeComposition(in application: XCUIApplication) {
+        let home = application.buttons["Home"]
+        XCTAssertTrue(home.waitForExistence(timeout: 15))
+        home.tap()
+        XCTAssertTrue(
+            application.staticTexts["Everything in one place"].waitForExistence(timeout: 15)
+        )
+        for action in ["Receive", "Send", "Present"] {
+            XCTAssertTrue(application.buttons[action].exists)
+        }
+        XCTAssertTrue(application.buttons["Open Wallet NIGHT account"].exists)
+        XCTAssertTrue(application.buttons["Open Wallet shielded account"].exists)
+        XCTAssertTrue(application.buttons["Open newest document"].exists)
+        XCTAssertTrue(application.buttons["Open Passport Vault"].exists)
+        XCTAssertTrue(application.buttons["Open wallet security settings"].exists)
+        XCTAssertTrue(application.buttons["See all activity"].exists)
+        XCTAssertFalse(application.staticTexts["Backed up"].exists)
+    }
+
+    @MainActor
+    private func openPassportVault(in application: XCUIApplication) {
+        application.buttons["Home"].tap()
+        let vault = application.buttons["Open Passport Vault"]
+        let firstCard = application.buttons["Open Wallet NIGHT account"]
+        XCTAssertTrue(vault.waitForExistence(timeout: 15))
+        for _ in 0..<5 where !vault.isHittable {
+            firstCard.swipeLeft()
+        }
+        XCTAssertTrue(vault.isHittable)
+        vault.tap()
+    }
+
+    @MainActor
     func testCreatesProfileAndCompletesStandaloneWalletFlow() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         ensureProfile(in: application)
-        application.buttons["Wallet"].tap()
+        assertHomeComposition(in: application)
+        application.buttons["Present"].tap()
+        XCTAssertTrue(application.buttons["Manage identities"].waitForExistence(timeout: 5))
+        application.buttons["Home"].tap()
+        application.buttons["Receive"].tap()
 
         let activateButton = application.buttons["Activate protected Midnight account"]
         XCTAssertTrue(activateButton.waitForExistence(timeout: 15))
@@ -291,10 +328,7 @@ final class ProfileFlowTests: XCTestCase {
 
         let home = application.buttons["Home"]
         XCTAssertTrue(home.waitForExistence(timeout: 5))
-        home.tap()
-        let vault = application.buttons["Open Passport Vault"]
-        XCTAssertTrue(vault.waitForExistence(timeout: 5))
-        vault.tap()
+        openPassportVault(in: application)
         XCTAssertTrue(
             application.staticTexts["Owner-private saved conformance ledger · survives app restart · no on-chain transaction submitted"]
                 .waitForExistence(timeout: 5)
@@ -352,6 +386,8 @@ final class ProfileFlowTests: XCTestCase {
         application.terminate()
         application.launch()
 
+        assertHomeComposition(in: application)
+        application.buttons["Wallet"].tap()
         XCTAssertTrue(activateButton.waitForExistence(timeout: 30))
         activateButton.tap()
         XCTAssertTrue(application.staticTexts["Transfer included"].waitForExistence(timeout: 15))
@@ -367,9 +403,7 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertFalse(application.staticTexts["Alice"].exists)
         XCTAssertFalse(application.staticTexts["Example"].exists)
         XCTAssertTrue(application.buttons["Reverify"].waitForExistence(timeout: 5))
-        home.tap()
-        XCTAssertTrue(vault.waitForExistence(timeout: 5))
-        vault.tap()
+        openPassportVault(in: application)
         XCTAssertTrue(application.staticTexts["90 NIGHT remaining"].waitForExistence(timeout: 10))
         XCTAssertTrue(application.staticTexts["Claims 1"].waitForExistence(timeout: 5))
         XCTAssertTrue(
@@ -390,7 +424,7 @@ final class ProfileFlowTests: XCTestCase {
             createButton.tap()
         }
 
-        let scanIdentityRequest = application.buttons["Scan identity QR code"]
+        let scanIdentityRequest = application.buttons["Scan"]
         XCTAssertTrue(scanIdentityRequest.waitForExistence(timeout: 15))
         scanIdentityRequest.tap()
         XCTAssertTrue(
@@ -449,6 +483,7 @@ final class ProfileFlowTests: XCTestCase {
     func testNativePublicAddressCopyAndShare() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         ensureProfile(in: application)
+        application.buttons["Wallet"].tap()
 
         let activate = application.buttons["Activate protected Midnight account"]
         if activate.waitForExistence(timeout: 5) {

@@ -112,6 +112,7 @@ ADR status and delivery state answer different questions:
 | [0084](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0084-enforce-two-layer-ui-design-tokens.md) Enforce two-layer UI design tokens | Accepted | §§1, 3–7, 9, 12–13, 16, 18, 21 and issues #2/#65/#67 | Dark/light brand primitives map into one semantic component vocabulary; fixed safety colors and a repository lint prevent brand drift and raw presentation literals |
 | [0085](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0085-centralize-user-facing-machine-labels.md) Centralize user-facing machine labels | Accepted | §§1, 3–7, 9–13, 16, 18, 21 and issues #2/#65/#77 | One Dioxus label/format seam hides unknown values, names capability truth, formats exact assets/dates, and rejects raw machine copy |
 | [0086](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0086-compose-the-mobile-shell-with-a-bounded-route-stack.md) Compose the mobile shell with a bounded route stack | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1a; issues #2/#65/#78 | Four primary tabs and center Scan use an app-owned root-plus-secondary stack; every migrated page remains reachable without a new router dependency |
+| [0087](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0087-compose-home-as-a-safe-read-only-projection.md) Compose Home as a safe read-only projection | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1b; issues #2/#65/#79 | Home projects existing safe views and routes to existing flows; Wallet remains operational authority and security/activity copy cannot overclaim |
 
 ## Current boundaries
 
@@ -398,3 +399,8 @@ Settings, Diagnostics, and profiles are explicit secondary routes. Selecting a
 primary clears the secondary stack and Back only pops presentation state. Home
 and Wallet intentionally share the complete account view until Phase 1b splits
 their presentation; no application state machine or adapter boundary moves.
+ADR-0087 completes that split with a Dioxus-only read projection over existing
+account, security, shielded-sync, credential, and Vault use cases. Home routes
+actions to the existing operational surfaces and keeps optional failures
+payload-free. Backup completion, biometric enrollment, identity/Vault activity,
+secret masking, and all state-changing ceremonies remain outside this decision.

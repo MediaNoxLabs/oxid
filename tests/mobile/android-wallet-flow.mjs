@@ -120,11 +120,39 @@ async function openSettings() {
 
 async function openPassportVault() {
   await clickButton("Home");
+  await waitFor(
+    "document.querySelector('.home-card--identity')?.innerText.includes('Digital Passport') && document.querySelector('.home-security-strip')?.innerText.includes('Standalone custody')",
+    "populated Home document and truthful standalone security summary",
+  );
   await clickButtonByLabel("Open Passport Vault");
 }
 
 async function openWallet() {
   await clickButton("Wallet");
+}
+
+async function assertHomeComposition() {
+  await clickButton("Home");
+  await waitFor(
+    `document.body.innerText.includes("Everything in one place")
+      && Boolean(document.querySelector('.home-quick-actions'))
+      && Boolean(document.querySelector('button[aria-label="Open Wallet NIGHT account"]'))
+      && Boolean(document.querySelector('button[aria-label="Open Wallet shielded account"]'))
+      && Boolean(document.querySelector('button[aria-label="Open newest document"]'))
+      && Boolean(document.querySelector('button[aria-label="Open Passport Vault"]'))
+      && Boolean(document.querySelector('button[aria-label="Open wallet security settings"]'))
+      && Boolean(document.querySelector('button[aria-label="See all activity"]'))`,
+    "five-part Home composition",
+  );
+  const truthful = await evaluate(`(() => {
+    const labels = Array.from(document.querySelectorAll('.home-quick-action'))
+      .map((element) => element.textContent.trim());
+    return ["Receive", "Send", "Present", "Scan"].every((label) => labels.includes(label))
+      && !document.body.innerText.includes("Backed up");
+  })()`);
+  if (!truthful) {
+    throw new Error("Home quick actions or security capability truth did not match Phase 1b");
+  }
 }
 
 async function setInput(label, value) {
@@ -254,6 +282,7 @@ try {
     if (recoveryError) {
       throw new Error(`Android complete wallet recovery failed: ${recoveryError}`);
     }
+    await openWallet();
     await waitFor(
       'Boolean(document.querySelector(\'button[aria-label="Copy Unshielded receive address"]\')) && Boolean(document.querySelector(\'button[aria-label="Copy Shielded receive address"]\'))',
       "restored Midnight receive addresses",
@@ -280,7 +309,15 @@ try {
     })}\n`);
   } else if (mode === "flow") {
     await clickButton("Create and continue");
-    await openWallet();
+    await assertHomeComposition();
+    await clickButton("Present");
+    await waitForButton("Manage identities");
+    await clickButton("Home");
+    await clickButton("Receive");
+    await waitFor(
+      'Boolean(document.querySelector(\'button[aria-label="Activate protected Midnight account"]\'))',
+      "one-tap Home Receive route to Wallet",
+    );
     await clickButtonByLabel("Activate protected Midnight account");
     await waitForButton("Use my receive address", 90_000);
     await waitForButton("Scan");
@@ -632,8 +669,8 @@ try {
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, claimsHiddenByDefault, credentialChooserValidated, credentialPolicyChecked, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.claimsHiddenByDefault || !result.credentialChooserValidated || !result.credentialPolicyChecked || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
+    const result = { ...walletResult, homeComposed: true, claimsHiddenByDefault, credentialChooserValidated, credentialPolicyChecked, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.homeComposed || !result.claimsHiddenByDefault || !result.credentialChooserValidated || !result.credentialPolicyChecked || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
     await openWallet();
@@ -641,6 +678,7 @@ try {
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } else if (mode === "restored") {
     await waitForButton("Wallet");
+    await assertHomeComposition();
     await openWallet();
     await waitForButton("Activate development wallet");
     const walletRestored = await evaluate(`(() => ({
@@ -689,6 +727,7 @@ try {
   } else if (mode === "native-authorize") {
     const createProfile = await evaluate(`Boolean(${buttonExpression("Create and continue")})`);
     if (createProfile) await clickButton("Create and continue");
+    await openWallet();
     await waitFor(
       'Boolean(document.querySelector(\'button[aria-label="Activate protected Midnight account"]\')) || Boolean(document.querySelector(\'.address-row\')) || Boolean(document.querySelector(\'[role="alert"]\'))',
       "settled pre-authorization account state",
