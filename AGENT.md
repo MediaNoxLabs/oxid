@@ -928,10 +928,14 @@ Current package ownership:
 
 Every static `class: "..."` token in the Dioxus adapter must have a selector
 in `crates/ui-dioxus/assets/styles.css`; `scripts/check-ui-css-classes.sh`
-enforces that contract from the UI/repository gate. The pre-Phase-0 Passport
-Vault vocabulary is intentionally styled as compatibility aliases of the
-shared card, action, form, warning, and review rules. Do not add another
-unmatched component vocabulary while the semantic-token rollout remains open.
+enforces that contract from the UI/repository gate. ADR-0084 also requires the
+complete dark/light brand schema and fixed semantic component vocabulary;
+`scripts/check-ui-design-tokens.sh` rejects raw component colors, legacy
+palette aliases, and ad-hoc type sizes, radii, or motion durations. Safety
+colors are not brandable and dark is still the only selected scheme. Keep
+responsive dimensions and safe-area geometry explicit, but put component
+spacing on `--space-1..8`. The Passport Vault compatibility classes remain
+mapped to the shared card/action/form rules; do not add a third vocabulary.
 
 `oxid-composition` exposes UI-neutral `ApplicationServices`. Incoming adapters
 adapt that object at their own boundary; composition must not depend on Dioxus,
@@ -1687,6 +1691,8 @@ to silence the shell probe.
   capability label; normal mobile composition must remain proof-disabled.
 - The ADR-0083 proof-control port is non-blocking and payload-free. A control
   signal is `cancellation_requested`, never proof cancellation acknowledgement.
+  Measure its timeout from admission, including worker scheduling delay; a
+  result produced after that budget is late and must be discarded.
   Do not release the one-proof admission slot or publish a terminal state until
   the worker has stopped using witness/custody material, independent
   verification has completed, and any late result has been discarded. Never

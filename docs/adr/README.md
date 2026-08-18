@@ -105,6 +105,7 @@ ADR status and delivery state answer different questions:
 | [0081](0081-clear-android-jni-exceptions-at-the-native-boundary.md) Clear Android JNI exceptions at the native boundary | Accepted | §§3–7, 12–13, 16–18, 21 and issues #2/#41 | All fallible shared-plugin JNI conversions clear pending Java exceptions before returning a payload-free failure; the Android smoke injects a debug-only throw and then completes the standalone wallet journey |
 | [0082](0082-require-explicit-presentation-credential-selection.md) Require explicit presentation credential selection | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#64 | Claim-free previews name the issuer and opaque credential reference; Dioxus visibly auto-selects only a sole match and requires an explicit card choice before multi-candidate consent |
 | [0083](0083-run-mobile-compact-proofs-on-a-foreground-worker.md) Run mobile Compact proofs on a foreground worker | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | The explicit native-custody artifact build admits one foreground proof, independently verifies it, and safely reports cancel/background/timeout only after worker completion; physical-device release budgets remain open |
+| [0084](0084-enforce-two-layer-ui-design-tokens.md) Enforce two-layer UI design tokens | Accepted | §§1, 3–7, 9, 12–13, 16, 18, 21 and issues #2/#65/#67 | Dark/light brand primitives map into one semantic component vocabulary; fixed safety colors and a repository lint prevent brand drift and raw presentation literals |
 
 ## Current boundaries
 
@@ -218,6 +219,12 @@ disposal and are acknowledged only after the non-interruptible prover stops.
 Retry starts from a fresh single-use OpenID4VP preview and consent. Normal
 production and ordinary standalone builds remain proof-disabled, while
 physical-device custody and resource budgets remain issues #29 and #30.
+ADR-0084 makes presentation theming a two-layer build boundary. Components
+consume only the fixed semantic surface/text/accent/product/type/space/radius/
+motion/elevation vocabulary, while raw palette values remain confined to
+complete dark/light brand primitives. Safety-state colors are not brandable,
+dark stays the only selected scheme, and the repository gate rejects drift;
+this does not alter application truth, consent, or masking policy.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a

@@ -539,11 +539,20 @@ opaque managed holder custody and fresh randomness instead of migrating either
 shortcut.
 
 Additional internal/change address management, replacement handling, live DID
-writes, live OpenID4VP response delivery and mobile Compact proving,
+writes, live OpenID4VP response delivery and physical-device Compact proving
+budgets,
 credential status/revocation plus production issuer trust, physical-camera and
 native-custody physical-device evidence, universal HTTPS links, production
 endpoint discovery, durable recovery, and device resource baselines remain
 separate follow-ups.
+
+ADR-0084 begins the accepted product-UX rollout without copying the
+prototype's ad-hoc stylesheet values. The migrated Dioxus surface now separates
+complete dark/light brand primitives from one semantic component vocabulary;
+fixed safety colors cannot be rebranded, dark remains the only selected scheme,
+and `run.sh` rejects raw component colors plus legacy type/radius/motion drift.
+This is a presentation-only prerequisite for the four-tab route shell and does
+not change wallet state machines, capability truth, consent, or composition.
 
 ## Gate for each later slice
 

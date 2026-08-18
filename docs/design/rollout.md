@@ -7,11 +7,12 @@ program (the two exceptions are called out).
 
 ## Phase 0 — Foundations (enables everything; also fixes live bugs)
 
-1. **Token layer**: refactor `styles.css` into the two-layer token system
-   (design-system.md); replace hardcoded literals; collapse type/radius/
-   spacing scales. Includes styling the ~26 currently-undefined classes or
-   migrating their pages to the shared vocabulary (the Vault page renders
-   half-unstyled today — tracked as its own bug issue).
+1. **Token layer** (delivered by ADR-0084 / issue #67): `styles.css` now uses
+   the two-layer token system from `design-system.md`; component palette
+   literals and ad-hoc type/radius/motion values are rejected by the repository
+   gate, spacing is collapsed to the eight-step scale, and both dark/light
+   brand schemas are complete while dark remains the selected scheme. Issue
+   #63 previously unified the Vault compatibility vocabulary.
 2. **Labeling layer**: the `label(...)` module with exhaustive matches for
    every user-visible enum/state; lint that fails review on raw
    `snake_case`, epoch-ms, or "base units" in rsx for user-profile surfaces.

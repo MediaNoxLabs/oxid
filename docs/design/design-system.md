@@ -1,14 +1,15 @@
 # Design System
 
-## Token architecture (Phase 0 of the rollout — everything depends on it)
+## Token architecture (Phase 0 of the rollout — delivered by ADR-0084)
 
-Today `assets/styles.css` defines 24 `:root` custom properties but bypasses
-them with 60+ hardcoded alpha literals, ~20 ad-hoc font sizes, and ~10 radii.
-Issue #63 maps the previously undefined Vault vocabulary onto the shared
-card/action/form rules, and `scripts/check-ui-css-classes.sh` now rejects a
-new static Dioxus class literal without a stylesheet selector. Phase 0 still
-replaces the compatibility vocabulary and raw values with a strict two-layer
-system:
+`assets/styles.css` now implements the strict two-layer system. Issue #63
+first mapped the previously undefined Vault vocabulary onto the shared
+card/action/form rules; ADR-0084 then replaced the component palette literals,
+ad-hoc type sizes, spacing, radii, and motion with the vocabulary below.
+`scripts/check-ui-css-classes.sh` rejects unmatched static Dioxus classes and
+`scripts/check-ui-design-tokens.sh` rejects token-schema drift or raw component
+colors. Dark remains the selected scheme; complete light primitives exist as a
+future reviewed mapping and do not activate an unshipped light theme.
 
 **Layer 1 — brand tokens** (supplied per brand, white-label.md):
 palette primitives, type family, radius personality, logo/mascot assets.
@@ -31,7 +32,10 @@ brands may only re-point them at their primitives):
 /* elevation */   --shadow-card, --shadow-sheet
 ```
 
-Rules: no raw color/size literals in component CSS (lint in rollout.md);
+Rules: no raw color literals in component CSS; type sizes, radii, and timed
+motion also use their token scales (lint in rollout.md). Responsive widths,
+touch-target dimensions, QR sizes, and safe-area geometry remain explicit
+layout constraints rather than pretending to be spacing. The
 semantic-state colors (`--positive/--warning/--critical`) are **fixed across
 all brands** — a brand can restyle joy, never danger. Dark is the default
 scheme (current `color-scheme: dark` stays); a first-class light palette is
