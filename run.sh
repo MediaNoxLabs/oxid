@@ -62,6 +62,7 @@ run_coverage_excluded_tests() {
 }
 
 run_ui() {
+  ./scripts/check-ui-css-classes.sh
   cargo check -p oxid-ui-dioxus
   cargo check -p oxid-app
   cargo check -p oxid-app --no-default-features --features mobile

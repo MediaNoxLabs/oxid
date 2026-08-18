@@ -110,6 +110,8 @@ button {
 .menu-item:focus-visible,
 .primary-action:focus-visible,
 .secondary-action:focus-visible,
+.primary-button:focus-visible,
+.secondary-button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
@@ -421,14 +423,17 @@ textarea:focus-visible {
 }
 
 .primary-action,
-.secondary-action {
+.secondary-action,
+.primary-button,
+.secondary-button {
   min-height: 3.2rem;
   border-radius: 1rem;
   font-weight: 800;
   cursor: pointer;
 }
 
-.primary-action {
+.primary-action,
+.primary-button {
   width: 100%;
   margin-top: 1rem;
   border: 0;
@@ -437,12 +442,14 @@ textarea:focus-visible {
   box-shadow: 0 1rem 2.5rem rgb(56 213 255 / 13%);
 }
 
-.primary-action:hover:not(:disabled) {
+.primary-action:hover:not(:disabled),
+.primary-button:hover:not(:disabled) {
   filter: brightness(1.08);
   transform: translateY(-1px);
 }
 
-.primary-action:disabled {
+.primary-action:disabled,
+.primary-button:disabled {
   border: 1px solid var(--line);
   background: var(--surface-4);
   box-shadow: none;
@@ -450,7 +457,8 @@ textarea:focus-visible {
   cursor: not-allowed;
 }
 
-.secondary-action {
+.secondary-action,
+.secondary-button {
   flex: 0 0 auto;
   padding: 0 1rem;
   border: 1px solid rgb(56 213 255 / 32%);
@@ -499,14 +507,21 @@ textarea:focus-visible {
 }
 
 .dashboard-grid,
-.diagnostic-grid {
+.diagnostic-grid,
+.page-stack,
+.credential-list,
+.field-grid {
   display: grid;
   gap: 0.8rem;
   margin-top: 1rem;
 }
 
 .surface-card,
-.capability-row {
+.capability-row,
+.info-card,
+.balance-card,
+.credential-card,
+.empty-card {
   border: 1px solid var(--line);
   background:
     linear-gradient(145deg, rgb(56 213 255 / 5%), transparent 42%),
@@ -516,18 +531,30 @@ textarea:focus-visible {
   -webkit-backdrop-filter: blur(18px);
 }
 
-.surface-card {
+.surface-card,
+.info-card,
+.balance-card,
+.credential-card,
+.empty-card {
   padding: 1.15rem;
   border-radius: 1.35rem;
 }
 
-.surface-card h2 {
+.surface-card h2,
+.info-card h2,
+.balance-card h2,
+.credential-card h2,
+.empty-card h2 {
   margin: 0;
   color: var(--text-strong);
   font-size: 1rem;
 }
 
 .surface-card > p:not(.card-eyebrow),
+.info-card > p:not(.card-eyebrow),
+.balance-card > p:not(.card-eyebrow),
+.credential-card > p:not(.card-eyebrow),
+.empty-card > p:not(.card-eyebrow),
 .settings-card > div > p:not(.card-eyebrow) {
   margin: 0.5rem 0 0;
   color: var(--text-muted);
@@ -554,7 +581,8 @@ textarea:focus-visible {
   line-height: 1.6;
 }
 
-.empty-state {
+.empty-state,
+.empty-card {
   display: grid;
   min-height: 18rem;
   place-items: center;
@@ -654,13 +682,16 @@ textarea:focus-visible {
   gap: 0.9rem;
 }
 
-.credential-inventory {
+.credential-inventory,
+.credential-list {
   display: grid;
   gap: 1rem;
   margin-top: 1rem;
 }
 
-.credential-record__heading {
+.credential-record__heading,
+.card-heading,
+.credential-card__heading {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -908,7 +939,8 @@ textarea:focus-visible {
   padding: 0;
 }
 
-.action-row {
+.action-row,
+.button-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.65rem;
@@ -1204,6 +1236,26 @@ textarea:focus-visible {
   background:
     linear-gradient(145deg, rgb(251 191 36 / 8%), transparent 48%),
     var(--surface-2);
+}
+
+.warning-card {
+  border-color: rgb(251 191 36 / 26%);
+  background:
+    linear-gradient(145deg, rgb(251 191 36 / 8%), transparent 48%),
+    var(--surface-2);
+}
+
+.review-card {
+  border-color: rgb(56 213 255 / 24%);
+}
+
+.balance-breakdown {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 1rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
 }
 
 .address-row {
@@ -1535,6 +1587,19 @@ textarea:focus-visible {
   padding: clamp(1.25rem, 5vw, 2rem);
 }
 
+.complete-recovery-card {
+  border-color: rgb(56 213 255 / 24%);
+}
+
+.credential-policy-summary {
+  padding-left: 0.75rem;
+  border-left: 2px solid rgb(70 243 181 / 28%);
+}
+
+.capability-dot.ready {
+  background: var(--green);
+}
+
 label {
   display: block;
   margin-bottom: 0.55rem;
@@ -1543,7 +1608,8 @@ label {
   font-weight: 700;
 }
 
-input {
+input,
+select {
   width: 100%;
   min-height: 3.25rem;
   padding: 0 0.95rem;
@@ -1554,11 +1620,13 @@ input {
   color: var(--text-strong);
 }
 
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   border-color: var(--cyan);
 }
 
 .form-hint,
+.field-hint,
 .result {
   margin: 1rem 0 0;
   color: var(--text-muted);
@@ -1586,10 +1654,21 @@ input:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.result.error {
+.result.error,
+.field-error {
   display: block;
   border-color: rgb(255 92 138 / 35%);
   color: #ff9fba;
+}
+
+.field-error {
+  margin: 1rem 0 0;
+  padding: 0.9rem;
+  border: 1px solid rgb(255 92 138 / 35%);
+  border-radius: 0.9rem;
+  background: rgb(7 11 20 / 55%);
+  font-size: 0.8rem;
+  line-height: 1.5;
 }
 
 .bottom-nav {
@@ -1742,7 +1821,8 @@ input:focus-visible {
     justify-content: space-between;
   }
 
-  .secondary-action {
+  .secondary-action,
+  .secondary-button {
     width: 100%;
   }
 }

@@ -915,6 +915,13 @@ Current package ownership:
 | `apps/oxid` | Executable shell and platform launch point. |
 | `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |
 
+Every static `class: "..."` token in the Dioxus adapter must have a selector
+in `crates/ui-dioxus/assets/styles.css`; `scripts/check-ui-css-classes.sh`
+enforces that contract from the UI/repository gate. The pre-Phase-0 Passport
+Vault vocabulary is intentionally styled as compatibility aliases of the
+shared card, action, form, warning, and review rules. Do not add another
+unmatched component vocabulary while the semantic-token rollout remains open.
+
 `oxid-composition` exposes UI-neutral `ApplicationServices`. Incoming adapters
 adapt that object at their own boundary; composition must not depend on Dioxus,
 the headless protocol, or another incoming adapter. The headless protocol is

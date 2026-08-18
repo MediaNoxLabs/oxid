@@ -3,9 +3,12 @@
 ## Token architecture (Phase 0 of the rollout — everything depends on it)
 
 Today `assets/styles.css` defines 24 `:root` custom properties but bypasses
-them with 60+ hardcoded alpha literals, ~20 ad-hoc font sizes, ~10 radii —
-and the Vault page references ~26 classes that don't exist in the stylesheet
-at all. Phase 0 replaces this with a strict two-layer system:
+them with 60+ hardcoded alpha literals, ~20 ad-hoc font sizes, and ~10 radii.
+Issue #63 maps the previously undefined Vault vocabulary onto the shared
+card/action/form rules, and `scripts/check-ui-css-classes.sh` now rejects a
+new static Dioxus class literal without a stylesheet selector. Phase 0 still
+replaces the compatibility vocabulary and raw values with a strict two-layer
+system:
 
 **Layer 1 — brand tokens** (supplied per brand, white-label.md):
 palette primitives, type family, radius personality, logo/mascot assets.
