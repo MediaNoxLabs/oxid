@@ -1,0 +1,43 @@
+name: Nightly
+
+on:
+  schedule:
+    # Daily hermetic validation; off-minute to avoid the top-of-hour rush.
+    - cron: "41 2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oxid-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flake-check:
+    name: Hermetic nix flake check (full sandboxed test suite)
+    runs-on: ubuntu-24.04
+    # Builds every flake check cold: both checked package variants (with the
+    # full sandboxed test suite the per-push builds skip), both Compact
+    # artifact derivations, and the call composer.
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache the package-build Nix store
+        uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6.1.3
+        with:
+          primary-key: nix-build-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix', 'Cargo.lock') }}
+          restore-prefixes-first-match: nix-build-${{ runner.os }}-
+          gc-max-store-size-linux: 6G
+          purge: false
+
+      - name: Run every flake check hermetically
+        run: nix flake check --print-build-logs

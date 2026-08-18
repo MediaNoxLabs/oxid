@@ -57,7 +57,10 @@
           nativeBuildInputs = [ pkgs.pkg-config ] ++ linuxNativeBuildInputs;
           buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;
 
-          doCheck = true;
+          # Per-push CI verifies tests once in the repository gate; the hermetic
+          # re-run lives in the checked variants below, exercised by
+          # `nix flake check` and the nightly workflow.
+          doCheck = false;
           strictDeps = true;
 
           meta = {
@@ -88,7 +91,8 @@
             "oxid-headless"
           ];
 
-          doCheck = true;
+          # See packages.default: hermetic tests run in the checked variant.
+          doCheck = false;
           strictDeps = true;
 
           meta = {
@@ -111,8 +115,15 @@
         xcodegen = pkgs.xcodegen;
       };
 
-      checks.package = self'.packages.default;
-      checks.headless = self'.packages.headless;
+      # The checked variants re-enable the hermetic sandbox test run that the
+      # per-push package builds skip; `nix flake check` and the nightly
+      # workflow build these.
+      checks.package = self'.packages.default.overrideAttrs (_: {
+        doCheck = true;
+      });
+      checks.headless = self'.packages.headless.overrideAttrs (_: {
+        doCheck = true;
+      });
       checks.presentation-compact-artifacts = presentationCompactArtifacts;
       checks.passport-vault-compact-artifacts = passportVaultCompactArtifacts;
       checks.passport-vault-call-composer = passportVaultCallComposer;
