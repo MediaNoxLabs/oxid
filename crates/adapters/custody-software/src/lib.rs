@@ -163,4 +163,77 @@ mod tests {
         assert!(public_key_from_secret(WalletKeyAlgorithm::P256, &[0; 32]).is_err());
         assert!(public_key_from_secret(WalletKeyAlgorithm::Secp256k1Schnorr, &[0; 32]).is_err());
     }
+
+    // Official BIP-32 Test Vector 4 (the only spec vector with a 32-byte
+    // seed). Expected keys are the last 32 bytes of the spec's Base58Check
+    // xprv strings, decoded with checksum verification. The m/0' key starts
+    // with a zero byte on purpose: the vector exists to catch
+    // leading-zero-trimming bugs in derivation code.
+    const BIP32_VECTOR4_SEED: [u8; 32] = [
+        0x3d, 0xdd, 0x56, 0x02, 0x28, 0x58, 0x99, 0xa9, 0x46, 0x11, 0x45, 0x06, 0x15, 0x7c, 0x79,
+        0x97, 0xe5, 0x44, 0x45, 0x28, 0xf3, 0x00, 0x3f, 0x61, 0x34, 0x71, 0x21, 0x47, 0xdb, 0x19,
+        0xb6, 0x78,
+    ];
+    const BIP32_VECTOR4_M_0H: [u8; 32] = [
+        0x00, 0xd9, 0x48, 0xe9, 0x26, 0x1e, 0x41, 0x36, 0x2a, 0x68, 0x8b, 0x91, 0x6f, 0x29, 0x71,
+        0x21, 0xba, 0x6b, 0xfb, 0x22, 0x74, 0xa3, 0x57, 0x5a, 0xc0, 0xe4, 0x56, 0x55, 0x1d, 0xfd,
+        0x7f, 0x7e,
+    ];
+    const BIP32_VECTOR4_M_0H_1H: [u8; 32] = [
+        0x3a, 0x20, 0x86, 0xed, 0xd7, 0xd9, 0xdf, 0x86, 0xc3, 0x48, 0x7a, 0x59, 0x05, 0xa1, 0x71,
+        0x2a, 0x9a, 0xa6, 0x64, 0xbc, 0xe8, 0xcc, 0x26, 0x81, 0x41, 0xe0, 0x75, 0x49, 0xea, 0xa8,
+        0x66, 0x1d,
+    ];
+
+    fn hardened_path(indices: &[u32]) -> WalletHdPath {
+        WalletHdPath::new(
+            indices
+                .iter()
+                .map(|index| {
+                    oxid_wallet_application::WalletHdPathComponent::new(*index, true)
+                        .expect("bounded index")
+                })
+                .collect(),
+        )
+        .expect("non-empty path")
+    }
+
+    #[test]
+    fn bip32_hardened_child_matches_official_vector_4() {
+        let derived = derive_bip32_secret(&BIP32_VECTOR4_SEED, &hardened_path(&[0]))
+            .expect("derivation succeeds");
+        assert_eq!(
+            *derived, BIP32_VECTOR4_M_0H,
+            "m/0' must match the BIP-32 spec, including its leading zero byte"
+        );
+    }
+
+    #[test]
+    fn bip32_double_hardened_child_matches_official_vector_4() {
+        let derived = derive_bip32_secret(&BIP32_VECTOR4_SEED, &hardened_path(&[0, 1]))
+            .expect("derivation succeeds");
+        assert_eq!(
+            *derived, BIP32_VECTOR4_M_0H_1H,
+            "m/0'/1' must match the BIP-32 spec"
+        );
+    }
+
+    #[test]
+    fn bip32_hardened_and_unhardened_children_differ() {
+        let hardened = derive_bip32_secret(&BIP32_VECTOR4_SEED, &hardened_path(&[0]))
+            .expect("hardened derivation succeeds");
+        let unhardened = derive_bip32_secret(
+            &BIP32_VECTOR4_SEED,
+            &WalletHdPath::new(vec![
+                oxid_wallet_application::WalletHdPathComponent::new(0, false)
+                    .expect("bounded index"),
+            ])
+            .expect("non-empty path"),
+        )
+        .expect("unhardened derivation succeeds");
+        assert_ne!(
+            *hardened, *unhardened,
+            "hardened and unhardened children of the same index must differ"
+        );
+    }
 }

@@ -1309,4 +1309,99 @@ mod tests {
         .expect_err("duplicate key references must fail");
         assert_eq!(error, WalletPortableBackupPortError::Conflict);
     }
+
+    // Property tests for the sealed-envelope codec. They run against the
+    // legacy version-1 Argon2id policy so each case derives in tens of
+    // milliseconds instead of the version-3 policy's deliberate slowness;
+    // the sealing/opening code path is identical apart from the parameters.
+    mod envelope_properties {
+        use std::sync::OnceLock;
+
+        use proptest::prelude::*;
+
+        use super::*;
+
+        fn property_secret() -> WalletRecoverySecret {
+            WalletRecoverySecret::parse("property-testing recovery secret 042")
+                .expect("secret should satisfy the length policy")
+        }
+
+        fn sealed_fixture() -> &'static Vec<u8> {
+            static SEALED: OnceLock<Vec<u8>> = OnceLock::new();
+            SEALED.get_or_init(|| {
+                seal_payload(
+                    CUSTODY_FORMAT_VERSION,
+                    b"oxid envelope corruption fixture payload",
+                    &property_secret(),
+                    &IncrementingRandom::new(),
+                )
+                .expect("sealing should succeed")
+                .into_bytes()
+            })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig { cases: 12, ..ProptestConfig::default() })]
+
+            #[test]
+            fn sealed_payloads_round_trip(payload in proptest::collection::vec(any::<u8>(), 0..512)) {
+                let secret = property_secret();
+                let sealed = seal_payload(
+                    CUSTODY_FORMAT_VERSION,
+                    &payload,
+                    &secret,
+                    &IncrementingRandom::new(),
+                )
+                .expect("sealing should succeed");
+                let opened = open_payload(&sealed, &secret, &[CUSTODY_FORMAT_VERSION])
+                    .expect("opening an untampered envelope should succeed");
+                prop_assert_eq!(opened.as_slice(), payload.as_slice());
+            }
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
+
+            #[test]
+            fn any_single_byte_corruption_fails_closed(
+                position_seed in any::<usize>(),
+                mask in 1_u8..=255,
+            ) {
+                let sealed = sealed_fixture();
+                let position = position_seed % sealed.len();
+                let mut corrupted = sealed.clone();
+                corrupted[position] ^= mask;
+                let backup = PortableWalletBackup::parse(corrupted)
+                    .expect("corrupted bytes stay within size bounds");
+                prop_assert!(
+                    open_payload(&backup, &property_secret(), &[CUSTODY_FORMAT_VERSION]).is_err(),
+                    "corruption at byte {} must be rejected",
+                    position
+                );
+            }
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
+
+            #[test]
+            fn any_truncation_fails_closed(length_seed in any::<usize>()) {
+                let sealed = sealed_fixture();
+                let length = length_seed % sealed.len();
+                let backup = PortableWalletBackup::parse(sealed[..length].to_vec());
+                match backup {
+                    Ok(backup) => prop_assert!(
+                        open_payload(&backup, &property_secret(), &[CUSTODY_FORMAT_VERSION])
+                            .is_err(),
+                        "truncation to {} bytes must be rejected",
+                        length
+                    ),
+                    Err(_) => {
+                        // Construction itself may reject degenerate lengths;
+                        // failing closed at either layer satisfies the property.
+                    }
+                }
+            }
+        }
+    }
 }
