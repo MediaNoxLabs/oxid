@@ -15,6 +15,7 @@ mobile = ["dioxus/mobile"]
 dioxus = { workspace = true, features = ["minimal"] }
 oxid-wallet-application.workspace = true
 oxid-credential-application.workspace = true
+oxid-diagnostics-application.workspace = true
 oxid-identity-application.workspace = true
 oxid-identity-domain.workspace = true
 oxid-protocol-application.workspace = true

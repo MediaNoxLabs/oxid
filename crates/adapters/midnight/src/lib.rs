@@ -67,7 +67,7 @@ pub use transaction::{
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use bech32::{Bech32m, Hrp, primitives::decode::CheckedHrpstring};
@@ -75,6 +75,9 @@ use bech32::{Bech32m, Hrp, primitives::decode::CheckedHrpstring};
 use midnight_serialize::Serializable as _;
 #[cfg(not(target_arch = "wasm32"))]
 use midnight_zswap::keys::{SecretKeys as ZswapSecretKeys, Seed as ZswapSeed};
+use oxid_diagnostics_application::{
+    DiagnosticCode, DiagnosticEventSinkPort, DiagnosticSeverity, NoopDiagnosticEventSink,
+};
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
     DeriveProtectedKeyRequest, WalletAccountAssociation, WalletAccountDerivationPort,
@@ -362,6 +365,7 @@ pub struct MidnightWalletAdapter<S, D = UnavailableMidnightAccountDeriver> {
     hydrated_profiles: Mutex<HashSet<WalletProfileId>>,
     association_repository: Option<Arc<dyn WalletProfileAssociationRepository>>,
     default_network: Option<ChainNetworkId>,
+    diagnostics: RwLock<Arc<dyn DiagnosticEventSinkPort>>,
     #[cfg(not(target_arch = "wasm32"))]
     completer: Arc<dyn transaction::MidnightTransactionCompleter>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -388,6 +392,14 @@ pub struct MidnightWalletAdapter<S, D = UnavailableMidnightAccountDeriver> {
     contract_call_submissions: transaction::RetainedContractCallSubmissions,
 }
 
+/// Composition-only hook for attaching the payload-free diagnostic sink.
+///
+/// Incoming adapters cannot replace this sink. Recording is best-effort and
+/// never changes wallet results or authority decisions.
+pub trait MidnightDiagnosticAttachPort: Send + Sync {
+    fn attach_diagnostic_sink(&self, sink: Arc<dyn DiagnosticEventSinkPort>);
+}
+
 impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
     #[must_use]
     pub fn new(source: S) -> Self {
@@ -399,6 +411,7 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             hydrated_profiles: Mutex::new(HashSet::new()),
             association_repository: None,
             default_network: None,
+            diagnostics: RwLock::new(Arc::new(NoopDiagnosticEventSink)),
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
             #[cfg(not(target_arch = "wasm32"))]
@@ -429,6 +442,7 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             hydrated_profiles: Mutex::new(HashSet::new()),
             association_repository: None,
             default_network: Some(default_network),
+            diagnostics: RwLock::new(Arc::new(NoopDiagnosticEventSink)),
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
             #[cfg(not(target_arch = "wasm32"))]
@@ -449,6 +463,17 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
 }
 
 impl<S, D> MidnightWalletAdapter<S, D> {
+    pub(crate) fn diagnostic_sink(&self) -> Arc<dyn DiagnosticEventSinkPort> {
+        self.diagnostics.read().map_or_else(
+            |_| Arc::new(NoopDiagnosticEventSink) as Arc<dyn DiagnosticEventSinkPort>,
+            |sink| Arc::clone(&*sink),
+        )
+    }
+
+    pub(crate) fn record_diagnostic(&self, code: DiagnosticCode, severity: DiagnosticSeverity) {
+        self.diagnostic_sink().record(code, severity);
+    }
+
     /// Persists only public, derivable profile/account coordinates. Protected
     /// key handles and rendered addresses remain in custody and read models.
     #[must_use]
@@ -544,6 +569,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             hydrated_profiles: Mutex::new(HashSet::new()),
             association_repository: None,
             default_network: None,
+            diagnostics: RwLock::new(Arc::new(NoopDiagnosticEventSink)),
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
             #[cfg(not(target_arch = "wasm32"))]
@@ -576,6 +602,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             hydrated_profiles: Mutex::new(HashSet::new()),
             association_repository: None,
             default_network: Some(default_network),
+            diagnostics: RwLock::new(Arc::new(NoopDiagnosticEventSink)),
             #[cfg(not(target_arch = "wasm32"))]
             completer: Arc::new(transaction::UnavailableMidnightTransactionCompleter),
             #[cfg(not(target_arch = "wasm32"))]
@@ -609,6 +636,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             hydrated_profiles: Mutex::new(HashSet::new()),
             association_repository: None,
             default_network: Some(default_network),
+            diagnostics: RwLock::new(Arc::new(NoopDiagnosticEventSink)),
             completer,
             dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
             shielded_sync: Arc::new(shielded_sync::UnavailableMidnightShieldedSyncController),
@@ -635,6 +663,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             hydrated_profiles: Mutex::new(HashSet::new()),
             association_repository: None,
             default_network: None,
+            diagnostics: RwLock::new(Arc::new(NoopDiagnosticEventSink)),
             completer,
             dust_sync: Arc::new(dust_sync::UnavailableMidnightDustSyncController),
             shielded_sync: Arc::new(shielded_sync::UnavailableMidnightShieldedSyncController),
@@ -723,6 +752,23 @@ impl<S, D> MidnightWalletAdapter<S, D> {
         self.submission_journal = journal;
         self.submission_reconciler = reconciler;
         self
+    }
+}
+
+impl<S, D> MidnightDiagnosticAttachPort for MidnightWalletAdapter<S, D>
+where
+    S: Send + Sync,
+    D: Send + Sync,
+{
+    fn attach_diagnostic_sink(&self, sink: Arc<dyn DiagnosticEventSinkPort>) {
+        if let Ok(mut diagnostics) = self.diagnostics.write() {
+            *diagnostics = Arc::clone(&sink);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.dust_sync.attach_diagnostic_sink(Arc::clone(&sink));
+            self.shielded_sync.attach_diagnostic_sink(sink);
+        }
     }
 }
 

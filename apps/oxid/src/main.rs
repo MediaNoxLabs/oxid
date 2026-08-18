@@ -207,6 +207,10 @@ fn main() {
                 application.route_identity_request(),
             ),
         ),
+        oxid_ui_dioxus::DiagnosticsUiServices::new(
+            application.get_diagnostic_snapshot(),
+            application.clear_diagnostics(),
+        ),
     );
 
     let launcher = dioxus::LaunchBuilder::new().with_context(ui);

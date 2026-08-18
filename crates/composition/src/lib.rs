@@ -12,6 +12,7 @@ use oxid_adapter_backup_complete::{FileRecoveryJournal, UnavailableRecoveryJourn
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_backup_document_mobile::NativePortableWalletBackupDocuments;
 use oxid_adapter_backup_portable::PortableCustodyVaultPort;
+use oxid_adapter_diagnostics_memory::InMemoryDiagnosticStore;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_did_midnight::{
     HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
@@ -20,7 +21,6 @@ use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
 use oxid_adapter_identity_ingress::StrictIdentityRequestRouter;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_identity_ingress::{NativeIdentityLinkIngress, NativeQrScanner};
-use oxid_adapter_midnight::MidnightPublicCallContextSource;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
     MidnightAccountCheckpointConfig, MidnightAccountCheckpointConfigError,
@@ -45,6 +45,7 @@ use oxid_adapter_midnight::{
     MidnightContractCallSubmissionRequest, MidnightContractCallSubmissionState,
     MidnightContractCallSubmissionStatus,
 };
+use oxid_adapter_midnight::{MidnightDiagnosticAttachPort, MidnightPublicCallContextSource};
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 use oxid_adapter_openid4vci::{
     DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
@@ -128,6 +129,10 @@ use oxid_credential_application::{
     PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase, RevealCredentialClaimUseCase,
     ReverifyCredentialUseCase, UnavailableCredentialDisclosure, UnavailableCredentialInbox,
     UnavailableCredentialRepository, UnavailableCredentialVerifier,
+};
+use oxid_diagnostics_application::{
+    ClearDiagnosticsUseCase, DiagnosticEventSinkPort, DiagnosticsService,
+    GetDiagnosticSnapshotUseCase,
 };
 use oxid_identity_application::{
     CreateDidUseCase, DeactivateDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort,
@@ -228,6 +233,9 @@ impl<T> NativeMidnightCompositionCapability for T {}
 /// Application capabilities shared by every incoming adapter.
 #[derive(Clone)]
 pub struct ApplicationServices {
+    diagnostic_events: Arc<dyn DiagnosticEventSinkPort>,
+    get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
+    clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
     qr_scanner: Arc<dyn QrScannerPort>,
     identity_link_ingress: Arc<dyn IdentityLinkIngressPort>,
     public_text_exporter: Arc<dyn PublicTextExportPort>,
@@ -384,6 +392,21 @@ impl PassportVaultRepositoryComposition {
 }
 
 impl ApplicationServices {
+    #[must_use]
+    pub fn diagnostic_events(&self) -> Arc<dyn DiagnosticEventSinkPort> {
+        Arc::clone(&self.diagnostic_events)
+    }
+
+    #[must_use]
+    pub fn get_diagnostic_snapshot(&self) -> Arc<dyn GetDiagnosticSnapshotUseCase> {
+        Arc::clone(&self.get_diagnostic_snapshot)
+    }
+
+    #[must_use]
+    pub fn clear_diagnostics(&self) -> Arc<dyn ClearDiagnosticsUseCase> {
+        Arc::clone(&self.clear_diagnostics)
+    }
+
     #[must_use]
     pub fn qr_scanner(&self) -> Arc<dyn QrScannerPort> {
         Arc::clone(&self.qr_scanner)
@@ -2167,6 +2190,7 @@ where
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
         + NativeMidnightCompositionCapability
         + 'static,
 {
@@ -2199,6 +2223,7 @@ where
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
         + NativeMidnightCompositionCapability
         + 'static,
 {
@@ -2261,9 +2286,16 @@ where
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
         + NativeMidnightCompositionCapability
         + 'static,
 {
+    let diagnostic_repository = Arc::new(InMemoryDiagnosticStore::default());
+    let diagnostic_events: Arc<dyn DiagnosticEventSinkPort> = diagnostic_repository.clone();
+    midnight.attach_diagnostic_sink(Arc::clone(&diagnostic_events));
+    let diagnostics = Arc::new(DiagnosticsService::new(diagnostic_repository));
+    let get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase> = diagnostics.clone();
+    let clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase> = diagnostics;
     let IdentityAdapters {
         did_repository,
         did_resolver,
@@ -2663,6 +2695,9 @@ where
     > = passport_vault_contract_calls;
 
     ApplicationServices {
+        diagnostic_events,
+        get_diagnostic_snapshot,
+        clear_diagnostics,
         qr_scanner,
         identity_link_ingress,
         public_text_exporter,

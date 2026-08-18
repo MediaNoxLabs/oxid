@@ -93,6 +93,7 @@ check_workspace_dependencies --all-kinds oxid-protocol-domain oxid-foundation
 check_workspace_dependencies --all-kinds oxid-platform-ports oxid-foundation
 check_workspace_dependencies --all-kinds oxid-presentation-domain oxid-foundation
 check_workspace_dependencies --all-kinds oxid-passport-vault-domain
+check_workspace_dependencies --all-kinds oxid-diagnostics-application
 check_workspace_dependencies --all-kinds oxid-wallet-application \
   oxid-foundation oxid-platform-ports oxid-wallet-domain
 check_workspace_dependencies --all-kinds oxid-identity-application \
@@ -109,6 +110,8 @@ check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-credential-application oxid-credential-domain oxid-foundation \
   oxid-identity-application oxid-identity-domain \
   oxid-wallet-application oxid-wallet-domain
+check_workspace_dependencies oxid-adapter-diagnostics-memory \
+  oxid-diagnostics-application
 check_workspace_dependencies oxid-adapter-storage-dev \
   oxid-adapter-backup-portable oxid-foundation oxid-platform-ports \
   oxid-wallet-application oxid-wallet-domain
@@ -134,7 +137,8 @@ check_workspace_dependencies oxid-adapter-mobile-native
 check_workspace_dependencies oxid-adapter-platform-system \
   oxid-adapter-mobile-native oxid-foundation oxid-platform-ports
 check_workspace_dependencies oxid-adapter-midnight \
-  oxid-foundation oxid-platform-ports oxid-wallet-application oxid-wallet-domain
+  oxid-diagnostics-application oxid-foundation oxid-platform-ports \
+  oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-did-midnight \
   oxid-identity-application oxid-identity-domain oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-identity-ingress \
@@ -161,13 +165,15 @@ check_workspace_dependencies oxid-adapter-passport-vault \
   oxid-foundation oxid-passport-vault-application oxid-passport-vault-domain \
   oxid-platform-ports
 check_workspace_dependencies oxid-ui-dioxus \
-  oxid-credential-application oxid-identity-application oxid-identity-domain \
+  oxid-credential-application oxid-diagnostics-application \
+  oxid-identity-application oxid-identity-domain \
   oxid-platform-ports \
   oxid-passport-vault-application oxid-presentation-application \
   oxid-protocol-application oxid-wallet-application
 check_workspace_dependencies oxid-composition \
   oxid-adapter-backup-complete oxid-adapter-backup-document-mobile \
-  oxid-adapter-backup-portable oxid-adapter-did-midnight oxid-adapter-identity-ingress \
+  oxid-adapter-backup-portable oxid-adapter-diagnostics-memory \
+  oxid-adapter-did-midnight oxid-adapter-identity-ingress \
   oxid-adapter-openid4vci oxid-adapter-siopv2 \
   oxid-adapter-openid4vp oxid-adapter-passport-vault \
   oxid-adapter-platform-system \
@@ -175,14 +181,14 @@ check_workspace_dependencies oxid-composition \
   oxid-adapter-storage-identity-json oxid-adapter-vc-midnight \
   oxid-adapter-storage-memory oxid-adapter-storage-mobile \
   oxid-adapter-storage-dev oxid-adapter-midnight \
-  oxid-credential-application oxid-identity-application \
+  oxid-credential-application oxid-diagnostics-application oxid-identity-application \
   oxid-passport-vault-application oxid-platform-ports oxid-presentation-application \
   oxid-protocol-application \
   oxid-wallet-application
 check_workspace_dependencies oxid-app oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
   oxid-composition oxid-credential-application \
-  oxid-identity-application oxid-identity-domain \
+  oxid-diagnostics-application oxid-identity-application oxid-identity-domain \
   oxid-passport-vault-application oxid-passport-vault-domain \
   oxid-presentation-application oxid-protocol-application \
   oxid-wallet-application oxid-wallet-domain
@@ -220,6 +226,7 @@ check_no_external_dependencies oxid-protocol-domain
 check_no_external_dependencies oxid-platform-ports
 check_no_external_dependencies oxid-presentation-domain
 check_no_external_dependencies oxid-passport-vault-domain
+check_no_external_dependencies oxid-diagnostics-application
 check_no_external_dependencies oxid-wallet-application
 check_no_external_dependencies oxid-identity-application
 check_no_external_dependencies oxid-credential-application

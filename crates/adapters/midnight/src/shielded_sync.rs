@@ -6,7 +6,7 @@ use std::{
     cell::Cell,
     collections::HashMap,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -25,6 +25,9 @@ use midnight_zswap::{
     Offer as ZswapOffer, Output as ZswapOutput,
     keys::{SecretKeys as ZswapSecretKeys, Seed as ZswapSeed},
     local::State as ZswapState,
+};
+use oxid_diagnostics_application::{
+    DiagnosticCode, DiagnosticEventSinkPort, DiagnosticSeverity, NoopDiagnosticEventSink,
 };
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
@@ -79,6 +82,8 @@ const SIMULATED_TOKEN_TYPE: &str =
 const SIMULATED_BALANCE_ATOMIC_UNITS: u128 = 5_000_000;
 
 pub(crate) trait MidnightShieldedSyncController: Send + Sync {
+    fn attach_diagnostic_sink(&self, _: Arc<dyn DiagnosticEventSinkPort>) {}
+
     fn status(
         &self,
         profile_id: &WalletProfileId,
@@ -338,6 +343,7 @@ pub(crate) struct LiveMidnightShieldedSyncController<C, K> {
     clock: Arc<C>,
     keys: Arc<K>,
     sessions: Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+    diagnostics: RwLock<Arc<dyn DiagnosticEventSinkPort>>,
 }
 
 impl<C, K> LiveMidnightShieldedSyncController<C, K> {
@@ -353,6 +359,7 @@ impl<C, K> LiveMidnightShieldedSyncController<C, K> {
             clock,
             keys,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            diagnostics: RwLock::new(Arc::new(NoopDiagnosticEventSink)),
         }
     }
 }
@@ -362,6 +369,12 @@ where
     C: ClockPort + 'static,
     K: WalletDerivedSecretUsePort + 'static,
 {
+    fn attach_diagnostic_sink(&self, sink: Arc<dyn DiagnosticEventSinkPort>) {
+        if let Ok(mut diagnostics) = self.diagnostics.write() {
+            *diagnostics = sink;
+        }
+    }
+
     fn status(
         &self,
         profile_id: &WalletProfileId,
@@ -431,20 +444,51 @@ where
         let profile = profile_id.clone();
         let network = network_id.clone();
         let worker_cancellation = Arc::clone(&cancellation);
+        let diagnostics = self.diagnostics.read().map_or_else(
+            |_| Arc::new(NoopDiagnosticEventSink) as Arc<dyn DiagnosticEventSinkPort>,
+            |sink| Arc::clone(&*sink),
+        );
+        let worker_key = key.clone();
         let spawn = thread::Builder::new()
             .name("oxid-midnight-shielded-sync".to_owned())
             .spawn(move || {
-                run_live_sync(
-                    &config,
-                    checkpoints.as_ref(),
-                    clock.as_ref(),
-                    keys.as_ref(),
-                    &sessions,
-                    &profile,
-                    &network,
-                    account_index,
-                    &worker_cancellation,
-                );
+                let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_live_sync(
+                        &config,
+                        checkpoints.as_ref(),
+                        clock.as_ref(),
+                        keys.as_ref(),
+                        &sessions,
+                        &profile,
+                        &network,
+                        account_index,
+                        &worker_cancellation,
+                    );
+                }));
+                if completed.is_err() {
+                    finish_with_failure(
+                        &sessions,
+                        &worker_key,
+                        &worker_cancellation,
+                        WalletShieldedSyncFailure::TransportUnavailable,
+                    );
+                    diagnostics.record(
+                        DiagnosticCode::MidnightShieldedSyncWorkerPanicked,
+                        DiagnosticSeverity::Error,
+                    );
+                    return;
+                }
+                let failed = sessions.lock().ok().and_then(|sessions| {
+                    sessions
+                        .get(&worker_key)
+                        .map(|session| session.snapshot.failure().is_some())
+                });
+                if failed == Some(true) {
+                    diagnostics.record(
+                        DiagnosticCode::MidnightShieldedSyncFailed,
+                        DiagnosticSeverity::Warning,
+                    );
+                }
             });
         if spawn.is_err() {
             finish_with_failure(
@@ -453,6 +497,16 @@ where
                 &cancellation,
                 WalletShieldedSyncFailure::TransportUnavailable,
             );
+            self.diagnostics
+                .read()
+                .map_or_else(
+                    |_| Arc::new(NoopDiagnosticEventSink) as Arc<dyn DiagnosticEventSinkPort>,
+                    |sink| Arc::clone(&*sink),
+                )
+                .record(
+                    DiagnosticCode::MidnightShieldedSyncWorkerSpawnFailed,
+                    DiagnosticSeverity::Error,
+                );
             return Err(WalletShieldedSyncPortError::Unavailable);
         }
         Ok(started)
@@ -930,8 +984,14 @@ fn finish_with_snapshot(
     cancellation: &Arc<AtomicBool>,
     snapshot: WalletShieldedSyncSnapshot,
 ) {
-    if let Ok(mut sessions) = sessions.lock()
-        && let Some(session) = sessions.get_mut(key)
+    let mut sessions = match sessions.lock() {
+        Ok(sessions) => sessions,
+        Err(poisoned) => {
+            sessions.clear_poison();
+            poisoned.into_inner()
+        }
+    };
+    if let Some(session) = sessions.get_mut(key)
         && Arc::ptr_eq(&session.cancellation, cancellation)
     {
         if cancellation.load(Ordering::Acquire) {
@@ -967,8 +1027,14 @@ fn finish_with_failure(
     cancellation: &Arc<AtomicBool>,
     failure: WalletShieldedSyncFailure,
 ) {
-    if let Ok(mut sessions) = sessions.lock()
-        && let Some(session) = sessions.get_mut(key)
+    let mut sessions = match sessions.lock() {
+        Ok(sessions) => sessions,
+        Err(poisoned) => {
+            sessions.clear_poison();
+            poisoned.into_inner()
+        }
+    };
+    if let Some(session) = sessions.get_mut(key)
         && Arc::ptr_eq(&session.cancellation, cancellation)
     {
         if cancellation.load(Ordering::Acquire) {
@@ -1242,6 +1308,33 @@ mod tests {
         }
     }
 
+    struct PanickingKeys;
+
+    impl WalletDerivedSecretUsePort for PanickingKeys {
+        fn use_derived_secret(
+            &self,
+            _: &WalletProfileId,
+            _: &WalletHdPath,
+            _: &mut dyn FnMut(&[u8; 32]) -> Result<(), WalletSecurityPortError>,
+        ) -> Result<(), WalletSecurityPortError> {
+            panic!("test-only shielded worker panic")
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingDiagnosticSink {
+        events: Mutex<Vec<(DiagnosticCode, DiagnosticSeverity)>>,
+    }
+
+    impl DiagnosticEventSinkPort for RecordingDiagnosticSink {
+        fn record(&self, code: DiagnosticCode, severity: DiagnosticSeverity) {
+            self.events
+                .lock()
+                .expect("diagnostic event lock")
+                .push((code, severity));
+        }
+    }
+
     struct MemoryCheckpointStore {
         checkpoint: Mutex<Option<StoredShieldedCheckpoint>>,
         saves: AtomicUsize,
@@ -1440,5 +1533,52 @@ mod tests {
         assert_eq!(final_status.events_processed(), 0);
         assert_eq!(final_status.owned_note_count(), Some(0));
         assert_eq!(checkpoints.saves.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn live_worker_panic_becomes_a_terminal_redacted_snapshot() {
+        const ADDRESS: &str =
+            "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+        let config =
+            MidnightIndexerConfig::new("devnet", "ws://127.0.0.1:9/api/v1/graphql/ws", ADDRESS)
+                .expect("fixture config");
+        let network = config.network_id().clone();
+        let checkpoints: Arc<dyn MidnightShieldedCheckpointStore> =
+            Arc::new(MemoryCheckpointStore {
+                checkpoint: Mutex::new(None),
+                saves: AtomicUsize::new(0),
+            });
+        let sync = LiveMidnightShieldedSyncController::new(
+            config,
+            checkpoints,
+            Arc::new(FixedClock),
+            Arc::new(PanickingKeys),
+        );
+        let diagnostics = Arc::new(RecordingDiagnosticSink::default());
+        sync.attach_diagnostic_sink(diagnostics.clone());
+
+        sync.start(&profile(), &network, 7).expect("worker starts");
+        let mut terminal = None;
+        for _ in 0..100 {
+            let status = sync.status(&profile(), &network).expect("status reads");
+            if status.state() != WalletShieldedSyncState::Syncing {
+                terminal = Some(status);
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let terminal = terminal.expect("panic becomes terminal");
+        assert_eq!(terminal.state(), WalletShieldedSyncState::Stalled);
+        assert_eq!(
+            terminal.failure(),
+            Some(WalletShieldedSyncFailure::TransportUnavailable)
+        );
+        assert_eq!(
+            diagnostics.events.lock().expect("events").as_slice(),
+            &[(
+                (DiagnosticCode::MidnightShieldedSyncWorkerPanicked),
+                DiagnosticSeverity::Error
+            )]
+        );
     }
 }

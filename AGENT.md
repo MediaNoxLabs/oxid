@@ -1605,6 +1605,14 @@ to silence the shell probe.
 
 - Telemetry is off by default. New telemetry requires an ADR and explicit user
   opt-in.
+- ADR-0080 permits runtime-health visibility only through the diagnostics
+  application port's closed payload-free codes and the bounded process-local
+  memory adapter (default 256, hard cap 1,024). The ring has no timestamps,
+  custom strings, identifiers, endpoints, persistence, upload, or process
+  statistics; reset requires exact `CLEAR_LOCAL_DIAGNOSTICS`. Diagnostics are
+  best-effort and never authorize readiness or retry. DUST/Zswap worker panics
+  must publish terminal sanitized snapshots, and retained contract-call unwind
+  must always release its active process reservation.
 - Never log secrets, seeds, private identifiers, credential claims, signing
   payloads, or raw external error bodies that may contain them.
 - Standalone indexer and proof-server HTTP routes are explicit trust-boundary

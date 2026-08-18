@@ -13,6 +13,10 @@ use oxid_credential_application::{
     CredentialVerificationError, CredentialView, DeleteCredentialCommand,
     PreviewCredentialDisclosureCommand,
 };
+use oxid_diagnostics_application::{
+    CLEAR_LOCAL_DIAGNOSTICS_INTENT, ClearDiagnosticsCommand, DiagnosticCode, DiagnosticSeverity,
+    DiagnosticSnapshotView,
+};
 use oxid_identity_application::{
     CreateDidCommand, DeactivateDidCommand, DidKeyAlgorithm, DidLifecyclePortError,
     DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordRepositoryError,
@@ -127,6 +131,10 @@ impl HeadlessWallet {
         let value = match serde_json::from_str::<Value>(line) {
             Ok(value) => value,
             Err(_) => {
+                self.record_diagnostic(
+                    DiagnosticCode::HeadlessRequestRejected,
+                    DiagnosticSeverity::Warning,
+                );
                 return Dispatch::continue_with(Response::error(
                     None,
                     "parse_error",
@@ -138,6 +146,10 @@ impl HeadlessWallet {
         let request_id = match request_id(&value) {
             Ok(request_id) => request_id,
             Err(message) => {
+                self.record_diagnostic(
+                    DiagnosticCode::HeadlessRequestRejected,
+                    DiagnosticSeverity::Warning,
+                );
                 return Dispatch::continue_with(Response::error(None, "invalid_request", message));
             }
         };
@@ -145,6 +157,10 @@ impl HeadlessWallet {
         let request = match serde_json::from_value::<Request>(value) {
             Ok(request) => request,
             Err(_) => {
+                self.record_diagnostic(
+                    DiagnosticCode::HeadlessRequestRejected,
+                    DiagnosticSeverity::Warning,
+                );
                 return Dispatch::continue_with(Response::error(
                     request_id,
                     "invalid_request",
@@ -154,6 +170,10 @@ impl HeadlessWallet {
         };
 
         if request.protocol != PROTOCOL_VERSION {
+            self.record_diagnostic(
+                DiagnosticCode::HeadlessRequestRejected,
+                DiagnosticSeverity::Warning,
+            );
             return Dispatch::continue_with(Response::error(
                 request.id,
                 "unsupported_protocol",
@@ -162,6 +182,10 @@ impl HeadlessWallet {
         }
 
         if !request.params.is_object() {
+            self.record_diagnostic(
+                DiagnosticCode::HeadlessRequestRejected,
+                DiagnosticSeverity::Warning,
+            );
             return Dispatch::continue_with(Response::error(
                 request.id,
                 "invalid_params",
@@ -171,6 +195,8 @@ impl HeadlessWallet {
 
         match request.method.as_str() {
             "system.capabilities" => self.capabilities(request),
+            "system.diagnostics.snapshot" => self.diagnostics_snapshot(request),
+            "system.diagnostics.clear" => self.clear_diagnostics(request),
             "system.quit" => self.quit(request),
             "wallet.profile.create" => self.create_profile(request),
             "wallet.profile.list" => self.list_profiles(request),
@@ -275,12 +301,22 @@ impl HeadlessWallet {
             "identity.authentication.refuse" => self.refuse_self_issued_authentication(request),
             "identity.authentication.get" => self.get_self_issued_authentication(request),
             "identity.authentication.list" => self.list_self_issued_authentications(request),
-            _ => Dispatch::continue_with(Response::error(
-                request.id,
-                "method_not_found",
-                "requested method is not implemented",
-            )),
+            _ => {
+                self.record_diagnostic(
+                    DiagnosticCode::HeadlessMethodNotFound,
+                    DiagnosticSeverity::Warning,
+                );
+                Dispatch::continue_with(Response::error(
+                    request.id,
+                    "method_not_found",
+                    "requested method is not implemented",
+                ))
+            }
         }
+    }
+
+    fn record_diagnostic(&self, code: DiagnosticCode, severity: DiagnosticSeverity) {
+        self.application.diagnostic_events().record(code, severity);
     }
 
     fn capabilities(&self, request: Request) -> Dispatch {
@@ -318,6 +354,53 @@ impl HeadlessWallet {
                 "compatibilityAliases": ["quit", "exit"]
             }),
         ))
+    }
+
+    fn diagnostics_snapshot(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "system.diagnostics.snapshot");
+        }
+        match self.application.get_diagnostic_snapshot().execute() {
+            Ok(snapshot) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "diagnostics": diagnostic_snapshot_value(&snapshot) }),
+            )),
+            Err(_) => Dispatch::continue_with(Response::error(
+                request.id,
+                "diagnostics_unavailable",
+                "local diagnostics are unavailable",
+            )),
+        }
+    }
+
+    fn clear_diagnostics(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<ClearDiagnosticsParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "system.diagnostics.clear requires confirmed and intent",
+                ));
+            }
+        };
+        match self
+            .application
+            .clear_diagnostics()
+            .execute(ClearDiagnosticsCommand {
+                confirmed: params.confirmed,
+                intent: params.intent,
+            }) {
+            Ok(cleared) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "clearedEvents": cleared.cleared_events }),
+            )),
+            Err(_) => Dispatch::continue_with(Response::error(
+                request.id,
+                "confirmation_required",
+                "clearing local diagnostics requires exact confirmation",
+            )),
+        }
     }
 
     fn quit(&self, request: Request) -> Dispatch {
@@ -2870,6 +2953,13 @@ struct Request {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClearDiagnosticsParams {
+    confirmed: bool,
+    intent: String,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateProfileParams {
     display_name: String,
@@ -3665,6 +3755,28 @@ fn dust_sync_value(status: &WalletDustSyncView) -> Value {
         },
         "updatedAtMillis": status.updated_at_millis,
         "failure": status.failure
+    })
+}
+
+fn diagnostic_snapshot_value(snapshot: &DiagnosticSnapshotView) -> Value {
+    json!({
+        "persistence": "process_local",
+        "telemetry": "off",
+        "payloadsRetained": false,
+        "capacity": snapshot.capacity(),
+        "totalEvents": snapshot.total_events(),
+        "retainedEvents": snapshot.recent().len(),
+        "evictedEvents": snapshot.evicted_events(),
+        "counts": snapshot.counts().iter().map(|count| json!({
+            "code": count.code().as_str(),
+            "severity": count.severity().as_str(),
+            "occurrences": count.occurrences(),
+        })).collect::<Vec<_>>(),
+        "recent": snapshot.recent().iter().map(|event| json!({
+            "sequence": event.sequence(),
+            "code": event.code().as_str(),
+            "severity": event.severity().as_str(),
+        })).collect::<Vec<_>>(),
     })
 }
 
@@ -5150,6 +5262,8 @@ fn capability_manifest(
     };
     json!([
         { "method": "system.capabilities", "status": "ready" },
+        { "method": "system.diagnostics.snapshot", "status": "ready", "persistence": "process_local", "telemetry": "off", "payloadsRetained": false },
+        { "method": "system.diagnostics.clear", "status": "ready", "confirmationRequired": true, "intent": CLEAR_LOCAL_DIAGNOSTICS_INTENT },
         { "method": "system.quit", "status": "ready" },
         { "method": "wallet.profile.create", "status": "ready" },
         { "method": "wallet.profile.list", "status": "ready" },
@@ -5247,7 +5361,7 @@ fn capability_manifest(
         { "method": "did.update", "status": "ready", "mode": "development_only", "operations": ["addAlsoKnownAs", "removeAlsoKnownAs", "addVerificationMethod", "updateVerificationMethod", "removeVerificationMethod", "addVerificationRelationship", "removeVerificationRelationship", "addService", "updateService", "removeService"], "confirmationRequired": true },
         { "method": "did.sign", "status": "ready", "mode": "development_only", "algorithms": ["ed25519", "p256", "jubjub"], "confirmationRequired": true },
         { "method": "did.deactivate", "status": "ready", "mode": "development_only", "confirmationRequired": true },
-        { "method": "diagnostics.snapshot", "status": "queued" }
+        { "method": "diagnostics.snapshot", "status": "superseded", "use": "system.diagnostics.snapshot" }
     ])
 }
 
@@ -6806,6 +6920,47 @@ mod tests {
         assert_eq!(responses[0]["error"]["code"], "parse_error");
         assert_eq!(responses[1]["error"]["code"], "method_not_found");
         assert_eq!(responses[2]["ok"], true);
+    }
+
+    #[test]
+    fn diagnostics_retain_only_closed_codes_and_clear_with_exact_confirmation() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let first = execute_with_wallet(
+            &wallet,
+            concat!(
+                "not-json-containing-super-secret\n",
+                r#"{"protocol":"oxid.headless.v1","id":"diag-1","method":"system.diagnostics.snapshot","params":{}}"#,
+            ),
+        );
+
+        assert_eq!(first[1]["result"]["diagnostics"]["totalEvents"], 1);
+        assert_eq!(
+            first[1]["result"]["diagnostics"]["recent"][0]["code"],
+            "headless.request.rejected"
+        );
+        assert_eq!(first[1]["result"]["diagnostics"]["payloadsRetained"], false);
+        assert!(!first[1].to_string().contains("super-secret"));
+
+        let clear = execute_with_wallet(
+            &wallet,
+            &format!(
+                "{}\n{}\n{}",
+                r#"{"protocol":"oxid.headless.v1","id":"diag-bad-clear","method":"system.diagnostics.clear","params":{"confirmed":true,"intent":"clear"}}"#,
+                json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "id": "diag-clear",
+                    "method": "system.diagnostics.clear",
+                    "params": {
+                        "confirmed": true,
+                        "intent": CLEAR_LOCAL_DIAGNOSTICS_INTENT,
+                    }
+                }),
+                r#"{"protocol":"oxid.headless.v1","id":"diag-after","method":"system.diagnostics.snapshot","params":{}}"#,
+            ),
+        );
+        assert_eq!(clear[0]["error"]["code"], "confirmation_required");
+        assert_eq!(clear[1]["result"]["clearedEvents"], 1);
+        assert_eq!(clear[2]["result"]["diagnostics"]["totalEvents"], 0);
     }
 
     #[test]

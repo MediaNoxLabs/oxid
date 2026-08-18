@@ -25,6 +25,7 @@ use midnight_ledger::structure::{
 use midnight_serialize::Deserializable;
 use midnight_storage::{DefaultDB, arena::Sp, storage::HashMap as LedgerHashMap};
 use midnight_transient_crypto::commitment::PedersenRandomness;
+use oxid_diagnostics_application::{DiagnosticCode, DiagnosticSeverity};
 use oxid_wallet_application::{
     AuthorizeWalletTransferRequest, PrepareShieldedWalletTransferRequest,
     PrepareWalletTransferRequest, SubmitWalletTransferRequest, SubmittedWalletTransfer,
@@ -915,12 +916,29 @@ where
                 dust_seed,
             )
         };
-        let completion = self.deriver.use_dust_seed(
-            &profile_id,
-            spendable.account.account_index(),
-            &mut operation,
-        );
-        let result = finish_contract_call_submission(control.as_ref(), completion);
+        let completion = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.deriver.use_dust_seed(
+                &profile_id,
+                spendable.account.account_index(),
+                &mut operation,
+            )
+        }));
+        let result = match completion {
+            Ok(completion) => finish_contract_call_submission(control.as_ref(), completion),
+            Err(_) => {
+                self.record_diagnostic(
+                    DiagnosticCode::MidnightContractCallWorkerPanicked,
+                    DiagnosticSeverity::Error,
+                );
+                if control.broadcast_started().unwrap_or(true) {
+                    let _ =
+                        control.mark_terminal(StoredSubmissionState::OutcomeUnknown, None, None);
+                    Err(WalletTransactionPortError::SubmissionOutcomeUnknown)
+                } else {
+                    Err(WalletTransactionPortError::Unavailable)
+                }
+            }
+        };
         if let Ok(mut active) = self.contract_call_submissions.lock() {
             active.remove(&key);
         }
@@ -1872,6 +1890,7 @@ where
             let mut cancel_on_drop = CancelSubmissionOnDrop::new(Arc::clone(&control));
             let worker_control = Arc::clone(&control);
             let (sender, receiver) = futures::channel::oneshot::channel();
+            let diagnostics = self.diagnostic_sink();
             let spawn = thread::Builder::new()
                 .name("oxid-midnight-submit".to_owned())
                 .spawn(move || {
@@ -1896,6 +1915,10 @@ where
                     let _ = sender.send(result);
                 });
             if spawn.is_err() {
+                diagnostics.record(
+                    DiagnosticCode::MidnightTransferWorkerSpawnFailed,
+                    DiagnosticSeverity::Error,
+                );
                 cancel_on_drop.disarm();
                 restore_authorized(
                     self.drafts.as_ref(),
@@ -1908,6 +1931,10 @@ where
             let result = match receiver.await {
                 Ok(result) => result,
                 Err(_) => {
+                    diagnostics.record(
+                        DiagnosticCode::MidnightTransferWorkerTerminated,
+                        DiagnosticSeverity::Error,
+                    );
                     if control.broadcast_started().unwrap_or(true) {
                         let _ = control.mark_terminal(
                             StoredSubmissionState::OutcomeUnknown,
@@ -2791,6 +2818,20 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingDiagnosticSink {
+        events: Mutex<Vec<(DiagnosticCode, DiagnosticSeverity)>>,
+    }
+
+    impl oxid_diagnostics_application::DiagnosticEventSinkPort for RecordingDiagnosticSink {
+        fn record(&self, code: DiagnosticCode, severity: DiagnosticSeverity) {
+            self.events
+                .lock()
+                .expect("diagnostic event lock")
+                .push((code, severity));
+        }
+    }
+
     struct BlockingCompleter {
         started: mpsc::SyncSender<()>,
         release: Arc<(Mutex<bool>, Condvar)>,
@@ -3149,6 +3190,54 @@ mod tests {
         );
         std::fs::remove_file(config.path()).expect("journal cleanup");
         std::fs::remove_dir(directory).expect("directory cleanup");
+    }
+
+    #[test]
+    fn panicking_contract_call_releases_the_active_reservation_and_records_only_a_code() {
+        let adapter = submittable_adapter(Arc::new(PanickingCompleter));
+        let diagnostics = Arc::new(RecordingDiagnosticSink::default());
+        crate::MidnightDiagnosticAttachPort::attach_diagnostic_sink(&adapter, diagnostics.clone());
+        let funded = adapter
+            .fund_contract_call(MidnightContractCallFundingRequest::new(
+                profile().as_str(),
+                "undeployed",
+                1_800_000_000,
+                true,
+                serialized_contract_call_with_night_shortfall(1),
+            ))
+            .expect("funding succeeds")
+            .into_transaction();
+        let complete = || {
+            adapter.complete_contract_call(MidnightContractCallSubmissionRequest::new(
+                profile().as_str(),
+                "undeployed",
+                "vault-panic-test",
+                [5; 32],
+                UnixTimestampMillis::new(1_800_000_000_000),
+                UnixTimestampMillis::new(2_000),
+                Zeroizing::new(funded.to_vec()),
+            ))
+        };
+
+        assert_eq!(complete(), Err(WalletTransactionPortError::Unavailable));
+        assert_eq!(complete(), Err(WalletTransactionPortError::Unavailable));
+        assert_eq!(
+            adapter.cancel_contract_call_submission(profile().as_str(), "vault-panic-test"),
+            Err(WalletTransactionPortError::SubmissionNotInProgress)
+        );
+        assert_eq!(
+            diagnostics.events.lock().expect("events").as_slice(),
+            &[
+                (
+                    DiagnosticCode::MidnightContractCallWorkerPanicked,
+                    DiagnosticSeverity::Error,
+                ),
+                (
+                    DiagnosticCode::MidnightContractCallWorkerPanicked,
+                    DiagnosticSeverity::Error,
+                ),
+            ]
+        );
     }
 
     #[test]

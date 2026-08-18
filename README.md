@@ -199,6 +199,19 @@ lock accounting and claim replay across restarts without becoming chain state;
 set `OXID_PASSPORT_VAULT_STORE_PATH` to a normalized absolute file path when an
 isolated harness route is required.
 
+Inspect the bounded, payload-free runtime-health ring through the same
+standalone process:
+
+```bash
+printf '%s\n' '{"protocol":"oxid.headless.v1","id":"health-1","method":"system.diagnostics.snapshot","params":{}}' | cargo run --quiet -p oxid-headless
+```
+
+The Dioxus **Diagnostics → Process-local diagnostics** panel exposes the same
+closed codes. Telemetry, persistence, uploads, request payloads, endpoints,
+credential data, and transaction material are not retained. Clearing the
+headless ring requires `confirmed: true` plus the exact
+`CLEAR_LOCAL_DIAGNOSTICS` intent; the ring also disappears on process exit.
+
 The implemented account methods are `wallet.network.list`,
 `wallet.network.select`, `wallet.account.derive`, `wallet.account.get`, `wallet.address.list`,
 `wallet.address.unshielded`, `wallet.address.shielded`, `wallet.balance.snapshot`,

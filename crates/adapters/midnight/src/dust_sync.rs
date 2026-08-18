@@ -7,7 +7,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -15,6 +15,9 @@ use std::{
 
 use midnight_base_crypto::time::Timestamp;
 use midnight_ledger::dust::{DustPublicKey, DustSecretKey};
+use oxid_diagnostics_application::{
+    DiagnosticCode, DiagnosticEventSinkPort, DiagnosticSeverity, NoopDiagnosticEventSink,
+};
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
     WalletDerivedSecretUsePort, WalletDustSyncPortError, WalletHdPath, WalletHdPathComponent,
@@ -42,6 +45,8 @@ const SIMULATED_TARGET_CURSOR: u64 = 2;
 const SIMULATED_BALANCE_ATOMIC_UNITS: u128 = 12 * SPECKS_PER_DUST;
 
 pub(crate) trait MidnightDustSyncController: Send + Sync {
+    fn attach_diagnostic_sink(&self, _: Arc<dyn DiagnosticEventSinkPort>) {}
+
     fn status(
         &self,
         profile_id: &WalletProfileId,
@@ -268,6 +273,7 @@ pub(crate) struct LiveMidnightDustSyncController<C, K> {
     clock: Arc<C>,
     keys: Arc<K>,
     sessions: Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+    diagnostics: RwLock<Arc<dyn DiagnosticEventSinkPort>>,
 }
 
 impl<C, K> LiveMidnightDustSyncController<C, K> {
@@ -300,6 +306,7 @@ impl<C, K> LiveMidnightDustSyncController<C, K> {
             clock,
             keys,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            diagnostics: RwLock::new(Arc::new(NoopDiagnosticEventSink)),
         }
     }
 }
@@ -309,6 +316,12 @@ where
     C: ClockPort + 'static,
     K: WalletDerivedSecretUsePort + 'static,
 {
+    fn attach_diagnostic_sink(&self, sink: Arc<dyn DiagnosticEventSinkPort>) {
+        if let Ok(mut diagnostics) = self.diagnostics.write() {
+            *diagnostics = sink;
+        }
+    }
+
     fn status(
         &self,
         profile_id: &WalletProfileId,
@@ -378,21 +391,52 @@ where
         let profile = profile_id.clone();
         let network = network_id.clone();
         let worker_cancellation = Arc::clone(&cancellation);
+        let diagnostics = self.diagnostics.read().map_or_else(
+            |_| Arc::new(NoopDiagnosticEventSink) as Arc<dyn DiagnosticEventSinkPort>,
+            |sink| Arc::clone(&*sink),
+        );
+        let worker_key = key.clone();
         let spawn = thread::Builder::new()
             .name("oxid-midnight-dust-sync".to_owned())
             .spawn(move || {
-                run_live_sync(
-                    &config,
-                    checkpoints.as_ref(),
-                    chain_tips.as_ref(),
-                    clock.as_ref(),
-                    keys.as_ref(),
-                    &sessions,
-                    &profile,
-                    &network,
-                    account_index,
-                    &worker_cancellation,
-                );
+                let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_live_sync(
+                        &config,
+                        checkpoints.as_ref(),
+                        chain_tips.as_ref(),
+                        clock.as_ref(),
+                        keys.as_ref(),
+                        &sessions,
+                        &profile,
+                        &network,
+                        account_index,
+                        &worker_cancellation,
+                    );
+                }));
+                if completed.is_err() {
+                    finish_with_failure(
+                        &sessions,
+                        &worker_key,
+                        &worker_cancellation,
+                        WalletDustSyncFailure::TransportUnavailable,
+                    );
+                    diagnostics.record(
+                        DiagnosticCode::MidnightDustSyncWorkerPanicked,
+                        DiagnosticSeverity::Error,
+                    );
+                    return;
+                }
+                let failed = sessions.lock().ok().and_then(|sessions| {
+                    sessions
+                        .get(&worker_key)
+                        .map(|session| session.snapshot.failure().is_some())
+                });
+                if failed == Some(true) {
+                    diagnostics.record(
+                        DiagnosticCode::MidnightDustSyncFailed,
+                        DiagnosticSeverity::Warning,
+                    );
+                }
             });
         if spawn.is_err() {
             finish_with_failure(
@@ -401,6 +445,16 @@ where
                 &cancellation,
                 WalletDustSyncFailure::TransportUnavailable,
             );
+            self.diagnostics
+                .read()
+                .map_or_else(
+                    |_| Arc::new(NoopDiagnosticEventSink) as Arc<dyn DiagnosticEventSinkPort>,
+                    |sink| Arc::clone(&*sink),
+                )
+                .record(
+                    DiagnosticCode::MidnightDustSyncWorkerSpawnFailed,
+                    DiagnosticSeverity::Error,
+                );
             return Err(WalletDustSyncPortError::Unavailable);
         }
         Ok(started)
@@ -635,8 +689,14 @@ fn finish_with_snapshot(
     cancellation: &Arc<AtomicBool>,
     snapshot: WalletDustSyncSnapshot,
 ) {
-    if let Ok(mut sessions) = sessions.lock()
-        && let Some(session) = sessions.get_mut(key)
+    let mut sessions = match sessions.lock() {
+        Ok(sessions) => sessions,
+        Err(poisoned) => {
+            sessions.clear_poison();
+            poisoned.into_inner()
+        }
+    };
+    if let Some(session) = sessions.get_mut(key)
         && Arc::ptr_eq(&session.cancellation, cancellation)
     {
         session.snapshot = snapshot;
@@ -675,8 +735,14 @@ fn finish_with_failure(
     cancellation: &Arc<AtomicBool>,
     failure: WalletDustSyncFailure,
 ) {
-    if let Ok(mut sessions) = sessions.lock()
-        && let Some(session) = sessions.get_mut(key)
+    let mut sessions = match sessions.lock() {
+        Ok(sessions) => sessions,
+        Err(poisoned) => {
+            sessions.clear_poison();
+            poisoned.into_inner()
+        }
+    };
+    if let Some(session) = sessions.get_mut(key)
         && Arc::ptr_eq(&session.cancellation, cancellation)
     {
         let state = match (
@@ -927,6 +993,33 @@ mod tests {
                 ]
             );
             operation(&[7; 32])
+        }
+    }
+
+    struct PanickingKeys;
+
+    impl WalletDerivedSecretUsePort for PanickingKeys {
+        fn use_derived_secret(
+            &self,
+            _: &WalletProfileId,
+            _: &WalletHdPath,
+            _: &mut dyn FnMut(&[u8; 32]) -> Result<(), WalletSecurityPortError>,
+        ) -> Result<(), WalletSecurityPortError> {
+            panic!("test-only DUST worker panic")
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingDiagnosticSink {
+        events: Mutex<Vec<(DiagnosticCode, DiagnosticSeverity)>>,
+    }
+
+    impl DiagnosticEventSinkPort for RecordingDiagnosticSink {
+        fn record(&self, code: DiagnosticCode, severity: DiagnosticSeverity) {
+            self.events
+                .lock()
+                .expect("diagnostic event lock")
+                .push((code, severity));
         }
     }
 
@@ -1422,6 +1515,52 @@ mod tests {
             Some(WalletDustSyncFailure::TransportUnavailable)
         );
         assert_eq!(chain_tips.calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn live_sync_worker_panic_becomes_a_terminal_redacted_snapshot() {
+        let config = live_config("ws://127.0.0.1:9/api/v1/graphql/ws");
+        let network = config.indexer().network_id().clone();
+        let checkpoints: Arc<dyn MidnightDustCheckpointStore> = Arc::new(MemoryCheckpointStore {
+            checkpoint: Mutex::new(None),
+            saves: AtomicUsize::new(0),
+        });
+        let chain_tips: Arc<dyn MidnightDustChainTipSource> = Arc::new(FixedChainTipSource {
+            calls: AtomicUsize::new(0),
+        });
+        let sync = LiveMidnightDustSyncController::with_chain_tip_source(
+            config,
+            checkpoints,
+            chain_tips,
+            Arc::new(FixedClock),
+            Arc::new(PanickingKeys),
+        );
+        let diagnostics = Arc::new(RecordingDiagnosticSink::default());
+        sync.attach_diagnostic_sink(diagnostics.clone());
+
+        sync.start(&profile(), &network, 7).expect("worker starts");
+        let mut terminal = None;
+        for _ in 0..100 {
+            let status = sync.status(&profile(), &network).expect("status reads");
+            if status.state() != WalletDustSyncState::Syncing {
+                terminal = Some(status);
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let terminal = terminal.expect("panic becomes terminal");
+        assert_eq!(terminal.state(), WalletDustSyncState::Stalled);
+        assert_eq!(
+            terminal.failure(),
+            Some(WalletDustSyncFailure::TransportUnavailable)
+        );
+        assert_eq!(
+            diagnostics.events.lock().expect("events").as_slice(),
+            &[(
+                (DiagnosticCode::MidnightDustSyncWorkerPanicked),
+                DiagnosticSeverity::Error
+            )]
+        );
     }
 
     #[test]

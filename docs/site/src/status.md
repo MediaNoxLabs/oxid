@@ -26,6 +26,7 @@ and the repository [issue backlog](https://github.com/MediaNoxLabs/oxid/issues).
 | Shielded transfers (fresh sync → prepare → authorize → prove → submit) | Standalone functional with adapter-private Zswap notes/witnesses; production mobile gated |
 | Passport Vault contract calls | Typed lifecycle with canonical finalized replay; claim path gated behind consent + funding + settlement review |
 | Portable + complete-wallet encrypted backup/recovery | Functional with hardened v3 KDF policy and native document pickers |
+| Secret-safe runtime diagnostics | Bounded process-local closed codes in headless and Dioxus; telemetry, payloads, upload, and persistence are off |
 
 ## Identity (SSI) capabilities
 

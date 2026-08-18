@@ -38,6 +38,7 @@ build can actually do.
 | `wallet.security.*` | initialize, unlock, lock protected custody |
 | `wallet.account.*` / `wallet.transaction.*` | accounts, sync, prepare/authorize/submit/cancel/reconcile |
 | `wallet.dust.sync.*` / `wallet.shielded.sync.*` | resumable background sync lifecycles |
+| `system.diagnostics.*` | bounded payload-free runtime-health snapshot and confirmed local reset |
 | `identity.*` | DID inventory, resolution, lifecycle, self-issued authentication |
 | `credential.*` | inventory, verification reports, disclosure planning |
 | `presentation.*` | OpenID4VP request preview, consent, refusal |
@@ -56,6 +57,21 @@ start/status/cancel shape: cancellation is acknowledged at safe boundaries
 only, and a possibly-broadcast transaction is never made blindly retryable —
 the same fail-closed semantics the UI gets, because both sit on the same
 application ports.
+
+## Secret-safe runtime health
+
+`system.diagnostics.snapshot` returns only closed event codes, severities,
+counts, monotonic process-local sequence numbers, capacity, and eviction
+totals. It explicitly reports `persistence: process_local`, `telemetry: off`,
+and `payloadsRetained: false`. It never contains the rejected request, request
+id, endpoint, profile, credential, transaction material, external response, or
+free-form error text.
+
+`system.diagnostics.clear` requires `confirmed: true` and the exact
+`CLEAR_LOCAL_DIAGNOSTICS` intent. The ring is not part of profile state,
+credential storage, or complete-wallet backup and disappears on process exit.
+Diagnostics are operator visibility only; wallet readiness, retry, and
+authorization continue to use their typed application state.
 
 ## Protected shielded transfer flow
 

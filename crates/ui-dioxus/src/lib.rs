@@ -13,6 +13,10 @@ use oxid_credential_application::{
     PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase, RevealCredentialClaimCommand,
     RevealCredentialClaimUseCase, ReverifyCredentialUseCase,
 };
+use oxid_diagnostics_application::{
+    CLEAR_LOCAL_DIAGNOSTICS_INTENT, ClearDiagnosticsCommand, ClearDiagnosticsUseCase,
+    DiagnosticSnapshotView, GetDiagnosticSnapshotUseCase,
+};
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
     DidKeyAlgorithm, DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordView,
@@ -169,6 +173,8 @@ where
 /// Incoming capabilities made available to Dioxus by the composition root.
 #[derive(Clone)]
 pub struct WalletUiServices {
+    get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
+    clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
     qr_scanner: Arc<dyn QrScannerPort>,
     identity_link_ingress: Arc<dyn IdentityLinkIngressPort>,
     public_text_exporter: Arc<dyn PublicTextExportPort>,
@@ -239,6 +245,23 @@ pub struct WalletUiServices {
     withdraw_passport_vault_lock: Arc<dyn WithdrawPassportVaultLockUseCase>,
     passport_vault_state_persistence: String,
     passport_vault_contract_calls: PassportVaultContractCallUiServices,
+}
+
+/// Process-local, payload-free diagnostic use cases consumed by the
+/// Diagnostics page.
+pub struct DiagnosticsUiServices {
+    get: Arc<dyn GetDiagnosticSnapshotUseCase>,
+    clear: Arc<dyn ClearDiagnosticsUseCase>,
+}
+
+impl DiagnosticsUiServices {
+    #[must_use]
+    pub const fn new(
+        get: Arc<dyn GetDiagnosticSnapshotUseCase>,
+        clear: Arc<dyn ClearDiagnosticsUseCase>,
+    ) -> Self {
+        Self { get, clear }
+    }
 }
 
 /// Product-specific Passport Vault capabilities consumed only by the Vault page.
@@ -864,6 +887,7 @@ impl WalletUiServices {
         account: WalletAccountUiServices,
         operations: WalletOperationalUiServices,
         identity: IdentityUiServices,
+        diagnostics: DiagnosticsUiServices,
     ) -> Self {
         let dust = operations.dust;
         let shielded = operations.shielded;
@@ -874,6 +898,8 @@ impl WalletUiServices {
         let authentication = identity.authentication;
         let ingress = identity.ingress;
         Self {
+            get_diagnostic_snapshot: diagnostics.get,
+            clear_diagnostics: diagnostics.clear,
             qr_scanner: ingress.qr_scanner,
             identity_link_ingress: ingress.app_links,
             public_text_exporter: account.public_text_exporter,
@@ -946,6 +972,16 @@ impl WalletUiServices {
             passport_vault_state_persistence: vault.state_persistence,
             passport_vault_contract_calls: vault.contract_calls,
         }
+    }
+
+    #[must_use]
+    pub fn get_diagnostic_snapshot(&self) -> Arc<dyn GetDiagnosticSnapshotUseCase> {
+        Arc::clone(&self.get_diagnostic_snapshot)
+    }
+
+    #[must_use]
+    pub fn clear_diagnostics(&self) -> Arc<dyn ClearDiagnosticsUseCase> {
+        Arc::clone(&self.clear_diagnostics)
     }
 
     #[must_use]
@@ -7671,20 +7707,38 @@ fn CredentialsPage(
     }
 }
 
+#[derive(Clone)]
+enum LocalDiagnosticsPageState {
+    Loading,
+    Ready(DiagnosticSnapshotView),
+    Failed,
+}
+
 #[component]
 fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
     let credential_protocol_ready = services.standalone_credential_offer().is_some();
     let mut account_state = use_signal(|| AccountPageState::Loading);
+    let mut diagnostic_state = use_signal(|| LocalDiagnosticsPageState::Loading);
     let profile_id = active_profile.id.clone();
+    let effect_services = services.clone();
     use_effect(move || {
-        let services = services.clone();
+        let services = effect_services.clone();
         let profile_id = profile_id.clone();
+        let get_diagnostics = services.get_diagnostic_snapshot();
         spawn(async move {
             account_state.set(
                 run_ui_blocking(move || load_account_page(&services, &profile_id))
                     .await
                     .unwrap_or_else(|error| AccountPageState::Failed(error.to_string())),
+            );
+        });
+        spawn(async move {
+            diagnostic_state.set(
+                match run_ui_blocking(move || get_diagnostics.execute()).await {
+                    Ok(Ok(snapshot)) => LocalDiagnosticsPageState::Ready(snapshot),
+                    Ok(Err(_)) | Err(_) => LocalDiagnosticsPageState::Failed,
+                },
             );
         });
     });
@@ -7727,6 +7781,45 @@ fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
                 )
             }
         };
+    let (diagnostic_summary, diagnostic_rows, diagnostics_ready) = match diagnostic_state
+        .read()
+        .clone()
+    {
+        LocalDiagnosticsPageState::Loading => ("Loading".to_owned(), Vec::new(), false),
+        LocalDiagnosticsPageState::Failed => ("Status unavailable".to_owned(), Vec::new(), false),
+        LocalDiagnosticsPageState::Ready(snapshot) => {
+            let rows = snapshot
+                .counts()
+                .iter()
+                .map(|count| {
+                    (
+                        count.code().as_str().to_owned(),
+                        format!(
+                            "{} · {} occurrence{}",
+                            count.severity().as_str(),
+                            count.occurrences(),
+                            if count.occurrences() == 1 { "" } else { "s" }
+                        ),
+                    )
+                })
+                .collect();
+            (
+                format!(
+                    "{} retained · {} total · {} evicted · capacity {}",
+                    snapshot.recent().len(),
+                    snapshot.total_events(),
+                    snapshot.evicted_events(),
+                    snapshot.capacity()
+                ),
+                rows,
+                true,
+            )
+        }
+    };
+    let refresh_services = services.clone();
+    let clear_services = services.clone();
+    let mut refresh_state = diagnostic_state;
+    let mut clear_state = diagnostic_state;
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Capability status" }
@@ -7739,12 +7832,72 @@ fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
             CapabilityStatus { name: "Protected secret store", state: protection_state, ready: protection_ready }
             CapabilityStatus { name: "Midnight account", state: midnight_state, ready: midnight_ready }
             CapabilityStatus { name: "Transaction completion", state: completion_state, ready: midnight_ready }
-            CapabilityStatus { name: "Local proof provider", state: "Not connected".to_owned(), ready: false }
-            CapabilityStatus { name: "DID adapter", state: "Not connected".to_owned(), ready: false }
+            CapabilityStatus { name: "Local proof provider", state: "Device-gated".to_owned(), ready: false }
+            CapabilityStatus { name: "DID adapter", state: if credential_protocol_ready { "Standalone Midnight DID".to_owned() } else { "Not connected".to_owned() }, ready: credential_protocol_ready }
             CapabilityStatus {
                 name: "Credential protocols",
                 state: if credential_protocol_ready { "OpenID4VCI 1.0 · standalone".to_owned() } else { "Not connected".to_owned() },
                 ready: credential_protocol_ready,
+            }
+        }
+        section { class: "surface-card",
+            p { class: "card-eyebrow", "Secret-safe runtime health" }
+            h2 { "Process-local diagnostics" }
+            p { "Telemetry is off. Events use fixed codes, retain no payloads, and disappear when this process exits." }
+            div { class: "button-row",
+                button {
+                    class: "secondary-button",
+                    r#type: "button",
+                    onclick: move |_| {
+                        let get = refresh_services.get_diagnostic_snapshot();
+                        refresh_state.set(LocalDiagnosticsPageState::Loading);
+                        spawn(async move {
+                            refresh_state.set(match run_ui_blocking(move || get.execute()).await {
+                                Ok(Ok(snapshot)) => LocalDiagnosticsPageState::Ready(snapshot),
+                                Ok(Err(_)) | Err(_) => LocalDiagnosticsPageState::Failed,
+                            });
+                        });
+                    },
+                    "Refresh"
+                }
+                button {
+                    class: "secondary-button",
+                    r#type: "button",
+                    onclick: move |_| {
+                        let clear = clear_services.clear_diagnostics();
+                        let get = clear_services.get_diagnostic_snapshot();
+                        clear_state.set(LocalDiagnosticsPageState::Loading);
+                        spawn(async move {
+                            clear_state.set(match run_ui_blocking(move || {
+                                clear.execute(ClearDiagnosticsCommand {
+                                    confirmed: true,
+                                    intent: CLEAR_LOCAL_DIAGNOSTICS_INTENT.to_owned(),
+                                })?;
+                                get.execute()
+                            }).await {
+                                Ok(Ok(snapshot)) => LocalDiagnosticsPageState::Ready(snapshot),
+                                Ok(Err(_)) | Err(_) => LocalDiagnosticsPageState::Failed,
+                            });
+                        });
+                    },
+                    "Clear local events"
+                }
+            }
+            div { class: "diagnostic-grid",
+                CapabilityStatus { name: "Bounded event ring", state: diagnostic_summary, ready: diagnostics_ready }
+                CapabilityStatus { name: "Privacy boundary", state: "No persistence · no upload · no payloads".to_owned(), ready: true }
+                if diagnostic_rows.is_empty() && diagnostics_ready {
+                    article { class: "capability-row",
+                        span { class: "capability-dot ready" }
+                        div { strong { "No diagnostic events recorded" } p { "Runtime health is clean for this process." } }
+                    }
+                }
+                for (code, detail) in diagnostic_rows {
+                    article { class: "capability-row", key: "{code}",
+                        span { class: "capability-dot queued" }
+                        div { strong { "{code}" } p { "{detail}" } }
+                    }
+                }
             }
         }
     }

@@ -101,6 +101,7 @@ ADR status and delivery state answer different questions:
 | [0077](0077-run-blocking-wallet-work-off-the-dioxus-executor.md) Run blocking wallet work off the Dioxus executor | Accepted | §§3, 6–7, 12–13, 16, 18, prototype mobile worker, and issues #2/#42 | Native synchronous and async-future wallet/SSI work uses an executor-neutral 8 MiB worker; only audited pure parsing, published snapshots, and non-waiting adapter-worker controls remain direct |
 | [0078](0078-harden-complete-wallet-backup-derivation.md) Harden complete-wallet backup derivation | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33/#48 | New complete-wallet exports use a strict 64 MiB/t=3 Argon2id version-3 envelope; exact version-2 complete-wallet and version-1 custody policies remain readable without attacker-selected KDF work |
 | [0079](0079-spend-shielded-assets-from-current-adapter-private-state.md) Spend shielded assets from current adapter-private state | Accepted | §§3–8, 12–13, 16–18, 21 and issues #2/#59 | Fresh-sync-gated canonical Zswap planning reuses staged authorization, DUST proving, durable submission recovery, headless, and Dioxus privacy selection; physical-device release gates remain open |
+| [0080](0080-bound-secret-safe-runtime-diagnostics.md) Bound runtime diagnostics to secret-safe closed codes | Accepted | §§3–7, 12–13, 16–18, 21, prototype diagnostics/worker boundaries, and issues #2/#46/#60 | Bounded process-local closed-code snapshots/reset are composed in headless and Dioxus; DUST/Zswap/transfer/vault worker loss is sanitized and cannot wedge active runtime state; persistent logs and telemetry remain excluded |
 
 ## Current boundaries
 
@@ -191,6 +192,13 @@ versions 1, 2, and 3 to exact reviewed policies before allocating KDF work;
 version 2 remains read-only compatibility for existing complete-wallet files,
 and version 1 remains the legacy custody-only format. Physical-device latency,
 peak-memory, low-memory, interruption, and thermal evidence remains issue #33.
+ADR-0080 permits useful runtime-health visibility without reversing the
+telemetry-off or staged-migration exclusions. Only closed payload-free codes
+enter a bounded process-local ring; headless and Dioxus can snapshot/reset it,
+but it has no persistence, upload, free-form fields, timestamps, endpoints, or
+process measurements and never participates in wallet authority. DUST and
+shielded worker panics publish terminal sanitized snapshots; retained Passport
+Vault completion unwind always releases its active process reservation.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a

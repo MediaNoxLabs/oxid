@@ -5575,6 +5575,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-adapter-diagnostics-memory"
+version = "0.1.0"
+dependencies = [
+ "oxid-diagnostics-application",
+]
+
+[[package]]
 name = "oxid-adapter-did-midnight"
 version = "0.1.0"
 dependencies = [
@@ -5626,6 +5633,7 @@ dependencies = [
  "midnight-transient-crypto",
  "midnight-zkir",
  "midnight-zswap",
+ "oxid-diagnostics-application",
  "oxid-foundation",
  "oxid-platform-ports",
  "oxid-wallet-application",
@@ -5911,6 +5919,7 @@ dependencies = [
  "oxid-adapter-backup-complete",
  "oxid-adapter-backup-document-mobile",
  "oxid-adapter-backup-portable",
+ "oxid-adapter-diagnostics-memory",
  "oxid-adapter-did-midnight",
  "oxid-adapter-identity-ingress",
  "oxid-adapter-midnight",
@@ -5927,6 +5936,7 @@ dependencies = [
  "oxid-adapter-storage-mobile",
  "oxid-adapter-vc-midnight",
  "oxid-credential-application",
+ "oxid-diagnostics-application",
  "oxid-identity-application",
  "oxid-passport-vault-application",
  "oxid-platform-ports",
@@ -5951,6 +5961,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-diagnostics-application"
+version = "0.1.0"
+
+[[package]]
 name = "oxid-foundation"
 version = "0.1.0"
 
@@ -5963,6 +5977,7 @@ dependencies = [
  "oxid-adapter-siopv2",
  "oxid-composition",
  "oxid-credential-application",
+ "oxid-diagnostics-application",
  "oxid-identity-application",
  "oxid-identity-domain",
  "oxid-passport-vault-application",
@@ -6049,6 +6064,7 @@ dependencies = [
  "dioxus",
  "futures",
  "oxid-credential-application",
+ "oxid-diagnostics-application",
  "oxid-identity-application",
  "oxid-identity-domain",
  "oxid-passport-vault-application",
