@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3–7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/store/backup.rs`, `mobile-bench/wallet-core/src/service/backup_service.rs`, and `mobile-bench/dioxus-wallet/src/session_persist.rs`
 - Tracking: issues #2 and #33
-- Implementation state: public Midnight account associations, strict profile/DID/credential snapshot codecs, exact restored-DID key rebinding, the version-2 authenticated archive, the journaled all-store coordinator, fresh-install Dioxus recovery, complete Settings export, and an all-store standalone composition round trip are implemented; complete iOS/Android document-round-trip and physical-device resource evidence remain issue #33 work
+- Implementation state: public Midnight account associations, strict profile/DID/credential snapshot codecs, exact restored-DID key rebinding, the authenticated complete-wallet archive, the journaled all-store coordinator, fresh-install Dioxus recovery, complete Settings export, and an all-store standalone composition round trip are implemented; ADR-0078 writes the stronger version-3 envelope while retaining version-2 reads; complete iOS/Android document-round-trip and physical-device resource evidence remain issue #33 work
 
 ## Context
 
@@ -54,13 +54,14 @@ agree across all sections. Duplicate identifiers, unsupported versions, trailing
 bytes, inconsistent DID methods, malformed credential material, existing target
 records, and initialized custody fail before mutation.
 
-The version-2 `OXIDBAK1` plaintext framing carries the three repository sections
-beside the custody record under one Argon2id/XChaCha20-Poly1305 operation and one
-authenticated header. Version 1 remains readable as custody-only input but is
-not relabelled a complete backup. The application and native document limits are
-raised only to the reviewed complete-store bound; each inner section retains its
-smaller independent limit. Decrypted aggregate and credential buffers are
-zeroizing.
+The complete-wallet `OXIDBAK1` plaintext framing carries the three repository
+sections beside the custody record under one Argon2id/XChaCha20-Poly1305
+operation and one authenticated header. ADR-0078 writes version 3 with the
+stronger complete-wallet KDF policy while retaining exact version-2 reads.
+Version 1 remains readable as custody-only input but is not relabelled a
+complete backup. The application and native document limits are raised only to
+the reviewed complete-store bound; each inner section retains its smaller
+independent limit. Decrypted aggregate and credential buffers are zeroizing.
 
 Recovery uses a prepared transaction owned by the outgoing backup adapter:
 

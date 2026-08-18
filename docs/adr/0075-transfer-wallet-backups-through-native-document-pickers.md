@@ -27,7 +27,7 @@ only the bounded `PortableWalletBackup` type and exposes asynchronous export and
 import operations with stable payload-free cancellation, unavailable, timeout,
 invalid-document, and failure categories. The application supplies a closed
 document kind: version-1 custody-only files use
-`oxid-wallet-custody.oxidbak`, while version-2 complete files use
+`oxid-wallet-custody.oxidbak`, while complete-wallet files use
 `oxid-wallet.oxidbak`. Callers never supply a path or arbitrary filename.
 Non-mobile composition fails closed.
 

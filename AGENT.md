@@ -1359,10 +1359,11 @@ retain only selected network plus bounded account/address indices—never
 addresses, key references, endpoints, balances, or history. Reconstruct DID
 control after restart only by a unique exact algorithm/public-JWK match against
 authorized custody; never persist opaque DID key references in the public store.
-The association/rebinding foundations, strict store snapshot codecs, version-2
-single authenticated envelope, and journaled custody-last recovery coordinator
-exist. Settings exports version 2; the empty-profile Dioxus gateway recovers it
-without a caller-selected identifier and preserves a legacy version-1 importer.
+The association/rebinding foundations, strict store snapshot codecs, single
+authenticated envelope, and journaled custody-last recovery coordinator exist.
+Settings exports version 3 under ADR-0078; the empty-profile Dioxus gateway
+recovers versions 2 and 3 without a caller-selected identifier and preserves a
+legacy version-1 importer.
 The in-process standalone composition test creates a profile, exact Midnight
 account association, managed DID, holder-bound private credential, and custody,
 then recovers all of them into a fresh composition. Keep the recovery methods
@@ -1395,6 +1396,16 @@ draft/status reads, and non-waiting cancellation signals; their port contracts
 must continue to forbid filesystem, transport, custody, ledger work, or waiting
 for acknowledgement. The WASM branch is only for current in-memory Tier-2
 adapters; a production browser adapter needs a reviewed Web Worker.
+
+ADR-0078 hardens new complete-wallet exports without stranding existing files.
+`OXIDBAK1` version 3 fixes Argon2id v1.3 at 65,536 KiB/t=3/p=1; all new
+complete-wallet exports must use it. Version 2 complete-wallet files remain
+readable only with their exact legacy 19,456 KiB/t=2/p=1 tuple, and version 1
+remains the legacy custody-only policy. Map the wire version to an exact KDF
+policy and reject unknown/cross-version parameter tuples before Argon2id; never
+accept attacker-selected ranges. This is stronger offline-file protection, not
+physical-device resource evidence. Issue #33 still gates iOS/Android latency,
+peak memory, low-memory, interruption, and thermal behavior.
 
 The iOS XCUITest `scrollTo` helper must require content controls to finish at
 least 90 points above the application frame bottom before tapping. WKWebView can

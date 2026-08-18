@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3, 7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/store/backup.rs`, `session_persist.rs`, and the Dioxus `WalletBackupCard`
 - Tracking: issues #2 and #33
-- Implementation state: the application boundary, authenticated package codec, and development/mobile custody export and empty-profile recovery are implemented; ADR-0075 supplies user-selected native file transfer and the legacy custody-only Dioxus recovery path, while ADR-0076 composes profile, account associations, DID records, credentials, and custody into complete export and fresh-install recovery; Tier-1 physical-device evidence remains issue #33 work
+- Implementation state: the application boundary, authenticated package codec, and development/mobile custody export and empty-profile recovery are implemented; ADR-0075 supplies user-selected native file transfer and the legacy custody-only Dioxus recovery path, ADR-0076 composes profile, account associations, DID records, credentials, and custody into complete export and fresh-install recovery, and ADR-0078 moves new complete-wallet exports to a stronger version-3 KDF policy; Tier-1 physical-device evidence remains issue #33 work
 
 ## Context
 
@@ -96,8 +96,10 @@ conformance tests only.
   presence and native recovery uses fresh authorized initialization.
 - No raw seed, key, recovery secret, or plaintext package enters ordinary UI,
   headless, clipboard, logging, or error DTOs.
-- Fixed Argon2id parameters make resource use reviewable. Raising them requires
-  a new version and migration decision, not accepting attacker-selected values.
+- Fixed Argon2id parameters make resource use reviewable. ADR-0078 performs the
+  required versioned migration for complete-wallet exports while retaining this
+  version-1 policy only for legacy custody compatibility; decoders never accept
+  attacker-selected parameter ranges.
 
 ## Consequences and remaining work
 

@@ -341,8 +341,12 @@ the encrypted package through fixed-name, user-selected iOS/Android document
 pickers and exposes exact-confirmation custody-only Settings UX. ADR-0076 adds
 the authenticated all-store archive, custody-last coordinator, complete
 Settings export, fresh-install recovery, and in-process standalone round trip.
-Complete iOS/Android document-picker round trips and physical-device resource
-evidence remain issue #33 work and are not represented as release parity.
+ADR-0078 additionally hardens new complete-wallet exports as strict
+`OXIDBAK1` version 3 with Argon2id at 65,536 KiB/t=3/p=1 while preserving exact
+read-only version-2 compatibility and rejecting cross-version parameter tuples
+before KDF allocation. Complete iOS/Android document-picker round trips and
+physical-device resource evidence remain issue #33 work and are not represented
+as release parity.
 
 [Issue #2](https://github.com/MediaNoxLabs/oxid/issues/2), ADR-0051, and
 [issue #31](https://github.com/MediaNoxLabs/oxid/issues/31) migrate the

@@ -99,6 +99,7 @@ ADR status and delivery state answer different questions:
 | [0075](0075-transfer-wallet-backups-through-native-document-pickers.md) Transfer wallet backups through native document pickers | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Capability-selected fixed filenames and bounded iOS/Android document pickers serve complete export/fresh-install recovery plus the legacy custody-only importer; physical-device recovery remains #33 |
 | [0076](0076-recover-complete-wallet-state-as-one-transaction.md) Recover complete wallet state as one transaction | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#33 | One-envelope journaled all-store recovery, fresh-install Dioxus UX, and an exact standalone composition round trip are implemented; complete mobile document-round-trip/resource evidence remains #33 |
 | [0077](0077-run-blocking-wallet-work-off-the-dioxus-executor.md) Run blocking wallet work off the Dioxus executor | Accepted | §§3, 6–7, 12–13, 16, 18, prototype mobile worker, and issues #2/#42 | Native synchronous and async-future wallet/SSI work uses an executor-neutral 8 MiB worker; only audited pure parsing, published snapshots, and non-waiting adapter-worker controls remain direct |
+| [0078](0078-harden-complete-wallet-backup-derivation.md) Harden complete-wallet backup derivation | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33/#48 | New complete-wallet exports use a strict 64 MiB/t=3 Argon2id version-3 envelope; exact version-2 complete-wallet and version-1 custody policies remain readable without attacker-selected KDF work |
 
 ## Current boundaries
 
@@ -162,8 +163,8 @@ ADR-0076 defines the all-store successor as one profile-scoped authenticated
 archive and a custody-last, journaled transaction. Public Midnight associations
 retain only network/account/address coordinates, and restored DID control is
 reconstructed by unique exact public-key matching rather than persisted opaque
-key handles. The version-2 single envelope, custody-last coordinator, rollback,
-and retry reconciliation are implemented. Settings exports the complete archive,
+key handles. The single envelope, custody-last coordinator, rollback, and retry
+reconciliation are implemented. Settings exports the complete archive,
 first-run Dioxus recovers it without a caller-supplied profile, and the
 standalone composition round trip verifies exact account, DID, credential, and
 custody restoration. Complete mobile picker round trips and physical-device
@@ -182,6 +183,13 @@ not authorization for production Web UI blocking. The completed issue #42
 audit leaves direct only strict identity parsing, published sync snapshots,
 retained draft/status reads, and non-waiting cancellation signals whose port
 contracts explicitly forbid filesystem, transport, custody, or ledger work.
+ADR-0078 treats the portable everything-file as a higher-value offline target
+than the first custody-only package. New complete-wallet exports use
+`OXIDBAK1` version 3 with Argon2id at 65,536 KiB/t=3/p=1. The decoder maps
+versions 1, 2, and 3 to exact reviewed policies before allocating KDF work;
+version 2 remains read-only compatibility for existing complete-wallet files,
+and version 1 remains the legacy custody-only format. Physical-device latency,
+peak-memory, low-memory, interruption, and thermal evidence remains issue #33.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a
