@@ -476,6 +476,17 @@ try {
   } else if (mode === "native-authorize") {
     const createProfile = await evaluate(`Boolean(${buttonExpression("Create and continue")})`);
     if (createProfile) await clickButton("Create and continue");
+    await waitFor(
+      'Boolean(document.querySelector(\'button[aria-label="Activate protected Midnight account"]\')) || Boolean(document.querySelector(\'.address-row\')) || Boolean(document.querySelector(\'[role="alert"]\'))',
+      "settled pre-authorization account state",
+      90_000,
+    );
+    const accountLoadFailed = await evaluate(
+      'Boolean(document.querySelector(\'[role="alert"]\'))',
+    );
+    if (accountLoadFailed) {
+      throw new Error("native custody account status failed safely before authorization");
+    }
     await clickButton("Settings");
     await waitFor(
       "document.body.textContent.includes('Wallet protection') && !document.body.textContent.includes('Checking custody capability')",
@@ -492,6 +503,17 @@ try {
     }
     if (securityAction !== "already unlocked") {
       await clickButtonByLabel(securityAction);
+      await waitFor(
+        'Boolean(document.querySelector(\'button[aria-label="Lock wallet"]\')) || Boolean(document.querySelector(\'[role="alert"]\'))',
+        "completed native custody authorization or a safe failure",
+        90_000,
+      );
+      const authorizationFailed = await evaluate(
+        'Boolean(document.querySelector(\'[role="alert"]\'))',
+      );
+      if (authorizationFailed) {
+        throw new Error("native custody authorization failed safely");
+      }
     }
     process.stdout.write(`${JSON.stringify({ mode, securityAction })}\n`);
   } else if (mode === "native-custody" || mode === "native-restored") {
@@ -519,10 +541,34 @@ try {
       "document.body.textContent.includes('Wallet overview')",
       "Assets page before native account activation",
     );
-    await clickButtonByLabel("Activate protected Midnight account");
+    try {
+      await waitFor(
+        'Boolean(document.querySelector(\'button[aria-label="Activate protected Midnight account"]\')) || Boolean(document.querySelector(\'.address-row\')) || Boolean(document.querySelector(\'[role="alert"]\'))',
+        "settled native account state",
+        90_000,
+      );
+    } catch (_error) {
+      const boundedState = await evaluate(`(() => ({
+        loading: document.body.textContent.includes('Loading the selected Midnight account boundary'),
+        accountUnavailable: document.body.textContent.includes('Midnight account unavailable'),
+        activationAvailable: Boolean(document.querySelector('button[aria-label="Activate protected Midnight account"]')),
+        receiveAvailable: Boolean(document.querySelector('.address-row')),
+        alertAvailable: Boolean(document.querySelector('[role="alert"]')),
+      }))()`);
+      throw new Error(`native account state did not settle: ${JSON.stringify(boundedState)}`);
+    }
+    const needsActivation = await evaluate(
+      'Boolean(document.querySelector(\'button[aria-label="Activate protected Midnight account"]\'))',
+    );
+    if (needsActivation) {
+      await clickButtonByLabel("Activate protected Midnight account");
+    }
+    const accountReadyExpression = needsActivation
+      ? '!Boolean(document.querySelector(\'button[aria-label="Activate protected Midnight account"]\')) && Boolean(document.querySelector(\'.address-row\'))'
+      : 'Boolean(document.querySelector(\'.address-row\'))';
     await waitFor(
-      `Boolean(${buttonExpression("Use my receive address")}) || Boolean(document.querySelector('[role="alert"]'))`,
-      "native account derivation or a safe failure",
+      `(${accountReadyExpression}) || Boolean(document.querySelector('[role="alert"]'))`,
+      needsActivation ? "native account derivation or a safe failure" : "restored native account or a safe failure",
       90_000,
     );
     const accountFailure = await evaluate(

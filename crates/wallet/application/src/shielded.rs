@@ -36,6 +36,9 @@ impl Error for WalletShieldedSyncPortError {}
 
 /// Focused outgoing port for adapter-owned, off-renderer shielded sync.
 pub trait WalletShieldedSyncPort: Send + Sync {
+    /// Return an already-published bounded snapshot. Implementations must not
+    /// perform custody, filesystem, transport, or ledger work in this method;
+    /// the adapter-owned sync worker publishes that work's state separately.
     fn shielded_status(
         &self,
         profile_id: &WalletProfileId,

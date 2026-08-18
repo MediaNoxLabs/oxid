@@ -338,6 +338,8 @@ pub trait PassportVaultContractCallPort: Send + Sync {
         request: SubmitPassportVaultCallRequest,
     ) -> PassportVaultCallSubmissionFuture<'a>;
 
+    /// Read one retained in-memory draft snapshot. Persistent recovery belongs
+    /// to `submission_history`, not this latency-sensitive control query.
     fn get(
         &self,
         profile_id: &OpaqueId,
@@ -345,12 +347,15 @@ pub trait PassportVaultContractCallPort: Send + Sync {
         now: UnixTimestampMillis,
     ) -> Result<PassportVaultCallPreview, PassportVaultCallPortError>;
 
+    /// Read already-published worker state without transport or filesystem I/O.
     fn submission_status(
         &self,
         profile_id: &OpaqueId,
         draft_id: &PassportVaultCallDraftId,
     ) -> Result<PassportVaultCallSubmissionStatus, PassportVaultCallPortError>;
 
+    /// Signal the adapter-owned worker and return its bounded current state;
+    /// this method must not wait for cancellation acknowledgement.
     fn cancel_submission(
         &self,
         profile_id: &OpaqueId,

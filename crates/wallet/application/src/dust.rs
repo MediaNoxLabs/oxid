@@ -36,6 +36,9 @@ impl Error for WalletDustSyncPortError {}
 
 /// Focused outgoing port for an adapter-owned, off-renderer DUST sync session.
 pub trait WalletDustSyncPort: Send + Sync {
+    /// Return an already-published bounded snapshot. Implementations must not
+    /// perform custody, filesystem, transport, or ledger work in this method;
+    /// the adapter-owned sync worker publishes that work's state separately.
     fn dust_status(
         &self,
         profile_id: &WalletProfileId,

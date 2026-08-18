@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3, 6–7, 12–13, 16, and 18
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/dioxus-wallet/src/worker/mod.rs`
 - Tracking: issues #2 and #42
-- Implementation state: native profile/account reads and writes, wallet protection, account derivation, transfer preparation/authorization, Passport Vault call authorization, managed DID storage/custody operations, and complete/legacy backup cryptography execute on an 8 MiB background thread; the remaining synchronous Dioxus call sites still require explicit fast-local or background classification under issue #42
+- Implementation state: every native Dioxus use-case path that may reach persistence, custody, cryptography, transport, or non-trivial protocol work executes or is polled on an 8 MiB background thread; the remaining direct paths are the explicitly bounded parser, published-snapshot, and adapter-worker cancellation controls listed below, completing issue #42's call-site classification
 
 ## Context
 
@@ -49,11 +49,28 @@ cancellation, and reconciliation contracts. Dropping a component or future does
 not pretend an already-started blocking operation was cancelled.
 
 Pure bounded parsing/formatting may remain on the UI executor. An application
-port whose contract is already asynchronous may be awaited directly only when
-its adapter owns any blocking hop. Adapter-owned status/start/cancel operations
-may remain direct only when their contract guarantees a bounded in-memory
-transition and starts heavy work elsewhere. Every other synchronous call site
-must be classified under issue #42 before that issue closes.
+port whose contract is asynchronous is still polled on the native UI worker:
+an `async` body can perform synchronous repository or cryptographic work before
+or after an await. Platform futures that must initiate a native UI surface—QR
+capture and document import/export—remain on the Dioxus executor while their
+native adapters own the callback/wait boundary.
+
+The completed call-site audit permits only these synchronous direct classes:
+
+| Direct class | Permitted work | Why it is bounded |
+| --- | --- | --- |
+| Identity ingress and routing | Pop one already-captured bounded link and strictly parse/classify one bounded URI | No filesystem, network, custody, credential, or protocol-session mutation; native capture happens before routing |
+| DUST and shielded status polling | Clone an already-published bounded snapshot | The application-port contract now forbids custody, filesystem, transport, or ledger work in status reads; adapter workers publish progress |
+| Transfer and Passport Vault draft/status/cancel control | Clone one retained draft/status or set a cancellation flag | The port contracts forbid transport/filesystem work and forbid waiting for acknowledgement; durable history and reconciliation run through background/async paths |
+| Local value/UI formatting | Validate amounts/policy text, format public views, and render a bounded receive QR | These functions have closed input bounds and no outgoing adapter access |
+
+DUST/Zswap start, persistent history, protocol refusal, credential disclosure,
+standalone Vault accounting, and every other synchronous use case now dispatch
+through `run_ui_blocking`. Existing asynchronous wallet, DID, credential,
+presentation, and contract-call use cases dispatch through `run_ui_future`,
+which polls the complete future on the same native worker boundary. Adding a
+new direct use-case call requires proving it belongs to one of the bounded
+classes above or extending this ADR.
 
 Browser composition uses its current in-memory adapters directly because a
 native OS thread is unavailable. A production Tier-2 browser adapter that adds
@@ -64,6 +81,8 @@ Worker boundary; this fallback is not permission to block a browser UI thread.
 
 - Native authorization prompts and backup KDF/storage work no longer stop
   Dioxus event processing or depend on a Tokio runtime being installed.
+- Synchronous work embedded inside an application future also stays off the UI
+  executor; adapters that need Tokio continue to own their runtime boundary.
 - The 8 MiB stack preserves the prototype's useful Android safety margin while
   Oxid keeps capability ports and typed results instead of one aggregate worker
   protocol.

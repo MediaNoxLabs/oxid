@@ -1292,6 +1292,18 @@ protection label plus IV/ciphertext in an atomic digest-named
 The selected Manganis 0.7.10 bridge requires one bounded JSON argument for
 custody because its generated Swift FFI mishandles the needed multi-string
 signature. Never log that request/response or widen the public native API.
+Initial Assets rendering must read security status before account state and
+must return the public unavailable placeholder while custody is uninitialized
+or locked; a background/public read must never open the system credential
+surface. Settings reads the mobile lifecycle wake signal and re-queries native
+status after the authorization activity resumes, because page-local completion
+can be discarded across pause/resume. Android custody smoke must prove the old
+PID is gone, the replacement PID differs, the explicit action is `Unlock
+wallet`, the active profile and opaque sealed record remain unchanged, and the
+post-derivation unshielded address matches. Wait for the activation control to
+disappear before capturing that address; the simulated source exposes public
+fixture rows before protected derivation and its synchronized flag is
+intentionally process-local.
 
 ADR-0074 adds portable custody without making native sealed-vault ciphertext
 portable. `oxid-adapter-backup-portable` owns exact `OXIDBAK1` version 1:
@@ -1371,11 +1383,18 @@ each admitted synchronous operation; Dioxus signals never cross that boundary.
 Profile/account persistence, wallet initialization/unlock/lock, account
 derivation, transfer preparation/authorization, Passport Vault call
 authorization, managed-DID persistence and custody, and complete/legacy backup
-KDF/recovery use it. Publish busy state before dispatch, keep worker failures
-payload-free, and do not claim cancellation after work starts. The WASM branch
-is only for current in-memory Tier-2 adapters; a production browser adapter
-needs a reviewed Web Worker. Issue #42 remains open until all other synchronous
-Dioxus calls are classified or migrated.
+KDF/recovery use it. Encrypted credential reads/disclosure/deletion, standalone
+Passport Vault persistence, submission-history reads, DUST/Zswap start, and
+protocol refusal use it too. `run_ui_future` polls complete native application
+futures on the same boundary because synchronous repository/crypto work can
+surround an await. Publish busy state before dispatch, keep worker failures
+payload-free, and do not claim cancellation after work starts. The completed
+issue #42 audit permits direct calls only for strict bounded identity parsing,
+already-published DUST/Zswap status snapshots, retained transfer/vault
+draft/status reads, and non-waiting cancellation signals; their port contracts
+must continue to forbid filesystem, transport, custody, ledger work, or waiting
+for acknowledgement. The WASM branch is only for current in-memory Tier-2
+adapters; a production browser adapter needs a reviewed Web Worker.
 
 The iOS XCUITest `scrollTo` helper must require content controls to finish at
 least 90 points above the application frame bottom before tapping. WKWebView can
@@ -1416,6 +1435,15 @@ survive while development custody and incomplete issuance sessions reset. The
 commands are destructive to the selected simulator's Oxid test profile state;
 protected development roots and transaction drafts are process-local and are
 expected to disappear on restart.
+
+The Android profile assertion targets current public store schema v2 and must
+validate the active profile's `undeployed` account association, account index,
+and address index. Schema v1 is a read-only compatibility input and is upgraded
+on write; a mobile smoke harness must not require that legacy output shape.
+After dismissing Android's native share chooser, wait until Oxid's MainActivity
+is the resumed activity before delivering a warm app link. Sending the link
+while the chooser still owns the task can produce only a task-front restart
+attempt and skip the repository-owned `onNewIntent` capture seam.
 
 Android processes do not reliably provide `HOME`, so `directories` cannot
 resolve the intended durable location there. The JSON adapter deliberately uses

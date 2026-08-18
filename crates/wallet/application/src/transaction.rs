@@ -153,6 +153,8 @@ pub trait WalletTransactionPort: Send + Sync {
         request: SubmitWalletTransferRequest,
     ) -> WalletTransactionPortFuture<'a>;
 
+    /// Read one retained in-memory draft snapshot. Persistent recovery belongs
+    /// to `submission_history`, not this latency-sensitive control query.
     fn get(
         &self,
         profile_id: &WalletProfileId,
@@ -160,12 +162,15 @@ pub trait WalletTransactionPort: Send + Sync {
         now: UnixTimestampMillis,
     ) -> Result<WalletTransferPreview, WalletTransactionPortError>;
 
+    /// Read already-published worker state without transport or filesystem I/O.
     fn submission_status(
         &self,
         profile_id: &WalletProfileId,
         draft_id: &WalletTransactionDraftId,
     ) -> Result<WalletTransactionSubmissionStatus, WalletTransactionPortError>;
 
+    /// Signal the adapter-owned worker and return its bounded current state;
+    /// this method must not wait for cancellation acknowledgement.
     fn cancel_submission(
         &self,
         profile_id: &WalletProfileId,

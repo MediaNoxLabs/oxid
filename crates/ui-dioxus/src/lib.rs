@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::{fmt, sync::Arc, time::Duration};
+use std::{fmt, future::Future, sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
 use oxid_credential_application::{
@@ -140,6 +140,29 @@ where
     // worker. Its in-memory adapters remain synchronous until Tier-2 gains a
     // reviewed Web Worker boundary.
     Ok(operation())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn run_ui_future<Output, Operation>(
+    operation: Operation,
+) -> Result<Output, UiBlockingTaskError>
+where
+    Output: Send + 'static,
+    Operation: Future<Output = Output> + Send + 'static,
+{
+    run_ui_blocking(move || futures::executor::block_on(operation)).await
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn run_ui_future<Output, Operation>(
+    operation: Operation,
+) -> Result<Output, UiBlockingTaskError>
+where
+    Operation: Future<Output = Output>,
+{
+    // See `run_ui_blocking`: Tier-2 currently composes only in-memory
+    // adapters. A production browser must provide a Web Worker boundary.
+    Ok(operation.await)
 }
 
 /// Incoming capabilities made available to Dioxus by the composition root.
@@ -1388,6 +1411,24 @@ enum PassportVaultPageState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+enum PassportVaultLocalOperation {
+    Invalid(String),
+    Deposit {
+        lock_id: u64,
+        amount: u128,
+    },
+    Claim {
+        lock_id: u64,
+        credential_id: String,
+        amount: u128,
+    },
+    Withdraw {
+        lock_id: u64,
+        amount: u128,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum PassportVaultContractPanelState {
     Editing,
     Preparing,
@@ -1444,6 +1485,7 @@ enum DustSyncPaneState {
     Loading,
     Ready {
         status: WalletDustSyncView,
+        action_busy: bool,
         operation_error: Option<String>,
     },
     Failed(String),
@@ -1454,6 +1496,7 @@ enum ShieldedSyncPaneState {
     Loading,
     Ready {
         status: WalletShieldedSyncView,
+        action_busy: bool,
         operation_error: Option<String>,
     },
     Failed(String),
@@ -1743,6 +1786,7 @@ pub fn App() -> Element {
                     Destination::Settings => rsx! {
                         SettingsPage {
                             active_profile: active_profile.clone(),
+                            lifecycle_wake: identity_link_wake,
                             on_open_profile: move |_| active_destination.set(Destination::Profile),
                         }
                     },
@@ -2449,13 +2493,18 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                                                 security: updated_security,
                                                 busy: Some(AccountOperation::Syncing),
                                             });
-                                            match service.execute(WalletAccountQuery { profile_id }).await {
-                                                Ok(account) => activate_state.set(AccountPageState::Ready {
+                                            match run_ui_future(async move {
+                                                service.execute(WalletAccountQuery { profile_id }).await
+                                            })
+                                            .await
+                                            {
+                                                Ok(Ok(account)) => activate_state.set(AccountPageState::Ready {
                                                     networks,
                                                     account: Box::new(account),
                                                     security: updated_security,
                                                     busy: None,
                                                 }),
+                                                Ok(Err(error)) => activate_state.set(AccountPageState::Failed(error.to_string())),
                                                 Err(error) => activate_state.set(AccountPageState::Failed(error.to_string())),
                                             }
                                         }
@@ -2483,13 +2532,18 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                         let profile_id = sync_profile_id.clone();
                         let networks = sync_networks.clone();
                         spawn(async move {
-                            match service.execute(WalletAccountQuery { profile_id }).await {
-                                Ok(account) => sync_state.set(AccountPageState::Ready {
+                            match run_ui_future(async move {
+                                service.execute(WalletAccountQuery { profile_id }).await
+                            })
+                            .await
+                            {
+                                Ok(Ok(account)) => sync_state.set(AccountPageState::Ready {
                                     networks,
                                     account: Box::new(account),
                                     security: sync_security,
                                     busy: None,
                                 }),
+                                Ok(Err(error)) => sync_state.set(AccountPageState::Failed(error.to_string())),
                                 Err(error) => sync_state.set(AccountPageState::Failed(error.to_string())),
                             }
                         });
@@ -2566,19 +2620,20 @@ fn SubmissionRecoveryPane(profile_id: String) -> Element {
     let load_services = services.clone();
     let load_profile = profile_id.clone();
     use_effect(move || {
-        state.set(
-            load_services
-                .list_wallet_transfer_submissions()
-                .execute(load_profile.clone())
-                .map_or_else(
-                    |error| SubmissionRecoveryPaneState::Failed(error.to_string()),
-                    |submissions| SubmissionRecoveryPaneState::Ready {
-                        latest: submissions.into_iter().next().map(Box::new),
-                        reconciling: false,
-                        operation_error: None,
-                    },
-                ),
-        );
+        let service = load_services.list_wallet_transfer_submissions();
+        let profile_id = load_profile.clone();
+        spawn(async move {
+            let result = run_ui_blocking(move || service.execute(profile_id)).await;
+            state.set(match result {
+                Ok(Ok(submissions)) => SubmissionRecoveryPaneState::Ready {
+                    latest: submissions.into_iter().next().map(Box::new),
+                    reconciling: false,
+                    operation_error: None,
+                },
+                Ok(Err(error)) => SubmissionRecoveryPaneState::Failed(error.to_string()),
+                Err(error) => SubmissionRecoveryPaneState::Failed(error.to_string()),
+            });
+        });
     });
 
     match state.read().clone() {
@@ -2592,19 +2647,21 @@ fn SubmissionRecoveryPane(profile_id: String) -> Element {
                     class: "secondary-action",
                     r#type: "button",
                     onclick: move |_| {
-                        state.set(
-                            services
-                                .list_wallet_transfer_submissions()
-                                .execute(profile_id.clone())
-                                .map_or_else(
-                                    |error| SubmissionRecoveryPaneState::Failed(error.to_string()),
-                                    |submissions| SubmissionRecoveryPaneState::Ready {
-                                        latest: submissions.into_iter().next().map(Box::new),
-                                        reconciling: false,
-                                        operation_error: None,
-                                    },
-                                ),
-                        );
+                        let service = services.list_wallet_transfer_submissions();
+                        let profile_id = profile_id.clone();
+                        state.set(SubmissionRecoveryPaneState::Loading);
+                        spawn(async move {
+                            let result = run_ui_blocking(move || service.execute(profile_id)).await;
+                            state.set(match result {
+                                Ok(Ok(submissions)) => SubmissionRecoveryPaneState::Ready {
+                                    latest: submissions.into_iter().next().map(Box::new),
+                                    reconciling: false,
+                                    operation_error: None,
+                                },
+                                Ok(Err(error)) => SubmissionRecoveryPaneState::Failed(error.to_string()),
+                                Err(error) => SubmissionRecoveryPaneState::Failed(error.to_string()),
+                            });
+                        });
                     },
                     "Retry"
                 }
@@ -2664,14 +2721,23 @@ fn SubmissionRecoveryPane(profile_id: String) -> Element {
                                 let profile_id = reconcile_profile.clone();
                                 let draft_id = draft_id.clone();
                                 spawn(async move {
-                                    match service.execute(WalletTransferSubmissionQuery {
-                                        profile_id,
-                                        draft_id,
-                                    }).await {
-                                        Ok(updated) => state.set(SubmissionRecoveryPaneState::Ready {
+                                    match run_ui_future(async move {
+                                        service.execute(WalletTransferSubmissionQuery {
+                                            profile_id,
+                                            draft_id,
+                                        }).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(Ok(updated)) => state.set(SubmissionRecoveryPaneState::Ready {
                                             latest: Some(Box::new(updated)),
                                             reconciling: false,
                                             operation_error: None,
+                                        }),
+                                        Ok(Err(error)) => state.set(SubmissionRecoveryPaneState::Ready {
+                                            latest: Some(recovery_status),
+                                            reconciling: false,
+                                            operation_error: Some(error.to_string()),
                                         }),
                                         Err(error) => state.set(SubmissionRecoveryPaneState::Ready {
                                             latest: Some(recovery_status),
@@ -2699,20 +2765,15 @@ fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
     let load_services = services.clone();
     let load_profile = profile_id.clone();
     use_effect(move || {
-        state.set(
-            load_services
-                .get_wallet_dust_sync_status()
-                .execute(WalletDustSyncCommand {
-                    profile_id: load_profile.clone(),
-                })
-                .map_or_else(
-                    |error| DustSyncPaneState::Failed(error.to_string()),
-                    |status| DustSyncPaneState::Ready {
-                        status,
-                        operation_error: None,
-                    },
-                ),
-        );
+        let services = load_services.clone();
+        let profile_id = load_profile.clone();
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || load_dust_sync(&services, &profile_id))
+                    .await
+                    .unwrap_or_else(|error| DustSyncPaneState::Failed(error.to_string())),
+            );
+        });
     });
 
     match state.read().clone() {
@@ -2739,20 +2800,16 @@ fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
                         class: "secondary-action",
                         r#type: "button",
                         onclick: move |_| {
-                            state.set(
-                                retry_services
-                                    .get_wallet_dust_sync_status()
-                                    .execute(WalletDustSyncCommand {
-                                        profile_id: retry_profile.clone(),
-                                    })
-                                    .map_or_else(
-                                        |error| DustSyncPaneState::Failed(error.to_string()),
-                                        |status| DustSyncPaneState::Ready {
-                                            status,
-                                            operation_error: None,
-                                        },
-                                    ),
-                            );
+                            let services = retry_services.clone();
+                            let profile_id = retry_profile.clone();
+                            state.set(DustSyncPaneState::Loading);
+                            spawn(async move {
+                                state.set(
+                                    run_ui_blocking(move || load_dust_sync(&services, &profile_id))
+                                        .await
+                                        .unwrap_or_else(|error| DustSyncPaneState::Failed(error.to_string())),
+                                );
+                            });
                         },
                         "Retry"
                     }
@@ -2761,6 +2818,7 @@ fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
         }
         DustSyncPaneState::Ready {
             status,
+            action_busy,
             operation_error,
         } => {
             let syncing = status.state == "syncing";
@@ -2797,51 +2855,84 @@ fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
                     button {
                         class: "secondary-action wallet-sync-action",
                         r#type: "button",
-                        disabled: unavailable || (!can_sync && !syncing),
+                        disabled: action_busy || unavailable || (!can_sync && !syncing),
                         onclick: move |_| {
                             let command = WalletDustSyncCommand {
                                 profile_id: action_profile.clone(),
                             };
-                            let result = if syncing {
-                                action_services.cancel_wallet_dust_sync().execute(command)
-                            } else {
-                                action_services.start_wallet_dust_sync().execute(command)
-                            };
-                            match result {
-                                Ok(updated) => {
-                                    let should_poll = updated.state == "syncing";
-                                    action_state.set(DustSyncPaneState::Ready {
-                                        status: updated,
-                                        operation_error: None,
-                                    });
-                                    if should_poll {
-                                        poll_dust_sync(
-                                            action_services.clone(),
-                                            action_profile.clone(),
-                                            action_state,
-                                        );
+                            let services = action_services.clone();
+                            let profile_id = action_profile.clone();
+                            let retained = status.clone();
+                            action_state.set(DustSyncPaneState::Ready {
+                                status: status.clone(),
+                                action_busy: true,
+                                operation_error: None,
+                            });
+                            spawn(async move {
+                                let worker_services = services.clone();
+                                let result = run_ui_blocking(move || {
+                                    if syncing {
+                                        worker_services.cancel_wallet_dust_sync().execute(command)
+                                    } else {
+                                        worker_services.start_wallet_dust_sync().execute(command)
                                     }
+                                })
+                                .await;
+                                match result {
+                                    Ok(Ok(updated)) => {
+                                        let should_poll = updated.state == "syncing";
+                                        action_state.set(DustSyncPaneState::Ready {
+                                            status: updated,
+                                            action_busy: false,
+                                            operation_error: None,
+                                        });
+                                        if should_poll {
+                                            poll_dust_sync(services, profile_id, action_state);
+                                        }
+                                    }
+                                    Ok(Err(error)) => action_state.set(DustSyncPaneState::Ready {
+                                        status: retained.clone(),
+                                        action_busy: false,
+                                        operation_error: Some(error.to_string()),
+                                    }),
+                                    Err(error) => action_state.set(DustSyncPaneState::Ready {
+                                        status: retained,
+                                        action_busy: false,
+                                        operation_error: Some(error.to_string()),
+                                    }),
                                 }
-                                Err(error) => action_state.set(DustSyncPaneState::Ready {
-                                    status: status.clone(),
-                                    operation_error: Some(error.to_string()),
-                                }),
-                            }
+                            });
                         },
                         if syncing {
-                            "Cancel DUST sync"
+                            if action_busy { "Cancelling DUST sync…" } else { "Cancel DUST sync" }
                         } else if !can_sync {
                             "Unlock wallet to sync DUST"
                         } else if status.state == "never_synced" {
-                            "Sync DUST"
+                            if action_busy { "Starting DUST sync…" } else { "Sync DUST" }
                         } else {
-                            "Resync DUST"
+                            if action_busy { "Starting DUST sync…" } else { "Resync DUST" }
                         }
                     }
                 }
             }
         }
     }
+}
+
+fn load_dust_sync(services: &WalletUiServices, profile_id: &str) -> DustSyncPaneState {
+    services
+        .get_wallet_dust_sync_status()
+        .execute(WalletDustSyncCommand {
+            profile_id: profile_id.to_owned(),
+        })
+        .map_or_else(
+            |error| DustSyncPaneState::Failed(error.to_string()),
+            |status| DustSyncPaneState::Ready {
+                status,
+                action_busy: false,
+                operation_error: None,
+            },
+        )
 }
 
 fn poll_dust_sync(
@@ -2861,6 +2952,7 @@ fn poll_dust_sync(
                     let complete = status.state != "syncing";
                     state.set(DustSyncPaneState::Ready {
                         status,
+                        action_busy: false,
                         operation_error: None,
                     });
                     if complete {
@@ -2936,7 +3028,15 @@ fn ShieldedSyncPane(profile_id: String, can_sync: bool) -> Element {
     let load_services = services.clone();
     let load_profile = profile_id.clone();
     use_effect(move || {
-        state.set(load_shielded_sync(&load_services, &load_profile));
+        let services = load_services.clone();
+        let profile_id = load_profile.clone();
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || load_shielded_sync(&services, &profile_id))
+                    .await
+                    .unwrap_or_else(|error| ShieldedSyncPaneState::Failed(error.to_string())),
+            );
+        });
     });
 
     match state.read().clone() {
@@ -2963,7 +3063,16 @@ fn ShieldedSyncPane(profile_id: String, can_sync: bool) -> Element {
                         class: "secondary-action",
                         r#type: "button",
                         onclick: move |_| {
-                            state.set(load_shielded_sync(&retry_services, &retry_profile));
+                            let services = retry_services.clone();
+                            let profile_id = retry_profile.clone();
+                            state.set(ShieldedSyncPaneState::Loading);
+                            spawn(async move {
+                                state.set(
+                                    run_ui_blocking(move || load_shielded_sync(&services, &profile_id))
+                                        .await
+                                        .unwrap_or_else(|error| ShieldedSyncPaneState::Failed(error.to_string())),
+                                );
+                            });
                         },
                         "Retry"
                     }
@@ -2972,6 +3081,7 @@ fn ShieldedSyncPane(profile_id: String, can_sync: bool) -> Element {
         }
         ShieldedSyncPaneState::Ready {
             status,
+            action_busy,
             operation_error,
         } => {
             let syncing = status.state == "syncing";
@@ -3019,45 +3129,62 @@ fn ShieldedSyncPane(profile_id: String, can_sync: bool) -> Element {
                     button {
                         class: "secondary-action wallet-sync-action",
                         r#type: "button",
-                        disabled: unavailable || (!can_sync && !syncing),
+                        disabled: action_busy || unavailable || (!can_sync && !syncing),
                         onclick: move |_| {
                             let command = WalletShieldedSyncCommand {
                                 profile_id: action_profile.clone(),
                             };
-                            let result = if syncing {
-                                action_services.cancel_wallet_shielded_sync().execute(command)
-                            } else {
-                                action_services.start_wallet_shielded_sync().execute(command)
-                            };
-                            match result {
-                                Ok(updated) => {
-                                    let should_poll = updated.state == "syncing";
-                                    action_state.set(ShieldedSyncPaneState::Ready {
-                                        status: updated,
-                                        operation_error: None,
-                                    });
-                                    if should_poll {
-                                        poll_shielded_sync(
-                                            action_services.clone(),
-                                            action_profile.clone(),
-                                            action_state,
-                                        );
+                            let services = action_services.clone();
+                            let profile_id = action_profile.clone();
+                            let retained = status.clone();
+                            action_state.set(ShieldedSyncPaneState::Ready {
+                                status: status.clone(),
+                                action_busy: true,
+                                operation_error: None,
+                            });
+                            spawn(async move {
+                                let worker_services = services.clone();
+                                let result = run_ui_blocking(move || {
+                                    if syncing {
+                                        worker_services.cancel_wallet_shielded_sync().execute(command)
+                                    } else {
+                                        worker_services.start_wallet_shielded_sync().execute(command)
                                     }
+                                })
+                                .await;
+                                match result {
+                                    Ok(Ok(updated)) => {
+                                        let should_poll = updated.state == "syncing";
+                                        action_state.set(ShieldedSyncPaneState::Ready {
+                                            status: updated,
+                                            action_busy: false,
+                                            operation_error: None,
+                                        });
+                                        if should_poll {
+                                            poll_shielded_sync(services, profile_id, action_state);
+                                        }
+                                    }
+                                    Ok(Err(error)) => action_state.set(ShieldedSyncPaneState::Ready {
+                                        status: retained.clone(),
+                                        action_busy: false,
+                                        operation_error: Some(error.to_string()),
+                                    }),
+                                    Err(error) => action_state.set(ShieldedSyncPaneState::Ready {
+                                        status: retained,
+                                        action_busy: false,
+                                        operation_error: Some(error.to_string()),
+                                    }),
                                 }
-                                Err(error) => action_state.set(ShieldedSyncPaneState::Ready {
-                                    status: status.clone(),
-                                    operation_error: Some(error.to_string()),
-                                }),
-                            }
+                            });
                         },
                         if syncing {
-                            "Cancel shielded sync"
+                            if action_busy { "Cancelling shielded sync…" } else { "Cancel shielded sync" }
                         } else if !can_sync {
                             "Unlock wallet to sync shielded assets"
                         } else if status.state == "never_synced" {
-                            "Sync shielded assets"
+                            if action_busy { "Starting shielded sync…" } else { "Sync shielded assets" }
                         } else {
-                            "Resync shielded assets"
+                            if action_busy { "Starting shielded sync…" } else { "Resync shielded assets" }
                         }
                     }
                 }
@@ -3076,6 +3203,7 @@ fn load_shielded_sync(services: &WalletUiServices, profile_id: &str) -> Shielded
             |error| ShieldedSyncPaneState::Failed(error.to_string()),
             |status| ShieldedSyncPaneState::Ready {
                 status,
+                action_busy: false,
                 operation_error: None,
             },
         )
@@ -3098,6 +3226,7 @@ fn poll_shielded_sync(
                     let complete = status.state != "syncing";
                     state.set(ShieldedSyncPaneState::Ready {
                         status,
+                        action_busy: false,
                         operation_error: None,
                     });
                     if complete {
@@ -3179,6 +3308,17 @@ fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPa
             Ok(security) => security,
             Err(error) => return AccountPageState::Failed(error.to_string()),
         };
+    if !account_read_is_noninteractive(security.state_name()) {
+        let Some(account) = protected_account_placeholder(&networks) else {
+            return AccountPageState::Failed("selected Midnight network is unavailable".to_owned());
+        };
+        return AccountPageState::Ready {
+            networks,
+            account: Box::new(account),
+            security,
+            busy: None,
+        };
+    }
     let account = match services.get_wallet_account().execute(query) {
         Ok(account) => account,
         Err(WalletAccountError::Port(
@@ -3200,6 +3340,10 @@ fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPa
         security,
         busy: None,
     }
+}
+
+fn account_read_is_noninteractive(security_state: &str) -> bool {
+    !matches!(security_state, "Uninitialized" | "Locked")
 }
 
 fn protected_account_placeholder(networks: &WalletNetworkListView) -> Option<WalletAccountView> {
@@ -3568,13 +3712,19 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                             let draft_id = draft_id.clone();
                             let confirmation = confirmation.clone();
                             spawn(async move {
-                                match service.execute(SubmitWalletTransferCommand {
-                                    profile_id: profile_id.clone(),
-                                    draft_id: draft_id.clone(),
-                                    confirmation,
-                                }).await {
-                                    Ok(submitted) => panel.set(TransferPanelState::Submitted(Box::new(submitted))),
-                                    Err(error) => {
+                                let execute_profile = profile_id.clone();
+                                let execute_draft = draft_id.clone();
+                                match run_ui_future(async move {
+                                    service.execute(SubmitWalletTransferCommand {
+                                        profile_id: execute_profile,
+                                        draft_id: execute_draft,
+                                        confirmation,
+                                    }).await
+                                })
+                                .await
+                                {
+                                    Ok(Ok(submitted)) => panel.set(TransferPanelState::Submitted(Box::new(submitted))),
+                                    Ok(Err(error)) => {
                                         let retained = drafts.execute(WalletTransferDraftQuery {
                                             profile_id,
                                             draft_id,
@@ -3588,6 +3738,11 @@ fn SendTransferPanel(profile_id: String, receive_address: String) -> Element {
                                             recovery,
                                         });
                                     }
+                                    Err(error) => panel.set(TransferPanelState::Failed {
+                                        message: error.to_string(),
+                                        retained: None,
+                                        recovery: TransferRecovery::ReconcileUnknown,
+                                    }),
                                 }
                             });
                         },
@@ -4691,10 +4846,15 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                             let reader = reader.clone();
                             let address = address.clone();
                             spawn(async move {
-                                match reader.execute(ReadPassportVaultContractStateCommand {
-                                    contract_address_hex: address,
-                                }).await {
-                                    Ok(view) => chain_state.set(PassportVaultContractStatePaneState::Ready(Box::new(view))),
+                                match run_ui_future(async move {
+                                    reader.execute(ReadPassportVaultContractStateCommand {
+                                        contract_address_hex: address,
+                                    }).await
+                                })
+                                .await
+                                {
+                                    Ok(Ok(view)) => chain_state.set(PassportVaultContractStatePaneState::Ready(Box::new(view))),
+                                    Ok(Err(error)) => chain_state.set(PassportVaultContractStatePaneState::Failed(error.to_string())),
                                     Err(error) => chain_state.set(PassportVaultContractStatePaneState::Failed(error.to_string())),
                                 }
                             });
@@ -4833,12 +4993,21 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                                         let profile_id = profile_id.clone();
                                         let address = address.clone();
                                         spawn(async move {
-                                            match prepare.execute(PreparePassportVaultCallCommand {
-                                                profile_id,
-                                                contract_address_hex: address,
-                                                action,
-                                            }).await {
-                                                Ok(preview) => panel.set(PassportVaultContractPanelState::Prepared(Box::new(preview))),
+                                            match run_ui_future(async move {
+                                                prepare.execute(PreparePassportVaultCallCommand {
+                                                    profile_id,
+                                                    contract_address_hex: address,
+                                                    action,
+                                                }).await
+                                            })
+                                            .await
+                                            {
+                                                Ok(Ok(preview)) => panel.set(PassportVaultContractPanelState::Prepared(Box::new(preview))),
+                                                Ok(Err(error)) => panel.set(PassportVaultContractPanelState::Failed {
+                                                    message: error.to_string(),
+                                                    retained: None,
+                                                    recovery: PassportVaultCallRecovery::Edit,
+                                                }),
                                                 Err(error) => panel.set(PassportVaultContractPanelState::Failed {
                                                     message: error.to_string(),
                                                     retained: None,
@@ -4944,14 +5113,20 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                                     let profile_id = profile_id.clone();
                                     let draft_id = draft_id.clone();
                                     spawn(async move {
-                                        match submit.execute(SubmitPassportVaultCallCommand {
-                                            profile_id: profile_id.clone(),
-                                            draft_id: draft_id.clone(),
-                                            confirmed: true,
-                                            intent: SUBMIT_PASSPORT_VAULT_CALL_INTENT.to_owned(),
-                                        }).await {
-                                            Ok(submission) => panel.set(PassportVaultContractPanelState::Submitted(Box::new(submission))),
-                                            Err(error) => {
+                                        let execute_profile = profile_id.clone();
+                                        let execute_draft = draft_id.clone();
+                                        match run_ui_future(async move {
+                                            submit.execute(SubmitPassportVaultCallCommand {
+                                                profile_id: execute_profile,
+                                                draft_id: execute_draft,
+                                                confirmed: true,
+                                                intent: SUBMIT_PASSPORT_VAULT_CALL_INTENT.to_owned(),
+                                            }).await
+                                        })
+                                        .await
+                                        {
+                                            Ok(Ok(submission)) => panel.set(PassportVaultContractPanelState::Submitted(Box::new(submission))),
+                                            Ok(Err(error)) => {
                                                 let retained = drafts.execute(PassportVaultCallQuery {
                                                     profile_id,
                                                     draft_id,
@@ -4965,6 +5140,11 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                                                     recovery,
                                                 });
                                             }
+                                            Err(error) => panel.set(PassportVaultContractPanelState::Failed {
+                                                message: error.to_string(),
+                                                retained: None,
+                                                recovery: PassportVaultCallRecovery::ReconcileUnknown,
+                                            }),
                                         }
                                     });
                                 }
@@ -5121,14 +5301,20 @@ fn PassportVaultCallRecoveryPane(profile_id: String) -> Element {
     let load_calls = calls.clone();
     let load_profile = profile_id.clone();
     use_effect(move || {
-        state.set(load_calls.list.execute(load_profile.clone()).map_or_else(
-            |error| PassportVaultCallRecoveryPaneState::Failed(error.to_string()),
-            |submissions| PassportVaultCallRecoveryPaneState::Ready {
-                latest: submissions.into_iter().next().map(Box::new),
-                reconciling: false,
-                operation_error: None,
-            },
-        ));
+        let calls = load_calls.clone();
+        let profile_id = load_profile.clone();
+        spawn(async move {
+            let result = run_ui_blocking(move || calls.list.execute(profile_id)).await;
+            state.set(match result {
+                Ok(Ok(submissions)) => PassportVaultCallRecoveryPaneState::Ready {
+                    latest: submissions.into_iter().next().map(Box::new),
+                    reconciling: false,
+                    operation_error: None,
+                },
+                Ok(Err(error)) => PassportVaultCallRecoveryPaneState::Failed(error.to_string()),
+                Err(error) => PassportVaultCallRecoveryPaneState::Failed(error.to_string()),
+            });
+        });
     });
 
     match state.read().clone() {
@@ -5187,14 +5373,23 @@ fn PassportVaultCallRecoveryPane(profile_id: String) -> Element {
                                     let draft_id = draft_id.clone();
                                     let fallback = current.clone();
                                     spawn(async move {
-                                        match calls.reconcile.execute(PassportVaultCallQuery {
-                                            profile_id,
-                                            draft_id,
-                                        }).await {
-                                            Ok(updated) => state.set(PassportVaultCallRecoveryPaneState::Ready {
+                                        match run_ui_future(async move {
+                                            calls.reconcile.execute(PassportVaultCallQuery {
+                                                profile_id,
+                                                draft_id,
+                                            }).await
+                                        })
+                                        .await
+                                        {
+                                            Ok(Ok(updated)) => state.set(PassportVaultCallRecoveryPaneState::Ready {
                                                 latest: Some(Box::new(updated)),
                                                 reconciling: false,
                                                 operation_error: None,
+                                            }),
+                                            Ok(Err(error)) => state.set(PassportVaultCallRecoveryPaneState::Ready {
+                                                latest: Some(fallback.clone()),
+                                                reconciling: false,
+                                                operation_error: Some(error.to_string()),
                                             }),
                                             Err(error) => state.set(PassportVaultCallRecoveryPaneState::Ready {
                                                 latest: Some(fallback),
@@ -5313,14 +5508,21 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
     let services_for_load = services.clone();
     let profile_for_load = active_profile.id.clone();
     use_effect(move || {
-        let loaded = load_passport_vault_page(&services_for_load, &profile_for_load, None);
-        if selected_credential.read().is_empty()
-            && let PassportVaultPageState::Ready { credentials, .. } = &loaded
-            && let Some(credential) = credentials.first()
-        {
-            selected_credential.set(credential.id.clone());
-        }
-        page.set(loaded);
+        let services = services_for_load.clone();
+        let profile_id = profile_for_load.clone();
+        spawn(async move {
+            let loaded =
+                run_ui_blocking(move || load_passport_vault_page(&services, &profile_id, None))
+                    .await
+                    .unwrap_or_else(|error| PassportVaultPageState::Failed(error.to_string()));
+            if selected_credential.read().is_empty()
+                && let PassportVaultPageState::Ready { credentials, .. } = &loaded
+                && let Some(credential) = credentials.first()
+            {
+                selected_credential.set(credential.id.clone());
+            }
+            page.set(loaded);
+        });
     });
 
     match page.read().clone() {
@@ -5366,6 +5568,8 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
             let create_age = minimum_age.read().clone();
             let create_maximum = maximum_claim.read().clone();
             let create_initial = initial_amount.read().clone();
+            let create_vault = vault.clone();
+            let create_credentials = credentials.clone();
             rsx! {
                 section { class: "page-stack",
                     div { class: "page-heading",
@@ -5433,23 +5637,48 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                                     Ok::<_, String>((age, maximum, initial, state, document))
                                 })();
                                 match parsed {
-                                    Err(message) => page.set(load_passport_vault_page(&create_services, &create_profile, Some(message))),
+                                    Err(message) => page.set(PassportVaultPageState::Ready {
+                                        vault: create_vault.clone(),
+                                        credentials: create_credentials.clone(),
+                                        busy: false,
+                                        operation_error: Some(message),
+                                    }),
                                     Ok((age, maximum, initial, state, document)) => {
-                                        let result = create_services.create_passport_vault_lock().execute(CreatePassportVaultLockCommand {
-                                            profile_id: create_profile.clone(),
-                                            minimum_age_years: age,
-                                            required_issuing_state: state,
-                                            required_document_number: document,
-                                            maximum_claim_amount: maximum,
-                                            initial_amount: initial,
-                                            confirmed: true,
-                                            intent: CREATE_LOCK_INTENT.to_owned(),
+                                        let services = create_services.clone();
+                                        let profile_id = create_profile.clone();
+                                        page.set(PassportVaultPageState::Ready {
+                                            vault: create_vault.clone(),
+                                            credentials: create_credentials.clone(),
+                                            busy: true,
+                                            operation_error: None,
                                         });
-                                        page.set(load_passport_vault_page(
-                                            &create_services,
-                                            &create_profile,
-                                            result.err().map(|error| error.to_string()),
-                                        ));
+                                        spawn(async move {
+                                            let result = run_ui_blocking(move || {
+                                                let operation_error = services
+                                                    .create_passport_vault_lock()
+                                                    .execute(CreatePassportVaultLockCommand {
+                                                        profile_id: profile_id.clone(),
+                                                        minimum_age_years: age,
+                                                        required_issuing_state: state,
+                                                        required_document_number: document,
+                                                        maximum_claim_amount: maximum,
+                                                        initial_amount: initial,
+                                                        confirmed: true,
+                                                        intent: CREATE_LOCK_INTENT.to_owned(),
+                                                    })
+                                                    .err()
+                                                    .map(|error| error.to_string());
+                                                load_passport_vault_page(
+                                                    &services,
+                                                    &profile_id,
+                                                    operation_error,
+                                                )
+                                            })
+                                            .await;
+                                            page.set(result.unwrap_or_else(|error| {
+                                                PassportVaultPageState::Failed(error.to_string())
+                                            }));
+                                        });
                                     }
                                 }
                             },
@@ -5489,6 +5718,8 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                                 {
                                     let complete_services = services.clone();
                                     let complete_profile = profile_id.clone();
+                                    let complete_vault = vault.clone();
+                                    let complete_credentials = credentials.clone();
                                     rsx! {
                                         PassportVaultLockCard {
                                             key: "{lock.lock_id}",
@@ -5497,8 +5728,69 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                                             amount: operation_amount.read().clone(),
                                             credential_id: selected_credential.read().clone(),
                                             busy,
-                                            on_complete: move |message: Option<String>| {
-                                                page.set(load_passport_vault_page(&complete_services, &complete_profile, message));
+                                            on_operation: move |operation: PassportVaultLocalOperation| {
+                                                if let PassportVaultLocalOperation::Invalid(message) = &operation {
+                                                    page.set(PassportVaultPageState::Ready {
+                                                        vault: complete_vault.clone(),
+                                                        credentials: complete_credentials.clone(),
+                                                        busy: false,
+                                                        operation_error: Some(message.clone()),
+                                                    });
+                                                    return;
+                                                }
+                                                let services = complete_services.clone();
+                                                let profile_id = complete_profile.clone();
+                                                page.set(PassportVaultPageState::Ready {
+                                                    vault: complete_vault.clone(),
+                                                    credentials: complete_credentials.clone(),
+                                                    busy: true,
+                                                    operation_error: None,
+                                                });
+                                                spawn(async move {
+                                                    let result = run_ui_blocking(move || {
+                                                        let operation_error = match operation {
+                                                            PassportVaultLocalOperation::Invalid(_) => unreachable!("validated before dispatch"),
+                                                            PassportVaultLocalOperation::Deposit { lock_id, amount } => services
+                                                                .deposit_passport_vault_lock()
+                                                                .execute(PassportVaultAmountCommand {
+                                                                    profile_id: profile_id.clone(),
+                                                                    lock_id,
+                                                                    amount,
+                                                                    confirmed: true,
+                                                                    intent: DEPOSIT_INTENT.to_owned(),
+                                                                })
+                                                                .map(|_| ()),
+                                                            PassportVaultLocalOperation::Claim { lock_id, credential_id, amount } => futures::executor::block_on(
+                                                                services.claim_passport_vault_lock().execute(ClaimPassportVaultLockCommand {
+                                                                    profile_id: profile_id.clone(),
+                                                                    lock_id,
+                                                                    credential_id,
+                                                                    amount,
+                                                                    confirmed: true,
+                                                                    intent: CLAIM_INTENT.to_owned(),
+                                                                }),
+                                                            )
+                                                            .map(|_| ()),
+                                                            PassportVaultLocalOperation::Withdraw { lock_id, amount } => services
+                                                                .withdraw_passport_vault_lock()
+                                                                .execute(PassportVaultAmountCommand {
+                                                                    profile_id: profile_id.clone(),
+                                                                    lock_id,
+                                                                    amount,
+                                                                    confirmed: true,
+                                                                    intent: WITHDRAW_INTENT.to_owned(),
+                                                                })
+                                                                .map(|_| ()),
+                                                        }
+                                                        .err()
+                                                        .map(|error| error.to_string());
+                                                        load_passport_vault_page(&services, &profile_id, operation_error)
+                                                    })
+                                                    .await;
+                                                    page.set(result.unwrap_or_else(|error| {
+                                                        PassportVaultPageState::Failed(error.to_string())
+                                                    }));
+                                                });
                                             },
                                         }
                                     }
@@ -5519,12 +5811,8 @@ fn PassportVaultLockCard(
     amount: String,
     credential_id: String,
     busy: bool,
-    on_complete: EventHandler<Option<String>>,
+    on_operation: EventHandler<PassportVaultLocalOperation>,
 ) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let deposit = services.deposit_passport_vault_lock();
-    let withdraw = services.withdraw_passport_vault_lock();
-    let claim = services.claim_passport_vault_lock();
     let creator = lock.creator_profile_id == profile_id;
     let policy_detail = format!(
         "Age {}+ · max {}{}{}",
@@ -5550,13 +5838,14 @@ fn PassportVaultLockCard(
                     class: "secondary-button", r#type: "button", disabled: busy || !creator,
                     onclick: {
                         let amount = amount.clone();
-                        let profile_id = profile_id.clone();
                         move |_| {
-                            let result = parse_vault_amount(&amount).and_then(|amount| deposit.execute(PassportVaultAmountCommand {
-                                profile_id: profile_id.clone(), lock_id: lock.lock_id, amount,
-                                confirmed: true, intent: DEPOSIT_INTENT.to_owned(),
-                            }).map(|_| ()).map_err(|error| error.to_string()));
-                            on_complete.call(result.err());
+                            on_operation.call(match parse_vault_amount(&amount) {
+                                Ok(amount) => PassportVaultLocalOperation::Deposit {
+                                    lock_id: lock.lock_id,
+                                    amount,
+                                },
+                                Err(message) => PassportVaultLocalOperation::Invalid(message),
+                            });
                         }
                     },
                     "Deposit"
@@ -5565,22 +5854,18 @@ fn PassportVaultLockCard(
                     class: "primary-button", r#type: "button", disabled: busy || credential_id.is_empty(),
                     onclick: {
                         let amount = amount.clone();
-                        let profile_id = profile_id.clone();
                         let credential_id = credential_id.clone();
                         move |_| {
                             let Ok(amount) = parse_vault_amount(&amount) else {
-                                on_complete.call(Some("Enter a valid claim amount.".to_owned()));
+                                on_operation.call(PassportVaultLocalOperation::Invalid(
+                                    "Enter a valid claim amount.".to_owned(),
+                                ));
                                 return;
                             };
-                            let service = claim.clone();
-                            let profile_id = profile_id.clone();
-                            let credential_id = credential_id.clone();
-                            spawn(async move {
-                                let result = service.execute(ClaimPassportVaultLockCommand {
-                                    profile_id, lock_id: lock.lock_id, credential_id, amount,
-                                    confirmed: true, intent: CLAIM_INTENT.to_owned(),
-                                }).await;
-                                on_complete.call(result.err().map(|error| error.to_string()));
+                            on_operation.call(PassportVaultLocalOperation::Claim {
+                                lock_id: lock.lock_id,
+                                credential_id: credential_id.clone(),
+                                amount,
                             });
                         }
                     },
@@ -5590,13 +5875,14 @@ fn PassportVaultLockCard(
                     class: "secondary-button", r#type: "button", disabled: busy || !creator,
                     onclick: {
                         let amount = amount.clone();
-                        let profile_id = profile_id.clone();
                         move |_| {
-                            let result = parse_vault_amount(&amount).and_then(|amount| withdraw.execute(PassportVaultAmountCommand {
-                                profile_id: profile_id.clone(), lock_id: lock.lock_id, amount,
-                                confirmed: true, intent: WITHDRAW_INTENT.to_owned(),
-                            }).map(|_| ()).map_err(|error| error.to_string()));
-                            on_complete.call(result.err());
+                            on_operation.call(match parse_vault_amount(&amount) {
+                                Ok(amount) => PassportVaultLocalOperation::Withdraw {
+                                    lock_id: lock.lock_id,
+                                    amount,
+                                },
+                                Err(message) => PassportVaultLocalOperation::Invalid(message),
+                            });
                         }
                     },
                     "Withdraw"
@@ -5792,15 +6078,23 @@ fn DidsPage(
                                 authentication_busy.set(true);
                                 authentication_notice.set(None);
                                 spawn(async move {
-                                    match service.execute(PrepareSelfIssuedAuthenticationCommand { profile_id, request }).await {
-                                        Ok(preview) => {
+                                    match run_ui_future(async move {
+                                        service.execute(PrepareSelfIssuedAuthenticationCommand { profile_id, request }).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(Ok(preview)) => {
                                             prepared_authentication.set(Some(preview));
                                             authentication_consent.set(false);
                                             authentication_notice.set(Some("Login preview ready. Review the verifier and purpose before consenting.".to_owned()));
                                         }
-                                        Err(error) => {
+                                        Ok(Err(error)) => {
                                             prepared_authentication.set(None);
                                             authentication_notice.set(Some(self_issued_authentication_message(error)));
+                                        }
+                                        Err(error) => {
+                                            prepared_authentication.set(None);
+                                            authentication_notice.set(Some(error.to_string()));
                                         }
                                     }
                                     authentication_busy.set(false);
@@ -5849,19 +6143,24 @@ fn DidsPage(
                                                 authentication_busy.set(true);
                                                 authentication_notice.set(None);
                                                 spawn(async move {
-                                                    match service.execute(AcceptSelfIssuedAuthenticationCommand {
-                                                        profile_id,
-                                                        authentication_id,
-                                                        holder_did,
-                                                        method_id,
-                                                        confirmed: true,
-                                                        intent: "ACCEPT_SELF_ISSUED_AUTHENTICATION".to_owned(),
-                                                    }).await {
-                                                        Ok(result) => {
+                                                    match run_ui_future(async move {
+                                                        service.execute(AcceptSelfIssuedAuthenticationCommand {
+                                                            profile_id,
+                                                            authentication_id,
+                                                            holder_did,
+                                                            method_id,
+                                                            confirmed: true,
+                                                            intent: "ACCEPT_SELF_ISSUED_AUTHENTICATION".to_owned(),
+                                                        }).await
+                                                    })
+                                                    .await
+                                                    {
+                                                        Ok(Ok(result)) => {
                                                             prepared_authentication.set(Some(result));
                                                             authentication_notice.set(Some("DID authentication succeeded and the standalone verifier independently validated the proof.".to_owned()));
                                                         }
-                                                        Err(error) => authentication_notice.set(Some(self_issued_authentication_message(error))),
+                                                        Ok(Err(error)) => authentication_notice.set(Some(self_issued_authentication_message(error))),
+                                                        Err(error) => authentication_notice.set(Some(error.to_string())),
                                                     }
                                                     authentication_busy.set(false);
                                                 });
@@ -5877,16 +6176,31 @@ fn DidsPage(
                                             let service = services.refuse_self_issued_authentication();
                                             let profile_id = profile_id.clone();
                                             let authentication_id = preview.id.clone();
-                                            move |_| match service.execute(RefuseSelfIssuedAuthenticationCommand {
-                                                profile_id: profile_id.clone(),
-                                                authentication_id: authentication_id.clone(),
-                                            }) {
-                                                Ok(result) => {
-                                                    prepared_authentication.set(Some(result));
-                                                    authentication_consent.set(false);
-                                                    authentication_notice.set(Some("Login request refused; ephemeral protocol secrets were discarded.".to_owned()));
-                                                }
-                                                Err(error) => authentication_notice.set(Some(self_issued_authentication_message(error))),
+                                            move |_| {
+                                                let service = service.clone();
+                                                let profile_id = profile_id.clone();
+                                                let authentication_id = authentication_id.clone();
+                                                authentication_busy.set(true);
+                                                authentication_notice.set(None);
+                                                spawn(async move {
+                                                    let result = run_ui_blocking(move || {
+                                                        service.execute(RefuseSelfIssuedAuthenticationCommand {
+                                                            profile_id,
+                                                            authentication_id,
+                                                        })
+                                                    })
+                                                    .await;
+                                                    match result {
+                                                        Ok(Ok(result)) => {
+                                                            prepared_authentication.set(Some(result));
+                                                            authentication_consent.set(false);
+                                                            authentication_notice.set(Some("Login request refused; ephemeral protocol secrets were discarded.".to_owned()));
+                                                        }
+                                                        Ok(Err(error)) => authentication_notice.set(Some(self_issued_authentication_message(error))),
+                                                        Err(error) => authentication_notice.set(Some(error.to_string())),
+                                                    }
+                                                    authentication_busy.set(false);
+                                                });
                                             }
                                         },
                                         "Refuse login"
@@ -5918,14 +6232,19 @@ fn DidsPage(
                             let did = did_input.read().trim().to_owned();
                             let mut records = retained_records.clone();
                             spawn(async move {
-                                match service.execute(ResolveDidCommand { profile_id, did }).await {
-                                    Ok(record) => {
+                                match run_ui_future(async move {
+                                    service.execute(ResolveDidCommand { profile_id, did }).await
+                                })
+                                .await
+                                {
+                                    Ok(Ok(record)) => {
                                         records.retain(|existing| existing.document.id != record.document.id);
                                         records.push(record);
                                         records.sort_by(|left, right| left.document.id.cmp(&right.document.id));
                                         state.set(DidPageState::Ready { records, resolving: false, operation_error: None });
                                     }
-                                    Err(error) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(did_operation_message(error)) }),
+                                    Ok(Err(error)) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(did_operation_message(error)) }),
+                                    Err(error) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(error.to_string()) }),
                                 }
                             });
                         },
@@ -6255,15 +6574,23 @@ fn CredentialPresentationPanel(
                         busy.set(true);
                         notice.set(None);
                         spawn(async move {
-                            match service.execute(PrepareCredentialPresentationCommand { profile_id, request }).await {
-                                Ok(result) => {
+                            match run_ui_future(async move {
+                                service.execute(PrepareCredentialPresentationCommand { profile_id, request }).await
+                            })
+                            .await
+                            {
+                                Ok(Ok(result)) => {
                                     preview.set(Some(result));
                                     consent.set(false);
                                     notice.set(Some("Request preview ready. Nothing has been presented.".to_owned()));
                                 }
-                                Err(error) => {
+                                Ok(Err(error)) => {
                                     preview.set(None);
                                     notice.set(Some(credential_presentation_message(error)));
+                                }
+                                Err(error) => {
+                                    preview.set(None);
+                                    notice.set(Some(error.to_string()));
                                 }
                             }
                             busy.set(false);
@@ -6323,18 +6650,22 @@ fn CredentialPresentationPanel(
                                         busy.set(true);
                                         notice.set(None);
                                         spawn(async move {
-                                            match service.execute(AcceptCredentialPresentationCommand {
-                                                profile_id,
-                                                presentation_id,
-                                                credential_id,
-                                                confirmed: true,
-                                                intent: "ACCEPT_CREDENTIAL_PRESENTATION".to_owned(),
-                                            }).await {
-                                                Ok(result) => {
+                                            match run_ui_future(async move {
+                                                service.execute(AcceptCredentialPresentationCommand {
+                                                    profile_id,
+                                                    presentation_id,
+                                                    credential_id,
+                                                    confirmed: true,
+                                                    intent: "ACCEPT_CREDENTIAL_PRESENTATION".to_owned(),
+                                                }).await
+                                            })
+                                            .await
+                                            {
+                                                Ok(Ok(result)) => {
                                                     preview.set(Some(result));
                                                     notice.set(Some("Presentation generated and independently verified.".to_owned()));
                                                 }
-                                                Err(error) => {
+                                                Ok(Err(error)) => {
                                                     let failed_view = preview.read().clone();
                                                     if let CredentialPresentationError::Protocol(protocol) = &error
                                                         && let Some(mut failed) = failed_view {
@@ -6347,6 +6678,7 @@ fn CredentialPresentationPanel(
                                                     }
                                                     notice.set(Some(credential_presentation_message(error)));
                                                 }
+                                                Err(error) => notice.set(Some(error.to_string())),
                                             }
                                             busy.set(false);
                                         });
@@ -6362,16 +6694,31 @@ fn CredentialPresentationPanel(
                                     let service = services.refuse_credential_presentation();
                                     let profile_id = profile_id.clone();
                                     let presentation_id = presentation.id.clone();
-                                    move |_| match service.execute(RefuseCredentialPresentationCommand {
-                                        profile_id: profile_id.clone(),
-                                        presentation_id: presentation_id.clone(),
-                                    }) {
-                                        Ok(result) => {
-                                            preview.set(Some(result));
-                                            consent.set(false);
-                                            notice.set(Some("Presentation refused; the one-time verifier session was discarded.".to_owned()));
-                                        }
-                                        Err(error) => notice.set(Some(credential_presentation_message(error))),
+                                    move |_| {
+                                        let service = service.clone();
+                                        let profile_id = profile_id.clone();
+                                        let presentation_id = presentation_id.clone();
+                                        busy.set(true);
+                                        notice.set(None);
+                                        spawn(async move {
+                                            let result = run_ui_blocking(move || {
+                                                service.execute(RefuseCredentialPresentationCommand {
+                                                    profile_id,
+                                                    presentation_id,
+                                                })
+                                            })
+                                            .await;
+                                            match result {
+                                                Ok(Ok(result)) => {
+                                                    preview.set(Some(result));
+                                                    consent.set(false);
+                                                    notice.set(Some("Presentation refused; the one-time verifier session was discarded.".to_owned()));
+                                                }
+                                                Ok(Err(error)) => notice.set(Some(credential_presentation_message(error))),
+                                                Err(error) => notice.set(Some(error.to_string())),
+                                            }
+                                            busy.set(false);
+                                        });
                                     }
                                 },
                                 "Refuse request"
@@ -6408,18 +6755,29 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
     let mut revealed_last = use_signal(|| None::<String>);
     let mut age_threshold = use_signal(|| 18_u8);
     let mut plan_notice = use_signal(|| None::<String>);
+    let mut operation_busy = use_signal(|| false);
     let load_service = services.get_credential_disclosure();
     let load_profile = profile_id.clone();
     let load_credential = credential_id.clone();
     use_effect(move || {
-        disclosure_state.set(Some(
-            load_service
-                .execute(CredentialDisclosureQuery {
-                    profile_id: load_profile.clone(),
-                    credential_id: load_credential.clone(),
-                })
-                .map_err(credential_operation_message),
-        ));
+        let service = load_service.clone();
+        let profile_id = load_profile.clone();
+        let credential_id = load_credential.clone();
+        spawn(async move {
+            let result = run_ui_blocking(move || {
+                service
+                    .execute(CredentialDisclosureQuery {
+                        profile_id,
+                        credential_id,
+                    })
+                    .map_err(credential_operation_message)
+            })
+            .await;
+            disclosure_state.set(Some(match result {
+                Ok(result) => result,
+                Err(error) => Err(error.to_string()),
+            }));
+        });
     });
 
     match disclosure_state.read().clone() {
@@ -6483,22 +6841,35 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                             }
                             button {
                                 class: "secondary-action", r#type: "button",
+                                disabled: operation_busy(),
                                 aria_label: if revealed_first.read().is_some() { "Hide First name" } else { "Reveal First name locally" },
                                 onclick: move |_| {
                                     if revealed_first.read().is_some() {
                                         revealed_first.set(None);
                                     } else {
-                                        match first_service.execute(RevealCredentialClaimCommand {
-                                            profile_id: first_profile.clone(),
-                                            credential_id: first_credential.clone(),
-                                            claim_path: PASSPORT_FIRST_NAME.to_owned(),
-                                        }) {
-                                            Ok(claim) => {
-                                                revealed_first.set(Some(claim.value().to_owned()));
-                                                plan_notice.set(Some("First name revealed only on this device screen.".to_owned()));
+                                        let service = first_service.clone();
+                                        let profile_id = first_profile.clone();
+                                        let credential_id = first_credential.clone();
+                                        operation_busy.set(true);
+                                        spawn(async move {
+                                            let result = run_ui_blocking(move || {
+                                                service.execute(RevealCredentialClaimCommand {
+                                                    profile_id,
+                                                    credential_id,
+                                                    claim_path: PASSPORT_FIRST_NAME.to_owned(),
+                                                })
+                                            })
+                                            .await;
+                                            match result {
+                                                Ok(Ok(claim)) => {
+                                                    revealed_first.set(Some(claim.value().to_owned()));
+                                                    plan_notice.set(Some("First name revealed only on this device screen.".to_owned()));
+                                                }
+                                                Ok(Err(error)) => plan_notice.set(Some(credential_operation_message(error))),
+                                                Err(error) => plan_notice.set(Some(error.to_string())),
                                             }
-                                            Err(error) => plan_notice.set(Some(credential_operation_message(error))),
-                                        }
+                                            operation_busy.set(false);
+                                        });
                                     }
                                 },
                                 if revealed_first.read().is_some() { "Hide" } else { "Reveal locally" }
@@ -6518,22 +6889,35 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                             }
                             button {
                                 class: "secondary-action", r#type: "button",
+                                disabled: operation_busy(),
                                 aria_label: if revealed_last.read().is_some() { "Hide Last name" } else { "Reveal Last name locally" },
                                 onclick: move |_| {
                                     if revealed_last.read().is_some() {
                                         revealed_last.set(None);
                                     } else {
-                                        match last_service.execute(RevealCredentialClaimCommand {
-                                            profile_id: last_profile.clone(),
-                                            credential_id: last_credential.clone(),
-                                            claim_path: PASSPORT_LAST_NAME.to_owned(),
-                                        }) {
-                                            Ok(claim) => {
-                                                revealed_last.set(Some(claim.value().to_owned()));
-                                                plan_notice.set(Some("Last name revealed only on this device screen.".to_owned()));
+                                        let service = last_service.clone();
+                                        let profile_id = last_profile.clone();
+                                        let credential_id = last_credential.clone();
+                                        operation_busy.set(true);
+                                        spawn(async move {
+                                            let result = run_ui_blocking(move || {
+                                                service.execute(RevealCredentialClaimCommand {
+                                                    profile_id,
+                                                    credential_id,
+                                                    claim_path: PASSPORT_LAST_NAME.to_owned(),
+                                                })
+                                            })
+                                            .await;
+                                            match result {
+                                                Ok(Ok(claim)) => {
+                                                    revealed_last.set(Some(claim.value().to_owned()));
+                                                    plan_notice.set(Some("Last name revealed only on this device screen.".to_owned()));
+                                                }
+                                                Ok(Err(error)) => plan_notice.set(Some(credential_operation_message(error))),
+                                                Err(error) => plan_notice.set(Some(error.to_string())),
                                             }
-                                            Err(error) => plan_notice.set(Some(credential_operation_message(error))),
-                                        }
+                                            operation_busy.set(false);
+                                        });
                                     }
                                 },
                                 if revealed_last.read().is_some() { "Hide" } else { "Reveal locally" }
@@ -6567,6 +6951,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                     }
                     button {
                         class: "primary-action", r#type: "button",
+                        disabled: operation_busy(),
                         onclick: move |_| {
                             let mut reveal_claim_paths = Vec::new();
                             if revealed_first.read().is_some() {
@@ -6575,25 +6960,37 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                             if revealed_last.read().is_some() {
                                 reveal_claim_paths.push(PASSPORT_LAST_NAME.to_owned());
                             }
-                            let result = preview_service.execute(PreviewCredentialDisclosureCommand {
-                                profile_id: preview_profile.clone(),
-                                credential_id: preview_credential.clone(),
-                                reveal_claim_paths,
-                                predicates: vec![CredentialPredicateInput {
-                                    claim_path: PASSPORT_DATE_OF_BIRTH.to_owned(),
-                                    kind: "age_over".to_owned(),
-                                    threshold: age_threshold(),
-                                }],
+                            let service = preview_service.clone();
+                            let profile_id = preview_profile.clone();
+                            let credential_id = preview_credential.clone();
+                            let threshold = age_threshold();
+                            operation_busy.set(true);
+                            spawn(async move {
+                                let result = run_ui_blocking(move || {
+                                    service.execute(PreviewCredentialDisclosureCommand {
+                                        profile_id,
+                                        credential_id,
+                                        reveal_claim_paths,
+                                        predicates: vec![CredentialPredicateInput {
+                                            claim_path: PASSPORT_DATE_OF_BIRTH.to_owned(),
+                                            kind: "age_over".to_owned(),
+                                            threshold,
+                                        }],
+                                    })
+                                })
+                                .await;
+                                plan_notice.set(Some(match result {
+                                    Ok(Ok(plan)) => format!(
+                                        "{} · local preview only · no presentation generated",
+                                        plan.outcome.replace('_', " ")
+                                    ),
+                                    Ok(Err(error)) => credential_operation_message(error),
+                                    Err(error) => error.to_string(),
+                                }));
+                                operation_busy.set(false);
                             });
-                            plan_notice.set(Some(match result {
-                                Ok(plan) => format!(
-                                    "{} · local preview only · no presentation generated",
-                                    plan.outcome.replace('_', " ")
-                                ),
-                                Err(error) => credential_operation_message(error),
-                            }));
                         },
-                        "Preview disclosure plan"
+                        if operation_busy() { "Working…" } else { "Preview disclosure plan" }
                     }
                     if let Some(message) = plan_notice.read().as_deref() {
                         p { class: "form-hint", role: "status", "{message}" }
@@ -6691,11 +7088,15 @@ fn CredentialRecordCard(
                         let profile_id = verify_profile.clone();
                         let credential_id = verify_id.clone();
                         spawn(async move {
-                            let result = service.execute(CredentialQuery { profile_id, credential_id }).await;
+                            let result = run_ui_future(async move {
+                                service.execute(CredentialQuery { profile_id, credential_id }).await
+                            })
+                            .await;
                             working.set(false);
                             on_change.call(match result {
-                                Ok(credential) => CredentialChange::Updated(credential),
-                                Err(error) => CredentialChange::Failed(credential_operation_message(error)),
+                                Ok(Ok(credential)) => CredentialChange::Updated(credential),
+                                Ok(Err(error)) => CredentialChange::Failed(credential_operation_message(error)),
+                                Err(error) => CredentialChange::Failed(error.to_string()),
                             });
                         });
                     },
@@ -6712,15 +7113,28 @@ fn CredentialRecordCard(
                     class: "danger-action", r#type: "button",
                     disabled: working() || !delete_confirmed(),
                     onclick: move |_| {
-                        let result = delete_services.delete_credential().execute(DeleteCredentialCommand {
-                            profile_id: delete_profile.clone(),
-                            credential_id: delete_id.clone(),
-                            confirmed: delete_confirmed(),
-                            intent: "DELETE_CREDENTIAL".to_owned(),
-                        });
-                        on_change.call(match result {
-                            Ok(()) => CredentialChange::Deleted(delete_id.clone()),
-                            Err(error) => CredentialChange::Failed(credential_operation_message(error)),
+                        let service = delete_services.delete_credential();
+                        let profile_id = delete_profile.clone();
+                        let credential_id = delete_id.clone();
+                        let deleted_id = delete_id.clone();
+                        let confirmed = delete_confirmed();
+                        working.set(true);
+                        spawn(async move {
+                            let result = run_ui_blocking(move || {
+                                service.execute(DeleteCredentialCommand {
+                                    profile_id,
+                                    credential_id,
+                                    confirmed,
+                                    intent: "DELETE_CREDENTIAL".to_owned(),
+                                })
+                            })
+                            .await;
+                            working.set(false);
+                            on_change.call(match result {
+                                Ok(Ok(())) => CredentialChange::Deleted(deleted_id),
+                                Ok(Err(error)) => CredentialChange::Failed(credential_operation_message(error)),
+                                Err(error) => CredentialChange::Failed(error.to_string()),
+                            });
                         });
                     },
                     "Delete credential"
@@ -6782,7 +7196,17 @@ fn CredentialsPage(
     let profile_id = active_profile.id.clone();
     let load_services = services.clone();
     let load_profile = profile_id.clone();
-    use_effect(move || state.set(load_credential_page(&load_services, &load_profile)));
+    use_effect(move || {
+        let services = load_services.clone();
+        let profile_id = load_profile.clone();
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || load_credential_page(&services, &profile_id))
+                    .await
+                    .unwrap_or_else(|error| CredentialPageState::Failed(error.to_string())),
+            );
+        });
+    });
 
     match state.read().clone() {
         CredentialPageState::Loading => rsx! {
@@ -6804,7 +7228,18 @@ fn CredentialsPage(
                 p { "{message}" }
                 button {
                     class: "secondary-action", r#type: "button",
-                    onclick: move |_| state.set(load_credential_page(&services, &profile_id)),
+                    onclick: move |_| {
+                        let services = services.clone();
+                        let profile_id = profile_id.clone();
+                        state.set(CredentialPageState::Loading);
+                        spawn(async move {
+                            state.set(
+                                run_ui_blocking(move || load_credential_page(&services, &profile_id))
+                                    .await
+                                    .unwrap_or_else(|error| CredentialPageState::Failed(error.to_string())),
+                            );
+                        });
+                    },
                     "Retry"
                 }
             }
@@ -6866,15 +7301,23 @@ fn CredentialsPage(
                                 issuance_busy.set(true);
                                 issuance_notice.set(None);
                                 spawn(async move {
-                                    match service.execute(PrepareCredentialIssuanceCommand { profile_id, offer }).await {
-                                        Ok(preview) => {
+                                    match run_ui_future(async move {
+                                        service.execute(PrepareCredentialIssuanceCommand { profile_id, offer }).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(Ok(preview)) => {
                                             prepared_issuance.set(Some(preview));
                                             issuance_consent.set(false);
                                             issuance_notice.set(Some("Offer preview ready. Review the issuer and requested credential before consenting.".to_owned()));
                                         }
-                                        Err(error) => {
+                                        Ok(Err(error)) => {
                                             prepared_issuance.set(None);
                                             issuance_notice.set(Some(credential_issuance_message(error)));
+                                        }
+                                        Err(error) => {
+                                            prepared_issuance.set(None);
+                                            issuance_notice.set(Some(error.to_string()));
                                         }
                                     }
                                     issuance_busy.set(false);
@@ -6912,18 +7355,7 @@ fn CredentialsPage(
                                             let profile_id = profile_id.clone();
                                             let issuance_id = preview.id.clone();
                                             move |_| {
-                                                let records = match services.list_did_records().execute(ListDidRecordsQuery { profile_id: profile_id.clone() }) {
-                                                    Ok(records) => records,
-                                                    Err(error) => {
-                                                        issuance_notice.set(Some(did_operation_message(error)));
-                                                        return;
-                                                    }
-                                                };
-                                                let Some((holder_did, method_id, holder_binding_method_id)) = active_managed_issuance_methods(&records) else {
-                                                    issuance_notice.set(Some("Create an active managed DID with protected authentication and Jubjub assertion methods before accepting this credential offer.".to_owned()));
-                                                    return;
-                                                };
-                                                let service = services.accept_credential_issuance();
+                                                let services = services.clone();
                                                 let refresh_services = services.clone();
                                                 let refresh_profile = profile_id.clone();
                                                 let execute_profile = profile_id.clone();
@@ -6931,21 +7363,59 @@ fn CredentialsPage(
                                                 issuance_busy.set(true);
                                                 issuance_notice.set(None);
                                                 spawn(async move {
-                                                    match service.execute(AcceptCredentialIssuanceCommand {
-                                                        profile_id: execute_profile,
-                                                        issuance_id: execute_issuance_id,
-                                                        holder_did,
-                                                        method_id,
-                                                        holder_binding_method_id,
-                                                        confirmed: true,
-                                                        intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
-                                                    }).await {
-                                                        Ok(result) => {
+                                                    let list_service = services.list_did_records();
+                                                    let list_profile = execute_profile.clone();
+                                                    let records = match run_ui_blocking(move || {
+                                                        list_service.execute(ListDidRecordsQuery {
+                                                            profile_id: list_profile,
+                                                        })
+                                                    })
+                                                    .await
+                                                    {
+                                                        Ok(Ok(records)) => records,
+                                                        Ok(Err(error)) => {
+                                                            issuance_notice.set(Some(did_operation_message(error)));
+                                                            issuance_busy.set(false);
+                                                            return;
+                                                        }
+                                                        Err(error) => {
+                                                            issuance_notice.set(Some(error.to_string()));
+                                                            issuance_busy.set(false);
+                                                            return;
+                                                        }
+                                                    };
+                                                    let Some((holder_did, method_id, holder_binding_method_id)) = active_managed_issuance_methods(&records) else {
+                                                        issuance_notice.set(Some("Create an active managed DID with protected authentication and Jubjub assertion methods before accepting this credential offer.".to_owned()));
+                                                        issuance_busy.set(false);
+                                                        return;
+                                                    };
+                                                    let service = services.accept_credential_issuance();
+                                                    match run_ui_future(async move {
+                                                        service.execute(AcceptCredentialIssuanceCommand {
+                                                            profile_id: execute_profile,
+                                                            issuance_id: execute_issuance_id,
+                                                            holder_did,
+                                                            method_id,
+                                                            holder_binding_method_id,
+                                                            confirmed: true,
+                                                            intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
+                                                        }).await
+                                                    })
+                                                    .await
+                                                    {
+                                                        Ok(Ok(result)) => {
                                                             prepared_issuance.set(Some(result));
                                                             issuance_notice.set(Some("Credential issued, verified, and stored in the protected inventory.".to_owned()));
-                                                            state.set(load_credential_page(&refresh_services, &refresh_profile));
+                                                            state.set(
+                                                                run_ui_blocking(move || {
+                                                                    load_credential_page(&refresh_services, &refresh_profile)
+                                                                })
+                                                                .await
+                                                                .unwrap_or_else(|error| CredentialPageState::Failed(error.to_string())),
+                                                            );
                                                         }
-                                                        Err(error) => issuance_notice.set(Some(credential_issuance_message(error))),
+                                                        Ok(Err(error)) => issuance_notice.set(Some(credential_issuance_message(error))),
+                                                        Err(error) => issuance_notice.set(Some(error.to_string())),
                                                     }
                                                     issuance_busy.set(false);
                                                 });
@@ -6961,16 +7431,31 @@ fn CredentialsPage(
                                             let service = services.refuse_credential_issuance();
                                             let profile_id = profile_id.clone();
                                             let issuance_id = preview.id.clone();
-                                            move |_| match service.execute(RefuseCredentialIssuanceCommand {
-                                                profile_id: profile_id.clone(),
-                                                issuance_id: issuance_id.clone(),
-                                            }) {
-                                                Ok(result) => {
-                                                    prepared_issuance.set(Some(result));
-                                                    issuance_consent.set(false);
-                                                    issuance_notice.set(Some("Credential offer refused; ephemeral protocol secrets were discarded.".to_owned()));
-                                                }
-                                                Err(error) => issuance_notice.set(Some(credential_issuance_message(error))),
+                                            move |_| {
+                                                let service = service.clone();
+                                                let profile_id = profile_id.clone();
+                                                let issuance_id = issuance_id.clone();
+                                                issuance_busy.set(true);
+                                                issuance_notice.set(None);
+                                                spawn(async move {
+                                                    let result = run_ui_blocking(move || {
+                                                        service.execute(RefuseCredentialIssuanceCommand {
+                                                            profile_id,
+                                                            issuance_id,
+                                                        })
+                                                    })
+                                                    .await;
+                                                    match result {
+                                                        Ok(Ok(result)) => {
+                                                            prepared_issuance.set(Some(result));
+                                                            issuance_consent.set(false);
+                                                            issuance_notice.set(Some("Credential offer refused; ephemeral protocol secrets were discarded.".to_owned()));
+                                                        }
+                                                        Ok(Err(error)) => issuance_notice.set(Some(credential_issuance_message(error))),
+                                                        Err(error) => issuance_notice.set(Some(error.to_string())),
+                                                    }
+                                                    issuance_busy.set(false);
+                                                });
                                             }
                                         },
                                         "Refuse offer"
@@ -6999,14 +7484,19 @@ fn CredentialsPage(
                             let profile_id = receive_profile.clone();
                             let mut next = retained.clone();
                             spawn(async move {
-                                match service.execute(CredentialProfileQuery { profile_id }).await {
-                                    Ok(credential) => {
+                                match run_ui_future(async move {
+                                    service.execute(CredentialProfileQuery { profile_id }).await
+                                })
+                                .await
+                                {
+                                    Ok(Ok(credential)) => {
                                         next.retain(|existing| existing.id != credential.id);
                                         next.push(credential);
                                         next.sort_by(|left, right| left.id.cmp(&right.id));
                                         state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
                                     }
-                                    Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)) }),
+                                    Ok(Err(error)) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)) }),
+                                    Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(error.to_string()) }),
                                 }
                             });
                         },
@@ -7067,7 +7557,17 @@ fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     let credential_protocol_ready = services.standalone_credential_offer().is_some();
     let mut account_state = use_signal(|| AccountPageState::Loading);
     let profile_id = active_profile.id.clone();
-    use_effect(move || account_state.set(load_account_page(&services, &profile_id)));
+    use_effect(move || {
+        let services = services.clone();
+        let profile_id = profile_id.clone();
+        spawn(async move {
+            account_state.set(
+                run_ui_blocking(move || load_account_page(&services, &profile_id))
+                    .await
+                    .unwrap_or_else(|error| AccountPageState::Failed(error.to_string())),
+            );
+        });
+    });
 
     let (protection_state, protection_ready, midnight_state, midnight_ready, completion_state) =
         match account_state.read().clone() {
@@ -7146,6 +7646,7 @@ fn CapabilityStatus(name: &'static str, state: String, ready: bool) -> Element {
 #[component]
 fn SettingsPage(
     active_profile: WalletProfileView,
+    lifecycle_wake: Signal<u64>,
     on_open_profile: EventHandler<MouseEvent>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -7159,6 +7660,7 @@ fn SettingsPage(
     let profile_id = active_profile.id.clone();
     let services_for_load = services.clone();
     use_effect(move || {
+        let _lifecycle_generation = lifecycle_wake();
         let services = services_for_load.clone();
         let profile_id = profile_id.clone();
         spawn(async move {
@@ -7621,10 +8123,15 @@ fn ProfilePage(
     let services = consume_context::<WalletUiServices>();
     let mut profiles = use_signal(|| ProfileListState::Loading);
     use_effect(move || {
-        profiles.set(services.list_wallet_profiles().execute().map_or_else(
-            |error| ProfileListState::Failed(error.to_string()),
-            ProfileListState::Ready,
-        ));
+        let service = services.list_wallet_profiles();
+        spawn(async move {
+            let result = run_ui_blocking(move || service.execute()).await;
+            profiles.set(match result {
+                Ok(Ok(profiles)) => ProfileListState::Ready(profiles),
+                Ok(Err(error)) => ProfileListState::Failed(error.to_string()),
+                Err(error) => ProfileListState::Failed(error.to_string()),
+            });
+        });
     });
 
     let content = match profiles.read().clone() {
@@ -7689,6 +8196,18 @@ mod tests {
         assert_ne!(worker, caller);
         assert_eq!(worker_name.as_deref(), Some("oxid-ui-blocking"));
         assert_eq!(UI_BLOCKING_TASK_STACK_BYTES, 8 * 1024 * 1024);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn asynchronous_wallet_operations_are_polled_off_the_caller_thread() {
+        let caller = std::thread::current().id();
+
+        let worker =
+            futures::executor::block_on(run_ui_future(async move { std::thread::current().id() }))
+                .expect("worker future");
+
+        assert_ne!(worker, caller);
     }
 
     #[test]
@@ -7769,6 +8288,13 @@ mod tests {
         assert!(account.addresses.is_empty());
         assert_eq!(account.sync.state, "unavailable");
         assert!(!has_protected_account(&account));
+    }
+
+    #[test]
+    fn initial_account_read_never_enters_locked_custody() {
+        assert!(!account_read_is_noninteractive("Uninitialized"));
+        assert!(!account_read_is_noninteractive("Locked"));
+        assert!(account_read_is_noninteractive("Unlocked"));
     }
 
     #[test]

@@ -496,13 +496,25 @@ Dioxus 0.7.10 iOS multiple-framework embedding limitation.
 ADR-0077 retains the prototype's deliberate heavy-operation worker separation
 without migrating its aggregate `WorkMsg` wallet facade, thread-local outcome
 router, seed/controller-secret messages, or UI coupling. Native Oxid Dioxus
-dispatches the high-risk profile/account persistence, custody, derivation,
-transfer and Passport Vault authorization, managed-DID, and backup operations
-to a private named 8 MiB thread and receives only the existing typed application
-result over a one-shot. Dioxus signals remain on the UI executor, busy state
+dispatches every wallet/SSI use-case path that can reach persistence, custody,
+cryptography, transport, or non-trivial protocol work to a private named 8 MiB
+thread and receives only the existing typed application result over a one-shot.
+This includes polling complete async application futures off the UI executor,
+because their bodies can contain synchronous encrypted-repository or crypto
+work around awaits. Dioxus signals remain on the UI executor, busy state
 prevents duplicate dispatch, and worker failures expose no adapter or payload
-detail. The remaining synchronous UI call-site classification is tracked by
-issue #42.
+detail. Issue #42's audit is complete: only strict bounded identity parsing,
+already-published DUST/Zswap snapshots, retained draft/status reads, and
+non-waiting cancellation signals remain direct under explicit port contracts.
+
+ADR-0071's mobile custody path also keeps initial public account rendering out
+of protected derivation while the vault is uninitialized or locked, so an app
+launch cannot summon a device-credential prompt without explicit user intent.
+Settings re-reads native status after the OS authorization activity resumes.
+The Android conformance harness proves a distinct process, explicit restart
+unlock, unchanged opaque sealed record, current schema-2 account association,
+and the same protected public address after derivation has actually completed;
+fixture addresses and process-local sync state are not accepted as that proof.
 
 The prototype claim composer also derives a holder scalar from the public
 credential claim root and fixes the presentation nonce to `17`; Oxid requires

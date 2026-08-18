@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3, 7, 12–13, and 16–18
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, especially `wallet-core/secret_storage` and `unlock`
 - Tracking: issues #2, #29, and #30
-- Implementation state: the Rust sealed-vault adapter, iOS Keychain and Android Keystore backends, normal mobile fail-closed composition, opt-in standalone native-custody composition, adapter tests, iOS capability/fail-closed smoke, and Android credential/restart smoke are implemented; physical-device recovery, lifecycle/resource evidence, mobile Compact proving, and production release review remain open
+- Implementation state: the Rust sealed-vault adapter, iOS Keychain and Android Keystore backends, normal mobile fail-closed composition, opt-in standalone native-custody composition, adapter tests, iOS capability/fail-closed smoke, and Android explicit-authorization/distinct-process/stable-root smoke are implemented; physical-device recovery, lifecycle/resource evidence, mobile Compact proving, and production release review remain open
 
 ## Context
 
@@ -62,6 +62,14 @@ label, IV, and ciphertext in an atomic digest-named file below
 custody-domain string as AEAD additional data. Initialization and unlock
 require the system device-credential confirmation surface.
 
+User presence is entered only from an explicit initialize, unlock, or protected
+operation intent. Initial account rendering reads protection status first and,
+when protection is uninitialized or locked, renders a public unavailable
+placeholder without asking the account adapter to re-derive protected state.
+Returning from a native authorization surface makes Settings re-read the
+authoritative adapter status; page-local task completion is not the source of
+truth across a mobile pause/resume transition.
+
 Normal iOS and Android composition selects this adapter. Missing native
 packaging, missing secure device lock, inconsistent key/ciphertext state,
 denied authorization, malformed vault data, and expired sessions all fail
@@ -85,6 +93,8 @@ whose simulated security capability is absent.
 - A 30-second session is a bounded usability policy, not proof of continuous
   biometric presence. Every operation after expiry re-enters native
   authorization before loading protected bytes.
+- Background rendering and public account-status reads must never cause a
+  credential prompt. Only an explicit user action may enter native custody.
 - iOS Simulator may report the passcode-bound Keychain policy unavailable.
   That is a valid fail-closed result, not permission to substitute development
   custody inside normal composition.
@@ -103,8 +113,9 @@ whose simulated security capability is absent.
   domain crates do not import Keychain, Keystore, Swift, Kotlin, or storage
   formats.
 - Android emulator evidence covers a real system credential prompt, opaque
-  no-backup ciphertext, process restart, reauthorization, and stable protected
-  account derivation. iOS simulator evidence covers native capability
+  no-backup ciphertext, a proven distinct process restart, explicit
+  reauthorization, and stable protected account derivation from an unchanged
+  sealed record. iOS simulator evidence covers native capability
   detection and fail-closed behavior; physical-device evidence remains a
   release gate.
 - This removes native wrapping as the blocker for mobile Compact proving, but

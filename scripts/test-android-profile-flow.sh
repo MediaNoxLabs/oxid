@@ -87,6 +87,20 @@ run_webview_wallet_flow() {
   "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null
 }
 
+wait_for_main_activity() {
+  local resumed=""
+  for _attempt in $(seq 1 50); do
+    resumed="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null \
+      | rg 'topResumedActivity|ResumedActivity' || true)"
+    if rg -q 'io\.medianox\.oxid/dev\.dioxus\.main\.MainActivity' <<<"$resumed"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "Oxid MainActivity did not resume after the native share chooser closed." >&2
+  return 1
+}
+
 run_webview_wallet_flow flow
 
 chooser_state="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null || true)"
@@ -95,6 +109,7 @@ if ! rg -q 'ResolverActivity|ChooserActivity|IntentResolverActivity' <<<"$choose
   exit 1
 fi
 "$adb_command" -s "$device" shell input keyevent BACK >/dev/null
+wait_for_main_activity
 
 credential_offer_uri='openid-credential-offer://?credential_offer=%7B%7D'
 "$adb_command" -s "$device" shell am start -W \
@@ -123,10 +138,17 @@ for _attempt in $(seq 1 15); do
 done
 
 if ! jq -e '
-  .schemaVersion == 1
+  .schemaVersion == 2
   and (.profiles | length) == 1
   and .profiles[0].displayName == "My wallet"
   and .profiles[0].id == .activeProfileId
+  and (.accountAssociations | length) == 1
+  and .accountAssociations[0].profileId == .activeProfileId
+  and .accountAssociations[0].selectedNetworkId == "undeployed"
+  and (.accountAssociations[0].accounts | length) == 1
+  and .accountAssociations[0].accounts[0].networkId == "undeployed"
+  and .accountAssociations[0].accounts[0].accountIndex == 0
+  and .accountAssociations[0].accounts[0].addressIndex == 0
 ' >/dev/null <<<"$profile_document"; then
   echo "Android profile creation did not produce the expected durable public metadata." >&2
   exit 1

@@ -59,13 +59,24 @@ OXID_MOBILE_CUSTODY=native OXID_ANDROID_DEVICE="$device" \
   -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
 sleep 2
 
+credential_prompt_focused() {
+  local focused
+  focused="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null \
+    | rg 'topResumedActivity|ResumedActivity' || true)"
+  rg -q 'ConfirmDeviceCredential|ConfirmLockPassword|ConfirmLockPattern|Keyguard' <<<"$focused"
+}
+
 authorize_prompt() {
   for _attempt in $(seq 1 90); do
-    focused="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null \
-      | rg 'topResumedActivity|ResumedActivity' || true)"
-    if rg -q 'ConfirmDeviceCredential|ConfirmLockPassword|ConfirmLockPattern|Keyguard' <<<"$focused"; then
+    if credential_prompt_focused; then
       echo "Android device-credential prompt observed on $device." >&2
       "$adb_command" -s "$device" shell input text "$test_pin" >/dev/null
+      for _settle_attempt in $(seq 1 10); do
+        if ! credential_prompt_focused; then
+          return 0
+        fi
+        sleep 0.2
+      done
       "$adb_command" -s "$device" shell input keyevent ENTER >/dev/null
       return 0
     fi
@@ -154,25 +165,63 @@ if ! jq -e '.version == 1 and (.protection == "operating_system" or .protection 
   exit 1
 fi
 first_result="$(run_webview_mode native-custody)"
+post_activation_record="$($adb_command -s "$device" exec-out run-as io.medianox.oxid \
+  cat "no_backup/oxid-custody-v1/$sealed_name" 2>/dev/null || true)"
+post_activation_record_hash="$(printf '%s' "$post_activation_record" | shasum -a 256 | awk '{print $1}')"
 
+old_process_id="$($adb_command -s "$device" shell pidof io.medianox.oxid | tr -d '\r')"
 "$adb_command" -s "$device" shell am force-stop io.medianox.oxid
+for _attempt in $(seq 1 30); do
+  if [ -z "$($adb_command -s "$device" shell pidof io.medianox.oxid | tr -d '\r')" ]; then
+    break
+  fi
+  sleep 1
+done
+if [ -n "$($adb_command -s "$device" shell pidof io.medianox.oxid | tr -d '\r')" ]; then
+  echo "Android did not stop the native custody process before the restart check." >&2
+  exit 1
+fi
 "$adb_command" -s "$device" shell am start \
   -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
 sleep 2
+new_process_id="$($adb_command -s "$device" shell pidof io.medianox.oxid | tr -d '\r')"
+if [ -z "$old_process_id" ] || [ -z "$new_process_id" ] || [ "$old_process_id" = "$new_process_id" ]; then
+  echo "Android did not establish a distinct native custody process after restart." >&2
+  exit 1
+fi
 authorize_prompt &
 second_authorizer=$!
 second_authorization="$(run_webview_mode native-authorize)"
 wait "$second_authorizer"
-if [ "$(jq -r '.securityAction' <<<"$second_authorization")" != "Unlock wallet" ]; then
-  echo "Android native custody did not require restart reauthorization." >&2
+second_security_action="$(jq -r '.securityAction // empty' <<<"$second_authorization")"
+if [ "$second_security_action" != "Unlock wallet" ]; then
+  case "$second_security_action" in
+    "") reported_action="missing" ;;
+    "Initialize wallet") reported_action="initialize" ;;
+    "already unlocked") reported_action="already-unlocked" ;;
+    *) reported_action="unexpected" ;;
+  esac
+  echo "Android native custody did not require restart reauthorization (action: $reported_action)." >&2
   exit 1
 fi
 second_result="$(run_webview_mode native-restored)"
+restored_profile_document="$($adb_command -s "$device" shell run-as io.medianox.oxid \
+  cat files/oxid/wallet-profiles.json 2>/dev/null || true)"
+restored_profile_id="$(jq -r '.activeProfileId // empty' <<<"$restored_profile_document")"
+restored_record="$($adb_command -s "$device" exec-out run-as io.medianox.oxid \
+  cat "no_backup/oxid-custody-v1/$sealed_name" 2>/dev/null || true)"
+restored_record_hash="$(printf '%s' "$restored_record" | shasum -a 256 | awk '{print $1}')"
 
 first_address="$(jq -r '.receiveAddress' <<<"$first_result")"
 second_address="$(jq -r '.receiveAddress' <<<"$second_result")"
 if [ -z "$first_address" ] || [ "$first_address" != "$second_address" ]; then
-  echo "Android native custody did not restore the same protected Midnight root." >&2
+  profile_continuity=false
+  sealed_record_continuity=false
+  address_continuity=false
+  [ -n "$active_profile_id" ] && [ "$active_profile_id" = "$restored_profile_id" ] && profile_continuity=true
+  [ -n "$post_activation_record_hash" ] && [ "$post_activation_record_hash" = "$restored_record_hash" ] && sealed_record_continuity=true
+  [ -n "$first_address" ] && [ "$first_address" = "$second_address" ] && address_continuity=true
+  echo "Android native custody did not restore the same protected Midnight root (profile continuity: $profile_continuity; sealed record continuity: $sealed_record_continuity; address continuity: $address_continuity)." >&2
   exit 1
 fi
 
