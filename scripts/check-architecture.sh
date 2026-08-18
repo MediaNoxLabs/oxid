@@ -3,21 +3,37 @@
 
 set -euo pipefail
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "jq is required; run this check from 'nix develop'." >&2
-  exit 1
-fi
+for required_tool in jq rg; do
+  if ! command -v "$required_tool" >/dev/null 2>&1; then
+    echo "$required_tool is required; run this check from 'nix develop'." >&2
+    exit 1
+  fi
+done
 
 metadata_file="$(mktemp)"
 trap 'rm -f "$metadata_file"' EXIT
 cargo metadata --no-deps --format-version 1 >"$metadata_file"
 
+# Every workspace member must appear in exactly these calls; the default-deny
+# sweep at the end of this script fails when a member has no allowlist entry.
+covered_packages=()
+
 check_workspace_dependencies() {
+  # --all-kinds also constrains dev-dependencies. Core crates use it so a
+  # test-only dependency cannot quietly point a domain or application crate
+  # at an adapter.
+  local include_dev=false
+  if [ "$1" = "--all-kinds" ]; then
+    include_dev=true
+    shift
+  fi
   local package="$1"
   shift
   local allowed=("$@")
   local dependency
   local permitted
+
+  covered_packages+=("$package")
 
   if ! jq -e --arg package "$package" '.packages[] | select(.name == $package)' "$metadata_file" >/dev/null; then
     echo "Architecture check is missing workspace package '$package'." >&2
@@ -38,11 +54,11 @@ check_workspace_dependencies() {
       exit 1
     fi
   done < <(
-    jq -r --arg package "$package" '
+    jq -r --arg package "$package" --argjson include_dev "$include_dev" '
       .packages[]
       | select(.name == $package)
       | .dependencies[]
-      | select(.kind != "dev")
+      | select($include_dev or .kind != "dev")
       | select(.path != null)
       | .name
     ' "$metadata_file" | sort -u
@@ -69,25 +85,25 @@ check_no_external_dependencies() {
   fi
 }
 
-check_workspace_dependencies oxid-foundation
-check_workspace_dependencies oxid-wallet-domain oxid-foundation
-check_workspace_dependencies oxid-identity-domain oxid-foundation
-check_workspace_dependencies oxid-credential-domain oxid-foundation
-check_workspace_dependencies oxid-protocol-domain oxid-foundation
-check_workspace_dependencies oxid-platform-ports oxid-foundation
-check_workspace_dependencies oxid-presentation-domain oxid-foundation
-check_workspace_dependencies oxid-passport-vault-domain
-check_workspace_dependencies oxid-wallet-application \
+check_workspace_dependencies --all-kinds oxid-foundation
+check_workspace_dependencies --all-kinds oxid-wallet-domain oxid-foundation
+check_workspace_dependencies --all-kinds oxid-identity-domain oxid-foundation
+check_workspace_dependencies --all-kinds oxid-credential-domain oxid-foundation
+check_workspace_dependencies --all-kinds oxid-protocol-domain oxid-foundation
+check_workspace_dependencies --all-kinds oxid-platform-ports oxid-foundation
+check_workspace_dependencies --all-kinds oxid-presentation-domain oxid-foundation
+check_workspace_dependencies --all-kinds oxid-passport-vault-domain
+check_workspace_dependencies --all-kinds oxid-wallet-application \
   oxid-foundation oxid-platform-ports oxid-wallet-domain
-check_workspace_dependencies oxid-identity-application \
+check_workspace_dependencies --all-kinds oxid-identity-application \
   oxid-foundation oxid-identity-domain
-check_workspace_dependencies oxid-credential-application \
+check_workspace_dependencies --all-kinds oxid-credential-application \
   oxid-credential-domain oxid-foundation
-check_workspace_dependencies oxid-protocol-application \
+check_workspace_dependencies --all-kinds oxid-protocol-application \
   oxid-foundation oxid-protocol-domain
-check_workspace_dependencies oxid-presentation-application \
+check_workspace_dependencies --all-kinds oxid-presentation-application \
   oxid-foundation oxid-presentation-domain
-check_workspace_dependencies oxid-passport-vault-application \
+check_workspace_dependencies --all-kinds oxid-passport-vault-application \
   oxid-foundation oxid-passport-vault-domain oxid-platform-ports
 check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-credential-application oxid-credential-domain oxid-foundation \
@@ -171,12 +187,28 @@ check_workspace_dependencies oxid-headless \
   oxid-presentation-application oxid-protocol-application \
   oxid-wallet-application oxid-wallet-domain
 
-unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' || true)"
-if [ "$unsafe_sources" != "crates/adapters/storage-json/src/lib.rs" ]; then
-  echo "Unsafe Rust is permitted only in the reviewed Android profile-path boundary." >&2
-  if [ -n "$unsafe_sources" ]; then
-    echo "$unsafe_sources" >&2
+# Default-deny: a workspace member without an allowlist entry above is an
+# error, so newly added crates cannot bypass the dependency rules by omission.
+while IFS= read -r member; do
+  member_covered=false
+  for candidate in "${covered_packages[@]}"; do
+    if [ "$member" = "$candidate" ]; then
+      member_covered=true
+      break
+    fi
+  done
+  if ! $member_covered; then
+    echo "Workspace package '$member' has no architecture allowlist entry; add a check_workspace_dependencies call for it." >&2
+    exit 1
   fi
+done < <(jq -r '.packages[].name' "$metadata_file" | sort -u)
+
+# Unsafe Rust allowlist: an empty match set is success (the last unsafe block
+# was removed); anything beyond the reviewed boundary is a failure.
+unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' || true)"
+if [ -n "$unsafe_sources" ] && [ "$unsafe_sources" != "crates/adapters/storage-json/src/lib.rs" ]; then
+  echo "Unsafe Rust is permitted only in the reviewed Android profile-path boundary." >&2
+  echo "$unsafe_sources" >&2
   exit 1
 fi
 
