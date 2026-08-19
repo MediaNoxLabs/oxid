@@ -228,7 +228,9 @@ fn spawn_indexer_fixture(
                 expected_transaction_id
             );
             assert!(subscribe["payload"]["query"].as_str().is_some_and(|query| {
-                query.contains("highestTransactionId") && query.contains("fee")
+                query.contains("highestTransactionId")
+                    && query.contains("fees")
+                    && query.contains("paidFees")
             }));
 
             let target = if incremental { 3 } else { 2 };
@@ -455,7 +457,7 @@ fn transaction_event(
                 },
                 "__typename": "RegularTransaction",
                 "transactionResult": { "status": status },
-                "fee": fee
+                "fees": { "paidFees": fee }
             },
             "createdUtxos": created,
             "spentUtxos": spent
