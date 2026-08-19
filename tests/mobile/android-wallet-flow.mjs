@@ -4,8 +4,8 @@ const endpoint = process.argv[2];
 const mode = process.argv[3] ?? "flow";
 const backupRecoverySecret = "oxidandroidbackup2026";
 
-if (!endpoint || !["flow", "live-account", "prepare-live-account-touch", "live-account-after-touch", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "developer", "demo", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
-  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|live-account|prepare-live-account-touch|live-account-after-touch|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|developer|demo|native-authorize|native-custody|native-restored>");
+if (!endpoint || !["flow", "live-account", "prepare-live-account-touch", "live-account-after-touch", "live-account-restarted", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "developer", "demo", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
+  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|live-account|prepare-live-account-touch|live-account-after-touch|live-account-restarted|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|developer|demo|native-authorize|native-custody|native-restored>");
 }
 
 const socket = new WebSocket(endpoint);
@@ -470,6 +470,21 @@ try {
     }))()`);
     if (!result.live || !result.synchronized || !result.scannerNoticeAbsent) {
       throw new Error(`Android physical activation tap did not reach the wallet: ${JSON.stringify(result)}`);
+    }
+    process.stdout.write(`${JSON.stringify({ mode, ...result })}\n`);
+  } else if (mode === "live-account-restarted") {
+    await openWallet();
+    await waitFor(
+      `Boolean(document.querySelector('button[aria-label="Activate protected Midnight account"]'))`,
+      "honest process-local account reactivation",
+    );
+    const result = await evaluate(`(() => ({
+      notConnected: document.querySelector('.status-pill')?.textContent.trim() === 'Not connected',
+      accountAddressWithheld: !document.querySelector('button[aria-label="Copy Unshielded receive address"]'),
+      failedClosed: !document.body.innerText.includes('Account state could not be loaded safely.'),
+    }))()`);
+    if (!result.notConnected || !result.accountAddressWithheld || !result.failedClosed) {
+      throw new Error(`Android restarted development custody was not truthful: ${JSON.stringify(result)}`);
     }
     process.stdout.write(`${JSON.stringify({ mode, ...result })}\n`);
   } else if (mode === "live-account") {
