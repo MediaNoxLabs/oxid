@@ -2852,18 +2852,16 @@ select:focus-visible {
 .bottom-nav__scan {
   position: relative;
   display: flex;
-  width: 4.35rem;
-  min-height: 4.35rem;
-  align-self: end;
-  justify-self: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 3.6rem;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: var(--space-1);
-  margin-top: calc(-1 * var(--space-4));
-  padding: var(--space-2);
+  padding: var(--space-1);
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-control);
   background: linear-gradient(135deg, var(--positive), var(--accent));
   box-shadow: 0 0.75rem 1.8rem color-mix(in srgb, var(--accent) 32%, transparent);
   color: var(--on-accent);

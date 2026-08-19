@@ -11266,6 +11266,19 @@ mod tests {
         assert_eq!(labels, ["Home", "Wallet", "Documents", "Activity"]);
     }
 
+    #[test]
+    fn fixed_scan_control_stays_inside_the_navigation_bar_hit_region() {
+        let rule = BASE_STYLES
+            .split(".bottom-nav__scan {")
+            .nth(1)
+            .and_then(|styles| styles.split('}').next())
+            .expect("scan navigation rule");
+
+        assert!(rule.contains("width: 100%;"));
+        assert!(rule.contains("min-height: 3.6rem;"));
+        assert!(!rule.contains("margin-top"));
+    }
+
     #[cfg(feature = "ui-profile-dev")]
     #[test]
     fn developer_capabilities_are_a_bounded_secondary_route() {
