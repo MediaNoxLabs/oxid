@@ -2073,9 +2073,13 @@ to silence the shell probe.
   persistent live/standalone composition must attach the same
   `JsonWalletProfileRepository` instance to the Midnight adapter; otherwise
   schema-v3 public account coordinates disappear on restart. The exact
-  `indexer-standalone:4.0.0` image rejects the newer singular `fee` query field,
-  so keep the reviewed v4-compatible `fees { paidFees }` shape unless a pinned
-  image/schema upgrade is made atomically. Development custody remains
+  `indexer-standalone:4.0.0` image rejects the newer singular `fee` query field.
+  The prototype's
+  `mobile-bench/wallet-core/queries/midnight-indexer/unshielded_transactions.subscription.graphql`
+  deliberately requests neither fee field; Oxid's richer transaction history
+  therefore uses the image-compatible `fees { paidFees }` shape. Keep that
+  compatibility choice unless a pinned image/schema upgrade is made atomically.
+  Development custody remains
   process-local: after process death, retain the public association but report
   uninitialized protection and withhold the former addresses. This private
   tailnet harness is not verified public App Link or production-discovery

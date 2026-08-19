@@ -558,10 +558,13 @@ production switch. The physical Android tailnet build derives a protected
 profile account, synchronizes it through the laptop-hosted
 `indexer-standalone:4.0.0`, and persists only its public network/derivation
 coordinates through the same profile repository. A process restart truthfully
-withholds the address because development custody is process-local. The live
-image rejected the newer singular `fee` selection, so Oxid uses the reviewed
-v4-compatible `fees { paidFees }` response shape. A separate compile-time
-localhost standalone simulator profile remains the next transport-parity slice.
+withholds the address because development custody is process-local. The
+prototype's exact unshielded subscription requests neither fee field and
+therefore avoids the schema discrepancy. Oxid's richer history needs the value;
+the live image rejected the singular `fee` selection despite the reviewed
+schema advertising it, so Oxid uses the image-proven `fees { paidFees }`
+response shape. A separate compile-time localhost standalone simulator profile
+remains the next transport-parity slice.
 
 ADR-0084 begins the accepted product-UX rollout without copying the
 prototype's ad-hoc stylesheet values. The migrated Dioxus surface now separates

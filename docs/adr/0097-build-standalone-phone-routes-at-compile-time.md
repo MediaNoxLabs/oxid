@@ -69,10 +69,14 @@ generated local environment file in place.
   selected network and non-secret derivation coordinates therefore survive a
   process restart; process-local development custody still returns honestly as
   uninitialized and withholds the former account addresses after that restart.
-- The pinned `indexer-standalone:4.0.0` image exposes regular-transaction fees
-  through the compatible `fees { paidFees }` shape. Oxid uses that shape for
-  account history while retaining its existing response, event, and timeout
-  bounds.
+- The prototype's reviewed
+  `wallet-core/queries/midnight-indexer/unshielded_transactions.subscription.graphql`
+  does not request transaction fees, so its working sync flow does not exercise
+  the schema discrepancy. Oxid's richer account-history projection needs that
+  value. Although the reviewed prototype schema advertises both `fee` and the
+  deprecated `fees`, the pinned `indexer-standalone:4.0.0` image rejects the
+  singular field and accepts `fees { paidFees }`. Oxid uses that proven shape
+  while retaining its existing response, event, and timeout bounds.
 - The harness may temporarily configure local Tailscale Serve and run three
   Docker containers. It refuses to overwrite an unrelated Serve configuration
   and supplies an explicit cleanup command.
