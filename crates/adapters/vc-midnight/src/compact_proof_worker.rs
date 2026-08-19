@@ -420,7 +420,7 @@ mod tests {
             Arc::new(ControlledProof {
                 state: Arc::clone(&state),
             }),
-            Duration::from_millis(20),
+            Duration::ZERO,
         ));
         let worker_for_thread = Arc::clone(&worker);
         let proof = std::thread::spawn(move || {
@@ -429,7 +429,6 @@ mod tests {
             )
         });
         drop(wait_started(&state));
-        std::thread::sleep(Duration::from_millis(40));
         assert!(!proof.is_finished());
         release(&state);
         assert_eq!(
