@@ -5575,6 +5575,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-adapter-deployment-profile"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "hex",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "oxid-adapter-diagnostics-memory"
 version = "0.1.0"
 dependencies = [
@@ -5933,6 +5945,7 @@ dependencies = [
  "oxid-adapter-backup-complete",
  "oxid-adapter-backup-document-mobile",
  "oxid-adapter-backup-portable",
+ "oxid-adapter-deployment-profile",
  "oxid-adapter-diagnostics-memory",
  "oxid-adapter-did-midnight",
  "oxid-adapter-identity-ingress",
@@ -5958,6 +5971,7 @@ dependencies = [
  "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",
+ "zeroize",
 ]
 
 [[package]]

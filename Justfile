@@ -38,6 +38,9 @@ standalone-recovery-smoke:
 standalone-up:
     ./scripts/standalone-up.sh local
 
+standalone-funded-finality:
+    ./scripts/test-standalone-funded-finality.sh
+
 standalone-phone-up:
     ./scripts/standalone-up.sh phone
 

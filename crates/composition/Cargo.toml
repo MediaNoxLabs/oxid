@@ -23,6 +23,7 @@ oxid-adapter-backup-portable.workspace = true
 oxid-adapter-did-midnight.workspace = true
 oxid-adapter-backup-document-mobile.workspace = true
 oxid-adapter-diagnostics-memory.workspace = true
+oxid-adapter-deployment-profile.workspace = true
 oxid-adapter-identity-ingress.workspace = true
 oxid-adapter-storage-credential-json.workspace = true
 oxid-adapter-midnight.workspace = true
@@ -55,6 +56,7 @@ midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-zswap.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

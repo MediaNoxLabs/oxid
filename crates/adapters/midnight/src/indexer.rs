@@ -55,7 +55,11 @@ use super::{
 const INDEXER_QUERY: &str = include_str!("../queries/unshielded_transactions.graphql");
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const ACK_TIMEOUT: Duration = Duration::from_secs(15);
-const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+// The indexer can briefly hold its database pool while it applies the final
+// replayed blocks. Five seconds was shorter than an observed healthy local
+// pool acquisition (4.5s), so allow one bounded 15-second event interval while
+// retaining the five-minute whole-snapshot deadline.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MAX_ENDPOINT_CHARACTERS: usize = 2_048;
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;

@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_adapter_backup_complete::InMemoryRecoveryJournal;
@@ -12,6 +12,8 @@ use oxid_adapter_backup_complete::{FileRecoveryJournal, UnavailableRecoveryJourn
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_backup_document_mobile::NativePortableWalletBackupDocuments;
 use oxid_adapter_backup_portable::PortableCustodyVaultPort;
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_adapter_deployment_profile::AuthenticatedDeploymentProfile;
 use oxid_adapter_diagnostics_memory::InMemoryDiagnosticStore;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_did_midnight::{
@@ -28,7 +30,8 @@ use oxid_adapter_midnight::{
     MidnightIndexerConfigError, MidnightLocalProvingConfig, MidnightLocalProvingConfigError,
     MidnightShieldedCheckpointConfig, MidnightShieldedCheckpointConfigError,
     MidnightStandaloneConfig, MidnightStandaloneConfigError, MidnightSubmissionJournalConfig,
-    MidnightSubmissionJournalConfigError, protected_live_midnight_wallet,
+    MidnightSubmissionJournalConfigError, authenticate_midnight_chain_identity,
+    configuration_placeholder_address, protected_live_midnight_wallet,
     protected_live_midnight_wallet_with_checkpoint_options,
     protected_live_midnight_wallet_with_checkpoints,
     protected_simulated_midnight_wallet_with_submission_journal,
@@ -967,6 +970,150 @@ fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort> {
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort> {
     Arc::new(InMemoryRecoveryJournal::default())
+}
+
+/// A signed deployment profile after the configured node has also proven the
+/// exact genesis hash bound by that profile.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct AuthenticatedProductionDeployment {
+    profile: AuthenticatedDeploymentProfile,
+    midnight: MidnightStandaloneConfig,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl fmt::Debug for AuthenticatedProductionDeployment {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthenticatedProductionDeployment")
+            .field("profile", &self.profile)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AuthenticatedProductionDeployment {
+    #[must_use]
+    pub const fn profile(&self) -> &AuthenticatedDeploymentProfile {
+        &self.profile
+    }
+}
+
+/// Payload-free failures from the production deployment composition gate.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProductionDeploymentCompositionError {
+    InvalidMidnightProfile,
+    ChainIdentityUnavailable,
+    ChainIdentityMismatch,
+    InvalidSsiProfile,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl fmt::Display for ProductionDeploymentCompositionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidMidnightProfile => "authenticated Midnight deployment profile is invalid",
+            Self::ChainIdentityUnavailable => {
+                "authenticated Midnight chain identity is unavailable"
+            }
+            Self::ChainIdentityMismatch => {
+                "authenticated Midnight chain identity does not match the node"
+            }
+            Self::InvalidSsiProfile => "authenticated SSI deployment profile is invalid",
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::error::Error for ProductionDeploymentCompositionError {}
+
+/// Binds a signed deployment profile to the genesis hash returned by its
+/// reviewed node route. The caller cannot provide alternate endpoints after
+/// this asynchronous gate succeeds.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn authenticate_production_deployment(
+    profile: AuthenticatedDeploymentProfile,
+) -> Result<AuthenticatedProductionDeployment, ProductionDeploymentCompositionError> {
+    let midnight = profile.midnight();
+    let placeholder = configuration_placeholder_address(midnight.network_id())
+        .map_err(|_| ProductionDeploymentCompositionError::InvalidMidnightProfile)?;
+    let config = MidnightStandaloneConfig::new(
+        midnight.network_id(),
+        midnight.indexer_websocket_url(),
+        midnight.indexer_http_url(),
+        midnight.node_websocket_url(),
+        midnight.proof_server_url(),
+        placeholder.value(),
+    )
+    .map_err(|_| ProductionDeploymentCompositionError::InvalidMidnightProfile)?;
+    authenticate_midnight_chain_identity(midnight.node_websocket_url(), midnight.genesis_hash())
+        .await
+        .map_err(|error| match error {
+            oxid_adapter_midnight::MidnightChainIdentityError::GenesisMismatch => {
+                ProductionDeploymentCompositionError::ChainIdentityMismatch
+            }
+            oxid_adapter_midnight::MidnightChainIdentityError::InvalidNodeEndpoint
+            | oxid_adapter_midnight::MidnightChainIdentityError::NodeUnavailable => {
+                ProductionDeploymentCompositionError::ChainIdentityUnavailable
+            }
+        })?;
+    Ok(AuthenticatedProductionDeployment {
+        profile,
+        midnight: config,
+    })
+}
+
+/// Composes the live Midnight path only after profile-signature and node
+/// genesis authentication. The default [`compose`] function remains
+/// fail-closed and never calls this opt-in constructor.
+///
+/// The authenticated DID resolver is enabled from the same signed profile.
+/// Issuer and verifier HTTP protocol adapters remain unavailable until their
+/// independent metadata/transport implementation is reviewed.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn compose_authenticated_production(
+    deployment: AuthenticatedProductionDeployment,
+) -> Result<ApplicationServices, ProductionDeploymentCompositionError> {
+    let did_resolver = HttpDidResolverConfig::new(deployment.profile.ssi().did_resolver_url())
+        .map(HttpDidResolver::new)
+        .map_err(|_| ProductionDeploymentCompositionError::InvalidSsiProfile)?;
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let security = {
+        let clock = Arc::new(SystemClock);
+        let random = Arc::new(OsRandom);
+        Arc::new(MobileWalletSecurity::native(clock, random))
+    };
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let security = Arc::new(UnavailableWalletSecurity);
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let clock = Arc::new(SystemClock);
+    let midnight = Arc::new(
+        protected_standalone_midnight_wallet(
+            deployment.midnight,
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        )
+        .with_profile_association_repository(profiles.clone()),
+    );
+    Ok(compose_with_identity_adapters(
+        profiles,
+        security,
+        midnight,
+        IdentityAdapters {
+            did_repository: Arc::new(UnavailableDidRecordRepository),
+            did_resolver: Arc::new(did_resolver),
+            did_lifecycle: Arc::new(UnavailableDidLifecycle),
+            did_jubjub_challenge_signing: Arc::new(UnavailableDidLifecycle),
+            credential_repository: Arc::new(UnavailableCredentialRepository),
+            credential_inbox: Arc::new(UnavailableCredentialInbox),
+            credential_verifier: Arc::new(UnavailableCredentialVerifier),
+            credential_disclosure: Arc::new(UnavailableCredentialDisclosure),
+            credential_issuance: CredentialIssuanceComposition::Unavailable,
+            self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
+            credential_presentation: CredentialPresentationComposition::Unavailable,
+        },
+        PassportVaultRepositoryComposition::unavailable(),
+    ))
 }
 
 /// Wires the application with persistent public-profile metadata storage.
@@ -3070,6 +3217,9 @@ fn headless_did_resolver() -> Arc<dyn DidResolutionPort> {
 fn headless_did_resolver() -> Arc<dyn DidResolutionPort> {
     Arc::new(StandaloneDidResolver)
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod standalone_funding_tests;
 
 #[cfg(test)]
 mod tests {

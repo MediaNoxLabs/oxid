@@ -313,15 +313,15 @@ try {
       `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'masked'`,
       "default masked secret mode",
     );
-    const maskedPresentation = await evaluate(`(() => {
-      const value = document.querySelector('.privacy-value');
-      if (!value) return false;
-      return getComputedStyle(value).color === 'rgba(0, 0, 0, 0)'
-        && getComputedStyle(value, '::after').content.includes('••••');
-    })()`);
-    if (!maskedPresentation) {
-      throw new Error("secret mode did not visually mask a private value");
-    }
+    await waitFor(
+      `(() => {
+        const value = document.querySelector('.privacy-value');
+        if (!value) return false;
+        return getComputedStyle(value).color === 'rgba(0, 0, 0, 0)'
+          && getComputedStyle(value, '::after').content.includes('••••');
+      })()`,
+      "visually masked private value",
+    );
     await clickButtonByLabel("Show private values for 30 seconds");
     await waitFor(
       `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'revealed'

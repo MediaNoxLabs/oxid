@@ -162,5 +162,11 @@ if rg -a -q \
   echo "normal release binary contains the standalone local profile or its routes" >&2
   exit 1
 fi
+if rg -a -q \
+  'OXID_STANDALONE_FUNDER_SEED_HEX|OXID_ENABLE_LIVE_STANDALONE_FUNDING|Ephemeral funded recipient|Standalone funding authority' \
+  "$release_binary"; then
+  echo "normal release binary contains the standalone funding harness" >&2
+  exit 1
+fi
 
 echo "UI profile compile guards and dev/demo/local/tailnet release exclusion passed."

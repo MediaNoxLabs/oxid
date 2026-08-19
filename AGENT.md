@@ -2115,9 +2115,35 @@ to silence the shell probe.
   Both require a newly derived account to report `Live`, synchronized
   live-source state and both address rails while excluding the simulation
   labels and balances. Android additionally verifies exact reverse mappings for
-  ports 8088, 9944, and 6300. Emulator 34.2.16 can print a crash-report setup
+  ports 8088, 9944, and 6300. Android WebView automation must wait for the
+  computed masked-value CSS invariant after `data-secret-mode=masked`; that
+  attribute can settle one render before the transparent text and four-dot
+  overlay. Emulator 34.2.16 can print a crash-report setup
   notice to standard output before its `-list-avds` result, so AVD discovery
   must accept only a returned name backed by an actual `.ini` file.
+- ADR-0098 production composition requires an
+  `oxid.deployment-profile.v1` canonical Ed25519 envelope that atomically binds
+  application audience, validity/sequence, Midnight network/genesis and all
+  Midnight/SSI routes. Trust roots and sequence floors must be reviewed
+  build-time inputs; environment variables are never production trust or route
+  authority. After signature verification, require the signed node's exact
+  genesis hash before composition. The default `compose()` remains fail-closed,
+  no production root/profile is currently selected, and issuer/verifier
+  protocol transports remain unavailable. The ignored funded standalone gate
+  is `just standalone-funded-finality`; it additionally requires
+  `OXID_ENABLE_LIVE_STANDALONE_FUNDING=1` and the out-of-band
+  `OXID_STANDALONE_FUNDER_SEED_HEX`. Never print, commit, persist, or place that
+  seed in an issue. It is zeroized after one development-root generation; every
+  recipient and later nonce uses OS randomness. The 2026-08-20 run proved exact
+  five-NIGHT authorization, DUST proof, node finality, public-journal restart
+  reconciliation, bounded recipient indexer convergence, and a stable second
+  read without duplicate delivery. Standalone readiness must compare indexer
+  and node heights because Docker health can become green during replay.
+  Midnight indexer v4 block timestamps are milliseconds and must be divided by
+  1,000 at the ledger boundary. DUST event IDs are sparse global cursors: accept
+  only strict forward movement and a nondecreasing advertised target, not
+  artificial contiguity. These facts match the immutable prototype baseline
+  `074b1a4bccbfee1740ee188374b606a022ecef42` and must remain focused tests.
 - Physical Android identity-ingress evidence must use
   `scripts/test-android-identity-ingress-physical.sh`. It refuses virtual
   devices and a concurrently booted iOS simulator, never clears application

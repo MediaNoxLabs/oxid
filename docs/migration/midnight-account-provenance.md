@@ -253,8 +253,9 @@ dependency review.
 ## Deliberate exclusions
 
 - prototype demo, genesis, pre-production, and raw seeds;
-- caller-supplied roots, mnemonics, recovery/import/export, durable software
-  roots, or production mobile custody;
+- runtime caller-supplied roots, mnemonics, recovery/import/export, durable
+  software roots, or production mobile custody; an ADR-0098 ignored test may
+  accept one explicit out-of-band development funding root and must zeroize it;
 - internal NIGHT/change roles beyond external receive derivation, exported
   Zswap/DUST keys, and metadata keys;
 - committed local, tailnet, pre-production, node, indexer, or prover endpoints;
@@ -265,9 +266,12 @@ dependency review.
 - generated proof artifacts, native projects, JavaScript bridges, QR scanning,
   copy/share integration, databases, and captured diagnostics.
 
-Production composition therefore exposes the network catalog but returns an
-unavailable account snapshot with no account ID, address, balance, or activity
-claim. Native headless composition selects either the deterministic simulator
+Default production composition therefore exposes the network catalog but
+returns an unavailable account snapshot with no account ID, address, balance,
+or activity claim. ADR-0098 adds a separate opt-in constructor that can only
+receive an opaque signed-profile value after audience/validity/sequence/TLS
+verification and an exact node-genesis check; no reviewed root/profile is
+selected by the default app. Native headless composition selects either the deterministic simulator
 or an explicitly configured public live source and adds process-local
 development derivation/BIP340 signing by opaque reference. Full standalone
 configuration additionally proves and submits canonical unshielded NIGHT

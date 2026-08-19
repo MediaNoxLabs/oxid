@@ -105,6 +105,14 @@ thin-app build decision; no runtime brand configuration was added.
    sends iOS Simulator directly to loopback and gives Android emulator only the
    three required `adb reverse` mappings; focused live-account flows distinguish
    real synchronization from deterministic simulation.
+5. **Authenticated deployment and funded finality** (ADR-0098 / issue #90): a
+   signed atomic profile binds Midnight genesis/network/routes and SSI metadata
+   routes behind audience, validity, revocation, and rollback checks; the node
+   must prove the exact genesis hash before opt-in production composition. No
+   production root/profile is selected. A separate external-seed guarded
+   headless flow proves funded unshielded authorization, DUST proving,
+   finalized inclusion, restart reconciliation, bounded indexer convergence,
+   and no duplicate recipient delivery while remaining absent from releases.
 
 ## Phase 5 — Delight & polish (owner-gated)
 
@@ -147,5 +155,6 @@ stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
 (delivered by #82), 2d receive sheet (delivered by #83), 3 white-label infra
 (delivered by #84), 4a secret mode + native privacy ops (delivered by #85),
 4b1 developer profile (delivered by #87), 4b2 demo profile (delivered by #88),
-5 per-item. Each remaining slice references the relevant spec section as its
-acceptance criteria, factory-work-item style.
+4c authenticated deployment/funded finality (#90), 5 per-item. Each remaining
+slice references the relevant spec section as its acceptance criteria,
+factory-work-item style.

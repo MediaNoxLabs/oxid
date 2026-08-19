@@ -13,6 +13,7 @@ members = [
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
   "crates/adapters/diagnostics-memory",
+  "crates/adapters/deployment-profile",
   "crates/adapters/identity-ingress",
   "crates/adapters/custody-software",
   "crates/adapters/backup-portable",
@@ -57,6 +58,7 @@ default-members = [
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
   "crates/adapters/diagnostics-memory",
+  "crates/adapters/deployment-profile",
   "crates/adapters/identity-ingress",
   "crates/adapters/custody-software",
   "crates/adapters/backup-portable",
@@ -150,6 +152,7 @@ oxid-adapter-siopv2 = { version = "=0.1.0", path = "crates/adapters/siopv2" }
 oxid-adapter-vc-midnight = { version = "=0.1.0", path = "crates/adapters/vc-midnight" }
 oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-midnight" }
 oxid-adapter-diagnostics-memory = { version = "=0.1.0", path = "crates/adapters/diagnostics-memory" }
+oxid-adapter-deployment-profile = { version = "=0.1.0", path = "crates/adapters/deployment-profile" }
 oxid-adapter-identity-ingress = { version = "=0.1.0", path = "crates/adapters/identity-ingress" }
 oxid-adapter-custody-software = { version = "=0.1.0", path = "crates/adapters/custody-software" }
 oxid-adapter-backup-portable = { version = "=0.1.0", path = "crates/adapters/backup-portable" }

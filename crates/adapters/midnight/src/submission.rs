@@ -207,6 +207,54 @@ impl fmt::Display for MidnightStandaloneConfigError {
 
 impl std::error::Error for MidnightStandaloneConfigError {}
 
+/// Safe failures while binding an authenticated deployment profile to the
+/// chain actually exposed by its reviewed node route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MidnightChainIdentityError {
+    InvalidNodeEndpoint,
+    NodeUnavailable,
+    GenesisMismatch,
+}
+
+impl fmt::Display for MidnightChainIdentityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidNodeEndpoint => "Midnight node endpoint is invalid",
+            Self::NodeUnavailable => "Midnight node chain identity is unavailable",
+            Self::GenesisMismatch => {
+                "Midnight node chain identity does not match the deployment profile"
+            }
+        })
+    }
+}
+
+impl std::error::Error for MidnightChainIdentityError {}
+
+/// Checks the node genesis hash before an authenticated production profile can
+/// be composed. Endpoint values and observed identifiers are never logged or
+/// returned in failures.
+pub async fn authenticate_midnight_chain_identity(
+    node_websocket_url: &str,
+    expected_genesis_hash: &[u8; 32],
+) -> Result<(), MidnightChainIdentityError> {
+    super::indexer::validate_websocket_url(node_websocket_url)
+        .map_err(|_| MidnightChainIdentityError::InvalidNodeEndpoint)?;
+    let client = timeout(
+        CONNECT_TIMEOUT,
+        OnlineClient::<SubstrateConfig>::from_insecure_url(node_websocket_url),
+    )
+    .await
+    .map_err(|_| MidnightChainIdentityError::NodeUnavailable)?
+    .map_err(|_| MidnightChainIdentityError::NodeUnavailable)?;
+    let genesis_hash = client.genesis_hash();
+    let observed: &[u8] = genesis_hash.as_ref();
+    if observed == expected_genesis_hash {
+        Ok(())
+    } else {
+        Err(MidnightChainIdentityError::GenesisMismatch)
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct LiveMidnightTransactionCompleter<C> {
     config: MidnightStandaloneConfig,
@@ -586,7 +634,7 @@ fn decode_chain_tip(root: &Value) -> Result<ChainTip, WalletTransactionPortError
         .pointer("/data/block")
         .and_then(Value::as_object)
         .ok_or(WalletTransactionPortError::InvalidChainState)?;
-    let timestamp_seconds = block
+    let timestamp_millis = block
         .get("timestamp")
         .and_then(Value::as_i64)
         .and_then(|value| u64::try_from(value).ok())
@@ -599,7 +647,9 @@ fn decode_chain_tip(root: &Value) -> Result<ChainTip, WalletTransactionPortError
     let parameters = midnight_serialize::tagged_deserialize(&parameters_bytes[..])
         .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
     Ok(ChainTip {
-        timestamp: Timestamp::from_secs(timestamp_seconds),
+        // Midnight indexer v4 exposes its DateTime scalar as Unix
+        // milliseconds. The ledger Timestamp is second-granular.
+        timestamp: Timestamp::from_secs(timestamp_millis / 1_000),
         parameters,
     })
 }
@@ -732,13 +782,14 @@ pub(crate) async fn synchronize_dust_controlled(
                                 .pointer("/payload/data/dustLedgerEvents")
                                 .ok_or(WalletTransactionPortError::InvalidChainState)?;
                             let decoded = decode_dust_event(data)?;
-                            let expected_id = match last_id {
-                                Some(last) => last
-                                    .checked_add(1)
-                                    .ok_or(WalletTransactionPortError::InvalidChainState)?,
-                                None => 0,
+                            let sequence_valid = match last_id {
+                                // DUST IDs are sparse global indexer cursors:
+                                // unrelated ledger activity can create gaps.
+                                // They must still move strictly forward.
+                                Some(last) => decoded.id > last,
+                                None => true,
                             };
-                            if decoded.id != expected_id
+                            if !sequence_valid
                                 || decoded.id > decoded.max_id
                                 || target_id.is_some_and(|target| decoded.max_id < target)
                             {
@@ -1549,8 +1600,8 @@ mod tests {
                             "payload": {
                                 "data": {
                                     "dustLedgerEvents": {
-                                        "id": 0,
-                                        "maxId": 0,
+                                        "id": 1,
+                                        "maxId": 1,
                                         "raw": raw
                                     }
                                 }
@@ -1781,14 +1832,14 @@ mod tests {
     }
 
     #[test]
-    fn chain_tip_timestamp_is_already_unix_seconds() {
+    fn chain_tip_timestamp_converts_indexer_milliseconds_to_ledger_seconds() {
         let mut parameters = Vec::new();
         midnight_serialize::tagged_serialize(&INITIAL_PARAMETERS, &mut parameters)
             .expect("initial parameters serialize");
         let tip = decode_chain_tip(&json!({
             "data": {
                 "block": {
-                    "timestamp": 1_750_000_000_i64,
+                    "timestamp": 1_750_000_000_123_i64,
                     "ledgerParameters": hex::encode(parameters)
                 }
             }
@@ -1827,7 +1878,7 @@ mod tests {
         let body = serde_json::to_vec(&json!({
             "data": {
                 "block": {
-                    "timestamp": 1_750_000_123_i64,
+                    "timestamp": 1_750_000_123_999_i64,
                     "ledgerParameters": format!("0x{}", hex::encode(parameters))
                 }
             }
@@ -1958,8 +2009,8 @@ mod tests {
 
         assert_eq!(state.state.sync_time, Timestamp::from_secs(0));
         assert_eq!(state.state.params, INITIAL_PARAMETERS.dust);
-        assert_eq!(state.current_cursor, 0);
-        assert_eq!(state.target_cursor, 0);
+        assert_eq!(state.current_cursor, 1);
+        assert_eq!(state.target_cursor, 1);
     }
 
     #[test]
@@ -2007,10 +2058,31 @@ mod tests {
     }
 
     #[test]
+    fn dust_sync_accepts_sparse_global_cursors_but_preserves_order() {
+        let raw = parameter_change_event_hex();
+        let (endpoint, worker) =
+            serve_dust_subscriptions(vec![(0, vec![(1, 30, raw.clone()), (30, 30, raw)])]);
+        let dust_key = DustSecretKey::derive_secret_key(&[7; 32]);
+        let synchronized = runtime()
+            .block_on(synchronize_dust(
+                &endpoint,
+                &dust_key,
+                INITIAL_PARAMETERS.dust,
+                None,
+            ))
+            .expect("sparse global DUST cursors replay");
+        worker.join().expect("WebSocket worker completes");
+
+        assert_eq!(synchronized.current_cursor, 30);
+        assert_eq!(synchronized.target_cursor, 30);
+        assert_eq!(synchronized.events_processed, 2);
+    }
+
+    #[test]
     fn controlled_dust_sync_reports_a_consistent_batch_before_cancellation() {
         let raw = parameter_change_event_hex();
-        let events = (0_u64..=256)
-            .map(|id| (id, 256, raw.clone()))
+        let events = (1_u64..=257)
+            .map(|id| (id, 257, raw.clone()))
             .collect::<Vec<_>>();
         let (endpoint, worker) = serve_dust_subscriptions(vec![(0, events)]);
         let dust_key = DustSecretKey::derive_secret_key(&[7; 32]);
@@ -2038,7 +2110,7 @@ mod tests {
             result.err(),
             Some(WalletTransactionPortError::SubmissionCancelled)
         );
-        assert_eq!(observed, vec![(255, 256, 256)]);
+        assert_eq!(observed, vec![(256, 257, 256)]);
     }
 
     #[test]
@@ -2047,7 +2119,7 @@ mod tests {
 
         let raw = parameter_change_event_hex();
         let (endpoint, worker) =
-            serve_dust_subscriptions(vec![(1, vec![(2, 2, raw.clone())]), (0, vec![(0, 0, raw)])]);
+            serve_dust_subscriptions(vec![(1, vec![(0, 2, raw.clone())]), (0, vec![(1, 1, raw)])]);
         let dust_key = DustSecretKey::derive_secret_key(&[8; 32]);
         let synchronized = runtime()
             .block_on(synchronize_dust_with_fallback(
@@ -2063,8 +2135,8 @@ mod tests {
             ))
             .expect("incompatible delta recovers with one clean replay");
         worker.join().expect("both WebSocket attempts complete");
-        assert_eq!(synchronized.current_cursor, 0);
-        assert_eq!(synchronized.target_cursor, 0);
+        assert_eq!(synchronized.current_cursor, 1);
+        assert_eq!(synchronized.target_cursor, 1);
     }
 
     #[test]
@@ -2087,6 +2159,17 @@ mod tests {
             }),
         ));
         assert_eq!(result.err(), Some(WalletTransactionPortError::Unavailable));
+    }
+
+    #[test]
+    fn chain_identity_authentication_rejects_invalid_routes_without_network_io() {
+        assert_eq!(
+            runtime().block_on(authenticate_midnight_chain_identity(
+                "http://node.example.test",
+                &[0; 32],
+            )),
+            Err(MidnightChainIdentityError::InvalidNodeEndpoint)
+        );
     }
 
     #[test]

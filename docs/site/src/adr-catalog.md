@@ -123,6 +123,7 @@ ADR status and delivery state answer different questions:
 | [0095](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0095-share-a-closed-capability-manifest-with-developer-ui.md) Share a closed capability manifest with the developer UI | Accepted | §§3–7, 12–13, 16–18, 21; UI profiles P1/P2/P7/P9/P10; issues #2/#65/#69/#87 | One dependency-free manifest feeds headless JSON and an opt-in standalone developer viewer; confirmation metadata, feature guards, and normal-release marker exclusion are checked |
 | [0096](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0096-sequence-standalone-fixtures-through-a-demo-drawer.md) Sequence standalone fixtures through a demo drawer | Accepted | §§3–7, 12–13, 16, 18, 21; UI profiles P1/P2/P5/P8–P10; issues #2/#65/#88 | An opt-in standalone-development drawer isolates setup in the named demo profile, sequences only existing safe fixtures, gates simulated funding, and stops offer/login/presentation fixtures at their unchanged review screens |
 | [0097](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0097-build-standalone-phone-routes-at-compile-time.md) Build standalone mobile routes at compile time | Accepted | §§3–8, 12–13, 16–18, 21; reviewed prototype route profiles; issues #2/#32/#89 | Separate opt-in development builds use immutable localhost routes for simulators/desktop or local MagicDNS/TLS routes for a phone; production and native-custody composition remain unchanged |
+| [0098](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0098-authenticate-deployment-profiles-and-isolate-standalone-funding.md) Authenticate deployment profiles and isolate standalone funding | Accepted | §§3–8, 12–13, 16–18, 21; reviewed prototype live path; issues #2/#90 | Signed atomic Midnight/SSI routes plus node genesis gate are implemented without selecting a deployment; an external-seed guarded harness proves funded unshielded finality and restart safety |
 
 ## Current boundaries
 
@@ -487,3 +488,14 @@ profile exposes repository-owned loopback services through temporary
 TLS-terminated Tailscale Serve routes. The normal release gate rejects both
 profile markers and the localhost endpoints, native custody cannot select
 either, and verified public app links remain a separate open gate.
+
+ADR-0098 adds a signed, canonical, audience/validity/sequence-bound deployment
+profile that atomically carries Midnight chain identity/routes and SSI metadata
+routes. Composition additionally requires the signed node to expose the exact
+genesis hash, while normal composition stays unavailable and no production
+trust root/profile is selected. A separate double-opt-in test harness accepts
+an out-of-band zeroizing standalone funding root and proves exact unshielded
+finality, public-journal restart reconciliation, bounded indexer convergence,
+and no duplicate recipient delivery. The working prototype's millisecond chain
+time and sparse global DUST cursors are retained behind Oxid's strict bounds;
+the genesis fixture itself is not copied.
