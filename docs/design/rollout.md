@@ -97,6 +97,12 @@ thin-app build decision; no runtime brand configuration was added.
    consent. Per-action/full-run progress, honest stop/retry states, feature
    guards, focused mobile checks, and normal-release marker exclusion are
    repository gates.
+4. **Physical standalone evidence** (ADR-0097): the development-only tailnet
+   build now derives and synchronizes a protected account through the real
+   laptop stack, persists only public account coordinates, and proves with a
+   physical Android tap that the contained Scan navigation target cannot steal
+   the wallet activation action. A compile-time localhost stack profile remains
+   follow-up work for simulator parity.
 
 ## Phase 5 — Delight & polish (owner-gated)
 

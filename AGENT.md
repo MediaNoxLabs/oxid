@@ -2069,9 +2069,19 @@ to silence the shell probe.
   indexer/node/prover through Oxid-owned TLS Tailscale Serve routes; use
   `just standalone-down` to remove only the Serve configuration marked as
   Oxid-owned. The public undeployed placeholder validates composition only and
-  must be replaced by profile-derived account binding before sync. This private
+  must be replaced by profile-derived account binding before sync. Every
+  persistent live/standalone composition must attach the same
+  `JsonWalletProfileRepository` instance to the Midnight adapter; otherwise
+  schema-v3 public account coordinates disappear on restart. The exact
+  `indexer-standalone:4.0.0` image rejects the newer singular `fee` query field,
+  so keep the reviewed v4-compatible `fees { paidFees }` shape unless a pinned
+  image/schema upgrade is made atomically. Development custody remains
+  process-local: after process death, retain the public association but report
+  uninitialized protection and withhold the former addresses. This private
   tailnet harness is not verified public App Link or production-discovery
-  evidence.
+  evidence. The prototype's separate localhost/Tailscale routes share one
+  undeployed chain identity; Oxid's missing localhost equivalent must be a
+  compile-time development profile, never runtime-selected production behavior.
 - Physical Android identity-ingress evidence must use
   `scripts/test-android-identity-ingress-physical.sh`. It refuses virtual
   devices and a concurrently booted iOS simulator, never clears application

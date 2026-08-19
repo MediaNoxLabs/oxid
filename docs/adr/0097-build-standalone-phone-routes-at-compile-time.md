@@ -4,7 +4,9 @@
 - Date: 2026-08-19
 - Source: Blueprint §§3–8, 12–13, 16–18, 21; reviewed prototype phone profile; issues #2/#32
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`
-- Implementation state: Opt-in Android physical-device harness implemented; production and native-custody composition unchanged
+- Implementation state: Opt-in Android physical-device harness and protected
+  live-account synchronization implemented; production and native-custody
+  composition unchanged
 
 ## Context
 
@@ -62,9 +64,22 @@ generated local environment file in place.
   stack or tailnet requires a rebuild; production discovery remains open work.
 - The initial public address is not evidence of ownership, funding, sync, or
   settlement. Only the profile-derived binding can become wallet state.
+- Every persistent live/standalone constructor gives the Midnight adapter the
+  exact same public profile repository used by the application services. The
+  selected network and non-secret derivation coordinates therefore survive a
+  process restart; process-local development custody still returns honestly as
+  uninitialized and withholds the former account addresses after that restart.
+- The pinned `indexer-standalone:4.0.0` image exposes regular-transaction fees
+  through the compatible `fees { paidFees }` shape. Oxid uses that shape for
+  account history while retaining its existing response, event, and timeout
+  bounds.
 - The harness may temporarily configure local Tailscale Serve and run three
   Docker containers. It refuses to overwrite an unrelated Serve configuration
   and supplies an explicit cleanup command.
 - Verified public Android App Links remain blocked on an approved HTTPS domain
   and `assetlinks.json`; a private MagicDNS route is not substituted as that
   production proof.
+- The reviewed prototype also has a localhost standalone transport profile
+  with the same undeployed chain identity. Oxid still needs a separate
+  compile-time local-stack simulator profile; it must not be implemented as
+  runtime production route selection.

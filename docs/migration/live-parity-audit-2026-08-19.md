@@ -12,10 +12,10 @@ The estimate is roughly **95% of useful prototype behavior implemented**. The
 Oxid target intentionally adds stricter recovery, custody, consent, SSI,
 reproducibility, and headless requirements, so current progress against the
 stated 110% target is approximately **100/110 (91%)**. Production-release
-evidence is lower, approximately **75%**. Physical Android QR/custom-scheme
-evidence is now real rather than fixture-derived, but physical iOS, verified
-HTTPS associations, device resource budgets, and funded live infrastructure
-remain unproven.
+evidence is lower, approximately **75%**. Physical Android QR/custom-scheme and
+tailnet account-sync evidence is now real rather than fixture-derived, but
+physical iOS, verified HTTPS associations, device resource budgets, funded
+protected accounts, and live transaction completion remain unproven.
 
 ## Capability matrix
 
@@ -24,7 +24,7 @@ remain unproven.
 | Profile lifecycle and first-run choice | Implemented | `crates/wallet/domain`, `crates/wallet/application`, `crates/adapters/storage-json`, `crates/ui-dioxus/src/lib.rs`, `apps/oxid-headless/src/lib.rs` | None for prototype parity |
 | Portable complete recovery | Implemented; device evidence partial | `crates/wallet/application/src/backup.rs`, `crates/adapters/backup-portable`, `crates/adapters/storage-mobile`, ADR-0074–0078, mobile backup tests | Physical-device interruption, picker, storage-pressure, and resource evidence (#33) |
 | Native custody and protected derivation | Implemented; release evidence partial | `crates/adapters/storage-mobile`, `crates/adapters/mobile-native-plugin`, ADR-0071, native custody mobile tests | Physical Keychain/Keystore/user-presence and resource evidence (#30/#33) |
-| Public accounts, receive, sync, and checkpoints | Implemented | `crates/adapters/midnight/src/account.rs`, `crates/adapters/midnight/src/indexer.rs`, `crates/adapters/midnight/src/checkpoint.rs`, `crates/adapters/midnight/src/dust_sync.rs`, `crates/adapters/midnight/src/shielded_sync.rs` | Production background/session policy and authenticated discovery |
+| Public accounts, receive, sync, and checkpoints | Implemented; physical tailnet sync proven | `crates/adapters/midnight/src/indexer.rs`, `crates/adapters/midnight/src/checkpoint.rs`, `crates/adapters/midnight/src/dust_sync.rs`, `crates/adapters/midnight/src/shielded_sync.rs`, shared durable profile association repository, physical Android `live-account` flow | Compile-time localhost simulator profile, production background/session policy, authenticated discovery, and funded protected account |
 | Unshielded transfer lifecycle | Implemented in deterministic/live-capable adapters; live E2E partial | `crates/wallet/application/src/transaction.rs`, `crates/adapters/midnight/src/transaction.rs`, `crates/adapters/midnight/src/submission.rs`, Dioxus/headless tests | One funded real-node prepare→authorize→prove→submit→finalize fixture |
 | Shielded sync and spending | Implemented in standalone; production partial | `crates/adapters/midnight/src/shielded_sync.rs`, `crates/adapters/midnight/src/shielded_transport.rs`, `crates/adapters/midnight/src/transaction.rs`, ADR-0079 | Funded real shielded spend plus physical proof budgets (#59/#30) |
 | DID inventory/lifecycle | Implemented standalone; live writes missing | `crates/identity/domain`, `crates/identity/application`, `crates/adapters/did-midnight`, headless DID methods and Dioxus management | Authenticated discovery and live Compact writes |
@@ -48,22 +48,28 @@ dependencies. These are security improvements, not parity gaps.
 
 1. Capture physical native custody and complete-recovery interruption/resource
    evidence (#33, with #30 budgets).
-2. Define authenticated production discovery/composition for Midnight and SSI;
+2. Add the prototype-equivalent compile-time localhost standalone transport
+   profile for simulator use; keep it distinct from simulation and tailnet.
+3. Define authenticated production discovery/composition for Midnight and SSI;
    do not infer trust from environment routes.
-3. Add one funded real-node unshielded end-to-end fixture through finalized
+4. Add one funded real-node unshielded end-to-end fixture through finalized
    completion.
-4. Prove a funded real shielded spend and physical Compact budgets (#59/#30).
-5. Validate physical iOS QR/permission behavior and reviewed universal/app
+5. Prove a funded real shielded spend and physical Compact budgets (#59/#30).
+6. Validate physical iOS QR/permission behavior and reviewed universal/app
    links using an approved HTTPS domain, AASA, associated-domain entitlement,
    `assetlinks.json`, and release identities (#32). Android physical
    success/cancel/timeout and warm/cold custom schemes are complete.
-6. Define production background synchronization/session behavior.
-7. Complete identity trust/status, live protocol delivery, and live DID writes.
-8. Produce Passport Vault live-deployment and physical-device evidence (#31).
-9. Close remaining mobile size, memory, latency, thermal, and storage budgets.
+7. Define production background synchronization/session behavior.
+8. Complete identity trust/status, live protocol delivery, and live DID writes.
+9. Produce Passport Vault live-deployment and physical-device evidence (#31).
+10. Close remaining mobile size, memory, latency, thermal, and storage budgets.
 
-The next bounded engineering slice is **authenticated production discovery
-plus one real-node unshielded end-to-end fixture**. Engineering-only work is
+The next bounded engineering slice is the **compile-time localhost standalone
+profile for simulator/desktop use**, sharing the tailnet profile's exact
+undeployed chain identity and differing only in its loopback routes. It must
+remain distinct from deterministic simulation and from runtime production
+discovery. The following slice is **authenticated production discovery plus
+one funded real-node unshielded end-to-end fixture**. Engineering-only work is
 approximately five to eight bounded waves; this is a scope estimate, not a
 calendar promise. External evidence has no honest ETA until approved domains,
 association files, release signing identities, physical devices, funded

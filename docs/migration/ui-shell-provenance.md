@@ -78,3 +78,15 @@ only generated semantic CSS plus an immutable `BrandProfile`, while fixed
 safety colors and code-owned consent/recovery/submission templates remain
 identical across brands. The default output preserves the established Oxid
 appearance and the original wallet/SSI state machines remain untouched.
+
+The reviewed prototype keeps every fixed-navigation item within a 56 px row,
+reserves the complete fixed-bar height below scrolling content, and presents
+identity scanning as an ordinary content action. Oxid retains its center Scan
+destination but now contains its entire hit target inside the same navigation
+row rather than using the former negative-margin circular protrusion. On a
+physical Samsung SM-S928B running Android 16/API 36, the accessibility tree
+placed the wallet activation control at `[90,1096]–[990,1245]` and Scan at
+`[433,2019]–[646,2185]`; a real Android input tap at the activation center
+started protected account synchronization, kept Oxid foregrounded, and did not
+open the scanner. DOM-only `element.click()` results are not used as this touch
+evidence.
