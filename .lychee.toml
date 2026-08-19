@@ -1,3 +1,9 @@
+# Slow or briefly unreachable hosts must not fail the whole check: retry
+# before declaring failure, and allow slow responders (nixos.org has twice
+# timed out from GitHub runners while serving 200s from elsewhere).
+max_retries = 3
+timeout = 45
+
 # The workflow badge returns 404 until the CI workflow exists on `develop`.
 # Keep checking its destination link while allowing the generated badge image.
 # Apple and Android Developer documentation reject automated GitHub-hosted
