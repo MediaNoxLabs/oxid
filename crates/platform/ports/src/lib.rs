@@ -51,6 +51,7 @@ impl fmt::Debug for ScannedQrPayload {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QrScanError {
     Cancelled,
+    Denied,
     Unavailable,
     TimedOut,
     InvalidPayload,
@@ -61,6 +62,7 @@ impl fmt::Display for QrScanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Cancelled => "QR scan was cancelled",
+            Self::Denied => "camera access was denied",
             Self::Unavailable => "QR scanning is unavailable on this device",
             Self::TimedOut => "QR scan timed out",
             Self::InvalidPayload => "QR payload is invalid",
@@ -337,6 +339,13 @@ mod tests {
             error.to_string(),
             "QR scanning is unavailable on this device"
         );
+    }
+
+    #[test]
+    fn scanner_denial_is_distinct_and_payload_free() {
+        assert_eq!(QrScanError::Denied.to_string(), "camera access was denied");
+        assert_ne!(QrScanError::Denied, QrScanError::Unavailable);
+        assert_ne!(QrScanError::Denied, QrScanError::Cancelled);
     }
 
     #[test]

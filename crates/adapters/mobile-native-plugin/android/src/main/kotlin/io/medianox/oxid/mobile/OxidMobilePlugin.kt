@@ -18,6 +18,9 @@ import android.security.keystore.UserNotAuthenticatedException
 import android.util.AtomicFile
 import android.util.Base64
 import android.view.WindowManager
+import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.GoogleApiAvailability
+import com.google.mlkit.common.MlKitException
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -39,6 +42,8 @@ class OxidMobilePlugin(private val activity: Activity) {
     fun startScanJson(): String = ScannerState.start(activity)
 
     fun takeScanResultJson(): String = ScannerState.take()
+
+    fun timeoutScanJson(): String = ScannerState.timeout()
 
     fun takeIdentityLinkJson(): String = IdentityLinkState.take()
 
@@ -756,16 +761,26 @@ private object IdentityLinkState {
 }
 
 private object ScannerState {
+    private const val MAX_PAYLOAD_BYTES = 32 * 1024
     private var status: String = "idle"
     private var payload: String? = null
+    private var generation: Long = 0
 
     @Synchronized
     fun start(activity: Activity): String {
         if (status == "scanning") return json("failed")
+        generation += 1
+        val activeGeneration = generation
         status = "scanning"
         payload = null
         activity.runOnUiThread {
             try {
+                val availability = GoogleApiAvailability.getInstance()
+                    .isGooglePlayServicesAvailable(activity)
+                if (availability != ConnectionResult.SUCCESS) {
+                    finish("unavailable", null, activeGeneration)
+                    return@runOnUiThread
+                }
                 val options = GmsBarcodeScannerOptions.Builder()
                     .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
                     .enableAutoZoom()
@@ -774,12 +789,35 @@ private object ScannerState {
                     .startScan()
                     .addOnSuccessListener { barcode ->
                         val raw = barcode.rawValue
-                        if (raw == null) finish("invalid", null) else finish("succeeded", raw)
+                        if (raw.isNullOrEmpty() ||
+                            raw.toByteArray(StandardCharsets.UTF_8).size > MAX_PAYLOAD_BYTES
+                        ) {
+                            finish("invalid", null, activeGeneration)
+                        } else {
+                            finish("succeeded", raw, activeGeneration)
+                        }
                     }
-                    .addOnCanceledListener { finish("cancelled", null) }
-                    .addOnFailureListener { finish("failed", null) }
+                    .addOnCanceledListener { finish("cancelled", null, activeGeneration) }
+                    .addOnFailureListener { failure ->
+                        val next = when {
+                            failure is MlKitException &&
+                                failure.errorCode == MlKitException.CODE_SCANNER_CANCELLED ->
+                                "cancelled"
+                            failure is MlKitException &&
+                                failure.errorCode ==
+                                    MlKitException.CODE_SCANNER_CAMERA_PERMISSION_NOT_GRANTED ->
+                                "unavailable"
+                            failure is MlKitException &&
+                                (failure.errorCode == MlKitException.CODE_SCANNER_UNAVAILABLE ||
+                                    failure.errorCode ==
+                                        MlKitException.CODE_SCANNER_GOOGLE_PLAY_SERVICES_VERSION_TOO_OLD) ->
+                                "unavailable"
+                            else -> "failed"
+                        }
+                        finish(next, null, activeGeneration)
+                    }
             } catch (_: Exception) {
-                finish("unavailable", null)
+                finish("unavailable", null, activeGeneration)
             }
         }
         return json("scanning")
@@ -796,7 +834,26 @@ private object ScannerState {
     }
 
     @Synchronized
-    private fun finish(next: String, value: String?) {
+    fun timeout(): String {
+        if (status != "scanning") {
+            val current = json(status, payload)
+            status = "idle"
+            payload = null
+            return current
+        }
+        generation += 1
+        status = "idle"
+        payload = null
+        // Google Code Scanner exposes no programmatic dismissal API. This
+        // closes Oxid's logical one-item handoff and makes every eventual task
+        // callback stale; the system-owned scanner UI may still require the
+        // holder to dismiss it.
+        return json("timed_out")
+    }
+
+    @Synchronized
+    private fun finish(next: String, value: String?, activeGeneration: Long) {
+        if (status != "scanning" || generation != activeGeneration) return
         status = next
         payload = value
     }

@@ -51,6 +51,8 @@ class MainActivity : WryActivity() {
 
     fun oxidTakeScanResultJson(): String = oxidMobilePlugin.takeScanResultJson()
 
+    fun oxidTimeoutScanJson(): String = oxidMobilePlugin.timeoutScanJson()
+
     fun oxidTakeIdentityLinkJson(): String = oxidMobilePlugin.takeIdentityLinkJson()
 
     fun oxidCopyPublicReceiveAddress(value: String): String =

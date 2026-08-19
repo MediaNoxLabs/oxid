@@ -17,6 +17,10 @@ public final class OxidMobilePlugin: NSObject {
         ScanCoordinator.shared.take()
     }
 
+    @objc public func timeoutScanJson() -> String {
+        ScanCoordinator.shared.timeout()
+    }
+
     @objc public func copyPublicReceiveAddress(_ value: String) -> String {
         onMain {
             UIPasteboard.general.string = value
@@ -690,9 +694,12 @@ private final class ScanCoordinator: NSObject, AVCaptureMetadataOutputObjectsDel
     static let shared = ScanCoordinator()
 
     private let lock = NSLock()
+    private let maximumPayloadBytes = 32 * 1024
     private var status = "idle"
     private var payload: String?
+    private var generation: UInt64 = 0
     private var session: AVCaptureSession?
+    private var metadataOutput: AVCaptureMetadataOutput?
     private weak var controller: UIViewController?
 
     func start() -> String {
@@ -704,11 +711,15 @@ private final class ScanCoordinator: NSObject, AVCaptureMetadataOutputObjectsDel
             lock.unlock()
             return Self.json(status: "failed")
         }
+        generation &+= 1
+        let activeGeneration = generation
         status = "scanning"
         payload = nil
         lock.unlock()
 
-        DispatchQueue.main.async { [weak self] in self?.requestCameraAndPresent() }
+        DispatchQueue.main.async {
+            [weak self] in self?.requestCameraAndPresent(activeGeneration)
+        }
         return Self.json(status: "scanning")
 #endif
     }
@@ -724,39 +735,74 @@ private final class ScanCoordinator: NSObject, AVCaptureMetadataOutputObjectsDel
         return result
     }
 
-    private func requestCameraAndPresent() {
+    func timeout() -> String {
+        lock.lock()
+        if status != "scanning" {
+            let result = Self.json(status: status, payload: payload)
+            status = "idle"
+            payload = nil
+            lock.unlock()
+            return result
+        }
+        generation &+= 1
+        status = "timed_out"
+        payload = nil
+        let capture = session
+        let presented = controller
+        session = nil
+        metadataOutput = nil
+        controller = nil
+        lock.unlock()
+
+        DispatchQueue.main.async {
+            capture?.stopRunning()
+            presented?.dismiss(animated: true)
+        }
+        return Self.json(status: "timed_out")
+    }
+
+    private func requestCameraAndPresent(_ activeGeneration: UInt64) {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
-            presentScanner()
+            presentScanner(activeGeneration)
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 DispatchQueue.main.async {
-                    if granted { self?.presentScanner() } else { self?.finish("unavailable") }
+                    if granted {
+                        self?.presentScanner(activeGeneration)
+                    } else {
+                        self?.finish("denied", generation: activeGeneration)
+                    }
                 }
             }
         case .denied, .restricted:
-            finish("unavailable")
+            finish("denied", generation: activeGeneration)
         @unknown default:
-            finish("unavailable")
+            finish("unavailable", generation: activeGeneration)
         }
     }
 
-    private func presentScanner() {
+    private func presentScanner(_ activeGeneration: UInt64) {
+        lock.lock()
+        let isActive = status == "scanning" && generation == activeGeneration
+        lock.unlock()
+        guard isActive else { return }
+
         guard let camera = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: camera) else {
-            finish("unavailable")
+            finish("unavailable", generation: activeGeneration)
             return
         }
         let capture = AVCaptureSession()
         guard capture.canAddInput(input) else {
-            finish("failed")
+            finish("failed", generation: activeGeneration)
             return
         }
         capture.addInput(input)
 
         let output = AVCaptureMetadataOutput()
         guard capture.canAddOutput(output) else {
-            finish("failed")
+            finish("failed", generation: activeGeneration)
             return
         }
         capture.addOutput(output)
@@ -764,15 +810,31 @@ private final class ScanCoordinator: NSObject, AVCaptureMetadataOutputObjectsDel
         output.metadataObjectTypes = [.qr]
 
         guard let presenter = OxidMobilePlugin.topViewController() else {
-            finish("failed")
+            finish("failed", generation: activeGeneration)
             return
         }
         let scanner = ScannerViewController(session: capture) { [weak self] in
-            self?.finish("cancelled")
+            self?.finish("cancelled", generation: activeGeneration)
+        }
+
+        lock.lock()
+        guard status == "scanning" && generation == activeGeneration else {
+            lock.unlock()
+            return
         }
         session = capture
+        metadataOutput = output
         controller = scanner
-        presenter.present(scanner, animated: true) { capture.startRunning() }
+        lock.unlock()
+        presenter.present(scanner, animated: true) { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let shouldStart = self.status == "scanning"
+                && self.generation == activeGeneration
+                && self.session === capture
+            self.lock.unlock()
+            if shouldStart { capture.startRunning() }
+        }
     }
 
     func metadataOutput(
@@ -780,17 +842,30 @@ private final class ScanCoordinator: NSObject, AVCaptureMetadataOutputObjectsDel
         didOutput metadataObjects: [AVMetadataObject],
         from connection: AVCaptureConnection
     ) {
+        lock.lock()
+        let activeGeneration = generation
+        let isActive = status == "scanning" && metadataOutput === output
+        lock.unlock()
+        guard isActive else { return }
+
         guard let code = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
               code.type == .qr,
-              let value = code.stringValue else {
+              let value = code.stringValue,
+              !value.isEmpty,
+              value.utf8.count <= maximumPayloadBytes else {
+            finish("invalid", generation: activeGeneration)
             return
         }
-        finish("succeeded", payload: value)
+        finish("succeeded", payload: value, generation: activeGeneration)
     }
 
-    private func finish(_ next: String, payload value: String? = nil) {
+    private func finish(
+        _ next: String,
+        payload value: String? = nil,
+        generation activeGeneration: UInt64
+    ) {
         lock.lock()
-        guard status == "scanning" else {
+        guard status == "scanning" && generation == activeGeneration else {
             lock.unlock()
             return
         }
@@ -799,6 +874,7 @@ private final class ScanCoordinator: NSObject, AVCaptureMetadataOutputObjectsDel
         let capture = session
         let presented = controller
         session = nil
+        metadataOutput = nil
         controller = nil
         lock.unlock()
 

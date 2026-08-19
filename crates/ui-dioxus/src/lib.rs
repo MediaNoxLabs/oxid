@@ -9025,6 +9025,10 @@ fn identity_link_ingress_message(error: IdentityLinkIngressError) -> String {
 fn qr_scan_message(error: QrScanError) -> String {
     match error {
         QrScanError::Cancelled => "QR scan cancelled.".to_owned(),
+        QrScanError::Denied => {
+            "Camera access was denied. Enable it in system settings and retry; no request was imported."
+                .to_owned()
+        }
         QrScanError::Unavailable => {
             "Camera scanning is unavailable here. Paste or load the request in the identity page instead.".to_owned()
         }
@@ -11434,6 +11438,14 @@ mod tests {
         assert!(!identity_request_dismiss_is_visible(true, false));
         assert!(!identity_request_dismiss_is_visible(false, true));
         assert!(!identity_request_dismiss_is_visible(false, false));
+    }
+
+    #[test]
+    fn denied_qr_camera_access_has_a_distinct_payload_free_message() {
+        assert_eq!(
+            qr_scan_message(QrScanError::Denied),
+            "Camera access was denied. Enable it in system settings and retry; no request was imported."
+        );
     }
 
     #[test]

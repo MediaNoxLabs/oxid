@@ -36,6 +36,19 @@ pub fn take_scan_result_json() -> Result<String, NativeBridgeError> {
     call_android_activity("oxidTakeScanResultJson")
 }
 
+/// Closes only the active QR capture handoff after the Rust scanner budget
+/// expires. The call carries no payload and cannot route or execute a request.
+#[cfg(target_os = "ios")]
+pub fn timeout_scan_json() -> Result<String, NativeBridgeError> {
+    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
+    timeoutScanJson(&plugin).map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(target_os = "android")]
+pub fn timeout_scan_json() -> Result<String, NativeBridgeError> {
+    call_android_activity("oxidTimeoutScanJson")
+}
+
 #[cfg(target_os = "android")]
 pub fn take_identity_link_json() -> Result<String, NativeBridgeError> {
     call_android_activity("oxidTakeIdentityLinkJson")
@@ -352,7 +365,7 @@ pub fn verify_android_jni_exception_recovery() -> Result<(), NativeBridgeError> 
 use ios_bridge::{
     OxidMobilePlugin, copyPublicReceiveAddress, custodyJson, setScreenPrivacy,
     sharePublicReceiveAddress, startBackupExportJson, startBackupImportJson, startScanJson,
-    takeBackupDocumentResultJson, takeScanResultJson,
+    takeBackupDocumentResultJson, takeScanResultJson, timeoutScanJson,
 };
 
 #[cfg(target_os = "ios")]
@@ -363,6 +376,7 @@ mod ios_bridge {
         pub type OxidMobilePlugin;
         pub fn startScanJson(this: &OxidMobilePlugin) -> String;
         pub fn takeScanResultJson(this: &OxidMobilePlugin) -> String;
+        pub fn timeoutScanJson(this: &OxidMobilePlugin) -> String;
         pub fn copyPublicReceiveAddress(this: &OxidMobilePlugin, value: String) -> String;
         pub fn sharePublicReceiveAddress(this: &OxidMobilePlugin, value: String) -> String;
         pub fn setScreenPrivacy(this: &OxidMobilePlugin, protected: bool) -> String;

@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3–7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/qr_scanner.rs`, `mobile-bench/dioxus-wallet/src/identity_centre.rs`, and the Android/iOS QR bridges
 - Tracking: issues #2 and #32
-- Implementation state: strict standalone request routing, native iOS/Android QR adapters, Dioxus handoff, headless conformance, native packaging, and simulator/emulator fail-closed evidence are implemented; ADR-0070 adds OS link delivery through the same router, while physical-camera evidence remains #32
+- Implementation state: strict standalone request routing, native iOS/Android QR adapters, bounded timeout closure, explicit iOS camera-denial status, Dioxus handoff, headless conformance, native packaging, and simulator/emulator fail-closed evidence are implemented; ADR-0070 adds custom-scheme OS link delivery through the same router, while physical-camera and verified universal/app-link evidence remain #32
 
 ## Context
 
@@ -29,8 +29,11 @@ presentation. Production endpoint discovery is not yet implemented.
 
 Add a capability-specific `QrScannerPort` to `platform-ports`. A successful
 scan returns an opaque, 32 KiB-bounded value whose `Debug` output reports only
-its length. Stable failures distinguish cancellation, unavailability, timeout,
-invalid payload, and generic failure without carrying native error bodies.
+its length. Stable failures distinguish cancellation, camera denial,
+unavailability, timeout, invalid payload, and generic failure without carrying
+native error bodies. Denial is an iOS camera-permission outcome; Android's
+Google Code Scanner owns camera access outside the app and reports its
+permission/module failures as unavailable.
 
 Implement the port in `adapters/identity-ingress`:
 
@@ -41,6 +44,15 @@ Implement the port in `adapters/identity-ingress`:
   Scanner 16.1.0 in QR-only mode. The scanner is Play-services-backed, requires
   no app camera permission, and may be unavailable where its module cannot run.
 - Desktop, web, and uncomposed targets use a fail-closed unavailable adapter.
+
+The Rust adapter owns a 60-second scan budget. When it expires, the native
+coordinator must acknowledge `timed_out` and invalidate the exact active scan
+generation before Rust publishes the terminal result. iOS also stops and
+dismisses its repository-owned scanner. Google Code Scanner does not expose a
+programmatic dismissal operation: Android closes Oxid's logical handoff and
+discards its eventual generation-stale callback, while the holder may still
+need to dismiss the system-owned scanner UI. A late native callback can never
+complete a subsequent scan.
 
 Keep request classification in a separate `IdentityRequestRouterPort` owned by
 `protocol/application`. `StrictIdentityRequestRouter` parses the complete URI,
@@ -55,6 +67,12 @@ An exact match selects the existing flow. Unknown pairs are `ambiguous` and
 fail closed; the wallet must not guess from scheme, port, host prefix, or page
 state. Production composition remains credential-offer-only until reviewed
 endpoint discovery supplies an authenticated registry.
+
+Android serializes an empty-authority credential-offer URI with a `/` path
+when it delivers the intent. The shared router accepts only the equivalent
+empty and `/` path forms; non-root paths, hosts, and every existing query-field
+restriction still fail closed. Native code forwards the bounded OS value
+unchanged and does not classify or normalize it.
 
 Dioxus exposes one Scan QR action and passes only the classified request to the
 existing issuance, authentication, or presentation page. Scanning does not
@@ -81,6 +99,14 @@ ambiguous failure without requiring camera hardware.
   available where Play services are absent.
 - ADR-0070 routes OS deep/app links through this same bounded router; they may
   not create a second, looser classification path.
+- Verified HTTPS delivery cannot be declared from application code alone.
+  Universal links require an approved domain and path, an iOS associated-domain
+  entitlement plus a matching hosted AASA document, and signed-device evidence.
+  Android App Links require that same approved URL policy, an `autoVerify`
+  manifest filter, and a hosted `assetlinks.json` containing the release signing
+  identity. Until those external inputs and the HTTPS-to-protocol mapping are
+  reviewed, Oxid must not invent a domain, accept arbitrary `https`, or broaden
+  the strict router. Custom schemes remain the only implemented OS-link route.
 
 ## Consequences
 
