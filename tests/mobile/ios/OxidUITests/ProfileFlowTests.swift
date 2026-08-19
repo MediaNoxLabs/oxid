@@ -79,6 +79,29 @@ final class ProfileFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testSecretModeRearmsAfterBackground() throws {
+        let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
+        ensureProfile(in: application)
+
+        // WebKit exposes aria-pressed buttons as switches on iOS while
+        // preserving the accessible label and activation behavior.
+        let reveal = application.descendants(matching: .any)[
+            "Show private values for 30 seconds"
+        ]
+        XCTAssertTrue(reveal.waitForExistence(timeout: 10))
+        reveal.tap()
+        XCTAssertTrue(
+            application.descendants(matching: .any)["Hide private values"]
+                .waitForExistence(timeout: 5)
+        )
+
+        XCUIDevice.shared.press(.home)
+        application.activate()
+        XCTAssertTrue(reveal.waitForExistence(timeout: 10))
+        XCTAssertFalse(application.descendants(matching: .any)["Hide private values"].exists)
+    }
+
+    @MainActor
     func testOnboardingForkAndUnifiedAccountSync() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         application.launch()

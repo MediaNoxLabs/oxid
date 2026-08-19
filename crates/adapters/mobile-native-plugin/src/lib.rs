@@ -64,6 +64,17 @@ pub fn share_public_receive_address(value: &str) -> Result<String, NativeBridgeE
 }
 
 #[cfg(target_os = "ios")]
+pub fn set_screen_privacy(protected: bool) -> Result<String, NativeBridgeError> {
+    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
+    setScreenPrivacy(&plugin, protected).map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(target_os = "android")]
+pub fn set_screen_privacy(protected: bool) -> Result<String, NativeBridgeError> {
+    call_android_activity_with_bool("oxidSetScreenPrivacy", protected)
+}
+
+#[cfg(target_os = "ios")]
 pub fn start_backup_export_json(
     file_name: &str,
     payload: &str,
@@ -276,6 +287,22 @@ fn call_android_activity_with_string(
 }
 
 #[cfg(target_os = "android")]
+fn call_android_activity_with_bool(method: &str, value: bool) -> Result<String, NativeBridgeError> {
+    manganis::android::with_activity(|mut environment, activity| {
+        let result = environment.call_method(
+            activity,
+            method,
+            "(Z)Ljava/lang/String;",
+            &[manganis::jni::objects::JValue::Bool(u8::from(value))],
+        );
+        let result = android_jni_result(&mut environment, result)
+            .and_then(|value| android_string(&mut environment, value));
+        Some(result)
+    })
+    .ok_or(NativeBridgeError::Unavailable)?
+}
+
+#[cfg(target_os = "android")]
 fn android_string<'local>(
     environment: &mut manganis::jni::JNIEnv<'local>,
     value: manganis::jni::objects::JValueOwned<'local>,
@@ -323,9 +350,9 @@ pub fn verify_android_jni_exception_recovery() -> Result<(), NativeBridgeError> 
 
 #[cfg(target_os = "ios")]
 use ios_bridge::{
-    OxidMobilePlugin, copyPublicReceiveAddress, custodyJson, sharePublicReceiveAddress,
-    startBackupExportJson, startBackupImportJson, startScanJson, takeBackupDocumentResultJson,
-    takeScanResultJson,
+    OxidMobilePlugin, copyPublicReceiveAddress, custodyJson, setScreenPrivacy,
+    sharePublicReceiveAddress, startBackupExportJson, startBackupImportJson, startScanJson,
+    takeBackupDocumentResultJson, takeScanResultJson,
 };
 
 #[cfg(target_os = "ios")]
@@ -338,6 +365,7 @@ mod ios_bridge {
         pub fn takeScanResultJson(this: &OxidMobilePlugin) -> String;
         pub fn copyPublicReceiveAddress(this: &OxidMobilePlugin, value: String) -> String;
         pub fn sharePublicReceiveAddress(this: &OxidMobilePlugin, value: String) -> String;
+        pub fn setScreenPrivacy(this: &OxidMobilePlugin, protected: bool) -> String;
         pub fn startBackupExportJson(this: &OxidMobilePlugin, request: String) -> String;
         pub fn startBackupImportJson(this: &OxidMobilePlugin) -> String;
         pub fn takeBackupDocumentResultJson(this: &OxidMobilePlugin) -> String;

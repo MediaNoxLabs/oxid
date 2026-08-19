@@ -228,6 +228,7 @@ fn main() {
             application.get_diagnostic_snapshot(),
             application.clear_diagnostics(),
         ),
+        application.screen_privacy(),
     );
 
     let launcher = dioxus::LaunchBuilder::new()

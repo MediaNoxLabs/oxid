@@ -17,6 +17,7 @@ import android.security.keystore.KeyProperties
 import android.security.keystore.UserNotAuthenticatedException
 import android.util.AtomicFile
 import android.util.Base64
+import android.view.WindowManager
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -56,6 +57,17 @@ class OxidMobilePlugin(private val activity: Activity) {
             }
             activity.startActivity(Intent.createChooser(send, "Share Oxid receive address"))
         }) "presented" else "unavailable"
+    }
+
+    fun setScreenPrivacy(enabled: Boolean): String {
+        val changed = onUiThread {
+            if (enabled) {
+                activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            } else {
+                activity.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            }
+        }
+        return if (!changed) "failed" else if (enabled) "protected" else "unprotected"
     }
 
     fun custodyJson(request: String): String = CustodyCoordinator.dispatch(activity, request)

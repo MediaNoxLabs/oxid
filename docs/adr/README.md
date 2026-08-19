@@ -114,6 +114,8 @@ ADR status and delivery state answer different questions:
 | [0090](0090-compose-onboarding-backup-receipts-and-account-sync.md) Compose onboarding, backup receipts, and account sync | Accepted | §§3–8, 12–13, 16, 18; design Phase 2c; issues #2/#33/#65/#82 | First launch forks create/restore, complete native export records the sole truthful backup receipt, and Wallet composes account/DUST/shielded refresh into one action without merging authority |
 | [0091](0091-present-receive-as-a-typed-address-sheet.md) Present receive as a typed address sheet | Accepted | §§3, 6–8, 12–13, 16, 18; Receive journey; issues #2/#65/#83 | Home opens a bounded modal over existing safe account and typed public-export ports; only protected returned address rails become selectable QR/Copy/Share destinations |
 | [0092](0092-generate-validated-build-time-brand-packs.md) Generate validated build-time brand packs | Accepted | §§1–6, 12–18, 21; white-label design/Phase 3; issues #2/#65/#84 | Default thin app generates immutable identity/CSS/logo from a strict pack; contrast, safety copy, manifest, and every enumerated Nix pack fail closed |
+| [0093](0093-mask-private-wallet-values-as-a-render-only-ui-profile.md) Mask private wallet values as a render-only UI profile | Accepted | §§1–7, 9–13, 16–18, 21; UI profiles P1–P5/Phase 4a; issues #2/#65/#85 | Every Dioxus build defaults to a process-local mask, permits one timed reveal, re-arms on lifecycle/unlock, and leaves exact consent objects visible |
+| [0094](0094-protect-mobile-snapshots-through-a-boolean-platform-port.md) Protect mobile snapshots through a boolean platform port | Accepted | §§3–7, 12–13, 16–18, 21; UI profile P6/Phase 4a; issues #2/#32/#65/#85 | One payload-free port sets Android `FLAG_SECURE` or an honest iOS background overlay; backup/reveal routes force protection and unsupported targets fail closed |
 
 ## Current boundaries
 
@@ -227,6 +229,14 @@ disposal and are acknowledged only after the non-interruptible prover stops.
 Retry starts from a fresh single-use OpenID4VP preview and consent. Normal
 production and ordinary standalone builds remain proof-disabled, while
 physical-device custody and resource budgets remain issues #29 and #30.
+ADR-0093 keeps secret mode entirely inside the Dioxus incoming adapter. It
+changes only rendering of reviewed public view strings, defaults to masked,
+uses generation-bound timed reveal, re-arms after lifecycle and wallet-unlock
+boundaries, and never masks exact consent or authorization objects. ADR-0094
+adds the distinct host snapshot boundary: one boolean platform port sets
+Android `FLAG_SECURE` or an iOS scene-background overlay and carries no wallet
+value. iOS does not claim screenshot prevention, and physical-device evidence
+remains issue #32.
 ADR-0084 makes presentation theming a two-layer build boundary. Components
 consume only the fixed semantic surface/text/accent/product/type/space/radius/
 motion/elevation vocabulary, while raw palette values remain confined to

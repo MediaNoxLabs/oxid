@@ -4,8 +4,8 @@ const endpoint = process.argv[2];
 const mode = process.argv[3] ?? "flow";
 const backupRecoverySecret = "oxidandroidbackup2026";
 
-if (!endpoint || !["flow", "restored", "app-link", "backup-export", "backup-recover", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
-  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link|backup-export|backup-recover|native-authorize|native-custody|native-restored>");
+if (!endpoint || !["flow", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
+  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|native-authorize|native-custody|native-restored>");
 }
 
 const socket = new WebSocket(endpoint);
@@ -132,6 +132,8 @@ async function openWallet() {
 }
 
 async function createFreshProfile() {
+  const createAvailable = await evaluate(`Boolean(${buttonExpression("Create new wallet")})`);
+  if (!createAvailable) return;
   await clickButton("Create new wallet");
   await clickButton("Create and continue");
   await clickButton("Skip for now");
@@ -220,7 +222,36 @@ try {
   await command("Runtime.enable");
   await waitFor("document.readyState === 'complete'", "Dioxus document");
 
-  if (mode === "backup-export") {
+  if (mode === "privacy-reveal") {
+    await createFreshProfile();
+    await waitFor(
+      `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'masked'`,
+      "default masked secret mode",
+    );
+    const maskedPresentation = await evaluate(`(() => {
+      const value = document.querySelector('.privacy-value');
+      if (!value) return false;
+      return getComputedStyle(value).color === 'rgba(0, 0, 0, 0)'
+        && getComputedStyle(value, '::after').content.includes('••••');
+    })()`);
+    if (!maskedPresentation) {
+      throw new Error("secret mode did not visually mask a private value");
+    }
+    await clickButtonByLabel("Show private values for 30 seconds");
+    await waitFor(
+      `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'revealed'
+        && Boolean(document.querySelector('button[aria-label="Hide private values"]'))`,
+      "explicit timed secret-mode reveal",
+    );
+    process.stdout.write(`${JSON.stringify({ mode, revealed: true })}\n`);
+  } else if (mode === "privacy-rearmed") {
+    await waitFor(
+      `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'masked'
+        && Boolean(document.querySelector('button[aria-label="Show private values for 30 seconds"]'))`,
+      "background-rearmed secret mode",
+    );
+    process.stdout.write(`${JSON.stringify({ mode, rearmed: true })}\n`);
+  } else if (mode === "backup-export") {
     await createFreshProfile();
     await openWallet();
     await clickButtonByLabel("Activate protected Midnight account");
@@ -346,6 +377,12 @@ try {
     await waitForButton("Sync now");
 
     await clickButton("Home");
+    await waitFor(
+      `document.querySelector('.app-header__title strong')?.textContent === 'Home'
+        && document.body.innerText.includes('Everything in one place')
+        && Boolean(${buttonExpression("Receive")})`,
+      "populated Home route before Receive",
+    );
     await clickButton("Receive");
     await waitFor(
       `Boolean(document.querySelector('button[aria-label="Use Public receive address"]'))
@@ -692,6 +729,12 @@ try {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
     await clickButton("Home");
+    await waitFor(
+      `document.querySelector('.app-header__title strong')?.textContent === 'Home'
+        && document.body.innerText.includes('Everything in one place')
+        && Boolean(${buttonExpression("Receive")})`,
+      "populated Home route before native share",
+    );
     await clickButton("Receive");
     await waitForButton("Share");
     await clickButtonByLabel("Share Unshielded receive address");

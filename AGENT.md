@@ -354,6 +354,22 @@ not authorization or binary removal; a licensed removal needs a separately
 reviewed thin-app Cargo feature. Runtime or environment-selected brands remain
 forbidden. Every real pack directory is auto-enumerated by Nix and the
 repository UI gate.
+ADR-0093 keeps secret mode inside Dioxus as process-local render state. It
+defaults masked, permits one generation-bound 30-second global reveal, and
+re-arms after background/resume or successful initialization/unlock. Mark only
+reviewed already-public strings with `privacy-value`/`privacy-qr`; never alter
+application DTOs, persisted state, diagnostics, or headless responses. Exact
+transfer, Vault, issuance, presentation, and SIOPv2 authorization objects must
+remain unmasked and state `Details shown for authorization.` New private UI
+surfaces must extend the reviewed matrix rather than use broad page-level
+masking that could hide consent inputs.
+ADR-0094 owns the separate OS snapshot boundary. `ScreenPrivacyPort` carries
+only one boolean and closed payload-free failures. Android sets/clears
+`FLAG_SECURE`; iOS adds an opaque overlay only while the scene is backgrounded
+and must never claim foreground screenshot blocking. Settings and credential
+routes force protection for backup-secret and local-reveal surfaces. Native
+failure cannot unmask Dioxus or affect wallet authority. Physical-device and
+multi-scene evidence remains issue #32.
 The native controller contract suite injects only the already-decoded chain
 tip so pure Nix does not depend on HTTP loopback, then drives the real bounded
 GraphQL-WebSocket worker. It proves an owned event projects exactly 12 DUST,
@@ -712,6 +728,11 @@ The reviewed baseline is:
 - commit: `074b1a4bccbfee1740ee188374b606a022ecef42` (2026-07-02);
 - source area: `mobile-bench/`, especially `wallet-core/`,
   `dioxus-wallet/`, and `headless-wallet/`.
+
+The remote `feat/mobile-prototype` ref was re-verified on 2026-08-19 and still
+resolved to that exact commit. The separate remote `mobile-prototype` ref
+resolved to `255f2caf8c728c203f554d6bc853d1f3b7e8bc15`; do not treat its older name
+as a successor without a fresh provenance review.
 
 That commit declares itself the successor to the earlier Dioxus/VC prototype
 branches. Record a new immutable commit here before taking later prototype
@@ -1442,7 +1463,10 @@ Scanning only populates the existing page and cannot bypass preview or consent.
 ADR-0070 registers only `openid-credential-offer` and `openid4vp`. The app-level
 Tao handler captures cold iOS events before the component tree exists; the
 repository-owned Android `singleTop` activity captures both `onCreate` and
-`onNewIntent`. Both enter the ADR-0069 router and remain pending until explicit
+`onNewIntent`. Because Wry does not emit Tao `Opened` for a foreground Android
+`onNewIntent`, the rendered component polls only the one-item native handoff at
+250 ms; it does not move or log the URL outside the existing ingress port. Both
+platform paths enter the ADR-0069 router and remain pending until explicit
 dismissal. `PublicTextExportPort` exposes copy/share only for bounded public
 receive addresses; never widen it to arbitrary strings or protocol links.
 Dioxus 0.7.10 compiles multiple Swift packages but embeds only the primary

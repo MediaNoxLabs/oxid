@@ -46,6 +46,10 @@ public final class OxidMobilePlugin: NSObject {
         }
     }
 
+    @objc public func setScreenPrivacy(_ enabled: Bool) -> String {
+        onMain { ScreenPrivacyCoordinator.shared.setEnabled(enabled) }
+    }
+
     @objc public func startBackupExportJson(_ request: String) -> String {
         onMain { BackupDocumentCoordinator.shared.startExport(request: request) }
     }
@@ -75,6 +79,71 @@ public final class OxidMobilePlugin: NSObject {
         var current = root
         while let presented = current?.presentedViewController { current = presented }
         return current
+    }
+}
+
+private final class ScreenPrivacyCoordinator: NSObject {
+    static let shared = ScreenPrivacyCoordinator()
+
+    private let overlayTag = 0x0A71D
+    private var enabled = false
+
+    override private init() {
+        super.init()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(sceneDidEnterBackground),
+            name: UIScene.didEnterBackgroundNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(sceneWillEnterForeground),
+            name: UIScene.willEnterForegroundNotification,
+            object: nil
+        )
+    }
+
+    func setEnabled(_ next: Bool) -> String {
+        enabled = next
+        if next && UIApplication.shared.applicationState != .active {
+            installOverlays()
+        } else if !next {
+            removeOverlays()
+        }
+        return next ? "protected" : "unprotected"
+    }
+
+    @objc private func sceneDidEnterBackground() {
+        if enabled { installOverlays() }
+    }
+
+    @objc private func sceneWillEnterForeground() {
+        removeOverlays()
+    }
+
+    private func installOverlays() {
+        for window in applicationWindows() where window.viewWithTag(overlayTag) == nil {
+            let overlay = UIView(frame: window.bounds)
+            overlay.tag = overlayTag
+            overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            overlay.backgroundColor = .black
+            overlay.isAccessibilityElement = true
+            overlay.accessibilityLabel = "Protected wallet preview"
+            window.addSubview(overlay)
+        }
+    }
+
+    private func removeOverlays() {
+        for window in applicationWindows() {
+            window.viewWithTag(overlayTag)?.removeFromSuperview()
+        }
+    }
+
+    private func applicationWindows() -> [UIWindow] {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
     }
 }
 

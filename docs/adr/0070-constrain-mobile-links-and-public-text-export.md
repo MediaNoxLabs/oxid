@@ -40,7 +40,11 @@ Register only the two protocol schemes in `apps/oxid/Dioxus.toml`:
   cannot race component registration.
 - Android uses the repository-owned `MainActivity` with `singleTop`; `onCreate`
   captures cold links and `onNewIntent` captures warm links. Only `ACTION_VIEW`
-  intents with an exact registered scheme enter the bounded native queue.
+  intents with an exact registered scheme enter the bounded native queue. Wry
+  does not translate a foreground Android `onNewIntent` into Tao `Opened`, so
+  the rendered Android component polls only that one-item native handoff every
+  250 ms. The hook is paused when the component is not rendered; it never logs
+  or carries the link itself.
 
 Native capture never classifies or executes a request. Dioxus drains a pending
 link only after a profile is active and sends it through the same

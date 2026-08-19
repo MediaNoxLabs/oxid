@@ -75,11 +75,15 @@ thin-app build decision; no runtime brand configuration was added.
 
 ## Phase 4 — UI profiles
 
-Secret mode (toggle + matrix + auto-re-arm); the two mobile-native bridge
-operations for FLAG_SECURE / iOS privacy overlay (the second exception:
-a small, typed, reviewed native addition); dev capability viewer; demo
-bootstrap drawer; the two profile ADRs (P1–P5 policy; native screen-privacy
-operations); release-CI guard for profile features.
+1. **Secret mode and native screen privacy** (delivered by ADR-0093/0094 and
+   issue #85): every build defaults to a render-only matrix mask, one explicit
+   reveal auto-re-arms after 30 seconds/background/unlock, exact consent stays
+   visible, and one boolean platform port sets Android `FLAG_SECURE` or an
+   honest iOS scene-background overlay. Settings/credential routes force host
+   protection; physical-device evidence remains issue #32.
+2. **Dev/demo profiles**: dev capability viewer; demo bootstrap drawer; build
+   feature guards; release-CI proof that distributed artifacts contain neither
+   profile.
 
 ## Phase 5 — Delight & polish (owner-gated)
 
@@ -120,6 +124,7 @@ issues: 0a tokens, 0b labeling layer, 0c credential chooser (bug), 1a route
 stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
 (delivered by #80), 2b consent sheet (delivered by #81), 2c onboarding + backup
 (delivered by #82), 2d receive sheet (delivered by #83), 3 white-label infra
-(delivered by #84), 4a secret mode + native privacy ops, 4b dev/demo profiles,
+(delivered by #84), 4a secret mode + native privacy ops (delivered by #85),
+4b dev/demo profiles,
 5 per-item. Each remaining slice references the relevant spec section as its
 acceptance criteria, factory-work-item style.

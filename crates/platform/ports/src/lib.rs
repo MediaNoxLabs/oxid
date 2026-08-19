@@ -208,6 +208,32 @@ pub trait PublicTextExportPort: Send + Sync {
     ) -> Result<(), PublicTextExportError>;
 }
 
+/// Stable, payload-free screen-privacy failures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScreenPrivacyError {
+    Unavailable,
+    Failed,
+}
+
+impl fmt::Display for ScreenPrivacyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unavailable => "screen privacy is unavailable on this device",
+            Self::Failed => "screen privacy could not be changed",
+        })
+    }
+}
+
+impl Error for ScreenPrivacyError {}
+
+/// Applies only operating-system snapshot protection.
+///
+/// Presentation masking remains an incoming-adapter concern. Implementations
+/// must not inspect wallet state or receive any rendered value.
+pub trait ScreenPrivacyPort: Send + Sync {
+    fn set_protected(&self, protected: bool) -> Result<(), ScreenPrivacyError>;
+}
+
 /// Fail-closed scanner used by non-mobile and unavailable composition.
 pub struct UnavailableQrScanner;
 
@@ -246,6 +272,15 @@ impl PublicTextExportPort for UnavailablePublicTextExporter {
         _address: PublicReceiveAddress,
     ) -> Result<(), PublicTextExportError> {
         Err(PublicTextExportError::Unavailable)
+    }
+}
+
+/// Fail-closed screen-privacy edge for targets without a native window.
+pub struct UnavailableScreenPrivacy;
+
+impl ScreenPrivacyPort for UnavailableScreenPrivacy {
+    fn set_protected(&self, _protected: bool) -> Result<(), ScreenPrivacyError> {
+        Err(ScreenPrivacyError::Unavailable)
     }
 }
 
@@ -345,6 +380,14 @@ mod tests {
         assert_eq!(
             UnavailablePublicTextExporter.share_receive_address(address),
             Err(PublicTextExportError::Unavailable)
+        );
+        assert_eq!(
+            UnavailableScreenPrivacy.set_protected(true),
+            Err(ScreenPrivacyError::Unavailable)
+        );
+        assert_eq!(
+            UnavailableScreenPrivacy.set_protected(false),
+            Err(ScreenPrivacyError::Unavailable)
         );
     }
 }

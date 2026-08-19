@@ -86,6 +86,7 @@ button {
 }
 
 .profile-shortcut:focus-visible,
+.privacy-toggle:focus-visible,
 .back-action:focus-visible,
 .profile-sheet__item:focus-visible,
 .profile-sheet__dismiss:focus-visible,
@@ -193,6 +194,39 @@ textarea:focus-visible {
   justify-self: end;
   place-content: center;
   color: var(--accent);
+}
+
+.app-header__actions {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: var(--space-2);
+}
+
+.privacy-toggle {
+  display: grid;
+  width: 2.65rem;
+  height: 2.65rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface-4);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
+.privacy-toggle.is-masked {
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-4));
+  color: var(--accent);
+}
+
+.privacy-toggle span,
+.privacy-toggle svg {
+  display: block;
+  width: 1.25rem;
+  height: 1.25rem;
 }
 
 .profile-shortcut {
@@ -363,6 +397,62 @@ textarea:focus-visible {
 .profile-sheet__dismiss:hover {
   background: var(--surface-4);
   color: var(--text-soft);
+}
+
+/* Secret mode changes only rendering. The original strings stay in the
+   already-public view model and no value crosses the native privacy port. */
+.privacy-value {
+  position: relative;
+}
+
+.privacy-masked .privacy-value:not(:active) {
+  min-width: 4ch;
+  color: transparent !important;
+  text-shadow: none !important;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.privacy-masked .privacy-value:not(:active)::after {
+  position: absolute;
+  inset: 0 auto auto 0;
+  color: var(--text-strong);
+  content: "••••";
+  font: inherit;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.privacy-qr {
+  position: relative;
+  overflow: hidden;
+}
+
+.privacy-masked .privacy-qr:not(:active) .address-qr__frame {
+  filter: blur(1.25rem);
+  opacity: 0.12;
+}
+
+.privacy-masked .privacy-qr:not(:active)::after {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--surface-sheet) 92%, transparent);
+  color: var(--text-strong);
+  content: "Hold to reveal QR";
+  font-size: var(--font-label);
+  font-weight: 800;
+  text-align: center;
+}
+
+.privacy-consent-exemption {
+  margin: var(--space-2) 0;
+  color: var(--accent);
+  font-size: var(--font-caption);
+  font-weight: 800;
 }
 
 .page-content {

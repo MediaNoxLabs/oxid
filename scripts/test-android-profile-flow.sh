@@ -102,6 +102,45 @@ wait_for_main_activity() {
   return 1
 }
 
+assert_screen_privacy_flag() {
+  local expected="$1"
+  local window_state=""
+  window_state="$($adb_command -s "$device" shell dumpsys window windows 2>/dev/null \
+    | awk '
+      /Window #[0-9]+ Window.*io\.medianox\.oxid\/dev\.dioxus\.main\.MainActivity/ {
+        capture = 1
+        lines = 0
+      }
+      capture {
+        print
+        lines += 1
+        if (lines == 24) exit
+      }
+    ')"
+  if [ -z "$window_state" ]; then
+    echo "Android Oxid window was unavailable for screen-privacy inspection." >&2
+    exit 1
+  fi
+  if [ "$expected" = "protected" ]; then
+    if ! rg -q 'fl=.*[[:space:]]SECURE([[:space:]]|$)' <<<"$window_state"; then
+      echo "Android secret mode did not set FLAG_SECURE." >&2
+      exit 1
+    fi
+  elif rg -q 'fl=.*[[:space:]]SECURE([[:space:]]|$)' <<<"$window_state"; then
+    echo "Android explicit reveal did not clear FLAG_SECURE." >&2
+    exit 1
+  fi
+}
+
+run_webview_wallet_flow privacy-reveal
+assert_screen_privacy_flag unprotected
+"$adb_command" -s "$device" shell input keyevent HOME >/dev/null
+sleep 1
+"$adb_command" -s "$device" shell am start \
+  -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
+sleep 1
+run_webview_wallet_flow privacy-rearmed
+assert_screen_privacy_flag protected
 run_webview_wallet_flow flow
 
 chooser_state="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null || true)"

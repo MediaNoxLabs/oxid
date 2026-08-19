@@ -48,7 +48,7 @@ use oxid_passport_vault_application::{
 };
 use oxid_platform_ports::{
     IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportError,
-    PublicTextExportPort, QrScanError, QrScannerPort,
+    PublicTextExportPort, QrScanError, QrScannerPort, ScreenPrivacyPort,
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationCommand, AcceptCredentialPresentationUseCase,
@@ -189,6 +189,7 @@ pub struct WalletUiServices {
     qr_scanner: Arc<dyn QrScannerPort>,
     identity_link_ingress: Arc<dyn IdentityLinkIngressPort>,
     public_text_exporter: Arc<dyn PublicTextExportPort>,
+    screen_privacy: Arc<dyn ScreenPrivacyPort>,
     portable_wallet_backup_documents: Arc<dyn PortableWalletBackupDocumentPort>,
     route_identity_request: Arc<dyn RouteIdentityRequestUseCase>,
     create_wallet_profile: Arc<dyn CreateWalletProfileUseCase>,
@@ -913,6 +914,7 @@ impl WalletUiServices {
         operations: WalletOperationalUiServices,
         identity: IdentityUiServices,
         diagnostics: DiagnosticsUiServices,
+        screen_privacy: Arc<dyn ScreenPrivacyPort>,
     ) -> Self {
         let dust = operations.dust;
         let shielded = operations.shielded;
@@ -928,6 +930,7 @@ impl WalletUiServices {
             qr_scanner: ingress.qr_scanner,
             identity_link_ingress: ingress.app_links,
             public_text_exporter: account.public_text_exporter,
+            screen_privacy,
             portable_wallet_backup_documents: security.backup.documents,
             route_identity_request: ingress.route,
             create_wallet_profile: profiles.create_wallet_profile,
@@ -1025,6 +1028,11 @@ impl WalletUiServices {
     #[must_use]
     pub fn public_text_exporter(&self) -> Arc<dyn PublicTextExportPort> {
         Arc::clone(&self.public_text_exporter)
+    }
+
+    #[must_use]
+    pub fn screen_privacy(&self) -> Arc<dyn ScreenPrivacyPort> {
+        Arc::clone(&self.screen_privacy)
     }
 
     #[must_use]
@@ -1881,6 +1889,77 @@ enum TransferRecovery {
     ReconcileUnknown,
 }
 
+const SECRET_MODE_REVEAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SecretModeState {
+    masked: bool,
+    reveal_generation: u64,
+}
+
+impl Default for SecretModeState {
+    fn default() -> Self {
+        Self {
+            masked: true,
+            reveal_generation: 0,
+        }
+    }
+}
+
+impl SecretModeState {
+    fn toggle(&mut self) -> Option<u64> {
+        self.reveal_generation = self.reveal_generation.wrapping_add(1);
+        self.masked = !self.masked;
+        (!self.masked).then_some(self.reveal_generation)
+    }
+
+    fn rearm(&mut self) {
+        self.reveal_generation = self.reveal_generation.wrapping_add(1);
+        self.masked = true;
+    }
+
+    fn timeout(&mut self, generation: u64) {
+        if self.reveal_generation == generation {
+            self.rearm();
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct SecretModeController {
+    state: Signal<SecretModeState>,
+}
+
+impl SecretModeController {
+    fn rearm(mut self) {
+        let mut state = (self.state)();
+        state.rearm();
+        self.state.set(state);
+    }
+
+    fn toggle(mut self) {
+        let mut state = (self.state)();
+        let timeout_generation = state.toggle();
+        self.state.set(state);
+        if let Some(generation) = timeout_generation {
+            let mut signal = self.state;
+            spawn(async move {
+                tokio::time::sleep(SECRET_MODE_REVEAL_TIMEOUT).await;
+                let mut state = signal();
+                state.timeout(generation);
+                signal.set(state);
+            });
+        }
+    }
+}
+
+const fn route_forces_screen_privacy(route: Route) -> bool {
+    matches!(
+        route,
+        Route::Settings | Route::Documents | Route::CredentialRequest
+    )
+}
+
 /// Brand-agnostic Dioxus incoming adapter and mobile-first application shell.
 #[component]
 pub fn App() -> Element {
@@ -1889,6 +1968,10 @@ pub fn App() -> Element {
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
     let mut navigation = use_signal(RouteStack::default);
     let mut profile_menu_open = use_signal(|| false);
+    let secret_mode_state = use_signal(SecretModeState::default);
+    let secret_mode = SecretModeController {
+        state: secret_mode_state,
+    };
     let mut pending_identity_request = use_signal(|| None::<PendingIdentityRequest>);
     let mut identity_ingress_notice = use_signal(|| None::<String>);
     let identity_scan_busy = use_signal(|| false);
@@ -1908,16 +1991,55 @@ pub fn App() -> Element {
         });
     });
 
+    let screen_privacy = services.screen_privacy();
+    use_effect(move || {
+        let screen_privacy_enabled =
+            secret_mode_state().masked || route_forces_screen_privacy(navigation.read().current());
+        // Snapshot protection is best-effort on unsupported desktop/web
+        // targets. The render-only mask remains effective independently.
+        let _ = screen_privacy.set_protected(screen_privacy_enabled);
+    });
+
     #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         dioxus::mobile::use_wry_event_handler(move |event, _target| match event {
             dioxus::mobile::tao::event::Event::Opened { .. } => {
                 identity_link_wake.set(identity_link_wake().wrapping_add(1));
             }
+            dioxus::mobile::tao::event::Event::Suspended => {
+                secret_mode.rearm();
+            }
             dioxus::mobile::tao::event::Event::Resumed => {
                 identity_link_wake.set(identity_link_wake().wrapping_add(1));
+                secret_mode.rearm();
             }
             _ => {}
+        });
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let services_for_native_links = services.clone();
+        use_future(move || {
+            let services = services_for_native_links.clone();
+            async move {
+                // Wry does not surface Android onNewIntent as a Tao Opened
+                // event. Poll only the bounded one-item native handoff; the
+                // task is paused automatically while this component is not
+                // being rendered.
+                loop {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    if matches!(*profile_session.read(), ProfileSessionState::Active(_)) {
+                        route_pending_identity_link(
+                            &services,
+                            pending_identity_request,
+                            navigation,
+                            profile_menu_open,
+                            identity_ingress_notice,
+                        );
+                    }
+                }
+            }
         });
     }
 
@@ -1983,7 +2105,8 @@ pub fn App() -> Element {
         style { {brand.style_sheet()} }
         style { {BASE_STYLES} }
         div {
-            class: "app-shell",
+            class: if secret_mode_state().masked { "app-shell privacy-masked" } else { "app-shell" },
+            "data-secret-mode": if secret_mode_state().masked { "masked" } else { "revealed" },
             aria_hidden: if receive_sheet_open { "true" } else { "false" },
             header { class: "app-header",
                 button {
@@ -2002,23 +2125,37 @@ pub fn App() -> Element {
                     strong { "{active_route.title()}" }
                     small { "{brand.product_name()} {brand.tagline()}" }
                 }
-                if can_go_back {
+                div { class: "app-header__actions",
                     button {
-                        class: "back-action",
+                        class: if secret_mode_state().masked { "privacy-toggle is-masked" } else { "privacy-toggle" },
                         r#type: "button",
-                        aria_label: "Go back",
-                        onclick: move |_| {
-                            navigation.write().pop();
-                            profile_menu_open.set(false);
-                        },
-                        span { aria_hidden: "true", "←" }
-                        span { "Back" }
+                        aria_label: if secret_mode_state().masked { "Show private values for 30 seconds" } else { "Hide private values" },
+                        aria_pressed: if secret_mode_state().masked { "true" } else { "false" },
+                        title: if secret_mode_state().masked { "Show private values for 30 seconds" } else { "Hide private values" },
+                        onclick: move |_| secret_mode.toggle(),
+                        span {
+                            aria_hidden: "true",
+                            dangerous_inner_html: if secret_mode_state().masked { LUCIDE_EYE_OFF } else { LUCIDE_EYE },
+                        }
                     }
-                } else {
-                    span {
-                        class: "app-header__mark brand-mark",
-                        aria_hidden: "true",
-                        dangerous_inner_html: "{brand.logo_svg()}",
+                    if can_go_back {
+                        button {
+                            class: "back-action",
+                            r#type: "button",
+                            aria_label: "Go back",
+                            onclick: move |_| {
+                                navigation.write().pop();
+                                profile_menu_open.set(false);
+                            },
+                            span { aria_hidden: "true", "←" }
+                            span { "Back" }
+                        }
+                    } else {
+                        span {
+                            class: "app-header__mark brand-mark",
+                            aria_hidden: "true",
+                            dangerous_inner_html: "{brand.logo_svg()}",
+                        }
                     }
                 }
             }
@@ -2118,7 +2255,7 @@ pub fn App() -> Element {
                         }
                     },
                     Route::Receive => rsx! {},
-                    Route::Wallet => rsx! { AssetsPage { active_profile: active_profile.clone() } },
+                    Route::Wallet => rsx! { AssetsPage { active_profile: active_profile.clone(), secret_mode } },
                     Route::Documents => rsx! {
                         DocumentsPage {
                             active_profile: active_profile.clone(),
@@ -2145,6 +2282,7 @@ pub fn App() -> Element {
                         SettingsPage {
                             active_profile: active_profile.clone(),
                             lifecycle_wake: identity_link_wake,
+                            secret_mode,
                             on_open_profile: move |_| navigation.write().push(Route::Profile),
                             on_open_diagnostics: move |_| navigation.write().push(Route::Diagnostics),
                         }
@@ -2227,6 +2365,7 @@ pub fn App() -> Element {
         if receive_sheet_open {
             ReceiveSheet {
                 active_profile: active_profile.clone(),
+                masked: secret_mode_state().masked,
                 on_close: move |_| {
                     navigation.write().pop();
                     profile_menu_open.set(false);
@@ -3016,11 +3155,11 @@ fn HomeHero(account: WalletAccountView) -> Element {
                 }
             }
             div { class: "home-hero__number-row",
-                h1 { "{night}" }
+                h1 { class: "privacy-value", "{night}" }
                 span { "NIGHT" }
             }
             div { class: "dust-pill",
-                strong { "{dust}" }
+                strong { class: "privacy-value", "{dust}" }
                 span { "DUST" }
             }
             p { class: "home-hero__hint", "{ui::account_source_note(&account.source)}" }
@@ -3066,6 +3205,7 @@ fn HomeQuickActions(
 #[component]
 fn ReceiveSheet(
     active_profile: WalletProfileView,
+    masked: bool,
     on_close: EventHandler<MouseEvent>,
     on_open_wallet: EventHandler<MouseEvent>,
 ) -> Element {
@@ -3222,7 +3362,7 @@ fn ReceiveSheet(
                         p { "{ui::address_purpose(&selected.kind)}" }
                     }
                     div {
-                        class: "address-qr",
+                        class: "address-qr privacy-qr",
                         role: "img",
                         aria_label: "QR code for {ui::address_kind(&selected.kind)} receive address",
                         if let Some(svg) = qr {
@@ -3232,8 +3372,7 @@ fn ReceiveSheet(
                         }
                     }
                     code {
-                        class: "receive-sheet__preview",
-                        title: "{selected.value}",
+                        class: "receive-sheet__preview privacy-value",
                         aria_label: "Full {ui::address_kind(&selected.kind)} receive address {selected.value}",
                         "{preview}"
                     }
@@ -3280,7 +3419,7 @@ fn ReceiveSheet(
             onclick: move |event| on_close.call(event),
         }
         section {
-            class: "receive-sheet",
+            class: if masked { "receive-sheet privacy-masked" } else { "receive-sheet" },
             role: "dialog",
             aria_modal: "true",
             aria_labelledby: "receive-sheet-title",
@@ -3372,7 +3511,7 @@ fn HomeProductStack(
                     aria_label: "Open Wallet NIGHT account",
                     onclick: move |_| on_select_primary.call(PrimaryDestination::Wallet),
                     p { class: "card-eyebrow", "NIGHT account" }
-                    strong { class: "home-card__value", "{night}" }
+                    strong { class: "home-card__value privacy-value", "{night}" }
                     span { class: "home-card__detail", "{account.network_name} · {ui::sync_state(&account.sync.state)}" }
                     span { class: "home-card__link", "Open Wallet →" }
                 }
@@ -3384,7 +3523,7 @@ fn HomeProductStack(
                     p { class: "card-eyebrow", "Shielded account" }
                     match shielded {
                         HomeResource::Ready(status) => rsx! {
-                            strong { class: "home-card__value", "{home_shielded_value(&status)}" }
+                            strong { class: "home-card__value privacy-value", "{home_shielded_value(&status)}" }
                             span { class: "home-card__detail", "{home_shielded_detail(&status)}" }
                         },
                         HomeResource::Unavailable => rsx! {
@@ -3433,7 +3572,7 @@ fn HomeProductStack(
                                 let lock_count = vault.locks.len();
                                 let lock_label = if lock_count == 1 { "active lock" } else { "active locks" };
                                 rsx! {
-                                    strong { class: "home-card__value", "{ui::format_night_amount(&vault.total_locked)}" }
+                                    strong { class: "home-card__value privacy-value", "{ui::format_night_amount(&vault.total_locked)}" }
                                     span { class: "home-card__detail", "{lock_count} {lock_label} · {ui::vault_contract_source(&vault.source)}" }
                                 }
                             },
@@ -3512,7 +3651,7 @@ fn HomeActivityPreview(
                                 strong { "{ui::transaction_direction(&transaction.direction)}" }
                                 small { "{ui::transaction_status(&transaction.status)}" }
                             }
-                            span { class: "home-activity-preview__amount", "{home_transaction_amount(transaction)}" }
+                            span { class: "home-activity-preview__amount privacy-value", "{home_transaction_amount(transaction)}" }
                         }
                     }
                 }
@@ -3615,7 +3754,7 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
 }
 
 #[component]
-fn AssetsPage(active_profile: WalletProfileView) -> Element {
+fn AssetsPage(active_profile: WalletProfileView, secret_mode: SecretModeController) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| AccountPageState::Loading);
     let profile_id = active_profile.id.clone();
@@ -3716,11 +3855,11 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                         }
                     }
                     div { class: "wallet-hero__number-row",
-                        h1 { "{night}" }
+                        h1 { class: "privacy-value", "{night}" }
                         span { "NIGHT" }
                     }
                     div { class: "dust-pill",
-                        strong { "{dust}" }
+                        strong { class: "privacy-value", "{dust}" }
                         span { "DUST" }
                     }
                     p { class: "wallet-hero__hint", "{account_hint}" }
@@ -3831,6 +3970,12 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                                     .await
                                     {
                                         Ok(updated_security) => {
+                                            if matches!(
+                                                security.state_name(),
+                                                "Uninitialized" | "Locked"
+                                            ) {
+                                                secret_mode.rearm();
+                                            }
                                             let service = services.sync_wallet_account();
                                             activate_state.set(AccountPageState::Ready {
                                                 networks: networks.clone(),
@@ -3931,9 +4076,9 @@ fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element
                             span { class: "activity-row__mark", aria_hidden: "true", "{ui::transaction_mark(&transaction.direction)}" }
                             div {
                                 strong { "{ui::transaction_direction(&transaction.direction)}" }
-                                small { "{transaction_status_line(transaction)}" }
+                                small { class: "privacy-value", "{transaction_status_line(transaction)}" }
                             }
-                            code { "{truncate_middle(&transaction.transaction_id, 12, 6)}" }
+                            code { class: "privacy-value", "{truncate_middle(&transaction.transaction_id, 12, 6)}" }
                         }
                     }
                 }
@@ -4187,14 +4332,14 @@ fn AccountSyncCard(
                     div { class: "account-sync-card__rows",
                         div { class: "account-sync-card__row",
                             div {
-                                strong { "{dust_balance} DUST" }
+                                strong { class: "privacy-value", "{dust_balance} DUST" }
                                 small { "{dust_sync_note(&dust)}" }
                             }
                             span { class: "{dust_status_pill_class(&dust.state)}", "{ui::sync_state(&dust.state)}" }
                         }
                         div { class: "account-sync-card__row",
                             div {
-                                strong { "{owned_notes} shielded notes" }
+                                strong { class: "privacy-value", "{owned_notes} shielded notes" }
                                 small { "{shielded_sync_note(&shielded)}" }
                             }
                             span { class: "{dust_status_pill_class(&shielded.state)}", "{ui::sync_state(&shielded.state)}" }
@@ -4206,7 +4351,7 @@ fn AccountSyncCard(
                                 div { class: "activity-row", key: "{balance.token_type_hex}",
                                     span { class: "activity-row__mark", aria_hidden: "true", "◈" }
                                     div {
-                                        strong { "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
+                                        strong { class: "privacy-value", "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
                                         small { title: "{balance.token_type_hex}", "Protected token" }
                                     }
                                 }
@@ -4742,7 +4887,7 @@ fn ReceiveAddress(kind: String, value: String) -> Element {
                 strong { "{ui::address_kind(&kind)}" }
                 small { "{ui::address_purpose(&kind)}" }
             }
-            code { title: "{value}", "{truncate_middle(&value, 18, 8)}" }
+            code { class: "privacy-value", "{truncate_middle(&value, 18, 8)}" }
             span { class: "address-actions",
                 button {
                     class: "address-action",
@@ -4783,7 +4928,7 @@ fn ReceiveAddress(kind: String, value: String) -> Element {
             p { class: "address-export-notice", role: "status", "{message}" }
         }
         if *qr_open.read() {
-            div { class: "address-qr", role: "img", aria_label: "QR code for {ui::address_kind(&kind)} receive address",
+            div { class: "address-qr privacy-qr", role: "img", aria_label: "QR code for {ui::address_kind(&kind)} receive address",
                 if let Some(svg) = qr {
                     div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
                     p { "Scan to receive at the public address shown above." }
@@ -5102,6 +5247,7 @@ fn SendTransferPanel(
                         class: "surface-card transfer-card confirm-sheet",
                         aria_label: "Confirm NIGHT transfer",
                         p { class: "card-eyebrow", "Confirm transfer" }
+                        p { class: "privacy-consent-exemption", "Details shown for authorization." }
                         h2 { "Authorize {amount_label}?" }
                         p { class: "confirm-sheet__summary", "{summary}" }
                         div { class: "confirm-sheet__recipient",
@@ -5159,6 +5305,7 @@ fn SendTransferPanel(
                 rsx! {
                     article { class: "surface-card transfer-card review-card", aria_label: "Review NIGHT transfer",
                         p { class: "card-eyebrow", "Review transfer" }
+                        p { class: "privacy-consent-exemption", "Details shown for authorization." }
                         h2 { "Does this look right?" }
                         p { class: "send-wizard__summary", "{summary}" }
                         details { class: "transfer-details",
@@ -6271,7 +6418,7 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                             dl { class: "preview-list",
                                 div { dt { "Source" } dd { "{source}" } }
                                 div { dt { "Authentication" } dd { "{authentication}" } }
-                                div { dt { "Total locked" } dd { "{ui::format_night_amount(&vault.total_locked)}" } }
+                                div { dt { "Total locked" } dd { class: "privacy-value", "{ui::format_night_amount(&vault.total_locked)}" } }
                                 div { dt { "Locks" } dd { "{vault.locks.len()}" } }
                                 if let Some(anchor) = vault.chain_anchor.as_ref() {
                                     div { dt { "Finalized height" } dd { "{anchor.finalized_head_height}" } }
@@ -6664,6 +6811,7 @@ fn PassportVaultCallPreviewCard(preview: Box<PassportVaultCallPreviewView>) -> E
     rsx! {
         article { class: "info-card review-card", aria_label: "Reviewed Passport Vault call",
             p { class: "card-eyebrow", "Exact call preview" }
+            p { class: "privacy-consent-exemption", "Details shown for authorization." }
             h2 { "{ui::vault_operation(&preview.operation)}" }
             dl { class: "preview-list",
                 div { dt { "Amount" } dd { "{ui::format_night_amount(&preview.amount_atomic_units)}" } }
@@ -6967,10 +7115,10 @@ fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
 
                     article { class: "balance-card",
                         p { class: "card-eyebrow", "Standalone conformance ledger · total locked" }
-                        h2 { "{ui::format_night_amount(&vault.total_locked)}" }
+                        h2 { class: "privacy-value", "{ui::format_night_amount(&vault.total_locked)}" }
                         div { class: "balance-breakdown",
-                            span { "Deposited {ui::format_night_amount(&vault.total_deposited)}" }
-                            span { "Released {ui::format_night_amount(&vault.total_released)}" }
+                            span { class: "privacy-value", "Deposited {ui::format_night_amount(&vault.total_deposited)}" }
+                            span { class: "privacy-value", "Released {ui::format_night_amount(&vault.total_released)}" }
                             span { "Claims {vault.claim_count}" }
                         }
                         p { class: "trust-line", "{persistence_note}" }
@@ -7207,11 +7355,11 @@ fn PassportVaultLockCard(
     rsx! {
         article { class: "credential-card",
             div { class: "credential-card__heading",
-                div { p { class: "card-eyebrow", "Lock #{lock.lock_id}" } h2 { "{ui::format_night_amount(&lock.remaining)} remaining" } }
+                div { p { class: "card-eyebrow", "Lock #{lock.lock_id}" } h2 { class: "privacy-value", "{ui::format_night_amount(&lock.remaining)} remaining" } }
                 span { class: "status-pill", if creator { "Your lock" } else { "Claimable" } }
             }
             p { "{policy_detail}" }
-            p { class: "field-hint", "Deposited {ui::format_night_amount(&lock.total_deposited)} · released {ui::format_night_amount(&lock.total_released)}" }
+            p { class: "field-hint privacy-value", "Deposited {ui::format_night_amount(&lock.total_deposited)} · released {ui::format_night_amount(&lock.total_released)}" }
             div { class: "button-row",
                 button {
                     class: "secondary-button", r#type: "button", disabled: busy || !creator,
@@ -7489,6 +7637,7 @@ fn DidsPage(
                                 span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
                             }
                             if preview.state == "awaiting_consent" {
+                                p { class: "privacy-consent-exemption", "Details shown for authorization." }
                                 ol { class: "consent-questions", aria_label: "DID authentication consent questions",
                                     li { class: "consent-question",
                                         p { class: "card-eyebrow", "Who" }
@@ -7686,7 +7835,7 @@ fn DidsPage(
                                         div { class: "did-record__heading",
                                             div {
                                                 p { class: "card-eyebrow", "{ui::midnight_network(&record.document.network)} · {source}" }
-                                                h2 { title: "{did}", "{truncate_middle(&did, 22, 12)}" }
+                                                h2 { class: "privacy-value", "{truncate_middle(&did, 22, 12)}" }
                                             }
                                             span { class: if record.document_metadata.deactivated == Some(true) { "status-pill" } else { "status-pill success" },
                                                 if record.document_metadata.deactivated == Some(true) { "Deactivated" } else { "Resolved" }
@@ -7702,7 +7851,7 @@ fn DidsPage(
                                                 for method in record.document.verification_methods.clone() {
                                                     li { key: "{method.id}",
                                                         strong { "{ui::key_curve(&method.public_key_jwk.curve)}" }
-                                                        code { title: "{method.id}", "{truncate_middle(&method.id, 16, 8)}" }
+                                                        code { class: "privacy-value", "{truncate_middle(&method.id, 16, 8)}" }
                                                     }
                                                 }
                                             }
@@ -8055,6 +8204,7 @@ fn CredentialPresentationPanel(
                     if presentation.candidates.is_empty() {
                         p { class: "field-error", role: "alert", "No matching Digital Passport is available in this profile." }
                     } else if presentation.state == "awaiting_consent" {
+                        p { class: "privacy-consent-exemption", "Details shown for authorization." }
                         ol { class: "consent-questions", aria_label: "Credential presentation consent questions",
                             li { class: "consent-question",
                                 p { class: "card-eyebrow", "Who" }
@@ -8410,7 +8560,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                                 span { class: "passport-claim__tier", "{ui::claim_privacy(&candidate.privacy_tier)}" }
                                 h4 { "{candidate.label}" }
                                 if let Some(value) = revealed_first.read().as_deref() {
-                                    p { class: "passport-claim__value", "{value}" }
+                                    p { class: "passport-claim__value privacy-value", "{value}" }
                                 } else {
                                     p { "Encrypted until locally revealed." }
                                 }
@@ -8458,7 +8608,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                                 span { class: "passport-claim__tier", "{ui::claim_privacy(&candidate.privacy_tier)}" }
                                 h4 { "{candidate.label}" }
                                 if let Some(value) = revealed_last.read().as_deref() {
-                                    p { class: "passport-claim__value", "{value}" }
+                                    p { class: "passport-claim__value privacy-value", "{value}" }
                                 } else {
                                     p { "Encrypted until locally revealed." }
                                 }
@@ -8907,6 +9057,7 @@ fn CredentialsPage(
                                 span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
                             }
                             if preview.state == "awaiting_consent" {
+                                p { class: "privacy-consent-exemption", "Details shown for authorization." }
                                 ol { class: "consent-questions", aria_label: "Credential issuance consent questions",
                                     li { class: "consent-question",
                                         p { class: "card-eyebrow", "Who" }
@@ -9367,6 +9518,7 @@ fn CapabilityStatus(name: &'static str, state: String, ready: bool) -> Element {
 fn SettingsPage(
     active_profile: WalletProfileView,
     lifecycle_wake: Signal<u64>,
+    secret_mode: SecretModeController,
     on_open_profile: EventHandler<MouseEvent>,
     on_open_diagnostics: EventHandler<MouseEvent>,
 ) -> Element {
@@ -9465,6 +9617,8 @@ fn SettingsPage(
                                 security_state.set(SecurityCapabilityState::Loading);
                                 spawn(async move {
                                     let state = status.state_name();
+                                    let rearm_after_success =
+                                        matches!(state, "Uninitialized" | "Locked");
                                     let result = run_ui_blocking(move || {
                                         match state {
                                             "Uninitialized" => Some(
@@ -9482,6 +9636,11 @@ fn SettingsPage(
                                         }
                                     })
                                     .await;
+                                    if rearm_after_success
+                                        && matches!(&result, Ok(Some(Ok(_))))
+                                    {
+                                        secret_mode.rearm();
+                                    }
                                     security_state.set(match result {
                                         Ok(Some(result)) => result.map_or_else(
                                             |error| {
@@ -9977,6 +10136,8 @@ const LUCIDE_ACTIVITY: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="
 const LUCIDE_SCAN_LINE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>"#;
 const LUCIDE_RECEIVE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>"#;
 const LUCIDE_SEND: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>"#;
+const LUCIDE_EYE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.06 12.35a1 1 0 0 1 0-.7C3.73 7.6 7.7 5 12 5c4.3 0 8.27 2.6 9.94 6.65a1 1 0 0 1 0 .7C20.27 16.4 16.3 19 12 19c-4.3 0-8.27-2.6-9.94-6.65"/><circle cx="12" cy="12" r="3"/></svg>"#;
+const LUCIDE_EYE_OFF: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 2 20 20"/><path d="M6.71 6.71C4.9 7.9 3.52 9.6 2.66 11.65a1 1 0 0 0 0 .7C4.33 16.4 8.3 19 12.6 19c1.3 0 2.56-.24 3.72-.68"/><path d="M10.73 5.08A9 9 0 0 1 12.6 5c4.3 0 8.27 2.6 9.94 6.65a1 1 0 0 1 0 .7 11.1 11.1 0 0 1-2.1 3.18"/><path d="M14.72 14.72A3 3 0 0 1 10.48 10.48"/></svg>"#;
 
 #[cfg(test)]
 mod tests {
@@ -10798,5 +10959,31 @@ mod tests {
     fn long_public_identifiers_are_shortened_for_mobile_display() {
         assert_eq!(truncate_middle("1234567890", 4, 3), "1234…890");
         assert_eq!(truncate_middle("short", 4, 3), "short");
+    }
+
+    #[test]
+    fn secret_mode_defaults_masked_and_ignores_stale_timeouts() {
+        let mut state = SecretModeState::default();
+        assert!(state.masked);
+
+        let first_generation = state.toggle().expect("first reveal");
+        assert!(!state.masked);
+        state.rearm();
+        let second_generation = state.toggle().expect("second reveal");
+        assert_ne!(first_generation, second_generation);
+
+        state.timeout(first_generation);
+        assert!(!state.masked, "stale timeout must not hide a newer reveal");
+        state.timeout(second_generation);
+        assert!(state.masked);
+    }
+
+    #[test]
+    fn backup_and_credential_routes_force_native_snapshot_protection() {
+        assert!(route_forces_screen_privacy(Route::Settings));
+        assert!(route_forces_screen_privacy(Route::Documents));
+        assert!(route_forces_screen_privacy(Route::CredentialRequest));
+        assert!(!route_forces_screen_privacy(Route::Home));
+        assert!(!route_forces_screen_privacy(Route::Wallet));
     }
 }

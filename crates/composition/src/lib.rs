@@ -97,7 +97,7 @@ pub const fn simulated_passport_vault_contract_address_hex() -> &'static str {
     SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX
 }
 #[cfg(any(target_os = "ios", target_os = "android"))]
-use oxid_adapter_platform_system::NativePublicTextExporter;
+use oxid_adapter_platform_system::{NativePublicTextExporter, NativeScreenPrivacy};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_credential_json::EncryptedJsonCredentialRepository;
 use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
@@ -166,10 +166,13 @@ use oxid_passport_vault_application::{
     PassportVaultCallSubmissionState, PassportVaultCallSubmissionStatus,
     PassportVaultContractStateSnapshot,
 };
-use oxid_platform_ports::{IdentityLinkIngressPort, PublicTextExportPort, QrScannerPort};
+use oxid_platform_ports::{
+    IdentityLinkIngressPort, PublicTextExportPort, QrScannerPort, ScreenPrivacyPort,
+};
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_platform_ports::{
     UnavailableIdentityLinkIngress, UnavailablePublicTextExporter, UnavailableQrScanner,
+    UnavailableScreenPrivacy,
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CancelCredentialPresentationUseCase,
@@ -251,6 +254,7 @@ pub struct ApplicationServices {
     qr_scanner: Arc<dyn QrScannerPort>,
     identity_link_ingress: Arc<dyn IdentityLinkIngressPort>,
     public_text_exporter: Arc<dyn PublicTextExportPort>,
+    screen_privacy: Arc<dyn ScreenPrivacyPort>,
     portable_wallet_backup_documents: Arc<dyn PortableWalletBackupDocumentPort>,
     route_identity_request: Arc<dyn RouteIdentityRequestUseCase>,
     midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource>,
@@ -441,6 +445,11 @@ impl ApplicationServices {
     #[must_use]
     pub fn public_text_exporter(&self) -> Arc<dyn PublicTextExportPort> {
         Arc::clone(&self.public_text_exporter)
+    }
+
+    #[must_use]
+    pub fn screen_privacy(&self) -> Arc<dyn ScreenPrivacyPort> {
+        Arc::clone(&self.screen_privacy)
     }
 
     #[must_use]
@@ -2432,6 +2441,10 @@ where
     let public_text_exporter: Arc<dyn PublicTextExportPort> =
         Arc::new(UnavailablePublicTextExporter);
     #[cfg(any(target_os = "ios", target_os = "android"))]
+    let screen_privacy: Arc<dyn ScreenPrivacyPort> = Arc::new(NativeScreenPrivacy);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let screen_privacy: Arc<dyn ScreenPrivacyPort> = Arc::new(UnavailableScreenPrivacy);
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     let portable_wallet_backup_documents: Arc<dyn PortableWalletBackupDocumentPort> =
         Arc::new(NativePortableWalletBackupDocuments);
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
@@ -2842,6 +2855,7 @@ where
         qr_scanner,
         identity_link_ingress,
         public_text_exporter,
+        screen_privacy,
         portable_wallet_backup_documents,
         route_identity_request,
         midnight_public_call_context,

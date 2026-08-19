@@ -59,6 +59,9 @@ class MainActivity : WryActivity() {
     fun oxidSharePublicReceiveAddress(value: String): String =
         oxidMobilePlugin.sharePublicReceiveAddress(value)
 
+    fun oxidSetScreenPrivacy(enabled: Boolean): String =
+        oxidMobilePlugin.setScreenPrivacy(enabled)
+
     fun oxidStartBackupExportJson(request: String): String =
         oxidMobilePlugin.startBackupExportJson(request)
 
