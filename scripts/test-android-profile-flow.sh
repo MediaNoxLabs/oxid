@@ -102,8 +102,24 @@ wait_for_main_activity() {
   return 1
 }
 
+dismiss_native_share_chooser() {
+  local resumed=""
+  for _attempt in $(seq 1 3); do
+    resumed="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null \
+      | rg 'topResumedActivity|ResumedActivity' || true)"
+    if ! rg -q 'ResolverActivity|ChooserActivity|IntentResolverActivity' <<<"$resumed"; then
+      wait_for_main_activity
+      return
+    fi
+    "$adb_command" -s "$device" shell input keyevent BACK >/dev/null
+    sleep 1
+  done
+  wait_for_main_activity
+}
+
 assert_screen_privacy_flag() {
   local expected="$1"
+  local flag_line=""
   local flag_hex=""
   local flag_secure_set=0
   local window_state=""
@@ -123,16 +139,21 @@ assert_screen_privacy_flag() {
     echo "Android Oxid window was unavailable for screen-privacy inspection." >&2
     exit 1
   fi
-  flag_hex="$(rg -o 'fl=[0-9a-fA-F]+' <<<"$window_state" | head -1 | cut -d= -f2)"
-  if [ -z "$flag_hex" ]; then
+  flag_line="$(rg '^[[:space:]]+fl=' <<<"$window_state" | head -1 || true)"
+  if [ -z "$flag_line" ]; then
     echo "Android Oxid window flags were unavailable for screen-privacy inspection." >&2
     exit 1
   fi
-  # WindowManager.LayoutParams.FLAG_SECURE is bit 0x2000. Recent Samsung
-  # Android 16 dumpsys output exposes only the hexadecimal mask rather than a
-  # symbolic SECURE label, so assert the platform bit directly.
-  if (( (0x$flag_hex & 0x2000) != 0 )); then
+  # AOSP emulator images expose symbolic names while recent Samsung Android 16
+  # builds expose only a hexadecimal mask. Support both truthful dumpsys forms;
+  # WindowManager.LayoutParams.FLAG_SECURE is bit 0x2000 in the numeric form.
+  if rg -q '(^|[[:space:]])SECURE([[:space:]]|$)' <<<"$flag_line"; then
     flag_secure_set=1
+  else
+    flag_hex="$(rg -o 'fl=[0-9a-fA-F]+' <<<"$flag_line" | head -1 | cut -d= -f2 || true)"
+    if [ -n "$flag_hex" ] && (( (0x$flag_hex & 0x2000) != 0 )); then
+      flag_secure_set=1
+    fi
   fi
   if [ "$expected" = "protected" ]; then
     if [ "$flag_secure_set" -ne 1 ]; then
@@ -161,8 +182,7 @@ if ! rg -q 'ResolverActivity|ChooserActivity|IntentResolverActivity' <<<"$choose
   echo "Android public receive-address share did not open a native chooser." >&2
   exit 1
 fi
-"$adb_command" -s "$device" shell input keyevent BACK >/dev/null
-wait_for_main_activity
+dismiss_native_share_chooser
 
 credential_offer_uri='openid-credential-offer://?credential_offer=%7B%7D'
 "$adb_command" -s "$device" shell am start -W \

@@ -939,7 +939,7 @@ try {
     );
     const restored = { ...walletRestored, credentialRestored, didRestored, managedDidRestored, vaultRestored };
     if (!restored.profileRestored || !restored.developmentRootReset || !restored.submissionRestored || !restored.credentialRestored || !restored.didRestored || !restored.managedDidRestored || !restored.vaultRestored) {
-      throw new Error("Android restart did not restore the expected public and owner-private state");
+      throw new Error(`Android restart did not restore the expected public and owner-private state: ${JSON.stringify(restored)}`);
     }
     process.stdout.write(`${JSON.stringify(restored)}\n`);
   } else if (mode === "native-authorize") {

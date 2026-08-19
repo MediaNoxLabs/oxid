@@ -1528,12 +1528,19 @@ QR and custom-scheme evidence is recorded below.
 `scripts/test-android-identity-ingress.sh` is the focused packaged-host proof:
 on `emulator-5554` it has passed scanner cancellation, exact 60-second timeout
 closure, and warm/cold custom-scheme delivery into the unchanged consent
-boundary. The iOS package builds, installs, launches, and compiles the focused
-XCTest bundle on iPhone 17 Pro simulator
-`76B99C81-BE72-4A93-A443-7F244723AAF3`; Xcode 26.4 currently duplicates
-`UIAccessibilityLoaderWebShared` and hides the WKWebView accessibility subtree,
-so that host cannot claim interaction evidence. Do not weaken the XCTest or
-substitute a simulator result for physical camera/permission evidence.
+boundary. The complete `just android-smoke` flow also passes on the arm64
+Pixel Fold API 35 AOSP emulator. Its symbolic `dumpsys window` flags and
+full-screen share resolver differ from the Samsung/API 36 physical host: the
+harness must accept either symbolic `SECURE` or numeric bit `0x2000`, and may
+dismiss a bounded stack of currently resumed chooser activities without
+sending Back after Oxid resumes. The complete iOS package and XCUITest suite
+builds, installs, launches, and passes on the iPhone 17 Pro / iOS 26.4
+simulator `76B99C81-BE72-4A93-A443-7F244723AAF3`, including unavailable-camera
+fail-closed behavior, warm/cold custom schemes, wallet/identity consent, and
+restart persistence. Xcode 26.4 still prints a duplicate
+`UIAccessibilityLoaderWebShared` warning; it did not prevent the current suite
+from interacting with the WKWebView. Do not weaken either virtual-device test
+or substitute a simulator result for physical camera/permission evidence.
 
 The repository-owned physical harness has also passed on a Samsung SM-S928B
 running Android 16 / API 36 with application ID `io.medianox.oxid`: real-camera
@@ -1801,7 +1808,11 @@ mobile smoke harness must not require either legacy output shape.
 After dismissing Android's native share chooser, wait until Oxid's MainActivity
 is the resumed activity before delivering a warm app link. Sending the link
 while the chooser still owns the task can produce only a task-front restart
-attempt and skip the repository-owned `onNewIntent` capture seam.
+attempt and skip the repository-owned `onNewIntent` capture seam. Some
+foldable AOSP images require two Back events to dismiss the full-screen chooser;
+inspect only the current `topResumedActivity`/`ResumedActivity`, use a bounded
+dismissal loop, and stop immediately when Oxid resumes so the harness cannot
+back out to the launcher.
 
 Android processes do not reliably provide `HOME`, so `directories` cannot
 resolve the intended durable location there. The JSON adapter deliberately uses
