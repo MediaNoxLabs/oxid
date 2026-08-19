@@ -161,6 +161,14 @@ pub(crate) fn transfer_privacy(value: &str) -> &'static str {
     }
 }
 
+pub(crate) fn transfer_privacy_adverb(value: &str) -> &'static str {
+    match value {
+        "unshielded" => "publicly",
+        "shielded" => "privately",
+        _ => "with unavailable privacy",
+    }
+}
+
 pub(crate) fn address_kind(value: &str) -> &'static str {
     match value {
         "unshielded" => "Unshielded",

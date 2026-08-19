@@ -109,6 +109,7 @@ ADR status and delivery state answer different questions:
 | [0085](0085-centralize-user-facing-machine-labels.md) Centralize user-facing machine labels | Accepted | §§1, 3–7, 9–13, 16, 18, 21 and issues #2/#65/#77 | One Dioxus label/format seam hides unknown values, names capability truth, formats exact assets/dates, and rejects raw machine copy |
 | [0086](0086-compose-the-mobile-shell-with-a-bounded-route-stack.md) Compose the mobile shell with a bounded route stack | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1a; issues #2/#65/#78 | Four primary tabs and center Scan use an app-owned root-plus-secondary stack; every migrated page remains reachable without a new router dependency |
 | [0087](0087-compose-home-as-a-safe-read-only-projection.md) Compose Home as a safe read-only projection | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1b; issues #2/#65/#79 | Home projects existing safe views and routes to existing flows; Wallet remains operational authority and security/activity copy cannot overclaim |
+| [0088](0088-present-night-transfer-as-a-bounded-send-wizard.md) Present NIGHT transfer as a bounded Send wizard | Accepted | §§3–7, 12–13, 16, 18; design Phase 2a; issues #2/#65/#80 | Two editable screens lead into preview-derived review, separate authorization/submission intents, and only the recovery permitted by the existing nine-state machine |
 
 ## Current boundaries
 
@@ -400,3 +401,9 @@ account, security, shielded-sync, credential, and Vault use cases. Home routes
 actions to the existing operational surfaces and keeps optional failures
 payload-free. Backup completion, biometric enrollment, identity/Vault activity,
 secret masking, and all state-changing ceremonies remain outside this decision.
+ADR-0088 presents the existing protected public/shielded transfer lifecycle as
+two bounded editable screens followed by exact review, confirmation, and
+status. It preserves separate authorization and prove/submit intents, safe
+pre-broadcast cancellation, durable unknown-outcome reconciliation, and the
+nine-state application machine. Clipboard import, payment scanning, and recent
+recipients remain absent until reviewed ports exist.

@@ -129,14 +129,18 @@ final class ProfileFlowTests: XCTestCase {
         )
         application.buttons["Hide receive QR"].firstMatch.tap()
 
+        scrollTo(useReceiveAddress, in: application)
+        useReceiveAddress.tap()
+        let continueToAmount = application.buttons["Continue to transfer amount"]
+        XCTAssertTrue(continueToAmount.waitForExistence(timeout: 5))
+        continueToAmount.tap()
+
         let shieldedTransfer = application.switches["Use shielded NIGHT transfer"]
         XCTAssertTrue(shieldedTransfer.waitForExistence(timeout: 5))
         scrollTo(shieldedTransfer, in: application)
         shieldedTransfer.tap()
-        XCTAssertTrue(application.staticTexts["Send shielded NIGHT"].waitForExistence(timeout: 5))
+        XCTAssertEqual(shieldedTransfer.value as? String, "1")
 
-        scrollTo(useReceiveAddress, in: application)
-        useReceiveAddress.tap()
         let amount = application.textFields["Amount in NIGHT"]
         XCTAssertTrue(amount.exists)
         scrollTo(amount, in: application)
@@ -145,13 +149,20 @@ final class ProfileFlowTests: XCTestCase {
         // `typeText("1.5")`; use an exact whole NIGHT for this interaction
         // smoke while Rust unit tests retain fractional conversion coverage.
         amount.typeText("1")
-        let review = application.buttons["Review transfer"]
+        // The numeric keyboard overlaps the lower WKWebView controls. Blur the
+        // field through the fixed, non-interactive center of the app header so
+        // the following tap reaches the review button instead of a keypad key.
+        application.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
+        let review = application.buttons["Review exact transfer"]
         scrollTo(review, in: application)
         review.tap()
 
+        let continueToConfirm = application.buttons["Continue to NIGHT transfer confirmation"]
+        XCTAssertTrue(continueToConfirm.waitForExistence(timeout: 10))
+        scrollTo(continueToConfirm, in: application)
+        continueToConfirm.tap()
         let authorize = application.buttons["Authorize reviewed NIGHT transfer"]
         XCTAssertTrue(authorize.waitForExistence(timeout: 10))
-        XCTAssertTrue(application.staticTexts["Shielded"].exists)
         scrollTo(authorize, in: application)
         authorize.tap()
         let submit = application.buttons["Prove and submit NIGHT transfer"]
@@ -161,13 +172,14 @@ final class ProfileFlowTests: XCTestCase {
         let cancelSubmission = application.buttons["Cancel NIGHT transfer submission"]
         if cancelSubmission.waitForExistence(timeout: 5) {
             cancelSubmission.tap()
-            let retrySubmission = application.buttons["Retry safe submission"]
+            let retrySubmission = application.buttons["Retry safely — nothing was broadcast"]
             XCTAssertTrue(retrySubmission.waitForExistence(timeout: 5))
             retrySubmission.tap()
             XCTAssertTrue(submit.waitForExistence(timeout: 5))
+            scrollTo(submit, in: application)
             submit.tap()
         }
-        XCTAssertTrue(application.staticTexts["Transfer submitted"].waitForExistence(timeout: 15))
+        XCTAssertTrue(application.staticTexts["Transfer confirmed"].waitForExistence(timeout: 15))
 
         let documents = application.buttons["Documents"]
         XCTAssertTrue(documents.waitForExistence(timeout: 5))

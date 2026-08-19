@@ -1801,6 +1801,28 @@ enum TransferPanelState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SendWizardStep {
+    Recipient,
+    Amount,
+}
+
+impl SendWizardStep {
+    const fn number(self) -> u8 {
+        match self {
+            Self::Recipient => 1,
+            Self::Amount => 2,
+        }
+    }
+
+    const fn title(self) -> &'static str {
+        match self {
+            Self::Recipient => "Recipient",
+            Self::Amount => "Amount",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransferRecovery {
     Edit,
     RetryAuthorized,
@@ -3413,6 +3435,7 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                             profile_id: active_profile.id.clone(),
                             unshielded_receive_address: unshielded.value.clone(),
                             shielded_receive_address: shielded.value.clone(),
+                            night_balance: balance_for(&account, "NIGHT").cloned(),
                         }
                     }
                 }
@@ -3473,7 +3496,7 @@ fn SubmissionRecoveryPane(profile_id: String) -> Element {
     match state.read().clone() {
         SubmissionRecoveryPaneState::Loading => rsx! {},
         SubmissionRecoveryPaneState::Failed(error) => rsx! {
-            article { class: "surface-card submission-recovery-card", role: "alert",
+            article { id: "transaction-recovery", class: "surface-card submission-recovery-card", role: "alert",
                 p { class: "card-eyebrow", "Transaction recovery" }
                 h2 { "Submission history unavailable" }
                 p { "{error}" }
@@ -3513,6 +3536,7 @@ fn SubmissionRecoveryPane(profile_id: String) -> Element {
             let reconcile_profile = profile_id.clone();
             rsx! {
                 article {
+                    id: "transaction-recovery",
                     class: "surface-card submission-recovery-card",
                     role: "status",
                     aria_live: "polite",
@@ -4364,112 +4388,240 @@ fn public_export_message(result: Result<(), PublicTextExportError>, share: bool)
 }
 
 #[component]
+fn SendWizardProgress(current: SendWizardStep) -> Element {
+    let steps = [SendWizardStep::Recipient, SendWizardStep::Amount];
+    rsx! {
+        ol { class: "send-wizard__progress", aria_label: "Send progress",
+            for step in steps {
+                {
+                    let class = if step == current {
+                        "send-wizard__step is-active"
+                    } else if step.number() < current.number() {
+                        "send-wizard__step is-complete"
+                    } else {
+                        "send-wizard__step"
+                    };
+                    rsx! {
+                        li {
+                            key: "{step.number()}",
+                            class,
+                            aria_current: if step == current { "step" } else { "false" },
+                            span { class: "send-wizard__step-mark", aria_hidden: "true", "{step.number()}" }
+                            strong { "{step.title()}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
 fn SendTransferPanel(
     profile_id: String,
     unshielded_receive_address: String,
     shielded_receive_address: String,
+    night_balance: Option<oxid_wallet_application::WalletAssetBalanceView>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut panel = use_signal(|| TransferPanelState::Editing);
+    let mut wizard_step = use_signal(|| SendWizardStep::Recipient);
+    let mut confirmation_open = use_signal(|| false);
     let mut recipient = use_signal(String::new);
+    let mut using_own_address = use_signal(|| false);
     let mut amount = use_signal(String::new);
     let mut shielded = use_signal(|| false);
 
     match panel.read().clone() {
-        TransferPanelState::Editing => {
-            let can_review =
-                !recipient.read().trim().is_empty() && !amount.read().trim().is_empty();
-            rsx! {
-                article { class: "surface-card transfer-card",
-                    p { class: "card-eyebrow", "Send" }
-                    h2 { if shielded() { "Send shielded NIGHT" } else { "Send unshielded NIGHT" } }
-                    p {
-                        if shielded() {
-                            "A freshly synchronized private note set is required before exact review and authorization."
-                        } else {
-                            "The recipient and exact amount are validated before an explicit review and authorization step."
-                        }
-                    }
-                    span { class: "transfer-field-label", "Transfer privacy" }
-                    div { class: "privacy-choice", role: "group", aria_label: "Transfer privacy",
-                        button {
-                            class: if shielded() { "privacy-choice__option" } else { "privacy-choice__option selected" },
-                            r#type: "button",
-                            aria_label: "Use public NIGHT transfer",
-                            aria_pressed: if shielded() { "false" } else { "true" },
-                            onclick: move |_| {
-                                shielded.set(false);
-                                recipient.set(String::new());
+        TransferPanelState::Editing => match wizard_step() {
+            SendWizardStep::Recipient => {
+                let can_continue = !recipient.read().trim().is_empty();
+                rsx! {
+                    article { class: "surface-card transfer-card send-wizard",
+                        p { class: "card-eyebrow", "Send NIGHT" }
+                        SendWizardProgress { current: SendWizardStep::Recipient }
+                        h2 { "Who are you sending to?" }
+                        p { "Enter the public or shielded Midnight address that should receive this transfer." }
+                        label { r#for: "transfer-recipient", "Recipient address" }
+                        input {
+                            id: "transfer-recipient",
+                            r#type: "text",
+                            aria_label: "Recipient address",
+                            maxlength: 512,
+                            autocomplete: "off",
+                            value: "{recipient}",
+                            oninput: move |event| {
+                                using_own_address.set(false);
+                                recipient.set(event.value());
                             },
-                            "Public NIGHT"
+                        }
+                        if !recipient.read().trim().is_empty() {
+                            p { class: "send-wizard__recipient-note",
+                                "Address entered. Oxid validates its network and privacy kind before review."
+                            }
                         }
                         button {
-                            class: if shielded() { "privacy-choice__option selected" } else { "privacy-choice__option" },
+                            class: "inline-action",
                             r#type: "button",
-                            aria_label: "Use shielded NIGHT transfer",
-                            aria_pressed: if shielded() { "true" } else { "false" },
                             onclick: move |_| {
-                                shielded.set(true);
-                                recipient.set(String::new());
+                                using_own_address.set(true);
+                                recipient.set(if shielded() {
+                                    shielded_receive_address.clone()
+                                } else {
+                                    unshielded_receive_address.clone()
+                                });
                             },
-                            "Shielded NIGHT"
+                            "Use my receive address"
+                        }
+                        button {
+                            class: "primary-action",
+                            r#type: "button",
+                            disabled: !can_continue,
+                            aria_label: "Continue to transfer amount",
+                            onclick: move |_| wizard_step.set(SendWizardStep::Amount),
+                            "Continue to amount"
                         }
                     }
-                    label { r#for: "transfer-recipient", "Recipient address" }
-                    input {
-                        id: "transfer-recipient",
-                        r#type: "text",
-                        aria_label: "Recipient address",
-                        maxlength: 512,
-                        autocomplete: "off",
-                        value: "{recipient}",
-                        oninput: move |event| recipient.set(event.value()),
-                    }
-                    button {
-                        class: "inline-action",
-                        r#type: "button",
-                        onclick: move |_| {
-                            recipient.set(if shielded() {
-                                shielded_receive_address.clone()
+                }
+            }
+            SendWizardStep::Amount => {
+                let can_review = !amount.read().trim().is_empty();
+                let available_label = night_balance.as_ref().map(|balance| {
+                    ui::format_asset_amount(
+                        &balance.atomic_units,
+                        balance.decimals,
+                        &balance.symbol,
+                    )
+                });
+                let maximum_amount = night_balance.as_ref().map(|balance| {
+                    ui::format_atomic_units(&balance.atomic_units, balance.decimals)
+                });
+                let public_address = unshielded_receive_address.clone();
+                let private_address = shielded_receive_address.clone();
+                rsx! {
+                            article { class: "surface-card transfer-card send-wizard",
+                                p { class: "card-eyebrow", "Send NIGHT" }
+                                SendWizardProgress { current: SendWizardStep::Amount }
+                                h2 { "How much should arrive?" }
+                                p { "Choose whether this transfer is public or shielded, then enter the exact NIGHT amount." }
+                                span { class: "transfer-field-label", "Transfer privacy" }
+                                div { class: "privacy-choice", role: "group", aria_label: "Transfer privacy",
+                            button {
+                                class: if shielded() { "privacy-choice__option" } else { "privacy-choice__option selected" },
+                                r#type: "button",
+                                aria_label: "Use public NIGHT transfer",
+                                aria_pressed: if shielded() { "false" } else { "true" },
+                                onclick: move |_| {
+                                    if using_own_address() {
+                                        recipient.set(public_address.clone());
+                                    }
+                                    shielded.set(false);
+                                },
+                                strong { "Public" }
+                                small { "Visible in public Midnight account history" }
+                            }
+                            button {
+                                class: if shielded() { "privacy-choice__option selected" } else { "privacy-choice__option" },
+                                r#type: "button",
+                                aria_label: "Use shielded NIGHT transfer",
+                                aria_pressed: if shielded() { "true" } else { "false" },
+                                onclick: move |_| {
+                                    if using_own_address() {
+                                        recipient.set(private_address.clone());
+                                    }
+                                    shielded.set(true);
+                                },
+                                strong { "Shielded" }
+                                small { "Uses the synchronized private note set" }
+                            }
+                        }
+                        label { r#for: "transfer-amount", "Amount (NIGHT)" }
+                        input {
+                            class: "send-wizard__amount-input",
+                            id: "transfer-amount",
+                            r#type: "text",
+                            aria_label: "Amount in NIGHT",
+                            inputmode: "decimal",
+                            maxlength: 48,
+                            autocomplete: "off",
+                            placeholder: "1.5",
+                            value: "{amount}",
+                            oninput: move |event| amount.set(event.value()),
+                        }
+                        div { class: "send-wizard__balance",
+                            if shielded() {
+                                span { "Private balance is validated from the latest shielded synchronization." }
+                            } else if let Some(available) = available_label {
+                                span { "Available {available}" }
+                                if let Some(maximum) = maximum_amount {
+                                    button {
+                                        class: "inline-action",
+                                        r#type: "button",
+                                        aria_label: "Use maximum available NIGHT amount",
+                                        onclick: move |_| amount.set(maximum.clone()),
+                                        "Max"
+                                    }
+                                }
                             } else {
-                                unshielded_receive_address.clone()
-                            });
-                        },
-                        "Use my receive address"
-                    }
-                    label { r#for: "transfer-amount", "Amount (NIGHT)" }
-                    input {
-                        id: "transfer-amount",
-                        r#type: "text",
-                        aria_label: "Amount in NIGHT",
-                        inputmode: "decimal",
-                        maxlength: 48,
-                        autocomplete: "off",
-                        placeholder: "1.5",
-                        value: "{amount}",
-                        oninput: move |event| amount.set(event.value()),
-                    }
-                    button {
-                        class: "primary-action",
-                        r#type: "button",
-                        disabled: !can_review,
-                        onclick: move |_| {
-                            match night_display_to_atomic_units(&amount.read()) {
-                                Ok(amount_atomic_units) => {
-                                    let shielded_transfer = shielded();
-                                    let profile_id = profile_id.clone();
-                                    let recipient_address = recipient.read().trim().to_owned();
-                                    panel.set(TransferPanelState::Preparing);
-                                    if shielded_transfer {
-                                        let service = services.prepare_shielded_wallet_transfer();
-                                        spawn(async move {
-                                            let command = PrepareShieldedWalletTransferCommand {
-                                                profile_id,
-                                                recipient_address,
-                                                token_type: "0000000000000000000000000000000000000000000000000000000000000000".to_owned(),
-                                                amount_atomic_units,
-                                            };
-                                            match run_ui_blocking(move || service.execute(command)).await {
+                                span { "Available balance is validated before review." }
+                            }
+                        }
+                        p { class: "send-wizard__fee-note",
+                            "The DUST fee is calculated while proving and cannot spend more NIGHT than the reviewed transfer allows."
+                        }
+                        div { class: "transfer-actions",
+                            button {
+                                class: "secondary-action",
+                                r#type: "button",
+                                onclick: move |_| wizard_step.set(SendWizardStep::Recipient),
+                                "Back"
+                            }
+                            button {
+                                class: "primary-action",
+                                r#type: "button",
+                                disabled: !can_review,
+                                onclick: move |_| {
+                                match night_display_to_atomic_units(&amount.read()) {
+                                    Ok(amount_atomic_units) => {
+                                        let shielded_transfer = shielded();
+                                        let profile_id = profile_id.clone();
+                                        let recipient_address = recipient.read().trim().to_owned();
+                                        confirmation_open.set(false);
+                                        panel.set(TransferPanelState::Preparing);
+                                        if shielded_transfer {
+                                            let service = services.prepare_shielded_wallet_transfer();
+                                            spawn(async move {
+                                                let command = PrepareShieldedWalletTransferCommand {
+                                                    profile_id,
+                                                    recipient_address,
+                                                    token_type: "0000000000000000000000000000000000000000000000000000000000000000".to_owned(),
+                                                    amount_atomic_units,
+                                                };
+                                                match run_ui_blocking(move || service.execute(command)).await {
+                                                    Ok(Ok(preview)) => panel.set(
+                                                        TransferPanelState::Prepared(Box::new(preview)),
+                                                    ),
+                                                    Ok(Err(error)) => panel.set(TransferPanelState::Failed {
+                                                        message: error.to_string(),
+                                                        retained: None,
+                                                        recovery: TransferRecovery::Edit,
+                                                    }),
+                                                    Err(error) => panel.set(TransferPanelState::Failed {
+                                                        message: error.to_string(),
+                                                        retained: None,
+                                                        recovery: TransferRecovery::Edit,
+                                                    }),
+                                                }
+                                            });
+                                        } else {
+                                            let service = services.prepare_wallet_transfer();
+                                            spawn(async move {
+                                                let command = PrepareWalletTransferCommand {
+                                                    profile_id,
+                                                    recipient_address,
+                                                    amount_atomic_units,
+                                                };
+                                                match run_ui_blocking(move || service.execute(command)).await {
                                                 Ok(Ok(preview)) => panel.set(
                                                     TransferPanelState::Prepared(Box::new(preview)),
                                                 ),
@@ -4484,45 +4636,23 @@ fn SendTransferPanel(
                                                     recovery: TransferRecovery::Edit,
                                                 }),
                                             }
-                                        });
-                                    } else {
-                                        let service = services.prepare_wallet_transfer();
-                                        spawn(async move {
-                                            let command = PrepareWalletTransferCommand {
-                                                profile_id,
-                                                recipient_address,
-                                                amount_atomic_units,
-                                            };
-                                            match run_ui_blocking(move || service.execute(command)).await {
-                                            Ok(Ok(preview)) => panel.set(
-                                                TransferPanelState::Prepared(Box::new(preview)),
-                                            ),
-                                            Ok(Err(error)) => panel.set(TransferPanelState::Failed {
-                                                message: error.to_string(),
-                                                retained: None,
-                                                recovery: TransferRecovery::Edit,
-                                            }),
-                                            Err(error) => panel.set(TransferPanelState::Failed {
-                                                message: error.to_string(),
-                                                retained: None,
-                                                recovery: TransferRecovery::Edit,
-                                            }),
+                                            });
                                         }
-                                        });
                                     }
+                                    Err(error) => panel.set(TransferPanelState::Failed {
+                                        message: error.to_owned(),
+                                        retained: None,
+                                        recovery: TransferRecovery::Edit,
+                                    }),
                                 }
-                                Err(error) => panel.set(TransferPanelState::Failed {
-                                    message: error.to_owned(),
-                                    retained: None,
-                                    recovery: TransferRecovery::Edit,
-                                }),
+                            },
+                                "Review exact transfer"
                             }
-                        },
-                        "Review transfer"
+                        }
                     }
                 }
             }
-        }
+        },
         TransferPanelState::Preparing => rsx! {
             article { class: "surface-card transfer-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
                 span { class: "loading-mark", aria_hidden: "true" }
@@ -4537,63 +4667,106 @@ fn SendTransferPanel(
             let amount_label = format_transfer_asset(&preview.amount);
             let change_label = format_transfer_asset(&preview.change);
             let recipient_label = truncate_middle(&preview.recipient_address, 18, 8);
+            let summary = transfer_review_summary(&preview);
             let confirmation = authorize_transfer_confirmation(&preview);
             let draft_id = preview.draft_id.clone();
             let challenge = preview.authorization_challenge.clone();
-            rsx! {
-                article { class: "surface-card transfer-card review-card", aria_label: "Review NIGHT transfer" ,
-                    p { class: "card-eyebrow", "Review" }
-                    h2 { "Confirm transfer details" }
-                    dl { class: "preview-list",
-                        div { dt { "Send" } dd { "{amount_label}" } }
-                        div { dt { "Recipient" } dd { title: "{preview.recipient_address}", "{recipient_label}" } }
-                        div { dt { "Privacy" } dd { "{ui::transfer_privacy(&preview.recipient_kind)}" } }
-                        div { dt { "Network" } dd { "{ui::midnight_network(&preview.network_id)}" } }
-                        div { dt { "Change" } dd { "{change_label}" } }
-                        div { dt { "Inputs" } dd { "{preview.input_count}" } }
-                        div { dt { "DUST fee" } dd { "Calculated during proving" } }
+            if confirmation_open() {
+                rsx! {
+                    article {
+                        class: "surface-card transfer-card confirm-sheet",
+                        aria_label: "Confirm NIGHT transfer",
+                        p { class: "card-eyebrow", "Confirm transfer" }
+                        h2 { "Authorize {amount_label}?" }
+                        p { class: "confirm-sheet__summary", "{summary}" }
+                        div { class: "confirm-sheet__recipient",
+                            span { "Recipient" }
+                            code { title: "{preview.recipient_address}", "{recipient_label}" }
+                        }
+                        p { class: "consent-copy",
+                            "Device protection authorizes only this exact transfer. Proving and submission remain a separate action."
+                        }
+                        div { class: "transfer-actions",
+                            button {
+                                class: "secondary-action",
+                                r#type: "button",
+                                onclick: move |_| confirmation_open.set(false),
+                                "Back to review"
+                            }
+                            button {
+                                class: "primary-action",
+                                r#type: "button",
+                                aria_label: "Authorize reviewed NIGHT transfer",
+                                onclick: move |_| {
+                                    let service = services.authorize_wallet_transfer();
+                                    let command = AuthorizeWalletTransferCommand {
+                                        profile_id: profile_id.clone(),
+                                        draft_id: draft_id.clone(),
+                                        authorization_challenge: challenge.clone(),
+                                        confirmation: confirmation.clone(),
+                                    };
+                                    let retained_preview = preview.clone();
+                                    panel.set(TransferPanelState::Authorizing(preview.clone()));
+                                    spawn(async move {
+                                        match run_ui_blocking(move || service.execute(command)).await {
+                                            Ok(Ok(authorized)) => panel.set(
+                                                TransferPanelState::Authorized(Box::new(authorized)),
+                                            ),
+                                            Ok(Err(error)) => panel.set(TransferPanelState::Failed {
+                                                message: error.to_string(),
+                                                retained: Some(retained_preview.clone()),
+                                                recovery: TransferRecovery::Edit,
+                                            }),
+                                            Err(error) => panel.set(TransferPanelState::Failed {
+                                                message: error.to_string(),
+                                                retained: Some(retained_preview),
+                                                recovery: TransferRecovery::Edit,
+                                            }),
+                                        }
+                                    });
+                                },
+                                "Authorize with device protection"
+                            }
+                        }
                     }
-                    p { class: "consent-copy", "Authorization binds only this reviewed transfer. Proof generation and submission remain a separate action." }
-                    div { class: "transfer-actions",
+                }
+            } else {
+                rsx! {
+                    article { class: "surface-card transfer-card review-card", aria_label: "Review NIGHT transfer",
+                        p { class: "card-eyebrow", "Review transfer" }
+                        h2 { "Does this look right?" }
+                        p { class: "send-wizard__summary", "{summary}" }
+                        details { class: "transfer-details",
+                            summary { "Details" }
+                            dl { class: "preview-list",
+                                div { dt { "Send" } dd { "{amount_label}" } }
+                                div { dt { "Recipient" } dd { title: "{preview.recipient_address}", "{recipient_label}" } }
+                                div { dt { "Privacy" } dd { "{ui::transfer_privacy(&preview.recipient_kind)}" } }
+                                div { dt { "Network" } dd { "{ui::midnight_network(&preview.network_id)}" } }
+                                div { dt { "Change" } dd { "{change_label}" } }
+                                div { dt { "Inputs" } dd { "{preview.input_count}" } }
+                                div { dt { "DUST fee" } dd { "Calculated during proving" } }
+                            }
+                        }
+                        p { class: "consent-copy", "Only the exact transfer shown here can be authorized." }
+                        div { class: "transfer-actions",
                         button {
                             class: "secondary-action",
                             r#type: "button",
-                            onclick: move |_| panel.set(TransferPanelState::Editing),
-                            "Edit"
+                                onclick: move |_| {
+                                    confirmation_open.set(false);
+                                    wizard_step.set(SendWizardStep::Amount);
+                                    panel.set(TransferPanelState::Editing);
+                                },
+                                "Edit amount"
                         }
                         button {
                             class: "primary-action",
                             r#type: "button",
-                            aria_label: "Authorize reviewed NIGHT transfer",
-                            onclick: move |_| {
-                                let service = services.authorize_wallet_transfer();
-                                let command = AuthorizeWalletTransferCommand {
-                                    profile_id: profile_id.clone(),
-                                    draft_id: draft_id.clone(),
-                                    authorization_challenge: challenge.clone(),
-                                    confirmation: confirmation.clone(),
-                                };
-                                let retained_preview = preview.clone();
-                                panel.set(TransferPanelState::Authorizing(preview.clone()));
-                                spawn(async move {
-                                    match run_ui_blocking(move || service.execute(command)).await {
-                                        Ok(Ok(authorized)) => panel.set(
-                                            TransferPanelState::Authorized(Box::new(authorized)),
-                                        ),
-                                        Ok(Err(error)) => panel.set(TransferPanelState::Failed {
-                                            message: error.to_string(),
-                                            retained: Some(retained_preview.clone()),
-                                            recovery: TransferRecovery::Edit,
-                                        }),
-                                        Err(error) => panel.set(TransferPanelState::Failed {
-                                            message: error.to_string(),
-                                            retained: Some(retained_preview),
-                                            recovery: TransferRecovery::Edit,
-                                        }),
-                                    }
-                                });
-                            },
-                            "Authorize transfer"
+                                aria_label: "Continue to NIGHT transfer confirmation",
+                                onclick: move |_| confirmation_open.set(true),
+                                "Continue to confirm"
+                            }
                         }
                     }
                 }
@@ -4611,14 +4784,25 @@ fn SendTransferPanel(
         },
         TransferPanelState::Authorized(preview) => {
             let amount_label = format_transfer_asset(&preview.amount);
+            let recipient_label = truncate_middle(&preview.recipient_address, 18, 8);
+            let summary = transfer_review_summary(&preview);
             let confirmation = submit_transfer_confirmation(&preview);
             let draft_id = preview.draft_id.clone();
             let submitting_preview = preview.clone();
             rsx! {
-                article { class: "surface-card transfer-card review-card", aria_label: "Authorized NIGHT transfer",
-                    p { class: "card-eyebrow", "Authorized" }
-                    h2 { "{amount_label} is ready" }
-                    p { "The authorized transaction is retained inside the Midnight adapter. Continue to prove, balance the DUST fee, and submit." }
+                article {
+                    class: "surface-card transfer-card confirm-sheet",
+                    aria_label: "Authorized NIGHT transfer",
+                    p { class: "card-eyebrow", "Device confirmed" }
+                    h2 { "Send {amount_label} now?" }
+                    p { class: "confirm-sheet__summary", "{summary}" }
+                    div { class: "confirm-sheet__recipient",
+                        span { "Recipient" }
+                        code { title: "{preview.recipient_address}", "{recipient_label}" }
+                    }
+                    p { class: "consent-copy",
+                        "Oxid will prove locally, calculate the DUST fee, save recovery state, then submit."
+                    }
                     button {
                         class: "primary-action",
                         r#type: "button",
@@ -4676,12 +4860,12 @@ fn SendTransferPanel(
             let cancel_draft = preview.draft_id.clone();
             let cancelling_preview = preview.clone();
             rsx! {
-                article { class: "surface-card transfer-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
+                article { class: "surface-card transfer-card submitting-card sending-card", role: "status", aria_live: "polite", aria_busy: "true",
                     span { class: "loading-mark", aria_hidden: "true" }
                     div {
-                        p { class: "card-eyebrow", "Submitting" }
-                        h2 { "Proving {format_transfer_asset(&preview.amount)}" }
-                        p { "The worker is balancing the DUST fee and proving locally. Cancellation is available only before broadcast." }
+                        p { class: "card-eyebrow", "Sending" }
+                        h2 { "Sending {format_transfer_asset(&preview.amount)}" }
+                        p { "Oxid is proving locally and saving recovery state. You can stop only before broadcast." }
                         button {
                             class: "secondary-action",
                             r#type: "button",
@@ -4730,19 +4914,27 @@ fn SendTransferPanel(
         },
         TransferPanelState::Submitted(submission) => rsx! {
             article { class: "surface-card transfer-card submitted-card", role: "status", aria_live: "polite",
-                p { class: "card-eyebrow", "Included" }
-                h2 { "Transfer submitted" }
+                span { class: "transfer-status-mark", aria_hidden: "true", "✓" }
+                p { class: "card-eyebrow", "Confirmed" }
+                h2 { "Transfer confirmed" }
                 p { "Mode: {ui::submission_mode(&submission.mode)}. Final DUST fee: {format_transfer_asset(&submission.fee)}." }
-                dl { class: "preview-list",
-                    div { dt { "Transaction" } dd { title: "{submission.transaction_id}", "{truncate_middle(&submission.transaction_id, 16, 8)}" } }
-                    div { dt { "Block" } dd { title: "{submission.block_id}", "{truncate_middle(&submission.block_id, 16, 8)}" } }
+                details { class: "transfer-details",
+                    summary { "Confirmation details" }
+                    dl { class: "preview-list",
+                        div { dt { "Transaction" } dd { title: "{submission.transaction_id}", "{truncate_middle(&submission.transaction_id, 16, 8)}" } }
+                        div { dt { "Block" } dd { title: "{submission.block_id}", "{truncate_middle(&submission.block_id, 16, 8)}" } }
+                    }
                 }
                 button {
                     class: "secondary-action",
                     r#type: "button",
                     onclick: move |_| {
                         recipient.set(String::new());
+                        using_own_address.set(false);
                         amount.set(String::new());
+                        shielded.set(false);
+                        confirmation_open.set(false);
+                        wizard_step.set(SendWizardStep::Recipient);
                         panel.set(TransferPanelState::Editing);
                     },
                     "Send another"
@@ -4750,7 +4942,7 @@ fn SendTransferPanel(
             }
         },
         TransferPanelState::Failed {
-            message,
+            message: _,
             retained,
             recovery,
         } => {
@@ -4758,20 +4950,16 @@ fn SendTransferPanel(
             let outcome_unknown = recovery == TransferRecovery::ReconcileUnknown;
             let retry_preview = retained.clone();
             rsx! {
-            article { class: "surface-card transfer-card", role: "alert",
+            article { class: "surface-card transfer-card failed-card", role: "alert",
                 p { class: "card-eyebrow", "Transfer not completed" }
-                h2 {
-                    if outcome_unknown {
-                        "Submission outcome needs reconciliation"
-                    } else if retryable {
-                        "Authorized transfer can be retried safely"
-                    } else {
-                        "Check the transfer and try again"
-                    }
-                }
-                p { "{message}" }
+                h2 { "{transfer_failure_heading(recovery)}" }
+                p { "{transfer_failure_note(recovery)}" }
                 if outcome_unknown {
-                    p { "Oxid will not create or submit a replacement while broadcast may have occurred." }
+                    a {
+                        class: "secondary-action",
+                        href: "#transaction-recovery",
+                        "Check with the network"
+                    }
                 } else if retryable {
                     button {
                         class: "secondary-action",
@@ -4781,14 +4969,18 @@ fn SendTransferPanel(
                                 panel.set(TransferPanelState::Authorized(preview));
                             }
                         },
-                        "Retry safe submission"
+                        "Retry safely — nothing was broadcast"
                     }
                 } else {
                     button {
                         class: "secondary-action",
                         r#type: "button",
-                        onclick: move |_| panel.set(TransferPanelState::Editing),
-                        "Back to transfer"
+                        onclick: move |_| {
+                            confirmation_open.set(false);
+                            wizard_step.set(SendWizardStep::Amount);
+                            panel.set(TransferPanelState::Editing);
+                        },
+                        "Edit and try again"
                     }
                 }
             }
@@ -4879,6 +5071,38 @@ fn night_display_to_atomic_units(value: &str) -> Result<String, &'static str> {
 
 fn format_transfer_asset(asset: &oxid_wallet_application::WalletTransferAssetView) -> String {
     ui::format_asset_amount(&asset.atomic_units, asset.decimals, &asset.symbol)
+}
+
+fn transfer_review_summary(preview: &WalletTransferPreviewView) -> String {
+    format!(
+        "Send {} {} to {} on {}.",
+        format_transfer_asset(&preview.amount),
+        ui::transfer_privacy_adverb(&preview.recipient_kind),
+        truncate_middle(&preview.recipient_address, 18, 8),
+        ui::midnight_network(&preview.network_id),
+    )
+}
+
+const fn transfer_failure_heading(recovery: TransferRecovery) -> &'static str {
+    match recovery {
+        TransferRecovery::Edit => "Edit and try again",
+        TransferRecovery::RetryAuthorized => "Safe to try submission again",
+        TransferRecovery::ReconcileUnknown => "Check with the network",
+    }
+}
+
+const fn transfer_failure_note(recovery: TransferRecovery) -> &'static str {
+    match recovery {
+        TransferRecovery::Edit => {
+            "Check the recipient, amount, privacy choice, and current balance before trying again."
+        }
+        TransferRecovery::RetryAuthorized => {
+            "Nothing was broadcast. The exact authorized transfer is still retained."
+        }
+        TransferRecovery::ReconcileUnknown => {
+            "This may have reached the network. Oxid will check before anything is sent again."
+        }
+    }
 }
 
 fn authorize_transfer_confirmation(
@@ -9292,6 +9516,84 @@ mod tests {
         assert_eq!(
             ui::wallet_protection("unexpected"),
             "Protection class unavailable"
+        );
+    }
+
+    fn transfer_preview(recipient_kind: &str) -> WalletTransferPreviewView {
+        WalletTransferPreviewView {
+            draft_id: "draft_test".to_owned(),
+            authorization_challenge: "challenge_test".to_owned(),
+            network_id: "undeployed".to_owned(),
+            account_id: "account_test".to_owned(),
+            recipient_address: "mn_addr_test".to_owned(),
+            recipient_kind: recipient_kind.to_owned(),
+            amount: oxid_wallet_application::WalletTransferAssetView {
+                asset_id: "night".to_owned(),
+                symbol: "NIGHT".to_owned(),
+                decimals: 6,
+                atomic_units: "12500000".to_owned(),
+            },
+            change: oxid_wallet_application::WalletTransferAssetView {
+                asset_id: "night".to_owned(),
+                symbol: "NIGHT".to_owned(),
+                decimals: 6,
+                atomic_units: "0".to_owned(),
+            },
+            fee: None,
+            fee_state: "pending".to_owned(),
+            input_count: 1,
+            expires_at_millis: 42,
+            state: "prepared".to_owned(),
+            proof_required: true,
+            submission_ready: false,
+        }
+    }
+
+    #[test]
+    fn send_wizard_has_two_bounded_editable_steps() {
+        assert_eq!(SendWizardStep::Recipient.number(), 1);
+        assert_eq!(SendWizardStep::Recipient.title(), "Recipient");
+        assert_eq!(SendWizardStep::Amount.number(), 2);
+        assert_eq!(SendWizardStep::Amount.title(), "Amount");
+    }
+
+    #[test]
+    fn send_review_summary_uses_only_the_exact_preview() {
+        assert_eq!(
+            transfer_review_summary(&transfer_preview("shielded")),
+            "Send 12.5 NIGHT privately to mn_addr_test on Standalone development."
+        );
+        assert_eq!(
+            transfer_review_summary(&transfer_preview("unshielded")),
+            "Send 12.5 NIGHT publicly to mn_addr_test on Standalone development."
+        );
+        assert_eq!(
+            ui::transfer_privacy_adverb("unexpected"),
+            "with unavailable privacy"
+        );
+    }
+
+    #[test]
+    fn send_failure_copy_exposes_only_the_allowed_recovery() {
+        assert_eq!(
+            transfer_failure_heading(TransferRecovery::Edit),
+            "Edit and try again"
+        );
+        assert_eq!(
+            transfer_failure_heading(TransferRecovery::RetryAuthorized),
+            "Safe to try submission again"
+        );
+        assert!(
+            transfer_failure_note(TransferRecovery::RetryAuthorized)
+                .contains("Nothing was broadcast")
+        );
+        assert_eq!(
+            transfer_failure_heading(TransferRecovery::ReconcileUnknown),
+            "Check with the network"
+        );
+        assert!(
+            transfer_failure_note(TransferRecovery::ReconcileUnknown)
+                .contains("check before anything is sent again")
         );
     }
 

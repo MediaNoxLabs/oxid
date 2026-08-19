@@ -313,6 +313,10 @@ try {
     await clickButton("Present");
     await waitForButton("Manage identities");
     await clickButton("Home");
+    await waitFor(
+      "document.body.innerText.includes('Everything in one place')",
+      "Home route after presentation shortcut",
+    );
     await clickButton("Receive");
     await waitFor(
       'Boolean(document.querySelector(\'button[aria-label="Activate protected Midnight account"]\'))',
@@ -362,21 +366,23 @@ try {
     );
 
     await clickButton("Use my receive address");
+    await clickButtonByLabel("Continue to transfer amount");
     await setInput("Amount in NIGHT", "1.5");
-    await clickButton("Review transfer");
+    await clickButton("Review exact transfer");
+    await clickButtonByLabel("Continue to NIGHT transfer confirmation");
     await clickButtonByLabel("Authorize reviewed NIGHT transfer");
     await clickButtonByLabel("Prove and submit NIGHT transfer");
     await clickButtonByLabel("Cancel NIGHT transfer submission");
-    await waitForButton("Retry safe submission");
-    await clickButton("Retry safe submission");
+    await waitForButton("Retry safely — nothing was broadcast");
+    await clickButton("Retry safely — nothing was broadcast");
     await clickButtonByLabel("Prove and submit NIGHT transfer");
     await waitFor(
-      "document.body.innerText.includes('Transfer submitted')",
+      "document.body.innerText.includes('Transfer confirmed')",
       "simulated transfer inclusion",
     );
 
     const walletResult = await evaluate(`(() => ({
-      submitted: document.body.innerText.includes("Transfer submitted"),
+      submitted: document.body.innerText.includes("Transfer confirmed"),
       simulated: document.body.innerText.includes("Mode: Simulated — runs locally, nothing on Midnight"),
       dustSynced: document.body.innerText.includes("12 DUST"),
       shieldedSynced: document.body.innerText.includes("1 shielded notes")

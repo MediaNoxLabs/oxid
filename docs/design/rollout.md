@@ -36,10 +36,15 @@ program (the two exceptions are called out).
 
 ## Phase 2 — Journey ceremonies
 
-Send wizard over the existing 9-state machine; receive sheet; consent sheet
-(the four-question anatomy) for presentation/issuance/SIOPv2; backup
-celebration flow; onboarding fork. Sync collapses into card state. Word
-budgets enforced.
+1. **Send wizard** (delivered by ADR-0088 / issue #80): two bounded editable
+   screens lead into exact preview-derived review, separate device
+   authorization and prove/submit intents, and truthful sending/confirmed/
+   failure recovery over the unchanged nine-state machine. Clipboard import,
+   payment scanning, and recent recipients remain follow-up ports rather than
+   inert controls.
+2. **Remaining ceremonies**: receive sheet; four-question consent sheet for
+   presentation/issuance/SIOPv2; backup celebration flow; onboarding fork.
+   Sync collapses into card state. Word budgets remain enforced.
 
 ## Phase 3 — White-label infrastructure
 
@@ -91,7 +96,8 @@ global search across assets/documents/activity, light theme ship.
 
 One epic issue (this spec), then per-phase slices sized like existing
 issues: 0a tokens, 0b labeling layer, 0c credential chooser (bug), 1a route
-stack + shell (delivered by #78), 1b Home, 2a send wizard, 2b consent sheet, 2c onboarding +
-backup, 3 white-label infra, 4a secret mode + native privacy ops, 4b dev/demo
+stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
+(delivered by #80), 2b consent sheet, 2c onboarding + backup, 3 white-label
+infra, 4a secret mode + native privacy ops, 4b dev/demo
 profiles, 5 per-item. Each slice references the relevant spec section as its
 acceptance criteria, factory-work-item style.

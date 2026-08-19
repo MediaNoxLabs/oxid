@@ -1747,6 +1747,57 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
+.send-wizard {
+  scroll-margin-top: var(--space-5);
+}
+
+.send-wizard__progress {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0 0 var(--space-5);
+  padding: 0;
+  list-style: none;
+}
+
+.send-wizard__step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid var(--line);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.send-wizard__step.is-active {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.send-wizard__step.is-complete {
+  border-color: var(--positive);
+  color: var(--text-soft);
+}
+
+.send-wizard__step-mark {
+  display: grid;
+  width: 1.55rem;
+  height: 1.55rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-pill);
+  font-weight: 850;
+}
+
+.send-wizard__recipient-note,
+.send-wizard__fee-note {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
 .transfer-card label {
   display: grid;
   gap: var(--space-2);
@@ -1776,6 +1827,8 @@ textarea:focus-visible {
 }
 
 .privacy-choice__option {
+  display: grid;
+  gap: var(--space-1);
   min-height: 2.65rem;
   padding: var(--space-2) var(--space-3);
   border: 1px solid transparent;
@@ -1785,6 +1838,13 @@ textarea:focus-visible {
   font-size: var(--font-caption);
   font-weight: 800;
   cursor: pointer;
+}
+
+.privacy-choice__option small {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .privacy-choice__option.selected {
@@ -1811,6 +1871,28 @@ textarea:focus-visible {
 
 .transfer-card input:focus-visible {
   border-color: var(--accent);
+}
+
+.transfer-card .send-wizard__amount-input {
+  min-height: 4.5rem;
+  font-size: var(--font-title);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.send-wizard__balance {
+  display: flex;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.send-wizard__balance .inline-action {
+  flex: 0 0 auto;
+  margin-top: 0;
 }
 
 .inline-action {
@@ -1854,6 +1936,62 @@ textarea:focus-visible {
   text-overflow: ellipsis;
 }
 
+.send-wizard__summary,
+.confirm-sheet__summary {
+  color: var(--text-strong);
+  font-size: var(--font-body);
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.transfer-details {
+  margin: var(--space-4) 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.transfer-details > summary {
+  padding: var(--space-3) 0;
+  color: var(--accent);
+  font-size: var(--font-caption);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.transfer-details .preview-list {
+  margin-top: 0;
+}
+
+.confirm-sheet {
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 48%),
+    var(--surface-sheet);
+  box-shadow: var(--shadow-sheet);
+}
+
+.confirm-sheet__recipient {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--surface-0) 70%, transparent);
+}
+
+.confirm-sheet__recipient span {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.confirm-sheet__recipient code {
+  overflow: hidden;
+  color: var(--text-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .consent-copy {
   padding: var(--space-3);
   border-left: 2px solid var(--accent);
@@ -1876,8 +2014,37 @@ textarea:focus-visible {
   gap: var(--space-4);
 }
 
+.sending-card {
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+  background: color-mix(in srgb, var(--warning) 7%, var(--surface-raised));
+}
+
 .submitted-card {
   border-color: color-mix(in srgb, var(--positive) 28%, transparent);
+}
+
+.transfer-status-mark {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--positive) 15%, transparent);
+  color: var(--positive);
+  font-size: var(--font-title);
+  font-weight: 900;
+}
+
+.failed-card {
+  border-color: color-mix(in srgb, var(--critical) 30%, transparent);
+  background: color-mix(in srgb, var(--critical) 7%, var(--surface-raised));
+}
+
+.failed-card .secondary-action {
+  display: inline-grid;
+  margin-top: var(--space-3);
+  place-items: center;
+  text-decoration: none;
 }
 
 .submission-recovery-card {

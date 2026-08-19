@@ -976,6 +976,22 @@ concrete URL/history requirement and review. The shared Back control does not
 claim Android system-back interception. Secret-mode UI remains absent until its
 masking and native privacy policy is implemented.
 
+ADR-0088 owns the Phase 2a Send presentation. Dioxus keeps exactly two
+editable steps (recipient, then amount/privacy) over the unchanged nine-state
+`TransferPanelState`; review and all confirmation copy must be derived from the
+retained application preview. Device authorization and prove/submit remain two
+separate explicit intents. Sending retains acknowledged pre-broadcast cancel;
+failure exposes only Edit, safe retained-draft retry, or durable network
+reconciliation as selected by `TransferRecovery`. When the development
+self-address affordance is active, changing Public/Shielded updates it to the
+matching address; manually entered recipients are never rewritten. Clipboard
+import, payment-address scanning, and recent recipients stay absent until
+focused ports are reviewed. iOS XCUITest must blur the decimal keyboard before
+tapping the lower review control and scroll confirmation/retry submit controls
+above the fixed navigation; Android CDP must wait for Home composition before
+using a quick action. Both standalone mobile smokes traverse exact review,
+authorization, cancellation-safe retry, and confirmed inclusion.
+
 `oxid-composition` exposes UI-neutral `ApplicationServices`. Incoming adapters
 adapt that object at their own boundary; composition must not depend on Dioxus,
 the headless protocol, or another incoming adapter. The headless protocol is

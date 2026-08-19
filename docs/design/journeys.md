@@ -40,13 +40,18 @@ shown" guarantee sentence as the sheet's footer, verbatim.
 
 ## 3. Send (budget: 4 steps + confirm sheet + biometric)
 
-**Today:** a single in-place panel morphing through 9 states
-(`TransferPanelState`, lib.rs:1548-1569) with a 7-row review `<dl>`.
+**Today (ADR-0088 / issue #80):** two editable screens collect recipient and
+amount/privacy, then the existing nine-state `TransferPanelState` supplies an
+exact preview-derived summary, collapsed details, a separate authorization
+sheet, explicit prove/submit intent, and truthful Sending / Confirmed / Failed
+recovery states. Safe cancellation, retained drafts, and network reconciliation
+remain application-owned.
 
 **Redesign — the canonical wizard, one decision per screen:**
-1. **Recipient**: paste button, scan button, recent recipients (new — the
-   monobank audit's top complaint is recipient re-entry), inline validation
-   with conversational errors. Resolved address echoed in grouped form.
+1. **Recipient**: bounded manual entry and the development self-address
+   affordance are delivered. Clipboard import, payment-address scanning, and
+   recent recipients require reviewed ports and are intentionally not rendered
+   yet. Exact adapter validation remains authoritative.
 2. **Amount**: big numerals, NIGHT with decimal formatting (the exact-integer
    formatter already exists — no more "base units"), privacy toggle
    (Public/Shielded) as a visible choice with a one-line explanation of the
