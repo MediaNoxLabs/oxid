@@ -68,8 +68,8 @@ function button(label) {
 
 async function click(label) {
   await waitFor(
-    `(() => { const element = ${button(label)}; return Boolean(element && !element.disabled); })()`,
-    `enabled ${label} button`,
+    `(() => { const element = ${button(label)}; return Boolean(element && !element.disabled && !element.closest("[inert]")); })()`,
+    `enabled, interactive ${label} button`,
   );
   const clicked = await evaluate(`(() => {
     const element = ${button(label)};
@@ -84,7 +84,13 @@ async function ensureProfile() {
   await waitFor("Boolean(document.body)", "document body");
   if (await evaluate(`Boolean(${button("Create new wallet")})`)) {
     await click("Create new wallet");
+    await waitFor(`Boolean(${button("Create and continue")})`, "wallet-name step");
+  }
+  if (await evaluate(`Boolean(${button("Create and continue")})`)) {
     await click("Create and continue");
+    await waitFor(`Boolean(${button("Skip for now")})`, "wallet-protection step", 60_000);
+  }
+  if (await evaluate(`Boolean(${button("Skip for now")})`)) {
     await click("Skip for now");
   }
   await waitFor(`Boolean(${button("Scan")})`, "Scan action");
@@ -100,6 +106,10 @@ try {
   await ensureProfile();
   if (mode === "prepare-scan") {
     await click("Scan");
+    await waitFor(
+      `(() => { const element = ${button("Scan")}; return Boolean(element && element.disabled); })()`,
+      "active native scanner handoff",
+    );
   } else if (mode === "assert-qr-offer") {
     await waitFor(
       'document.body.innerText.includes("QR recognized as a credential offer. Review the request before consent.")',

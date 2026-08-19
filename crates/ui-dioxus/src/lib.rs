@@ -2838,6 +2838,13 @@ const fn demo_background_inert(drawer_open: bool) -> bool {
     drawer_open
 }
 
+/// HTML boolean attributes are enabled by presence, so rendering
+/// `inert="false"` still makes the subtree inert in a WebView. Return `None`
+/// when the modal background must remain interactive.
+const fn html_boolean_attribute(enabled: bool) -> Option<&'static str> {
+    if enabled { Some("true") } else { None }
+}
+
 const fn identity_request_dismiss_is_visible(has_notice: bool, request_waiting: bool) -> bool {
     has_notice && request_waiting
 }
@@ -2996,7 +3003,7 @@ pub fn App() -> Element {
             {demo_gateway_drawer}
             div {
                 aria_hidden: if demo_gateway_hidden { "true" } else { "false" },
-                inert: demo_gateway_inert,
+                inert: html_boolean_attribute(demo_gateway_inert),
                 {developer_profile_banner()}
                 {demo_gateway_banner}
                 ProfileGateway {
@@ -3094,7 +3101,7 @@ pub fn App() -> Element {
             class: if secret_mode_state().masked { "app-shell privacy-masked" } else { "app-shell" },
             "data-secret-mode": if secret_mode_state().masked { "masked" } else { "revealed" },
             aria_hidden: if demo_shell_hidden { "true" } else { "false" },
-            inert: demo_shell_inert,
+            inert: html_boolean_attribute(demo_shell_inert),
             {developer_profile_banner()}
             {demo_shell_banner}
             header { class: "app-header",
@@ -11425,6 +11432,8 @@ mod tests {
         assert!(!demo_background_hidden(false, false));
         assert!(demo_background_inert(true));
         assert!(!demo_background_inert(false));
+        assert_eq!(html_boolean_attribute(true), Some("true"));
+        assert_eq!(html_boolean_attribute(false), None);
 
         // The pre-existing receive sheet hides the shell from assistive
         // technology, but only the demo drawer owns the new inert behavior.
