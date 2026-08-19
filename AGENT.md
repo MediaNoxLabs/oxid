@@ -1521,8 +1521,9 @@ Dioxus 0.7.10 compiles multiple Swift packages but embeds only the primary
 framework, so all reviewed native operations must remain in one package until
 an upgrade is proven. Android JNI calls use public methods on the activity
 instance so the application class loader resolves the plugin from Rust worker
-threads. Issue #32 owns physical-camera, universal-link, production-discovery,
-and resource evidence.
+threads. Issue #32 owns physical iOS camera/permission, verified HTTPS links,
+production discovery, and remaining device-resource evidence. Physical Android
+QR and custom-scheme evidence is recorded below.
 
 `scripts/test-android-identity-ingress.sh` is the focused packaged-host proof:
 on `emulator-5554` it has passed scanner cancellation, exact 60-second timeout
@@ -1533,6 +1534,24 @@ XCTest bundle on iPhone 17 Pro simulator
 `UIAccessibilityLoaderWebShared` and hides the WKWebView accessibility subtree,
 so that host cannot claim interaction evidence. Do not weaken the XCTest or
 substitute a simulator result for physical camera/permission evidence.
+
+The repository-owned physical harness has also passed on a Samsung SM-S928B
+running Android 16 / API 36 with application ID `io.medianox.oxid`: real-camera
+credential-offer success reached exactly one strict review item without
+consent; Back cancellation, the 60-second logical timeout, post-return controls,
+and a fresh scan remained live; and foreground-warm plus force-stopped-cold
+custom schemes each reached one dismissible review item. Google Code Scanner
+16.1.0 is permissionless on Android, so app camera denial is not applicable.
+Do not disable Play Services or alter a personal device to manufacture module
+unavailability; retain the fail-closed fixture and record that physical path as
+unavailable evidence. On this host, Back after the scanner takes foreground
+returns `MlKitException.INTERNAL`, not the documented scanner-cancelled code.
+Normalize it only when the owning activity observed suspension during that same
+active generation; every pre-presentation/stale internal failure stays failed.
+No payload, exception message, or device serial may enter logs, committed
+artifacts, or public issue comments. Android 16 `dumpsys window` may expose only
+the hexadecimal window mask; test `FLAG_SECURE` bit `0x2000`, not the optional
+symbolic word `SECURE`.
 
 ADR-0071 makes normal iOS/Android composition use `storage-mobile`; never add a
 fallback from it to development custody. The adapter stores one bounded,
@@ -2059,6 +2078,9 @@ to silence the shell probe.
   data, and separates scan preparation from holder-controlled scan,
   cancellation, and timeout actions. Its QR is a public deterministic offer;
   do not commit device serials or generated `target/physical-evidence` files.
+  The exact full Android smoke may clear only `io.medianox.oxid` after explicit
+  approval and must parse numeric `FLAG_SECURE` bit `0x2000` because current
+  Samsung/API 36 `dumpsys` omits the symbolic label.
 - Use opaque key references. Key-generation and signing ports must not return
   raw private keys to application or UI layers.
 - Record every significant dependency using the review template in the

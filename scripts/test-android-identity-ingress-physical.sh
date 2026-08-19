@@ -104,6 +104,14 @@ wait_for_oxid() {
   exit 1
 }
 
+start_oxid_if_needed() {
+  if ! rg -q 'io\.medianox\.oxid/dev\.dioxus\.main\.MainActivity' <<<"$(top_activity)"; then
+    "$adb_command" -s "$device" shell am start \
+      -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
+  fi
+  wait_for_oxid
+}
+
 run_webview_scenario() {
   local scenario="$1"
   local process_id=""
@@ -145,18 +153,14 @@ run_webview_scenario() {
 
 case "$mode" in
   prepare-scan)
-    "$adb_command" -s "$device" shell am start \
-      -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
-    wait_for_oxid
+    start_oxid_if_needed
     run_webview_scenario prepare-scan
     ;;
   assert-qr-offer|assert-cancelled|assert-timeout|assert-unavailable)
     run_webview_scenario "$mode"
     ;;
   link-warm)
-    "$adb_command" -s "$device" shell am start \
-      -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
-    wait_for_oxid
+    start_oxid_if_needed
     "$adb_command" -s "$device" shell am start -W \
       -a android.intent.action.VIEW -d "$offer_uri" io.medianox.oxid >/dev/null
     wait_for_oxid

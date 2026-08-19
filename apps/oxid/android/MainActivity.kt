@@ -26,6 +26,11 @@ class MainActivity : WryActivity() {
         super.onNewIntent(intent)
     }
 
+    override fun onPause() {
+        OxidMobilePlugin.captureScanHostSuspended()
+        super.onPause()
+    }
+
     @Deprecated("Android activity-result callback required by the device credential prompt")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (!OxidMobilePlugin.captureBackupDocumentResult(

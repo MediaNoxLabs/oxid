@@ -107,7 +107,7 @@ try {
   if (mode === "prepare-scan") {
     await click("Scan");
     await waitFor(
-      `(() => { const element = ${button("Scan")}; return Boolean(element && element.disabled); })()`,
+      `Array.from(document.querySelectorAll("button")).some((element) => element.textContent.trim() === "Scan" && element.disabled)`,
       "active native scanner handoff",
     );
   } else if (mode === "assert-qr-offer") {

@@ -6,7 +6,7 @@
 - Design source: `docs/design/ui-profiles.md` P6, rollout Phase 4a
 - Tracking: issues #2, #32, #65, and #85
 - Amends: ADR-0004, ADR-0006, ADR-0029, and ADR-0070
-- Implementation state: the existing repository-owned mobile plugin applies Android `FLAG_SECURE` or an iOS scene-background privacy overlay from one payload-free boolean port; desktop/web remain unavailable
+- Implementation state: the existing repository-owned mobile plugin applies Android `FLAG_SECURE` or an iOS scene-background privacy overlay from one payload-free boolean port; physical Samsung/API 36 lifecycle inspection proves Android re-arm using the numeric platform flag mask; desktop/web remain unavailable
 
 ## Context
 
@@ -58,8 +58,10 @@ does not participate in any transaction or consent decision.
   balances have been explicitly revealed.
 - The plugin stays capability-specific and receives no arbitrary text or
   secret-bearing payload.
-- Physical-device screenshot/recording and multi-scene evidence remains part
-  of issue #32; simulator/emulator evidence is integration conformance only.
+- Physical Samsung SM-S928B / Android 16 (API 36) host inspection proves the
+  secure-window bit is cleared only by explicit reveal and restored after
+  background/resume. Screenshot/recording behavior on additional vendors and
+  physical iOS multi-scene evidence remain part of issue #32.
 
 ## Validation
 
@@ -68,9 +70,10 @@ does not participate in any transaction or consent decision.
 - Rust cross-target builds compile the typed JNI and Swift bridges; the Android
   JNI exception-recovery smoke continues to exercise the bridge afterwards.
 - Android and iOS standalone smokes verify the presentation toggle and
-  lifecycle re-arm. Android host inspection verifies the secure-window flag;
-  iOS UI coverage verifies foreground recovery after the privacy-overlay
-  lifecycle.
+  lifecycle re-arm. Android host inspection reads
+  `WindowManager.LayoutParams.FLAG_SECURE` as bit `0x2000`; this remains valid
+  on hosts whose `dumpsys window` output omits the symbolic `SECURE` label. iOS
+  UI coverage verifies foreground recovery after the privacy-overlay lifecycle.
 - Strict architecture gates continue to forbid direct native dependencies in
   domain/application crates.
 
@@ -83,4 +86,3 @@ does not participate in any transaction or consent decision.
   recording and foreground screenshots exposed.
 - Making native success a prerequisite for wallet use would conflate a
   privacy hardening capability with custody and transaction correctness.
-

@@ -104,6 +104,12 @@ class OxidMobilePlugin(private val activity: Activity) {
             IdentityLinkState.capture(value)
         }
 
+        /** Called only by Oxid's owning activity when an active scanner takes foreground. */
+        @JvmStatic
+        fun captureScanHostSuspended() {
+            ScannerState.captureHostSuspended()
+        }
+
         /** Called by Oxid's repository-owned MainActivity for the credential prompt result. */
         @JvmStatic
         fun captureCustodyAuthorizationResult(requestCode: Int, resultCode: Int): Boolean {
@@ -765,6 +771,7 @@ private object ScannerState {
     private var status: String = "idle"
     private var payload: String? = null
     private var generation: Long = 0
+    private var hostSuspendedDuringScan: Boolean = false
 
     @Synchronized
     fun start(activity: Activity): String {
@@ -773,6 +780,7 @@ private object ScannerState {
         val activeGeneration = generation
         status = "scanning"
         payload = null
+        hostSuspendedDuringScan = false
         activity.runOnUiThread {
             try {
                 val availability = GoogleApiAvailability.getInstance()
@@ -799,22 +807,10 @@ private object ScannerState {
                     }
                     .addOnCanceledListener { finish("cancelled", null, activeGeneration) }
                     .addOnFailureListener { failure ->
-                        val next = when {
-                            failure is MlKitException &&
-                                failure.errorCode == MlKitException.CODE_SCANNER_CANCELLED ->
-                                "cancelled"
-                            failure is MlKitException &&
-                                failure.errorCode ==
-                                    MlKitException.CODE_SCANNER_CAMERA_PERMISSION_NOT_GRANTED ->
-                                "unavailable"
-                            failure is MlKitException &&
-                                (failure.errorCode == MlKitException.CODE_SCANNER_UNAVAILABLE ||
-                                    failure.errorCode ==
-                                        MlKitException.CODE_SCANNER_GOOGLE_PLAY_SERVICES_VERSION_TOO_OLD) ->
-                                "unavailable"
-                            else -> "failed"
-                        }
-                        finish(next, null, activeGeneration)
+                        finishFailure(
+                            (failure as? MlKitException)?.errorCode,
+                            activeGeneration
+                        )
                     }
             } catch (_: Exception) {
                 finish("unavailable", null, activeGeneration)
@@ -824,11 +820,17 @@ private object ScannerState {
     }
 
     @Synchronized
+    fun captureHostSuspended() {
+        if (status == "scanning") hostSuspendedDuringScan = true
+    }
+
+    @Synchronized
     fun take(): String {
         val current = json(status, payload)
         if (status != "scanning") {
             status = "idle"
             payload = null
+            hostSuspendedDuringScan = false
         }
         return current
     }
@@ -839,11 +841,13 @@ private object ScannerState {
             val current = json(status, payload)
             status = "idle"
             payload = null
+            hostSuspendedDuringScan = false
             return current
         }
         generation += 1
         status = "idle"
         payload = null
+        hostSuspendedDuringScan = false
         // Google Code Scanner exposes no programmatic dismissal API. This
         // closes Oxid's logical one-item handoff and makes every eventual task
         // callback stale; the system-owned scanner UI may still require the
@@ -856,6 +860,28 @@ private object ScannerState {
         if (status != "scanning" || generation != activeGeneration) return
         status = next
         payload = value
+        hostSuspendedDuringScan = false
+    }
+
+    @Synchronized
+    private fun finishFailure(errorCode: Int?, activeGeneration: Long) {
+        if (status != "scanning" || generation != activeGeneration) return
+        status = when {
+            errorCode == MlKitException.CODE_SCANNER_CANCELLED -> "cancelled"
+            // Google Code Scanner 16.1.0 has been observed on Samsung/API 36
+            // to return INTERNAL when Back closes its already-presented native
+            // activity. Normalize only after Oxid actually lost foreground;
+            // pre-presentation internal failures remain fail-closed failures.
+            errorCode == MlKitException.INTERNAL && hostSuspendedDuringScan -> "cancelled"
+            errorCode == MlKitException.CODE_SCANNER_CAMERA_PERMISSION_NOT_GRANTED ->
+                "unavailable"
+            errorCode == MlKitException.CODE_SCANNER_UNAVAILABLE ||
+                errorCode == MlKitException.CODE_SCANNER_GOOGLE_PLAY_SERVICES_VERSION_TOO_OLD ->
+                "unavailable"
+            else -> "failed"
+        }
+        payload = null
+        hostSuspendedDuringScan = false
     }
 
     private fun json(value: String, text: String? = null): String {

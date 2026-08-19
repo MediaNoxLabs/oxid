@@ -104,6 +104,8 @@ wait_for_main_activity() {
 
 assert_screen_privacy_flag() {
   local expected="$1"
+  local flag_hex=""
+  local flag_secure_set=0
   local window_state=""
   window_state="$($adb_command -s "$device" shell dumpsys window windows 2>/dev/null \
     | awk '
@@ -121,12 +123,23 @@ assert_screen_privacy_flag() {
     echo "Android Oxid window was unavailable for screen-privacy inspection." >&2
     exit 1
   fi
+  flag_hex="$(rg -o 'fl=[0-9a-fA-F]+' <<<"$window_state" | head -1 | cut -d= -f2)"
+  if [ -z "$flag_hex" ]; then
+    echo "Android Oxid window flags were unavailable for screen-privacy inspection." >&2
+    exit 1
+  fi
+  # WindowManager.LayoutParams.FLAG_SECURE is bit 0x2000. Recent Samsung
+  # Android 16 dumpsys output exposes only the hexadecimal mask rather than a
+  # symbolic SECURE label, so assert the platform bit directly.
+  if (( (0x$flag_hex & 0x2000) != 0 )); then
+    flag_secure_set=1
+  fi
   if [ "$expected" = "protected" ]; then
-    if ! rg -q 'fl=.*[[:space:]]SECURE([[:space:]]|$)' <<<"$window_state"; then
+    if [ "$flag_secure_set" -ne 1 ]; then
       echo "Android secret mode did not set FLAG_SECURE." >&2
       exit 1
     fi
-  elif rg -q 'fl=.*[[:space:]]SECURE([[:space:]]|$)' <<<"$window_state"; then
+  elif [ "$flag_secure_set" -eq 1 ]; then
     echo "Android explicit reveal did not clear FLAG_SECURE." >&2
     exit 1
   fi

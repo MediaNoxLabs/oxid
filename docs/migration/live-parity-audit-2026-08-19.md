@@ -12,9 +12,10 @@ The estimate is roughly **95% of useful prototype behavior implemented**. The
 Oxid target intentionally adds stricter recovery, custody, consent, SSI,
 reproducibility, and headless requirements, so current progress against the
 stated 110% target is approximately **100/110 (91%)**. Production-release
-evidence is lower, approximately **74%**, because physical devices, verified
-HTTPS associations, and funded live infrastructure cannot be proven by local
-fixtures.
+evidence is lower, approximately **75%**. Physical Android QR/custom-scheme
+evidence is now real rather than fixture-derived, but physical iOS, verified
+HTTPS associations, device resource budgets, and funded live infrastructure
+remain unproven.
 
 ## Capability matrix
 
@@ -31,7 +32,7 @@ fixtures.
 | OpenID4VCI, SIOPv2, and OpenID4VP consent | Implemented standalone | `crates/protocol`, `crates/presentation`, `crates/adapters/openid4vci`, `crates/adapters/openid4vp`, `crates/adapters/siopv2` | Authenticated production discovery/transport and response delivery |
 | Compact presentation proving | Implemented in headless and explicit mobile conformance | `crates/adapters/vc-midnight`, authenticated artifact closure, ADR-0050/0072/0083 | Physical latency/memory/thermal/size budgets (#30) |
 | Passport Vault | Implemented standalone and native-lifecycle capable; live/device partial | `crates/passport-vault`, `crates/adapters/passport-vault`, ADR-0051–0068, headless/mobile journey | Authenticated live deployment/state/call evidence and device budgets (#31) |
-| QR and OS identity ingress | Implemented custom-scheme stack; physical/HTTPS partial | `crates/platform/ports`, `crates/adapters/identity-ingress`, `crates/adapters/mobile-native-plugin`, `apps/oxid/android/MainActivity.kt`, focused native tests | Physical camera success/denial and reviewed AASA/assetlinks/release-signing evidence (#32) |
+| QR and OS identity ingress | Implemented; Android physical evidence complete for locally supported paths | `crates/platform/ports`, `crates/adapters/identity-ingress`, `crates/adapters/mobile-native-plugin`, `apps/oxid/android/MainActivity.kt`, `scripts/test-android-identity-ingress-physical.sh`, focused native tests, Samsung SM-S928B / Android 16 (API 36) success/cancel/timeout and warm/cold custom-scheme runs | Physical iOS camera/permission evidence and reviewed AASA/assetlinks/release-signing evidence (#32); Android app-owned denial is not applicable to permissionless Google Code Scanner |
 | Developer capability visibility | Implemented | `crates/capabilities/application`, headless `system.capabilities`, ADR-0095, `scripts/check-ui-profile-release.sh` | None; unsafe prototype logs/benchmarks remain deliberately excluded |
 | Repeatable demo setup | Implemented | compile-time `ui-profile-demo`, named isolated profile drawer, ADR-0096, focused Dioxus/mobile/release-exclusion tests | None; automated consent is deliberately excluded |
 
@@ -52,9 +53,10 @@ dependencies. These are security improvements, not parity gaps.
 3. Add one funded real-node unshielded end-to-end fixture through finalized
    completion.
 4. Prove a funded real shielded spend and physical Compact budgets (#59/#30).
-5. Validate physical QR behavior and reviewed universal/app links using an
-   approved HTTPS domain, AASA, associated-domain entitlement,
-   `assetlinks.json`, and release identities (#32).
+5. Validate physical iOS QR/permission behavior and reviewed universal/app
+   links using an approved HTTPS domain, AASA, associated-domain entitlement,
+   `assetlinks.json`, and release identities (#32). Android physical
+   success/cancel/timeout and warm/cold custom schemes are complete.
 6. Define production background synchronization/session behavior.
 7. Complete identity trust/status, live protocol delivery, and live DID writes.
 8. Produce Passport Vault live-deployment and physical-device evidence (#31).
@@ -79,10 +81,13 @@ accounts, and live deployments are available.
 - Identity: acquire one request through authenticated discovery, prove strict
   routing and four-question consent, and deliver the protocol response without
   raw request/token/proof output.
-- Physical iOS/Android: camera success/cancel/denial-or-vendor-unavailable,
-  timeout and stale-callback isolation, warm/cold verified links, custody
-  restart, complete recovery interruption, and explicit size/RSS/latency/
-  thermal/storage budgets.
+- Physical iOS: camera success/cancel/denial, timeout and stale-callback
+  isolation, plus warm/cold custom and verified links. Physical Android still
+  needs vendor/module-unavailable coverage without modifying a personal device,
+  verified HTTPS App Links, custody/recovery interruption, and explicit
+  size/RSS/latency/thermal/storage budgets; QR success/cancel/timeout,
+  post-return liveness, consent isolation, and warm/cold custom schemes are
+  already proven.
 - Passport Vault: authenticate deployed state, prepare/authorize/prove/submit
   each supported call on live infrastructure, reconcile finality, and repeat
   the claim path with managed holder custody on physical devices.

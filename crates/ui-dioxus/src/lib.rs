@@ -2903,6 +2903,8 @@ pub fn App() -> Element {
     });
 
     let screen_privacy = services.screen_privacy();
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let screen_privacy_for_lifecycle = Arc::clone(&screen_privacy);
     use_effect(move || {
         let screen_privacy_enabled =
             secret_mode_state().masked || route_forces_screen_privacy(navigation.read().current());
@@ -2913,18 +2915,22 @@ pub fn App() -> Element {
 
     #[cfg(any(target_os = "ios", target_os = "android"))]
     {
-        dioxus::mobile::use_wry_event_handler(move |event, _target| match event {
-            dioxus::mobile::tao::event::Event::Opened { .. } => {
-                identity_link_wake.set(identity_link_wake().wrapping_add(1));
+        dioxus::mobile::use_wry_event_handler(move |event, _target| {
+            match event {
+                dioxus::mobile::tao::event::Event::Opened { .. } => {
+                    identity_link_wake.set(identity_link_wake().wrapping_add(1));
+                }
+                dioxus::mobile::tao::event::Event::Suspended => {
+                    // Protect the OS snapshot immediately. Dioxus signal writes
+                    // wait until Resumed, when the WebView is active again.
+                    let _ = screen_privacy_for_lifecycle.set_protected(true);
+                }
+                dioxus::mobile::tao::event::Event::Resumed => {
+                    identity_link_wake.set(identity_link_wake().wrapping_add(1));
+                    secret_mode.rearm();
+                }
+                _ => {}
             }
-            dioxus::mobile::tao::event::Event::Suspended => {
-                secret_mode.rearm();
-            }
-            dioxus::mobile::tao::event::Event::Resumed => {
-                identity_link_wake.set(identity_link_wake().wrapping_add(1));
-                secret_mode.rearm();
-            }
-            _ => {}
         });
     }
 
@@ -3228,6 +3234,7 @@ pub fn App() -> Element {
                     Route::Home => rsx! {
                         HomePage {
                             active_profile: active_profile.clone(),
+                            scan_busy: identity_scan_busy(),
                             on_select_primary: move |destination| {
                                 navigation.write().select_primary(destination);
                                 profile_menu_open.set(false);
@@ -4012,6 +4019,7 @@ fn ProfileManager(
 #[component]
 fn HomePage(
     active_profile: WalletProfileView,
+    scan_busy: bool,
     on_select_primary: EventHandler<PrimaryDestination>,
     on_open_vault: EventHandler<MouseEvent>,
     on_open_settings: EventHandler<MouseEvent>,
@@ -4044,7 +4052,7 @@ fn HomePage(
                 }
                 p { class: "home-hero__hint", "Loading your wallet overview…" }
             }
-            HomeQuickActions { on_select_primary, on_receive, on_scan }
+            HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
             section { class: "home-card-stack", aria_label: "Loading wallet products", aria_busy: "true",
                 for label in ["NIGHT account", "Shielded account", "Newest document", "Passport Vault"] {
                     article { class: "home-card home-card--loading", key: "{label}",
@@ -4074,7 +4082,7 @@ fn HomePage(
                 }
                 p { class: "home-hero__hint", "Wallet data could not be loaded safely." }
             }
-            HomeQuickActions { on_select_primary, on_receive, on_scan }
+            HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
             article { class: "empty-state surface-card", role: "alert",
                 h2 { "Home is unavailable" }
                 p { "Your complete wallet and documents are still available from their tabs." }
@@ -4108,7 +4116,7 @@ fn HomePage(
             } = *projection;
             rsx! {
                 HomeHero { account: (*account).clone() }
-                HomeQuickActions { on_select_primary, on_receive, on_scan }
+                HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
                 HomeProductStack {
                     account: (*account).clone(),
                     shielded,
@@ -4168,6 +4176,7 @@ fn HomeHero(account: WalletAccountView) -> Element {
 
 #[component]
 fn HomeQuickActions(
+    scan_busy: bool,
     on_select_primary: EventHandler<PrimaryDestination>,
     on_receive: EventHandler<MouseEvent>,
     on_scan: EventHandler<MouseEvent>,
@@ -4180,6 +4189,7 @@ fn HomeQuickActions(
                     key: "{action.label()}",
                     r#type: "button",
                     aria_label: "{action.label()}",
+                    disabled: home_quick_action_disabled(action, scan_busy),
                     onclick: move |event| {
                         match action.target() {
                             HomeQuickActionTarget::ReceiveSheet => on_receive.call(event),
@@ -4199,6 +4209,10 @@ fn HomeQuickActions(
             }
         }
     }
+}
+
+const fn home_quick_action_disabled(action: HomeQuickAction, scan_busy: bool) -> bool {
+    matches!(action, HomeQuickAction::Scan) && scan_busy
 }
 
 #[component]
@@ -11472,6 +11486,9 @@ mod tests {
             HomeQuickActionTarget::Primary(PrimaryDestination::Documents)
         );
         assert_eq!(HomeQuickAction::Scan.target(), HomeQuickActionTarget::Scan);
+        assert!(home_quick_action_disabled(HomeQuickAction::Scan, true));
+        assert!(!home_quick_action_disabled(HomeQuickAction::Scan, false));
+        assert!(!home_quick_action_disabled(HomeQuickAction::Receive, true));
     }
 
     #[test]

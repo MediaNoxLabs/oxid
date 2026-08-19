@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3–7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/qr_scanner.rs`, `mobile-bench/dioxus-wallet/src/identity_centre.rs`, and the Android/iOS QR bridges
 - Tracking: issues #2 and #32
-- Implementation state: strict standalone request routing, native iOS/Android QR adapters, bounded timeout closure, explicit iOS camera-denial status, Dioxus handoff, headless conformance, native packaging, and simulator/emulator fail-closed evidence are implemented; ADR-0070 adds custom-scheme OS link delivery through the same router, while physical-camera and verified universal/app-link evidence remain #32
+- Implementation state: strict standalone request routing, native iOS/Android QR adapters, bounded timeout closure, explicit iOS camera-denial status, Dioxus handoff, headless conformance, native packaging, and simulator/emulator fail-closed evidence are implemented; physical Android success, cancellation, timeout, post-return liveness, and consent isolation are proven on Samsung SM-S928B / Android 16 (API 36); ADR-0070 adds custom-scheme OS link delivery through the same router, while physical iOS and verified universal/app-link evidence remain #32
 
 ## Context
 
@@ -54,6 +54,14 @@ discards its eventual generation-stale callback, while the holder may still
 need to dismiss the system-owned scanner UI. A late native callback can never
 complete a subsequent scan.
 
+Google Code Scanner 16.1.0 on the reviewed Samsung/API 36 host returns
+`MlKitException.INTERNAL` when Back closes an already-presented scanner rather
+than the documented scanner-cancelled code. Oxid normalizes that exact result
+to cancellation only when its owning activity observed a foreground loss while
+the same generation was scanning. An internal failure before presentation, a
+stale callback, or an inactive generation remains fail-closed. The exception
+message and QR value are never logged or returned.
+
 Keep request classification in a separate `IdentityRequestRouterPort` owned by
 `protocol/application`. `StrictIdentityRequestRouter` parses the complete URI,
 rejects user-info, fragments, ports, unknown or duplicate query fields, empty
@@ -92,8 +100,13 @@ ambiguous failure without requiring camera hardware.
 - Native exception text, payloads, offer codes, nonces, state, request objects,
   and endpoints must not enter logs, debug output, or headless responses.
 - A simulator result proves packaging and the unavailable path, not camera
-  success. Physical-device success, cancellation, and permission denial remain
-  explicit evidence in issue #32.
+  success. Repository-owned physical evidence proves Android success,
+  cancellation, timeout, stale-result isolation, post-return controls, and
+  consent isolation on Samsung SM-S928B / Android 16 (API 36). Android denial
+  is not an app-owned state because Google Code Scanner is permissionless;
+  module/vendor unavailability remains a fail-closed fixture rather than a
+  device setting manufactured for a test. Physical iOS permission and camera
+  evidence remains issue #32.
 - Google Code Scanner is a replaceable Android edge dependency, not a wallet or
   identity core dependency. Manual fixtures and headless routing remain
   available where Play services are absent.

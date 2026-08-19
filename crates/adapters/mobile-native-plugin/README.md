@@ -28,10 +28,10 @@ This limitation must remain visible in physical-device evidence.
 
 | Outcome | iOS native source | Android native source | Local evidence |
 | --- | --- | --- | --- |
-| Success | bounded AVFoundation QR metadata | bounded Google Code Scanner QR result | Rust closed-status and bound tests; physical capture open |
-| Cancel | repository Cancel control | Code Scanner cancelled task | Rust closed-status test; physical gesture open |
+| Success | bounded AVFoundation QR metadata | bounded Google Code Scanner QR result | Rust closed-status/bound tests; physical Android pass on Samsung/API 36 |
+| Cancel | repository Cancel control | Code Scanner cancelled task, including reviewed post-presentation Samsung/API 36 `INTERNAL` normalization | Rust closed-status test; physical Android Back pass |
 | Denial | AVFoundation permission denied/restricted | not an app-owned permission outcome | Rust distinct-denial test; physical iOS denial open |
-| Timeout | Rust deadline acknowledged; scanner stopped/dismissed | Rust deadline acknowledged; late task invalidated | Rust closed-status test; focused virtual/physical lifecycle evidence open |
+| Timeout | Rust deadline acknowledged; scanner stopped/dismissed | Rust deadline acknowledged; late task invalidated | Rust closed-status test; physical Android 60-second pass |
 | Unavailable | simulator or missing capture device | failed Play Services preflight/module | existing iOS simulator and focused adapter evidence |
 
 Focused virtual-device harnesses are:
@@ -84,7 +84,9 @@ fixtures already used by repository tests.
    confirm review without consent. Repeat and dismiss Code Scanner. Leave a scan
    open beyond 60 seconds, return to Oxid if the system scanner remains visible,
    confirm timeout imported nothing, and retry successfully. Repeat on a device
-   without the Code Scanner module to prove the unavailable path.
+   without the Code Scanner module to prove the unavailable path. Do not alter a
+   personal device's Play Services or global settings merely to manufacture
+   that unavailable state.
 3. For every case, inspect application logs only for absence of the request
    value; never enable payload logging to obtain evidence. Record OS/device,
    app commit, outcome, and whether any request reached preview. Camera success,
