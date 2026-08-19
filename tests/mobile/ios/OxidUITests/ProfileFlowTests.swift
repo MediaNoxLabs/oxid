@@ -124,6 +124,11 @@ final class ProfileFlowTests: XCTestCase {
         application.buttons["Home"].tap()
         application.buttons["Receive"].tap()
 
+        XCTAssertTrue(application.staticTexts["Receive NIGHT"].waitForExistence(timeout: 10))
+        let openWallet = application.buttons["Open Wallet to activate"]
+        XCTAssertTrue(openWallet.waitForExistence(timeout: 10))
+        openWallet.tap()
+
         let activateButton = application.buttons["Activate protected Midnight account"]
         XCTAssertTrue(activateButton.waitForExistence(timeout: 15))
         activateButton.tap()
@@ -140,28 +145,31 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 5))
         XCTAssertTrue(application.buttons["Sync now"].exists)
 
-        let showQrButton = application.buttons["Show receive QR"].firstMatch
-        XCTAssertTrue(showQrButton.exists)
-        scrollTo(showQrButton, in: application)
-        showQrButton.tap()
+        application.buttons["Home"].tap()
+        application.buttons["Receive"].tap()
+        let publicSelector = application.descendants(matching: .any)[
+            "Use Public receive address"
+        ]
+        let privateSelector = application.descendants(matching: .any)[
+            "Use Private receive address"
+        ]
+        XCTAssertTrue(publicSelector.waitForExistence(timeout: 10))
+        XCTAssertTrue(privateSelector.exists)
         XCTAssertTrue(
             application.images["QR code for Unshielded receive address"]
                 .waitForExistence(timeout: 5)
         )
-        application.buttons["Hide receive QR"].firstMatch.tap()
 
-        let showShieldedQrButton = application.buttons
-            .matching(identifier: "Show receive QR")
-            .element(boundBy: 1)
-        XCTAssertTrue(showShieldedQrButton.exists)
-        scrollTo(showShieldedQrButton, in: application)
-        showShieldedQrButton.tap()
+        privateSelector.tap()
         XCTAssertTrue(
             application.images["QR code for Shielded receive address"]
                 .waitForExistence(timeout: 5)
         )
-        application.buttons["Hide receive QR"].firstMatch.tap()
+        application.buttons["Close Receive"].firstMatch.tap()
+        XCTAssertTrue(application.buttons["Receive"].waitForExistence(timeout: 5))
 
+        application.buttons["Wallet"].tap()
+        XCTAssertTrue(useReceiveAddress.waitForExistence(timeout: 10))
         scrollTo(useReceiveAddress, in: application)
         useReceiveAddress.tap()
         let continueToAmount = application.buttons["Continue to transfer amount"]
@@ -715,9 +723,16 @@ final class ProfileFlowTests: XCTestCase {
             activate.tap()
         }
 
+        XCTAssertTrue(
+            application.buttons["Copy Unshielded receive address"]
+                .waitForExistence(timeout: 15)
+        )
+        application.buttons["Home"].tap()
+        application.buttons["Receive"].tap()
+        XCTAssertTrue(application.staticTexts["Receive NIGHT"].waitForExistence(timeout: 10))
+
         let copy = application.buttons["Copy Unshielded receive address"]
         XCTAssertTrue(copy.waitForExistence(timeout: 15))
-        scrollTo(copy, in: application)
         copy.tap()
         XCTAssertTrue(
             application.staticTexts[
@@ -733,6 +748,8 @@ final class ProfileFlowTests: XCTestCase {
         )
         let dismiss = application.otherElements["PopoverDismissRegion"]
         if dismiss.exists { dismiss.tap() }
+        application.buttons["Close Receive"].firstMatch.tap()
+        XCTAssertTrue(application.buttons["Receive"].waitForExistence(timeout: 5))
     }
 
 }

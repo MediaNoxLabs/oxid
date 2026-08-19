@@ -33,12 +33,19 @@ semantics (rephrased to one sentence + one checkbox).
 
 ## 2. Receive (budget: 1 tap)
 
-**Today:** already good — per-address Copy/Share/QR with honest copy
-(lib.rs:3472-3555). **Redesign:** promote to a bottom sheet from Home's
-action row: address-kind picker as segmented capsules (Public / Private /
-Fee account — human names, exact kinds one tap deeper), large QR, truncated
-address with grouped digits, Copy + Share. Keep the "exactly the address
-shown" guarantee sentence as the sheet's footer, verbatim.
+**Today (ADR-0091 / issue #83):** Home opens a non-primary Receive sheet in one
+tap. It reads the existing account projection off the UI executor, refuses to
+present fixture/watch-only addresses as holder-controlled before protected
+derivation, and renders only returned rails as human-labelled segmented
+capsules (Public / Private / Fee account / neutral fallback). The selected full
+address alone feeds the large deterministic QR and typed native Copy/Share
+ports; the grouped middle-truncated preview is display-only. Close pops the
+sheet back to Home, while an unactivated profile gets one truthful path to the
+Wallet activation surface.
+
+**Remaining redesign:** payment requests, receive amounts, address rotation or
+discovery, and deeper rail details require separate reviewed domain/port work;
+none are represented as inert controls.
 
 ## 3. Send (budget: 4 steps + confirm sheet + biometric)
 

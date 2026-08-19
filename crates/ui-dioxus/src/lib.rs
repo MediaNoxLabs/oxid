@@ -90,11 +90,12 @@ use oxid_wallet_application::{
     SelectWalletProfileUseCase, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
     StartWalletShieldedSyncUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
     SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountError, WalletAccountPortError,
-    WalletAccountQuery, WalletAccountView, WalletBackupReceiptCommand, WalletBackupReceiptView,
-    WalletDustSyncCommand, WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand,
-    WalletProfileView, WalletRecoverySecret, WalletSecurityStatusView, WalletShieldedSyncCommand,
-    WalletShieldedSyncView, WalletSyncStatusView, WalletTransferDraftQuery,
-    WalletTransferPreviewView, WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
+    WalletAccountQuery, WalletAccountView, WalletAddressView, WalletBackupReceiptCommand,
+    WalletBackupReceiptView, WalletDustSyncCommand, WalletDustSyncView, WalletNetworkListView,
+    WalletProfileSecurityCommand, WalletProfileView, WalletRecoverySecret,
+    WalletSecurityStatusView, WalletShieldedSyncCommand, WalletShieldedSyncView,
+    WalletSyncStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
+    WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
     WalletTransferSubmissionView,
 };
 use zeroize::Zeroizing;
@@ -1376,6 +1377,13 @@ enum HomeQuickAction {
     Scan,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HomeQuickActionTarget {
+    ReceiveSheet,
+    Primary(PrimaryDestination),
+    Scan,
+}
+
 impl HomeQuickAction {
     const fn label(self) -> &'static str {
         match self {
@@ -1395,11 +1403,12 @@ impl HomeQuickAction {
         }
     }
 
-    const fn destination(self) -> Option<PrimaryDestination> {
+    const fn target(self) -> HomeQuickActionTarget {
         match self {
-            Self::Receive | Self::Send => Some(PrimaryDestination::Wallet),
-            Self::Present => Some(PrimaryDestination::Documents),
-            Self::Scan => None,
+            Self::Receive => HomeQuickActionTarget::ReceiveSheet,
+            Self::Send => HomeQuickActionTarget::Primary(PrimaryDestination::Wallet),
+            Self::Present => HomeQuickActionTarget::Primary(PrimaryDestination::Documents),
+            Self::Scan => HomeQuickActionTarget::Scan,
         }
     }
 }
@@ -1450,6 +1459,7 @@ const PRIMARY_DESTINATIONS: [PrimaryDestination; 4] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Route {
     Home,
+    Receive,
     Wallet,
     Documents,
     Activity,
@@ -1466,6 +1476,7 @@ impl Route {
     const fn title(self) -> &'static str {
         match self {
             Self::Home => "Home",
+            Self::Receive => "Receive",
             Self::Wallet => "Wallet",
             Self::Documents => "Documents",
             Self::Activity => "Activity",
@@ -1485,7 +1496,8 @@ impl Route {
             Self::Wallet => Some(PrimaryDestination::Wallet),
             Self::Documents => Some(PrimaryDestination::Documents),
             Self::Activity => Some(PrimaryDestination::Activity),
-            Self::PassportVault
+            Self::Receive
+            | Self::PassportVault
             | Self::ManageIdentities
             | Self::CredentialRequest
             | Self::DidAuthenticationRequest
@@ -1510,6 +1522,10 @@ impl Default for RouteStack {
 }
 
 impl RouteStack {
+    fn root(&self) -> Route {
+        self.routes.first().copied().unwrap_or(Route::Home)
+    }
+
     fn current(&self) -> Route {
         self.routes.last().copied().unwrap_or(Route::Home)
     }
@@ -1679,6 +1695,13 @@ enum AccountPageState {
         busy: Option<AccountOperation>,
     },
     Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ReceiveSheetState {
+    Loading,
+    Ready(Box<WalletAccountView>),
+    Failed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1936,6 +1959,12 @@ pub fn App() -> Element {
     };
 
     let active_route = navigation.read().current();
+    let receive_sheet_open = active_route == Route::Receive;
+    let content_route = if receive_sheet_open {
+        navigation.read().root()
+    } else {
+        active_route
+    };
     let active_primary = navigation.read().active_primary();
     let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name);
@@ -1947,7 +1976,9 @@ pub fn App() -> Element {
 
     rsx! {
         style { {STYLES} }
-        div { class: "app-shell",
+        div {
+            class: "app-shell",
+            aria_hidden: if receive_sheet_open { "true" } else { "false" },
             header { class: "app-header",
                 button {
                     class: if *profile_menu_open.read() { "profile-shortcut active" } else { "profile-shortcut" },
@@ -2053,7 +2084,7 @@ pub fn App() -> Element {
             }
 
             main { class: "page-content",
-                match active_route {
+                match content_route {
                     Route::Home => rsx! {
                         HomePage {
                             active_profile: active_profile.clone(),
@@ -2063,6 +2094,10 @@ pub fn App() -> Element {
                             },
                             on_open_vault: move |_| navigation.write().push(Route::PassportVault),
                             on_open_settings: move |_| navigation.write().push(Route::Settings),
+                            on_receive: move |_| {
+                                navigation.write().push(Route::Receive);
+                                profile_menu_open.set(false);
+                            },
                             on_scan: move |_| {
                                 start_identity_scan(
                                     Arc::clone(&home_scanner),
@@ -2076,6 +2111,7 @@ pub fn App() -> Element {
                             },
                         }
                     },
+                    Route::Receive => rsx! {},
                     Route::Wallet => rsx! { AssetsPage { active_profile: active_profile.clone() } },
                     Route::Documents => rsx! {
                         DocumentsPage {
@@ -2180,6 +2216,19 @@ pub fn App() -> Element {
                         }
                     }
                 }
+            }
+        }
+        if receive_sheet_open {
+            ReceiveSheet {
+                active_profile: active_profile.clone(),
+                on_close: move |_| {
+                    navigation.write().pop();
+                    profile_menu_open.set(false);
+                },
+                on_open_wallet: move |_| {
+                    navigation.write().select_primary(PrimaryDestination::Wallet);
+                    profile_menu_open.set(false);
+                },
             }
         }
     }
@@ -2810,6 +2859,7 @@ fn HomePage(
     on_select_primary: EventHandler<PrimaryDestination>,
     on_open_vault: EventHandler<MouseEvent>,
     on_open_settings: EventHandler<MouseEvent>,
+    on_receive: EventHandler<MouseEvent>,
     on_scan: EventHandler<MouseEvent>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -2838,7 +2888,7 @@ fn HomePage(
                 }
                 p { class: "home-hero__hint", "Loading your wallet overview…" }
             }
-            HomeQuickActions { on_select_primary, on_scan }
+            HomeQuickActions { on_select_primary, on_receive, on_scan }
             section { class: "home-card-stack", aria_label: "Loading wallet products", aria_busy: "true",
                 for label in ["NIGHT account", "Shielded account", "Newest document", "Passport Vault"] {
                     article { class: "home-card home-card--loading", key: "{label}",
@@ -2868,7 +2918,7 @@ fn HomePage(
                 }
                 p { class: "home-hero__hint", "Wallet data could not be loaded safely." }
             }
-            HomeQuickActions { on_select_primary, on_scan }
+            HomeQuickActions { on_select_primary, on_receive, on_scan }
             article { class: "empty-state surface-card", role: "alert",
                 h2 { "Home is unavailable" }
                 p { "Your complete wallet and documents are still available from their tabs." }
@@ -2902,7 +2952,7 @@ fn HomePage(
             } = *projection;
             rsx! {
                 HomeHero { account: (*account).clone() }
-                HomeQuickActions { on_select_primary, on_scan }
+                HomeQuickActions { on_select_primary, on_receive, on_scan }
                 HomeProductStack {
                     account: (*account).clone(),
                     shielded,
@@ -2963,6 +3013,7 @@ fn HomeHero(account: WalletAccountView) -> Element {
 #[component]
 fn HomeQuickActions(
     on_select_primary: EventHandler<PrimaryDestination>,
+    on_receive: EventHandler<MouseEvent>,
     on_scan: EventHandler<MouseEvent>,
 ) -> Element {
     rsx! {
@@ -2974,10 +3025,12 @@ fn HomeQuickActions(
                     r#type: "button",
                     aria_label: "{action.label()}",
                     onclick: move |event| {
-                        if let Some(destination) = action.destination() {
-                            on_select_primary.call(destination);
-                        } else {
-                            on_scan.call(event);
+                        match action.target() {
+                            HomeQuickActionTarget::ReceiveSheet => on_receive.call(event),
+                            HomeQuickActionTarget::Primary(destination) => {
+                                on_select_primary.call(destination);
+                            }
+                            HomeQuickActionTarget::Scan => on_scan.call(event),
                         }
                     },
                     span {
@@ -2990,6 +3043,285 @@ fn HomeQuickActions(
             }
         }
     }
+}
+
+#[component]
+fn ReceiveSheet(
+    active_profile: WalletProfileView,
+    on_close: EventHandler<MouseEvent>,
+    on_open_wallet: EventHandler<MouseEvent>,
+) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| ReceiveSheetState::Loading);
+    let mut selected_kind = use_signal(|| None::<String>);
+    let mut export_notice = use_signal(|| None::<String>);
+    let profile_id = active_profile.id.clone();
+    let services_for_load = services.clone();
+    use_effect(move || {
+        let services = services_for_load.clone();
+        let profile_id = profile_id.clone();
+        spawn(async move {
+            let next = run_ui_blocking(move || load_receive_sheet(&services, &profile_id))
+                .await
+                .unwrap_or(ReceiveSheetState::Failed);
+            if let ReceiveSheetState::Ready(account) = &next {
+                selected_kind.set(default_receive_kind(account));
+            }
+            state.set(next);
+        });
+    });
+
+    let content = match state.read().clone() {
+        ReceiveSheetState::Loading => rsx! {
+            div { class: "receive-sheet__state", role: "status", aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                strong { "Loading receive addresses…" }
+                p { "Reading the selected protected Midnight account." }
+            }
+        },
+        ReceiveSheetState::Failed => rsx! {
+            div { class: "receive-sheet__state", role: "alert",
+                strong { "Receive is unavailable" }
+                p { "The selected account could not be read safely. No address was exported." }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    onclick: move |_| {
+                        let services = services.clone();
+                        let profile_id = active_profile.id.clone();
+                        export_notice.set(None);
+                        state.set(ReceiveSheetState::Loading);
+                        spawn(async move {
+                            let next = run_ui_blocking(move || {
+                                load_receive_sheet(&services, &profile_id)
+                            })
+                            .await
+                            .unwrap_or(ReceiveSheetState::Failed);
+                            if let ReceiveSheetState::Ready(account) = &next {
+                                selected_kind.set(default_receive_kind(account));
+                            }
+                            state.set(next);
+                        });
+                    },
+                    "Retry"
+                }
+            }
+        },
+        ReceiveSheetState::Ready(account) => {
+            let Some(addresses) = protected_receive_addresses(&account) else {
+                return rsx! {
+                    button {
+                        class: "receive-sheet__backdrop",
+                        r#type: "button",
+                        aria_label: "Dismiss Receive",
+                        onclick: move |event| on_close.call(event),
+                    }
+                    section {
+                        class: "receive-sheet",
+                        role: "dialog",
+                        aria_modal: "true",
+                        aria_labelledby: "receive-sheet-title",
+                        div { class: "receive-sheet__handle", aria_hidden: "true" }
+                        div { class: "receive-sheet__heading",
+                            div {
+                                p { class: "card-eyebrow", "Midnight account" }
+                                h2 { id: "receive-sheet-title", "Receive NIGHT" }
+                                p { "Choose exactly which public receive destination to share." }
+                            }
+                            button {
+                                class: "receive-sheet__close",
+                                r#type: "button",
+                                aria_label: "Close Receive",
+                                onclick: move |event| on_close.call(event),
+                                "Close"
+                            }
+                        }
+                        div { class: "receive-sheet__state",
+                            strong { "Protected receive addresses are not ready" }
+                            p { "Activate and derive this profile's protected Midnight account before sharing a holder-controlled address." }
+                            button {
+                                class: "primary-action",
+                                r#type: "button",
+                                onclick: move |event| on_open_wallet.call(event),
+                                "Open Wallet to activate"
+                            }
+                        }
+                    }
+                };
+            };
+            let addresses = addresses.to_vec();
+            let selected_kind_value = selected_kind.read().clone();
+            let selected = addresses
+                .iter()
+                .find(|address| Some(address.kind.as_str()) == selected_kind_value.as_deref())
+                .cloned()
+                .unwrap_or_else(|| addresses[0].clone());
+            let source = ui::account_source(&account.source);
+            let status_class = if matches!(
+                account.source.as_str(),
+                "simulated" | "cached" | "unavailable"
+            ) {
+                "status-pill warning"
+            } else {
+                "status-pill"
+            };
+            let qr = render_qr_svg(&selected.value);
+            let preview = grouped_address_preview(&selected.value);
+            let copy_exporter = services.public_text_exporter();
+            let copy_value = selected.value.clone();
+            let share_exporter = services.public_text_exporter();
+            let share_value = selected.value.clone();
+            rsx! {
+                div { class: "receive-sheet__status",
+                    span { class: "{status_class}", "{source}" }
+                    span { "{account.network_name}" }
+                }
+                div { class: "receive-sheet__selectors", role: "group", aria_label: "Receive address type",
+                    for address in addresses.iter() {
+                        {
+                            let kind = address.kind.clone();
+                            let selected = address.kind == selected.kind;
+                            rsx! {
+                                button {
+                                    class: if selected { "receive-sheet__selector is-selected" } else { "receive-sheet__selector" },
+                                    key: "{address.kind}:{address.value}",
+                                    r#type: "button",
+                                    aria_pressed: if selected { "true" } else { "false" },
+                                    aria_label: "Use {ui::receive_address_tab(&address.kind)} receive address",
+                                    onclick: move |_| {
+                                        selected_kind.set(Some(kind.clone()));
+                                        export_notice.set(None);
+                                    },
+                                    "{ui::receive_address_tab(&address.kind)}"
+                                }
+                            }
+                        }
+                    }
+                }
+                div { class: "receive-sheet__address",
+                    div {
+                        strong { "{ui::address_kind(&selected.kind)}" }
+                        p { "{ui::address_purpose(&selected.kind)}" }
+                    }
+                    div {
+                        class: "address-qr",
+                        role: "img",
+                        aria_label: "QR code for {ui::address_kind(&selected.kind)} receive address",
+                        if let Some(svg) = qr {
+                            div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
+                        } else {
+                            p { role: "alert", "This address could not be encoded as a QR code." }
+                        }
+                    }
+                    code {
+                        class: "receive-sheet__preview",
+                        title: "{selected.value}",
+                        aria_label: "Full {ui::address_kind(&selected.kind)} receive address {selected.value}",
+                        "{preview}"
+                    }
+                }
+                div { class: "receive-sheet__actions",
+                    button {
+                        class: "receive-sheet__action",
+                        r#type: "button",
+                        aria_label: "Copy {ui::address_kind(&selected.kind)} receive address",
+                        onclick: move |_| {
+                            let result = PublicReceiveAddress::new(copy_value.clone())
+                                .and_then(|address| copy_exporter.copy_receive_address(address));
+                            export_notice.set(Some(public_export_message(result, false)));
+                        },
+                        "Copy address"
+                    }
+                    button {
+                        class: "receive-sheet__action",
+                        r#type: "button",
+                        aria_label: "Share {ui::address_kind(&selected.kind)} receive address",
+                        onclick: move |_| {
+                            let result = PublicReceiveAddress::new(share_value.clone())
+                                .and_then(|address| share_exporter.share_receive_address(address));
+                            export_notice.set(Some(public_export_message(result, true)));
+                        },
+                        "Share"
+                    }
+                }
+                if let Some(message) = export_notice.read().as_deref() {
+                    p { class: "address-export-notice", role: "status", "{message}" }
+                }
+                p { class: "receive-sheet__guarantee",
+                    "Each QR, clipboard copy, and share sheet contains exactly the public receive address shown. The grouped preview is display-only."
+                }
+            }
+        }
+    };
+
+    rsx! {
+        button {
+            class: "receive-sheet__backdrop",
+            r#type: "button",
+            aria_label: "Dismiss Receive",
+            onclick: move |event| on_close.call(event),
+        }
+        section {
+            class: "receive-sheet",
+            role: "dialog",
+            aria_modal: "true",
+            aria_labelledby: "receive-sheet-title",
+            div { class: "receive-sheet__handle", aria_hidden: "true" }
+            div { class: "receive-sheet__heading",
+                div {
+                    p { class: "card-eyebrow", "Midnight account" }
+                    h2 { id: "receive-sheet-title", "Receive NIGHT" }
+                    p { "Choose exactly which public receive destination to share." }
+                }
+                button {
+                    class: "receive-sheet__close",
+                    r#type: "button",
+                    aria_label: "Close Receive",
+                    onclick: move |event| on_close.call(event),
+                    "Close"
+                }
+            }
+            {content}
+        }
+    }
+}
+
+fn load_receive_sheet(services: &WalletUiServices, profile_id: &str) -> ReceiveSheetState {
+    services
+        .get_wallet_account()
+        .execute(WalletAccountQuery {
+            profile_id: profile_id.to_owned(),
+        })
+        .map(|account| ReceiveSheetState::Ready(Box::new(account)))
+        .unwrap_or(ReceiveSheetState::Failed)
+}
+
+fn protected_receive_addresses(account: &WalletAccountView) -> Option<&[WalletAddressView]> {
+    has_protected_account(account).then_some(account.addresses.as_slice())
+}
+
+fn default_receive_kind(account: &WalletAccountView) -> Option<String> {
+    protected_receive_addresses(account)
+        .and_then(|addresses| addresses.first())
+        .map(|address| address.kind.clone())
+}
+
+fn grouped_address_preview(value: &str) -> String {
+    let characters = value.chars().collect::<Vec<_>>();
+    let visible = if characters.len() > 32 {
+        let mut shortened = characters[..20].to_vec();
+        shortened.extend(['…', '…', '…']);
+        shortened.extend_from_slice(&characters[characters.len() - 8..]);
+        shortened
+    } else {
+        characters
+    };
+
+    visible
+        .chunks(4)
+        .map(|chunk| chunk.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[component]
@@ -3526,9 +3858,9 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                 div { class: "dashboard-grid",
                     article { class: "surface-card",
                         p { class: "card-eyebrow", "Receive" }
-                        if account.addresses.is_empty() {
+                        if !protected_account || account.addresses.is_empty() {
                             h2 { "Address unavailable" }
-                            p { "Protected Midnight account derivation is not connected in this composition." }
+                            p { "Activate and derive this profile's protected Midnight account before sharing a holder-controlled address." }
                         } else {
                             for address in account.addresses.iter() {
                                 ReceiveAddress {
@@ -9667,20 +9999,20 @@ mod tests {
     }
 
     #[test]
-    fn home_quick_actions_route_to_existing_surfaces() {
+    fn home_quick_actions_route_to_the_reviewed_surfaces() {
         assert_eq!(
-            HomeQuickAction::Receive.destination(),
-            Some(PrimaryDestination::Wallet)
+            HomeQuickAction::Receive.target(),
+            HomeQuickActionTarget::ReceiveSheet
         );
         assert_eq!(
-            HomeQuickAction::Send.destination(),
-            Some(PrimaryDestination::Wallet)
+            HomeQuickAction::Send.target(),
+            HomeQuickActionTarget::Primary(PrimaryDestination::Wallet)
         );
         assert_eq!(
-            HomeQuickAction::Present.destination(),
-            Some(PrimaryDestination::Documents)
+            HomeQuickAction::Present.target(),
+            HomeQuickActionTarget::Primary(PrimaryDestination::Documents)
         );
-        assert_eq!(HomeQuickAction::Scan.destination(), None);
+        assert_eq!(HomeQuickAction::Scan.target(), HomeQuickActionTarget::Scan);
     }
 
     #[test]
@@ -9835,6 +10167,13 @@ mod tests {
     #[test]
     fn secondary_routes_push_and_primary_selection_resets_the_stack() {
         let mut navigation = RouteStack::default();
+        navigation.push(Route::Receive);
+
+        assert_eq!(navigation.root(), Route::Home);
+        assert_eq!(navigation.current(), Route::Receive);
+        assert_eq!(navigation.active_primary(), PrimaryDestination::Home);
+        assert!(navigation.pop());
+
         navigation.push(Route::PassportVault);
 
         assert_eq!(navigation.current(), Route::PassportVault);
@@ -9874,6 +10213,8 @@ mod tests {
     fn profile_remains_an_explicit_non_primary_route() {
         assert_eq!(Route::Profile.title(), "Wallet profiles");
         assert_eq!(Route::Profile.primary(), None);
+        assert_eq!(Route::Receive.title(), "Receive");
+        assert_eq!(Route::Receive.primary(), None);
     }
 
     #[test]
@@ -9919,6 +10260,60 @@ mod tests {
         assert!(account.addresses.is_empty());
         assert_eq!(account.sync.state, "unavailable");
         assert!(!has_protected_account(&account));
+        assert!(protected_receive_addresses(&account).is_none());
+    }
+
+    #[test]
+    fn receive_sheet_admits_only_protected_derived_addresses() {
+        let networks = WalletNetworkListView {
+            selected_network_id: "undeployed".to_owned(),
+            networks: vec![oxid_wallet_application::WalletNetworkView {
+                chain: "midnight".to_owned(),
+                network_id: "undeployed".to_owned(),
+                display_name: "Midnight undeployed".to_owned(),
+                environment: "development".to_owned(),
+                selected: true,
+            }],
+        };
+        let mut account = protected_account_placeholder(&networks).expect("selected network");
+        account.source = "simulated".to_owned();
+        account.addresses = vec![
+            WalletAddressView {
+                kind: "unshielded".to_owned(),
+                value: "mn_addr_fixture".to_owned(),
+            },
+            WalletAddressView {
+                kind: "shielded".to_owned(),
+                value: "mn_shield_fixture".to_owned(),
+            },
+        ];
+
+        assert!(protected_receive_addresses(&account).is_none());
+
+        account.account_id = Some("midnight_account_derived".to_owned());
+        let addresses = protected_receive_addresses(&account).expect("protected addresses");
+        assert_eq!(addresses.len(), 2);
+        assert_eq!(
+            default_receive_kind(&account).as_deref(),
+            Some("unshielded")
+        );
+    }
+
+    #[test]
+    fn receive_preview_is_grouped_and_never_changes_the_full_payload() {
+        let address = "mn_addr_1234567890abcdefghijklmnopqrstuvwxyz";
+        let preview = grouped_address_preview(address);
+
+        assert!(preview.contains(' '));
+        assert!(preview.contains('…'));
+        assert_ne!(preview, address);
+        assert_eq!(
+            PublicReceiveAddress::new(address.to_owned())
+                .expect("address")
+                .as_str(),
+            address
+        );
+        assert_eq!(grouped_address_preview("mn_addr_short"), "mn_a ddr_ shor t");
     }
 
     #[test]

@@ -111,6 +111,8 @@ ADR status and delivery state answer different questions:
 | [0087](0087-compose-home-as-a-safe-read-only-projection.md) Compose Home as a safe read-only projection | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1b; issues #2/#65/#79 | Home projects existing safe views and routes to existing flows; Wallet remains operational authority and security/activity copy cannot overclaim |
 | [0088](0088-present-night-transfer-as-a-bounded-send-wizard.md) Present NIGHT transfer as a bounded Send wizard | Accepted | §§3–7, 12–13, 16, 18; design Phase 2a; issues #2/#65/#80 | Two editable screens lead into preview-derived review, separate authorization/submission intents, and only the recovery permitted by the existing nine-state machine |
 | [0089](0089-compose-identity-consent-as-four-question-ceremonies.md) Compose identity consent as four-question ceremonies | Accepted | §§3–7, 9–13, 16, 18, 21; design Phase 2b; issues #2/#27/#65/#81 | OpenID4VP, OpenID4VCI, and SIOPv2 expose truthful WHO → WHAT → FROM → WHY review without changing exact consent intents or protocol authority |
+| [0090](0090-compose-onboarding-backup-receipts-and-account-sync.md) Compose onboarding, backup receipts, and account sync | Accepted | §§3–8, 12–13, 16, 18; design Phase 2c; issues #2/#33/#65/#82 | First launch forks create/restore, complete native export records the sole truthful backup receipt, and Wallet composes account/DUST/shielded refresh into one action without merging authority |
+| [0091](0091-present-receive-as-a-typed-address-sheet.md) Present receive as a typed address sheet | Accepted | §§3, 6–8, 12–13, 16, 18; Receive journey; issues #2/#65/#83 | Home opens a bounded modal over existing safe account and typed public-export ports; only protected returned address rails become selectable QR/Copy/Share destinations |
 
 ## Current boundaries
 
@@ -424,3 +426,11 @@ A new profile-scoped timestamp-only application receipt is recorded only after
 complete backup encryption and the fixed-kind native document export both
 succeed; it is excluded from archives and is the sole authority for **Backed
 up** copy and celebration.
+
+ADR-0091 presents Receive as a Dioxus-owned non-primary sheet over the existing
+safe account view and typed public export ports. Home remains the root under the
+modal; only protected derived address rails returned by the account use case
+become selectable Public/Private/Fee destinations, and the selected full value
+alone feeds QR, Copy, and Share. Fixture/watch-only addresses fail closed to a
+Wallet activation path, while the existing headless address methods remain the
+UI-independent conformance harness.

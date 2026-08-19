@@ -61,3 +61,12 @@ longer appear in the normal user surface. The same decision splits onboarding
 into create/restore routes and introduces a timestamp-only application receipt
 so Home/Settings can say **Backed up** only after the native document exporter
 actually succeeds.
+
+ADR-0091 reuses the prototype `AddressCard` / `AddressRow` evidence without
+copying its component state or bridge facade. Home now opens one bounded
+Receive secondary route with a large selected QR, dynamic human address-kind
+selectors, grouped display-only preview, and typed native Copy/Share. Oxid adds
+a stricter protected-account admission rule: simulation fixtures and
+watch-only fallbacks cannot be presented as holder-controlled destinations.
+The existing headless `wallet.address.list|unshielded|shielded` methods remain
+the UI-independent conformance surface; no modal state enters the protocol.

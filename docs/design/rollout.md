@@ -57,7 +57,13 @@ privacy operations remain the other called-out exception.
    export both succeed, enabling truthful **Backed up** copy and an accessible
    celebration. Wallet now composes account, DUST, and shielded refresh into
    one sync card/action while their independent authority and cancellation
-   semantics remain unchanged. The receive sheet remains a later ceremony.
+   semantics remain unchanged.
+4. **Receive sheet** (delivered by ADR-0091 / issue #83): Home opens a bounded
+   secondary sheet in one tap. Only protected derived address rails returned by
+   the existing account use case become human-labelled Public/Private/Fee
+   selectors; the selected full value alone feeds the large QR and typed native
+   Copy/Share ports. Fixture and watch-only addresses remain unavailable until
+   activation, and Close restores Home without changing wallet state.
 
 ## Phase 3 — White-label infrastructure
 
@@ -110,7 +116,8 @@ global search across assets/documents/activity, light theme ship.
 One epic issue (this spec), then per-phase slices sized like existing
 issues: 0a tokens, 0b labeling layer, 0c credential chooser (bug), 1a route
 stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
-(delivered by #80), 2b consent sheet, 2c onboarding + backup, 3 white-label
+(delivered by #80), 2b consent sheet (delivered by #81), 2c onboarding + backup
+(delivered by #82), 2d receive sheet (delivered by #83), 3 white-label
 infra, 4a secret mode + native privacy ops, 4b dev/demo
-profiles, 5 per-item. Phase 2c is delivered by #82; each remaining slice references the relevant spec section as its
-acceptance criteria, factory-work-item style.
+profiles, 5 per-item. Each remaining slice references the relevant spec section
+as its acceptance criteria, factory-work-item style.

@@ -329,9 +329,11 @@ try {
     );
     await clickButton("Receive");
     await waitFor(
-      'Boolean(document.querySelector(\'button[aria-label="Activate protected Midnight account"]\'))',
-      "one-tap Home Receive route to Wallet",
+      "document.body.innerText.includes('Receive NIGHT') && Boolean(document.querySelector('[role=dialog]'))",
+      "one-tap Home Receive sheet",
     );
+    await waitForButton("Open Wallet to activate");
+    await clickButton("Open Wallet to activate");
     await clickButtonByLabel("Activate protected Midnight account");
     await waitForButton("Use my receive address", 90_000);
     await waitForButton("Scan");
@@ -343,21 +345,26 @@ try {
     );
     await waitForButton("Sync now");
 
-    await clickButton("Show QR");
+    await clickButton("Home");
+    await clickButton("Receive");
     await waitFor(
-      "Boolean(document.querySelector('.address-qr__frame svg'))",
-      "rendered receive QR",
+      `Boolean(document.querySelector('button[aria-label="Use Public receive address"]'))
+        && Boolean(document.querySelector('button[aria-label="Use Private receive address"]'))
+        && Boolean(document.querySelector('.receive-sheet .address-qr__frame svg'))`,
+      "public and private receive selectors with rendered QR",
     );
     const qrRendered = await evaluate(
-      "Boolean(document.querySelector('.address-qr__frame svg'))",
+      "Boolean(document.querySelector('.receive-sheet .address-qr__frame svg'))",
     );
-    await clickButton("Hide QR");
-    const shieldedAddressRendered = await evaluate(`(() => {
-      const rows = Array.from(document.querySelectorAll('.address-row'));
-      return rows.some((row) =>
-        row.innerText.includes('Shielded') && row.querySelector('code')?.innerText.startsWith('mn_shield-addr_')
-      );
-    })()`);
+    await clickButtonByLabel("Use Private receive address");
+    await waitFor(
+      'Boolean(document.querySelector(\'.receive-sheet [role="img"][aria-label="QR code for Shielded receive address"]\'))',
+      "shielded receive QR",
+    );
+    const shieldedAddressRendered = await evaluate(
+      'Boolean(document.querySelector(\'.receive-sheet [role="img"][aria-label="QR code for Shielded receive address"]\'))',
+    );
+    await clickButtonByLabel("Use Public receive address");
 
     await clickButtonByLabel("Copy Unshielded receive address");
     await waitFor(
@@ -368,6 +375,8 @@ try {
       "document.body.innerText.includes('Public receive address copied to the native clipboard.')",
     );
 
+    await clickButtonByLabel("Close Receive");
+    await openWallet();
     await clickButton("Use my receive address");
     await clickButtonByLabel("Continue to transfer amount");
     await setInput("Amount in NIGHT", "1.5");
@@ -682,7 +691,9 @@ try {
     if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.homeComposed || !result.claimsHiddenByDefault || !result.credentialChooserValidated || !result.credentialPolicyChecked || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
-    await openWallet();
+    await clickButton("Home");
+    await clickButton("Receive");
+    await waitForButton("Share");
     await clickButtonByLabel("Share Unshielded receive address");
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } else if (mode === "restored") {

@@ -7522,6 +7522,20 @@ mod tests {
                         .is_some_and(|value| value.starts_with("mn_shield-addr_undeployed1"))
             })
         }));
+        let listed = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"derive-list","method":"wallet.address.list","params":{}}"#,
+        );
+        assert_eq!(listed[0]["result"]["addresses"], derived["addresses"]);
+        let unshielded = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"derive-unshielded","method":"wallet.address.unshielded","params":{}}"#,
+        );
+        assert_eq!(unshielded[0]["result"]["address"]["kind"], "unshielded");
+        assert_eq!(
+            unshielded[0]["result"]["address"]["value"],
+            derived["receiveAddress"]["value"]
+        );
         let shielded = execute_with_wallet(
             &wallet,
             r#"{"protocol":"oxid.headless.v1","id":"derive-shielded","method":"wallet.address.shielded","params":{}}"#,

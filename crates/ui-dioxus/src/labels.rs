@@ -179,6 +179,16 @@ pub(crate) fn address_kind(value: &str) -> &'static str {
     }
 }
 
+pub(crate) fn receive_address_tab(value: &str) -> &'static str {
+    match value {
+        "unshielded" => "Public",
+        "shielded" => "Private",
+        "dust" => "Fee account",
+        "reward" => "Rewards",
+        _ => "Address",
+    }
+}
+
 pub(crate) fn address_purpose(value: &str) -> &'static str {
     match value {
         "unshielded" => "Send public NIGHT here",
@@ -724,5 +734,9 @@ mod tests {
             credential_format("midnight_compact_vc"),
             "Digital Passport (Midnight format)"
         );
+        assert_eq!(receive_address_tab("unshielded"), "Public");
+        assert_eq!(receive_address_tab("shielded"), "Private");
+        assert_eq!(receive_address_tab("dust"), "Fee account");
+        assert_eq!(receive_address_tab("future_kind"), "Address");
     }
 }

@@ -330,6 +330,18 @@ smoke flows use one `Sync now` action and assert the exact `12 DUST`, one owned
 shielded note, and `5 NIGHT` fixture results before transfer checks. The action
 becomes `Cancel sync` while either worker remains active; cursor and per-run
 event counts stay out of normal user copy.
+ADR-0091 makes Home **Receive** a non-primary Dioxus route rendered as a modal
+sheet over the Home root. It must reuse `GetWalletAccountUseCase`,
+`WalletAccountView`, deterministic Rust QR rendering, and the typed
+`PublicReceiveAddress` export port; do not add receive-specific application
+state or widen native export to arbitrary text. Only an account id beginning
+`midnight_account_` with both protected unshielded and shielded rails may expose
+returned addresses as holder-controlled receive destinations. Never synthesize
+a Fee/DUST selector or admit simulation/watch-only fixtures merely because an
+address parses. The selected complete address alone feeds QR, Copy, and Share;
+the grouped/truncated preview is display-only. The UI-independent conformance
+surface remains `wallet.address.list|unshielded|shielded`, and modal selection
+state must not enter the headless protocol.
 The native controller contract suite injects only the already-decoded chain
 tip so pure Nix does not depend on HTTP loopback, then drives the real bounded
 GraphQL-WebSocket worker. It proves an owned event projects exactly 12 DUST,
