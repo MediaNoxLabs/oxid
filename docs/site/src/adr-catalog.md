@@ -94,14 +94,14 @@ ADR status and delivery state answer different questions:
 | [0066](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0066-enable-native-vault-claim-discovery-after-managed-conformance.md) Enable native vault claim discovery after managed conformance | Accepted | §§3–7, 9–13, 16–18, 21, standalone issuance/custody/composer flow, and issue #31 | Full managed-DID and holder-bound credential conformance reaches terminal native submission through the packaged composer; `native_settlement` now advertises all four wallet operations |
 | [0067](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0067-drive-mobile-vault-settlement-through-typed-application-use-cases.md) Drive mobile vault settlement through typed application use cases | Accepted | §§3–8, 12–13, 16–18, 21, prototype mobile vault surface, and issue #31 | Dioxus reads truthfully labelled contract state and drives all four calls through explicit prepare/authorize/prove/submit/cancel/reconcile stages without WebView or secret-bearing bridges |
 | [0068](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0068-persist-the-standalone-passport-vault-ledger.md) Persist the standalone Passport Vault ledger | Accepted | §§3–7, 12–13, 16–18, 21, prototype vault/headless flow, and issues #2/#31 | Owner-private bounded atomic storage preserves standalone accounting and claim replay across headless/mobile restarts without becoming native contract-state authority |
-| [0069](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0069-route-native-identity-ingress-through-strict-protocol-links.md) Route native identity ingress through strict protocol links | Accepted | §§3–7, 9–13, 16–18, 21, prototype QR/mobile flow, and issues #2/#32 | Native QR adapters and strict shared routing hand standalone requests to existing preview/consent flows; ADR-0070 adds OS delivery while physical-camera evidence remains #32 |
-| [0070](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0070-constrain-mobile-links-and-public-text-export.md) Constrain mobile links and public text export | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#32 | Warm/cold custom-scheme links reuse the strict router and typed public receive addresses alone reach native clipboard/share; universal links, physical-device evidence, discovery, and resource baselines remain #32 |
+| [0069](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0069-route-native-identity-ingress-through-strict-protocol-links.md) Route native identity ingress through strict protocol links | Accepted | §§3–7, 9–13, 16–18, 21, prototype QR/mobile flow, and issues #2/#32 | Native QR adapters now close exact cancellation/denial-or-unavailable/timeout generations and strict shared routing hands only bounded requests to existing preview/consent; physical-camera evidence remains #32 |
+| [0070](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0070-constrain-mobile-links-and-public-text-export.md) Constrain mobile links and public text export | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#32 | Packaged warm/cold custom-scheme links reuse the strict router and typed public receive addresses alone reach native clipboard/share; verified HTTPS links, physical-device evidence, discovery, and resource baselines remain #32 |
 | [0071](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0071-wrap-mobile-custody-with-device-user-presence.md) Wrap mobile custody with device user presence | Accepted | §§3, 7, 12–13, 16–18, prototype secret storage, and issues #2/#29/#30 | Normal mobile composition uses a bounded OS-wrapped sealed vault; locked public reads stay non-interactive and Android explicit-authorization/distinct-process/stable-root plus iOS capability/fail-closed simulator evidence exist, while physical-device and mobile-prover gates remain open |
 | [0072](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0072-embed-authenticated-compact-artifacts-for-mobile-measurement.md) Embed authenticated Compact artifacts for mobile measurement | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | Opt-in native-custody mobile builds embed and authenticate the exact runtime-minimal Nix closure; ADR-0083 adds standalone worker execution while physical-device lifecycle/resource budgets remain gated |
 | [0073](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0073-anchor-standalone-compact-credential-policy.md) Anchor standalone Compact credential policy | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#29/#34 | Standalone composition resolves and authorizes the exact issuer Jubjub method, enforces current-time/expiry policy, and requires a pinned trust anchor; status remains not checked and production remains unavailable |
 | [0074](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0074-package-portable-custody-for-one-shot-recovery.md) Package portable custody for one-shot recovery | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Versioned Argon2id/XChaCha20-Poly1305 custody packages restore exact keys only into empty development/mobile vaults; ADR-0075 adds native file UX and ADR-0076 composes custody into complete wallet recovery |
 | [0075](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0075-transfer-wallet-backups-through-native-document-pickers.md) Transfer wallet backups through native document pickers | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Capability-selected fixed filenames and bounded iOS/Android document pickers serve complete export/fresh-install recovery plus the legacy custody-only importer; physical-device recovery remains #33 |
-| [0076](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0076-recover-complete-wallet-state-as-one-transaction.md) Recover complete wallet state as one transaction | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#33 | One-envelope journaled all-store recovery, fresh-install Dioxus UX, and an exact standalone composition round trip are implemented; complete mobile document-round-trip/resource evidence remains #33 |
+| [0076](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0076-recover-complete-wallet-state-as-one-transaction.md) Recover complete wallet state as one transaction | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#33 | One-envelope journaled all-store recovery, fresh-install Dioxus UX, exact standalone composition, and iOS/Android virtual-device document round trips are implemented; physical interruption/resource evidence remains #33 |
 | [0077](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0077-run-blocking-wallet-work-off-the-dioxus-executor.md) Run blocking wallet work off the Dioxus executor | Accepted | §§3, 6–7, 12–13, 16, 18, prototype mobile worker, and issues #2/#42 | Native synchronous and async-future wallet/SSI work uses an executor-neutral 8 MiB worker; only audited pure parsing, published snapshots, and non-waiting adapter-worker controls remain direct |
 | [0078](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0078-harden-complete-wallet-backup-derivation.md) Harden complete-wallet backup derivation | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33/#48 | New complete-wallet exports use a strict 64 MiB/t=3 Argon2id version-3 envelope; exact version-2 complete-wallet and version-1 custody policies remain readable without attacker-selected KDF work |
 | [0079](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0079-spend-shielded-assets-from-current-adapter-private-state.md) Spend shielded assets from current adapter-private state | Accepted | §§3–8, 12–13, 16–18, 21 and issues #2/#59 | Fresh-sync-gated canonical Zswap planning reuses staged authorization, DUST proving, durable submission recovery, headless, and Dioxus privacy selection; physical-device release gates remain open |
@@ -114,6 +114,14 @@ ADR status and delivery state answer different questions:
 | [0086](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0086-compose-the-mobile-shell-with-a-bounded-route-stack.md) Compose the mobile shell with a bounded route stack | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1a; issues #2/#65/#78 | Four primary tabs and center Scan use an app-owned root-plus-secondary stack; every migrated page remains reachable without a new router dependency |
 | [0087](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0087-compose-home-as-a-safe-read-only-projection.md) Compose Home as a safe read-only projection | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1b; issues #2/#65/#79 | Home projects existing safe views and routes to existing flows; Wallet remains operational authority and security/activity copy cannot overclaim |
 | [0088](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0088-present-night-transfer-as-a-bounded-send-wizard.md) Present NIGHT transfer as a bounded Send wizard | Accepted | §§3–7, 12–13, 16, 18; design Phase 2a; issues #2/#65/#80 | Two editable screens lead into preview-derived review, separate authorization/submission intents, and only the recovery permitted by the existing nine-state machine |
+| [0089](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0089-compose-identity-consent-as-four-question-ceremonies.md) Compose identity consent as four-question ceremonies | Accepted | §§3–7, 9–13, 16, 18, 21; design Phase 2b; issues #2/#27/#65/#81 | OpenID4VP, OpenID4VCI, and SIOPv2 expose truthful WHO → WHAT → FROM → WHY review without changing exact consent intents or protocol authority |
+| [0090](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0090-compose-onboarding-backup-receipts-and-account-sync.md) Compose onboarding, backup receipts, and account sync | Accepted | §§3–8, 12–13, 16, 18; design Phase 2c; issues #2/#33/#65/#82 | First launch forks create/restore, complete native export records the sole truthful backup receipt, and Wallet composes account/DUST/shielded refresh into one action without merging authority |
+| [0091](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0091-present-receive-as-a-typed-address-sheet.md) Present receive as a typed address sheet | Accepted | §§3, 6–8, 12–13, 16, 18; Receive journey; issues #2/#65/#83 | Home opens a bounded modal over existing safe account and typed public-export ports; only protected returned address rails become selectable QR/Copy/Share destinations |
+| [0092](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0092-generate-validated-build-time-brand-packs.md) Generate validated build-time brand packs | Accepted | §§1–6, 12–18, 21; white-label design/Phase 3; issues #2/#65/#84 | Default thin app generates immutable identity/CSS/logo from a strict pack; contrast, safety copy, manifest, and every enumerated Nix pack fail closed |
+| [0093](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0093-mask-private-wallet-values-as-a-render-only-ui-profile.md) Mask private wallet values as a render-only UI profile | Accepted | §§1–7, 9–13, 16–18, 21; UI profiles P1–P5/Phase 4a; issues #2/#65/#85 | Every Dioxus build defaults to a process-local mask, permits one timed reveal, re-arms on lifecycle/unlock, and leaves exact consent objects visible |
+| [0094](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0094-protect-mobile-snapshots-through-a-boolean-platform-port.md) Protect mobile snapshots through a boolean platform port | Accepted | §§3–7, 12–13, 16–18, 21; UI profile P6/Phase 4a; issues #2/#32/#65/#85 | One payload-free port sets Android `FLAG_SECURE` or an honest iOS background overlay; backup/reveal routes force protection and unsupported targets fail closed |
+| [0095](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0095-share-a-closed-capability-manifest-with-developer-ui.md) Share a closed capability manifest with the developer UI | Accepted | §§3–7, 12–13, 16–18, 21; UI profiles P1/P2/P7/P9/P10; issues #2/#65/#69/#87 | One dependency-free manifest feeds headless JSON and an opt-in standalone developer viewer; confirmation metadata, feature guards, and normal-release marker exclusion are checked |
+| [0096](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0096-sequence-standalone-fixtures-through-a-demo-drawer.md) Sequence standalone fixtures through a demo drawer | Accepted | §§3–7, 12–13, 16, 18, 21; UI profiles P1/P2/P5/P8–P10; issues #2/#65/#88 | An opt-in standalone-development drawer isolates setup in the named demo profile, sequences only existing safe fixtures, gates simulated funding, and stops offer/login/presentation fixtures at their unchanged review screens |
 
 ## Current boundaries
 
@@ -227,6 +235,31 @@ disposal and are acknowledged only after the non-interruptible prover stops.
 Retry starts from a fresh single-use OpenID4VP preview and consent. Normal
 production and ordinary standalone builds remain proof-disabled, while
 physical-device custody and resource budgets remain issues #29 and #30.
+ADR-0093 keeps secret mode entirely inside the Dioxus incoming adapter. It
+changes only rendering of reviewed public view strings, defaults to masked,
+uses generation-bound timed reveal, re-arms after lifecycle and wallet-unlock
+boundaries, and never masks exact consent or authorization objects. ADR-0094
+adds the distinct host snapshot boundary: one boolean platform port sets
+Android `FLAG_SECURE` or an iOS scene-background overlay and carries no wallet
+value. iOS does not claim screenshot prevention, and physical-device evidence
+remains issue #32.
+ADR-0095 removes capability discovery from the headless adapter's private JSON
+implementation. One dependency-free application manifest now feeds headless
+serialization and the opt-in standalone Dioxus developer view. Its closed facts
+cannot carry payloads, identifiers, claims, endpoints, logs, or telemetry;
+unknown composition labels fail to `unavailable`. The developer profile has a
+persistent build banner, cannot compile with normal composition, and a normal
+release binary must not contain its marker.
+ADR-0096 adds the separate presentation-only demo profile. Its drawer first
+selects or creates the named `Oxid Demo Wallet`, leaving unrelated active
+profiles untouched, then uses the existing custody, derivation, DID,
+credential-inbox, account-sync, and
+strict identity-routing boundaries; the funding step admits only the exact
+undeployed simulator. Full setup stops at the existing credential-offer review,
+and login/presentation fixtures likewise occupy the one-item pending review
+without accepting, authorizing, proving, or submitting anything. Production
+and native-standalone builds reject the feature, and normal release artifacts
+exclude its stable markers.
 ADR-0084 makes presentation theming a two-layer build boundary. Components
 consume only the fixed semantic surface/text/accent/product/type/space/radius/
 motion/elevation vocabulary, while raw palette values remain confined to
@@ -411,3 +444,35 @@ status. It preserves separate authorization and prove/submit intents, safe
 pre-broadcast cancellation, durable unknown-outcome reconciliation, and the
 nine-state application machine. Clipboard import, payment scanning, and recent
 recipients remain absent until reviewed ports exist.
+ADR-0089 composes the existing OpenID4VP, OpenID4VCI, and SIOPv2 public plans as
+ordered WHO, WHAT, FROM, and WHY consent ceremonies. Standalone endpoints are
+explicitly unverified, required presentation claims remain locked to the exact
+prepared plan, the supported age predicate includes negative reassurance, and
+the existing literal confirmations, exact intents, credential chooser,
+managed-DID custody, refusal, replay, verification, and fail-closed proof gates
+remain authoritative. Verified endpoint discovery and optional claim selection
+remain absent until dedicated trust and authorization ports exist.
+ADR-0090 completes the next mobile ceremony slice: first launch forks cleanly
+between create and restore, profile creation offers truthful skippable device
+protection without exposing its opaque id, and Wallet presents public account,
+DUST, and shielded refresh through one action without merging their authority.
+A new profile-scoped timestamp-only application receipt is recorded only after
+complete backup encryption and the fixed-kind native document export both
+succeed; it is excluded from archives and is the sole authority for **Backed
+up** copy and celebration.
+
+ADR-0091 presents Receive as a Dioxus-owned non-primary sheet over the existing
+safe account view and typed public export ports. Home remains the root under the
+modal; only protected derived address rails returned by the account use case
+become selectable Public/Private/Fee destinations, and the selected full value
+alone feeds QR, Copy, and Share. Fixture/watch-only addresses fail closed to a
+Wallet activation path, while the existing headless address methods remain the
+UI-independent conformance harness.
+
+ADR-0092 moves brand identity out of shared Dioxus source and into immutable
+build-time packs selected by thin app crates. Closed metadata/token schemas,
+bounded safe SVG, two-scheme contrast, exact manifest purpose templates, fixed
+safety colors, and security-copy snapshots fail closed; generated semantic CSS
+and `BrandProfile` are the only UI inputs. Nix and `run.sh` enumerate every
+pack, while runtime brand selection and brand-controlled capability/security
+semantics remain forbidden.

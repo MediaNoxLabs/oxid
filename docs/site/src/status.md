@@ -27,6 +27,7 @@ and the repository [issue backlog](https://github.com/MediaNoxLabs/oxid/issues).
 | Passport Vault contract calls | Typed lifecycle with canonical finalized replay; claim path gated behind consent + funding + settlement review |
 | Portable + complete-wallet encrypted backup/recovery | Functional with hardened v3 KDF policy and native document pickers |
 | Secret-safe runtime diagnostics | Bounded process-local closed codes in headless and Dioxus; telemetry, payloads, upload, and persistence are off |
+| Developer/demo UI profiles | Separate compile-time standalone profiles; normal release marker scan proves both are excluded |
 
 ## Identity (SSI) capabilities
 
@@ -39,6 +40,7 @@ and the repository [issue backlog](https://github.com/MediaNoxLabs/oxid/issues).
 | SIOPv2 self-issued authentication | Standalone functional (draft-13 subset) |
 | Digital Passport disclosure planning + local reveal | Functional; explicitly not a verifier presentation |
 | OpenID4VP presentation with real ZK proof | Functional in native headless composition and the explicit native-custody mobile conformance build; normal/production mobile remains gated pending physical-device budgets |
+| Native QR and identity links | Typed iOS/Android capture plus strict shared routing; emulator cancellation/timeout and warm/cold custom schemes proven, physical cameras and verified HTTPS associations pending |
 
 ## The road to a shippable MVP
 
@@ -46,8 +48,9 @@ The load-bearing open pillars, each tracked publicly: mobile Compact proving
 budgets ([#30](https://github.com/MediaNoxLabs/oxid/issues/30)), the live
 Passport Vault adapter ([#31](https://github.com/MediaNoxLabs/oxid/issues/31)),
 physical-device ingress evidence
-([#32](https://github.com/MediaNoxLabs/oxid/issues/32)), backup/recovery
-completion ([#33](https://github.com/MediaNoxLabs/oxid/issues/33)), standalone
+([#32](https://github.com/MediaNoxLabs/oxid/issues/32)), physical-device
+recovery interruption/resource evidence
+([#33](https://github.com/MediaNoxLabs/oxid/issues/33)), standalone
 issuer time policy ([#34](https://github.com/MediaNoxLabs/oxid/issues/34)),
 plus live protocol transport and production issuer trust policy.
 

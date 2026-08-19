@@ -370,6 +370,27 @@ and must never claim foreground screenshot blocking. Settings and credential
 routes force protection for backup-secret and local-reveal surfaces. Native
 failure cannot unmask Dioxus or affect wallet authority. Physical-device and
 multi-scene evidence remains issue #32.
+ADR-0095 makes the capability manifest a UI-neutral, closed public projection.
+`capabilities/application` is the only source for both headless
+`system.capabilities` and the opt-in Dioxus developer viewer. Select the viewer
+only with the compile-time `ui-profile-dev` feature in standalone-development
+composition. Never add identifiers, routes, free-form adapter strings,
+process statistics, timing samples, logs, or readiness authority. The normal
+release must exclude the profile marker and viewer copy through
+`scripts/check-ui-profile-release.sh`.
+ADR-0096 keeps the separate compile-time `ui-profile-demo` feature inside
+standalone-development composition. Its drawer may select or create only the
+named `Oxid Demo Wallet` profile, initialize/unlock development custody, derive
+account `0/0`, select or create one managed DID, receive the public inbox
+fixture, and synchronize only the exact
+`simulated`/`undeployed`/`development` fixture. Operations are serialized and
+blocked while an identity request is pending. Full setup stops at the existing
+credential-offer review; login and presentation remain separate strict-router
+actions. Never automate consent, refusal, authorization, proving, submission,
+or confirmation. Developer and demo features are mutually exclusive, invalid
+outside standalone development, and excluded from normal release artifacts.
+The accepted implementation commits are `8ec1b18812541ccceac84c347ba93e0fc2367d5e`
+and `e841acc2fed8a6281744f37f79477437e3a9fa42`.
 The native controller contract suite injects only the already-decoded chain
 tip so pure Nix does not depend on HTTP loopback, then drives the real bounded
 GraphQL-WebSocket worker. It proves an owned event projects exactly 12 DUST,
@@ -733,6 +754,22 @@ The remote `feat/mobile-prototype` ref was re-verified on 2026-08-19 and still
 resolved to that exact commit. The separate remote `mobile-prototype` ref
 resolved to `255f2caf8c728c203f554d6bc853d1f3b7e8bc15`; do not treat its older name
 as a successor without a fresh provenance review.
+
+The 2026-08-19 read-only parity audit compares that immutable baseline with
+Oxid repository evidence in
+`docs/migration/live-parity-audit-2026-08-19.md`. It estimates roughly 95% of
+useful prototype behavior implemented, or 100/110 (91%) of the deliberately
+harder migration target, while production-release evidence is about 74%.
+These are evidence classifications, not source-line counts. The dependency-
+ordered gaps are physical custody/recovery evidence, authenticated production
+discovery/composition, real-node unshielded completion, real shielded spending,
+physical identity ingress plus verified HTTPS association, production
+background synchronization, live identity trust/transport and DID writes,
+Passport Vault live/device evidence, and device resource budgets. The next
+bounded engineering slice is authenticated production discovery plus one
+real-node unshielded end-to-end fixture. Approved domains/association files,
+release signing identities, physical devices, and funded live infrastructure
+are external evidence inputs and have no repository-only ETA.
 
 That commit declares itself the successor to the earlier Dioxus/VC prototype
 branches. Record a new immutable commit here before taking later prototype
@@ -1459,6 +1496,17 @@ protocol flow. SIOPv2 and credential presentation both use `openid4vp`, so stand
 composition classifies only exact registered `client_id`/`request_uri` pairs;
 unknown pairs must stay `ambiguous` until reviewed production discovery exists.
 Scanning only populates the existing page and cannot bypass preview or consent.
+The native lifecycle closure at commit
+`a865dbf7572c28f549326c45406b0f93d4664aa4` distinguishes iOS denial,
+cancellation, timeout, and unavailability; invalidates the exact active scan
+generation on timeout; bounds successful UTF-8 payloads to 32 KiB; and keeps
+Android vendor permission/module failures closed as unavailable rather than
+inventing a denial state. Android may retain the system-owned scanner UI after
+Oxid closes its logical generation, so tests must dismiss it before independent
+link checks. Android also serializes an empty-authority offer with a `/` path;
+the shared router accepts only `""` or `"/"` while retaining every host, field,
+fragment, duplication, and smuggling rejection. Native code never normalizes
+or classifies the value.
 
 ADR-0070 registers only `openid-credential-offer` and `openid4vp`. The app-level
 Tao handler captures cold iOS events before the component tree exists; the
@@ -1475,6 +1523,16 @@ an upgrade is proven. Android JNI calls use public methods on the activity
 instance so the application class loader resolves the plugin from Rust worker
 threads. Issue #32 owns physical-camera, universal-link, production-discovery,
 and resource evidence.
+
+`scripts/test-android-identity-ingress.sh` is the focused packaged-host proof:
+on `emulator-5554` it has passed scanner cancellation, exact 60-second timeout
+closure, and warm/cold custom-scheme delivery into the unchanged consent
+boundary. The iOS package builds, installs, launches, and compiles the focused
+XCTest bundle on iPhone 17 Pro simulator
+`76B99C81-BE72-4A93-A443-7F244723AAF3`; Xcode 26.4 currently duplicates
+`UIAccessibilityLoaderWebShared` and hides the WKWebView accessibility subtree,
+so that host cannot claim interaction evidence. Do not weaken the XCTest or
+substitute a simulator result for physical camera/permission evidence.
 
 ADR-0071 makes normal iOS/Android composition use `storage-mobile`; never add a
 fallback from it to development custody. The adapter stores one bounded,
