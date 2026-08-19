@@ -110,6 +110,7 @@ ADR status and delivery state answer different questions:
 | [0086](0086-compose-the-mobile-shell-with-a-bounded-route-stack.md) Compose the mobile shell with a bounded route stack | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1a; issues #2/#65/#78 | Four primary tabs and center Scan use an app-owned root-plus-secondary stack; every migrated page remains reachable without a new router dependency |
 | [0087](0087-compose-home-as-a-safe-read-only-projection.md) Compose Home as a safe read-only projection | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1b; issues #2/#65/#79 | Home projects existing safe views and routes to existing flows; Wallet remains operational authority and security/activity copy cannot overclaim |
 | [0088](0088-present-night-transfer-as-a-bounded-send-wizard.md) Present NIGHT transfer as a bounded Send wizard | Accepted | §§3–7, 12–13, 16, 18; design Phase 2a; issues #2/#65/#80 | Two editable screens lead into preview-derived review, separate authorization/submission intents, and only the recovery permitted by the existing nine-state machine |
+| [0089](0089-compose-identity-consent-as-four-question-ceremonies.md) Compose identity consent as four-question ceremonies | Accepted | §§3–7, 9–13, 16, 18, 21; design Phase 2b; issues #2/#27/#65/#81 | OpenID4VP, OpenID4VCI, and SIOPv2 expose truthful WHO → WHAT → FROM → WHY review without changing exact consent intents or protocol authority |
 
 ## Current boundaries
 
@@ -407,3 +408,11 @@ status. It preserves separate authorization and prove/submit intents, safe
 pre-broadcast cancellation, durable unknown-outcome reconciliation, and the
 nine-state application machine. Clipboard import, payment scanning, and recent
 recipients remain absent until reviewed ports exist.
+ADR-0089 composes the existing OpenID4VP, OpenID4VCI, and SIOPv2 public plans as
+ordered WHO, WHAT, FROM, and WHY consent ceremonies. Standalone endpoints are
+explicitly unverified, required presentation claims remain locked to the exact
+prepared plan, the supported age predicate includes negative reassurance, and
+the existing literal confirmations, exact intents, credential chooser,
+managed-DID custody, refusal, replay, verification, and fail-closed proof gates
+remain authoritative. Verified endpoint discovery and optional claim selection
+remain absent until dedicated trust and authorization ports exist.

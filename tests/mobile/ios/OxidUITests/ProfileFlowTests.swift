@@ -203,6 +203,16 @@ final class ProfileFlowTests: XCTestCase {
         scrollTo(previewLogin, in: application)
         previewLogin.tap()
         XCTAssertTrue(application.staticTexts["DID authentication preview"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["Who is asking?"].exists)
+        XCTAssertTrue(application.staticTexts["What will you prove?"].exists)
+        XCTAssertTrue(application.staticTexts["Which identity?"].exists)
+        XCTAssertTrue(application.staticTexts["Why is it requested?"].exists)
+        XCTAssertTrue(application.staticTexts["Unverified endpoint"].exists)
+        XCTAssertTrue(
+            application.staticTexts[
+                "Control of the selected managed DID. No credential or document claims will be disclosed."
+            ].exists
+        )
         let loginConsent = application.descendants(matching: .any)["Consent to DID authentication"]
         XCTAssertTrue(loginConsent.waitForExistence(timeout: 5))
         loginConsent.tap()
@@ -231,6 +241,11 @@ final class ProfileFlowTests: XCTestCase {
         previewOffer.tap()
         XCTAssertTrue(application.staticTexts["Digital Passport"].waitForExistence(timeout: 10))
         XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 5))
+        XCTAssertTrue(application.staticTexts["Who is issuing it?"].exists)
+        XCTAssertTrue(application.staticTexts["What will you receive?"].exists)
+        XCTAssertTrue(application.staticTexts["Which identity receives it?"].exists)
+        XCTAssertTrue(application.staticTexts["Why add it?"].exists)
+        XCTAssertTrue(application.staticTexts["Unverified endpoint"].exists)
         let consent = application.descendants(matching: .any)["Consent to credential issuance"]
         XCTAssertTrue(consent.waitForExistence(timeout: 5))
         consent.tap()
@@ -305,7 +320,16 @@ final class ProfileFlowTests: XCTestCase {
         scrollTo(previewPresentation, in: application)
         previewPresentation.tap()
         XCTAssertTrue(application.staticTexts["Presentation preview"].waitForExistence(timeout: 10))
-        XCTAssertTrue(application.staticTexts["Requested claims"].exists)
+        XCTAssertTrue(application.staticTexts["Who is asking?"].exists)
+        XCTAssertTrue(application.staticTexts["What will be shared?"].exists)
+        XCTAssertTrue(application.staticTexts["Which document?"].exists)
+        XCTAssertTrue(application.staticTexts["Why is it requested?"].exists)
+        XCTAssertTrue(application.staticTexts["Unverified endpoint"].exists)
+        XCTAssertTrue(
+            application.staticTexts[
+                "Confirms you're over 18. Your date of birth will not be shared."
+            ].exists
+        )
         XCTAssertTrue(
             application.staticTexts["No presentation or vp_token has been generated."]
                 .waitForExistence(timeout: 5)
@@ -327,7 +351,7 @@ final class ProfileFlowTests: XCTestCase {
         wait(for: [consentEnabled], timeout: 5)
         scrollTo(presentationConsent, in: application)
         presentationConsent.tap()
-        let presentCredential = application.buttons["Consent and present"]
+        let presentCredential = application.buttons["Share proof"]
         scrollTo(presentCredential, in: application)
         presentCredential.tap()
         XCTAssertTrue(
@@ -424,6 +448,159 @@ final class ProfileFlowTests: XCTestCase {
         )
         XCTAssertTrue(application.buttons["Home"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
+    }
+
+    @MainActor
+    func testIdentityConsentCeremoniesInStandaloneMode() throws {
+        let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
+        ensureProfile(in: application)
+
+        application.buttons["Wallet"].tap()
+        let activateAccount = application.buttons["Activate protected Midnight account"]
+        if activateAccount.waitForExistence(timeout: 2) {
+            activateAccount.tap()
+            XCTAssertTrue(
+                application.buttons["Use my receive address"].waitForExistence(timeout: 15)
+            )
+        }
+        application.buttons["Documents"].tap()
+        let manageIdentities = application.buttons["Manage identities"]
+        XCTAssertTrue(manageIdentities.waitForExistence(timeout: 10))
+        manageIdentities.tap()
+        if !application.descendants(matching: .any)["Manage this DID"]
+            .waitForExistence(timeout: 2)
+        {
+            let createDid = application.buttons["Create standalone DID"]
+            XCTAssertTrue(createDid.waitForExistence(timeout: 5))
+            createDid.tap()
+            XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 10))
+            XCTAssertTrue(
+                application.descendants(matching: .any)["Manage this DID"]
+                    .waitForExistence(timeout: 10)
+            )
+        }
+
+        let demoLogin = application.buttons["Use standalone login request"]
+        XCTAssertTrue(demoLogin.waitForExistence(timeout: 5))
+        scrollTo(demoLogin, in: application)
+        demoLogin.tap()
+        let previewLogin = application.buttons["Preview login request"]
+        scrollTo(previewLogin, in: application)
+        previewLogin.tap()
+        XCTAssertTrue(
+            application.staticTexts["DID authentication preview"]
+                .waitForExistence(timeout: 10)
+        )
+        for heading in [
+            "Who is asking?", "What will you prove?", "Which identity?",
+            "Why is it requested?", "Unverified endpoint",
+        ] {
+            XCTAssertTrue(application.staticTexts[heading].exists)
+        }
+        XCTAssertTrue(
+            application.staticTexts[
+                "Control of the selected managed DID. No credential or document claims will be disclosed."
+            ].exists
+        )
+        let loginConsent = application.descendants(matching: .any)["Consent to DID authentication"]
+        scrollTo(loginConsent, in: application)
+        loginConsent.tap()
+        let authenticate = application.buttons["Authenticate with DID"]
+        scrollTo(authenticate, in: application)
+        authenticate.tap()
+        XCTAssertTrue(
+            application.staticTexts[
+                "DID authentication succeeded and the standalone verifier independently validated the proof."
+            ].waitForExistence(timeout: 10)
+        )
+
+        application.buttons["Documents"].tap()
+        let hadCredential = application.staticTexts["Valid"].waitForExistence(timeout: 2)
+        let demoOffer = application.buttons["Use standalone demo offer"]
+        XCTAssertTrue(demoOffer.waitForExistence(timeout: 5))
+        scrollTo(demoOffer, in: application)
+        demoOffer.tap()
+        let previewOffer = application.buttons["Preview credential offer"]
+        scrollTo(previewOffer, in: application)
+        previewOffer.tap()
+        XCTAssertTrue(
+            application.staticTexts["Credential offer preview"].waitForExistence(timeout: 10)
+        )
+        for heading in [
+            "Who is issuing it?", "What will you receive?",
+            "Which identity receives it?", "Why add it?", "Unverified endpoint",
+        ] {
+            XCTAssertTrue(application.staticTexts[heading].exists)
+        }
+        if hadCredential {
+            let refuseOffer = application.buttons["Refuse offer"]
+            scrollTo(refuseOffer, in: application)
+            refuseOffer.tap()
+            XCTAssertTrue(
+                application.staticTexts[
+                    "Credential offer refused; ephemeral protocol secrets were discarded."
+                ].waitForExistence(timeout: 10)
+            )
+        } else {
+            let issuanceConsent = application.descendants(matching: .any)[
+                "Consent to credential issuance"
+            ]
+            scrollTo(issuanceConsent, in: application)
+            issuanceConsent.tap()
+            let issueCredential = application.buttons["Accept and issue credential"]
+            scrollTo(issueCredential, in: application)
+            issueCredential.tap()
+            XCTAssertTrue(
+                application.staticTexts[
+                    "Credential issued, verified, and stored in the protected inventory."
+                ].waitForExistence(timeout: 10)
+            )
+        }
+
+        let verifierRequest = application.buttons["Use standalone verifier request"]
+        XCTAssertTrue(verifierRequest.waitForExistence(timeout: 5))
+        scrollTo(verifierRequest, in: application)
+        verifierRequest.tap()
+        let previewPresentation = application.buttons["Preview presentation request"]
+        scrollTo(previewPresentation, in: application)
+        previewPresentation.tap()
+        XCTAssertTrue(
+            application.staticTexts["Presentation preview"].waitForExistence(timeout: 10)
+        )
+        for heading in [
+            "Who is asking?", "What will be shared?", "Which document?",
+            "Why is it requested?", "Unverified endpoint",
+        ] {
+            XCTAssertTrue(application.staticTexts[heading].exists)
+        }
+        XCTAssertTrue(
+            application.staticTexts[
+                "Confirms you're over 18. Your date of birth will not be shared."
+            ].exists
+        )
+        let ageClaim = application.descendants(matching: .any)["Age over 18, required"]
+        XCTAssertTrue(ageClaim.exists)
+        XCTAssertFalse(ageClaim.isEnabled)
+        let presentationConsent = application.descendants(matching: .any)[
+            "Consent to credential presentation"
+        ]
+        if !presentationConsent.isEnabled {
+            let matchingCredential = application.descendants(matching: .any).matching(
+                NSPredicate(format: "label BEGINSWITH %@", "Use Digital Passport issued by")
+            ).firstMatch
+            scrollTo(matchingCredential, in: application)
+            matchingCredential.tap()
+        }
+        scrollTo(presentationConsent, in: application)
+        presentationConsent.tap()
+        let shareProof = application.buttons["Share proof"]
+        scrollTo(shareProof, in: application)
+        shareProof.tap()
+        XCTAssertTrue(
+            application.staticTexts[
+                "The holder authorized this exact presentation, but Compact proving is unavailable. No presentation or vp_token was generated."
+            ].waitForExistence(timeout: 10)
+        )
     }
 
     @MainActor

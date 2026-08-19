@@ -42,9 +42,15 @@ program (the two exceptions are called out).
    failure recovery over the unchanged nine-state machine. Clipboard import,
    payment scanning, and recent recipients remain follow-up ports rather than
    inert controls.
-2. **Remaining ceremonies**: receive sheet; four-question consent sheet for
-   presentation/issuance/SIOPv2; backup celebration flow; onboarding fork.
-   Sync collapses into card state. Word budgets remain enforced.
+2. **Identity consent** (delivered by ADR-0089 / issue #81): presentation,
+   issuance, and SIOPv2 use one ordered WHO → WHAT → FROM → WHY review while
+   preserving their distinct semantics, exact confirmation intents, explicit
+   refusal, managed custody, and fail-closed proof gates. Standalone endpoints
+   are explicitly unverified and all current presentation claims are locked as
+   required because no optional-claim authorization port exists.
+3. **Remaining ceremonies**: receive sheet; backup celebration flow;
+   onboarding fork. Sync collapses into card state. Word budgets remain
+   enforced.
 
 ## Phase 3 — White-label infrastructure
 

@@ -391,21 +391,6 @@ pub(crate) fn claim_privacy(value: &str) -> &'static str {
     }
 }
 
-pub(crate) fn claim_intent(value: &str) -> &'static str {
-    match value {
-        "reveal" => "Reveal",
-        "predicate" => "Prove only",
-        _ => "Request",
-    }
-}
-
-pub(crate) fn predicate_kind(value: &str) -> &'static str {
-    match value {
-        "age_over" => "Age over",
-        _ => "Private condition",
-    }
-}
-
 pub(crate) fn disclosure_outcome(value: &str) -> &'static str {
     match value {
         "local_preview_ready" => "Disclosure preview ready",

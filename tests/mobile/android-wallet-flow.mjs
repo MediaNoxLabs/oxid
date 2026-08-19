@@ -423,8 +423,8 @@ try {
     await clickButton("Use standalone login request");
     await clickButton("Preview login request");
     await waitFor(
-      "document.body.innerText.includes('DID authentication preview') && document.body.innerText.includes('Authenticate with the selected DID.')",
-      "SIOPv2 DID authentication preview",
+      "document.body.innerText.includes('DID authentication preview') && document.body.innerText.includes('Who is asking?') && document.body.innerText.includes('What will you prove?') && document.body.innerText.includes('Which identity?') && document.body.innerText.includes('Why is it requested?') && document.body.innerText.includes('Unverified endpoint') && document.body.innerText.includes('No credential or document claims will be disclosed.')",
+      "four-question SIOPv2 DID authentication preview",
     );
     await evaluate(`(() => {
       const consent = document.querySelector('#self-issued-authentication-consent');
@@ -445,8 +445,8 @@ try {
     await clickButton("Use standalone demo offer");
     await clickButton("Preview credential offer");
     await waitFor(
-      "document.body.innerText.includes('Credential offer preview') && document.body.innerText.includes('Digital Passport')",
-      "OID4VCI credential offer preview",
+      "document.body.innerText.includes('Credential offer preview') && document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Who is issuing it?') && document.body.innerText.includes('What will you receive?') && document.body.innerText.includes('Which identity receives it?') && document.body.innerText.includes('Why add it?') && document.body.innerText.includes('Unverified endpoint')",
+      "four-question OID4VCI credential offer preview",
     );
     await evaluate(`(() => {
       const consent = document.querySelector('#credential-issuance-consent');
@@ -483,8 +483,8 @@ try {
     await clickButton("Use standalone verifier request");
     await clickButton("Preview presentation request");
     await waitFor(
-      "document.body.innerText.includes('Presentation preview') && document.body.innerText.includes('Requested claims') && document.body.innerText.includes('No presentation or vp_token has been generated.')",
-      "claim-free OpenID4VP presentation preview",
+      "document.body.innerText.includes('Presentation preview') && document.body.innerText.includes('Who is asking?') && document.body.innerText.includes('What will be shared?') && document.body.innerText.includes('Which document?') && document.body.innerText.includes('Why is it requested?') && document.body.innerText.includes('Unverified endpoint') && document.body.innerText.includes(\"Confirms you're over 18. Your date of birth will not be shared.\") && document.body.innerText.includes('No presentation or vp_token has been generated.')",
+      "four-question OpenID4VP presentation preview",
     );
     const credentialChooserRequired = await evaluate(`(() => {
       const choices = Array.from(document.querySelectorAll(
@@ -524,7 +524,7 @@ try {
       consent.click();
       return consent.checked;
     })()`);
-    await clickButton("Consent and present");
+    await clickButton("Share proof");
     await waitFor(
       "document.body.innerText.includes('The holder authorized this exact presentation, but Compact proving is unavailable. No presentation or vp_token was generated.')",
       "fail-closed Compact presentation proof gate",

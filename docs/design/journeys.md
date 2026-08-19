@@ -89,8 +89,11 @@ sending unlocks when fresh" instead of a disabled mystery button.
 
 ## 5. Add a document (credential issuance)
 
-**Today:** paste-URI textarea + spec-citation eyebrow ("OpenID4VCI 1.0
-Final") + preview + literal consent checkbox (lib.rs:7382-7590).
+**Today (ADR-0089 / issue #81):** paste or classified Scan ingress leads to an
+ordered WHO → WHAT → FROM → WHY offer review. It names the issuer endpoint and
+truthfully warns when no production trust signal exists, names every offered
+document, explains protected managed-DID binding, and states the holder-local
+storage outcome before the existing literal consent boundary.
 
 **Redesign (EUDI-conventional):** entry via Scan or "Add document" →
 **issuer identity block** (name + verified-domain line, visually distinct
@@ -103,12 +106,14 @@ profile's drawer (ui-profiles.md).
 
 ## 6. Present / prove (the flagship consent sheet)
 
-**Today:** paste-URI + preview `<dl>` + requested claims + explicit credential
-cards. One match is shown and selected; multiple matches require the user to
-choose a card before the consent checkbox is enabled (ADR-0082). The broader
-four-question sheet below remains redesign work.
+**Today (ADR-0089 / issue #81):** paste or classified Scan ingress leads to the
+four-question sheet below. One match is shown and selected; multiple matches
+require the user to choose a card before the consent checkbox is enabled
+(ADR-0082). Every claim in the current prepared plan is required and locked on;
+the age predicate says both what it confirms and that date of birth is not
+shared. Standalone verifier endpoints are explicitly unverified.
 
-**Redesign — one sheet, four questions, in order:**
+**Delivered core — one sheet, four questions, in order:**
 1. **WHO**: verified relying-party name + domain, with a registered/verified
    indicator; explicit warning state when unverified.
 2. **WHAT**: per-attribute checklist — required items locked-on, optional
@@ -117,9 +122,10 @@ four-question sheet below remains redesign work.
    **not** be shared."
 3. **FROM**: the credential card being used — chooser when multiple match.
 4. **WHY**: the verifier's stated purpose, one line.
-Then a single affirmative button ("Share proof") behind biometrics, a
-celebration on first successful proof, and an Activity entry ("Shared proof
-of age with shop.example — 2 details"). Refusal is one tap, no guilt copy.
+Then a single affirmative button ("Share proof") retains the existing protected
+authorization boundary. Refusal is one tap, no guilt copy. First-proof
+celebration and a typed identity Activity entry remain follow-up work because
+the current application surface has no durable interaction-log contract.
 When proving isn't available (no artifact root), the sheet says so in one
 sentence — "This build can't generate proofs yet" — with the full truth in
 Details; `proof_unavailable` never reaches the user raw.

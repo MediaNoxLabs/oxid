@@ -53,6 +53,7 @@ use oxid_presentation_application::{
     CredentialPresentationError, CredentialPresentationView, PrepareCredentialPresentationCommand,
     PrepareCredentialPresentationUseCase, PresentationProtocolError,
     RefuseCredentialPresentationCommand, RefuseCredentialPresentationUseCase,
+    RequestedPresentationClaimView,
 };
 use oxid_protocol_application::{
     AcceptCredentialIssuanceCommand, AcceptCredentialIssuanceUseCase,
@@ -7055,18 +7056,48 @@ fn DidsPage(
                     }
                     if let Some(preview) = prepared_authentication.read().clone() {
                         div { class: "credential-offer-preview",
-                            h3 { "DID authentication preview" }
-                            dl { class: "did-record__facts",
-                                div { dt { "Verifier" } dd { title: "{preview.verifier}", "{preview.verifier}" } }
-                                div { dt { "Purpose" } dd { "{preview.purpose}" } }
-                                div { dt { "State" } dd { "{ui::protocol_state(&preview.state)}" } }
+                            div { class: "consent-preview__heading",
+                                h3 { "DID authentication preview" }
+                                span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
                             }
                             if preview.state == "awaiting_consent" {
+                                ol { class: "consent-questions", aria_label: "DID authentication consent questions",
+                                    li { class: "consent-question",
+                                        p { class: "card-eyebrow", "Who" }
+                                        h4 { "Who is asking?" }
+                                        code { title: "{preview.verifier}", "{preview.verifier}" }
+                                        div { class: "consent-trust",
+                                            span { class: "status-pill warning", "Unverified endpoint" }
+                                            p { "Standalone mode has no production trust-registry or verified-domain signal." }
+                                        }
+                                    }
+                                    li { class: "consent-question",
+                                        p { class: "card-eyebrow", "What" }
+                                        h4 { "What will you prove?" }
+                                        p { "Control of the selected managed DID. No credential or document claims will be disclosed." }
+                                    }
+                                    li { class: "consent-question",
+                                        p { class: "card-eyebrow", "From" }
+                                        h4 { "Which identity?" }
+                                        if let Some((holder_did, _)) = active_managed_authentication_method(&records) {
+                                            code { title: "{holder_did}", "{holder_did}" }
+                                            p { class: "form-hint", "A protected authentication method stays inside wallet custody." }
+                                        } else {
+                                            p { class: "field-error", role: "alert", "Create an active managed DID before authenticating." }
+                                        }
+                                    }
+                                    li { class: "consent-question",
+                                        p { class: "card-eyebrow", "Why" }
+                                        h4 { "Why is it requested?" }
+                                        p { "{preview.purpose}" }
+                                    }
+                                }
                                 label { class: "confirmation-check",
                                     input {
                                         id: "self-issued-authentication-consent",
                                         r#type: "checkbox",
                                         aria_label: "Consent to DID authentication",
+                                        disabled: active_managed_authentication_method(&records).is_none(),
                                         checked: authentication_consent(),
                                         onchange: move |event| authentication_consent.set(event.checked()),
                                     }
@@ -7463,6 +7494,24 @@ fn initial_credential_presentation_selection(
     (presentation.candidates.len() == 1).then(|| presentation.candidates[0].credential_id.clone())
 }
 
+fn presentation_claim_consent_copy(claim: &RequestedPresentationClaimView) -> String {
+    match (
+        claim.intent.as_str(),
+        claim.predicate_kind.as_deref(),
+        claim.threshold,
+    ) {
+        ("predicate", Some("age_over"), Some(threshold)) => {
+            format!("Confirms you're over {threshold}. Your date of birth will not be shared.")
+        }
+        ("predicate", _, _) => format!(
+            "Confirms {} without sharing the underlying value.",
+            claim.label.to_lowercase()
+        ),
+        ("reveal", _, _) => format!("{} will be shared.", claim.label),
+        _ => format!("{} is required by this request.", claim.label),
+    }
+}
+
 #[component]
 fn CredentialPresentationPanel(
     profile_id: String,
@@ -7569,72 +7618,98 @@ fn CredentialPresentationPanel(
             }
             if let Some(presentation) = preview.read().clone() {
                 div { class: "credential-offer-preview",
-                    h3 { "Presentation preview" }
-                    dl { class: "credential-record__facts",
-                        div { dt { "Verifier" } dd { title: "{presentation.verifier}", "{presentation.verifier}" } }
-                        div { dt { "Purpose" } dd { "{presentation.purpose}" } }
-                        div { dt { "State" } dd { "{ui::protocol_state(&presentation.state)}" } }
-                    }
-                    h4 { "Requested claims" }
-                    ul { class: "credential-stage-list", aria_label: "Requested presentation claims",
-                        for claim in presentation.requested_claims.clone() {
-                            li { key: "{claim.claim_path}",
-                                span { "{claim.label}" }
-                                strong { "{ui::claim_intent(&claim.intent)}" }
-                                if let Some(kind) = claim.predicate_kind {
-                                    small { "{ui::predicate_kind(&kind)} {claim.threshold.unwrap_or_default()}" }
-                                }
-                            }
-                        }
+                    div { class: "consent-preview__heading",
+                        h3 { "Presentation preview" }
+                        span { class: "status-pill", "{ui::protocol_state(&presentation.state)}" }
                     }
                     if presentation.candidates.is_empty() {
                         p { class: "field-error", role: "alert", "No matching Digital Passport is available in this profile." }
                     } else if presentation.state == "awaiting_consent" {
-                        h4 { "Credential to use" }
-                        if presentation.candidates.len() > 1 {
-                            p { class: "form-hint", "Choose the exact credential to present before consenting." }
-                        } else {
-                            p { class: "form-hint", "This is the credential that will be used for the presentation." }
-                        }
-                        fieldset {
-                            class: "presentation-credential-choice",
-                            aria_label: "Matching credentials",
-                            for candidate in presentation.candidates.clone() {
-                                {
-                                    let credential_id = candidate.credential_id.clone();
-                                    let card_credential_id = credential_id.clone();
-                                    let selected = selected_credential_id.read().as_deref()
-                                        == Some(credential_id.as_str());
-                                    let issuer = truncate_middle(&candidate.issuer, 20, 12);
-                                    let reference = truncate_middle(&candidate.credential_id, 12, 8);
-                                    rsx! {
-                                        label {
-                                            key: "{candidate.credential_id}",
-                                            class: if selected { "presentation-credential-option selected" } else { "presentation-credential-option" },
-                                            onclick: move |_| {
-                                                selected_credential_id.set(Some(card_credential_id.clone()));
-                                                consent.set(false);
-                                            },
+                        ol { class: "consent-questions", aria_label: "Credential presentation consent questions",
+                            li { class: "consent-question",
+                                p { class: "card-eyebrow", "Who" }
+                                h4 { "Who is asking?" }
+                                code { title: "{presentation.verifier}", "{presentation.verifier}" }
+                                div { class: "consent-trust",
+                                    span { class: "status-pill warning", "Unverified endpoint" }
+                                    p { "Standalone mode has no production trust-registry or verified-domain signal." }
+                                }
+                            }
+                            li { class: "consent-question",
+                                p { class: "card-eyebrow", "What" }
+                                h4 { "What will be shared?" }
+                                p { class: "form-hint", "Every item in this request is required and locked on. No optional claims are authorized by this plan." }
+                                div { class: "consent-required-claims", role: "list", aria_label: "Required presentation claims",
+                                    for claim in presentation.requested_claims.clone() {
+                                        label { class: "consent-required-claim", key: "{claim.claim_path}", role: "listitem",
                                             input {
-                                                r#type: "radio",
-                                                name: "presentation-credential",
-                                                aria_label: "Use {candidate.display_name} issued by {candidate.issuer}, credential {reference}",
-                                                checked: selected,
-                                                onchange: move |event| {
-                                                    if event.checked() {
-                                                        selected_credential_id.set(Some(credential_id.clone()));
-                                                        consent.set(false);
-                                                    }
-                                                },
+                                                r#type: "checkbox",
+                                                checked: true,
+                                                disabled: true,
+                                                aria_label: "{claim.label}, required",
                                             }
                                             span {
-                                                strong { "{candidate.display_name}" }
-                                                small { title: "{candidate.issuer}", "Issuer {issuer}" }
-                                                code { title: "{candidate.credential_id}", "Reference {reference}" }
+                                                strong { "{claim.label}" }
+                                                small { "{presentation_claim_consent_copy(&claim)}" }
                                             }
                                         }
                                     }
                                 }
+                            }
+                            li { class: "consent-question",
+                                p { class: "card-eyebrow", "From" }
+                                h4 { "Which document?" }
+                                if presentation.candidates.len() > 1 {
+                                    p { class: "form-hint", "Choose the exact document to use before consenting." }
+                                } else {
+                                    p { class: "form-hint", "This is the document that will be used for the presentation." }
+                                }
+                                fieldset {
+                                    class: "presentation-credential-choice",
+                                    aria_label: "Matching credentials",
+                                    for candidate in presentation.candidates.clone() {
+                                        {
+                                            let credential_id = candidate.credential_id.clone();
+                                            let card_credential_id = credential_id.clone();
+                                            let selected = selected_credential_id.read().as_deref()
+                                                == Some(credential_id.as_str());
+                                            let issuer = truncate_middle(&candidate.issuer, 20, 12);
+                                            let reference = truncate_middle(&candidate.credential_id, 12, 8);
+                                            rsx! {
+                                                label {
+                                                    key: "{candidate.credential_id}",
+                                                    class: if selected { "presentation-credential-option selected" } else { "presentation-credential-option" },
+                                                    onclick: move |_| {
+                                                        selected_credential_id.set(Some(card_credential_id.clone()));
+                                                        consent.set(false);
+                                                    },
+                                                    input {
+                                                        r#type: "radio",
+                                                        name: "presentation-credential",
+                                                        aria_label: "Use {candidate.display_name} issued by {candidate.issuer}, credential {reference}",
+                                                        checked: selected,
+                                                        onchange: move |event| {
+                                                            if event.checked() {
+                                                                selected_credential_id.set(Some(credential_id.clone()));
+                                                                consent.set(false);
+                                                            }
+                                                        },
+                                                    }
+                                                    span {
+                                                        strong { "{candidate.display_name}" }
+                                                        small { title: "{candidate.issuer}", "Issuer {issuer}" }
+                                                        code { title: "{candidate.credential_id}", "Reference {reference}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            li { class: "consent-question",
+                                p { class: "card-eyebrow", "Why" }
+                                h4 { "Why is it requested?" }
+                                p { "{presentation.purpose}" }
                             }
                         }
                         label { class: "confirmation-check",
@@ -7713,7 +7788,7 @@ fn CredentialPresentationPanel(
                                         });
                                     }
                                 },
-                                if busy() { "Generating proof…" } else { "Consent and present" }
+                                if busy() { "Generating proof…" } else { "Share proof" }
                             }
                             button {
                                 class: "secondary-action",
@@ -8397,13 +8472,42 @@ fn CredentialsPage(
                     }
                     if let Some(preview) = prepared_issuance.read().clone() {
                         div { class: "credential-offer-preview",
-                            h3 { "Credential offer preview" }
-                            dl { class: "credential-record__facts",
-                                div { dt { "Issuer" } dd { title: "{preview.issuer}", "{preview.issuer}" } }
-                                div { dt { "Credential" } dd { {preview.display_names.join(", ")} } }
-                                div { dt { "State" } dd { "{ui::protocol_state(&preview.state)}" } }
+                            div { class: "consent-preview__heading",
+                                h3 { "Credential offer preview" }
+                                span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
                             }
                             if preview.state == "awaiting_consent" {
+                                ol { class: "consent-questions", aria_label: "Credential issuance consent questions",
+                                    li { class: "consent-question",
+                                        p { class: "card-eyebrow", "Who" }
+                                        h4 { "Who is issuing it?" }
+                                        code { title: "{preview.issuer}", "{preview.issuer}" }
+                                        div { class: "consent-trust",
+                                            span { class: "status-pill warning", "Unverified endpoint" }
+                                            p { "Standalone mode has no production trust-registry or verified-domain signal." }
+                                        }
+                                    }
+                                    li { class: "consent-question",
+                                        p { class: "card-eyebrow", "What" }
+                                        h4 { "What will you receive?" }
+                                        ul { class: "consent-document-list", aria_label: "Offered documents",
+                                            for display_name in preview.display_names.clone() {
+                                                li { key: "{display_name}", strong { "{display_name}" } }
+                                            }
+                                        }
+                                    }
+                                    li { class: "consent-question",
+                                        p { class: "card-eyebrow", "From" }
+                                        h4 { "Which identity receives it?" }
+                                        p { "Your active managed DID will authenticate the request and bind the document." }
+                                        p { class: "form-hint", "Protected methods stay inside wallet custody. Acceptance stops if no compatible DID is available." }
+                                    }
+                                    li { class: "consent-question",
+                                        p { class: "card-eyebrow", "Why" }
+                                        h4 { "Why add it?" }
+                                        p { "Store this document in your protected wallet. You choose when it is used." }
+                                    }
+                                }
                                 label { class: "confirmation-check",
                                     input {
                                         id: "credential-issuance-consent",
@@ -9794,6 +9898,55 @@ mod tests {
             Some("vc_one")
         );
         assert_eq!(initial_credential_presentation_selection(&multiple), None);
+    }
+
+    #[test]
+    fn presentation_consent_copy_distinguishes_reveal_and_private_predicates() {
+        let reveal = RequestedPresentationClaimView {
+            claim_path: "/credentialSubject/firstName".to_owned(),
+            label: "First name".to_owned(),
+            intent: "reveal".to_owned(),
+            predicate_kind: None,
+            threshold: None,
+        };
+        let age = RequestedPresentationClaimView {
+            claim_path: "/credentialSubject/dateOfBirth".to_owned(),
+            label: "Age over 18".to_owned(),
+            intent: "predicate".to_owned(),
+            predicate_kind: Some("age_over".to_owned()),
+            threshold: Some(18),
+        };
+        let private_condition = RequestedPresentationClaimView {
+            claim_path: "/credentialSubject/residency".to_owned(),
+            label: "Eligible residency".to_owned(),
+            intent: "predicate".to_owned(),
+            predicate_kind: Some("membership".to_owned()),
+            threshold: Some(1),
+        };
+        let unknown = RequestedPresentationClaimView {
+            claim_path: "/credentialSubject/unknown".to_owned(),
+            label: "Reviewed detail".to_owned(),
+            intent: "unknown".to_owned(),
+            predicate_kind: None,
+            threshold: None,
+        };
+
+        assert_eq!(
+            presentation_claim_consent_copy(&reveal),
+            "First name will be shared."
+        );
+        assert_eq!(
+            presentation_claim_consent_copy(&age),
+            "Confirms you're over 18. Your date of birth will not be shared."
+        );
+        assert_eq!(
+            presentation_claim_consent_copy(&private_condition),
+            "Confirms eligible residency without sharing the underlying value."
+        );
+        assert_eq!(
+            presentation_claim_consent_copy(&unknown),
+            "Reviewed detail is required by this request."
+        );
     }
 
     #[test]

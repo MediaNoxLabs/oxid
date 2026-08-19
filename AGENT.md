@@ -992,6 +992,31 @@ above the fixed navigation; Android CDP must wait for Home composition before
 using a quick action. Both standalone mobile smokes traverse exact review,
 authorization, cancellation-safe retry, and confirmed inclusion.
 
+ADR-0089 owns the Phase 2b identity consent presentation. OpenID4VP,
+OpenID4VCI, and SIOPv2 must render their existing public application plans as
+ordered WHO, WHAT, FROM, and WHY questions without merging protocol semantics
+or moving authority into Dioxus. Until a production trust-result port exists,
+standalone verifier and issuer endpoints are labelled `Unverified endpoint`;
+fixture equality is routing, not trust. Until an optional-claim authorization
+port binds holder selection into the retained request and proof inputs, every
+prepared presentation claim is shown checked, disabled, and required. The
+`age_over` predicate must say that it confirms the threshold and does not share
+date of birth. Preserve the literal confirmation checkboxes, exact acceptance
+intents, explicit presentation credential chooser, managed DID selection,
+one-tap refusal, replay controls, and fail-closed Compact proof result. SIOPv2
+proves DID control without a credential; issuance receives a document and must
+not invent an issuer purpose absent from `CredentialIssuanceView`.
+`ProfileFlowTests.testIdentityConsentCeremoniesInStandaloneMode` is the focused
+fresh-install iOS gate for this surface: it activates custody, creates a managed
+DID when absent, exercises login and issuance, verifies the locked age
+predicate, and reaches the fail-closed presentation result without entering the
+numeric-keyboard Send path. The complete wallet-flow test retains the same
+ceremony assertions and the Android CDP smoke retains the multi-credential
+chooser. On iOS 26, a numeric-keyboard interaction can leave XCTest waiting one
+minute for WebView idle after every later tap; an interrupted run in that state
+is not a functional pass or failure, so use the focused test for diagnosis and
+rerun the complete suite on a fresh simulator process for release evidence.
+
 `oxid-composition` exposes UI-neutral `ApplicationServices`. Incoming adapters
 adapt that object at their own boundary; composition must not depend on Dioxus,
 the headless protocol, or another incoming adapter. The headless protocol is
