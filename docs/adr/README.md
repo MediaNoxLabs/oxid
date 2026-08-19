@@ -416,3 +416,11 @@ the existing literal confirmations, exact intents, credential chooser,
 managed-DID custody, refusal, replay, verification, and fail-closed proof gates
 remain authoritative. Verified endpoint discovery and optional claim selection
 remain absent until dedicated trust and authorization ports exist.
+ADR-0090 completes the next mobile ceremony slice: first launch forks cleanly
+between create and restore, profile creation offers truthful skippable device
+protection without exposing its opaque id, and Wallet presents public account,
+DUST, and shielded refresh through one action without merging their authority.
+A new profile-scoped timestamp-only application receipt is recorded only after
+complete backup encryption and the fixed-kind native document export both
+succeed; it is excluded from archives and is the sole authority for **Backed
+up** copy and celebration.

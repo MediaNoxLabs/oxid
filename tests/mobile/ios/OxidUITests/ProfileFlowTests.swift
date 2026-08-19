@@ -35,9 +35,12 @@ final class ProfileFlowTests: XCTestCase {
     @MainActor
     private func ensureProfile(in application: XCUIApplication) {
         application.launch()
-        let createButton = application.buttons["Create and continue"]
-        if createButton.waitForExistence(timeout: 5) {
-            createButton.tap()
+        let createWallet = application.buttons["Create new wallet"]
+        if createWallet.waitForExistence(timeout: 5) {
+            createWallet.tap()
+            application.buttons["Create and continue"].tap()
+            XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
+            application.buttons["Skip for now"].tap()
         }
         XCTAssertTrue(application.buttons["Scan identity QR code"].waitForExistence(timeout: 15))
     }
@@ -76,6 +79,42 @@ final class ProfileFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testOnboardingForkAndUnifiedAccountSync() throws {
+        let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
+        application.launch()
+
+        XCTAssertTrue(application.buttons["Create new wallet"].waitForExistence(timeout: 15))
+        XCTAssertTrue(application.buttons["Restore from backup"].exists)
+        XCTAssertFalse(application.buttons["Create and continue"].exists)
+        application.buttons["Create new wallet"].tap()
+        XCTAssertTrue(application.buttons["Create and continue"].waitForExistence(timeout: 10))
+        application.buttons["Create and continue"].tap()
+        XCTAssertTrue(application.staticTexts["Protect this wallet"].waitForExistence(timeout: 10))
+        XCTAssertFalse(application.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "profile_")
+        ).firstMatch.exists)
+        application.buttons["Skip for now"].tap()
+
+        XCTAssertTrue(application.buttons["Home"].waitForExistence(timeout: 15))
+        application.buttons["Wallet"].tap()
+        let activate = application.buttons["Activate protected Midnight account"]
+        XCTAssertTrue(activate.waitForExistence(timeout: 15))
+        activate.tap()
+        XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 30))
+
+        let sync = application.buttons["Sync now"]
+        XCTAssertTrue(sync.waitForExistence(timeout: 10))
+        scrollTo(sync, in: application)
+        sync.tap()
+        XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["1 shielded notes"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.buttons["Sync now"].exists)
+        XCTAssertFalse(application.buttons["Sync DUST"].exists)
+        XCTAssertFalse(application.buttons["Sync shielded assets"].exists)
+    }
+
+    @MainActor
     func testCreatesProfileAndCompletesStandaloneWalletFlow() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         ensureProfile(in: application)
@@ -92,20 +131,14 @@ final class ProfileFlowTests: XCTestCase {
         let useReceiveAddress = application.buttons["Use my receive address"]
         XCTAssertTrue(useReceiveAddress.waitForExistence(timeout: 15))
 
-        let syncDust = application.buttons["Sync DUST"]
-        XCTAssertTrue(syncDust.waitForExistence(timeout: 5))
-        scrollTo(syncDust, in: application)
-        syncDust.tap()
+        let sync = application.buttons["Sync now"]
+        XCTAssertTrue(sync.waitForExistence(timeout: 5))
+        scrollTo(sync, in: application)
+        sync.tap()
         XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 5))
-        XCTAssertTrue(application.buttons["Resync DUST"].exists)
-
-        let syncShielded = application.buttons["Sync shielded assets"]
-        XCTAssertTrue(syncShielded.waitForExistence(timeout: 5))
-        scrollTo(syncShielded, in: application)
-        syncShielded.tap()
         XCTAssertTrue(application.staticTexts["1 shielded notes"].waitForExistence(timeout: 5))
         XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 5))
-        XCTAssertTrue(application.buttons["Resync shielded assets"].exists)
+        XCTAssertTrue(application.buttons["Sync now"].exists)
 
         let showQrButton = application.buttons["Show receive QR"].firstMatch
         XCTAssertTrue(showQrButton.exists)
@@ -608,9 +641,12 @@ final class ProfileFlowTests: XCTestCase {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         application.launch()
 
-        let createButton = application.buttons["Create and continue"]
-        if createButton.waitForExistence(timeout: 5) {
-            createButton.tap()
+        let createWallet = application.buttons["Create new wallet"]
+        if createWallet.waitForExistence(timeout: 5) {
+            createWallet.tap()
+            application.buttons["Create and continue"].tap()
+            XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
+            application.buttons["Skip for now"].tap()
         }
 
         let scanIdentityRequest = application.buttons["Scan"]

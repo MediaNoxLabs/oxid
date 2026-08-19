@@ -324,9 +324,12 @@ freshness, and sanitized failure category. Headless v1 methods are
 `wallet.dust.sync.status`, `wallet.dust.sync.start`, and
 `wallet.dust.sync.cancel`; Dioxus polls the same use cases. Cached, cancelled,
 or stalled DUST is display/resume state only and never live spend authority.
-The iOS standalone smoke flow exercises `Sync DUST`, the exact `12 DUST`
-fixture result, and the resulting `Resync DUST` action before transfer checks.
-The Android CDP smoke flow asserts the same DUST result and resync transition.
+ADR-0090 composes public account refresh plus the independent DUST and shielded
+sessions into one Dioxus account-sync card. The iOS and Android standalone
+smoke flows use one `Sync now` action and assert the exact `12 DUST`, one owned
+shielded note, and `5 NIGHT` fixture results before transfer checks. The action
+becomes `Cancel sync` while either worker remains active; cursor and per-run
+event counts stay out of normal user copy.
 The native controller contract suite injects only the already-decoded chain
 tip so pure Nix does not depend on HTTP loopback, then drives the real bounded
 GraphQL-WebSocket worker. It proves an owned event projects exactly 12 DUST,
@@ -1525,6 +1528,26 @@ legacy version-1 importer.
 The in-process standalone composition test creates a profile, exact Midnight
 account association, managed DID, holder-bound private credential, and custody,
 then recovers all of them into a fresh composition. Keep the recovery methods
+unchanged when evolving backup completion UX.
+
+ADR-0090 adds a separate public backup-completion receipt: profile identifier
+plus the latest successful complete-document-export timestamp only. Record it
+only after complete archive encryption and
+`PortableWalletBackupDocumentPort::export(CompleteWallet, ...)` both return
+success; cancellation, errors, legacy custody recovery, and complete recovery
+must never create it. The timestamp is monotonic, unknown profiles fail, profile
+removal removes it, and profile-store schema v3 persists it in
+`completeBackupReceipts`. Complete archives deliberately exclude receipts, so a
+restored installation cannot inherit a stale **Backed up** claim. Never add a
+path, filename, document-provider identity, archive bytes, native authorization
+result, recovery secret, or key metadata to the receipt. Home and Settings may
+say **Backed up** only from this application query and must warn that the
+external document can later move or disappear.
+
+Fresh onboarding is a Dioxus-local route: exactly **Create new wallet** or
+**Restore from backup**, then profile naming, then skippable device protection.
+Do not expose the opaque profile id, promise biometrics/hardware backing, invent
+a seed phrase, or weaken the existing authenticated empty-install recovery.
 absent from `oxid.headless.v1`. Both headless and in-memory standalone Midnight
 adapters must stay connected to their profile association repository or exact
 account rebinding silently disappears. The encrypted package boundary is 80 MiB
@@ -1636,10 +1659,11 @@ recovery secret is test-only. The harness owns only its uniquely named
 Downloads directory and must never broaden cleanup or claim physical-device
 evidence.
 
-The Android profile assertion targets current public store schema v2 and must
+The Android profile assertion targets current public store schema v3 and must
 validate the active profile's `undeployed` account association, account index,
-and address index. Schema v1 is a read-only compatibility input and is upgraded
-on write; a mobile smoke harness must not require that legacy output shape.
+address index, and empty backup-receipt list before any completed export. Schema
+v1 and v2 are read-only compatibility inputs and are upgraded on write; a
+mobile smoke harness must not require either legacy output shape.
 After dismissing Android's native share chooser, wait until Oxid's MainActivity
 is the resumed activity before delivering a warm app link. Sending the link
 while the chooser still owns the task can produce only a task-front restart
@@ -1745,9 +1769,12 @@ to silence the shell probe.
   Nix derivations even when the WebSocket loopback harness succeeds.
 - Validate profile labels and all future QR/deep-link/protocol input at the
   boundary before use.
-- The JSON profile store contains public labels, identifiers, timestamps, and
-  active selection only. It serializes one repository instance; overlapping
-  headless processes must use distinct `OXID_PROFILE_STORE_PATH` values.
+- The JSON profile store contains only public labels, identifiers, creation and
+  backup-receipt timestamps, active selection, and bounded public Midnight
+  account coordinates. Schema v3 is current; v1/v2 are strict compatibility
+  reads and must not fabricate receipts. It serializes one repository instance;
+  overlapping headless processes must use distinct `OXID_PROFILE_STORE_PATH`
+  values.
 - The DID JSON store contains validated public DID documents/metadata only. It
   is a separate 128-record/2 MiB owner-private atomic file, rejects symlinks and
   unknown fields, and revalidates domain invariants on read. Never add private

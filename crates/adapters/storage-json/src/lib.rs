@@ -17,15 +17,16 @@ use std::{
 use directories::ProjectDirs;
 use oxid_foundation::UnixTimestampMillis;
 use oxid_wallet_application::{
-    WalletAccountAssociation, WalletProfileAssociationRepository,
+    WalletAccountAssociation, WalletBackupReceiptRepository, WalletProfileAssociationRepository,
     WalletProfileAssociationRepositoryError, WalletProfileAssociations, WalletProfileRepository,
     WalletProfileRepositoryError,
 };
 use oxid_wallet_domain::{ChainNetworkId, ProfileName, WalletProfile, WalletProfileId};
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 const LEGACY_SCHEMA_VERSION: u32 = 1;
+const ASSOCIATION_SCHEMA_VERSION: u32 = 2;
 const MAX_PROFILE_COUNT: usize = 128;
 const MAX_STORE_BYTES: u64 = 1024 * 1024;
 const STORE_FILE_NAME: &str = "wallet-profiles.json";
@@ -103,7 +104,7 @@ impl JsonWalletProfileRepository {
         let mut document: StoreDocument = serde_json::from_slice(&bytes)
             .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
         validate_document(&document)?;
-        if document.schema_version == LEGACY_SCHEMA_VERSION {
+        if document.schema_version != SCHEMA_VERSION {
             document.schema_version = SCHEMA_VERSION;
         }
 
@@ -312,6 +313,9 @@ impl WalletProfileRepository for JsonWalletProfileRepository {
         document
             .account_associations
             .retain(|record| record.profile_id != id.as_str());
+        document
+            .complete_backup_receipts
+            .retain(|record| record.profile_id != id.as_str());
         if document.active_profile_id.as_deref() == Some(id.as_str()) {
             document.active_profile_id = None;
         }
@@ -352,6 +356,65 @@ impl WalletProfileRepository for JsonWalletProfileRepository {
             .find(|profile| profile.id().as_str() == active_profile_id)
             .map(Some)
             .ok_or(WalletProfileRepositoryError::Unavailable)
+    }
+}
+
+impl WalletBackupReceiptRepository for JsonWalletProfileRepository {
+    fn load_complete_backup_at(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<Option<UnixTimestampMillis>, WalletProfileRepositoryError> {
+        let _guard = self
+            .access
+            .lock()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+        let document = self.load_document()?;
+        if !document
+            .profiles
+            .iter()
+            .any(|profile| profile.id == profile_id.as_str())
+        {
+            return Err(WalletProfileRepositoryError::NotFound);
+        }
+        Ok(document
+            .complete_backup_receipts
+            .iter()
+            .find(|record| record.profile_id == profile_id.as_str())
+            .map(|record| UnixTimestampMillis::new(record.completed_at_millis)))
+    }
+
+    fn record_complete_backup_at(
+        &self,
+        profile_id: &WalletProfileId,
+        completed_at: UnixTimestampMillis,
+    ) -> Result<(), WalletProfileRepositoryError> {
+        let _guard = self
+            .access
+            .lock()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+        let mut document = self.load_document()?;
+        if !document
+            .profiles
+            .iter()
+            .any(|profile| profile.id == profile_id.as_str())
+        {
+            return Err(WalletProfileRepositoryError::NotFound);
+        }
+        let completed_at_millis = document
+            .complete_backup_receipts
+            .iter()
+            .find(|record| record.profile_id == profile_id.as_str())
+            .map_or(completed_at.value(), |previous| {
+                previous.completed_at_millis.max(completed_at.value())
+            });
+        document
+            .complete_backup_receipts
+            .retain(|record| record.profile_id != profile_id.as_str());
+        document.complete_backup_receipts.push(BackupReceiptRecord {
+            profile_id: profile_id.as_str().to_owned(),
+            completed_at_millis,
+        });
+        self.save_document(&document)
     }
 }
 
@@ -431,6 +494,8 @@ struct StoreDocument {
     active_profile_id: Option<String>,
     #[serde(default)]
     account_associations: Vec<AssociationRecord>,
+    #[serde(default)]
+    complete_backup_receipts: Vec<BackupReceiptRecord>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -448,8 +513,16 @@ impl Default for StoreDocument {
             profiles: Vec::new(),
             active_profile_id: None,
             account_associations: Vec::new(),
+            complete_backup_receipts: Vec::new(),
         }
     }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BackupReceiptRecord {
+    profile_id: String,
+    completed_at_millis: u64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -529,9 +602,12 @@ impl From<&WalletProfile> for ProfileRecord {
 fn validate_document(document: &StoreDocument) -> Result<(), WalletProfileRepositoryError> {
     if !matches!(
         document.schema_version,
-        LEGACY_SCHEMA_VERSION | SCHEMA_VERSION
+        LEGACY_SCHEMA_VERSION | ASSOCIATION_SCHEMA_VERSION | SCHEMA_VERSION
     ) || document.profiles.len() > MAX_PROFILE_COUNT
         || document.account_associations.len() > document.profiles.len()
+        || document.complete_backup_receipts.len() > document.profiles.len()
+        || (document.schema_version < SCHEMA_VERSION
+            && !document.complete_backup_receipts.is_empty())
     {
         return Err(WalletProfileRepositoryError::Unavailable);
     }
@@ -568,6 +644,17 @@ fn validate_document(document: &StoreDocument) -> Result<(), WalletProfileReposi
             .account_associations
             .iter()
             .any(|record| record.to_domain().is_err())
+    {
+        return Err(WalletProfileRepositoryError::Unavailable);
+    }
+
+    let receipt_ids = document
+        .complete_backup_receipts
+        .iter()
+        .map(|record| record.profile_id.as_str())
+        .collect::<BTreeSet<_>>();
+    if receipt_ids.len() != document.complete_backup_receipts.len()
+        || !receipt_ids.is_subset(&profile_ids)
     {
         return Err(WalletProfileRepositoryError::Unavailable);
     }
@@ -686,6 +773,37 @@ mod tests {
     }
 
     #[test]
+    fn reopens_monotonic_backup_receipts_and_removes_them_with_the_profile() {
+        let store = TestStore::new();
+        let profile = profile("profile_backed_up", "Backed up", 42);
+        let profile_id = profile.id().clone();
+        let repository = JsonWalletProfileRepository::new(&store.path);
+        repository.save(profile).expect("profile saves");
+        repository
+            .record_complete_backup_at(&profile_id, UnixTimestampMillis::new(200))
+            .expect("receipt saves");
+        repository
+            .record_complete_backup_at(&profile_id, UnixTimestampMillis::new(100))
+            .expect("older observation does not regress");
+
+        let reopened = JsonWalletProfileRepository::new(&store.path);
+        assert_eq!(
+            reopened
+                .load_complete_backup_at(&profile_id)
+                .expect("receipt loads"),
+            Some(UnixTimestampMillis::new(200))
+        );
+        reopened.remove(&profile_id).expect("profile removes");
+        assert_eq!(
+            reopened.load_complete_backup_at(&profile_id),
+            Err(WalletProfileRepositoryError::NotFound)
+        );
+        let serialized =
+            String::from_utf8(fs::read(&store.path).expect("store reads")).expect("store is UTF-8");
+        assert!(!serialized.contains("profile_backed_up"));
+    }
+
+    #[test]
     fn reopens_public_midnight_account_associations() {
         let store = TestStore::new();
         let profile = profile("profile_associated", "Associated", 42);
@@ -738,6 +856,7 @@ mod tests {
         .expect("profile associations");
         let encoded = encode_portable_profile_snapshot(&profile, Some(&associations))
             .expect("snapshot encodes");
+        assert!(!String::from_utf8_lossy(&encoded).contains("completeBackupReceipts"));
         let decoded = decode_portable_profile_snapshot(&encoded).expect("snapshot decodes");
         assert_eq!(decoded, (profile, Some(associations)));
     }
@@ -788,6 +907,27 @@ mod tests {
         assert_eq!(
             repository.list(),
             Err(WalletProfileRepositoryError::Unavailable)
+        );
+    }
+
+    #[test]
+    fn reads_schema_two_documents_without_fabricating_backup_receipts() {
+        let store = TestStore::new();
+        fs::create_dir_all(&store.root).expect("test directory should be created");
+        fs::write(
+            &store.path,
+            br#"{"schemaVersion":2,"profiles":[{"id":"profile_legacy","displayName":"Legacy","createdAtMillis":42}],"activeProfileId":"profile_legacy","accountAssociations":[]}"#,
+        )
+        .expect("fixture should be written");
+        let repository = JsonWalletProfileRepository::new(&store.path);
+        let profile_id = WalletProfileId::parse("profile_legacy").expect("profile identifier");
+
+        assert_eq!(repository.list().expect("legacy profiles load").len(), 1);
+        assert_eq!(
+            repository
+                .load_complete_backup_at(&profile_id)
+                .expect("legacy receipt query succeeds"),
+            None
         );
     }
 

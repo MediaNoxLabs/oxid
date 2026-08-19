@@ -73,7 +73,7 @@ use oxid_wallet_application::{
     DeriveWalletAccountCommand, DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
     EXPORT_COMPLETE_WALLET_BACKUP_TITLE, ExportCompleteWalletBackupCommand,
     ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
-    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    GetWalletBackupReceiptUseCase, GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
     ListWalletNetworksUseCase, ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase,
@@ -83,15 +83,16 @@ use oxid_wallet_application::{
     PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
     RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY, RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
     RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
-    ReconcileWalletTransferSubmissionUseCase, RecoverCompleteWalletBackupCommand,
-    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupCommand,
-    RecoverPortableWalletBackupUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
-    SelectWalletProfileCommand, SelectWalletProfileUseCase, SensitiveOperationConfirmation,
-    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase, SubmitWalletTransferCommand,
-    SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountError,
-    WalletAccountPortError, WalletAccountQuery, WalletAccountView, WalletDustSyncCommand,
-    WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
-    WalletRecoverySecret, WalletSecurityStatusView, WalletShieldedSyncCommand,
+    ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
+    RecoverCompleteWalletBackupCommand, RecoverCompleteWalletBackupUseCase,
+    RecoverPortableWalletBackupCommand, RecoverPortableWalletBackupUseCase,
+    SelectWalletNetworkCommand, SelectWalletNetworkUseCase, SelectWalletProfileCommand,
+    SelectWalletProfileUseCase, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
+    StartWalletShieldedSyncUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
+    SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountError, WalletAccountPortError,
+    WalletAccountQuery, WalletAccountView, WalletBackupReceiptCommand, WalletBackupReceiptView,
+    WalletDustSyncCommand, WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand,
+    WalletProfileView, WalletRecoverySecret, WalletSecurityStatusView, WalletShieldedSyncCommand,
     WalletShieldedSyncView, WalletSyncStatusView, WalletTransferDraftQuery,
     WalletTransferPreviewView, WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
     WalletTransferSubmissionView,
@@ -190,6 +191,8 @@ pub struct WalletUiServices {
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
     get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
+    get_wallet_backup_receipt: Arc<dyn GetWalletBackupReceiptUseCase>,
+    record_wallet_backup_receipt: Arc<dyn RecordWalletBackupReceiptUseCase>,
     get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
     initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
     unlock_wallet: Arc<dyn UnlockWalletUseCase>,
@@ -701,6 +704,8 @@ pub struct WalletBackupUiServices {
     recover_custody: Arc<dyn RecoverPortableWalletBackupUseCase>,
     export_complete: Arc<dyn ExportCompleteWalletBackupUseCase>,
     recover_complete: Arc<dyn RecoverCompleteWalletBackupUseCase>,
+    get_receipt: Arc<dyn GetWalletBackupReceiptUseCase>,
+    record_receipt: Arc<dyn RecordWalletBackupReceiptUseCase>,
     documents: Arc<dyn PortableWalletBackupDocumentPort>,
 }
 
@@ -710,12 +715,16 @@ impl WalletBackupUiServices {
         recover_custody: Arc<dyn RecoverPortableWalletBackupUseCase>,
         export_complete: Arc<dyn ExportCompleteWalletBackupUseCase>,
         recover_complete: Arc<dyn RecoverCompleteWalletBackupUseCase>,
+        get_receipt: Arc<dyn GetWalletBackupReceiptUseCase>,
+        record_receipt: Arc<dyn RecordWalletBackupReceiptUseCase>,
         documents: Arc<dyn PortableWalletBackupDocumentPort>,
     ) -> Self {
         Self {
             recover_custody,
             export_complete,
             recover_complete,
+            get_receipt,
+            record_receipt,
             documents,
         }
     }
@@ -921,6 +930,8 @@ impl WalletUiServices {
             list_wallet_profiles: profiles.list_wallet_profiles,
             select_wallet_profile: profiles.select_wallet_profile,
             get_active_wallet_profile: profiles.get_active_wallet_profile,
+            get_wallet_backup_receipt: security.backup.get_receipt,
+            record_wallet_backup_receipt: security.backup.record_receipt,
             get_wallet_security_status: security.get_wallet_security_status,
             initialize_wallet_security: security.initialize_wallet_security,
             unlock_wallet: security.unlock_wallet,
@@ -1585,6 +1596,21 @@ enum ProfileSessionState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+enum OnboardingStep {
+    Welcome,
+    Create,
+    Protect(WalletProfileView),
+    Restore,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum OnboardingProtectionState {
+    Idle,
+    Working,
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum ProfileListState {
     Loading,
     Ready(Vec<WalletProfileView>),
@@ -1596,8 +1622,16 @@ enum PortableBackupUiState {
     Idle,
     Working(&'static str),
     Succeeded(String),
+    CompleteExported(WalletBackupReceiptView),
     Cancelled,
     Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BackupReceiptState {
+    Loading,
+    Ready(Option<WalletBackupReceiptView>),
+    Failed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1657,6 +1691,7 @@ enum HomeResource<T> {
 struct HomePageProjection {
     account: Box<WalletAccountView>,
     security: WalletSecurityStatusView,
+    backup_receipt: HomeResource<Option<WalletBackupReceiptView>>,
     shielded: HomeResource<WalletShieldedSyncView>,
     credentials: HomeResource<Vec<CredentialView>>,
     vault: HomeResource<Box<PassportVaultView>>,
@@ -1752,21 +1787,11 @@ enum AccountOperation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum DustSyncPaneState {
+enum AccountSyncCardState {
     Loading,
     Ready {
-        status: WalletDustSyncView,
-        action_busy: bool,
-        operation_error: Option<String>,
-    },
-    Failed(String),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ShieldedSyncPaneState {
-    Loading,
-    Ready {
-        status: WalletShieldedSyncView,
+        dust: WalletDustSyncView,
+        shielded: Box<WalletShieldedSyncView>,
         action_busy: bool,
         operation_error: Option<String>,
     },
@@ -2275,20 +2300,7 @@ fn ProfileGateway(
             }
         },
         ProfileSessionState::Onboarding => rsx! {
-            section { class: "page-heading onboarding-heading",
-                p { class: "eyebrow", "Welcome to Oxid" }
-                h1 { "Create your wallet profile" }
-                p { "Create a new wallet or recover one complete encrypted Oxid backup." }
-            }
-            ProfileManager {
-                profiles: Vec::new(),
-                active_profile_id: None,
-                onboarding: true,
-                on_selected,
-            }
-            FreshInstallRecovery {
-                on_recovered: move |profile| on_selected.call(profile),
-            }
+            OnboardingFlow { on_selected }
         },
         ProfileSessionState::Choosing(profiles) => rsx! {
             section { class: "page-heading onboarding-heading",
@@ -2340,6 +2352,146 @@ fn ProfileGateway(
 }
 
 #[component]
+fn OnboardingFlow(on_selected: EventHandler<WalletProfileView>) -> Element {
+    let mut step = use_signal(|| OnboardingStep::Welcome);
+
+    match step.read().clone() {
+        OnboardingStep::Welcome => rsx! {
+            section { class: "page-heading onboarding-heading",
+                p { class: "eyebrow", "Welcome to Oxid" }
+                h1 { "Your Midnight identity wallet" }
+                p { "Start a new wallet or restore one complete encrypted Oxid backup." }
+            }
+            section { class: "profile-card surface-card onboarding-choice-card",
+                button {
+                    class: "primary-action",
+                    r#type: "button",
+                    onclick: move |_| step.set(OnboardingStep::Create),
+                    "Create new wallet"
+                }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    onclick: move |_| step.set(OnboardingStep::Restore),
+                    "Restore from backup"
+                }
+            }
+        },
+        OnboardingStep::Create => rsx! {
+            section { class: "page-heading onboarding-heading",
+                button {
+                    class: "text-action",
+                    r#type: "button",
+                    aria_label: "Back to onboarding choices",
+                    onclick: move |_| step.set(OnboardingStep::Welcome),
+                    "← Back"
+                }
+                p { class: "eyebrow", "New wallet" }
+                h1 { "Name your wallet" }
+                p { "This private label helps distinguish wallet profiles on this device." }
+            }
+            ProfileManager {
+                profiles: Vec::new(),
+                active_profile_id: None,
+                onboarding: true,
+                on_selected: move |profile| step.set(OnboardingStep::Protect(profile)),
+            }
+        },
+        OnboardingStep::Protect(profile) => rsx! {
+            OnboardingProtection {
+                profile,
+                on_continue: move |profile| on_selected.call(profile),
+            }
+        },
+        OnboardingStep::Restore => rsx! {
+            section { class: "page-heading onboarding-heading",
+                button {
+                    class: "text-action",
+                    r#type: "button",
+                    aria_label: "Back to onboarding choices",
+                    onclick: move |_| step.set(OnboardingStep::Welcome),
+                    "← Back"
+                }
+                p { class: "eyebrow", "Existing wallet" }
+                h1 { "Restore from backup" }
+                p { "Recovery creates the authenticated wallet from your encrypted document." }
+            }
+            FreshInstallRecovery {
+                on_recovered: move |profile| on_selected.call(profile),
+            }
+        },
+    }
+}
+
+#[component]
+fn OnboardingProtection(
+    profile: WalletProfileView,
+    on_continue: EventHandler<WalletProfileView>,
+) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| OnboardingProtectionState::Idle);
+    let busy = matches!(*state.read(), OnboardingProtectionState::Working);
+    let failure = match state.read().clone() {
+        OnboardingProtectionState::Failed(message) => Some(message),
+        OnboardingProtectionState::Idle | OnboardingProtectionState::Working => None,
+    };
+    let protected_profile = profile.clone();
+    let skipped_profile = profile.clone();
+
+    rsx! {
+        section { class: "page-heading onboarding-heading",
+            p { class: "eyebrow", "Wallet created" }
+            h1 { "Protect this wallet" }
+            p { "Device protection authorizes sensitive wallet actions. You can enable it now or continue and configure it later in Settings." }
+        }
+        section { class: "profile-card surface-card",
+            div { class: "profile-row__identity",
+                span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram(&profile.display_name)}" }
+                div {
+                    strong { "{profile.display_name}" }
+                    small { "Ready on this device" }
+                }
+            }
+            button {
+                class: "primary-action",
+                r#type: "button",
+                disabled: busy,
+                onclick: move |_| {
+                    let service = services.initialize_wallet_security();
+                    let profile = protected_profile.clone();
+                    let profile_id = profile.id.clone();
+                    state.set(OnboardingProtectionState::Working);
+                    spawn(async move {
+                        match run_ui_blocking(move || {
+                            service.execute(WalletProfileSecurityCommand { profile_id })
+                        }).await {
+                            Ok(Ok(_)) => on_continue.call(profile),
+                            Ok(Err(error)) => state.set(OnboardingProtectionState::Failed(error.to_string())),
+                            Err(error) => state.set(OnboardingProtectionState::Failed(error.to_string())),
+                        }
+                    });
+                },
+                if busy { "Enabling device protection…" } else { "Enable device protection" }
+            }
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                disabled: busy,
+                onclick: move |_| on_continue.call(skipped_profile.clone()),
+                "Skip for now"
+            }
+            if let Some(message) = failure {
+                div { class: "result error", role: "alert",
+                    strong { "Device protection was not enabled" }
+                    p { "{message}" }
+                    p { "You can skip for now and retry from Settings." }
+                }
+            }
+        }
+    }
+}
+
+#[component]
 fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut recovery_secret = use_signal(|| Zeroizing::new(String::new()));
@@ -2357,6 +2509,11 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
         },
         PortableBackupUiState::Succeeded(message) => rsx! {
             div { class: "result success", role: "status", p { "{message}" } }
+        },
+        PortableBackupUiState::CompleteExported(receipt) => rsx! {
+            div { class: "result success", role: "status",
+                p { "Backup completed at {ui::format_epoch_millis(receipt.completed_at_millis)}." }
+            }
         },
         PortableBackupUiState::Cancelled => rsx! {
             div { class: "result", role: "status",
@@ -2522,7 +2679,6 @@ fn ProfileManager(
                 div {
                     strong { "Profile ready" }
                     p { "{profile.display_name}" }
-                    code { "{profile.id}" }
                 }
             }
         },
@@ -2739,6 +2895,7 @@ fn HomePage(
             let HomePageProjection {
                 account,
                 security,
+                backup_receipt,
                 shielded,
                 credentials,
                 vault,
@@ -2754,7 +2911,7 @@ fn HomePage(
                     on_select_primary,
                     on_open_vault,
                 }
-                HomeSecurityStrip { security, on_open_settings }
+                HomeSecurityStrip { security, backup_receipt, on_open_settings }
                 HomeActivityPreview { account: *account, on_select_primary }
             }
         }
@@ -2943,8 +3100,14 @@ fn HomeProductStack(
 #[component]
 fn HomeSecurityStrip(
     security: WalletSecurityStatusView,
+    backup_receipt: HomeResource<Option<WalletBackupReceiptView>>,
     on_open_settings: EventHandler<MouseEvent>,
 ) -> Element {
+    let backup_status = match backup_receipt {
+        HomeResource::Ready(Some(_)) => "Backed up",
+        HomeResource::Ready(None) => ui::backup_capability(security.portable_backup_supported),
+        HomeResource::Unavailable => "Backup status unavailable",
+    };
     rsx! {
         button {
             class: "home-security-strip surface-card",
@@ -2956,7 +3119,7 @@ fn HomeSecurityStrip(
             span { class: "home-security-strip__separator", aria_hidden: "true", "·" }
             span { "{ui::wallet_protection(security.protection_name())}" }
             span { class: "home-security-strip__separator", aria_hidden: "true", "·" }
-            span { "{ui::backup_capability(security.portable_backup_supported)}" }
+            span { "{backup_status}" }
             span { class: "home-security-strip__arrow", aria_hidden: "true", "→" }
         }
     }
@@ -3181,25 +3344,10 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
             let protected_account = has_protected_account(&account);
             let protection_available = security.is_available();
             let protection_unlocked = security.state_name() == "Unlocked";
-            let sync_label = if busy == Some(AccountOperation::Syncing) {
-                "Syncing Midnight account…"
-            } else if unavailable {
-                "Midnight account unavailable"
-            } else if account.sync.state == "synced" {
-                "Resync Midnight account"
-            } else {
-                "Connect Midnight account"
-            };
             let selected_network_id = networks.selected_network_id.clone();
             let select_services = services.clone();
             let select_profile_id = active_profile.id.clone();
             let mut select_state = state;
-            let sync_services = services.clone();
-            let sync_profile_id = active_profile.id.clone();
-            let sync_networks = networks.clone();
-            let sync_account = account.clone();
-            let sync_security = security;
-            let mut sync_state = state;
             let activate_services = services.clone();
             let activate_profile_id = active_profile.id.clone();
             let activate_networks = networks.clone();
@@ -3361,48 +3509,18 @@ fn AssetsPage(active_profile: WalletProfileView) -> Element {
                     }
                 }
 
-                button {
-                    class: if protected_account { "secondary-action account-sync-action" } else { "primary-action" },
-                    r#type: "button",
-                    disabled: is_busy || unavailable,
-                    onclick: move |_| {
-                        sync_state.set(AccountPageState::Ready {
-                            networks: sync_networks.clone(),
-                            account: sync_account.clone(),
-                            security: sync_security,
-                            busy: Some(AccountOperation::Syncing),
-                        });
-                        let service = sync_services.sync_wallet_account();
-                        let profile_id = sync_profile_id.clone();
-                        let networks = sync_networks.clone();
-                        spawn(async move {
-                            match run_ui_future(async move {
-                                service.execute(WalletAccountQuery { profile_id }).await
-                            })
-                            .await
-                            {
-                                Ok(Ok(account)) => sync_state.set(AccountPageState::Ready {
-                                    networks,
-                                    account: Box::new(account),
-                                    security: sync_security,
-                                    busy: None,
-                                }),
-                                Ok(Err(error)) => sync_state.set(AccountPageState::Failed(error.to_string())),
-                                Err(error) => sync_state.set(AccountPageState::Failed(error.to_string())),
-                            }
+                AccountSyncCard {
+                    profile_id: active_profile.id.clone(),
+                    can_sync: protection_unlocked,
+                    account_unavailable: unavailable,
+                    on_account_updated: move |updated_account| {
+                        state.set(AccountPageState::Ready {
+                            networks: networks.clone(),
+                            account: Box::new(updated_account),
+                            security,
+                            busy: None,
                         });
                     },
-                    "{sync_label}"
-                }
-
-                DustSyncPane {
-                    profile_id: active_profile.id.clone(),
-                    can_sync: protection_unlocked,
-                }
-
-                ShieldedSyncPane {
-                    profile_id: active_profile.id.clone(),
-                    can_sync: protection_unlocked,
                 }
 
                 div { class: "dashboard-grid",
@@ -3618,9 +3736,14 @@ fn SubmissionRecoveryPane(profile_id: String) -> Element {
 }
 
 #[component]
-fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
+fn AccountSyncCard(
+    profile_id: String,
+    can_sync: bool,
+    account_unavailable: bool,
+    on_account_updated: EventHandler<WalletAccountView>,
+) -> Element {
     let services = consume_context::<WalletUiServices>();
-    let mut state = use_signal(|| DustSyncPaneState::Loading);
+    let mut state = use_signal(|| AccountSyncCardState::Loading);
     let load_services = services.clone();
     let load_profile = profile_id.clone();
     use_effect(move || {
@@ -3628,28 +3751,28 @@ fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
         let profile_id = load_profile.clone();
         spawn(async move {
             state.set(
-                run_ui_blocking(move || load_dust_sync(&services, &profile_id))
+                run_ui_blocking(move || load_account_sync_card(&services, &profile_id))
                     .await
-                    .unwrap_or_else(|error| DustSyncPaneState::Failed(error.to_string())),
+                    .unwrap_or_else(|error| AccountSyncCardState::Failed(error.to_string())),
             );
         });
     });
 
     match state.read().clone() {
-        DustSyncPaneState::Loading => rsx! {
-            article { class: "surface-card wallet-sync-pane", role: "status", aria_busy: "true",
-                p { class: "card-eyebrow", "DUST index" }
-                h2 { "Loading DUST status…" }
+        AccountSyncCardState::Loading => rsx! {
+            article { class: "surface-card account-sync-card", role: "status", aria_busy: "true",
+                p { class: "card-eyebrow", "Account sync" }
+                h2 { "Loading wallet status…" }
             }
         },
-        DustSyncPaneState::Failed(message) => {
+        AccountSyncCardState::Failed(message) => {
             let retry_services = services.clone();
             let retry_profile = profile_id.clone();
             rsx! {
-                article { class: "surface-card wallet-sync-pane", role: "alert",
+                article { class: "surface-card account-sync-card", role: "alert",
                     div { class: "wallet-sync-row__heading",
                         div {
-                            p { class: "card-eyebrow", "DUST index" }
+                            p { class: "card-eyebrow", "Account sync" }
                             h2 { "Status unavailable" }
                         }
                         span { class: "status-pill", "Error" }
@@ -3661,12 +3784,12 @@ fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
                         onclick: move |_| {
                             let services = retry_services.clone();
                             let profile_id = retry_profile.clone();
-                            state.set(DustSyncPaneState::Loading);
+                            state.set(AccountSyncCardState::Loading);
                             spawn(async move {
                                 state.set(
-                                    run_ui_blocking(move || load_dust_sync(&services, &profile_id))
+                                    run_ui_blocking(move || load_account_sync_card(&services, &profile_id))
                                         .await
-                                        .unwrap_or_else(|error| DustSyncPaneState::Failed(error.to_string())),
+                                        .unwrap_or_else(|error| AccountSyncCardState::Failed(error.to_string())),
                                 );
                             });
                         },
@@ -3675,101 +3798,163 @@ fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
                 }
             }
         }
-        DustSyncPaneState::Ready {
-            status,
+        AccountSyncCardState::Ready {
+            dust,
+            shielded,
             action_busy,
             operation_error,
         } => {
-            let syncing = status.state == "syncing";
-            let unavailable = status.state == "unavailable";
-            let progress = dust_progress_percent(&status);
-            let balance = status
+            let syncing = dust.state == "syncing" || shielded.state == "syncing";
+            let overall_state = account_sync_state(&dust, &shielded);
+            let progress = account_sync_progress(&dust, &shielded);
+            let dust_balance = dust
                 .balance_atomic_units
                 .as_deref()
                 .map(|value| ui::format_atomic_units(value, ui::DUST_DECIMALS))
                 .unwrap_or_else(|| "—".to_owned());
-            let note = dust_sync_note(&status);
-            let pill_class = dust_status_pill_class(&status.state);
+            let owned_notes = shielded
+                .owned_note_count
+                .map_or_else(|| "—".to_owned(), |count| count.to_string());
+            let retained_dust = dust.clone();
+            let retained_shielded = shielded.clone();
             let action_services = services.clone();
             let action_profile = profile_id.clone();
             let mut action_state = state;
             rsx! {
-                article { class: "surface-card wallet-sync-pane",
+                article { class: "surface-card account-sync-card",
                     div { class: "wallet-sync-row__heading",
                         div {
-                            p { class: "card-eyebrow", "DUST index" }
-                            h2 { "{balance} DUST" }
+                            p { class: "card-eyebrow", "Account sync" }
+                            h2 { "Midnight account" }
                         }
-                        span { class: "{pill_class}", "{ui::sync_state(&status.state)}" }
+                        span { class: "{dust_status_pill_class(overall_state)}", "{ui::sync_state(overall_state)}" }
                     }
-                    p { "{note}" }
-                    if let Some(message) = operation_error {
-                        p { class: "wallet-sync-error", role: "alert", "{message}" }
+                    p { "Refresh the public account, DUST balance, and shielded notes together. Each source retains its own authoritative status." }
+                    div { class: "account-sync-card__rows",
+                        div { class: "account-sync-card__row",
+                            div {
+                                strong { "{dust_balance} DUST" }
+                                small { "{dust_sync_note(&dust)}" }
+                            }
+                            span { class: "{dust_status_pill_class(&dust.state)}", "{ui::sync_state(&dust.state)}" }
+                        }
+                        div { class: "account-sync-card__row",
+                            div {
+                                strong { "{owned_notes} shielded notes" }
+                                small { "{shielded_sync_note(&shielded)}" }
+                            }
+                            span { class: "{dust_status_pill_class(&shielded.state)}", "{ui::sync_state(&shielded.state)}" }
+                        }
+                    }
+                    if !shielded.balances.is_empty() {
+                        div { class: "activity-list", aria_label: "Shielded token balances",
+                            for balance in shielded.balances.iter() {
+                                div { class: "activity-row", key: "{balance.token_type_hex}",
+                                    span { class: "activity-row__mark", aria_hidden: "true", "◈" }
+                                    div {
+                                        strong { "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
+                                        small { title: "{balance.token_type_hex}", "Protected token" }
+                                    }
+                                }
+                            }
+                        }
                     }
                     if let Some(percent) = progress {
-                        div { class: "wallet-sync-progress", aria_label: "DUST synchronization progress",
+                        div { class: "wallet-sync-progress", aria_label: "Account synchronization progress",
                             div { class: "wallet-sync-progress__bar", style: "width: {percent}%" }
                         }
+                    }
+                    if let Some(message) = operation_error {
+                        p { class: "wallet-sync-error", role: "alert", "{message}" }
                     }
                     button {
                         class: "secondary-action wallet-sync-action",
                         r#type: "button",
-                        disabled: action_busy || unavailable || (!can_sync && !syncing),
+                        disabled: action_busy || (!syncing && (!can_sync || account_unavailable)),
                         onclick: move |_| {
-                            let command = WalletDustSyncCommand {
-                                profile_id: action_profile.clone(),
-                            };
-                            let services = action_services.clone();
-                            let profile_id = action_profile.clone();
-                            let retained = status.clone();
-                            action_state.set(DustSyncPaneState::Ready {
-                                status: status.clone(),
+                            action_state.set(AccountSyncCardState::Ready {
+                                dust: retained_dust.clone(),
+                                shielded: retained_shielded.clone(),
                                 action_busy: true,
                                 operation_error: None,
                             });
+                            let services = action_services.clone();
+                            let profile_id = action_profile.clone();
+                            let dust = retained_dust.clone();
+                            let shielded = retained_shielded.clone();
                             spawn(async move {
-                                let worker_services = services.clone();
-                                let result = run_ui_blocking(move || {
-                                    if syncing {
-                                        worker_services.cancel_wallet_dust_sync().execute(command)
-                                    } else {
-                                        worker_services.start_wallet_dust_sync().execute(command)
+                                if !syncing {
+                                    let account_service = services.sync_wallet_account();
+                                    let account_profile = profile_id.clone();
+                                    match run_ui_future(async move {
+                                        account_service
+                                            .execute(WalletAccountQuery {
+                                                profile_id: account_profile,
+                                            })
+                                            .await
+                                    })
+                                    .await
+                                    {
+                                        Ok(Ok(account)) => on_account_updated.call(account),
+                                        Ok(Err(error)) => {
+                                            action_state.set(AccountSyncCardState::Ready {
+                                                dust,
+                                                shielded,
+                                                action_busy: false,
+                                                operation_error: Some(error.to_string()),
+                                            });
+                                            return;
+                                        }
+                                        Err(error) => {
+                                            action_state.set(AccountSyncCardState::Ready {
+                                                dust,
+                                                shielded,
+                                                action_busy: false,
+                                                operation_error: Some(error.to_string()),
+                                            });
+                                            return;
+                                        }
                                     }
+                                }
+                                let worker_services = services.clone();
+                                let worker_profile = profile_id.clone();
+                                let result = run_ui_blocking(move || {
+                                    mutate_account_indexes(
+                                        &worker_services,
+                                        &worker_profile,
+                                        dust,
+                                        shielded,
+                                        syncing,
+                                    )
                                 })
                                 .await;
                                 match result {
-                                    Ok(Ok(updated)) => {
-                                        let should_poll = updated.state == "syncing";
-                                        action_state.set(DustSyncPaneState::Ready {
-                                            status: updated,
+                                    Ok((dust, shielded, operation_error)) => {
+                                        let should_poll = dust.state == "syncing" || shielded.state == "syncing";
+                                        action_state.set(AccountSyncCardState::Ready {
+                                            dust,
+                                            shielded,
                                             action_busy: false,
-                                            operation_error: None,
+                                            operation_error,
                                         });
                                         if should_poll {
-                                            poll_dust_sync(services, profile_id, action_state);
+                                            poll_account_sync(services, profile_id, action_state);
                                         }
                                     }
-                                    Ok(Err(error)) => action_state.set(DustSyncPaneState::Ready {
-                                        status: retained.clone(),
-                                        action_busy: false,
-                                        operation_error: Some(error.to_string()),
-                                    }),
-                                    Err(error) => action_state.set(DustSyncPaneState::Ready {
-                                        status: retained,
-                                        action_busy: false,
-                                        operation_error: Some(error.to_string()),
-                                    }),
+                                    Err(error) => action_state.set(AccountSyncCardState::Failed(error.to_string())),
                                 }
                             });
                         },
                         if syncing {
-                            if action_busy { "Cancelling DUST sync…" } else { "Cancel DUST sync" }
+                            if action_busy { "Cancelling sync…" } else { "Cancel sync" }
                         } else if !can_sync {
-                            "Unlock wallet to sync DUST"
-                        } else if status.state == "never_synced" {
-                            if action_busy { "Starting DUST sync…" } else { "Sync DUST" }
+                            "Unlock wallet to sync"
+                        } else if account_unavailable {
+                            "Sync unavailable"
+                        } else if action_busy {
+                            "Starting sync…"
                         } else {
-                            if action_busy { "Starting DUST sync…" } else { "Resync DUST" }
+                            "Sync now"
                         }
                     }
                 }
@@ -3778,39 +3963,109 @@ fn DustSyncPane(profile_id: String, can_sync: bool) -> Element {
     }
 }
 
-fn load_dust_sync(services: &WalletUiServices, profile_id: &str) -> DustSyncPaneState {
-    services
+fn load_account_sync_card(services: &WalletUiServices, profile_id: &str) -> AccountSyncCardState {
+    let dust = services
         .get_wallet_dust_sync_status()
         .execute(WalletDustSyncCommand {
             profile_id: profile_id.to_owned(),
         })
-        .map_or_else(
-            |error| DustSyncPaneState::Failed(error.to_string()),
-            |status| DustSyncPaneState::Ready {
-                status,
-                action_busy: false,
-                operation_error: None,
-            },
-        )
+        .map_err(|error| error.to_string());
+    let shielded = services
+        .get_wallet_shielded_sync_status()
+        .execute(WalletShieldedSyncCommand {
+            profile_id: profile_id.to_owned(),
+        })
+        .map_err(|error| error.to_string());
+    match (dust, shielded) {
+        (Ok(dust), Ok(shielded)) => AccountSyncCardState::Ready {
+            dust,
+            shielded: Box::new(shielded),
+            action_busy: false,
+            operation_error: None,
+        },
+        (Err(dust), Err(shielded)) => {
+            AccountSyncCardState::Failed(format!("DUST: {dust}; shielded: {shielded}"))
+        }
+        (Err(error), Ok(_)) => AccountSyncCardState::Failed(format!("DUST: {error}")),
+        (Ok(_), Err(error)) => AccountSyncCardState::Failed(format!("Shielded: {error}")),
+    }
 }
 
-fn poll_dust_sync(
+fn mutate_account_indexes(
+    services: &WalletUiServices,
+    profile_id: &str,
+    retained_dust: WalletDustSyncView,
+    retained_shielded: Box<WalletShieldedSyncView>,
+    cancel: bool,
+) -> (
+    WalletDustSyncView,
+    Box<WalletShieldedSyncView>,
+    Option<String>,
+) {
+    let dust_result = if (cancel && retained_dust.state == "syncing")
+        || (!cancel && retained_dust.state != "unavailable")
+    {
+        let command = WalletDustSyncCommand {
+            profile_id: profile_id.to_owned(),
+        };
+        if cancel {
+            services.cancel_wallet_dust_sync().execute(command)
+        } else {
+            services.start_wallet_dust_sync().execute(command)
+        }
+        .map_err(|error| error.to_string())
+    } else {
+        Ok(retained_dust.clone())
+    };
+    let shielded_result = if (cancel && retained_shielded.state == "syncing")
+        || (!cancel && retained_shielded.state != "unavailable")
+    {
+        let command = WalletShieldedSyncCommand {
+            profile_id: profile_id.to_owned(),
+        };
+        let result = if cancel {
+            services.cancel_wallet_shielded_sync().execute(command)
+        } else {
+            services.start_wallet_shielded_sync().execute(command)
+        };
+        result.map(Box::new).map_err(|error| error.to_string())
+    } else {
+        Ok(retained_shielded.clone())
+    };
+
+    let (dust, dust_error) = dust_result
+        .map(|status| (status, None))
+        .unwrap_or_else(|error| (retained_dust, Some(format!("DUST: {error}"))));
+    let (shielded, shielded_error) = shielded_result
+        .map(|status| (status, None))
+        .unwrap_or_else(|error| (retained_shielded, Some(format!("Shielded: {error}"))));
+    let operation_error = match (dust_error, shielded_error) {
+        (Some(dust), Some(shielded)) => Some(format!("{dust}; {shielded}")),
+        (Some(error), None) | (None, Some(error)) => Some(error),
+        (None, None) => None,
+    };
+    (dust, shielded, operation_error)
+}
+
+fn poll_account_sync(
     services: WalletUiServices,
     profile_id: String,
-    mut state: Signal<DustSyncPaneState>,
+    mut state: Signal<AccountSyncCardState>,
 ) {
     spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_millis(150)).await;
-            match services
-                .get_wallet_dust_sync_status()
-                .execute(WalletDustSyncCommand {
-                    profile_id: profile_id.clone(),
-                }) {
-                Ok(status) => {
-                    let complete = status.state != "syncing";
-                    state.set(DustSyncPaneState::Ready {
-                        status,
+            let worker_services = services.clone();
+            let worker_profile = profile_id.clone();
+            let result =
+                run_ui_blocking(move || load_account_sync_card(&worker_services, &worker_profile))
+                    .await;
+            match result {
+                Ok(AccountSyncCardState::Ready { dust, shielded, .. }) => {
+                    let complete = dust.state != "syncing" && shielded.state != "syncing";
+                    state.set(AccountSyncCardState::Ready {
+                        dust,
+                        shielded,
                         action_busy: false,
                         operation_error: None,
                     });
@@ -3818,13 +4073,55 @@ fn poll_dust_sync(
                         break;
                     }
                 }
+                Ok(AccountSyncCardState::Failed(error)) => {
+                    state.set(AccountSyncCardState::Failed(error));
+                    break;
+                }
+                Ok(AccountSyncCardState::Loading) => {}
                 Err(error) => {
-                    state.set(DustSyncPaneState::Failed(error.to_string()));
+                    state.set(AccountSyncCardState::Failed(error.to_string()));
                     break;
                 }
             }
         }
     });
+}
+
+fn account_sync_state<'a>(
+    dust: &'a WalletDustSyncView,
+    shielded: &'a WalletShieldedSyncView,
+) -> &'a str {
+    if dust.state == "syncing" || shielded.state == "syncing" {
+        "syncing"
+    } else if dust.state == "synced" && shielded.state == "synced" {
+        "synced"
+    } else if dust.state == "stalled" || shielded.state == "stalled" {
+        "stalled"
+    } else if dust.state == "cancelled" || shielded.state == "cancelled" {
+        "cancelled"
+    } else if dust.state == "cached" || shielded.state == "cached" {
+        "cached"
+    } else if dust.state == "unavailable" && shielded.state == "unavailable" {
+        "unavailable"
+    } else {
+        "never_synced"
+    }
+}
+
+fn account_sync_progress(
+    dust: &WalletDustSyncView,
+    shielded: &WalletShieldedSyncView,
+) -> Option<u64> {
+    let values = [
+        dust_progress_percent(dust),
+        shielded_progress_percent(shielded),
+    ];
+    let values = values.into_iter().flatten().collect::<Vec<_>>();
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.iter().sum::<u64>() / u64::try_from(values.len()).ok()?)
+    }
 }
 
 fn dust_progress_percent(status: &WalletDustSyncView) -> Option<u64> {
@@ -3838,13 +4135,7 @@ fn dust_progress_percent(status: &WalletDustSyncView) -> Option<u64> {
 fn dust_sync_note(status: &WalletDustSyncView) -> String {
     let detail = match status.state.as_str() {
         "never_synced" => "DUST has not been indexed for this protected account.".to_owned(),
-        "syncing" if status.events_processed > 0 => {
-            format!("Indexing DUST · {} events processed this run.", status.events_processed)
-        }
-        "syncing" => "Connecting to the DUST event index…".to_owned(),
-        "synced" if status.events_processed > 0 => {
-            format!("DUST is synchronized · {} events processed.", status.events_processed)
-        }
+        "syncing" => "Refreshing the protected DUST balance…".to_owned(),
         "synced" => "DUST is synchronized.".to_owned(),
         "cached" => "Showing a resumable cached DUST checkpoint; spending remains disabled until live catch-up.".to_owned(),
         "cancelled" => "DUST synchronization was cancelled at a consistent checkpoint and can resume.".to_owned(),
@@ -3864,227 +4155,6 @@ fn dust_status_pill_class(state: &str) -> &'static str {
     }
 }
 
-#[component]
-fn ShieldedSyncPane(profile_id: String, can_sync: bool) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let mut state = use_signal(|| ShieldedSyncPaneState::Loading);
-    let load_services = services.clone();
-    let load_profile = profile_id.clone();
-    use_effect(move || {
-        let services = load_services.clone();
-        let profile_id = load_profile.clone();
-        spawn(async move {
-            state.set(
-                run_ui_blocking(move || load_shielded_sync(&services, &profile_id))
-                    .await
-                    .unwrap_or_else(|error| ShieldedSyncPaneState::Failed(error.to_string())),
-            );
-        });
-    });
-
-    match state.read().clone() {
-        ShieldedSyncPaneState::Loading => rsx! {
-            article { class: "surface-card wallet-sync-pane", role: "status", aria_busy: "true",
-                p { class: "card-eyebrow", "Shielded index" }
-                h2 { "Loading shielded status…" }
-            }
-        },
-        ShieldedSyncPaneState::Failed(message) => {
-            let retry_services = services.clone();
-            let retry_profile = profile_id.clone();
-            rsx! {
-                article { class: "surface-card wallet-sync-pane", role: "alert",
-                    div { class: "wallet-sync-row__heading",
-                        div {
-                            p { class: "card-eyebrow", "Shielded index" }
-                            h2 { "Status unavailable" }
-                        }
-                        span { class: "status-pill", "Error" }
-                    }
-                    p { "{message}" }
-                    button {
-                        class: "secondary-action",
-                        r#type: "button",
-                        onclick: move |_| {
-                            let services = retry_services.clone();
-                            let profile_id = retry_profile.clone();
-                            state.set(ShieldedSyncPaneState::Loading);
-                            spawn(async move {
-                                state.set(
-                                    run_ui_blocking(move || load_shielded_sync(&services, &profile_id))
-                                        .await
-                                        .unwrap_or_else(|error| ShieldedSyncPaneState::Failed(error.to_string())),
-                                );
-                            });
-                        },
-                        "Retry"
-                    }
-                }
-            }
-        }
-        ShieldedSyncPaneState::Ready {
-            status,
-            action_busy,
-            operation_error,
-        } => {
-            let syncing = status.state == "syncing";
-            let unavailable = status.state == "unavailable";
-            let progress = shielded_progress_percent(&status);
-            let note = shielded_sync_note(&status);
-            let pill_class = dust_status_pill_class(&status.state);
-            let owned_notes = status
-                .owned_note_count
-                .map_or_else(|| "—".to_owned(), |count| count.to_string());
-            let action_services = services.clone();
-            let action_profile = profile_id.clone();
-            let mut action_state = state;
-            rsx! {
-                article { class: "surface-card wallet-sync-pane",
-                    div { class: "wallet-sync-row__heading",
-                        div {
-                            p { class: "card-eyebrow", "Shielded index" }
-                            h2 { "{owned_notes} shielded notes" }
-                        }
-                        span { class: "{pill_class}", "{ui::sync_state(&status.state)}" }
-                    }
-                    p { "{note}" }
-                    if !status.balances.is_empty() {
-                        div { class: "activity-list", aria_label: "Shielded token balances",
-                            for balance in status.balances.iter() {
-                                div { class: "activity-row", key: "{balance.token_type_hex}",
-                                    span { class: "activity-row__mark", aria_hidden: "true", "◈" }
-                                    div {
-                                        strong { "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
-                                        small { title: "{balance.token_type_hex}", "Token {truncate_middle(&balance.token_type_hex, 8, 6)}" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if let Some(message) = operation_error {
-                        p { class: "wallet-sync-error", role: "alert", "{message}" }
-                    }
-                    if let Some(percent) = progress {
-                        div { class: "wallet-sync-progress", aria_label: "Shielded synchronization progress",
-                            div { class: "wallet-sync-progress__bar", style: "width: {percent}%" }
-                        }
-                    }
-                    button {
-                        class: "secondary-action wallet-sync-action",
-                        r#type: "button",
-                        disabled: action_busy || unavailable || (!can_sync && !syncing),
-                        onclick: move |_| {
-                            let command = WalletShieldedSyncCommand {
-                                profile_id: action_profile.clone(),
-                            };
-                            let services = action_services.clone();
-                            let profile_id = action_profile.clone();
-                            let retained = status.clone();
-                            action_state.set(ShieldedSyncPaneState::Ready {
-                                status: status.clone(),
-                                action_busy: true,
-                                operation_error: None,
-                            });
-                            spawn(async move {
-                                let worker_services = services.clone();
-                                let result = run_ui_blocking(move || {
-                                    if syncing {
-                                        worker_services.cancel_wallet_shielded_sync().execute(command)
-                                    } else {
-                                        worker_services.start_wallet_shielded_sync().execute(command)
-                                    }
-                                })
-                                .await;
-                                match result {
-                                    Ok(Ok(updated)) => {
-                                        let should_poll = updated.state == "syncing";
-                                        action_state.set(ShieldedSyncPaneState::Ready {
-                                            status: updated,
-                                            action_busy: false,
-                                            operation_error: None,
-                                        });
-                                        if should_poll {
-                                            poll_shielded_sync(services, profile_id, action_state);
-                                        }
-                                    }
-                                    Ok(Err(error)) => action_state.set(ShieldedSyncPaneState::Ready {
-                                        status: retained.clone(),
-                                        action_busy: false,
-                                        operation_error: Some(error.to_string()),
-                                    }),
-                                    Err(error) => action_state.set(ShieldedSyncPaneState::Ready {
-                                        status: retained,
-                                        action_busy: false,
-                                        operation_error: Some(error.to_string()),
-                                    }),
-                                }
-                            });
-                        },
-                        if syncing {
-                            if action_busy { "Cancelling shielded sync…" } else { "Cancel shielded sync" }
-                        } else if !can_sync {
-                            "Unlock wallet to sync shielded assets"
-                        } else if status.state == "never_synced" {
-                            if action_busy { "Starting shielded sync…" } else { "Sync shielded assets" }
-                        } else {
-                            if action_busy { "Starting shielded sync…" } else { "Resync shielded assets" }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn load_shielded_sync(services: &WalletUiServices, profile_id: &str) -> ShieldedSyncPaneState {
-    services
-        .get_wallet_shielded_sync_status()
-        .execute(WalletShieldedSyncCommand {
-            profile_id: profile_id.to_owned(),
-        })
-        .map_or_else(
-            |error| ShieldedSyncPaneState::Failed(error.to_string()),
-            |status| ShieldedSyncPaneState::Ready {
-                status,
-                action_busy: false,
-                operation_error: None,
-            },
-        )
-}
-
-fn poll_shielded_sync(
-    services: WalletUiServices,
-    profile_id: String,
-    mut state: Signal<ShieldedSyncPaneState>,
-) {
-    spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(150)).await;
-            match services
-                .get_wallet_shielded_sync_status()
-                .execute(WalletShieldedSyncCommand {
-                    profile_id: profile_id.clone(),
-                }) {
-                Ok(status) => {
-                    let complete = status.state != "syncing";
-                    state.set(ShieldedSyncPaneState::Ready {
-                        status,
-                        action_busy: false,
-                        operation_error: None,
-                    });
-                    if complete {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    state.set(ShieldedSyncPaneState::Failed(error.to_string()));
-                    break;
-                }
-            }
-        }
-    });
-}
-
 fn shielded_progress_percent(status: &WalletShieldedSyncView) -> Option<u64> {
     let (current, target) = status.current_cursor.zip(status.target_cursor)?;
     let completed = u128::from(current).checked_add(1)?;
@@ -4098,15 +4168,7 @@ fn shielded_sync_note(status: &WalletShieldedSyncView) -> String {
         "never_synced" => {
             "Shielded notes have not been indexed for this protected account.".to_owned()
         }
-        "syncing" if status.events_processed > 0 => format!(
-            "Indexing shielded notes · {} events processed this run.",
-            status.events_processed
-        ),
-        "syncing" => "Connecting to the shielded event index…".to_owned(),
-        "synced" if status.events_processed > 0 => format!(
-            "Shielded notes are synchronized · {} events processed.",
-            status.events_processed
-        ),
+        "syncing" => "Refreshing protected shielded notes…".to_owned(),
         "synced" => "Shielded notes are synchronized.".to_owned(),
         "cached" => {
             "Showing a key-scoped cached shielded checkpoint; live catch-up is still required."
@@ -4191,6 +4253,12 @@ fn load_home_page(services: &WalletUiServices, profile_id: &str) -> HomePageStat
             profile_id: profile_id.to_owned(),
         })
         .map_or(HomeResource::Unavailable, HomeResource::Ready);
+    let backup_receipt = services
+        .get_wallet_backup_receipt
+        .execute(WalletBackupReceiptCommand {
+            profile_id: profile_id.to_owned(),
+        })
+        .map_or(HomeResource::Unavailable, HomeResource::Ready);
     let credentials = services
         .list_credentials()
         .execute(CredentialProfileQuery {
@@ -4207,6 +4275,7 @@ fn load_home_page(services: &WalletUiServices, profile_id: &str) -> HomePageStat
     HomePageState::Ready(Box::new(HomePageProjection {
         account,
         security,
+        backup_receipt,
         shielded,
         credentials,
         vault,
@@ -8942,6 +9011,7 @@ fn SettingsPage(
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut security = use_signal(|| SecurityCapabilityState::Loading);
+    let mut backup_receipt = use_signal(|| BackupReceiptState::Loading);
     let mut export_secret = use_signal(|| Zeroizing::new(String::new()));
     let mut export_secret_confirmation = use_signal(|| Zeroizing::new(String::new()));
     let mut export_confirmed = use_signal(|| false);
@@ -8955,19 +9025,33 @@ fn SettingsPage(
         let services = services_for_load.clone();
         let profile_id = profile_id.clone();
         spawn(async move {
-            let result = run_ui_blocking(move || {
-                services
-                    .get_wallet_security_status()
-                    .execute(WalletProfileSecurityCommand { profile_id })
+            let results = run_ui_blocking(move || {
+                let security =
+                    services
+                        .get_wallet_security_status()
+                        .execute(WalletProfileSecurityCommand {
+                            profile_id: profile_id.clone(),
+                        });
+                let receipt = services
+                    .get_wallet_backup_receipt
+                    .execute(WalletBackupReceiptCommand { profile_id });
+                (security, receipt)
             })
             .await;
-            security.set(match result {
-                Ok(result) => result.map_or_else(
-                    |error| SecurityCapabilityState::Failed(error.to_string()),
-                    SecurityCapabilityState::Ready,
-                ),
-                Err(error) => SecurityCapabilityState::Failed(error.to_string()),
-            });
+            let (security_result, receipt_result) = match results {
+                Ok(results) => results,
+                Err(error) => {
+                    security.set(SecurityCapabilityState::Failed(error.to_string()));
+                    backup_receipt.set(BackupReceiptState::Failed);
+                    return;
+                }
+            };
+            security.set(security_result.map_or_else(
+                |error| SecurityCapabilityState::Failed(error.to_string()),
+                SecurityCapabilityState::Ready,
+            ));
+            backup_receipt
+                .set(receipt_result.map_or(BackupReceiptState::Failed, BackupReceiptState::Ready));
         });
     });
     let security_card = match security.read().clone() {
@@ -9072,6 +9156,17 @@ fn SettingsPage(
     let backup_card = match security.read().clone() {
         SecurityCapabilityState::Ready(status) => {
             let supported = status.portable_backup_supported;
+            let receipt = match backup_receipt.read().clone() {
+                BackupReceiptState::Ready(receipt) => receipt,
+                BackupReceiptState::Loading | BackupReceiptState::Failed => None,
+            };
+            let receipt_label = if receipt.is_some() {
+                "Backed up"
+            } else if supported {
+                "Available"
+            } else {
+                "Fail closed"
+            };
             let busy = matches!(*backup_state.read(), PortableBackupUiState::Working(_));
             let can_export = supported
                 && status.state_name() != "Uninitialized"
@@ -9097,8 +9192,15 @@ fn SettingsPage(
                         }
                         span {
                             class: if supported { "status-pill success" } else { "status-pill" },
-                            if supported { "Available" } else { "Fail closed" }
+                            "{receipt_label}"
                         }
+                    }
+                    if let Some(receipt) = receipt {
+                        p { class: "form-hint",
+                            "Latest completed export: {ui::format_epoch_millis(receipt.completed_at_millis)}. The external document can still be moved or deleted outside Oxid."
+                        }
+                    } else if matches!(*backup_receipt.read(), BackupReceiptState::Failed) {
+                        p { class: "form-hint", "Backup completion status could not be read." }
                     }
                     p { class: "backup-warning",
                         strong { "Store the recovery secret separately. " }
@@ -9171,6 +9273,8 @@ fn SettingsPage(
                                         };
                                         let services = export_services.clone();
                                         let profile_id = export_profile_id.clone();
+                                        let receipt_profile_id = profile_id.clone();
+                                        let mut receipt_state = backup_receipt;
                                         backup_state.set(PortableBackupUiState::Working(
                                             "Authorizing and encrypting the complete wallet",
                                         ));
@@ -9199,9 +9303,26 @@ fn SettingsPage(
                                                     )
                                                     .await
                                                 {
-                                                    Ok(()) => PortableBackupUiState::Succeeded(
-                                                        "Encrypted complete wallet backup saved to the selected document.".to_owned(),
-                                                    ),
+                                                    Ok(()) => {
+                                                        let record = Arc::clone(
+                                                            &services.record_wallet_backup_receipt,
+                                                        );
+                                                        match run_ui_blocking(move || {
+                                                            record.execute(WalletBackupReceiptCommand {
+                                                                profile_id: receipt_profile_id,
+                                                            })
+                                                        })
+                                                        .await
+                                                        {
+                                                            Ok(Ok(receipt)) => {
+                                                                receipt_state.set(BackupReceiptState::Ready(Some(receipt)));
+                                                                PortableBackupUiState::CompleteExported(receipt)
+                                                            }
+                                                            Ok(Err(_)) | Err(_) => PortableBackupUiState::Failed(
+                                                                "Backup document was saved, but Oxid could not record its completion status.".to_owned(),
+                                                            ),
+                                                        }
+                                                    }
                                                     Err(PortableWalletBackupDocumentError::Cancelled) => {
                                                         PortableBackupUiState::Cancelled
                                                     }
@@ -9351,6 +9472,16 @@ fn SettingsPage(
                         },
                         PortableBackupUiState::Succeeded(message) => rsx! {
                             div { class: "result", role: "status", p { "{message}" } }
+                        },
+                        PortableBackupUiState::CompleteExported(receipt) => rsx! {
+                            div { class: "result success backup-celebration", role: "status", aria_live: "polite",
+                                span { class: "empty-state__mark", aria_hidden: "true", "✓" }
+                                div {
+                                    strong { "Backup complete" }
+                                    p { "Encrypted complete wallet backup saved at {ui::format_epoch_millis(receipt.completed_at_millis)}." }
+                                    small { "Oxid recorded this export, but cannot guarantee that the external document remains available." }
+                                }
+                            }
                         },
                         PortableBackupUiState::Cancelled => rsx! {
                             div { class: "result", role: "status", p { "Document selection cancelled. No custody state was changed." } }
@@ -10041,6 +10172,24 @@ mod tests {
         assert!(
             shielded_sync_note(&shielded_status("stalled", Some(1), Some(2)))
                 .contains("last consistent checkpoint")
+        );
+    }
+
+    #[test]
+    fn account_sync_card_combines_progress_without_event_count_copy() {
+        let dust = dust_status("syncing", Some(0), Some(2));
+        let shielded = shielded_status("syncing", Some(2), Some(2));
+
+        assert_eq!(account_sync_state(&dust, &shielded), "syncing");
+        assert_eq!(account_sync_progress(&dust, &shielded), Some(66));
+        assert!(!dust_sync_note(&dust).contains("event"));
+        assert!(!shielded_sync_note(&shielded).contains("event"));
+        assert_eq!(
+            account_sync_state(
+                &dust_status("synced", Some(2), Some(2)),
+                &shielded_status("synced", Some(2), Some(2)),
+            ),
+            "synced"
         );
     }
 

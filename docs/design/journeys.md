@@ -8,9 +8,11 @@ changes.
 
 ## 1. Onboarding (fresh install → usable home)
 
-**Today:** one screen stacking a create-profile form *and* a 75-word
-complete-recovery card (`ProfileGateway` + `FreshInstallRecovery`,
-lib.rs:1896-2121). Success shows the raw profile id in a `<code>` block.
+**Today (ADR-0090 / issue #82):** fresh install opens with exactly **Create new
+wallet** or **Restore from backup**. Create names/selects the profile without
+showing its opaque identifier, then offers skippable device protection before
+Home. Restore owns a separate component lifetime, so Back drops its local
+zeroizing secret state.
 
 **Redesign (budget: ≤ 60 seconds, 3 screens):**
 1. Welcome: product name, one sentence, two buttons — **Create new wallet**
@@ -78,14 +80,14 @@ ambiguity handling. The wizard is a *view* over the same states.
 **Today:** two symmetric panes with cursor numbers and Sync/Resync/Cancel
 buttons, gated on unlock (lib.rs:2798-3231).
 
-**Redesign:** sync becomes a *state of the account card*, not a place: a
-progress ring on the card while syncing, freshness pill otherwise
-("Updated 2 min ago · Live"), pull-to-refresh on Wallet, and one
-"Sync now" in the card's quick actions. Cursor numbers move to dev profile.
-Cancellation/resume semantics unchanged (partial checkpoints are already
-safe). "Cached is display-only, never spend authority" surfaces exactly
-when it matters: the Send wizard's amount step shows "Balance updating —
-sending unlocks when fresh" instead of a disabled mystery button.
+**Delivered core (ADR-0090 / issue #82):** sync is one account card with a
+single **Sync now** action over public account refresh plus the independently
+authoritative DUST and shielded sessions. While either session runs, the action
+becomes **Cancel sync**. Combined progress and human states replace cursor and
+event-count prose; cached/cancelled/stalled remain non-authoritative. Native
+background scheduling, pull-to-refresh, relative-freshness copy, and the Send
+amount-step treatment remain follow-up work because no reviewed platform event
+or freshness projection exists yet.
 
 ## 5. Add a document (credential issuance)
 
@@ -148,8 +150,13 @@ locally; nothing settles on Midnight").
 
 ## 8. Backup & recovery (celebrated, not buried)
 
-**Today:** the heaviest copy in the app, split across three paths
-(Settings export, legacy custody recovery, fresh-install recovery).
+**Today (ADR-0090 / issue #82):** complete export remains in Settings and
+fresh-install recovery lives behind onboarding's Restore fork. After encrypted
+archive creation and the native document exporter both succeed, Oxid records a
+profile-scoped timestamp-only receipt, celebrates **Backup complete**, and may
+show **Backed up** on Home/Settings. Cancel, error, and restored archives never
+fabricate that receipt; copy warns that the external document can later move or
+disappear.
 
 **Redesign:** one **Backup** surface in Settings + a contextual Home prompt
 after first value: choose secret (with strength meter and the "store it

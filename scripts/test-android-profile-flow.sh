@@ -139,7 +139,7 @@ for _attempt in $(seq 1 15); do
 done
 
 if ! jq -e '
-  .schemaVersion == 2
+  .schemaVersion == 3
   and (.profiles | length) == 1
   and .profiles[0].displayName == "My wallet"
   and .profiles[0].id == .activeProfileId
@@ -150,6 +150,7 @@ if ! jq -e '
   and .accountAssociations[0].accounts[0].networkId == "undeployed"
   and .accountAssociations[0].accounts[0].accountIndex == 0
   and .accountAssociations[0].accounts[0].addressIndex == 0
+  and (.completeBackupReceipts | length) == 0
 ' >/dev/null <<<"$profile_document"; then
   echo "Android profile creation did not produce the expected durable public metadata." >&2
   exit 1

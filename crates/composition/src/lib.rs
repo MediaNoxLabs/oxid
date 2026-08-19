@@ -203,19 +203,20 @@ use oxid_wallet_application::{
     CreateWalletProfileUseCase, DeleteWalletKeyUseCase, DeriveWalletAccountUseCase,
     ExportCompleteWalletBackupUseCase, ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase,
     GetActiveWalletProfileService, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
-    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    GetWalletBackupReceiptUseCase, GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
     ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
     ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
     PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferUseCase,
     PrepareWalletTransferUseCase, ReconcileWalletTransferSubmissionUseCase,
-    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
-    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectWalletProfileUseCase,
-    SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
-    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
-    WalletAccountService, WalletDustSyncPort, WalletDustSyncService,
+    RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupUseCase,
+    RecoverPortableWalletBackupUseCase, SelectWalletNetworkUseCase, SelectWalletProfileService,
+    SelectWalletProfileUseCase, SignWalletDataUseCase, StartWalletDustSyncUseCase,
+    StartWalletShieldedSyncUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
+    WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
+    WalletBackupReceiptService, WalletDustSyncPort, WalletDustSyncService,
     WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
     WalletNetworkService, WalletPortableBackupPort, WalletPortableBackupService,
     WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
@@ -263,6 +264,8 @@ pub struct ApplicationServices {
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
     get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
+    get_wallet_backup_receipt: Arc<dyn GetWalletBackupReceiptUseCase>,
+    record_wallet_backup_receipt: Arc<dyn RecordWalletBackupReceiptUseCase>,
     get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
     initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
     unlock_wallet: Arc<dyn UnlockWalletUseCase>,
@@ -468,6 +471,16 @@ impl ApplicationServices {
     #[must_use]
     pub fn get_active_wallet_profile(&self) -> Arc<dyn GetActiveWalletProfileUseCase> {
         Arc::clone(&self.get_active_wallet_profile)
+    }
+
+    #[must_use]
+    pub fn get_wallet_backup_receipt(&self) -> Arc<dyn GetWalletBackupReceiptUseCase> {
+        Arc::clone(&self.get_wallet_backup_receipt)
+    }
+
+    #[must_use]
+    pub fn record_wallet_backup_receipt(&self) -> Arc<dyn RecordWalletBackupReceiptUseCase> {
+        Arc::clone(&self.record_wallet_backup_receipt)
     }
 
     #[must_use]
@@ -2238,7 +2251,10 @@ fn compose_with_adapters<R, S, M>(
     midnight: Arc<M>,
 ) -> ApplicationServices
 where
-    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
         + WalletJubjubChallengeSigningPort
@@ -2271,7 +2287,10 @@ fn compose_with_adapters_and_presentation<R, S, M>(
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices
 where
-    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
         + WalletJubjubChallengeSigningPort
@@ -2334,7 +2353,10 @@ fn compose_with_identity_adapters<R, S, M>(
     passport_vault_repository: PassportVaultRepositoryComposition,
 ) -> ApplicationServices
 where
-    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
         + WalletJubjubChallengeSigningPort
@@ -2456,7 +2478,12 @@ where
     ));
     let list_wallet_profiles = Arc::new(ListWalletProfilesService::new(Arc::clone(&repository)));
     let select_wallet_profile = Arc::new(SelectWalletProfileService::new(Arc::clone(&repository)));
-    let get_active_wallet_profile = Arc::new(GetActiveWalletProfileService::new(repository));
+    let get_active_wallet_profile =
+        Arc::new(GetActiveWalletProfileService::new(Arc::clone(&repository)));
+    let backup_receipts = Arc::new(WalletBackupReceiptService::new(
+        repository,
+        Arc::clone(&clock),
+    ));
     let protection = Arc::new(WalletProtectionService::new(Arc::clone(&security)));
     let portable_backup = Arc::new(WalletPortableBackupService::new(Arc::clone(&security)));
     let keys = Arc::new(WalletKeyService::new(security));
@@ -2699,6 +2726,8 @@ where
         complete_backup.clone();
     let recover_complete_wallet_backup: Arc<dyn RecoverCompleteWalletBackupUseCase> =
         complete_backup;
+    let get_wallet_backup_receipt: Arc<dyn GetWalletBackupReceiptUseCase> = backup_receipts.clone();
+    let record_wallet_backup_receipt: Arc<dyn RecordWalletBackupReceiptUseCase> = backup_receipts;
     let generate_wallet_key: Arc<dyn GenerateWalletKeyUseCase> = keys.clone();
     let list_wallet_keys: Arc<dyn ListWalletKeysUseCase> = keys.clone();
     let sign_wallet_data: Arc<dyn SignWalletDataUseCase> = keys.clone();
@@ -2826,6 +2855,8 @@ where
         list_wallet_profiles,
         select_wallet_profile,
         get_active_wallet_profile,
+        get_wallet_backup_receipt,
+        record_wallet_backup_receipt,
         get_wallet_security_status,
         initialize_wallet_security,
         unlock_wallet,
@@ -3039,8 +3070,9 @@ mod tests {
         EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY, EXPORT_COMPLETE_WALLET_BACKUP_TITLE,
         ExportCompleteWalletBackupCommand, RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY,
         RECOVER_COMPLETE_WALLET_BACKUP_TITLE, RecoverCompleteWalletBackupCommand,
-        SensitiveOperationConfirmation, WalletAccountQuery, WalletDustSyncCommand,
-        WalletProfileSecurityCommand, WalletRecoverySecret, WalletShieldedSyncCommand,
+        SensitiveOperationConfirmation, WalletAccountQuery, WalletBackupReceiptCommand,
+        WalletDustSyncCommand, WalletProfileSecurityCommand, WalletRecoverySecret,
+        WalletShieldedSyncCommand,
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -3192,6 +3224,21 @@ mod tests {
             })
             .expect("source profile");
         source
+            .record_wallet_backup_receipt()
+            .execute(WalletBackupReceiptCommand {
+                profile_id: profile.id.clone(),
+            })
+            .expect("prior complete-document export receipt");
+        assert!(
+            source
+                .get_wallet_backup_receipt()
+                .execute(WalletBackupReceiptCommand {
+                    profile_id: profile.id.clone(),
+                })
+                .expect("source receipt query")
+                .is_some()
+        );
+        source
             .initialize_wallet_security()
             .execute(WalletProfileSecurityCommand {
                 profile_id: profile.id.clone(),
@@ -3285,6 +3332,15 @@ mod tests {
         assert_eq!(summary.restored_credential_count, 1);
         assert_eq!(
             destination
+                .get_wallet_backup_receipt()
+                .execute(WalletBackupReceiptCommand {
+                    profile_id: summary.profile_id.clone(),
+                })
+                .expect("recovered receipt query"),
+            None
+        );
+        assert_eq!(
+            destination
                 .get_active_wallet_profile()
                 .execute()
                 .expect("active profile")
@@ -3315,7 +3371,7 @@ mod tests {
             destination
                 .list_credentials()
                 .execute(CredentialProfileQuery {
-                    profile_id: summary.profile_id,
+                    profile_id: summary.profile_id.clone(),
                 })
                 .expect("recovered credentials")
                 .len(),

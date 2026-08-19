@@ -896,6 +896,41 @@ textarea:focus-visible {
   margin-top: var(--space-4);
 }
 
+.account-sync-card {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.account-sync-card__rows {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.account-sync-card__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.account-sync-card__row + .account-sync-card__row {
+  border-top: 1px solid var(--line);
+}
+
+.account-sync-card__row div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.account-sync-card__row small {
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 .wallet-sync-row__heading {
   display: flex;
   align-items: flex-start;
@@ -1570,6 +1605,23 @@ textarea:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
+}
+
+.backup-celebration {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.backup-celebration .empty-state__mark {
+  width: 3rem;
+  height: 3rem;
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.backup-celebration small {
+  color: var(--text-muted);
 }
 
 .backup-warning {
@@ -2263,6 +2315,11 @@ textarea:focus-visible {
 
 .profile-card {
   padding: clamp(var(--space-5), 5vw, var(--space-7));
+}
+
+.onboarding-choice-card {
+  display: grid;
+  gap: var(--space-3);
 }
 
 .complete-recovery-card {

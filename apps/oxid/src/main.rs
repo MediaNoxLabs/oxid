@@ -106,6 +106,8 @@ fn main() {
                 application.recover_portable_wallet_backup(),
                 application.export_complete_wallet_backup(),
                 application.recover_complete_wallet_backup(),
+                application.get_wallet_backup_receipt(),
+                application.record_wallet_backup_receipt(),
                 application.portable_wallet_backup_documents(),
             ),
         ),

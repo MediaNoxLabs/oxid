@@ -2,8 +2,9 @@
 
 Sliced to the repo's delivery discipline: each phase is independently
 shippable, gated by the existing checks, and sized for the issue backlog.
-No phase changes application/domain code — this is a presentation-layer
-program (the two exceptions are called out).
+Most phases change only presentation. ADR-0090 adds the one application fact
+needed to make a successful complete-backup claim truthful; later native screen
+privacy operations remain the other called-out exception.
 
 ## Phase 0 — Foundations (enables everything; also fixes live bugs)
 
@@ -48,9 +49,15 @@ program (the two exceptions are called out).
    refusal, managed custody, and fail-closed proof gates. Standalone endpoints
    are explicitly unverified and all current presentation claims are locked as
    required because no optional-claim authorization port exists.
-3. **Remaining ceremonies**: receive sheet; backup celebration flow;
-   onboarding fork. Sync collapses into card state. Word budgets remain
-   enforced.
+3. **Onboarding, backup, and sync** (delivered by ADR-0090 / issue #82): fresh
+   installs fork into create or restore, profile creation offers skippable
+   device protection without exposing an opaque identifier, and recovery keeps
+   its existing empty-install confirmation. A profile-scoped application
+   receipt is recorded only after complete encryption and native document
+   export both succeed, enabling truthful **Backed up** copy and an accessible
+   celebration. Wallet now composes account, DUST, and shielded refresh into
+   one sync card/action while their independent authority and cancellation
+   semantics remain unchanged. The receive sheet remains a later ceremony.
 
 ## Phase 3 — White-label infrastructure
 
@@ -105,5 +112,5 @@ issues: 0a tokens, 0b labeling layer, 0c credential chooser (bug), 1a route
 stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
 (delivered by #80), 2b consent sheet, 2c onboarding + backup, 3 white-label
 infra, 4a secret mode + native privacy ops, 4b dev/demo
-profiles, 5 per-item. Each slice references the relevant spec section as its
+profiles, 5 per-item. Phase 2c is delivered by #82; each remaining slice references the relevant spec section as its
 acceptance criteria, factory-work-item style.

@@ -131,6 +131,12 @@ async function openWallet() {
   await clickButton("Wallet");
 }
 
+async function createFreshProfile() {
+  await clickButton("Create new wallet");
+  await clickButton("Create and continue");
+  await clickButton("Skip for now");
+}
+
 async function assertHomeComposition() {
   await clickButton("Home");
   await waitFor(
@@ -151,7 +157,7 @@ async function assertHomeComposition() {
       && !document.body.innerText.includes("Backed up");
   })()`);
   if (!truthful) {
-    throw new Error("Home quick actions or security capability truth did not match Phase 1b");
+    throw new Error("Home quick actions or security capability truth did not match the composed design");
   }
 }
 
@@ -215,7 +221,7 @@ try {
   await waitFor("document.readyState === 'complete'", "Dioxus document");
 
   if (mode === "backup-export") {
-    await clickButton("Create and continue");
+    await createFreshProfile();
     await openWallet();
     await clickButtonByLabel("Activate protected Midnight account");
     await waitForButton("Use my receive address", 90_000);
@@ -255,7 +261,7 @@ try {
     );
     await clickButton("Choose file and export");
     await waitFor(
-      "document.body.innerText.includes('Encrypted complete wallet backup saved to the selected document.') || Boolean(document.querySelector('[role=\"alert\"]'))",
+      "document.body.innerText.includes('Backup complete') || Boolean(document.querySelector('[role=\"alert\"]'))",
       "complete wallet document export",
       180_000,
     );
@@ -265,9 +271,13 @@ try {
     if (exportError) {
       throw new Error(`Android complete wallet export failed: ${exportError}`);
     }
+    await waitFor(
+      "document.body.innerText.includes('Backed up')",
+      "persisted complete backup receipt",
+    );
     process.stdout.write(`${JSON.stringify({ mode, exported: true })}\n`);
   } else if (mode === "backup-recover") {
-    await waitForButton("Create and continue");
+    await clickButton("Restore from backup");
     await setInputById("onboarding-recovery-secret", backupRecoverySecret);
     await clickConfirmation("I confirm complete recovery into this empty Oxid installation.");
     await clickButtonByLabel("Choose complete wallet backup and recover");
@@ -308,7 +318,7 @@ try {
       credentialRestored: true,
     })}\n`);
   } else if (mode === "flow") {
-    await clickButton("Create and continue");
+    await createFreshProfile();
     await assertHomeComposition();
     await clickButton("Present");
     await waitForButton("Manage identities");
@@ -326,19 +336,12 @@ try {
     await waitForButton("Use my receive address", 90_000);
     await waitForButton("Scan");
 
-    await clickButton("Sync DUST");
+    await clickButton("Sync now");
     await waitFor(
-      "document.body.innerText.includes('12 DUST')",
-      "exact simulated DUST balance",
+      "document.body.innerText.includes('12 DUST') && document.body.innerText.includes('1 shielded notes') && document.body.innerText.includes('5 NIGHT')",
+      "exact simulated account, DUST, and shielded synchronization",
     );
-    await waitForButton("Resync DUST");
-
-    await clickButton("Sync shielded assets");
-    await waitFor(
-      "document.body.innerText.includes('1 shielded notes') && document.body.innerText.includes('5 NIGHT')",
-      "exact simulated shielded note and token balance",
-    );
-    await waitForButton("Resync shielded assets");
+    await waitForButton("Sync now");
 
     await clickButton("Show QR");
     await waitFor(
@@ -731,8 +734,8 @@ try {
     }
     process.stdout.write(`${JSON.stringify(restored)}\n`);
   } else if (mode === "native-authorize") {
-    const createProfile = await evaluate(`Boolean(${buttonExpression("Create and continue")})`);
-    if (createProfile) await clickButton("Create and continue");
+    const createProfile = await evaluate(`Boolean(${buttonExpression("Create new wallet")})`);
+    if (createProfile) await createFreshProfile();
     await openWallet();
     await waitFor(
       'Boolean(document.querySelector(\'button[aria-label="Activate protected Midnight account"]\')) || Boolean(document.querySelector(\'.address-row\')) || Boolean(document.querySelector(\'[role="alert"]\'))',

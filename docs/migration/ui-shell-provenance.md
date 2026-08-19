@@ -52,3 +52,12 @@ cancellation. Oxid reimplements the component over application use cases and
 polls only an adapter-owned worker status. No ledger event, database, transport,
 or key type enters Dioxus, and cached/stalled state is explicitly distinguished
 from live spend readiness.
+
+ADR-0090 keeps those independent DUST and shielded state machines but composes
+them with public account refresh as one Wallet account-sync card. The one
+**Sync now** / **Cancel sync** action invokes only existing application ports;
+combined progress is presentation-only, and cursor/event-count diagnostics no
+longer appear in the normal user surface. The same decision splits onboarding
+into create/restore routes and introduces a timestamp-only application receipt
+so Home/Settings can say **Backed up** only after the native document exporter
+actually succeeds.

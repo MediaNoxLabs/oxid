@@ -143,9 +143,13 @@ final class BackupFlowTests: XCTestCase {
     @MainActor
     private func createCompleteWallet(in application: XCUIApplication) {
         application.launch()
+        XCTAssertTrue(application.buttons["Create new wallet"].waitForExistence(timeout: 15))
+        application.buttons["Create new wallet"].tap()
         let create = application.buttons["Create and continue"]
         XCTAssertTrue(create.waitForExistence(timeout: 15))
         create.tap()
+        XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 15))
+        application.buttons["Skip for now"].tap()
         application.buttons["Wallet"].tap()
 
         let activate = application.buttons["Activate protected Midnight account"]
@@ -223,10 +227,9 @@ final class BackupFlowTests: XCTestCase {
         }
 
         XCTAssertTrue(
-            application.staticTexts[
-                "Encrypted complete wallet backup saved to the selected document."
-            ].waitForExistence(timeout: 120)
+            application.staticTexts["Backup complete"].waitForExistence(timeout: 120)
         )
+        XCTAssertTrue(application.staticTexts["Backed up"].exists)
     }
 
     @MainActor
@@ -234,7 +237,8 @@ final class BackupFlowTests: XCTestCase {
         let application = XCUIApplication(bundleIdentifier: applicationIdentifier)
         application.launch()
 
-        XCTAssertTrue(application.buttons["Create and continue"].waitForExistence(timeout: 15))
+        XCTAssertTrue(application.buttons["Restore from backup"].waitForExistence(timeout: 15))
+        application.buttons["Restore from backup"].tap()
         let secret = application.secureTextFields["Recovery secret"].firstMatch
         XCTAssertTrue(secret.waitForExistence(timeout: 10))
         scrollTo(secret, in: application)
@@ -292,9 +296,9 @@ final class BackupFlowTests: XCTestCase {
             XCTFail("complete wallet recovery failed: \(message)")
         }
         XCTAssertTrue(home.exists)
-        XCTAssertFalse(application.buttons["Create and continue"].exists)
+        XCTAssertFalse(application.buttons["Create new wallet"].exists)
         XCTAssertTrue(
-            application.staticTexts["My wallet · Standalone"]
+            application.staticTexts["My wallet"]
                 .waitForExistence(timeout: 30)
         )
         application.buttons["Wallet"].tap()
