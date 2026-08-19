@@ -633,6 +633,24 @@ standalone configuration selects authenticated native settlement; partial or
 invalid configuration fails startup. A normal `cargo run -p oxid-app` does not
 enable this feature and stays fail-closed.
 
+To run the mobile UI against the real laptop-hosted standalone indexer, node,
+and prover rather than deterministic simulation, select the separate localhost
+profile at build time:
+
+```bash
+just standalone-up
+just ios-standalone-local
+# after stopping the iOS simulator:
+just android-standalone-local
+```
+
+Both builds use the immutable `undeployed` loopback routes from ADR-0097. iOS
+Simulator reaches host loopback directly. Android emulator receives only exact
+`adb reverse` mappings for ports 8088, 9944, and 6300; the launcher rejects a
+physical device. Do not substitute `10.0.2.2`, because the plaintext local
+prover policy intentionally accepts only syntactic loopback. These profiles are
+compile-time development composition, not a runtime production network picker.
+
 The standalone mobile header includes **Scan QR**. A successful physical-device
 scan strictly routes an OpenID credential offer or one of the registered
 standalone SIOPv2/OpenID4VP requests into its existing preview and consent
@@ -670,10 +688,19 @@ claim-replay restoration:
 
 ```bash
 just ios-smoke
+just ios-standalone-local-smoke
 just ios-backup-smoke
 just android-smoke
+just android-standalone-local-smoke
 just android-backup-smoke
 ```
+
+The two `standalone-local-smoke` commands start or reuse the repository-owned
+stack, reset only Oxid data on the selected virtual device, activate a protected
+profile account, and require `Live` plus `Synced · Live source` with both
+derived address rails. They reject deterministic balances/labels. Run them
+sequentially; do not keep the iOS Simulator and Android emulator active at the
+same time when collecting evidence.
 
 `just ios-backup-smoke` creates and later deletes a disposable iPhone
 simulator. It exports a populated complete wallet through Files, uninstalls the

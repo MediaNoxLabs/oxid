@@ -132,6 +132,11 @@ async function openWallet() {
 }
 
 async function createFreshProfile() {
+  await waitFor(
+    `Boolean(${buttonExpression("Create new wallet")}) || Boolean(${buttonExpression("Wallet")})`,
+    "first-run or restored profile readiness",
+    30_000,
+  );
   const createAvailable = await evaluate(`Boolean(${buttonExpression("Create new wallet")})`);
   if (!createAvailable) return;
   await clickButton("Create new wallet");

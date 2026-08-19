@@ -118,7 +118,7 @@ ADR status and delivery state answer different questions:
 | [0094](0094-protect-mobile-snapshots-through-a-boolean-platform-port.md) Protect mobile snapshots through a boolean platform port | Accepted | §§3–7, 12–13, 16–18, 21; UI profile P6/Phase 4a; issues #2/#32/#65/#85 | One payload-free port sets Android `FLAG_SECURE` or an honest iOS background overlay; backup/reveal routes force protection and unsupported targets fail closed |
 | [0095](0095-share-a-closed-capability-manifest-with-developer-ui.md) Share a closed capability manifest with the developer UI | Accepted | §§3–7, 12–13, 16–18, 21; UI profiles P1/P2/P7/P9/P10; issues #2/#65/#69/#87 | One dependency-free manifest feeds headless JSON and an opt-in standalone developer viewer; confirmation metadata, feature guards, and normal-release marker exclusion are checked |
 | [0096](0096-sequence-standalone-fixtures-through-a-demo-drawer.md) Sequence standalone fixtures through a demo drawer | Accepted | §§3–7, 12–13, 16, 18, 21; UI profiles P1/P2/P5/P8–P10; issues #2/#65/#88 | An opt-in standalone-development drawer isolates setup in the named demo profile, sequences only existing safe fixtures, gates simulated funding, and stops offer/login/presentation fixtures at their unchanged review screens |
-| [0097](0097-build-standalone-phone-routes-at-compile-time.md) Build standalone phone routes at compile time | Accepted | §§3–8, 12–13, 16–18, 21; reviewed prototype phone profile; issues #2/#32 | Opt-in mobile development builds use local MagicDNS/TLS routes without committed endpoints; production and native-custody composition remain unchanged |
+| [0097](0097-build-standalone-phone-routes-at-compile-time.md) Build standalone mobile routes at compile time | Accepted | §§3–8, 12–13, 16–18, 21; reviewed prototype route profiles; issues #2/#32/#89 | Separate opt-in development builds use immutable localhost routes for simulators/desktop or local MagicDNS/TLS routes for a phone; production and native-custody composition remain unchanged |
 
 ## Current boundaries
 
@@ -475,9 +475,11 @@ and `BrandProfile` are the only UI inputs. Nix and `run.sh` enumerate every
 pack, while runtime brand selection and brand-controlled capability/security
 semantics remain forbidden.
 
-ADR-0097 replaces the prototype's committed personal Tailscale endpoint with a
-compile-time-only mobile development profile. Repository-owned loopback
-standalone services are exposed through temporary TLS-terminated Tailscale
-Serve routes, preserving ADR-0027's HTTPS rule for remote witness transport.
-The normal release exclusion gate rejects the profile marker, native custody
-cannot select it, and verified public app links remain a separate open gate.
+ADR-0097 replaces the prototype's runtime-selected localhost/personal-Tailscale
+entries with separate compile-time-only development profiles. iOS Simulator
+uses immutable loopback routes directly; Android emulator uses exact `adb
+reverse` mappings so ADR-0027 still sees the prover as loopback. The phone
+profile exposes repository-owned loopback services through temporary
+TLS-terminated Tailscale Serve routes. The normal release gate rejects both
+profile markers and the localhost endpoints, native custody cannot select
+either, and verified public app links remain a separate open gate.

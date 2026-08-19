@@ -1607,9 +1607,9 @@ pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> Applicat
 /// Wires the mobile development harness to an explicitly build-selected
 /// standalone stack without making routes part of the network catalog.
 ///
-/// The app crate exposes this constructor only behind its opt-in
-/// `standalone-tailnet` feature. Normal and native-custody mobile composition
-/// never call it.
+/// The app crate exposes this constructor only behind its opt-in local or
+/// tailnet live-stack route profile. Normal and native-custody mobile
+/// composition never call it.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn compose_mobile_development_standalone_from_routes(
     indexer_websocket_url: &str,
@@ -3792,6 +3792,20 @@ mod tests {
                 )
             )
         ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn mobile_development_routes_accept_the_reviewed_loopback_stack() {
+        drop(
+            compose_mobile_development_standalone_from_routes(
+                "ws://127.0.0.1:8088/api/v4/graphql/ws",
+                "http://127.0.0.1:8088/api/v4/graphql",
+                "ws://127.0.0.1:9944",
+                "http://127.0.0.1:6300",
+            )
+            .expect("reviewed localhost standalone routes compose without network I/O"),
+        );
     }
 
     #[test]

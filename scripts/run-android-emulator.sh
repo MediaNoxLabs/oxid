@@ -51,6 +51,13 @@ standalone_network_profile="${OXID_STANDALONE_NETWORK_PROFILE:-simulated}"
 case "$standalone_network_profile" in
   simulated)
     ;;
+  local)
+    if [ "$mobile_custody" != "development" ]; then
+      echo "OXID_STANDALONE_NETWORK_PROFILE=local requires development custody." >&2
+      exit 1
+    fi
+    mobile_features="$mobile_features,standalone-local"
+    ;;
   tailnet)
     if [ "$mobile_custody" != "development" ]; then
       echo "OXID_STANDALONE_NETWORK_PROFILE=tailnet requires development custody." >&2
@@ -69,10 +76,15 @@ case "$standalone_network_profile" in
     mobile_features="$mobile_features,standalone-tailnet"
     ;;
   *)
-    echo "OXID_STANDALONE_NETWORK_PROFILE must be 'simulated' or 'tailnet'." >&2
+    echo "OXID_STANDALONE_NETWORK_PROFILE must be 'simulated', 'local', or 'tailnet'." >&2
     exit 1
     ;;
 esac
+
+if [ "$ui_profile" = "demo" ] && [ "$standalone_network_profile" != "simulated" ]; then
+  echo "OXID_UI_PROFILE=demo requires the simulated development composition." >&2
+  exit 1
+fi
 
 android_jni_recovery_test="${OXID_ANDROID_JNI_RECOVERY_TEST:-0}"
 case "$android_jni_recovery_test" in
@@ -124,9 +136,45 @@ if [ ! -x "$adb_command" ]; then
   exit 1
 fi
 
+first_online_device() {
+  if [ "$standalone_network_profile" = "local" ]; then
+    "$adb_command" devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }'
+  else
+    "$adb_command" devices | awk 'NR > 1 && $2 == "device" { print $1; exit }'
+  fi
+}
+
+avd_definition_exists() {
+  local candidate="$1"
+  local avd_root
+  if [ -n "${ANDROID_AVD_HOME:-}" ] && [ -f "$ANDROID_AVD_HOME/$candidate.ini" ]; then
+    return 0
+  fi
+  if [ -n "${ANDROID_SDK_HOME:-}" ] && [ -f "$ANDROID_SDK_HOME/avd/$candidate.ini" ]; then
+    return 0
+  fi
+  for avd_root in "$HOME/.android/avd"; do
+    if [ -f "$avd_root/$candidate.ini" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+first_configured_avd() {
+  local candidate
+  while IFS= read -r candidate; do
+    if [ -n "$candidate" ] && avd_definition_exists "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <("$emulator_command" -list-avds)
+  return 1
+}
+
 device="${OXID_ANDROID_DEVICE:-}"
 if [ -z "$device" ]; then
-  device="$($adb_command devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
+  device="$(first_online_device)"
 fi
 
 if [ -z "$device" ]; then
@@ -134,17 +182,34 @@ if [ -z "$device" ]; then
     echo "No Android device is connected and the SDK emulator is unavailable." >&2
     exit 1
   fi
-  avd="${OXID_ANDROID_AVD:-$($emulator_command -list-avds | sed -n '1p')}"
+  avd="${OXID_ANDROID_AVD:-}"
+  if [ -z "$avd" ]; then
+    avd="$(first_configured_avd || true)"
+  fi
   if [ -z "$avd" ]; then
     echo "No Android device or configured AVD was found." >&2
     exit 1
   fi
+  if ! avd_definition_exists "$avd"; then
+    echo "Android AVD '$avd' has no configuration file in a reviewed AVD directory." >&2
+    exit 1
+  fi
 
-  "$emulator_command" -avd "$avd" -no-snapshot-save >/dev/null 2>&1 &
+  emulator_log="$repository_root/target/mobile-tests/android-emulator-launch.log"
+  mkdir -p "$(dirname -- "$emulator_log")"
+  : >"$emulator_log"
+  nohup "$emulator_command" -avd "$avd" -no-snapshot-save \
+    </dev/null >"$emulator_log" 2>&1 &
+  emulator_process=$!
   for _attempt in $(seq 1 120); do
-    device="$($adb_command devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
+    device="$(first_online_device)"
     if [ -n "$device" ]; then
       break
+    fi
+    if ! kill -0 "$emulator_process" 2>/dev/null; then
+      echo "Android AVD '$avd' exited before becoming available." >&2
+      sed -n '1,120p' "$emulator_log" >&2
+      exit 1
     fi
     sleep 1
   done
@@ -164,6 +229,25 @@ done
 if [ "$($adb_command -s "$device" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; then
   echo "Android device '$device' did not finish booting." >&2
   exit 1
+fi
+
+if [ "$standalone_network_profile" = "local" ]; then
+  if [[ "$device" != emulator-* ]] || \
+    [ "$($adb_command -s "$device" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" != "1" ]; then
+    echo "The local standalone profile requires an Android emulator; use the tailnet profile for a physical phone." >&2
+    exit 1
+  fi
+  for local_port in 8088 9944 6300; do
+    "$adb_command" -s "$device" reverse "tcp:$local_port" "tcp:$local_port"
+  done
+  reverse_list="$($adb_command -s "$device" reverse --list)"
+  for local_port in 8088 9944 6300; do
+    if ! awk -v route="tcp:$local_port" '$2 == route && $3 == route { found = 1 } END { exit !found }' \
+      <<<"$reverse_list"; then
+      echo "Android emulator reverse route tcp:$local_port was not installed." >&2
+      exit 1
+    fi
+  done
 fi
 
 case "$($adb_command -s "$device" shell getprop ro.product.cpu.abi | tr -d '\r')" in

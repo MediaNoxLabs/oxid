@@ -101,8 +101,10 @@ thin-app build decision; no runtime brand configuration was added.
    build now derives and synchronizes a protected account through the real
    laptop stack, persists only public account coordinates, and proves with a
    physical Android tap that the contained Scan navigation target cannot steal
-   the wallet activation action. A compile-time localhost stack profile remains
-   follow-up work for simulator parity.
+   the wallet activation action. The separate compile-time localhost profile
+   sends iOS Simulator directly to loopback and gives Android emulator only the
+   three required `adb reverse` mappings; focused live-account flows distinguish
+   real synchronization from deterministic simulation.
 
 ## Phase 5 — Delight & polish (owner-gated)
 

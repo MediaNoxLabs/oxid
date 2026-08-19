@@ -66,6 +66,60 @@ if ! rg -q \
 fi
 
 if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-local >"$failure_log" 2>&1; then
+  echo "standalone-local compiled without standalone-development" >&2
+  exit 1
+fi
+if ! rg -q 'standalone-local requires standalone-development' "$failure_log"; then
+  echo "standalone-local failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-development,standalone-native-custody,standalone-local \
+  >"$failure_log" 2>&1; then
+  echo "standalone-local compiled with native custody" >&2
+  exit 1
+fi
+if ! rg -q \
+  'select exactly one standalone custody feature|standalone-local is incompatible with native custody' \
+  "$failure_log"; then
+  echo "native custody rejected standalone-local for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-development,standalone-local,standalone-tailnet \
+  >"$failure_log" 2>&1; then
+  echo "standalone-local and standalone-tailnet compiled together" >&2
+  exit 1
+fi
+if ! rg -q 'select at most one live standalone route profile' "$failure_log"; then
+  echo "combined local/tailnet profiles failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
+cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-development,standalone-local
+
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-development,standalone-local,ui-profile-demo \
+  >"$failure_log" 2>&1; then
+  echo "ui-profile-demo compiled with the local live-stack profile" >&2
+  exit 1
+fi
+if ! rg -q \
+  'ui-profile-demo requires deterministic standalone-development routes' \
+  "$failure_log"; then
+  echo "ui-profile-demo rejected the local profile for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
+if cargo check -p oxid-app --no-default-features \
   --features desktop,standalone-native-custody,standalone-tailnet \
   >"$failure_log" 2>&1; then
   echo "standalone-tailnet compiled with native custody" >&2
@@ -102,5 +156,11 @@ if rg -a -q 'OXID_STANDALONE_TAILNET_PROFILE' "$release_binary"; then
   echo "normal release binary contains the standalone tailnet profile" >&2
   exit 1
 fi
+if rg -a -q \
+  'OXID_STANDALONE_LOCAL_PROFILE|ws://127\.0\.0\.1:8088/api/v4/graphql/ws|http://127\.0\.0\.1:8088/api/v4/graphql|ws://127\.0\.0\.1:9944|http://127\.0\.0\.1:6300' \
+  "$release_binary"; then
+  echo "normal release binary contains the standalone local profile or its routes" >&2
+  exit 1
+fi
 
-echo "UI profile compile guards and dev/demo/tailnet release exclusion passed."
+echo "UI profile compile guards and dev/demo/local/tailnet release exclusion passed."

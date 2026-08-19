@@ -2073,30 +2073,51 @@ to silence the shell probe.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.
-- ADR-0097's `standalone-tailnet` profile is compile-time-only,
-  mobile-development-only, and incompatible with native custody. Never commit a
-  personal tailnet IP, MagicDNS name, standalone password, or endpoint. Use
-  `just standalone-phone-up` to keep Docker services on loopback and expose the
-  indexer/node/prover through Oxid-owned TLS Tailscale Serve routes; use
-  `just standalone-down` to remove only the Serve configuration marked as
-  Oxid-owned. The public undeployed placeholder validates composition only and
-  must be replaced by profile-derived account binding before sync. Every
-  persistent live/standalone composition must attach the same
-  `JsonWalletProfileRepository` instance to the Midnight adapter; otherwise
-  schema-v3 public account coordinates disappear on restart. The exact
-  `indexer-standalone:4.0.0` image rejects the newer singular `fee` query field.
-  The prototype's
+- ADR-0097's `standalone-local` and `standalone-tailnet` profiles are
+  compile-time-only development composition and incompatible with native
+  custody or each other. Never commit a personal tailnet IP, MagicDNS name,
+  standalone password, or endpoint. Use `just standalone-phone-up` to keep
+  Docker services on loopback and expose the indexer/node/prover through
+  Oxid-owned TLS Tailscale Serve routes; use `just standalone-down` to remove
+  only the Serve configuration marked as Oxid-owned. The localhost profile
+  embeds only the reviewed `undeployed` routes
+  `ws://127.0.0.1:8088/api/v4/graphql/ws`,
+  `http://127.0.0.1:8088/api/v4/graphql`, `ws://127.0.0.1:9944`, and
+  `http://127.0.0.1:6300`. iOS Simulator reaches laptop loopback directly;
+  Android emulator must be verified as qemu and use exact `adb reverse`
+  mappings for 8088, 9944, and 6300. Never use `10.0.2.2`: plaintext proving
+  is allowed only to syntactic loopback under ADR-0027. Leave those exact
+  reverse mappings in place for the installed development app; never remove
+  unrelated mappings with `reverse --remove-all`. The prototype exposes its
+  localhost/Tailscale entries through a runtime network picker; Oxid's
+  compile-time split is intentional hardening, not copied behavior. The public
+  undeployed placeholder validates composition only and must be replaced by
+  profile-derived account binding before sync. Every persistent live/standalone
+  composition must attach the same `JsonWalletProfileRepository` instance to
+  the Midnight adapter; otherwise schema-v3 public account coordinates
+  disappear on restart. The exact `indexer-standalone:4.0.0` image rejects the
+  newer singular `fee` query field. The prototype's
   `mobile-bench/wallet-core/queries/midnight-indexer/unshielded_transactions.subscription.graphql`
   deliberately requests neither fee field; Oxid's richer transaction history
   therefore uses the image-compatible `fees { paidFees }` shape. Keep that
   compatibility choice unless a pinned image/schema upgrade is made atomically.
-  Development custody remains
-  process-local: after process death, retain the public association but report
-  uninitialized protection and withhold the former addresses. This private
-  tailnet harness is not verified public App Link or production-discovery
-  evidence. The prototype's separate localhost/Tailscale routes share one
-  undeployed chain identity; Oxid's missing localhost equivalent must be a
-  compile-time development profile, never runtime-selected production behavior.
+  Development custody remains process-local: after process death, retain the
+  public association but report uninitialized protection and withhold the
+  former addresses. This private harness is not verified public App Link or
+  production-discovery evidence. Both live profiles share one undeployed chain
+  identity, the same typed adapters, and the same durable public
+  profile/account binding; only transport differs. Deterministic
+  `standalone-development` remains a third, distinct simulator mode.
+  Local acceptance evidence from 2026-08-20 is reproducible with `just
+  ios-standalone-local-smoke` and `just android-standalone-local-smoke`, run
+  sequentially. The iOS flow passed on iPhone 17 Pro / iOS 26.4; the Android
+  flow passed from a stopped `sdk_gphone64_arm64` AVD on Android 15 / API 35.
+  Both require a newly derived account to report `Live`, synchronized
+  live-source state and both address rails while excluding the simulation
+  labels and balances. Android additionally verifies exact reverse mappings for
+  ports 8088, 9944, and 6300. Emulator 34.2.16 can print a crash-report setup
+  notice to standard output before its `-list-avds` result, so AVD discovery
+  must accept only a returned name backed by an actual `.ini` file.
 - Physical Android identity-ingress evidence must use
   `scripts/test-android-identity-ingress-physical.sh`. It refuses virtual
   devices and a concurrently booted iOS simulator, never clears application

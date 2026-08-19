@@ -552,9 +552,10 @@ gaps, acceptance tests, and revised percentage are recorded in
 [the 2026-08-19 live parity audit](live-parity-audit-2026-08-19.md). Stale issue
 checkboxes are not evidence for that assessment.
 
-ADR-0097 reimplements the prototype's localhost/Tailscale transport aliasing
-without copying its personal endpoint, public genesis wallet, or runtime
-production switch. The physical Android tailnet build derives a protected
+ADR-0097 reimplements the prototype's runtime-selected localhost/Tailscale
+transport aliasing as separate compile-time development profiles without
+copying its personal endpoint, public genesis wallet, or runtime production
+switch. The physical Android tailnet build derives a protected
 profile account, synchronizes it through the laptop-hosted
 `indexer-standalone:4.0.0`, and persists only its public network/derivation
 coordinates through the same profile repository. A process restart truthfully
@@ -563,8 +564,11 @@ prototype's exact unshielded subscription requests neither fee field and
 therefore avoids the schema discrepancy. Oxid's richer history needs the value;
 the live image rejected the singular `fee` selection despite the reviewed
 schema advertising it, so Oxid uses the image-proven `fees { paidFees }`
-response shape. A separate compile-time localhost standalone simulator profile
-remains the next transport-parity slice.
+response shape. The localhost profile uses the same undeployed chain identity
+and shared profile binding with immutable loopback routes: iOS Simulator reaches
+them directly and Android emulator reaches them through exact `adb reverse`
+mappings for 8088, 9944, and 6300. It is distinct from deterministic simulation
+and cannot be combined with native custody, tailnet routes, or WebAssembly.
 
 ADR-0084 begins the accepted product-UX rollout without copying the
 prototype's ad-hoc stylesheet values. The migrated Dioxus surface now separates
