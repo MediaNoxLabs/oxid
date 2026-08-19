@@ -4,8 +4,8 @@ const endpoint = process.argv[2];
 const mode = process.argv[3] ?? "flow";
 const backupRecoverySecret = "oxidandroidbackup2026";
 
-if (!endpoint || !["flow", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "developer", "demo", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
-  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|developer|demo|native-authorize|native-custody|native-restored>");
+if (!endpoint || !["flow", "live-account", "prepare-live-account-touch", "live-account-after-touch", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "developer", "demo", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
+  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|live-account|prepare-live-account-touch|live-account-after-touch|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|developer|demo|native-authorize|native-custody|native-restored>");
 }
 
 const socket = new WebSocket(endpoint);
@@ -428,6 +428,66 @@ try {
       didRestored: true,
       credentialRestored: true,
     })}\n`);
+  } else if (mode === "prepare-live-account-touch") {
+    await createFreshProfile();
+    await openWallet();
+    await waitFor(
+      `Boolean(document.querySelector('button[aria-label="Activate protected Midnight account"]'))`,
+      "protected account activation control",
+    );
+    const geometry = await evaluate(`(() => {
+      const activation = document.querySelector('button[aria-label="Activate protected Midnight account"]');
+      activation.scrollIntoView({ block: 'center', inline: 'nearest' });
+      const scan = document.querySelector('button[aria-label="Scan identity QR code"]');
+      const nav = document.querySelector('.bottom-nav');
+      const rectangle = (element) => {
+        const bounds = element.getBoundingClientRect();
+        return { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom };
+      };
+      const activationBounds = rectangle(activation);
+      const navBounds = rectangle(nav);
+      const centerX = (activationBounds.left + activationBounds.right) / 2;
+      const centerY = (activationBounds.top + activationBounds.bottom) / 2;
+      const hit = document.elementFromPoint(centerX, centerY);
+      return {
+        activation: activationBounds,
+        nav: navBounds,
+        scan: rectangle(scan),
+        clearOfNav: activationBounds.bottom <= navBounds.top,
+        activationOwnsCenter: hit === activation || activation.contains(hit),
+      };
+    })()`);
+    if (!geometry.clearOfNav || !geometry.activationOwnsCenter) {
+      throw new Error(`Android activation touch geometry overlaps navigation: ${JSON.stringify(geometry)}`);
+    }
+    process.stdout.write(`${JSON.stringify({ mode, ...geometry })}\n`);
+  } else if (mode === "live-account-after-touch") {
+    await waitForButton("Use my receive address", 90_000);
+    const result = await evaluate(`(() => ({
+      live: document.querySelector('.status-pill')?.textContent.trim() === 'Live',
+      synchronized: document.querySelector('.trust-line')?.innerText.includes('Synced · Live source'),
+      scannerNoticeAbsent: !document.body.innerText.includes('QR scanning was cancelled.'),
+    }))()`);
+    if (!result.live || !result.synchronized || !result.scannerNoticeAbsent) {
+      throw new Error(`Android physical activation tap did not reach the wallet: ${JSON.stringify(result)}`);
+    }
+    process.stdout.write(`${JSON.stringify({ mode, ...result })}\n`);
+  } else if (mode === "live-account") {
+    await createFreshProfile();
+    await openWallet();
+    await clickButtonByLabel("Activate protected Midnight account");
+    await waitForButton("Use my receive address", 90_000);
+    const result = await evaluate(`(() => ({
+      live: document.querySelector('.status-pill')?.textContent.trim() === 'Live',
+      synchronized: document.querySelector('.trust-line')?.innerText.includes('Synced · Live source'),
+      unshielded: Boolean(document.querySelector('button[aria-label="Copy Unshielded receive address"]')),
+      shielded: Boolean(document.querySelector('button[aria-label="Copy Shielded receive address"]')),
+      failedClosed: !document.body.innerText.includes('Account state could not be loaded safely.'),
+    }))()`);
+    if (!result.live || !result.synchronized || !result.unshielded || !result.shielded || !result.failedClosed) {
+      throw new Error(`Android live account did not synchronize safely: ${JSON.stringify(result)}`);
+    }
+    process.stdout.write(`${JSON.stringify({ mode, ...result })}\n`);
   } else if (mode === "flow") {
     await createFreshProfile();
     await assertHomeComposition();
