@@ -5901,8 +5901,17 @@ name = "oxid-app"
 version = "0.1.0"
 dependencies = [
  "dioxus",
+ "oxid-brand-build",
  "oxid-composition",
  "oxid-ui-dioxus",
+]
+
+[[package]]
+name = "oxid-brand-build"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

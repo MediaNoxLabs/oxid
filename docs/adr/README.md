@@ -113,6 +113,7 @@ ADR status and delivery state answer different questions:
 | [0089](0089-compose-identity-consent-as-four-question-ceremonies.md) Compose identity consent as four-question ceremonies | Accepted | §§3–7, 9–13, 16, 18, 21; design Phase 2b; issues #2/#27/#65/#81 | OpenID4VP, OpenID4VCI, and SIOPv2 expose truthful WHO → WHAT → FROM → WHY review without changing exact consent intents or protocol authority |
 | [0090](0090-compose-onboarding-backup-receipts-and-account-sync.md) Compose onboarding, backup receipts, and account sync | Accepted | §§3–8, 12–13, 16, 18; design Phase 2c; issues #2/#33/#65/#82 | First launch forks create/restore, complete native export records the sole truthful backup receipt, and Wallet composes account/DUST/shielded refresh into one action without merging authority |
 | [0091](0091-present-receive-as-a-typed-address-sheet.md) Present receive as a typed address sheet | Accepted | §§3, 6–8, 12–13, 16, 18; Receive journey; issues #2/#65/#83 | Home opens a bounded modal over existing safe account and typed public-export ports; only protected returned address rails become selectable QR/Copy/Share destinations |
+| [0092](0092-generate-validated-build-time-brand-packs.md) Generate validated build-time brand packs | Accepted | §§1–6, 12–18, 21; white-label design/Phase 3; issues #2/#65/#84 | Default thin app generates immutable identity/CSS/logo from a strict pack; contrast, safety copy, manifest, and every enumerated Nix pack fail closed |
 
 ## Current boundaries
 
@@ -434,3 +435,11 @@ become selectable Public/Private/Fee destinations, and the selected full value
 alone feeds QR, Copy, and Share. Fixture/watch-only addresses fail closed to a
 Wallet activation path, while the existing headless address methods remain the
 UI-independent conformance harness.
+
+ADR-0092 moves brand identity out of shared Dioxus source and into immutable
+build-time packs selected by thin app crates. Closed metadata/token schemas,
+bounded safe SVG, two-scheme contrast, exact manifest purpose templates, fixed
+safety colors, and security-copy snapshots fail closed; generated semantic CSS
+and `BrandProfile` are the only UI inputs. Nix and `run.sh` enumerate every
+pack, while runtime brand selection and brand-controlled capability/security
+semantics remain forbidden.

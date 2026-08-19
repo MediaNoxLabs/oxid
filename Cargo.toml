@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "apps/oxid",
   "apps/oxid-headless",
+  "crates/brand-build",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
   "crates/adapters/openid4vci",
@@ -45,6 +46,7 @@ members = [
 default-members = [
   "apps/oxid",
   "apps/oxid-headless",
+  "crates/brand-build",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
   "crates/adapters/openid4vci",
@@ -160,6 +162,7 @@ oxid-adapter-storage-memory = { version = "=0.1.0", path = "crates/adapters/stor
 oxid-adapter-storage-mobile = { version = "=0.1.0", path = "crates/adapters/storage-mobile" }
 oxid-adapter-storage-dev = { version = "=0.1.0", path = "crates/adapters/storage-dev" }
 oxid-composition = { version = "=0.1.0", path = "crates/composition" }
+oxid-brand-build = { version = "=0.1.0", path = "crates/brand-build" }
 oxid-credential-application = { version = "=0.1.0", path = "crates/credential/application" }
 oxid-credential-domain = { version = "=0.1.0", path = "crates/credential/domain" }
 oxid-diagnostics-application = { version = "=0.1.0", path = "crates/diagnostics/application" }

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
+schema_version = 1
+product_name = "Oxid"
+wordmark = "oxid"
+tagline = "Identity wallet"
+bundle_identifier = "io.medianox.oxid"
+publisher = "MediaNoxLabs"
+logo = "assets/logo.svg"
+show_vault_card = true

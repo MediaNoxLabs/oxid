@@ -62,6 +62,7 @@ run_coverage_excluded_tests() {
 }
 
 run_ui() {
+  ./scripts/check-brand-packs.sh
   ./scripts/check-ui-css-classes.sh
   ./scripts/check-ui-design-tokens.sh
   ./scripts/check-ui-copy-labels.sh

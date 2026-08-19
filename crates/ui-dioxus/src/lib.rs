@@ -2,7 +2,10 @@
 
 #![forbid(unsafe_code)]
 
+mod brand;
 mod labels;
+
+pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
 
 use std::{fmt, future::Future, sync::Arc, time::Duration};
 
@@ -102,7 +105,7 @@ use zeroize::Zeroizing;
 
 use labels as ui;
 
-const STYLES: &str = include_str!("../assets/styles.css");
+const BASE_STYLES: &str = include_str!("../assets/styles.css");
 #[cfg(not(target_arch = "wasm32"))]
 const UI_BLOCKING_TASK_STACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -1878,10 +1881,11 @@ enum TransferRecovery {
     ReconcileUnknown,
 }
 
-/// Oxid's Dioxus incoming adapter and mobile-first application shell.
+/// Brand-agnostic Dioxus incoming adapter and mobile-first application shell.
 #[component]
 pub fn App() -> Element {
     let services = consume_context::<WalletUiServices>();
+    let brand = consume_context::<BrandProfile>();
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
     let mut navigation = use_signal(RouteStack::default);
     let mut profile_menu_open = use_signal(|| false);
@@ -1934,7 +1938,8 @@ pub fn App() -> Element {
     let session = profile_session.read().clone();
     let ProfileSessionState::Active(active_profile) = session else {
         return rsx! {
-            style { {STYLES} }
+            style { {brand.style_sheet()} }
+            style { {BASE_STYLES} }
             ProfileGateway {
                 state: session,
                 on_selected: move |profile| {
@@ -1967,7 +1972,7 @@ pub fn App() -> Element {
     };
     let active_primary = navigation.read().active_primary();
     let can_go_back = navigation.read().can_go_back();
-    let profile_monogram = profile_monogram(&active_profile.display_name);
+    let profile_monogram = profile_monogram(&active_profile.display_name, brand.wordmark());
     let identity_request_waiting = pending_identity_request.read().is_some();
     let home_scanner = services.qr_scanner();
     let home_router = services.route_identity_request();
@@ -1975,7 +1980,8 @@ pub fn App() -> Element {
     let navigation_router = services.route_identity_request();
 
     rsx! {
-        style { {STYLES} }
+        style { {brand.style_sheet()} }
+        style { {BASE_STYLES} }
         div {
             class: "app-shell",
             aria_hidden: if receive_sheet_open { "true" } else { "false" },
@@ -1994,7 +2000,7 @@ pub fn App() -> Element {
                 }
                 div { class: "app-header__title",
                     strong { "{active_route.title()}" }
-                    small { "oxid identity wallet" }
+                    small { "{brand.product_name()} {brand.tagline()}" }
                 }
                 if can_go_back {
                     button {
@@ -2009,10 +2015,10 @@ pub fn App() -> Element {
                         span { "Back" }
                     }
                 } else {
-                    span { class: "app-header__mark", aria_hidden: "true",
-                        span { class: "oxid-mark__dot" }
-                        span { class: "oxid-mark__dot" }
-                        span { class: "oxid-mark__dot" }
+                    span {
+                        class: "app-header__mark brand-mark",
+                        aria_hidden: "true",
+                        dangerous_inner_html: "{brand.logo_svg()}",
                     }
                 }
             }
@@ -2322,12 +2328,18 @@ fn profile_session_route(
     }
 }
 
-fn profile_monogram(display_name: &str) -> String {
+fn profile_monogram(display_name: &str, fallback: &str) -> String {
     display_name
         .chars()
         .find(|character| character.is_alphanumeric())
         .map(|character| character.to_uppercase().collect())
-        .unwrap_or_else(|| "O".to_owned())
+        .or_else(|| {
+            fallback
+                .chars()
+                .find(|character| character.is_alphanumeric())
+                .map(|character| character.to_uppercase().collect())
+        })
+        .unwrap_or_else(|| "W".to_owned())
 }
 
 #[component]
@@ -2336,6 +2348,7 @@ fn ProfileGateway(
     on_selected: EventHandler<WalletProfileView>,
     on_retry: EventHandler<MouseEvent>,
 ) -> Element {
+    let brand = consume_context::<BrandProfile>();
     let content = match state {
         ProfileSessionState::Loading => rsx! {
             section {
@@ -2384,14 +2397,14 @@ fn ProfileGateway(
         div { class: "app-shell onboarding-shell",
             header { class: "app-header onboarding-header",
                 div { class: "brand-button",
-                    span { class: "oxid-mark", aria_hidden: "true",
-                        span { class: "oxid-mark__dot" }
-                        span { class: "oxid-mark__dot" }
-                        span { class: "oxid-mark__dot" }
+                    span {
+                        class: "brand-mark",
+                        aria_hidden: "true",
+                        dangerous_inner_html: "{brand.logo_svg()}",
                     }
                     span { class: "wordmark",
-                        strong { "oxid" }
-                        small { "identity wallet" }
+                        strong { "{brand.wordmark()}" }
+                        small { "{brand.tagline()}" }
                     }
                 }
             }
@@ -2402,14 +2415,15 @@ fn ProfileGateway(
 
 #[component]
 fn OnboardingFlow(on_selected: EventHandler<WalletProfileView>) -> Element {
+    let brand = consume_context::<BrandProfile>();
     let mut step = use_signal(|| OnboardingStep::Welcome);
 
     match step.read().clone() {
         OnboardingStep::Welcome => rsx! {
             section { class: "page-heading onboarding-heading",
-                p { class: "eyebrow", "Welcome to Oxid" }
+                p { class: "eyebrow", "Welcome to {brand.product_name()}" }
                 h1 { "Your Midnight identity wallet" }
-                p { "Start a new wallet or restore one complete encrypted Oxid backup." }
+                p { "Start a new wallet or restore one complete encrypted {brand.product_name()} backup." }
             }
             section { class: "profile-card surface-card onboarding-choice-card",
                 button {
@@ -2478,6 +2492,7 @@ fn OnboardingProtection(
     on_continue: EventHandler<WalletProfileView>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let brand = consume_context::<BrandProfile>();
     let mut state = use_signal(|| OnboardingProtectionState::Idle);
     let busy = matches!(*state.read(), OnboardingProtectionState::Working);
     let failure = match state.read().clone() {
@@ -2495,7 +2510,7 @@ fn OnboardingProtection(
         }
         section { class: "profile-card surface-card",
             div { class: "profile-row__identity",
-                span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram(&profile.display_name)}" }
+                span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram(&profile.display_name, brand.wordmark())}" }
                 div {
                     strong { "{profile.display_name}" }
                     small { "Ready on this device" }
@@ -2543,6 +2558,8 @@ fn OnboardingProtection(
 #[component]
 fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let brand = consume_context::<BrandProfile>();
+    let security_copy = brand.security_copy();
     let mut recovery_secret = use_signal(|| Zeroizing::new(String::new()));
     let mut recovery_confirmed = use_signal(|| false);
     let mut recovery_state = use_signal(|| PortableBackupUiState::Idle);
@@ -2579,11 +2596,11 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
             p { class: "card-eyebrow", "Existing wallet" }
             h2 { "Restore your complete wallet" }
             p {
-                "Choose an encrypted Oxid complete-wallet backup. The profile, Midnight account associations, DID records, credentials, and protected keys are authenticated before this empty installation becomes active."
+                "Choose an encrypted {brand.product_name()} complete-wallet backup. The profile, Midnight account associations, DID records, credentials, and protected keys are authenticated before this empty installation becomes active."
             }
             p { class: "backup-warning",
                 strong { "Empty-install recovery only. " }
-                "Oxid never merges this archive into existing local wallet state. Chain-derived caches and transaction history rebuild from their authoritative sources."
+                "{security_copy.complete_recovery_warning}"
             }
             label { r#for: "onboarding-recovery-secret", "Recovery secret"
                 input {
@@ -2605,7 +2622,7 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
                     disabled: busy,
                     onchange: move |event| recovery_confirmed.set(event.checked()),
                 }
-                "I confirm complete recovery into this empty Oxid installation."
+                "{security_copy.complete_recovery_confirmation}"
             }
             button {
                 class: "secondary-action",
@@ -2704,6 +2721,7 @@ fn ProfileManager(
     on_selected: EventHandler<WalletProfileView>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let brand = consume_context::<BrandProfile>();
     let create_wallet_profile = services.create_wallet_profile();
     let select_wallet_profile = services.select_wallet_profile();
     let mut profile_list = use_signal(|| profiles);
@@ -2752,7 +2770,7 @@ fn ProfileManager(
                         rsx! {
                             article { class: if is_active { "profile-row active" } else { "profile-row" },
                                 div { class: "profile-row__identity",
-                                    span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram(&profile.display_name)}" }
+                                    span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram(&profile.display_name, brand.wordmark())}" }
                                     div {
                                         strong { "{profile.display_name}" }
                                         code { "{profile.id}" }
@@ -3333,6 +3351,7 @@ fn HomeProductStack(
     on_select_primary: EventHandler<PrimaryDestination>,
     on_open_vault: EventHandler<MouseEvent>,
 ) -> Element {
+    let brand = consume_context::<BrandProfile>();
     let night = balance_for(&account, "NIGHT")
         .map(|balance| ui::format_asset_amount(&balance.atomic_units, balance.decimals, "NIGHT"))
         .unwrap_or_else(|| "Balance unavailable".to_owned());
@@ -3402,27 +3421,29 @@ fn HomeProductStack(
                     }
                     span { class: "home-card__link", "Open Documents →" }
                 }
-                button {
-                    class: "home-card home-card--vault",
-                    r#type: "button",
-                    aria_label: "Open Passport Vault",
-                    onclick: move |event| on_open_vault.call(event),
-                    p { class: "card-eyebrow", "Passport Vault" }
-                    match vault {
-                        HomeResource::Ready(vault) => {
-                            let lock_count = vault.locks.len();
-                            let lock_label = if lock_count == 1 { "active lock" } else { "active locks" };
-                            rsx! {
-                                strong { class: "home-card__value", "{ui::format_night_amount(&vault.total_locked)}" }
-                                span { class: "home-card__detail", "{lock_count} {lock_label} · {ui::vault_contract_source(&vault.source)}" }
-                            }
-                        },
-                        HomeResource::Unavailable => rsx! {
-                            strong { class: "home-card__value", "Vault unavailable" }
-                            span { class: "home-card__detail", "Open Passport Vault to retry its public state." }
-                        },
+                if brand.show_vault_card() {
+                    button {
+                        class: "home-card home-card--vault",
+                        r#type: "button",
+                        aria_label: "Open Passport Vault",
+                        onclick: move |event| on_open_vault.call(event),
+                        p { class: "card-eyebrow", "Passport Vault" }
+                        match vault {
+                            HomeResource::Ready(vault) => {
+                                let lock_count = vault.locks.len();
+                                let lock_label = if lock_count == 1 { "active lock" } else { "active locks" };
+                                rsx! {
+                                    strong { class: "home-card__value", "{ui::format_night_amount(&vault.total_locked)}" }
+                                    span { class: "home-card__detail", "{lock_count} {lock_label} · {ui::vault_contract_source(&vault.source)}" }
+                                }
+                            },
+                            HomeResource::Unavailable => rsx! {
+                                strong { class: "home-card__value", "Vault unavailable" }
+                                span { class: "home-card__detail", "Open Passport Vault to retry its public state." }
+                            },
+                        }
+                        span { class: "home-card__link", "Open Vault →" }
                     }
-                    span { class: "home-card__link", "Open Vault →" }
                 }
             }
         }
@@ -3924,6 +3945,7 @@ fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element
 #[component]
 fn SubmissionRecoveryPane(profile_id: String) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let brand = consume_context::<BrandProfile>();
     let mut state = use_signal(|| SubmissionRecoveryPaneState::Loading);
     let load_services = services.clone();
     let load_profile = profile_id.clone();
@@ -3994,7 +4016,7 @@ fn SubmissionRecoveryPane(profile_id: String) -> Element {
                     aria_busy: if reconciling { "true" } else { "false" },
                     p { class: "card-eyebrow", "Latest transaction" }
                     h2 { "{ui::submission_heading(&submission.state)}" }
-                    p { "{ui::submission_note(&submission.state)}" }
+                    p { "{ui::submission_note(&submission.state, brand.product_name())}" }
                     dl { class: "preview-list",
                         div { dt { "State" } dd { "{ui::submission_state(&submission.state)}" } }
                         if let Some(mode) = submission.mode.as_deref() {
@@ -4826,6 +4848,7 @@ fn SendTransferPanel(
     night_balance: Option<oxid_wallet_application::WalletAssetBalanceView>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let brand = consume_context::<BrandProfile>();
     let mut panel = use_signal(|| TransferPanelState::Editing);
     let mut wizard_step = use_signal(|| SendWizardStep::Recipient);
     let mut confirmation_open = use_signal(|| false);
@@ -4859,7 +4882,7 @@ fn SendTransferPanel(
                         }
                         if !recipient.read().trim().is_empty() {
                             p { class: "send-wizard__recipient-note",
-                                "Address entered. Oxid validates its network and privacy kind before review."
+                                "Address entered. {brand.product_name()} validates its network and privacy kind before review."
                             }
                         }
                         button {
@@ -5061,7 +5084,7 @@ fn SendTransferPanel(
                 div {
                     p { class: "card-eyebrow", "Preparing" }
                     h2 { "Building the transfer preview" }
-                    p { "Oxid is validating the recipient, synchronized balance, and canonical Midnight transaction inputs." }
+                    p { "{brand.product_name()} is validating the recipient, synchronized balance, and canonical Midnight transaction inputs." }
                 }
             }
         },
@@ -5203,7 +5226,7 @@ fn SendTransferPanel(
                         code { title: "{preview.recipient_address}", "{recipient_label}" }
                     }
                     p { class: "consent-copy",
-                        "Oxid will prove locally, calculate the DUST fee, save recovery state, then submit."
+                        "{brand.product_name()} will prove locally, calculate the DUST fee, save recovery state, then submit."
                     }
                     button {
                         class: "primary-action",
@@ -5267,7 +5290,7 @@ fn SendTransferPanel(
                     div {
                         p { class: "card-eyebrow", "Sending" }
                         h2 { "Sending {format_transfer_asset(&preview.amount)}" }
-                        p { "Oxid is proving locally and saving recovery state. You can stop only before broadcast." }
+                        p { "{brand.product_name()} is proving locally and saving recovery state. You can stop only before broadcast." }
                         button {
                             class: "secondary-action",
                             r#type: "button",
@@ -5310,7 +5333,7 @@ fn SendTransferPanel(
                 div {
                     p { class: "card-eyebrow", "Cancelling" }
                     h2 { "Stopping {format_transfer_asset(&preview.amount)} safely" }
-                    p { "Oxid is waiting for the worker to acknowledge cancellation at a pre-broadcast boundary." }
+                    p { "{brand.product_name()} is waiting for the worker to acknowledge cancellation at a pre-broadcast boundary." }
                 }
             }
         },
@@ -5355,7 +5378,7 @@ fn SendTransferPanel(
             article { class: "surface-card transfer-card failed-card", role: "alert",
                 p { class: "card-eyebrow", "Transfer not completed" }
                 h2 { "{transfer_failure_heading(recovery)}" }
-                p { "{transfer_failure_note(recovery)}" }
+                p { "{transfer_failure_note(recovery, brand.product_name())}" }
                 if outcome_unknown {
                     a {
                         class: "secondary-action",
@@ -5493,16 +5516,17 @@ const fn transfer_failure_heading(recovery: TransferRecovery) -> &'static str {
     }
 }
 
-const fn transfer_failure_note(recovery: TransferRecovery) -> &'static str {
+fn transfer_failure_note(recovery: TransferRecovery, product_name: &str) -> String {
     match recovery {
         TransferRecovery::Edit => {
             "Check the recipient, amount, privacy choice, and current balance before trying again."
+                .to_owned()
         }
         TransferRecovery::RetryAuthorized => {
-            "Nothing was broadcast. The exact authorized transfer is still retained."
+            "Nothing was broadcast. The exact authorized transfer is still retained.".to_owned()
         }
         TransferRecovery::ReconcileUnknown => {
-            "This may have reached the network. Oxid will check before anything is sent again."
+            security_copy_snapshot(product_name).submission_ambiguity_warning
         }
     }
 }
@@ -6132,6 +6156,8 @@ fn passport_vault_call_recovery(retained_state: Option<&str>) -> PassportVaultCa
 #[component]
 fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<CredentialView>) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let brand = consume_context::<BrandProfile>();
+    let security_copy = brand.security_copy();
     let calls = services.passport_vault_contract_calls();
     let configured_address = calls.configured_contract_address_hex.clone();
     let mut contract_address = use_signal(|| configured_address.clone().unwrap_or_default());
@@ -6190,7 +6216,7 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
             if configured_address.is_some() {
                 p { class: "form-hint", "This deterministic fixture address is fixed by the development composition." }
             } else if calls.mode == "native_settlement" {
-                p { class: "form-hint", "Enter the reviewed deployment address. Oxid will authenticate state from configured finalized history." }
+                p { class: "form-hint", "Enter the reviewed deployment address. {brand.product_name()} will authenticate state from configured finalized history." }
             }
             div { class: "button-row",
                 button {
@@ -6522,7 +6548,7 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                     article { class: "info-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
                         p { class: "card-eyebrow", "Submitting" }
                         h2 { "Proving {ui::vault_operation(&preview.operation)}" }
-                        p { "Cancellation is safe only before the broadcast boundary. Oxid never blind-retries an ambiguous outcome." }
+                        p { "{security_copy.vault_broadcast_warning}" }
                         button {
                             class: "secondary-button",
                             r#type: "button",
@@ -6579,7 +6605,7 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                 article { class: "info-card", role: "status", aria_live: "polite",
                     p { class: "card-eyebrow", "Cancellation resolved" }
                     h2 { "{ui::vault_submission_heading(&submission.state)}" }
-                    p { "{ui::vault_submission_note(&submission.state)}" }
+                    p { "{ui::vault_submission_note(&submission.state, brand.product_name())}" }
                     dl { class: "preview-list",
                         div { dt { "State" } dd { "{ui::submission_state(&submission.state)}" } }
                         if let Some(mode) = submission.mode.as_deref() {
@@ -6611,7 +6637,7 @@ fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<Credentia
                         }
                         p { "{message}" }
                         if recovery == PassportVaultCallRecovery::ReconcileUnknown {
-                            p { "Oxid will not prepare or submit a replacement while broadcast may have occurred. Use the recovery card above." }
+                            p { "{brand.product_name()} will not prepare or submit a replacement while broadcast may have occurred. Use the recovery card above." }
                         } else if recovery == PassportVaultCallRecovery::RetryAuthorized {
                             button {
                                 class: "secondary-button",
@@ -6656,6 +6682,7 @@ fn PassportVaultCallPreviewCard(preview: Box<PassportVaultCallPreviewView>) -> E
 #[component]
 fn PassportVaultCallRecoveryPane(profile_id: String) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let brand = consume_context::<BrandProfile>();
     let calls = services.passport_vault_contract_calls();
     let mut state = use_signal(|| PassportVaultCallRecoveryPaneState::Loading);
     let load_calls = calls.clone();
@@ -6698,7 +6725,7 @@ fn PassportVaultCallRecoveryPane(profile_id: String) -> Element {
                 article { class: "info-card", role: "status", aria_live: "polite", aria_busy: if reconciling { "true" } else { "false" },
                     p { class: "card-eyebrow", "Latest vault call" }
                     h2 { "{ui::vault_submission_heading(&submission.state)}" }
-                    p { "{ui::vault_submission_note(&submission.state)}" }
+                    p { "{ui::vault_submission_note(&submission.state, brand.product_name())}" }
                     dl { class: "preview-list",
                         div { dt { "State" } dd { "{ui::submission_state(&submission.state)}" } }
                         if let Some(mode) = submission.mode.as_deref() {
@@ -7919,6 +7946,8 @@ fn CredentialPresentationPanel(
     pending_identity_request: Signal<Option<PendingIdentityRequest>>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let brand = consume_context::<BrandProfile>();
+    let security_copy = brand.security_copy();
     let mut request_input = use_signal(String::new);
     let mut preview = use_signal(|| None::<CredentialPresentationView>);
     let mut selected_credential_id = use_signal(|| None::<String>);
@@ -8122,7 +8151,7 @@ fn CredentialPresentationPanel(
                                 checked: consent(),
                                 onchange: move |event| consent.set(event.checked()),
                             }
-                            span { "I consent to use the selected credential and disclose exactly these claims to this verifier." }
+                            span { "{security_copy.presentation_consent}" }
                         }
                         div { class: "action-row",
                             button {
@@ -9342,6 +9371,8 @@ fn SettingsPage(
     on_open_diagnostics: EventHandler<MouseEvent>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let brand = consume_context::<BrandProfile>();
+    let security_copy = brand.security_copy();
     let mut security = use_signal(|| SecurityCapabilityState::Loading);
     let mut backup_receipt = use_signal(|| BackupReceiptState::Loading);
     let mut export_secret = use_signal(|| Zeroizing::new(String::new()));
@@ -9515,6 +9546,7 @@ fn SettingsPage(
             let export_profile_id = active_profile.id.clone();
             let recover_services = services.clone();
             let recover_profile_id = active_profile.id.clone();
+            let backup_receipt_failure = security_copy.backup_receipt_failure.clone();
             rsx! {
                 article { class: "backup-card surface-card",
                     div { class: "card-heading",
@@ -9529,7 +9561,7 @@ fn SettingsPage(
                     }
                     if let Some(receipt) = receipt {
                         p { class: "form-hint",
-                            "Latest completed export: {ui::format_epoch_millis(receipt.completed_at_millis)}. The external document can still be moved or deleted outside Oxid."
+                            "Latest completed export: {ui::format_epoch_millis(receipt.completed_at_millis)}. The external document can still be moved or deleted outside {brand.product_name()}."
                         }
                     } else if matches!(*backup_receipt.read(), BackupReceiptState::Failed) {
                         p { class: "form-hint", "Backup completion status could not be read." }
@@ -9607,6 +9639,7 @@ fn SettingsPage(
                                         let profile_id = export_profile_id.clone();
                                         let receipt_profile_id = profile_id.clone();
                                         let mut receipt_state = backup_receipt;
+                                        let backup_receipt_failure = backup_receipt_failure.clone();
                                         backup_state.set(PortableBackupUiState::Working(
                                             "Authorizing and encrypting the complete wallet",
                                         ));
@@ -9651,7 +9684,7 @@ fn SettingsPage(
                                                                 PortableBackupUiState::CompleteExported(receipt)
                                                             }
                                                             Ok(Err(_)) | Err(_) => PortableBackupUiState::Failed(
-                                                                "Backup document was saved, but Oxid could not record its completion status.".to_owned(),
+                                                                backup_receipt_failure,
                                                             ),
                                                         }
                                                     }
@@ -9679,9 +9712,9 @@ fn SettingsPage(
                                 h3 { "Legacy · {RECOVER_PORTABLE_WALLET_BACKUP_TITLE}" }
                                 p {
                                     if status.state_name() == "Uninitialized" {
-                                        "Choose an older custody-only Oxid backup. This compatibility path restores protected keys into this exact empty profile; complete-wallet recovery is available on the first-run screen."
+                                        "Choose an older custody-only {brand.product_name()} backup. This compatibility path restores protected keys into this exact empty profile; complete-wallet recovery is available on the first-run screen."
                                     } else {
-                                        "Legacy recovery is disabled because this profile is already initialized. Oxid never overwrites or merges existing custody."
+                                        "Legacy recovery is disabled because this profile is already initialized. {brand.product_name()} never overwrites or merges existing custody."
                                     }
                                 }
                                 label { r#for: "wallet-recovery-secret", "Recovery secret"
@@ -9811,7 +9844,7 @@ fn SettingsPage(
                                 div {
                                     strong { "Backup complete" }
                                     p { "Encrypted complete wallet backup saved at {ui::format_epoch_millis(receipt.completed_at_millis)}." }
-                                    small { "Oxid recorded this export, but cannot guarantee that the external document remains available." }
+                                    small { "{brand.product_name()} recorded this export, but cannot guarantee that the external document remains available." }
                                 }
                             }
                         },
@@ -10151,7 +10184,7 @@ mod tests {
             "Safe to try submission again"
         );
         assert!(
-            transfer_failure_note(TransferRecovery::RetryAuthorized)
+            transfer_failure_note(TransferRecovery::RetryAuthorized, "Oxid")
                 .contains("Nothing was broadcast")
         );
         assert_eq!(
@@ -10159,7 +10192,7 @@ mod tests {
             "Check with the network"
         );
         assert!(
-            transfer_failure_note(TransferRecovery::ReconcileUnknown)
+            transfer_failure_note(TransferRecovery::ReconcileUnknown, "Oxid")
                 .contains("check before anything is sent again")
         );
     }
@@ -10341,8 +10374,8 @@ mod tests {
 
     #[test]
     fn profile_monogram_uses_the_first_visible_character() {
-        assert_eq!(profile_monogram("  primary"), "P");
-        assert_eq!(profile_monogram("---"), "O");
+        assert_eq!(profile_monogram("  primary", "oxid"), "P");
+        assert_eq!(profile_monogram("---", "oxid"), "O");
     }
 
     #[test]
@@ -10650,9 +10683,9 @@ mod tests {
             ui::submission_state("outcome_unknown"),
             "Checking with the network…"
         );
-        assert!(ui::submission_note("broadcasting").contains("before broadcast"));
-        assert!(ui::submission_note("outcome_unknown").contains("not submit a duplicate"));
-        assert!(ui::submission_note("expired").contains("expired"));
+        assert!(ui::submission_note("broadcasting", "Oxid").contains("before broadcast"));
+        assert!(ui::submission_note("outcome_unknown", "Oxid").contains("not submit a duplicate"));
+        assert!(ui::submission_note("expired", "Oxid").contains("expired"));
     }
 
     fn vault_contract_inputs(operation: &str) -> PassportVaultContractInputs {
@@ -10756,7 +10789,9 @@ mod tests {
             passport_vault_call_recovery(Some("submitting")),
             PassportVaultCallRecovery::ReconcileUnknown
         );
-        assert!(ui::vault_submission_note("outcome_unknown").contains("not submit a duplicate"));
+        assert!(
+            ui::vault_submission_note("outcome_unknown", "Oxid").contains("not submit a duplicate")
+        );
     }
 
     #[test]

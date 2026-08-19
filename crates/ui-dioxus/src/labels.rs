@@ -122,26 +122,26 @@ pub(crate) fn submission_heading(value: &str) -> &'static str {
     }
 }
 
-pub(crate) fn submission_note(value: &str) -> &'static str {
+pub(crate) fn submission_note(value: &str, product_name: &str) -> String {
     match value {
         "included" => {
-            "The durable journal confirms this transfer was included in a finalized Midnight block."
+            "The durable journal confirms this transfer was included in a finalized Midnight block.".to_owned()
         }
         "broadcasting" => {
-            "This transaction was recorded before broadcast. Reconcile it before preparing a replacement."
+            "This transaction was recorded before broadcast. Reconcile it before preparing a replacement.".to_owned()
         }
-        "outcome_unknown" => {
-            "The transaction may have reached Midnight. Oxid will not submit a duplicate while it checks finalized history."
-        }
+        "outcome_unknown" => format!(
+            "The transaction may have reached Midnight. {product_name} will not submit a duplicate while it checks finalized history."
+        ),
         "rejected" => {
-            "Midnight finalized this submission as rejected. Its public record is retained for recovery history."
+            "Midnight finalized this submission as rejected. Its public record is retained for recovery history.".to_owned()
         }
-        "expired" => "The submission was not included before its bounded validity window expired.",
-        "cancelled" => "The submission stopped before broadcast and may be prepared again safely.",
-        "not_started" | "running" | "cancellation_requested" => {
-            "Oxid is still preparing this submission and has not crossed the broadcast boundary."
-        }
-        _ => "The transfer status could not be identified safely.",
+        "expired" => "The submission was not included before its bounded validity window expired.".to_owned(),
+        "cancelled" => "The submission stopped before broadcast and may be prepared again safely.".to_owned(),
+        "not_started" | "running" | "cancellation_requested" => format!(
+            "{product_name} is still preparing this submission and has not crossed the broadcast boundary."
+        ),
+        _ => "The transfer status could not be identified safely.".to_owned(),
     }
 }
 
@@ -504,22 +504,29 @@ pub(crate) fn vault_submission_heading(value: &str) -> &'static str {
     }
 }
 
-pub(crate) fn vault_submission_note(value: &str) -> &'static str {
+pub(crate) fn vault_submission_note(value: &str, product_name: &str) -> String {
     match value {
-        "included" => "Midnight reported finalized public inclusion metadata for this call.",
+        "included" => {
+            "Midnight reported finalized public inclusion metadata for this call.".to_owned()
+        }
         "broadcasting" => {
             "The broadcast boundary was crossed; cancellation and replacement are disabled."
+                .to_owned()
         }
-        "outcome_unknown" => {
-            "Oxid will not submit a duplicate while it checks finalized Midnight history."
+        "outcome_unknown" => format!(
+            "{product_name} will not submit a duplicate while it checks finalized Midnight history."
+        ),
+        "rejected" => {
+            "Finalized history rejected this attempt; prepare a fresh call if allowed.".to_owned()
         }
-        "rejected" => "Finalized history rejected this attempt; prepare a fresh call if allowed.",
-        "expired" => "The retained authorization expired before safe completion.",
-        "cancelled" => "The worker stopped before broadcast; the authorized call may be retried.",
+        "expired" => "The retained authorization expired before safe completion.".to_owned(),
+        "cancelled" => {
+            "The worker stopped before broadcast; the authorized call may be retried.".to_owned()
+        }
         "not_started" | "running" | "cancellation_requested" => {
-            "Proving or submission is still running."
+            "Proving or submission is still running.".to_owned()
         }
-        _ => "The vault-call status could not be identified safely.",
+        _ => "The vault-call status could not be identified safely.".to_owned(),
     }
 }
 

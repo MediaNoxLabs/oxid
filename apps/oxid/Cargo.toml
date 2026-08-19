@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
+build = "build.rs"
 
 [features]
 default = ["desktop"]
@@ -36,6 +37,9 @@ android-jni-exception-recovery-test = [
 dioxus = { workspace = true, features = ["launch"] }
 oxid-composition.workspace = true
 oxid-ui-dioxus.workspace = true
+
+[build-dependencies]
+oxid-brand-build.workspace = true
 
 [lints]
 workspace = true

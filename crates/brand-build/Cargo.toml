@@ -1,0 +1,16 @@
+[package]
+name = "oxid-brand-build"
+description = "Strict build-time brand-pack validation and code generation for Oxid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

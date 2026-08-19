@@ -5,20 +5,26 @@ typography personality, logo, product name, bundle identity — with zero
 runtime cost, no dead brand assets in the binary, and no ability to weaken
 the security surface.
 
-## Current reality (what we build on)
+## Delivered baseline
 
-- Styling is one static CSS file embedded via `include_str!` into a
-  `const STYLES` and injected inline; no manganis `asset!` usage, no
-  `build.rs` anywhere in the workspace.
-- Brand identity is scattered: a pure-markup logo (`.oxid-mark` + literal
-  `"oxid"` wordmark strings), ~18 hardcoded "Oxid" occurrences (mostly
-  inside safety-critical copy), and bundle identity in `apps/oxid/Dioxus.toml`
-  (`io.medianox.oxid`, publisher, iOS plist purpose strings).
-- Two repo idioms to reuse: mutually-exclusive cargo features enforced by
-  `compile_error!` (apps/oxid/src/main.rs), and env-vars-as-pure-Nix-inputs
-  (`OXID_*_ARTIFACTS_DIR` in nix/packages).
+ADR-0092 delivers the first pack without changing the default product:
 
-## Architecture (recommended): brand packs + thin per-brand app crates
+- `apps/oxid/build.rs` selects the literal `brands/oxid/` path, validates it
+  and the thin-app manifest, and generates CSS, SVG, and typed Rust into that
+  app's `OUT_DIR`;
+- `crates/ui-dioxus` embeds the generated layers through an immutable
+  `BrandProfile` context and contains no default-brand presentation strings;
+- safety copy and state colors stay code-owned, with a default-app snapshot
+  proving that only the validated product name is substituted;
+- `run.sh` validates the complete pack root and Nix exposes the checker, the
+  named default app, a root check, and one auto-enumerated check per pack.
+
+The repository currently has one release brand and therefore one thin app.
+App icons, splash resources, another partner app, compile-time licensed feature
+removal, and a user-selectable light theme remain later work; a pack directory
+alone is not a distributable application.
+
+## Architecture: brand packs + thin per-brand app crates
 
 ```text
 brands/<name>/
@@ -56,18 +62,21 @@ feature unification (features are additive; `--all-features` CI would merge
 brands) and bloats the matrix. A pure `OXID_BRAND` env var on a single crate
 can't give each brand its own bundle id/icons/store identity and makes brand
 enumeration invisible to CI. The pack + thin-crate model keeps store
-identity first-class, brands enumerable (`builtins.readDir ./brands` in Nix
-→ `packages.oxid-app-<brand>` + per-brand flake checks), and is idiomatic to
-this repo. An `OXID_BRAND` override may exist as a *developer convenience*
-for quick theme iteration on the default crate — never for releases.
+identity first-class and brands enumerable (`builtins.readDir ./brands` in Nix
+creates per-pack checks; each reviewed thin app exposes its named
+`packages.oxid-app-<brand>` build). This is idiomatic to the repository. A
+runtime or environment-selected `OXID_BRAND` override is not part of the
+accepted release or development boundary.
 
 ## The non-brandable surface (enforced by schema, documented by ADR)
 
 Brands may change: palette (within contrast gates), typography, radii,
 logo/mascot/icons, product name + tagline (as the only free-text fields,
 substituted into copy via a single `{product_name}` slot), cosmetic feature
-toggles (e.g. hide the Vault card where unlicensed — implemented as cargo
-features forwarded by the brand crate so dead code leaves the binary).
+visibility (the default pack's Vault-card flag is presentation-only and cannot
+grant capability). A licensed build that must remove code from its binary needs
+a separately reviewed Cargo feature forwarded by its thin app; the pack flag
+is not an authorization or licensing boundary.
 
 Brands may **never** change:
 - consent and confirmation semantics or their sentence templates;
@@ -90,6 +99,7 @@ apply to all app crates uniformly.
 
 ## CI
 
-Per-push: build the default brand + schema/contrast checks for all packs.
-Nightly: build every brand (auto-enumerated). Adding a brand = adding a
-directory + a thin crate; no workflow edits.
+Per-push: build the default brand plus schema/contrast checks for all packs.
+Nightly: validate every pack (auto-enumerated) and build every reviewed thin
+app. Adding a distributable brand requires a directory plus a thin crate; the
+pack-check matrix itself needs no workflow edit.

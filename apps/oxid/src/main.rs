@@ -2,6 +2,10 @@
 
 #![forbid(unsafe_code)]
 
+mod generated_brand {
+    include!(concat!(env!("OUT_DIR"), "/brand.rs"));
+}
+
 fn main() {
     #[cfg(all(
         feature = "android-jni-exception-recovery-test",
@@ -226,7 +230,9 @@ fn main() {
         ),
     );
 
-    let launcher = dioxus::LaunchBuilder::new().with_context(ui);
+    let launcher = dioxus::LaunchBuilder::new()
+        .with_context(ui)
+        .with_context(generated_brand::BRAND_PROFILE);
     #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         let app_links = application.identity_link_ingress();
@@ -254,4 +260,42 @@ fn main() {
     }
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     launcher.launch(oxid_ui_dioxus::App);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generated_brand::BRAND_PROFILE;
+
+    #[test]
+    fn default_brand_pins_identity_and_security_copy() {
+        assert_eq!(BRAND_PROFILE.product_name(), "Oxid");
+        assert_eq!(BRAND_PROFILE.bundle_identifier(), "io.medianox.oxid");
+        assert_eq!(BRAND_PROFILE.publisher(), "MediaNoxLabs");
+
+        let copy = BRAND_PROFILE.security_copy();
+        assert_eq!(
+            copy.presentation_consent,
+            "I consent to use the selected credential and disclose exactly these claims to this verifier."
+        );
+        assert_eq!(
+            copy.vault_broadcast_warning,
+            "Cancellation is safe only before the broadcast boundary. The wallet never blind-retries an ambiguous outcome."
+        );
+        assert_eq!(
+            copy.complete_recovery_warning,
+            "Oxid never merges this archive into existing local wallet state. Chain-derived caches and transaction history rebuild from their authoritative sources."
+        );
+        assert_eq!(
+            copy.complete_recovery_confirmation,
+            "I confirm complete recovery into this empty Oxid installation."
+        );
+        assert_eq!(
+            copy.submission_ambiguity_warning,
+            "This may have reached the network. Oxid will check before anything is sent again."
+        );
+        assert_eq!(
+            copy.backup_receipt_failure,
+            "Backup document was saved, but Oxid could not record its completion status."
+        );
+    }
 }

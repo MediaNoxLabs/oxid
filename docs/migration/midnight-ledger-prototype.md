@@ -553,6 +553,13 @@ fixed safety colors cannot be rebranded, dark remains the only selected scheme,
 and `run.sh` rejects raw component colors plus legacy type/radius/motion drift.
 This is a presentation-only prerequisite for the four-tab route shell and does
 not change wallet state machines, capability truth, consent, or composition.
+ADR-0092 realizes that boundary as a strict build-only pack: `apps/oxid`
+selects `brands/oxid`, generates semantic CSS/logo/typed identity into its own
+`OUT_DIR`, and injects only immutable presentation context. The closed schema,
+two-scheme contrast matrix, exact manifest purpose strings, safe-SVG checks,
+security-copy snapshots, and auto-enumerated Nix checks add reproducible
+white-label infrastructure without importing prototype branding, runtime brand
+selection, or any wallet/SSI authority.
 
 ## Gate for each later slice
 

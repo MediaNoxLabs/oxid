@@ -67,9 +67,11 @@ privacy operations remain the other called-out exception.
 
 ## Phase 3 — White-label infrastructure
 
-`crates/brand-build` + `brands/oxid/` as the first pack; contrast gate;
-per-brand snapshot tests of security copy; Nix brand enumeration; the
-non-brandable-surface ADR. (Build-layer change, no runtime code.)
+Delivered by ADR-0092 / issue #84: `crates/brand-build` plus `brands/oxid/` as
+the first pack, closed metadata/token and safe-SVG validation, two-scheme WCAG
+contrast gates, default-brand security-copy snapshots, exact thin-app manifest
+checks, and automatic `run.sh`/Nix brand enumeration. Brand selection remains a
+thin-app build decision; no runtime brand configuration was added.
 
 ## Phase 4 — UI profiles
 
@@ -117,7 +119,7 @@ One epic issue (this spec), then per-phase slices sized like existing
 issues: 0a tokens, 0b labeling layer, 0c credential chooser (bug), 1a route
 stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
 (delivered by #80), 2b consent sheet (delivered by #81), 2c onboarding + backup
-(delivered by #82), 2d receive sheet (delivered by #83), 3 white-label
-infra, 4a secret mode + native privacy ops, 4b dev/demo
-profiles, 5 per-item. Each remaining slice references the relevant spec section
-as its acceptance criteria, factory-work-item style.
+(delivered by #82), 2d receive sheet (delivered by #83), 3 white-label infra
+(delivered by #84), 4a secret mode + native privacy ops, 4b dev/demo profiles,
+5 per-item. Each remaining slice references the relevant spec section as its
+acceptance criteria, factory-work-item style.

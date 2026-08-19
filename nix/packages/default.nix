@@ -22,6 +22,83 @@
         inherit passportVaultCompactArtifacts;
         vaultContractStateFixture = ../../fixtures/passport-vault/contract-state-v1.hex;
       };
+      oxidApp = pkgs.rustPlatform.buildRustPackage {
+        pname = "oxid";
+        version = "0.1.0";
+        src = pkgs.lib.cleanSource ../..;
+
+        cargoLock = {
+          lockFile = ../../Cargo.lock;
+          outputHashes = {
+            "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
+          };
+        };
+        cargoBuildFlags = [
+          "-p"
+          "oxid-app"
+        ];
+        cargoTestFlags = [ "--workspace" ];
+        OXID_PASSPORT_VAULT_ARTIFACTS_DIR = passportVaultCompactArtifacts;
+        OXID_PASSPORT_VAULT_COMPOSER = "${passportVaultCallComposer}/bin/oxid-passport-vault-call-composer";
+
+        nativeBuildInputs = [ pkgs.pkg-config ] ++ linuxNativeBuildInputs;
+        buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;
+
+        # Per-push CI verifies tests once in the repository gate; the hermetic
+        # re-run lives in the checked variants below, exercised by
+        # `nix flake check` and the nightly workflow.
+        doCheck = false;
+        strictDeps = true;
+
+        meta = {
+          description = "Rust-first identity-native wallet foundation";
+          homepage = "https://github.com/MediaNoxLabs/oxid";
+          license = pkgs.lib.licenses.asl20;
+          mainProgram = "oxid-app";
+        };
+      };
+      brandCheck = pkgs.rustPlatform.buildRustPackage {
+        pname = "oxid-brand-check";
+        version = "0.1.0";
+        src = pkgs.lib.cleanSource ../..;
+
+        cargoLock = {
+          lockFile = ../../Cargo.lock;
+          outputHashes = {
+            "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
+          };
+        };
+        cargoBuildFlags = [
+          "-p"
+          "oxid-brand-build"
+          "--bin"
+          "oxid-brand-check"
+        ];
+        cargoTestFlags = [
+          "-p"
+          "oxid-brand-build"
+        ];
+        strictDeps = true;
+
+        meta = {
+          description = "Validated Oxid build-time brand-pack checker";
+          homepage = "https://github.com/MediaNoxLabs/oxid";
+          license = pkgs.lib.licenses.asl20;
+          mainProgram = "oxid-brand-check";
+        };
+      };
+      brandDirectories = pkgs.lib.filterAttrs (_name: kind: kind == "directory") (
+        builtins.readDir ../../brands
+      );
+      brandChecks = pkgs.lib.mapAttrs' (
+        name: _kind:
+        pkgs.lib.nameValuePair "brand-${name}" (
+          pkgs.runCommand "oxid-brand-${name}-check" { nativeBuildInputs = [ brandCheck ]; } ''
+            oxid-brand-check ${../../brands}/${name}
+            touch $out
+          ''
+        )
+      ) brandDirectories;
       linuxBuildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         pkgs.glib
         pkgs.gtk3
@@ -35,41 +112,11 @@
     in
     {
       packages = {
-        default = pkgs.rustPlatform.buildRustPackage {
-          pname = "oxid";
-          version = "0.1.0";
-          src = pkgs.lib.cleanSource ../..;
+        default = oxidApp;
 
-          cargoLock = {
-            lockFile = ../../Cargo.lock;
-            outputHashes = {
-              "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
-            };
-          };
-          cargoBuildFlags = [
-            "-p"
-            "oxid-app"
-          ];
-          cargoTestFlags = [ "--workspace" ];
-          OXID_PASSPORT_VAULT_ARTIFACTS_DIR = passportVaultCompactArtifacts;
-          OXID_PASSPORT_VAULT_COMPOSER = "${passportVaultCallComposer}/bin/oxid-passport-vault-call-composer";
+        oxid-app-oxid = oxidApp;
 
-          nativeBuildInputs = [ pkgs.pkg-config ] ++ linuxNativeBuildInputs;
-          buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;
-
-          # Per-push CI verifies tests once in the repository gate; the hermetic
-          # re-run lives in the checked variants below, exercised by
-          # `nix flake check` and the nightly workflow.
-          doCheck = false;
-          strictDeps = true;
-
-          meta = {
-            description = "Rust-first identity-native wallet foundation";
-            homepage = "https://github.com/MediaNoxLabs/oxid";
-            license = pkgs.lib.licenses.asl20;
-            mainProgram = "oxid-app";
-          };
-        };
+        brand-check = brandCheck;
 
         headless = pkgs.rustPlatform.buildRustPackage {
           pname = "oxid-headless";
@@ -118,15 +165,27 @@
       # The checked variants re-enable the hermetic sandbox test run that the
       # per-push package builds skip; `nix flake check` and the nightly
       # workflow build these.
-      checks.package = self'.packages.default.overrideAttrs (_: {
-        doCheck = true;
-      });
-      checks.headless = self'.packages.headless.overrideAttrs (_: {
-        doCheck = true;
-      });
-      checks.presentation-compact-artifacts = presentationCompactArtifacts;
-      checks.passport-vault-compact-artifacts = passportVaultCompactArtifacts;
-      checks.passport-vault-call-composer = passportVaultCallComposer;
+      checks = {
+        package = self'.packages.default.overrideAttrs (_: {
+          doCheck = true;
+        });
+        headless = self'.packages.headless.overrideAttrs (_: {
+          doCheck = true;
+        });
+        presentation-compact-artifacts = presentationCompactArtifacts;
+        passport-vault-compact-artifacts = passportVaultCompactArtifacts;
+        passport-vault-call-composer = passportVaultCallComposer;
+        brand-packs =
+          pkgs.runCommand "oxid-brand-packs-check"
+            {
+              nativeBuildInputs = [ brandCheck ];
+            }
+            ''
+              oxid-brand-check ${../../brands}
+              touch $out
+            '';
+      }
+      // brandChecks;
       formatter = pkgs.nixfmt;
     };
 }

@@ -342,6 +342,18 @@ address parses. The selected complete address alone feeds QR, Copy, and Share;
 the grouped/truncated preview is display-only. The UI-independent conformance
 surface remains `wallet.address.list|unshielded|shielded`, and modal selection
 state must not enter the headless protocol.
+ADR-0092 makes branding an immutable build input rather than shared UI source
+or runtime configuration. Each `brands/<slug>` pack is a closed, bounded,
+symlink-resistant metadata/token/SVG input; `oxid-brand-build` validates both
+dark/light contrast, rejects active/external SVG content, enforces exact
+code-owned manifest purpose templates, and generates only CSS/logo/a typed
+`BrandProfile` into the selecting thin app's `OUT_DIR`. Fixed safety colors,
+consent/recovery/submission templates, trust, protocols, custody, composition,
+and capability labels are never brandable. `show_vault_card` is cosmetic only,
+not authorization or binary removal; a licensed removal needs a separately
+reviewed thin-app Cargo feature. Runtime or environment-selected brands remain
+forbidden. Every real pack directory is auto-enumerated by Nix and the
+repository UI gate.
 The native controller contract suite injects only the already-decoded chain
 tip so pure Nix does not depend on HTTP loopback, then drives the real bounded
 GraphQL-WebSocket worker. It proves an owned event projects exactly 12 DUST,
@@ -935,10 +947,12 @@ Current package ownership:
 | `nix/packages/passport-vault-compact-artifacts.nix` | Immutable Passport Vault client/IR/key/parameter closure from the hash-checked distributed contract plus pinned VC and Compact toolchain revisions. |
 | `nix/packages/passport-vault-call-composer.nix` | One-request Node 24 outgoing adapter package with locked Midnight compatibility dependencies, Nix-fixed authenticated artifacts, closed typed operations, and real generated-client install checks. |
 | `tools/passport-vault-composer` | Internal generated-Compact composition implementation; never an incoming headless/mobile API and never a credential/private-witness bridge. |
+| `crates/brand-build` | Build-only closed-schema brand-pack validator, two-scheme contrast checker, safe-SVG/manifest gate, and `OUT_DIR` Rust/CSS/logo generator; never a runtime configuration or wallet capability crate. |
+| `brands` | Reviewed immutable presentation inputs only. Each real directory is one validated pack; no secrets, endpoints, trust, protocol, custody, confirmation, or application state. |
 | `crates/adapters/platform-system` | System clock, OS randomness, and typed public receive-address export implementations. |
-| `crates/ui-dioxus` | Dioxus incoming adapter, bounded mobile route stack, safe read-only Home projection, exact amount/consent presentation state, public receive-QR rendering, standalone Passport Vault UI, and truthfully labelled typed native vault-call review/authorization/submission/cancellation/reconciliation. |
+| `crates/ui-dioxus` | Brand-agnostic Dioxus incoming adapter, immutable `BrandProfile` presentation context, bounded mobile route stack, safe read-only Home projection, exact amount/consent presentation state, public receive-QR rendering, standalone Passport Vault UI, and truthfully labelled typed native vault-call review/authorization/submission/cancellation/reconciliation. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
-| `apps/oxid` | Executable shell and platform launch point. |
+| `apps/oxid` | Default-brand thin executable shell, literal `brands/oxid` build selection, and platform launch point. |
 | `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |
 
 Every static `class: "..."` token in the Dioxus adapter must have a selector
@@ -947,8 +961,11 @@ enforces that contract from the UI/repository gate. ADR-0084 also requires the
 complete dark/light brand schema and fixed semantic component vocabulary;
 `scripts/check-ui-design-tokens.sh` rejects raw component colors, legacy
 palette aliases, and ad-hoc type sizes, radii, or motion durations. Safety
-colors are not brandable and dark is still the only selected scheme. Keep
-responsive dimensions and safe-area geometry explicit, but put component
+colors are not brandable and dark is still the only selected scheme.
+`scripts/check-brand-packs.sh` validates the complete pack root before UI
+compilation; Nix exposes `packages.brand-check`, `packages.oxid-app-oxid`, the
+root `checks.brand-packs`, and one `checks.brand-<slug>` per real directory.
+Keep responsive dimensions and safe-area geometry explicit, but put component
 spacing on `--space-1..8`. The Passport Vault compatibility classes remain
 mapped to the shared card/action/form rules; do not add a third vocabulary.
 ADR-0085 makes `crates/ui-dioxus/src/labels.rs` the user-facing machine-value
@@ -1738,6 +1755,9 @@ to silence the shell probe.
   adapters; incoming adapters and executable shells are excluded from this core
   threshold and remain test/compile-gated.
 - `scripts/check-architecture.sh` enforces the initial inward dependency graph.
+- `scripts/check-brand-packs.sh` plus the auto-enumerated Nix brand checks must
+  reject schema, path/SVG, two-scheme contrast, and pack-root drift before a
+  thin app ships.
 - `scripts/check-midnight-sources.sh` permits known Midnight ledger/proof crates
   only from the official GitHub repositories with full immutable `rev` pins.
   ADR-0015/ADR-0026 and the dependency reviews remain the gate.

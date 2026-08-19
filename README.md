@@ -104,6 +104,18 @@ Launch the desktop shell:
 cargo run -p oxid-app
 ```
 
+The default thin app validates and embeds `brands/oxid` at build time. Check
+every pack, or inspect the default generated semantic CSS, with:
+
+```bash
+./scripts/check-brand-packs.sh
+cargo run -p oxid-brand-build --bin oxid-brand-check -- --css brands/oxid
+```
+
+Brand packs cannot select wallet adapters, protocols, custody, trust, consent,
+or safety copy. See [ADR-0092](docs/adr/0092-generate-validated-build-time-brand-packs.md)
+and the [white-label design](docs/design/white-label.md).
+
 Launch the fully capable standalone mobile application with deterministic,
 process-local development custody:
 

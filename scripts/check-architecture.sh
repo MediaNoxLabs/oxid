@@ -106,6 +106,7 @@ check_workspace_dependencies --all-kinds oxid-presentation-application \
   oxid-foundation oxid-presentation-domain
 check_workspace_dependencies --all-kinds oxid-passport-vault-application \
   oxid-foundation oxid-passport-vault-domain oxid-platform-ports
+check_workspace_dependencies oxid-brand-build
 check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-credential-application oxid-credential-domain oxid-foundation \
   oxid-identity-application oxid-identity-domain \
@@ -185,7 +186,7 @@ check_workspace_dependencies oxid-composition \
   oxid-passport-vault-application oxid-platform-ports oxid-presentation-application \
   oxid-protocol-application \
   oxid-wallet-application
-check_workspace_dependencies oxid-app oxid-composition oxid-ui-dioxus
+check_workspace_dependencies oxid-app oxid-brand-build oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
   oxid-composition oxid-credential-application \
   oxid-diagnostics-application oxid-identity-application oxid-identity-domain \

@@ -12,6 +12,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 stylesheet="$repo_root/crates/ui-dioxus/assets/styles.css"
 scratch="$(mktemp -d)"
 trap 'rm -r "$scratch"' EXIT
+brand_stylesheet="$scratch/brand.css"
+
+cargo run --quiet -p oxid-brand-build --bin oxid-brand-check -- \
+  --css "$repo_root/brands/oxid" >"$brand_stylesheet"
 
 required_tokens='surface-0 surface-1 surface-2 surface-3 surface-4 surface-raised surface-sheet
 text-strong text text-soft text-muted
@@ -23,7 +27,7 @@ radius-card radius-control radius-pill
 motion-fast motion-base motion-slow shadow-card shadow-sheet'
 
 for token in $required_tokens; do
-  if ! rg --quiet --fixed-strings -- "--${token}:" "$stylesheet"; then
+  if ! rg --quiet --fixed-strings -- "--${token}:" "$stylesheet" "$brand_stylesheet"; then
     echo "Required semantic UI token is missing: --${token}" >&2
     exit 1
   fi
@@ -36,19 +40,15 @@ for token in \
   brand-light-surface-0 brand-light-surface-1 brand-light-surface-2 \
   brand-light-surface-3 brand-light-surface-4 brand-light-text-strong \
   brand-light-text brand-light-text-soft brand-light-text-muted; do
-  if ! rg --quiet --fixed-strings -- "--${token}:" "$stylesheet"; then
+  if ! rg --quiet --fixed-strings -- "--${token}:" "$brand_stylesheet"; then
     echo "Required dark/light brand token is missing: --${token}" >&2
     exit 1
   fi
 done
 
-# Raw palette values are permitted only in the explicit token definition
-# block. Component selectors must consume semantic variables or color-mix.
-awk '
-  /OXID DESIGN TOKENS START/ { in_tokens = 1; next }
-  /OXID DESIGN TOKENS END/ { in_tokens = 0; next }
-  !in_tokens { print }
-' "$stylesheet" >"$scratch/component.css"
+# Raw palette values are generated into the build-selected brand stylesheet.
+# The shared component stylesheet must consume semantic variables or color-mix.
+cp "$stylesheet" "$scratch/component.css"
 
 raw_colors="$({
   rg --line-number --pcre2 '#[0-9A-Fa-f]{3,8}\b|rgba?\(' "$scratch/component.css" || true
@@ -69,7 +69,8 @@ if [[ -n "$legacy_tokens" ]]; then
 fi
 
 brand_bypass="$({
-  rg --line-number --pcre2 -- 'var\(--(?:brand|fixed)-' "$scratch/component.css" || true
+  rg --line-number --pcre2 -- 'var\(--(?:brand|fixed)-' "$scratch/component.css" |
+    rg --invert-match --fixed-strings 'var(--brand-font-family)' || true
 })"
 if [[ -n "$brand_bypass" ]]; then
   echo "Components must not bypass semantic tokens with brand/fixed primitives:" >&2

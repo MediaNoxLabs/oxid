@@ -70,3 +70,11 @@ a stricter protected-account admission rule: simulation fixtures and
 watch-only fallbacks cannot be presented as holder-controlled destinations.
 The existing headless `wallet.address.list|unshielded|shielded` methods remain
 the UI-independent conformance surface; no modal state enters the protocol.
+
+ADR-0092 then replaces the reauthored shell's embedded Oxid palette, mark, and
+product strings with a validated default build-time pack. This does not import
+prototype branding or create runtime configuration: shared components consume
+only generated semantic CSS plus an immutable `BrandProfile`, while fixed
+safety colors and code-owned consent/recovery/submission templates remain
+identical across brands. The default output preserves the established Oxid
+appearance and the original wallet/SSI state machines remain untouched.
