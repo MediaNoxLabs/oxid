@@ -1311,7 +1311,7 @@ struct GraphqlTransaction {
     #[serde(rename = "__typename")]
     typename: String,
     transaction_result: Option<GraphqlTransactionResult>,
-    fee: Option<String>,
+    fees: Option<GraphqlTransactionFees>,
 }
 
 #[derive(Deserialize)]
@@ -1323,6 +1323,12 @@ struct GraphqlBlock {
 #[derive(Deserialize)]
 struct GraphqlTransactionResult {
     status: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GraphqlTransactionFees {
+    paid_fees: String,
 }
 
 #[derive(Deserialize)]
@@ -1382,8 +1388,9 @@ fn decode_event(
                         _ => return Err(IndexerTransportError::InvalidData),
                     };
                     let fee = transaction
-                        .fee
+                        .fees
                         .ok_or(IndexerTransportError::InvalidData)?
+                        .paid_fees
                         .parse::<u128>()
                         .map_err(|_| IndexerTransportError::InvalidData)?;
                     (status, Some(fee))
@@ -1854,6 +1861,12 @@ mod tests {
     }
 
     #[test]
+    fn standalone_query_matches_the_reviewed_indexer_v4_fee_shape() {
+        assert!(INDEXER_QUERY.contains("fees {\n            paidFees\n          }"));
+        assert!(!INDEXER_QUERY.lines().any(|line| line.trim() == "fee"));
+    }
+
+    #[test]
     fn progress_first_fold_replays_create_and_spend_events_exactly() {
         let mut fold = SnapshotAccumulator::default();
         fold.apply(IndexerEvent::Progress { target: 4 })
@@ -2015,7 +2028,7 @@ mod tests {
                         "block": { "height": 1, "timestamp": 2 },
                         "__typename": "RegularTransaction",
                         "transactionResult": { "status": "SUCCESS" },
-                        "fee": "3"
+                        "fees": { "paidFees": "3" }
                     },
                     "createdUtxos": [{
                         "owner": owner,

@@ -23,7 +23,9 @@ subscription OxidUnshieldedTransactions(
           transactionResult {
             status
           }
-          fee
+          fees {
+            paidFees
+          }
         }
       }
       createdUtxos {
