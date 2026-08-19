@@ -35,6 +35,15 @@ headless:
 standalone-recovery-smoke:
     cargo test -p oxid-composition standalone_composition_recovers_a_complete_wallet_into_a_fresh_instance
 
+standalone-up:
+    ./scripts/standalone-up.sh local
+
+standalone-phone-up:
+    ./scripts/standalone-up.sh phone
+
+standalone-down:
+    ./scripts/standalone-down.sh
+
 ios-run:
     ./scripts/run-ios-simulator.sh
 
@@ -70,6 +79,12 @@ android-dev:
 
 android-demo:
     OXID_UI_PROFILE=demo ./scripts/run-android-emulator.sh
+
+android-phone:
+    ./scripts/run-android-tailnet.sh
+
+android-phone-ingress mode:
+    ./scripts/test-android-identity-ingress-physical.sh {{quote(mode)}}
 
 android-dev-smoke:
     ./scripts/test-android-developer-profile.sh

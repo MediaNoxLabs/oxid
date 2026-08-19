@@ -1607,6 +1607,37 @@ pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> Applicat
     )
 }
 
+/// Wires the mobile development harness to an explicitly build-selected
+/// standalone stack without making routes part of the network catalog.
+///
+/// The app crate exposes this constructor only behind its opt-in
+/// `standalone-tailnet` feature. Normal and native-custody mobile composition
+/// never call it.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn compose_mobile_development_standalone_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
+    let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
+        .map_err(|_| {
+            HeadlessCompositionError::InvalidMidnightStandaloneConfiguration(
+                MidnightStandaloneConfigError::Indexer(MidnightIndexerConfigError::InvalidAddress),
+            )
+        })?;
+    let config = MidnightStandaloneConfig::new(
+        "undeployed",
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+        placeholder.value(),
+    )
+    .map_err(HeadlessCompositionError::InvalidMidnightStandaloneConfiguration)?;
+    Ok(compose_headless_standalone(config))
+}
+
 /// Wires the complete standalone stack with durable public account checkpoints.
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
@@ -3737,6 +3768,33 @@ mod tests {
 
         drop(compose());
         drop(compose_headless());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn mobile_development_routes_require_tls_for_remote_proving() {
+        drop(
+            compose_mobile_development_standalone_from_routes(
+                "wss://laptop.example.invalid:8443/api/v4/graphql/ws",
+                "https://laptop.example.invalid:8443/api/v4/graphql",
+                "wss://laptop.example.invalid:10000",
+                "https://laptop.example.invalid",
+            )
+            .expect("explicit TLS standalone routes compose without network I/O"),
+        );
+        assert!(matches!(
+            compose_mobile_development_standalone_from_routes(
+                "ws://100.64.0.1:8088/api/v4/graphql/ws",
+                "http://100.64.0.1:8088/api/v4/graphql",
+                "ws://100.64.0.1:9944",
+                "http://100.64.0.1:6300",
+            ),
+            Err(
+                HeadlessCompositionError::InvalidMidnightStandaloneConfiguration(
+                    MidnightStandaloneConfigError::InvalidProofEndpoint
+                )
+            )
+        ));
     }
 
     #[test]

@@ -2043,6 +2043,22 @@ to silence the shell probe.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.
+- ADR-0097's `standalone-tailnet` profile is compile-time-only,
+  mobile-development-only, and incompatible with native custody. Never commit a
+  personal tailnet IP, MagicDNS name, standalone password, or endpoint. Use
+  `just standalone-phone-up` to keep Docker services on loopback and expose the
+  indexer/node/prover through Oxid-owned TLS Tailscale Serve routes; use
+  `just standalone-down` to remove only the Serve configuration marked as
+  Oxid-owned. The public undeployed placeholder validates composition only and
+  must be replaced by profile-derived account binding before sync. This private
+  tailnet harness is not verified public App Link or production-discovery
+  evidence.
+- Physical Android identity-ingress evidence must use
+  `scripts/test-android-identity-ingress-physical.sh`. It refuses virtual
+  devices and a concurrently booted iOS simulator, never clears application
+  data, and separates scan preparation from holder-controlled scan,
+  cancellation, and timeout actions. Its QR is a public deterministic offer;
+  do not commit device serials or generated `target/physical-evidence` files.
 - Use opaque key references. Key-generation and signing ports must not return
   raw private keys to application or UI layers.
 - Record every significant dependency using the review template in the

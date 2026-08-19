@@ -52,6 +52,33 @@ if ! rg -q 'select at most one non-user UI profile' "$failure_log"; then
   exit 1
 fi
 
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-tailnet >"$failure_log" 2>&1; then
+  echo "standalone-tailnet compiled without the development mobile composition" >&2
+  exit 1
+fi
+if ! rg -q \
+  'standalone-tailnet requires standalone-development on iOS or Android' \
+  "$failure_log"; then
+  echo "standalone-tailnet failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-native-custody,standalone-tailnet \
+  >"$failure_log" 2>&1; then
+  echo "standalone-tailnet compiled with native custody" >&2
+  exit 1
+fi
+if ! rg -q \
+  'standalone-tailnet requires standalone-development on iOS or Android' \
+  "$failure_log"; then
+  echo "native custody rejected standalone-tailnet for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
 # Inspect the actual normal release binary, not only Cargo feature metadata.
 # The stable marker is emitted into every developer-profile UI and must be
 # absent from a distributed default artifact.
@@ -71,5 +98,9 @@ if rg -a -q \
   echo "normal release binary contains demo-profile code or fixture markers" >&2
   exit 1
 fi
+if rg -a -q 'OXID_STANDALONE_TAILNET_PROFILE' "$release_binary"; then
+  echo "normal release binary contains the standalone tailnet profile" >&2
+  exit 1
+fi
 
-echo "UI profile compile guards and dev/demo release exclusion passed."
+echo "UI profile compile guards and dev/demo/tailnet release exclusion passed."

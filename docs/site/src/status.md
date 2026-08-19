@@ -12,7 +12,7 @@ and the repository [issue backlog](https://github.com/MediaNoxLabs/oxid/issues).
 | --- | --- |
 | **Production composition** | What a plain build wires. Fails closed for every capability that has not passed review — today that means profile management plus native mobile custody initialization, and nothing else. |
 | **Standalone development** | Explicit opt-in composition for simulators and headless runs: process-local development custody, deterministic simulations, and the real standalone SSI flows. |
-| **Live standalone** | Standalone composition pointed, via explicit environment configuration, at real Midnight infrastructure (indexer, node, proof parameters). |
+| **Live standalone** | Standalone composition pointed, via explicit headless environment configuration or the compile-time mobile tailnet profile, at real Midnight infrastructure (indexer, node, proof parameters). |
 
 ## Wallet (Midnight) capabilities
 
@@ -28,6 +28,7 @@ and the repository [issue backlog](https://github.com/MediaNoxLabs/oxid/issues).
 | Portable + complete-wallet encrypted backup/recovery | Functional with hardened v3 KDF policy and native document pickers |
 | Secret-safe runtime diagnostics | Bounded process-local closed codes in headless and Dioxus; telemetry, payloads, upload, and persistence are off |
 | Developer/demo UI profiles | Separate compile-time standalone profiles; normal release marker scan proves both are excluded |
+| Physical Android standalone routes | Compile-time development-only MagicDNS/TLS profile and repository-owned loopback stack harness; device/live-flow evidence remains separate |
 
 ## Identity (SSI) capabilities
 

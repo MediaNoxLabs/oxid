@@ -39,6 +39,15 @@ fn main() {
     compile_error!("select at most one non-user UI profile");
 
     #[cfg(all(
+        feature = "standalone-tailnet",
+        not(all(
+            feature = "standalone-development",
+            any(target_os = "ios", target_os = "android")
+        ))
+    ))]
+    compile_error!("standalone-tailnet requires standalone-development on iOS or Android");
+
+    #[cfg(all(
         feature = "standalone-native-proving-artifacts",
         not(any(target_os = "ios", target_os = "android"))
     ))]
@@ -64,6 +73,24 @@ fn main() {
     #[cfg(all(
         feature = "standalone-development",
         not(feature = "standalone-native-custody"),
+        feature = "standalone-tailnet",
+        not(target_arch = "wasm32")
+    ))]
+    let application = {
+        const OXID_STANDALONE_TAILNET_PROFILE: &str = "OXID_STANDALONE_TAILNET_PROFILE";
+        let _ = OXID_STANDALONE_TAILNET_PROFILE;
+        oxid_composition::compose_mobile_development_standalone_from_routes(
+            env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
+            env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
+            env!("OXID_BUILD_MIDNIGHT_NODE_WS_URL"),
+            env!("OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL"),
+        )
+        .unwrap_or_else(|error| panic!("standalone wallet configuration is invalid: {error}"))
+    };
+    #[cfg(all(
+        feature = "standalone-development",
+        not(feature = "standalone-native-custody"),
+        not(feature = "standalone-tailnet"),
         not(target_arch = "wasm32")
     ))]
     let application = oxid_composition::compose_headless_from_environment()

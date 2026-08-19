@@ -7,12 +7,13 @@ const modes = new Set([
   "assert-cancelled",
   "assert-timeout",
   "assert-unavailable",
+  "assert-qr-offer",
   "assert-app-link",
 ]);
 if (!endpoint || !modes.has(mode)) {
   throw new Error(
     "usage: node android-identity-ingress.mjs <cdp-websocket-url> " +
-      "<prepare-scan|assert-cancelled|assert-timeout|assert-unavailable|assert-app-link>",
+      "<prepare-scan|assert-cancelled|assert-timeout|assert-unavailable|assert-qr-offer|assert-app-link>",
   );
 }
 
@@ -99,6 +100,20 @@ try {
   await ensureProfile();
   if (mode === "prepare-scan") {
     await click("Scan");
+  } else if (mode === "assert-qr-offer") {
+    await waitFor(
+      'document.body.innerText.includes("QR recognized as a credential offer. Review the request before consent.")',
+      "strict QR review boundary",
+    );
+    const routedOnlyToOffer = await evaluate(`
+      !document.body.innerText.includes("recognized as a DID login request")
+      && !document.body.innerText.includes("recognized as a credential presentation")
+      && Boolean(${button("Dismiss identity request")})
+    `);
+    if (!routedOnlyToOffer) {
+      throw new Error("QR payload entered an unrelated identity review");
+    }
+    await click("Dismiss identity request");
   } else if (mode === "assert-app-link") {
     await waitFor(
       'document.body.innerText.includes("App link recognized as a credential offer. Review the request before consent.")',

@@ -23,6 +23,10 @@ ui-profile-demo = ["oxid-ui-dioxus/ui-profile-demo"]
 # Explicit simulator/emulator composition. This never changes the default
 # production-facing composition selected by a normal application build.
 standalone-development = []
+# Opt-in physical-device route profile for a TLS-terminated standalone stack.
+# Every route is supplied at compile time by the repository launcher; normal
+# and native-custody builds cannot select it.
+standalone-tailnet = []
 # Explicit simulator/emulator composition using production native custody and
 # deterministic standalone wallet/SSI adapters.
 standalone-native-custody = []

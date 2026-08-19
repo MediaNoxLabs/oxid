@@ -47,6 +47,33 @@ case "$ui_profile" in
     ;;
 esac
 
+standalone_network_profile="${OXID_STANDALONE_NETWORK_PROFILE:-simulated}"
+case "$standalone_network_profile" in
+  simulated)
+    ;;
+  tailnet)
+    if [ "$mobile_custody" != "development" ]; then
+      echo "OXID_STANDALONE_NETWORK_PROFILE=tailnet requires development custody." >&2
+      exit 1
+    fi
+    for build_value in \
+      OXID_BUILD_MIDNIGHT_INDEXER_WS_URL \
+      OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL \
+      OXID_BUILD_MIDNIGHT_NODE_WS_URL \
+      OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL; do
+      if [ -z "${!build_value:-}" ]; then
+        echo "$build_value is required for the tailnet build profile." >&2
+        exit 1
+      fi
+    done
+    mobile_features="$mobile_features,standalone-tailnet"
+    ;;
+  *)
+    echo "OXID_STANDALONE_NETWORK_PROFILE must be 'simulated' or 'tailnet'." >&2
+    exit 1
+    ;;
+esac
+
 android_jni_recovery_test="${OXID_ANDROID_JNI_RECOVERY_TEST:-0}"
 case "$android_jni_recovery_test" in
   0)
@@ -202,4 +229,4 @@ if [ -z "$($adb_command -s "$device" shell pidof io.medianox.oxid | tr -d '\r')"
   exit 1
 fi
 
-echo "Launched io.medianox.oxid ($ui_profile profile, $mobile_custody custody) on Android device $device."
+echo "Launched io.medianox.oxid ($ui_profile profile, $mobile_custody custody, $standalone_network_profile network) on Android device $device."

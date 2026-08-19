@@ -65,6 +65,21 @@ pub use transaction::{
     MidnightContractCallSubmissionStatus,
 };
 
+/// Returns a public undeployed address used only to validate an explicit
+/// standalone transport before a profile derives and binds its own account.
+///
+/// The address carries no custody material and is replaced by
+/// [`MidnightAccountSource::bind_derived_account`] before profile-scoped sync.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn standalone_configuration_placeholder_address() -> Result<ChainAddress, WalletAccountPortError>
+{
+    let network = network_id(DEFAULT_NETWORK_ID)?;
+    fixture_addresses(&network)?
+        .into_iter()
+        .find(|address| address.kind() == ChainAddressKind::Unshielded)
+        .ok_or(WalletAccountPortError::InvalidData)
+}
+
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex, RwLock},
@@ -2129,6 +2144,20 @@ mod tests {
         assert_eq!(decimal_places(SPECKS_PER_DUST), Some(15));
         assert_eq!(decimal_places(12), None);
         assert_eq!(decimal_places(0), None);
+    }
+
+    #[test]
+    fn standalone_configuration_placeholder_is_public_and_network_valid() {
+        let address = standalone_configuration_placeholder_address()
+            .expect("the undeployed public placeholder is valid");
+        assert_eq!(address.kind(), ChainAddressKind::Unshielded);
+        assert!(address.value().starts_with("mn_addr_undeployed1"));
+        MidnightIndexerConfig::new(
+            "undeployed",
+            "wss://indexer.example.invalid/api/v4/graphql/ws",
+            address.value(),
+        )
+        .expect("the placeholder validates only public route composition");
     }
 
     #[test]
