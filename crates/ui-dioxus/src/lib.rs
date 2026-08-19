@@ -1989,6 +1989,859 @@ const fn route_forces_screen_privacy(route: Route) -> bool {
     )
 }
 
+#[cfg(feature = "ui-profile-demo")]
+const DEMO_PROFILE_MARKER: &str = "OXID_UI_PROFILE_DEMO";
+#[cfg(feature = "ui-profile-demo")]
+const DEMO_DRAWER_MARKER: &str = "OXID_DEMO_BOOTSTRAP_DRAWER";
+#[cfg(feature = "ui-profile-demo")]
+const DEMO_PROFILE_NAME: &str = "Oxid Demo Wallet";
+
+#[cfg(feature = "ui-profile-demo")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DemoBootstrapAction {
+    Profile,
+    Protection,
+    Account,
+    ManagedDid,
+    InboxFixture,
+    SimulatedFunding,
+    CredentialOffer,
+    LoginRequest,
+    PresentationRequest,
+}
+
+#[cfg(feature = "ui-profile-demo")]
+impl DemoBootstrapAction {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Profile => "Create or select demo profile",
+            Self::Protection => "Initialize or unlock wallet",
+            Self::Account => "Derive Midnight account",
+            Self::ManagedDid => "Create managed DID",
+            Self::InboxFixture => "Receive inbox fixture",
+            Self::SimulatedFunding => "Load simulated funding",
+            Self::CredentialOffer => "Review credential offer",
+            Self::LoginRequest => "Review login request",
+            Self::PresentationRequest => "Review presentation request",
+        }
+    }
+
+    const fn review_boundary(self) -> bool {
+        matches!(
+            self,
+            Self::CredentialOffer | Self::LoginRequest | Self::PresentationRequest
+        )
+    }
+}
+
+#[cfg(feature = "ui-profile-demo")]
+const DEMO_BOOTSTRAP_ACTIONS: [DemoBootstrapAction; 9] = [
+    DemoBootstrapAction::Profile,
+    DemoBootstrapAction::Protection,
+    DemoBootstrapAction::Account,
+    DemoBootstrapAction::ManagedDid,
+    DemoBootstrapAction::InboxFixture,
+    DemoBootstrapAction::SimulatedFunding,
+    DemoBootstrapAction::CredentialOffer,
+    DemoBootstrapAction::LoginRequest,
+    DemoBootstrapAction::PresentationRequest,
+];
+
+#[cfg(feature = "ui-profile-demo")]
+const DEMO_SAFE_SETUP_ACTIONS: [DemoBootstrapAction; 6] = [
+    DemoBootstrapAction::Profile,
+    DemoBootstrapAction::Protection,
+    DemoBootstrapAction::Account,
+    DemoBootstrapAction::ManagedDid,
+    DemoBootstrapAction::InboxFixture,
+    DemoBootstrapAction::SimulatedFunding,
+];
+
+#[cfg(feature = "ui-profile-demo")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DemoActionPhase {
+    Ready,
+    Running,
+    Succeeded,
+    ReviewRequired,
+    Failed,
+}
+
+#[cfg(feature = "ui-profile-demo")]
+impl DemoActionPhase {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Ready => "Ready",
+            Self::Running => "Working",
+            Self::Succeeded => "Complete",
+            Self::ReviewRequired => "Review required",
+            Self::Failed => "Retry available",
+        }
+    }
+}
+
+#[cfg(feature = "ui-profile-demo")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DemoActionProgress {
+    action: DemoBootstrapAction,
+    phase: DemoActionPhase,
+    detail: String,
+}
+
+#[cfg(feature = "ui-profile-demo")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DemoFullSetupPhase {
+    Idle,
+    Running,
+    StopRequested,
+    Stopped,
+    ReviewRequired,
+    Failed,
+}
+
+#[cfg(feature = "ui-profile-demo")]
+impl DemoFullSetupPhase {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "Ready to run the safe setup sequence.",
+            Self::Running => "Running safe setup steps in order.",
+            Self::StopRequested => "Stopping after the current typed use case finishes.",
+            Self::Stopped => "Setup stopped between steps. Retry resumes idempotently.",
+            Self::ReviewRequired => {
+                "Safe setup complete. The credential offer is waiting on its existing review screen."
+            }
+            Self::Failed => {
+                "Setup paused after a failure. Retry the failed step or run setup again."
+            }
+        }
+    }
+}
+
+#[cfg(feature = "ui-profile-demo")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DemoBootstrapState {
+    actions: Vec<DemoActionProgress>,
+    full_setup: DemoFullSetupPhase,
+}
+
+#[cfg(feature = "ui-profile-demo")]
+impl Default for DemoBootstrapState {
+    fn default() -> Self {
+        Self {
+            actions: DEMO_BOOTSTRAP_ACTIONS
+                .iter()
+                .copied()
+                .map(|action| DemoActionProgress {
+                    action,
+                    phase: DemoActionPhase::Ready,
+                    detail: if action.review_boundary() {
+                        "Opens the exact existing review screen; consent is never automated."
+                            .to_owned()
+                    } else {
+                        "Uses the existing standalone application boundary.".to_owned()
+                    },
+                })
+                .collect(),
+            full_setup: DemoFullSetupPhase::Idle,
+        }
+    }
+}
+
+#[cfg(feature = "ui-profile-demo")]
+impl DemoBootstrapState {
+    fn progress(&self, action: DemoBootstrapAction) -> &DemoActionProgress {
+        self.actions
+            .iter()
+            .find(|progress| progress.action == action)
+            .expect("closed demo action list")
+    }
+
+    fn update(&mut self, action: DemoBootstrapAction, phase: DemoActionPhase, detail: String) {
+        let progress = self
+            .actions
+            .iter_mut()
+            .find(|progress| progress.action == action)
+            .expect("closed demo action list");
+        progress.phase = phase;
+        progress.detail = detail;
+    }
+
+    fn operation_running(&self) -> bool {
+        matches!(
+            self.full_setup,
+            DemoFullSetupPhase::Running | DemoFullSetupPhase::StopRequested
+        ) || self
+            .actions
+            .iter()
+            .any(|progress| progress.phase == DemoActionPhase::Running)
+    }
+
+    fn admits_new_operation(&self, request_waiting: bool) -> bool {
+        !self.operation_running() && !request_waiting
+    }
+}
+
+#[cfg(feature = "ui-profile-demo")]
+struct DemoActionOutcome {
+    profile: WalletProfileView,
+    detail: String,
+}
+
+#[cfg(feature = "ui-profile-demo")]
+fn active_demo_profile(session: &ProfileSessionState) -> Option<WalletProfileView> {
+    match session {
+        ProfileSessionState::Active(profile) if profile.display_name == DEMO_PROFILE_NAME => {
+            Some(profile.clone())
+        }
+        _ => None,
+    }
+}
+
+#[cfg(feature = "ui-profile-demo")]
+fn require_demo_profile(profile: Option<WalletProfileView>) -> Result<WalletProfileView, String> {
+    profile.ok_or_else(|| "Create or select a wallet profile before this step.".to_owned())
+}
+
+#[cfg(feature = "ui-profile-demo")]
+fn demo_funding_source_is_safe(source: &str, network_id: &str, environment: &str) -> bool {
+    matches!(
+        (source, network_id, environment),
+        ("simulated", "undeployed", "development")
+    )
+}
+
+#[cfg(feature = "ui-profile-demo")]
+async fn execute_demo_data_action(
+    action: DemoBootstrapAction,
+    services: WalletUiServices,
+    profile: Option<WalletProfileView>,
+) -> Result<DemoActionOutcome, String> {
+    match action {
+        DemoBootstrapAction::Profile => run_ui_blocking(move || {
+            if let Some(profile) = profile {
+                return Ok(DemoActionOutcome {
+                    profile,
+                    detail: "Kept the active wallet profile; the demo never replaces it."
+                        .to_owned(),
+                });
+            }
+            let profiles = services
+                .list_wallet_profiles()
+                .execute()
+                .map_err(|error| error.to_string())?;
+            let profile = if let Some(existing) = profiles
+                .into_iter()
+                .find(|profile| profile.display_name == DEMO_PROFILE_NAME)
+            {
+                services
+                    .select_wallet_profile()
+                    .execute(SelectWalletProfileCommand {
+                        profile_id: existing.id,
+                    })
+                    .map_err(|error| error.to_string())?
+            } else {
+                let created = services
+                    .create_wallet_profile()
+                    .execute(CreateWalletProfileCommand {
+                        display_name: DEMO_PROFILE_NAME.to_owned(),
+                    })
+                    .map_err(|error| error.to_string())?;
+                services
+                    .select_wallet_profile()
+                    .execute(SelectWalletProfileCommand {
+                        profile_id: created.id,
+                    })
+                    .map_err(|error| error.to_string())?
+            };
+            Ok(DemoActionOutcome {
+                profile,
+                detail: "Standalone public profile selected.".to_owned(),
+            })
+        })
+        .await
+        .map_err(|error| error.to_string())?,
+        DemoBootstrapAction::Protection => {
+            let profile = require_demo_profile(profile)?;
+            let operation_profile = profile.clone();
+            run_ui_blocking(move || {
+                let command = || WalletProfileSecurityCommand {
+                    profile_id: operation_profile.id.clone(),
+                };
+                let current = services
+                    .get_wallet_security_status()
+                    .execute(command())
+                    .map_err(|error| error.to_string())?;
+                let detail = match current.state_name() {
+                    "Uninitialized" => {
+                        services
+                            .initialize_wallet_security()
+                            .execute(command())
+                            .map_err(|error| error.to_string())?;
+                        "Initialized process-local standalone custody."
+                    }
+                    "Locked" => {
+                        services
+                            .unlock_wallet()
+                            .execute(command())
+                            .map_err(|error| error.to_string())?;
+                        "Unlocked the existing standalone wallet session."
+                    }
+                    "Unlocked" => "Wallet session was already unlocked; no key was regenerated.",
+                    _ => {
+                        return Err(
+                            "Wallet protection is unavailable in this composition.".to_owned()
+                        );
+                    }
+                };
+                Ok(DemoActionOutcome {
+                    profile,
+                    detail: detail.to_owned(),
+                })
+            })
+            .await
+            .map_err(|error| error.to_string())?
+        }
+        DemoBootstrapAction::Account => {
+            let profile = require_demo_profile(profile)?;
+            let operation_profile = profile.clone();
+            run_ui_blocking(move || {
+                services
+                    .derive_wallet_account()
+                    .execute(DeriveWalletAccountCommand {
+                        profile_id: operation_profile.id,
+                        account_index: 0,
+                        address_index: 0,
+                    })
+                    .map_err(|error| error.to_string())?;
+                Ok(DemoActionOutcome {
+                    profile,
+                    detail: "Derived the existing protected 0/0 Midnight account idempotently."
+                        .to_owned(),
+                })
+            })
+            .await
+            .map_err(|error| error.to_string())?
+        }
+        DemoBootstrapAction::ManagedDid => {
+            let profile = require_demo_profile(profile)?;
+            let operation_profile = profile.clone();
+            run_ui_blocking(move || {
+                let records = services
+                    .list_did_records()
+                    .execute(ListDidRecordsQuery {
+                        profile_id: operation_profile.id.clone(),
+                    })
+                    .map_err(|error| error.to_string())?;
+                let detail = if active_managed_authentication_method(&records).is_some() {
+                    "Kept the active managed DID; no new identity was created."
+                } else {
+                    services
+                        .create_did()
+                        .execute(CreateDidCommand {
+                            profile_id: operation_profile.id,
+                            network: "undeployed".to_owned(),
+                        })
+                        .map_err(|error| error.to_string())?;
+                    "Created one managed standalone DID through protected custody."
+                };
+                Ok(DemoActionOutcome {
+                    profile,
+                    detail: detail.to_owned(),
+                })
+            })
+            .await
+            .map_err(|error| error.to_string())?
+        }
+        DemoBootstrapAction::InboxFixture => {
+            let profile = require_demo_profile(profile)?;
+            let operation_profile = profile.clone();
+            let service = services.receive_credential();
+            run_ui_future(async move {
+                service
+                    .execute(CredentialProfileQuery {
+                        profile_id: operation_profile.id,
+                    })
+                    .await
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| error.to_string())??;
+            Ok(DemoActionOutcome {
+                profile,
+                detail: "Verified and upserted the public standalone inbox fixture.".to_owned(),
+            })
+        }
+        DemoBootstrapAction::SimulatedFunding => {
+            let profile = require_demo_profile(profile)?;
+            let operation_profile = profile.clone();
+            let source_services = services.clone();
+            let source_profile = operation_profile.clone();
+            let account = run_ui_blocking(move || {
+                source_services
+                    .get_wallet_account()
+                    .execute(WalletAccountQuery {
+                        profile_id: source_profile.id,
+                    })
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| error.to_string())??;
+            if !demo_funding_source_is_safe(
+                &account.source,
+                &account.network_id,
+                &account.network_environment,
+            ) {
+                return Err(
+                    "Demo funding is disabled outside the deterministic undeployed simulation; no chain was contacted by the drawer."
+                        .to_owned(),
+                );
+            }
+            let service = services.sync_wallet_account();
+            run_ui_future(async move {
+                service
+                    .execute(WalletAccountQuery {
+                        profile_id: operation_profile.id,
+                    })
+                    .await
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| error.to_string())??;
+            Ok(DemoActionOutcome {
+                profile,
+                detail: "Loaded the deterministic public 5 NIGHT funding snapshot; no chain was contacted."
+                    .to_owned(),
+            })
+        }
+        DemoBootstrapAction::CredentialOffer
+        | DemoBootstrapAction::LoginRequest
+        | DemoBootstrapAction::PresentationRequest => {
+            Err("Review actions are routed separately and never executed here.".to_owned())
+        }
+    }
+}
+
+#[cfg(feature = "ui-profile-demo")]
+fn route_demo_review(
+    action: DemoBootstrapAction,
+    services: &WalletUiServices,
+    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
+    navigation: &mut Signal<RouteStack>,
+    profile_menu_open: &mut Signal<bool>,
+    identity_ingress_notice: &mut Signal<Option<String>>,
+) -> Result<String, String> {
+    if pending_identity_request.read().is_some() {
+        return Err(
+            "Another identity request is already waiting. Finish or dismiss its exact review first."
+                .to_owned(),
+        );
+    }
+    let (request_uri, expected) = match action {
+        DemoBootstrapAction::CredentialOffer => (
+            services
+                .standalone_credential_offer()
+                .ok_or_else(|| "Standalone credential offer is unavailable.".to_owned())?,
+            IdentityRequestKind::CredentialIssuance,
+        ),
+        DemoBootstrapAction::LoginRequest => (
+            services
+                .standalone_self_issued_request()
+                .ok_or_else(|| "Standalone login request is unavailable.".to_owned())?,
+            IdentityRequestKind::SelfIssuedAuthentication,
+        ),
+        DemoBootstrapAction::PresentationRequest => (
+            services
+                .standalone_openid4vp_request()
+                .ok_or_else(|| "Standalone presentation request is unavailable.".to_owned())?,
+            IdentityRequestKind::CredentialPresentation,
+        ),
+        _ => return Err("The selected demo step is not a review boundary.".to_owned()),
+    };
+    let kind = services
+        .route_identity_request()
+        .execute(RouteIdentityRequestCommand {
+            request_uri: request_uri.clone(),
+        })
+        .map_err(identity_request_routing_message)?;
+    if kind != expected {
+        return Err("The strict identity router rejected the expected fixture class.".to_owned());
+    }
+    pending_identity_request.set(Some(PendingIdentityRequest { kind, request_uri }));
+    navigation.write().route_identity_request(kind);
+    profile_menu_open.set(false);
+    identity_ingress_notice.set(Some(
+        "Demo fixture loaded for review. Dismiss it without consent or continue on the existing review screen."
+            .to_owned(),
+    ));
+    Ok("Fixture loaded. Review the exact existing consent screen; nothing was accepted or executed."
+        .to_owned())
+}
+
+#[cfg(feature = "ui-profile-demo")]
+#[derive(Clone, Copy)]
+struct DemoActionSignals {
+    navigation: Signal<RouteStack>,
+    profile_menu_open: Signal<bool>,
+    pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    drawer_open: Signal<bool>,
+    identity_ingress_notice: Signal<Option<String>>,
+}
+
+#[cfg(feature = "ui-profile-demo")]
+fn start_demo_action(
+    action: DemoBootstrapAction,
+    services: WalletUiServices,
+    mut state: Signal<DemoBootstrapState>,
+    mut profile_session: Signal<ProfileSessionState>,
+    mut signals: DemoActionSignals,
+) {
+    if !state
+        .read()
+        .admits_new_operation(signals.pending_identity_request.read().is_some())
+    {
+        return;
+    }
+    let profile = active_demo_profile(&profile_session.read());
+    if action.review_boundary() {
+        let result = route_demo_review(
+            action,
+            &services,
+            &mut signals.pending_identity_request,
+            &mut signals.navigation,
+            &mut signals.profile_menu_open,
+            &mut signals.identity_ingress_notice,
+        );
+        let mut next = state();
+        match result {
+            Ok(detail) => {
+                next.update(action, DemoActionPhase::ReviewRequired, detail);
+                signals.drawer_open.set(false);
+            }
+            Err(error) => next.update(action, DemoActionPhase::Failed, error),
+        }
+        state.set(next);
+        return;
+    }
+
+    let mut next = state();
+    next.update(
+        action,
+        DemoActionPhase::Running,
+        "Waiting for the existing typed use case.".to_owned(),
+    );
+    state.set(next);
+    spawn(async move {
+        match execute_demo_data_action(action, services, profile).await {
+            Ok(outcome) => {
+                if action == DemoBootstrapAction::Profile {
+                    profile_session.set(ProfileSessionState::Active(outcome.profile));
+                    signals
+                        .navigation
+                        .write()
+                        .select_primary(PrimaryDestination::Home);
+                }
+                let mut next = state();
+                next.update(action, DemoActionPhase::Succeeded, outcome.detail);
+                state.set(next);
+            }
+            Err(error) => {
+                let mut next = state();
+                next.update(action, DemoActionPhase::Failed, error);
+                state.set(next);
+            }
+        }
+    });
+}
+
+#[cfg(feature = "ui-profile-demo")]
+fn start_demo_full_setup(
+    services: WalletUiServices,
+    mut state: Signal<DemoBootstrapState>,
+    mut profile_session: Signal<ProfileSessionState>,
+    mut signals: DemoActionSignals,
+) {
+    if !state
+        .read()
+        .admits_new_operation(signals.pending_identity_request.read().is_some())
+    {
+        return;
+    }
+    let mut next = state();
+    next.full_setup = DemoFullSetupPhase::Running;
+    state.set(next);
+    spawn(async move {
+        let mut profile = active_demo_profile(&profile_session.read());
+        for action in DEMO_SAFE_SETUP_ACTIONS {
+            if state.read().full_setup == DemoFullSetupPhase::StopRequested {
+                let mut next = state();
+                next.full_setup = DemoFullSetupPhase::Stopped;
+                state.set(next);
+                return;
+            }
+            let mut next = state();
+            next.update(
+                action,
+                DemoActionPhase::Running,
+                "Waiting for the existing typed use case.".to_owned(),
+            );
+            state.set(next);
+            match execute_demo_data_action(action, services.clone(), profile.clone()).await {
+                Ok(outcome) => {
+                    profile = Some(outcome.profile.clone());
+                    if action == DemoBootstrapAction::Profile {
+                        profile_session.set(ProfileSessionState::Active(outcome.profile));
+                        signals
+                            .navigation
+                            .write()
+                            .select_primary(PrimaryDestination::Home);
+                    }
+                    let mut next = state();
+                    next.update(action, DemoActionPhase::Succeeded, outcome.detail);
+                    state.set(next);
+                }
+                Err(error) => {
+                    let mut next = state();
+                    next.update(action, DemoActionPhase::Failed, error);
+                    next.full_setup = DemoFullSetupPhase::Failed;
+                    state.set(next);
+                    return;
+                }
+            }
+        }
+        if state.read().full_setup == DemoFullSetupPhase::StopRequested {
+            let mut next = state();
+            next.full_setup = DemoFullSetupPhase::Stopped;
+            state.set(next);
+            return;
+        }
+        let result = route_demo_review(
+            DemoBootstrapAction::CredentialOffer,
+            &services,
+            &mut signals.pending_identity_request,
+            &mut signals.navigation,
+            &mut signals.profile_menu_open,
+            &mut signals.identity_ingress_notice,
+        );
+        let mut next = state();
+        match result {
+            Ok(detail) => {
+                next.update(
+                    DemoBootstrapAction::CredentialOffer,
+                    DemoActionPhase::ReviewRequired,
+                    detail,
+                );
+                next.full_setup = DemoFullSetupPhase::ReviewRequired;
+                signals.drawer_open.set(false);
+            }
+            Err(error) => {
+                next.update(
+                    DemoBootstrapAction::CredentialOffer,
+                    DemoActionPhase::Failed,
+                    error,
+                );
+                next.full_setup = DemoFullSetupPhase::Failed;
+            }
+        }
+        state.set(next);
+    });
+}
+
+#[cfg(feature = "ui-profile-demo")]
+fn demo_profile_banner(mut drawer_open: Signal<bool>) -> Element {
+    rsx! {
+        aside {
+            class: "demo-profile-banner",
+            role: "status",
+            "data-ui-profile": DEMO_PROFILE_MARKER,
+            strong { "Standalone demo" }
+            span { "Fixture data · no chain contacted by demo setup" }
+            button {
+                class: "demo-profile-banner__action",
+                r#type: "button",
+                aria_label: "Open standalone demo setup",
+                aria_controls: "demo-bootstrap-drawer",
+                onclick: move |_| drawer_open.set(true),
+                "Open demo setup"
+            }
+        }
+    }
+}
+
+#[cfg(feature = "ui-profile-demo")]
+fn demo_bootstrap_drawer(
+    services: WalletUiServices,
+    mut state: Signal<DemoBootstrapState>,
+    profile_session: Signal<ProfileSessionState>,
+    signals: DemoActionSignals,
+) -> Element {
+    let DemoActionSignals {
+        navigation,
+        profile_menu_open,
+        pending_identity_request,
+        mut drawer_open,
+        identity_ingress_notice,
+    } = signals;
+    if !drawer_open() {
+        return rsx! {};
+    }
+    let full_setup_phase = state.read().full_setup;
+    let full_setup_running = matches!(
+        full_setup_phase,
+        DemoFullSetupPhase::Running | DemoFullSetupPhase::StopRequested
+    );
+    let operation_running = state.read().operation_running();
+    let has_profile = active_demo_profile(&profile_session.read()).is_some();
+    let request_waiting = pending_identity_request.read().is_some();
+    rsx! {
+        aside {
+            id: "demo-bootstrap-drawer",
+            class: "demo-bootstrap-drawer",
+            role: "dialog",
+            aria_label: "Standalone demo bootstrap",
+            aria_modal: "true",
+            "data-demo-marker": DEMO_DRAWER_MARKER,
+            div { class: "demo-bootstrap-drawer__heading",
+                div {
+                    p { class: "card-eyebrow", "Compile-time demo profile" }
+                    h2 { "Fixture bootstrap" }
+                }
+                button {
+                    class: "text-action",
+                    r#type: "button",
+                    aria_label: "Close standalone demo setup",
+                    autofocus: !operation_running,
+                    disabled: operation_running,
+                    onclick: move |_| drawer_open.set(false),
+                    "Close"
+                }
+            }
+            p { class: "demo-bootstrap-drawer__truth",
+                "Every action uses an existing standalone use case. Fixture request actions stop on the wallet's exact review screen; this drawer never consents, authorizes, proves, submits, or marks wallet readiness."
+            }
+            div {
+                class: "demo-full-setup surface-card",
+                role: "status",
+                aria_live: "polite",
+                aria_busy: if full_setup_running { "true" } else { "false" },
+                strong { "Full setup" }
+                p { "{full_setup_phase.label()}" }
+                div { class: "action-row",
+                    button {
+                        class: "primary-action",
+                        r#type: "button",
+                        disabled: operation_running || request_waiting,
+                        onclick: {
+                            let services = services.clone();
+                            move |_| start_demo_full_setup(
+                                services.clone(),
+                                state,
+                                profile_session,
+                                DemoActionSignals {
+                                    navigation,
+                                    profile_menu_open,
+                                    pending_identity_request,
+                                    drawer_open,
+                                    identity_ingress_notice,
+                                },
+                            )
+                        },
+                        if matches!(full_setup_phase, DemoFullSetupPhase::Failed | DemoFullSetupPhase::Stopped) {
+                            "Retry full demo setup"
+                        } else {
+                            "Run full demo setup"
+                        }
+                    }
+                    if full_setup_running {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            disabled: full_setup_phase == DemoFullSetupPhase::StopRequested,
+                            onclick: move |_| {
+                                let mut next = state();
+                                next.full_setup = DemoFullSetupPhase::StopRequested;
+                                state.set(next);
+                            },
+                            "Stop after current step"
+                        }
+                    }
+                }
+                if request_waiting {
+                    p { class: "form-hint", "Finish or dismiss the current exact identity review before running any demo action or setup step." }
+                }
+            }
+            ol { class: "demo-bootstrap-list", aria_label: "Demo setup actions",
+                for action in DEMO_BOOTSTRAP_ACTIONS {
+                    {
+                        let progress = state.read().progress(action).clone();
+                        let requires_profile = action != DemoBootstrapAction::Profile;
+                        let disabled = operation_running
+                            || request_waiting
+                            || (requires_profile && !has_profile);
+                        let services = services.clone();
+                        rsx! {
+                            li {
+                                key: "{action.label()}",
+                                class: "demo-bootstrap-item surface-card",
+                                "data-demo-action": "{action.label()}",
+                                div { class: "demo-bootstrap-item__copy",
+                                    strong { "{action.label()}" }
+                                    span {
+                                        class: match progress.phase {
+                                            DemoActionPhase::Succeeded => "status-pill success",
+                                            DemoActionPhase::Failed => "status-pill warning",
+                                            DemoActionPhase::ReviewRequired => "status-pill warning",
+                                            DemoActionPhase::Ready | DemoActionPhase::Running => "status-pill",
+                                        },
+                                        "{progress.phase.label()}"
+                                    }
+                                    p {
+                                        role: if progress.phase == DemoActionPhase::Failed { "alert" } else { "status" },
+                                        "{progress.detail}"
+                                    }
+                                }
+                                button {
+                                    class: "secondary-action",
+                                    r#type: "button",
+                                    disabled,
+                                    aria_label: "Run demo action: {action.label()}",
+                                    onclick: move |_| start_demo_action(
+                                        action,
+                                        services.clone(),
+                                        state,
+                                        profile_session,
+                                        DemoActionSignals {
+                                            navigation,
+                                            profile_menu_open,
+                                            pending_identity_request,
+                                            drawer_open,
+                                            identity_ingress_notice,
+                                        },
+                                    ),
+                                    if progress.phase == DemoActionPhase::Failed { "Retry" } else if action.review_boundary() { "Open review" } else { "Run" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "ui-profile-demo")]
+const fn demo_background_hidden(drawer_open: bool, another_modal_open: bool) -> bool {
+    drawer_open || another_modal_open
+}
+
+#[cfg(feature = "ui-profile-demo")]
+const fn demo_background_inert(drawer_open: bool) -> bool {
+    drawer_open
+}
+
+const fn identity_request_dismiss_is_visible(has_notice: bool, request_waiting: bool) -> bool {
+    has_notice && request_waiting
+}
+
 #[cfg(feature = "ui-profile-dev")]
 fn developer_profile_banner() -> Element {
     rsx! {
@@ -2015,6 +2868,10 @@ pub fn App() -> Element {
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
     let mut navigation = use_signal(RouteStack::default);
     let mut profile_menu_open = use_signal(|| false);
+    #[cfg(feature = "ui-profile-demo")]
+    let demo_drawer_open = use_signal(|| false);
+    #[cfg(feature = "ui-profile-demo")]
+    let demo_bootstrap_state = use_signal(DemoBootstrapState::default);
     let secret_mode_state = use_signal(SecretModeState::default);
     let secret_mode = SecretModeController {
         state: secret_mode_state,
@@ -2105,30 +2962,63 @@ pub fn App() -> Element {
     });
 
     let session = profile_session.read().clone();
+    #[cfg(feature = "ui-profile-demo")]
+    let demo_gateway_banner = demo_profile_banner(demo_drawer_open);
+    #[cfg(not(feature = "ui-profile-demo"))]
+    let demo_gateway_banner = rsx! {};
+    #[cfg(feature = "ui-profile-demo")]
+    let demo_gateway_drawer = demo_bootstrap_drawer(
+        services.clone(),
+        demo_bootstrap_state,
+        profile_session,
+        DemoActionSignals {
+            navigation,
+            profile_menu_open,
+            pending_identity_request,
+            drawer_open: demo_drawer_open,
+            identity_ingress_notice,
+        },
+    );
+    #[cfg(not(feature = "ui-profile-demo"))]
+    let demo_gateway_drawer = rsx! {};
+    #[cfg(feature = "ui-profile-demo")]
+    let demo_gateway_hidden = demo_background_hidden(demo_drawer_open(), false);
+    #[cfg(not(feature = "ui-profile-demo"))]
+    let demo_gateway_hidden = false;
+    #[cfg(feature = "ui-profile-demo")]
+    let demo_gateway_inert = demo_background_inert(demo_drawer_open());
+    #[cfg(not(feature = "ui-profile-demo"))]
+    let demo_gateway_inert = false;
     let ProfileSessionState::Active(active_profile) = session else {
         return rsx! {
             style { {brand.style_sheet()} }
             style { {BASE_STYLES} }
-            {developer_profile_banner()}
-            ProfileGateway {
-                state: session,
-                on_selected: move |profile| {
-                    profile_session.set(ProfileSessionState::Active(profile));
-                    navigation.write().select_primary(PrimaryDestination::Home);
-                },
-                on_retry: move |_| {
-                    let services = services.clone();
-                    profile_session.set(ProfileSessionState::Loading);
-                    spawn(async move {
-                        profile_session.set(
-                            run_ui_blocking(move || load_profile_session(&services))
-                                .await
-                                .unwrap_or_else(|error| {
-                                    ProfileSessionState::Failed(error.to_string())
-                                }),
-                        );
-                    });
-                },
+            {demo_gateway_drawer}
+            div {
+                aria_hidden: if demo_gateway_hidden { "true" } else { "false" },
+                inert: demo_gateway_inert,
+                {developer_profile_banner()}
+                {demo_gateway_banner}
+                ProfileGateway {
+                    state: session,
+                    on_selected: move |profile| {
+                        profile_session.set(ProfileSessionState::Active(profile));
+                        navigation.write().select_primary(PrimaryDestination::Home);
+                    },
+                    on_retry: move |_| {
+                        let services = services.clone();
+                        profile_session.set(ProfileSessionState::Loading);
+                        spawn(async move {
+                            profile_session.set(
+                                run_ui_blocking(move || load_profile_session(&services))
+                                    .await
+                                    .unwrap_or_else(|error| {
+                                        ProfileSessionState::Failed(error.to_string())
+                                    }),
+                            );
+                        });
+                    },
+                }
             }
         };
     };
@@ -2144,6 +3034,11 @@ pub fn App() -> Element {
     let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name, brand.wordmark());
     let identity_request_waiting = pending_identity_request.read().is_some();
+    let identity_ingress_notice_snapshot = identity_ingress_notice.read().clone();
+    let identity_request_dismiss_visible = identity_request_dismiss_is_visible(
+        identity_ingress_notice_snapshot.is_some(),
+        identity_request_waiting,
+    );
     let home_scanner = services.qr_scanner();
     let home_router = services.route_identity_request();
     let navigation_scanner = services.qr_scanner();
@@ -2163,15 +3058,45 @@ pub fn App() -> Element {
     };
     #[cfg(not(feature = "ui-profile-dev"))]
     let developer_profile_shortcut = rsx! {};
+    #[cfg(feature = "ui-profile-demo")]
+    let demo_shell_banner = demo_profile_banner(demo_drawer_open);
+    #[cfg(not(feature = "ui-profile-demo"))]
+    let demo_shell_banner = rsx! {};
+    #[cfg(feature = "ui-profile-demo")]
+    let demo_shell_drawer = demo_bootstrap_drawer(
+        services.clone(),
+        demo_bootstrap_state,
+        profile_session,
+        DemoActionSignals {
+            navigation,
+            profile_menu_open,
+            pending_identity_request,
+            drawer_open: demo_drawer_open,
+            identity_ingress_notice,
+        },
+    );
+    #[cfg(not(feature = "ui-profile-demo"))]
+    let demo_shell_drawer = rsx! {};
+    #[cfg(feature = "ui-profile-demo")]
+    let demo_shell_hidden = demo_background_hidden(demo_drawer_open(), receive_sheet_open);
+    #[cfg(not(feature = "ui-profile-demo"))]
+    let demo_shell_hidden = receive_sheet_open;
+    #[cfg(feature = "ui-profile-demo")]
+    let demo_shell_inert = demo_background_inert(demo_drawer_open());
+    #[cfg(not(feature = "ui-profile-demo"))]
+    let demo_shell_inert = false;
 
     rsx! {
         style { {brand.style_sheet()} }
         style { {BASE_STYLES} }
+        {demo_shell_drawer}
         div {
             class: if secret_mode_state().masked { "app-shell privacy-masked" } else { "app-shell" },
             "data-secret-mode": if secret_mode_state().masked { "masked" } else { "revealed" },
-            aria_hidden: if receive_sheet_open { "true" } else { "false" },
+            aria_hidden: if demo_shell_hidden { "true" } else { "false" },
+            inert: demo_shell_inert,
             {developer_profile_banner()}
+            {demo_shell_banner}
             header { class: "app-header",
                 button {
                     class: if *profile_menu_open.read() { "profile-shortcut active" } else { "profile-shortcut" },
@@ -2271,10 +3196,10 @@ pub fn App() -> Element {
                 }
             }
 
-            if let Some(message) = identity_ingress_notice.read().as_deref() {
+            if let Some(message) = identity_ingress_notice_snapshot.as_deref() {
                 div { class: "identity-ingress-notice", role: "status",
                     "{message}"
-                    if identity_request_waiting {
+                    if identity_request_dismiss_visible {
                         button {
                             class: "identity-ingress-dismiss",
                             r#type: "button",
@@ -10328,6 +11253,187 @@ mod tests {
         assert_eq!(navigation.current(), Route::Developer);
         assert!(navigation.pop());
         assert_eq!(navigation.current(), Route::Home);
+    }
+
+    #[cfg(feature = "ui-profile-demo")]
+    #[test]
+    fn demo_profile_has_a_closed_order_and_three_explicit_review_boundaries() {
+        assert_eq!(DEMO_BOOTSTRAP_ACTIONS.len(), 9);
+        assert_eq!(DEMO_SAFE_SETUP_ACTIONS.len(), 6);
+        assert_eq!(DEMO_SAFE_SETUP_ACTIONS[0], DemoBootstrapAction::Profile);
+        assert_eq!(
+            DEMO_SAFE_SETUP_ACTIONS[5],
+            DemoBootstrapAction::SimulatedFunding
+        );
+        assert_eq!(
+            DEMO_BOOTSTRAP_ACTIONS
+                .iter()
+                .filter(|action| action.review_boundary())
+                .count(),
+            3
+        );
+        assert!(
+            !DEMO_SAFE_SETUP_ACTIONS
+                .iter()
+                .any(|action| action.review_boundary())
+        );
+    }
+
+    #[cfg(feature = "ui-profile-demo")]
+    #[test]
+    fn demo_profile_selection_never_keeps_an_unrelated_active_profile() {
+        let demo = WalletProfileView {
+            id: "profile_demo".to_owned(),
+            display_name: DEMO_PROFILE_NAME.to_owned(),
+            created_at_millis: 1,
+        };
+        let unrelated = WalletProfileView {
+            id: "profile_personal".to_owned(),
+            display_name: "Personal wallet".to_owned(),
+            created_at_millis: 2,
+        };
+
+        assert_eq!(
+            active_demo_profile(&ProfileSessionState::Active(demo.clone())),
+            Some(demo)
+        );
+        assert_eq!(
+            active_demo_profile(&ProfileSessionState::Active(unrelated)),
+            None
+        );
+        assert_eq!(active_demo_profile(&ProfileSessionState::Onboarding), None);
+    }
+
+    #[cfg(feature = "ui-profile-demo")]
+    #[test]
+    fn demo_progress_distinguishes_success_review_failure_and_honest_stop() {
+        let mut state = DemoBootstrapState::default();
+        state.update(
+            DemoBootstrapAction::Profile,
+            DemoActionPhase::Succeeded,
+            "selected".to_owned(),
+        );
+        state.update(
+            DemoBootstrapAction::CredentialOffer,
+            DemoActionPhase::ReviewRequired,
+            "review".to_owned(),
+        );
+        state.update(
+            DemoBootstrapAction::InboxFixture,
+            DemoActionPhase::Failed,
+            "retry".to_owned(),
+        );
+
+        assert_eq!(
+            state.progress(DemoBootstrapAction::Profile).phase,
+            DemoActionPhase::Succeeded
+        );
+        assert_eq!(
+            state.progress(DemoBootstrapAction::CredentialOffer).phase,
+            DemoActionPhase::ReviewRequired
+        );
+        assert_eq!(
+            state.progress(DemoBootstrapAction::InboxFixture).phase,
+            DemoActionPhase::Failed
+        );
+        assert!(
+            DemoFullSetupPhase::StopRequested
+                .label()
+                .contains("after the current typed use case")
+        );
+        assert!(
+            DemoFullSetupPhase::ReviewRequired
+                .label()
+                .contains("existing review screen")
+        );
+    }
+
+    #[cfg(feature = "ui-profile-demo")]
+    #[test]
+    fn demo_admission_serializes_operations_and_blocks_a_pending_review() {
+        let mut state = DemoBootstrapState::default();
+        assert!(!state.operation_running());
+        assert!(state.admits_new_operation(false));
+        assert!(!state.admits_new_operation(true));
+
+        state.update(
+            DemoBootstrapAction::ManagedDid,
+            DemoActionPhase::Running,
+            "working".to_owned(),
+        );
+        assert!(state.operation_running());
+        assert!(!state.admits_new_operation(false));
+
+        state.update(
+            DemoBootstrapAction::ManagedDid,
+            DemoActionPhase::Succeeded,
+            "complete".to_owned(),
+        );
+        state.full_setup = DemoFullSetupPhase::Running;
+        assert!(state.operation_running());
+        assert!(!state.admits_new_operation(false));
+
+        state.full_setup = DemoFullSetupPhase::StopRequested;
+        assert!(state.operation_running());
+        assert!(!state.admits_new_operation(false));
+
+        state.full_setup = DemoFullSetupPhase::Stopped;
+        assert!(!state.operation_running());
+        assert!(state.admits_new_operation(false));
+        assert!(!state.admits_new_operation(true));
+    }
+
+    #[cfg(feature = "ui-profile-demo")]
+    #[test]
+    fn demo_funding_admits_only_the_undeployed_simulator() {
+        assert!(demo_funding_source_is_safe(
+            "simulated",
+            "undeployed",
+            "development"
+        ));
+        assert!(!demo_funding_source_is_safe(
+            "live",
+            "undeployed",
+            "development"
+        ));
+        assert!(!demo_funding_source_is_safe(
+            "cached",
+            "undeployed",
+            "development"
+        ));
+        assert!(!demo_funding_source_is_safe(
+            "simulated",
+            "testnet",
+            "public_test"
+        ));
+        assert!(!demo_funding_source_is_safe(
+            "simulated",
+            "undeployed",
+            "custom"
+        ));
+    }
+
+    #[cfg(feature = "ui-profile-demo")]
+    #[test]
+    fn demo_drawer_hides_and_inerts_only_its_own_modal_background() {
+        assert!(demo_background_hidden(true, false));
+        assert!(demo_background_hidden(false, true));
+        assert!(!demo_background_hidden(false, false));
+        assert!(demo_background_inert(true));
+        assert!(!demo_background_inert(false));
+
+        // The pre-existing receive sheet hides the shell from assistive
+        // technology, but only the demo drawer owns the new inert behavior.
+        assert!(demo_background_hidden(false, true));
+        assert!(!demo_background_inert(false));
+    }
+
+    #[test]
+    fn demo_review_notice_exposes_only_the_existing_pending_dismiss_path() {
+        assert!(identity_request_dismiss_is_visible(true, true));
+        assert!(!identity_request_dismiss_is_visible(true, false));
+        assert!(!identity_request_dismiss_is_visible(false, true));
+        assert!(!identity_request_dismiss_is_visible(false, false));
     }
 
     #[test]

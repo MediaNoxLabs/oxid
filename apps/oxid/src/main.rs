@@ -32,6 +32,12 @@ fn main() {
     ))]
     compile_error!("ui-profile-dev requires an explicit standalone composition");
 
+    #[cfg(all(feature = "ui-profile-demo", not(feature = "standalone-development")))]
+    compile_error!("ui-profile-demo requires standalone-development");
+
+    #[cfg(all(feature = "ui-profile-dev", feature = "ui-profile-demo"))]
+    compile_error!("select at most one non-user UI profile");
+
     #[cfg(all(
         feature = "standalone-native-proving-artifacts",
         not(any(target_os = "ios", target_os = "android"))

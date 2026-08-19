@@ -36,6 +36,8 @@ just check             # the light strict gate: fmt, architecture, clippy, tests
 | `just ios-run` / `just android-run` | Standalone development app in a simulator/emulator |
 | `just ios-dev` / `just android-dev` | Same standalone composition with the persistent developer capability profile |
 | `just ios-dev-smoke` / `just android-dev-smoke` | Fresh-install developer banner and shared capability-manifest checks |
+| `just ios-demo` / `just android-demo` | Compile-time standalone demo profile with the fixture bootstrap drawer |
+| `just ios-demo-smoke` / `just android-demo-smoke` | Fresh-install safe setup and unchanged credential-review boundary |
 | `just ios-smoke` / `just android-smoke` | The scripted mobile end-to-end flows |
 | `just nix-check` | Every hermetic flake check (slow, sandboxed) |
 
@@ -60,6 +62,13 @@ lives; [delivery status](status.md) maps each capability to its mode.
 the same standalone composition while adding the shared public capability
 viewer and a non-dismissible developer banner; normal release artifacts exclude
 this presentation profile.
+
+`just ios-demo` and `just android-demo` select the separate compile-time demo
+profile. Its drawer sequences only existing standalone use cases. The funding
+step admits only the exact undeployed simulator, and offer/login/presentation
+fixtures stop at their unchanged review screens. The drawer never supplies
+consent or claims production readiness; normal and native-custody artifacts
+cannot select it.
 
 To exercise the authenticated Compact presentation worker in the explicit
 native-custody conformance build, use:

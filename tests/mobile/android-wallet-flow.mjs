@@ -4,8 +4,8 @@ const endpoint = process.argv[2];
 const mode = process.argv[3] ?? "flow";
 const backupRecoverySecret = "oxidandroidbackup2026";
 
-if (!endpoint || !["flow", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "developer", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
-  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|developer|native-authorize|native-custody|native-restored>");
+if (!endpoint || !["flow", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "developer", "demo", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
+  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|developer|demo|native-authorize|native-custody|native-restored>");
 }
 
 const socket = new WebSocket(endpoint);
@@ -254,6 +254,54 @@ try {
       throw new Error(`Android developer profile was not safe and truthful: ${JSON.stringify(result)}`);
     }
     process.stdout.write(`${JSON.stringify({ mode, ...result })}\n`);
+  } else if (mode === "demo") {
+    await waitFor(
+      `document.querySelector('[data-ui-profile="OXID_UI_PROFILE_DEMO"]')
+        ?.innerText.includes("STANDALONE DEMO")`,
+      "persistent demo-profile banner before onboarding",
+    );
+    await clickButtonByLabel("Open standalone demo setup");
+    await waitFor(
+      `Boolean(document.querySelector('#demo-bootstrap-drawer'))`,
+      "demo bootstrap drawer",
+    );
+    const modal = await evaluate(`(() => {
+      const drawer = document.querySelector('#demo-bootstrap-drawer');
+      const background = Array.from(document.body.children)
+        .find((element) => element.getAttribute('aria-hidden') === 'true');
+      return {
+        dialog: drawer?.getAttribute('role') === 'dialog',
+        modal: drawer?.getAttribute('aria-modal') === 'true',
+        close: Boolean(drawer?.querySelector('button[aria-label="Close standalone demo setup"]')),
+        backgroundHidden: Boolean(background),
+      };
+    })()`);
+    if (!modal.dialog || !modal.modal || !modal.close || !modal.backgroundHidden) {
+      throw new Error(`Android demo drawer accessibility contract failed: ${JSON.stringify(modal)}`);
+    }
+    await clickButton("Run full demo setup");
+    await waitFor(
+      `document.body.innerText.includes("Accept a credential offer")
+        && Boolean(${buttonExpression("Preview credential offer")})
+        && Boolean(${buttonExpression("Dismiss identity request")})`,
+      "unchanged credential offer review after safe setup",
+      60_000,
+    );
+    const review = await evaluate(`(() => ({
+      consentAbsent: !document.querySelector('#credential-issuance-consent'),
+      acceptanceAbsent: !${buttonExpression("Accept and issue credential")},
+      banner: Boolean(document.querySelector('[data-ui-profile="OXID_UI_PROFILE_DEMO"]')),
+    }))()`);
+    if (!review.consentAbsent || !review.acceptanceAbsent || !review.banner) {
+      throw new Error(`Android demo setup bypassed review: ${JSON.stringify(review)}`);
+    }
+    await clickButtonByLabel("Open standalone demo setup");
+    await waitFor(
+      `document.querySelector('#demo-bootstrap-drawer')?.innerText.includes("Safe setup complete")
+        && document.querySelector('#demo-bootstrap-drawer')?.innerText.includes("5 NIGHT funding snapshot")`,
+      "demo full-chain and per-action completion",
+    );
+    process.stdout.write(`${JSON.stringify({ mode, ...modal, ...review, safeSetup: true })}\n`);
   } else if (mode === "privacy-reveal") {
     await createFreshProfile();
     await waitFor(

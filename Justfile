@@ -41,6 +41,9 @@ ios-run:
 ios-dev:
     OXID_UI_PROFILE=dev ./scripts/run-ios-simulator.sh
 
+ios-demo:
+    OXID_UI_PROFILE=demo ./scripts/run-ios-simulator.sh
+
 ui-profile-release:
     ./scripts/check-ui-profile-release.sh
 
@@ -49,6 +52,9 @@ ios-smoke:
 
 ios-dev-smoke:
     ./scripts/test-ios-developer-profile.sh
+
+ios-demo-smoke:
+    ./scripts/test-ios-demo-profile.sh
 
 ios-backup-smoke:
     ./scripts/test-ios-backup-flow.sh
@@ -62,8 +68,14 @@ android-run:
 android-dev:
     OXID_UI_PROFILE=dev ./scripts/run-android-emulator.sh
 
+android-demo:
+    OXID_UI_PROFILE=demo ./scripts/run-android-emulator.sh
+
 android-dev-smoke:
     ./scripts/test-android-developer-profile.sh
+
+android-demo-smoke:
+    ./scripts/test-android-demo-profile.sh
 
 android-smoke:
     ./scripts/test-android-profile-flow.sh

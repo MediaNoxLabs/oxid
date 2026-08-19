@@ -11,6 +11,7 @@ publish = false
 [features]
 mobile = ["dioxus/mobile"]
 ui-profile-dev = ["dep:oxid-capabilities-application"]
+ui-profile-demo = []
 
 [dependencies]
 dioxus = { workspace = true, features = ["minimal"] }

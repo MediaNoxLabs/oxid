@@ -44,8 +44,15 @@ case "$ui_profile" in
   dev)
     mobile_features="$mobile_features,ui-profile-dev"
     ;;
+  demo)
+    if [ "$mobile_custody" != "development" ]; then
+      echo "OXID_UI_PROFILE=demo requires OXID_MOBILE_CUSTODY=development." >&2
+      exit 1
+    fi
+    mobile_features="$mobile_features,ui-profile-demo"
+    ;;
   *)
-    echo "OXID_UI_PROFILE must be 'user' or 'dev'." >&2
+    echo "OXID_UI_PROFILE must be 'user', 'dev', or 'demo'." >&2
     exit 1
     ;;
 esac

@@ -88,10 +88,15 @@ thin-app build decision; no runtime brand configuration was added.
    are repository gates. Prototype free-form logs, process statistics, HTTP
    histograms, and timing telemetry remain excluded. iOS/Android smoke evidence
    closes the slice.
-3. **Demo profile**: demo bootstrap drawer over existing standalone fixtures;
-   per-action and full-chain progress; exact consent remains on the existing
-   review screens; release-CI proof that the distributed artifact contains no
-   demo profile.
+3. **Demo profile** (ADR-0096 / issue #88): the opt-in
+   standalone-development drawer isolates setup in the named demo profile and
+   sequences existing custody,
+   derivation, managed-DID, inbox, and exact simulated-funding use cases. Full
+   setup then pauses at the unchanged credential-offer review; login and
+   presentation fixtures use the same strict one-item router and never automate
+   consent. Per-action/full-run progress, honest stop/retry states, feature
+   guards, focused mobile checks, and normal-release marker exclusion are
+   repository gates.
 
 ## Phase 5 — Delight & polish (owner-gated)
 
@@ -133,6 +138,6 @@ stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
 (delivered by #80), 2b consent sheet (delivered by #81), 2c onboarding + backup
 (delivered by #82), 2d receive sheet (delivered by #83), 3 white-label infra
 (delivered by #84), 4a secret mode + native privacy ops (delivered by #85),
-4b1 developer profile (issue #87), 4b2 demo profile,
+4b1 developer profile (delivered by #87), 4b2 demo profile (delivered by #88),
 5 per-item. Each remaining slice references the relevant spec section as its
 acceptance criteria, factory-work-item style.

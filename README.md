@@ -144,6 +144,29 @@ just ios-dev-smoke
 just android-dev-smoke
 ```
 
+For the compile-time standalone demo presentation, use:
+
+```bash
+just ios-demo
+just android-demo
+```
+
+The non-dismissible banner identifies fixture data. Its opt-in drawer can
+idempotently select or create the isolated `Oxid Demo Wallet` profile, leaving
+unrelated active profiles untouched, initialize or unlock standalone custody,
+derive account `0/0`, create a managed DID, receive the public inbox fixture,
+and load funding only from the exact undeployed simulator. Offer, login, and
+presentation actions stop on their existing review screens and never automate
+consent, authorization, proving, or submission. Normal and native-custody builds
+reject this profile, and normal release artifacts exclude its code markers.
+
+Focused fresh-install evidence is available after the standard UI gates pass:
+
+```bash
+just ios-demo-smoke
+just android-demo-smoke
+```
+
 To exercise the same standalone wallet/SSI stack through native device custody,
 select it explicitly:
 

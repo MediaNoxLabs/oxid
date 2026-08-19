@@ -71,7 +71,8 @@ button {
     max(1rem, env(safe-area-inset-left));
 }
 
-.developer-profile-banner {
+.developer-profile-banner,
+.demo-profile-banner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -85,9 +86,99 @@ button {
   font-size: var(--font-caption);
 }
 
-.developer-profile-banner strong {
+.developer-profile-banner strong,
+.demo-profile-banner strong {
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.demo-profile-banner__action {
+  min-height: 2rem;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--warning) 48%, transparent);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--warning) 13%, transparent);
+  color: var(--text-strong);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.demo-bootstrap-drawer {
+  position: fixed;
+  z-index: 300;
+  top: env(safe-area-inset-top);
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: min(34rem, 100vw);
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5) max(var(--space-4), env(safe-area-inset-right)) calc(var(--space-6) + env(safe-area-inset-bottom)) var(--space-4);
+  overflow-y: auto;
+  border-left: 1px solid color-mix(in srgb, var(--warning) 42%, transparent);
+  background: var(--surface-sheet);
+  box-shadow: var(--shadow-sheet);
+  color: var(--text);
+  overscroll-behavior: contain;
+}
+
+.demo-bootstrap-drawer__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.demo-bootstrap-drawer__heading h2,
+.demo-bootstrap-drawer__heading p,
+.demo-bootstrap-drawer__truth,
+.demo-full-setup p,
+.demo-bootstrap-item p {
+  margin: 0;
+}
+
+.demo-bootstrap-drawer__truth {
+  color: var(--text-soft);
+  line-height: 1.55;
+}
+
+.demo-full-setup {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-color: color-mix(in srgb, var(--warning) 34%, var(--line));
+}
+
+.demo-bootstrap-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.demo-bootstrap-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.demo-bootstrap-item__copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.demo-bootstrap-item__copy .status-pill {
+  width: fit-content;
+}
+
+.demo-bootstrap-item__copy p {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  line-height: 1.45;
 }
 
 @media (max-width: 42rem) {
@@ -107,6 +198,7 @@ button {
 .profile-shortcut:focus-visible,
 .privacy-toggle:focus-visible,
 .back-action:focus-visible,
+.demo-profile-banner__action:focus-visible,
 .profile-sheet__item:focus-visible,
 .profile-sheet__dismiss:focus-visible,
 .bottom-nav__item:focus-visible,

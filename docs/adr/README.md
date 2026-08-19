@@ -117,6 +117,7 @@ ADR status and delivery state answer different questions:
 | [0093](0093-mask-private-wallet-values-as-a-render-only-ui-profile.md) Mask private wallet values as a render-only UI profile | Accepted | §§1–7, 9–13, 16–18, 21; UI profiles P1–P5/Phase 4a; issues #2/#65/#85 | Every Dioxus build defaults to a process-local mask, permits one timed reveal, re-arms on lifecycle/unlock, and leaves exact consent objects visible |
 | [0094](0094-protect-mobile-snapshots-through-a-boolean-platform-port.md) Protect mobile snapshots through a boolean platform port | Accepted | §§3–7, 12–13, 16–18, 21; UI profile P6/Phase 4a; issues #2/#32/#65/#85 | One payload-free port sets Android `FLAG_SECURE` or an honest iOS background overlay; backup/reveal routes force protection and unsupported targets fail closed |
 | [0095](0095-share-a-closed-capability-manifest-with-developer-ui.md) Share a closed capability manifest with the developer UI | Accepted | §§3–7, 12–13, 16–18, 21; UI profiles P1/P2/P7/P9/P10; issues #2/#65/#69/#87 | One dependency-free manifest feeds headless JSON and an opt-in standalone developer viewer; confirmation metadata, feature guards, and normal-release marker exclusion are checked |
+| [0096](0096-sequence-standalone-fixtures-through-a-demo-drawer.md) Sequence standalone fixtures through a demo drawer | Accepted | §§3–7, 12–13, 16, 18, 21; UI profiles P1/P2/P5/P8–P10; issues #2/#65/#88 | An opt-in standalone-development drawer isolates setup in the named demo profile, sequences only existing safe fixtures, gates simulated funding, and stops offer/login/presentation fixtures at their unchanged review screens |
 
 ## Current boundaries
 
@@ -244,8 +245,17 @@ serialization and the opt-in standalone Dioxus developer view. Its closed facts
 cannot carry payloads, identifiers, claims, endpoints, logs, or telemetry;
 unknown composition labels fail to `unavailable`. The developer profile has a
 persistent build banner, cannot compile with normal composition, and a normal
-release binary must not contain its marker. The demo fixture drawer remains a
-separate presentation-only slice.
+release binary must not contain its marker.
+ADR-0096 adds the separate presentation-only demo profile. Its drawer first
+selects or creates the named `Oxid Demo Wallet`, leaving unrelated active
+profiles untouched, then uses the existing custody, derivation, DID,
+credential-inbox, account-sync, and
+strict identity-routing boundaries; the funding step admits only the exact
+undeployed simulator. Full setup stops at the existing credential-offer review,
+and login/presentation fixtures likewise occupy the one-item pending review
+without accepting, authorizing, proving, or submitting anything. Production
+and native-standalone builds reject the feature, and normal release artifacts
+exclude its stable markers.
 ADR-0084 makes presentation theming a two-layer build boundary. Components
 consume only the fixed semantic surface/text/accent/product/type/space/radius/
 motion/elevation vocabulary, while raw palette values remain confined to
