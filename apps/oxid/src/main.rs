@@ -24,6 +24,15 @@ fn main() {
     compile_error!("select exactly one standalone custody feature");
 
     #[cfg(all(
+        feature = "ui-profile-dev",
+        not(any(
+            feature = "standalone-development",
+            feature = "standalone-native-custody"
+        ))
+    ))]
+    compile_error!("ui-profile-dev requires an explicit standalone composition");
+
+    #[cfg(all(
         feature = "standalone-native-proving-artifacts",
         not(any(target_os = "ios", target_os = "android"))
     ))]
@@ -230,6 +239,12 @@ fn main() {
         ),
         application.screen_privacy(),
     );
+    #[cfg(feature = "ui-profile-dev")]
+    let ui = ui.with_developer_capabilities(oxid_ui_dioxus::CapabilityManifestContext::new(
+        application.compact_presentation_proof_available(),
+        application.passport_vault_call_mode(),
+        application.passport_vault_state_persistence(),
+    ));
 
     let launcher = dioxus::LaunchBuilder::new()
         .with_context(ui)

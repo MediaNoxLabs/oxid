@@ -5915,6 +5915,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-capabilities-application"
+version = "0.1.0"
+
+[[package]]
 name = "oxid-composition"
 version = "0.1.0"
 dependencies = [
@@ -5986,6 +5990,7 @@ dependencies = [
  "futures",
  "oxid-adapter-openid4vci",
  "oxid-adapter-siopv2",
+ "oxid-capabilities-application",
  "oxid-composition",
  "oxid-credential-application",
  "oxid-diagnostics-application",
@@ -6074,6 +6079,7 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "futures",
+ "oxid-capabilities-application",
  "oxid-credential-application",
  "oxid-diagnostics-application",
  "oxid-identity-application",

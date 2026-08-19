@@ -10,9 +10,11 @@ publish = false
 
 [features]
 mobile = ["dioxus/mobile"]
+ui-profile-dev = ["dep:oxid-capabilities-application"]
 
 [dependencies]
 dioxus = { workspace = true, features = ["minimal"] }
+oxid-capabilities-application = { workspace = true, optional = true }
 oxid-wallet-application.workspace = true
 oxid-credential-application.workspace = true
 oxid-diagnostics-application.workspace = true

@@ -37,6 +37,19 @@ case "$mobile_custody" in
     ;;
 esac
 
+ui_profile="${OXID_UI_PROFILE:-user}"
+case "$ui_profile" in
+  user)
+    ;;
+  dev)
+    mobile_features="$mobile_features,ui-profile-dev"
+    ;;
+  *)
+    echo "OXID_UI_PROFILE must be 'user' or 'dev'." >&2
+    exit 1
+    ;;
+esac
+
 mobile_presentation_proving="${OXID_MOBILE_PRESENTATION_PROVING:-unavailable}"
 presentation_artifacts_dir=""
 case "$mobile_presentation_proving" in
@@ -140,4 +153,4 @@ bundle_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app_bundl
 /usr/bin/xcrun simctl terminate "$device" "$bundle_identifier" >/dev/null 2>&1 || true
 /usr/bin/xcrun simctl launch "$device" "$bundle_identifier"
 
-echo "Launched $bundle_identifier on simulator $device."
+echo "Launched $bundle_identifier ($ui_profile profile, $mobile_custody custody) on simulator $device."

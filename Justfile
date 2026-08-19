@@ -38,8 +38,17 @@ standalone-recovery-smoke:
 ios-run:
     ./scripts/run-ios-simulator.sh
 
+ios-dev:
+    OXID_UI_PROFILE=dev ./scripts/run-ios-simulator.sh
+
+ui-profile-release:
+    ./scripts/check-ui-profile-release.sh
+
 ios-smoke:
     ./scripts/test-ios-profile-flow.sh
+
+ios-dev-smoke:
+    ./scripts/test-ios-developer-profile.sh
 
 ios-backup-smoke:
     ./scripts/test-ios-backup-flow.sh
@@ -49,6 +58,12 @@ ios-native-custody-smoke:
 
 android-run:
     ./scripts/run-android-emulator.sh
+
+android-dev:
+    OXID_UI_PROFILE=dev ./scripts/run-android-emulator.sh
+
+android-dev-smoke:
+    ./scripts/test-android-developer-profile.sh
 
 android-smoke:
     ./scripts/test-android-profile-flow.sh

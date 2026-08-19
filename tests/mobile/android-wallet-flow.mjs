@@ -4,8 +4,8 @@ const endpoint = process.argv[2];
 const mode = process.argv[3] ?? "flow";
 const backupRecoverySecret = "oxidandroidbackup2026";
 
-if (!endpoint || !["flow", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
-  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|native-authorize|native-custody|native-restored>");
+if (!endpoint || !["flow", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "developer", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
+  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|developer|native-authorize|native-custody|native-restored>");
 }
 
 const socket = new WebSocket(endpoint);
@@ -222,7 +222,39 @@ try {
   await command("Runtime.enable");
   await waitFor("document.readyState === 'complete'", "Dioxus document");
 
-  if (mode === "privacy-reveal") {
+  if (mode === "developer") {
+    await waitFor(
+      `document.querySelector('[data-ui-profile="OXID_UI_PROFILE_DEVELOPMENT"]')
+        ?.innerText.includes("DEVELOPER PROFILE")`,
+      "persistent developer-profile banner before onboarding",
+    );
+    await createFreshProfile();
+    await clickButtonByLabel("Open profile menu");
+    await clickButtonByLabel("Open developer capabilities");
+    await waitFor(
+      `document.body.innerText.includes("Capability manifest")
+        && document.body.innerText.includes("oxid_capabilities_application")`,
+      "shared capability manifest",
+    );
+    const result = await evaluate(`(() => {
+      const signing = Array.from(document.querySelectorAll('.developer-capability-row'))
+        .find((element) => element.innerText.includes('wallet.key.sign'));
+      return {
+        banner: Boolean(document.querySelector(
+          '[data-ui-profile="OXID_UI_PROFILE_DEVELOPMENT"]'
+        )),
+        confirmationDeclared: Boolean(
+          signing && signing.innerText.includes('confirmationRequired')
+        ),
+        secretInputExcluded: !document.body.innerText.includes('credential_offer'),
+        sourceShared: document.body.innerText.includes('oxid_capabilities_application'),
+      };
+    })()`);
+    if (!result.banner || !result.confirmationDeclared || !result.secretInputExcluded || !result.sourceShared) {
+      throw new Error(`Android developer profile was not safe and truthful: ${JSON.stringify(result)}`);
+    }
+    process.stdout.write(`${JSON.stringify({ mode, ...result })}\n`);
+  } else if (mode === "privacy-reveal") {
     await createFreshProfile();
     await waitFor(
       `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'masked'`,

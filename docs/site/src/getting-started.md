@@ -34,6 +34,8 @@ just check             # the light strict gate: fmt, architecture, clippy, tests
 | `just run` | Launch the Dioxus desktop shell |
 | `just headless` | Launch the NDJSON headless adapter |
 | `just ios-run` / `just android-run` | Standalone development app in a simulator/emulator |
+| `just ios-dev` / `just android-dev` | Same standalone composition with the persistent developer capability profile |
+| `just ios-dev-smoke` / `just android-dev-smoke` | Fresh-install developer banner and shared capability-manifest checks |
 | `just ios-smoke` / `just android-smoke` | The scripted mobile end-to-end flows |
 | `just nix-check` | Every hermetic flake check (slow, sandboxed) |
 
@@ -53,6 +55,11 @@ The **standalone development composition** (`just ios-run`,
 variables) enables process-local development custody, deterministic
 simulations, and the real standalone SSI flows. That is where the demo
 lives; [delivery status](status.md) maps each capability to its mode.
+
+`just ios-dev` and `just android-dev` set only `OXID_UI_PROFILE=dev`. They keep
+the same standalone composition while adding the shared public capability
+viewer and a non-dismissible developer banner; normal release artifacts exclude
+this presentation profile.
 
 To exercise the authenticated Compact presentation worker in the explicit
 native-custody conformance build, use:

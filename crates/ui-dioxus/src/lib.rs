@@ -6,10 +6,14 @@ mod brand;
 mod labels;
 
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
+#[cfg(feature = "ui-profile-dev")]
+pub use oxid_capabilities_application::CapabilityManifestContext;
 
 use std::{fmt, future::Future, sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
+#[cfg(feature = "ui-profile-dev")]
+use oxid_capabilities_application::{CapabilityView, capability_manifest};
 use oxid_credential_application::{
     CredentialDisclosureQuery, CredentialDisclosureView, CredentialOperationError,
     CredentialPredicateInput, CredentialProfileQuery, CredentialQuery, CredentialView,
@@ -184,6 +188,8 @@ where
 /// Incoming capabilities made available to Dioxus by the composition root.
 #[derive(Clone)]
 pub struct WalletUiServices {
+    #[cfg(feature = "ui-profile-dev")]
+    developer_capabilities: Vec<CapabilityView>,
     get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
     clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
     qr_scanner: Arc<dyn QrScannerPort>,
@@ -925,6 +931,8 @@ impl WalletUiServices {
         let authentication = identity.authentication;
         let ingress = identity.ingress;
         Self {
+            #[cfg(feature = "ui-profile-dev")]
+            developer_capabilities: Vec::new(),
             get_diagnostic_snapshot: diagnostics.get,
             clear_diagnostics: diagnostics.clear,
             qr_scanner: ingress.qr_scanner,
@@ -1003,6 +1011,21 @@ impl WalletUiServices {
             passport_vault_state_persistence: vault.state_persistence,
             passport_vault_contract_calls: vault.contract_calls,
         }
+    }
+
+    /// Adds the public, shared capability manifest to a developer-profile UI.
+    /// This builder is absent from normal distributed UI artifacts.
+    #[cfg(feature = "ui-profile-dev")]
+    #[must_use]
+    pub fn with_developer_capabilities(mut self, context: CapabilityManifestContext) -> Self {
+        self.developer_capabilities = capability_manifest(context);
+        self
+    }
+
+    #[cfg(feature = "ui-profile-dev")]
+    #[must_use]
+    pub fn developer_capabilities(&self) -> &[CapabilityView] {
+        &self.developer_capabilities
     }
 
     #[must_use]
@@ -1480,6 +1503,8 @@ enum Route {
     DidAuthenticationRequest,
     Settings,
     Diagnostics,
+    #[cfg(feature = "ui-profile-dev")]
+    Developer,
     Profile,
 }
 
@@ -1497,6 +1522,8 @@ impl Route {
             Self::DidAuthenticationRequest => "Review login request",
             Self::Settings => "Settings",
             Self::Diagnostics => "Diagnostics",
+            #[cfg(feature = "ui-profile-dev")]
+            Self::Developer => "Developer capabilities",
             Self::Profile => "Wallet profiles",
         }
     }
@@ -1515,6 +1542,8 @@ impl Route {
             | Self::Settings
             | Self::Diagnostics
             | Self::Profile => None,
+            #[cfg(feature = "ui-profile-dev")]
+            Self::Developer => None,
         }
     }
 }
@@ -1960,6 +1989,24 @@ const fn route_forces_screen_privacy(route: Route) -> bool {
     )
 }
 
+#[cfg(feature = "ui-profile-dev")]
+fn developer_profile_banner() -> Element {
+    rsx! {
+        aside {
+            class: "developer-profile-banner",
+            role: "status",
+            "data-ui-profile": "OXID_UI_PROFILE_DEVELOPMENT",
+            strong { "Developer profile" }
+            span { "Standalone composition · public capability facts only · telemetry off" }
+        }
+    }
+}
+
+#[cfg(not(feature = "ui-profile-dev"))]
+fn developer_profile_banner() -> Element {
+    rsx! {}
+}
+
 /// Brand-agnostic Dioxus incoming adapter and mobile-first application shell.
 #[component]
 pub fn App() -> Element {
@@ -2062,6 +2109,7 @@ pub fn App() -> Element {
         return rsx! {
             style { {brand.style_sheet()} }
             style { {BASE_STYLES} }
+            {developer_profile_banner()}
             ProfileGateway {
                 state: session,
                 on_selected: move |profile| {
@@ -2100,6 +2148,21 @@ pub fn App() -> Element {
     let home_router = services.route_identity_request();
     let navigation_scanner = services.qr_scanner();
     let navigation_router = services.route_identity_request();
+    #[cfg(feature = "ui-profile-dev")]
+    let developer_profile_shortcut = rsx! {
+        button {
+            class: "profile-sheet__item",
+            r#type: "button",
+            aria_label: "Open developer capabilities",
+            onclick: move |_| {
+                navigation.write().push(Route::Developer);
+                profile_menu_open.set(false);
+            },
+            "Developer capabilities"
+        }
+    };
+    #[cfg(not(feature = "ui-profile-dev"))]
+    let developer_profile_shortcut = rsx! {};
 
     rsx! {
         style { {brand.style_sheet()} }
@@ -2108,6 +2171,7 @@ pub fn App() -> Element {
             class: if secret_mode_state().masked { "app-shell privacy-masked" } else { "app-shell" },
             "data-secret-mode": if secret_mode_state().masked { "masked" } else { "revealed" },
             aria_hidden: if receive_sheet_open { "true" } else { "false" },
+            {developer_profile_banner()}
             header { class: "app-header",
                 button {
                     class: if *profile_menu_open.read() { "profile-shortcut active" } else { "profile-shortcut" },
@@ -2197,6 +2261,7 @@ pub fn App() -> Element {
                         },
                         "Settings & backup"
                     }
+                    {developer_profile_shortcut}
                     button {
                         class: "profile-sheet__dismiss",
                         r#type: "button",
@@ -2278,6 +2343,8 @@ pub fn App() -> Element {
                         }
                     },
                     Route::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
+                    #[cfg(feature = "ui-profile-dev")]
+                    Route::Developer => rsx! { DeveloperCapabilitiesPage {} },
                     Route::Settings => rsx! {
                         SettingsPage {
                             active_profile: active_profile.clone(),
@@ -9305,6 +9372,63 @@ fn CredentialsPage(
     }
 }
 
+#[cfg(feature = "ui-profile-dev")]
+#[component]
+fn DeveloperCapabilitiesPage() -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let capabilities = services.developer_capabilities();
+    let ready = capabilities
+        .iter()
+        .filter(|capability| capability.status() == "ready")
+        .count();
+    let attention = capabilities.len().saturating_sub(ready);
+
+    rsx! {
+        section { class: "page-heading",
+            p { class: "eyebrow", "Standalone developer profile" }
+            h1 { "Capability manifest" }
+            p {
+                "Rendered from the same Oxid-owned manifest serialized by system.capabilities. Values are public composition facts; request payloads, identifiers, claims, endpoints, logs, and process telemetry are excluded."
+            }
+        }
+        section { class: "developer-capability-summary surface-card",
+            div {
+                p { class: "card-eyebrow", "Manifest snapshot" }
+                h2 { "{capabilities.len()} declared methods" }
+                p { "{ready} ready · {attention} queued, blocked, superseded, or composition-dependent" }
+            }
+            code { "source=oxid_capabilities_application freshness=composition_time cursor=not_applicable timing=not_collected" }
+        }
+        div { class: "developer-capability-list",
+            for capability in capabilities {
+                article {
+                    class: "developer-capability-row capability-row",
+                    key: "{capability.method()}",
+                    span {
+                        class: if capability.status() == "ready" { "capability-dot ready" } else { "capability-dot queued" }
+                    }
+                    div { class: "developer-capability-row__body",
+                        strong { "{capability.method()}" }
+                        code { "status={capability.status()}" }
+                        if capability.facts().is_empty() {
+                            small { "No additional public composition facts" }
+                        } else {
+                            dl { class: "developer-capability-facts",
+                                for fact in capability.facts() {
+                                    div { key: "{fact.key()}",
+                                        dt { "{fact.key()}" }
+                                        dd { code { "{fact.value().display_text()}" } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 enum LocalDiagnosticsPageState {
     Loading,
@@ -10190,6 +10314,20 @@ mod tests {
         let labels = PRIMARY_DESTINATIONS.map(PrimaryDestination::label);
 
         assert_eq!(labels, ["Home", "Wallet", "Documents", "Activity"]);
+    }
+
+    #[cfg(feature = "ui-profile-dev")]
+    #[test]
+    fn developer_capabilities_are_a_bounded_secondary_route() {
+        assert_eq!(Route::Developer.title(), "Developer capabilities");
+        assert_eq!(Route::Developer.primary(), None);
+        assert!(!route_forces_screen_privacy(Route::Developer));
+
+        let mut navigation = RouteStack::default();
+        navigation.push(Route::Developer);
+        assert_eq!(navigation.current(), Route::Developer);
+        assert!(navigation.pop());
+        assert_eq!(navigation.current(), Route::Home);
     }
 
     #[test]

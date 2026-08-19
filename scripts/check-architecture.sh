@@ -94,6 +94,7 @@ check_workspace_dependencies --all-kinds oxid-platform-ports oxid-foundation
 check_workspace_dependencies --all-kinds oxid-presentation-domain oxid-foundation
 check_workspace_dependencies --all-kinds oxid-passport-vault-domain
 check_workspace_dependencies --all-kinds oxid-diagnostics-application
+check_workspace_dependencies --all-kinds oxid-capabilities-application
 check_workspace_dependencies --all-kinds oxid-wallet-application \
   oxid-foundation oxid-platform-ports oxid-wallet-domain
 check_workspace_dependencies --all-kinds oxid-identity-application \
@@ -166,7 +167,7 @@ check_workspace_dependencies oxid-adapter-passport-vault \
   oxid-foundation oxid-passport-vault-application oxid-passport-vault-domain \
   oxid-platform-ports
 check_workspace_dependencies oxid-ui-dioxus \
-  oxid-credential-application oxid-diagnostics-application \
+  oxid-capabilities-application oxid-credential-application oxid-diagnostics-application \
   oxid-identity-application oxid-identity-domain \
   oxid-platform-ports \
   oxid-passport-vault-application oxid-presentation-application \
@@ -188,7 +189,7 @@ check_workspace_dependencies oxid-composition \
   oxid-wallet-application
 check_workspace_dependencies oxid-app oxid-brand-build oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
-  oxid-composition oxid-credential-application \
+  oxid-capabilities-application oxid-composition oxid-credential-application \
   oxid-diagnostics-application oxid-identity-application oxid-identity-domain \
   oxid-passport-vault-application oxid-passport-vault-domain \
   oxid-presentation-application oxid-protocol-application \
@@ -228,6 +229,7 @@ check_no_external_dependencies oxid-platform-ports
 check_no_external_dependencies oxid-presentation-domain
 check_no_external_dependencies oxid-passport-vault-domain
 check_no_external_dependencies oxid-diagnostics-application
+check_no_external_dependencies oxid-capabilities-application
 check_no_external_dependencies oxid-wallet-application
 check_no_external_dependencies oxid-identity-application
 check_no_external_dependencies oxid-credential-application

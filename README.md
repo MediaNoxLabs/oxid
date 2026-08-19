@@ -124,6 +124,26 @@ just ios-run
 just android-run
 ```
 
+For the standalone-only developer presentation, including the persistent build
+banner and the shared `system.capabilities` viewer, use:
+
+```bash
+just ios-dev
+just android-dev
+```
+
+These are aliases for `OXID_UI_PROFILE=dev` on the same launchers. They do not
+change custody, storage, fixtures, or network composition; normal release
+builds exclude the developer profile.
+
+Focused simulator/emulator checks prove the banner is present before
+onboarding and that the developer route renders the safe shared manifest:
+
+```bash
+just ios-dev-smoke
+just android-dev-smoke
+```
+
 To exercise the same standalone wallet/SSI stack through native device custody,
 select it explicitly:
 
@@ -576,6 +596,9 @@ iPhone simulator with:
 ```bash
 just ios-run
 ```
+
+Use `just ios-dev` (or `OXID_UI_PROFILE=dev just ios-run`) to launch the
+standalone developer capability profile. The default remains the user profile.
 
 The repository iOS and Android launch scripts explicitly enable
 `oxid-app/standalone-development`. Native builds select the same

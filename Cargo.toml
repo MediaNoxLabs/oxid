@@ -26,6 +26,7 @@ members = [
   "crates/adapters/storage-mobile",
   "crates/adapters/storage-dev",
   "crates/composition",
+  "crates/capabilities/application",
   "crates/credential/application",
   "crates/credential/domain",
   "crates/diagnostics/application",
@@ -69,6 +70,7 @@ default-members = [
   "crates/adapters/storage-mobile",
   "crates/adapters/storage-dev",
   "crates/composition",
+  "crates/capabilities/application",
   "crates/credential/application",
   "crates/credential/domain",
   "crates/diagnostics/application",
@@ -162,6 +164,7 @@ oxid-adapter-storage-memory = { version = "=0.1.0", path = "crates/adapters/stor
 oxid-adapter-storage-mobile = { version = "=0.1.0", path = "crates/adapters/storage-mobile" }
 oxid-adapter-storage-dev = { version = "=0.1.0", path = "crates/adapters/storage-dev" }
 oxid-composition = { version = "=0.1.0", path = "crates/composition" }
+oxid-capabilities-application = { version = "=0.1.0", path = "crates/capabilities/application" }
 oxid-brand-build = { version = "=0.1.0", path = "crates/brand-build" }
 oxid-credential-application = { version = "=0.1.0", path = "crates/credential/application" }
 oxid-credential-domain = { version = "=0.1.0", path = "crates/credential/domain" }

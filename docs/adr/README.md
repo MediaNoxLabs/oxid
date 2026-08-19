@@ -116,6 +116,7 @@ ADR status and delivery state answer different questions:
 | [0092](0092-generate-validated-build-time-brand-packs.md) Generate validated build-time brand packs | Accepted | §§1–6, 12–18, 21; white-label design/Phase 3; issues #2/#65/#84 | Default thin app generates immutable identity/CSS/logo from a strict pack; contrast, safety copy, manifest, and every enumerated Nix pack fail closed |
 | [0093](0093-mask-private-wallet-values-as-a-render-only-ui-profile.md) Mask private wallet values as a render-only UI profile | Accepted | §§1–7, 9–13, 16–18, 21; UI profiles P1–P5/Phase 4a; issues #2/#65/#85 | Every Dioxus build defaults to a process-local mask, permits one timed reveal, re-arms on lifecycle/unlock, and leaves exact consent objects visible |
 | [0094](0094-protect-mobile-snapshots-through-a-boolean-platform-port.md) Protect mobile snapshots through a boolean platform port | Accepted | §§3–7, 12–13, 16–18, 21; UI profile P6/Phase 4a; issues #2/#32/#65/#85 | One payload-free port sets Android `FLAG_SECURE` or an honest iOS background overlay; backup/reveal routes force protection and unsupported targets fail closed |
+| [0095](0095-share-a-closed-capability-manifest-with-developer-ui.md) Share a closed capability manifest with the developer UI | Accepted | §§3–7, 12–13, 16–18, 21; UI profiles P1/P2/P7/P9/P10; issues #2/#65/#69/#87 | One dependency-free manifest feeds headless JSON and an opt-in standalone developer viewer; confirmation metadata, feature guards, and normal-release marker exclusion are checked |
 
 ## Current boundaries
 
@@ -237,6 +238,14 @@ adds the distinct host snapshot boundary: one boolean platform port sets
 Android `FLAG_SECURE` or an iOS scene-background overlay and carries no wallet
 value. iOS does not claim screenshot prevention, and physical-device evidence
 remains issue #32.
+ADR-0095 removes capability discovery from the headless adapter's private JSON
+implementation. One dependency-free application manifest now feeds headless
+serialization and the opt-in standalone Dioxus developer view. Its closed facts
+cannot carry payloads, identifiers, claims, endpoints, logs, or telemetry;
+unknown composition labels fail to `unavailable`. The developer profile has a
+persistent build banner, cannot compile with normal composition, and a normal
+release binary must not contain its marker. The demo fixture drawer remains a
+separate presentation-only slice.
 ADR-0084 makes presentation theming a two-layer build boundary. Components
 consume only the fixed semantic surface/text/accent/product/type/space/radius/
 motion/elevation vocabulary, while raw palette values remain confined to

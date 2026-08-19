@@ -27,6 +27,19 @@ case "$mobile_custody" in
     ;;
 esac
 
+ui_profile="${OXID_UI_PROFILE:-user}"
+case "$ui_profile" in
+  user)
+    ;;
+  dev)
+    mobile_features="$mobile_features,ui-profile-dev"
+    ;;
+  *)
+    echo "OXID_UI_PROFILE must be 'user' or 'dev'." >&2
+    exit 1
+    ;;
+esac
+
 android_jni_recovery_test="${OXID_ANDROID_JNI_RECOVERY_TEST:-0}"
 case "$android_jni_recovery_test" in
   0)
@@ -182,4 +195,4 @@ if [ -z "$($adb_command -s "$device" shell pidof io.medianox.oxid | tr -d '\r')"
   exit 1
 fi
 
-echo "Launched io.medianox.oxid on Android device $device."
+echo "Launched io.medianox.oxid ($ui_profile profile, $mobile_custody custody) on Android device $device."

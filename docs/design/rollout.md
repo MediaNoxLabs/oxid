@@ -81,9 +81,17 @@ thin-app build decision; no runtime brand configuration was added.
    visible, and one boolean platform port sets Android `FLAG_SECURE` or an
    honest iOS scene-background overlay. Settings/credential routes force host
    protection; physical-device evidence remains issue #32.
-2. **Dev/demo profiles**: dev capability viewer; demo bootstrap drawer; build
-   feature guards; release-CI proof that distributed artifacts contain neither
-   profile.
+2. **Developer profile** (ADR-0095 / issue #87): one UI-neutral closed
+   capability manifest feeds both `system.capabilities` and the opt-in
+   standalone Dioxus viewer; confirmation declarations, build feature guards,
+   persistent profile/composition copy, and a normal-release binary marker scan
+   are repository gates. Prototype free-form logs, process statistics, HTTP
+   histograms, and timing telemetry remain excluded. iOS/Android smoke evidence
+   closes the slice.
+3. **Demo profile**: demo bootstrap drawer over existing standalone fixtures;
+   per-action and full-chain progress; exact consent remains on the existing
+   review screens; release-CI proof that the distributed artifact contains no
+   demo profile.
 
 ## Phase 5 — Delight & polish (owner-gated)
 
@@ -125,6 +133,6 @@ stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
 (delivered by #80), 2b consent sheet (delivered by #81), 2c onboarding + backup
 (delivered by #82), 2d receive sheet (delivered by #83), 3 white-label infra
 (delivered by #84), 4a secret mode + native privacy ops (delivered by #85),
-4b dev/demo profiles,
+4b1 developer profile (issue #87), 4b2 demo profile,
 5 per-item. Each remaining slice references the relevant spec section as its
 acceptance criteria, factory-work-item style.

@@ -5,6 +5,9 @@
 
 use std::{error::Error, fmt, io, io::BufRead, io::Write, thread, time::Duration};
 
+use oxid_capabilities_application::{
+    CapabilityManifestContext, CapabilityValue, capability_manifest as shared_capability_manifest,
+};
 use oxid_composition::ApplicationServices;
 use oxid_credential_application::{
     CredentialDisclosurePlanView, CredentialDisclosurePortError, CredentialDisclosureQuery,
@@ -14,8 +17,7 @@ use oxid_credential_application::{
     PreviewCredentialDisclosureCommand,
 };
 use oxid_diagnostics_application::{
-    CLEAR_LOCAL_DIAGNOSTICS_INTENT, ClearDiagnosticsCommand, DiagnosticCode, DiagnosticSeverity,
-    DiagnosticSnapshotView,
+    ClearDiagnosticsCommand, DiagnosticCode, DiagnosticSeverity, DiagnosticSnapshotView,
 };
 use oxid_identity_application::{
     CreateDidCommand, DeactivateDidCommand, DidKeyAlgorithm, DidLifecyclePortError,
@@ -25,16 +27,16 @@ use oxid_identity_application::{
 };
 use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::{
-    AUTHORIZE_PASSPORT_VAULT_CALL_INTENT, AuthorizePassportVaultCallCommand, CLAIM_INTENT,
-    CREATE_LOCK_INTENT, ClaimPassportVaultLockCommand, CreatePassportVaultLockCommand,
-    DEPOSIT_INTENT, DecodePassportVaultContractStateCommand, PassportVaultAmountCommand,
-    PassportVaultCallError, PassportVaultCallPortError, PassportVaultCallPreviewView,
-    PassportVaultCallQuery, PassportVaultCallSubmissionStatusView, PassportVaultCallSubmissionView,
-    PassportVaultContractStateError, PassportVaultContractStateReadError,
-    PassportVaultContractStateSourceError, PassportVaultLockView, PassportVaultOperationError,
-    PassportVaultView, PreparePassportVaultCallAction, PreparePassportVaultCallCommand,
+    AuthorizePassportVaultCallCommand, ClaimPassportVaultLockCommand,
+    CreatePassportVaultLockCommand, DecodePassportVaultContractStateCommand,
+    PassportVaultAmountCommand, PassportVaultCallError, PassportVaultCallPortError,
+    PassportVaultCallPreviewView, PassportVaultCallQuery, PassportVaultCallSubmissionStatusView,
+    PassportVaultCallSubmissionView, PassportVaultContractStateError,
+    PassportVaultContractStateReadError, PassportVaultContractStateSourceError,
+    PassportVaultLockView, PassportVaultOperationError, PassportVaultView,
+    PreparePassportVaultCallAction, PreparePassportVaultCallCommand,
     ReadPassportVaultContractStateCommand, SUBMIT_PASSPORT_VAULT_CALL_INTENT,
-    SubmitPassportVaultCallCommand, WITHDRAW_INTENT,
+    SubmitPassportVaultCallCommand,
 };
 use oxid_passport_vault_domain::PassportVaultError;
 use oxid_presentation_application::{
@@ -5219,151 +5221,56 @@ fn passport_vault_call_port_error(
     Response::error(id, code, error.to_string())
 }
 
+fn capability_value(value: &CapabilityValue) -> Value {
+    match value {
+        CapabilityValue::Text(value) => Value::String(value.clone()),
+        CapabilityValue::Boolean(value) => Value::Bool(*value),
+        CapabilityValue::TextList(values) => {
+            Value::Array(values.iter().cloned().map(Value::String).collect())
+        }
+        CapabilityValue::Object(facts) => Value::Object(
+            facts
+                .iter()
+                .map(|fact| (fact.key().to_owned(), capability_value(fact.value())))
+                .collect(),
+        ),
+        CapabilityValue::Null => Value::Null,
+    }
+}
+
 fn capability_manifest(
     compact_presentation_proof_available: bool,
     passport_vault_call_mode: &str,
     passport_vault_state_persistence: &str,
 ) -> Value {
-    let passport_vault_call_authentication =
-        if passport_vault_call_mode == "deterministic_simulation" {
-            "deterministic_simulation"
-        } else {
-            "canonical_finalized_replay"
-        };
-    let passport_vault_call_status = if matches!(
-        passport_vault_call_mode,
-        "deterministic_simulation" | "native_settlement"
-    ) {
-        "ready"
-    } else {
-        "composition_dependent"
-    };
-    let passport_vault_call_operations = if matches!(
-        passport_vault_call_mode,
-        "deterministic_simulation" | "native_settlement"
-    ) {
-        vec![
-            "create_lock",
-            "deposit_to_lock",
-            "claim_from_lock",
-            "withdraw_from_lock",
-        ]
-    } else {
-        vec!["create_lock", "deposit_to_lock", "withdraw_from_lock"]
-    };
-    let passport_vault_history_persistence = if passport_vault_call_mode == "native_settlement" {
-        "public_metadata_only"
-    } else {
-        "process_local_public_metadata"
-    };
-    let passport_vault_reconciliation_scope = if passport_vault_call_mode == "native_settlement" {
-        "finalized_chain"
-    } else {
-        "adapter_status"
-    };
-    json!([
-        { "method": "system.capabilities", "status": "ready" },
-        { "method": "system.diagnostics.snapshot", "status": "ready", "persistence": "process_local", "telemetry": "off", "payloadsRetained": false },
-        { "method": "system.diagnostics.clear", "status": "ready", "confirmationRequired": true, "intent": CLEAR_LOCAL_DIAGNOSTICS_INTENT },
-        { "method": "system.quit", "status": "ready" },
-        { "method": "wallet.profile.create", "status": "ready" },
-        { "method": "wallet.profile.list", "status": "ready" },
-        { "method": "wallet.profile.select", "status": "ready" },
-        { "method": "wallet.profile.active", "status": "ready" },
-        { "method": "wallet.security.status", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.security.initialize", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.security.unlock", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.security.lock", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.key.generate", "status": "ready", "mode": "development_only", "algorithms": ["ed25519", "p256", "secp256k1-schnorr", "jubjub"] },
-        { "method": "wallet.key.list", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.key.sign", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.key.delete", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.network.list", "status": "ready", "mode": "standalone" },
-        { "method": "wallet.network.select", "status": "ready", "mode": "standalone" },
-        { "method": "wallet.account.derive", "status": "ready", "mode": "development_only", "paths": ["midnight-night-external", "midnight-zswap"] },
-        { "method": "wallet.account.get", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
-        { "method": "wallet.connect", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
-        { "method": "wallet.bootstrap", "status": "queued" },
-        { "method": "wallet.address.list", "status": "ready", "mode": "standalone", "sources": ["protected_derivation", "official_public_vectors", "configured_public_address"] },
-        { "method": "wallet.address.unshielded", "status": "ready", "mode": "standalone", "sources": ["protected_derivation", "official_public_vectors", "configured_public_address"] },
-        { "method": "wallet.address.shielded", "status": "ready", "mode": "standalone", "sources": ["protected_derivation", "official_public_vectors"] },
-        { "method": "wallet.balance.snapshot", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
-        { "method": "wallet.transaction.history", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached"] },
-        { "method": "wallet.transaction.prepare_unshielded", "status": "ready", "mode": "development_only", "submissionReady": false },
-        { "method": "wallet.transaction.prepare_shielded", "status": "ready", "mode": "standalone", "requires": "fresh_shielded_sync", "submissionReady": false },
-        { "method": "wallet.transaction.authorize_unshielded", "status": "ready", "mode": "development_only", "submissionReady": true },
-        { "method": "wallet.transaction.authorize_shielded", "status": "ready", "mode": "standalone", "submissionReady": true },
-        { "method": "wallet.transaction.draft", "status": "ready", "mode": "development_only", "submissionReady": "state_dependent" },
-        { "method": "wallet.transaction.submit_unshielded", "status": "ready", "mode": "development_only", "sources": ["simulated", "live"] },
-        { "method": "wallet.transaction.send_unshielded", "status": "ready", "mode": "development_only", "aliasFor": "wallet.transaction.submit_unshielded" },
-        { "method": "wallet.transaction.submit_shielded", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
-        { "method": "wallet.transaction.send_shielded", "status": "ready", "mode": "standalone", "aliasFor": "wallet.transaction.submit_shielded" },
-        { "method": "wallet.transaction.start_submission", "status": "ready", "mode": "development_only", "execution": "adapter_worker" },
-        { "method": "wallet.transaction.submission_status", "status": "ready", "mode": "development_only" },
-        { "method": "wallet.transaction.submission_history", "status": "ready", "mode": "standalone", "persistence": "public_metadata_only" },
-        { "method": "wallet.transaction.reconcile_submission", "status": "ready", "mode": "standalone", "scope": "finalized_chain" },
-        { "method": "wallet.transaction.cancel_submission", "status": "ready", "mode": "development_only", "boundary": "pre_broadcast_only" },
-        { "method": "wallet.sync.force", "status": "ready", "mode": "standalone", "sources": ["simulated", "live"] },
-        { "method": "wallet.dust.sync.status", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached", "unavailable"] },
-        { "method": "wallet.dust.sync.start", "status": "ready", "mode": "standalone", "execution": "adapter_worker" },
-        { "method": "wallet.dust.sync.cancel", "status": "ready", "mode": "standalone", "checkpoint": "resumable" },
-        { "method": "wallet.shielded.sync.status", "status": "ready", "mode": "standalone", "sources": ["simulated", "live", "cached", "unavailable"] },
-        { "method": "wallet.shielded.sync.start", "status": "ready", "mode": "standalone", "execution": "adapter_worker" },
-        { "method": "wallet.shielded.sync.cancel", "status": "ready", "mode": "standalone", "checkpoint": "resumable" },
-        { "method": "vault.total_locked", "status": "ready", "mode": "standalone", "state": passport_vault_state_persistence, "settlesOnMidnight": false },
-        { "method": "vault.locks.list", "status": "ready", "mode": "standalone", "state": passport_vault_state_persistence, "settlesOnMidnight": false },
-        { "method": "vault.contract_state.decode", "status": "ready", "mode": "native", "source": "pinned_layout_tagged_midnight_state", "mutates": false },
-        { "method": "vault.contract_state.read", "status": "composition_dependent", "mode": "native", "sources": ["deterministic_simulation", "node_anchored_indexer", "finalized_node_replay"], "stateAuthentication": ["deterministic_simulation", "indexer_supplied_not_proven", "canonical_finalized_replay"], "mutates": false },
-        { "method": "vault.contract_call.prepare", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "operations": passport_vault_call_operations, "requiresStateAuthentication": passport_vault_call_authentication, "privateMaterialExposed": false },
-        { "method": "vault.contract_call.authorize", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "confirmationRequired": true, "intent": AUTHORIZE_PASSPORT_VAULT_CALL_INTENT },
-        { "method": "vault.contract_call.draft", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "serializedTransactionExposed": false },
-        { "method": "vault.contract_call.submit", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "confirmationRequired": true, "intent": SUBMIT_PASSPORT_VAULT_CALL_INTENT },
-        { "method": "vault.contract_call.start_submission", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "execution": "adapter_worker" },
-        { "method": "vault.contract_call.submission_status", "status": passport_vault_call_status, "mode": passport_vault_call_mode },
-        { "method": "vault.contract_call.submission_history", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "persistence": passport_vault_history_persistence },
-        { "method": "vault.contract_call.cancel_submission", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "boundary": "pre_broadcast_only" },
-        { "method": "vault.contract_call.reconcile_submission", "status": passport_vault_call_status, "mode": passport_vault_call_mode, "scope": passport_vault_reconciliation_scope },
-        { "method": "vault.credentials.list", "status": "ready", "mode": "standalone", "aliasFor": "credential.list" },
-        { "method": "vault.lock.create", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": CREATE_LOCK_INTENT },
-        { "method": "vault.deposit", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": DEPOSIT_INTENT },
-        { "method": "vault.claim", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": CLAIM_INTENT, "credentialPolicy": "digital-passport:v1", "replayProtection": "per_lock_credential_root" },
-        { "method": "vault.withdraw", "status": "ready", "mode": "standalone", "confirmationRequired": true, "intent": WITHDRAW_INTENT },
-        { "method": "identity.request.route", "status": "ready", "mode": "standalone", "inputs": ["openid-credential-offer", "registered_openid4vp"], "unknownOpenid4vp": "fail_closed", "requestUriExposed": false },
-        { "method": "identity.login", "status": "ready", "mode": "standalone", "aliasFor": "identity.authentication.prepare" },
-        { "method": "identity.authentication.prepare", "status": "ready", "mode": "standalone", "standard": "SIOPv2 draft 13", "requestMode": "by_reference", "responseMode": "direct_post", "responseType": "id_token", "secretsExposed": false },
-        { "method": "identity.authentication.accept", "status": "ready", "mode": "standalone", "confirmationRequired": true, "algorithms": ["EdDSA", "ES256"], "secretsExposed": false },
-        { "method": "identity.authentication.refuse", "status": "ready", "mode": "standalone" },
-        { "method": "identity.authentication.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
-        { "method": "identity.authentication.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
-        { "method": "credential.receive", "status": "ready", "mode": "standalone", "source": "public_fixture" },
-        { "method": "credential.request", "status": "ready", "mode": "standalone", "aliasFor": "credential.receive" },
-        { "method": "credential.list", "status": "ready", "mode": "standalone", "scope": "active_profile" },
-        { "method": "credential.get", "status": "ready", "mode": "standalone", "scope": "active_profile", "rawCredentialExposed": false },
-        { "method": "credential.reverify", "status": "ready", "mode": "standalone", "stages": ["structural", "issuer", "proof", "temporal", "status", "schema", "trust"], "compactPolicy": { "issuer": "did_assertion_method_and_jubjub_key", "temporal": "current_time_and_expiry", "trust": "pinned_standalone_anchor", "status": "not_checked" } },
-        { "method": "credential.verify", "status": "ready", "mode": "standalone", "aliasFor": "credential.reverify" },
-        { "method": "credential.delete", "status": "ready", "mode": "standalone", "confirmationRequired": true },
-        { "method": "credential.disclosure.candidates", "status": "ready", "mode": "standalone", "claimValuesExposed": false },
-        { "method": "credential.disclosure.preview", "status": "ready", "mode": "standalone", "generatesPresentation": false, "claimValuesExposed": false },
-        { "method": "credential.issuance.prepare", "status": "ready", "mode": "standalone", "standard": "OpenID4VCI 1.0 Final", "offerMode": "embedded" },
-        { "method": "credential.issuance.accept", "status": "ready", "mode": "standalone", "grant": "pre-authorized_code", "confirmationRequired": true, "proof": "jwt" },
-        { "method": "credential.issuance.refuse", "status": "ready", "mode": "standalone" },
-        { "method": "credential.issuance.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
-        { "method": "credential.issuance.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
-        { "method": "credential.presentation.prepare", "status": "ready", "mode": "standalone", "standard": "OpenID4VP 1.0 Final", "query": "DCQL", "requestMode": "by_reference", "claimValuesExposed": false },
-        { "method": "credential.presentation.accept", "status": if compact_presentation_proof_available { "ready" } else { "blocked" }, "mode": "standalone", "confirmationRequired": true, "holderAuthorization": "current_managed_jubjub_method", "proofAvailable": compact_presentation_proof_available, "artifactRootEnvironment": "OXID_PRESENTATION_ARTIFACTS_DIR", "generatesPresentation": compact_presentation_proof_available, "blocker": if compact_presentation_proof_available { Value::Null } else { json!("https://github.com/MediaNoxLabs/oxid/issues/28") } },
-        { "method": "credential.presentation.refuse", "status": "ready", "mode": "standalone" },
-        { "method": "credential.presentation.get", "status": "ready", "mode": "standalone", "secretsExposed": false },
-        { "method": "credential.presentation.list", "status": "ready", "mode": "standalone", "scope": "active_profile", "secretsExposed": false },
-        { "method": "did.create", "status": "ready", "mode": "development_only", "networks": ["undeployed"], "initialMethods": ["ed25519", "p256", "jubjub"] },
-        { "method": "did.resolve", "status": "ready", "mode": "standalone", "sources": ["standalone", "live"] },
-        { "method": "did.list", "status": "ready", "mode": "standalone", "scope": "active_profile" },
-        { "method": "did.get", "status": "ready", "mode": "standalone", "scope": "active_profile" },
-        { "method": "did.forget", "status": "ready", "mode": "standalone", "scope": "active_profile" },
-        { "method": "did.update", "status": "ready", "mode": "development_only", "operations": ["addAlsoKnownAs", "removeAlsoKnownAs", "addVerificationMethod", "updateVerificationMethod", "removeVerificationMethod", "addVerificationRelationship", "removeVerificationRelationship", "addService", "updateService", "removeService"], "confirmationRequired": true },
-        { "method": "did.sign", "status": "ready", "mode": "development_only", "algorithms": ["ed25519", "p256", "jubjub"], "confirmationRequired": true },
-        { "method": "did.deactivate", "status": "ready", "mode": "development_only", "confirmationRequired": true },
-        { "method": "diagnostics.snapshot", "status": "superseded", "use": "system.diagnostics.snapshot" }
-    ])
+    Value::Array(
+        shared_capability_manifest(CapabilityManifestContext::new(
+            compact_presentation_proof_available,
+            passport_vault_call_mode,
+            passport_vault_state_persistence,
+        ))
+        .iter()
+        .map(|capability| {
+            let mut object = serde_json::Map::from_iter([
+                (
+                    "method".to_owned(),
+                    Value::String(capability.method().to_owned()),
+                ),
+                (
+                    "status".to_owned(),
+                    Value::String(capability.status().to_owned()),
+                ),
+            ]);
+            object.extend(
+                capability
+                    .facts()
+                    .iter()
+                    .map(|fact| (fact.key().to_owned(), capability_value(fact.value()))),
+            );
+            Value::Object(object)
+        })
+        .collect(),
+    )
 }
 
 /// Failures while reading or writing the headless protocol stream.
@@ -5400,6 +5307,11 @@ mod tests {
     use super::*;
     use oxid_adapter_openid4vci::standalone_credential_offer;
     use oxid_adapter_siopv2::standalone_self_issued_request;
+    use oxid_diagnostics_application::CLEAR_LOCAL_DIAGNOSTICS_INTENT;
+    use oxid_passport_vault_application::{
+        AUTHORIZE_PASSPORT_VAULT_CALL_INTENT, CLAIM_INTENT, CREATE_LOCK_INTENT, DEPOSIT_INTENT,
+        WITHDRAW_INTENT,
+    };
 
     fn execute(input: &str) -> Vec<Value> {
         let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
@@ -5562,6 +5474,25 @@ mod tests {
                         "withdraw_from_lock"
                     ])
         }));
+        for (method, intent) in [
+            ("system.diagnostics.clear", CLEAR_LOCAL_DIAGNOSTICS_INTENT),
+            (
+                "vault.contract_call.authorize",
+                AUTHORIZE_PASSPORT_VAULT_CALL_INTENT,
+            ),
+            (
+                "vault.contract_call.submit",
+                SUBMIT_PASSPORT_VAULT_CALL_INTENT,
+            ),
+            ("vault.lock.create", CREATE_LOCK_INTENT),
+            ("vault.deposit", DEPOSIT_INTENT),
+            ("vault.claim", CLAIM_INTENT),
+            ("vault.withdraw", WITHDRAW_INTENT),
+        ] {
+            assert!(methods.iter().any(|capability| {
+                capability["method"] == method && capability["intent"] == intent
+            }));
+        }
     }
 
     #[test]
