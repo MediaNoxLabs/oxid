@@ -1655,8 +1655,12 @@ remain release gates. Simulator/emulator proof success is conformance evidence
 only.
 
 `just ios-smoke` generates an ignored XCUITest project from
-`tests/mobile/ios/project.yml`, resets only the installed Oxid simulator data,
-and must select only `OxidUITests/ProfileFlowTests`; the native-custody harness
+`tests/mobile/ios/project.yml`, discovers every `ProfileFlowTests` method, and
+runs each against a freshly reinstalled Oxid app container. Keep that per-test
+isolation: onboarding requires an empty profile and the stable standalone
+fixtures intentionally exercise replay protection, so a shared container makes
+otherwise independent scenarios order-dependent. The harness must select only
+`OxidUITests/ProfileFlowTests`; the native-custody harness
 selects only `NativeCustodyTests` so feature-specific assertions never run
 against the other composition. The development suite verifies profile creation,
 development account activation, receive QR,
