@@ -5826,6 +5826,7 @@ name = "oxid-adapter-storage-identity-json"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "oxid-adapter-store-atomic",
  "oxid-identity-application",
  "oxid-identity-domain",
  "serde",
@@ -5876,6 +5877,10 @@ dependencies = [
  "serde_json",
  "zeroize",
 ]
+
+[[package]]
+name = "oxid-adapter-store-atomic"
+version = "0.1.0"
 
 [[package]]
 name = "oxid-adapter-vc-midnight"

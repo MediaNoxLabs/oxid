@@ -147,7 +147,8 @@ check_workspace_dependencies oxid-adapter-did-midnight \
 check_workspace_dependencies oxid-adapter-identity-ingress \
   oxid-adapter-mobile-native oxid-platform-ports oxid-protocol-application
 check_workspace_dependencies oxid-adapter-storage-identity-json \
-  oxid-identity-application oxid-identity-domain
+  oxid-adapter-store-atomic oxid-identity-application oxid-identity-domain
+check_workspace_dependencies oxid-adapter-store-atomic
 check_workspace_dependencies oxid-adapter-storage-credential-json \
   oxid-credential-application oxid-credential-domain oxid-foundation
 check_workspace_dependencies oxid-adapter-vc-midnight \

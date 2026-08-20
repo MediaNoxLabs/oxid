@@ -20,6 +20,7 @@ members = [
   "crates/adapters/backup-complete",
   "crates/adapters/backup-document-mobile",
   "crates/adapters/mobile-native-plugin",
+  "crates/adapters/store-atomic",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
@@ -65,6 +66,7 @@ default-members = [
   "crates/adapters/backup-complete",
   "crates/adapters/backup-document-mobile",
   "crates/adapters/mobile-native-plugin",
+  "crates/adapters/store-atomic",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
@@ -159,6 +161,7 @@ oxid-adapter-backup-portable = { version = "=0.1.0", path = "crates/adapters/bac
 oxid-adapter-backup-complete = { version = "=0.1.0", path = "crates/adapters/backup-complete" }
 oxid-adapter-backup-document-mobile = { version = "=0.1.0", path = "crates/adapters/backup-document-mobile" }
 oxid-adapter-mobile-native = { version = "=0.1.0", path = "crates/adapters/mobile-native-plugin" }
+oxid-adapter-store-atomic = { version = "=0.1.0", path = "crates/adapters/store-atomic" }
 oxid-adapter-storage-credential-json = { version = "=0.1.0", path = "crates/adapters/storage-credential-json" }
 oxid-adapter-storage-identity-json = { version = "=0.1.0", path = "crates/adapters/storage-identity-json" }
 oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }
