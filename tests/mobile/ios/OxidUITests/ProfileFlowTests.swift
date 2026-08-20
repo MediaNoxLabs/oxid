@@ -197,6 +197,7 @@ final class ProfileFlowTests: XCTestCase {
         useReceiveAddress.tap()
         let continueToAmount = application.buttons["Continue to transfer amount"]
         XCTAssertTrue(continueToAmount.waitForExistence(timeout: 5))
+        scrollTo(continueToAmount, in: application)
         continueToAmount.tap()
 
         let shieldedTransfer = application.switches["Use shielded NIGHT transfer"]
