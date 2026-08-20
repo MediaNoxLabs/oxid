@@ -6232,7 +6232,7 @@ fn DustRegistrationReview(preview: WalletDustRegistrationPreviewView) -> Element
             div { dt { "NIGHT aggregate" } dd { "{review.registered_night}" } }
             div { dt { "Eligible inputs" } dd { "{review.input_count}" } }
             div { dt { "Maximum DUST fee allowance" } dd { "{review.maximum_fee_allowance}" } }
-            div { dt { "Network" } dd { "{review.network}" } }
+            div { dt { "Network" } dd { "{ui::midnight_network(&preview.network_id)}" } }
         }
     }
 }
@@ -6242,7 +6242,6 @@ struct DustRegistrationReviewCopy {
     registered_night: String,
     input_count: u16,
     maximum_fee_allowance: String,
-    network: String,
 }
 
 fn dust_registration_review(
@@ -6252,7 +6251,6 @@ fn dust_registration_review(
         registered_night: format_dust_registration_asset(&preview.registered_night),
         input_count: preview.input_count,
         maximum_fee_allowance: format_dust_registration_asset(&preview.maximum_fee_allowance),
-        network: ui::midnight_network(&preview.network_id).to_owned(),
     }
 }
 
