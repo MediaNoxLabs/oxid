@@ -141,9 +141,13 @@ thin-app build decision; no runtime brand configuration was added.
    balance once for the transfer and proves exact deltas. The write preflight
    runs before the single-use marker, which is shared across local worktrees.
    The harness isolates the seed from Cargo/build scripts and may retry only
-   the same authorized draft after exact pre-broadcast insufficient DUST. The
-   funded live write, durable native restart, physical-device, and production
-   evidence remain open.
+   the same authorized draft after exact pre-broadcast insufficient DUST.
+   Controlled DUST and Zswap cold catch-up now close bounded receive segments
+   before replay/checkpoint work; the live harness uses an optimized,
+   symbol-retaining evidence profile without changing release artifacts or
+   synchronization caps. Case 0 is externally funded, but exact indexed
+   topology, the clean read-only rerun, funded live write, durable native
+   restart, physical-device, and production evidence remain open.
 
 ## Phase 5 — Delight & polish (owner-gated)
 

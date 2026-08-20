@@ -252,13 +252,16 @@ four records, 16 MiB per state, and 64 MiB overall and uses owner-private atomic
 replacement. No seed or secret scalar is serialized.
 
 Standalone submission fetches the live tip first, loads only an exact
-network/key/parameter match, subscribes at `current_cursor + 1`, checks exact
-event continuity, and folds batches of at most 256 events/4 MiB. Catch-up is
-bounded to one million events, 512 MiB processed bytes, and 30 minutes. Cached
-state becomes eligible for balancing only after the live stream reaches its
-advertised target (including an explicit empty completion for an already
-current cursor). Invalid cached delta data gets one fresh replay; timeouts and
-connection failures fail closed and do not cause a second history request.
+network/key/parameter match, and subscribes at `current_cursor + 1`. Sparse
+global event cursors must move strictly forward while advertised targets never
+regress. Each subscription receives at most 16,384 events/16 MiB, is completed
+and dropped before replay, and then folds/checkpoints batches of at most 256
+events/4 MiB. Catch-up across every reconnect remains bounded to one million
+events, 512 MiB processed bytes, and 30 minutes. Cached state becomes eligible
+for balancing only after the live stream reaches its advertised target
+(including an explicit empty completion for an already current cursor).
+Invalid cached delta data gets one fresh replay; timeouts and connection
+failures fail closed and do not cause a second history request.
 
 [Issue #17](https://github.com/MediaNoxLabs/oxid/issues/17) and ADR-0032 expose
 that same fold as an explicit session without moving ledger state into core.
@@ -275,8 +278,10 @@ The native worker is covered separately from the lower-level replay helper. A
 fixed adapter-private chain-tip source keeps HTTP transport out of pure-Nix
 tests, while the real GraphQL-WebSocket fixture proves owned-event replay to an
 exact 12 DUST balance, `cursor + 1` resume, partial-batch cancellation, durable
-checkpoint publication, and redacted transport failure. Normal construction
-still obtains the chain tip through the bounded explicit HTTP route.
+checkpoint publication, complete/drop before replay, target monotonicity across
+reconnects, observer-error isolation, and redacted transport failure. Normal
+construction still obtains the chain tip through the bounded explicit HTTP
+route.
 
 The seven catalog IDs are `mainnet`, `preprod`, `preview`, `testnet`, `qanet`,
 `devnet`, and `undeployed`. They carry identity and environment only. Runtime

@@ -217,12 +217,14 @@ the prototype's persisted DUST replay behavior behind a distinct private
 adapter store. The bounded binary envelope preserves the official tagged
 `DustLocalState`, completed cursor, live-parameter identity, network, and a
 one-way public-key fingerprint without persisting the DUST seed or scalar.
-Standalone completion resumes from the next cursor and folds events in small
-batches instead of retaining the prototype's history-sized queue. A current
-checkpoint still needs a successful live subscription; wrong scope or
-parameters replay cleanly, incompatible deltas retry once from zero, and
-transport failure never authorizes a cached-only spend. Headless composition
-accepts the store only with the complete standalone route set.
+Standalone completion resumes from the next sparse cursor, receives at most
+16,384 events/16 MiB, closes the subscription, then folds and checkpoints in
+256-event/4 MiB batches instead of retaining the prototype's history-sized
+queue or folding under transport backpressure. A current checkpoint still
+needs a successful live subscription; wrong scope or parameters replay
+cleanly, incompatible deltas retry once from zero, and transport failure never
+authorizes a cached-only spend. Headless composition accepts the store only
+with the complete standalone route set.
 
 [Issue #17](https://github.com/MediaNoxLabs/oxid/issues/17) and ADR-0032 add the
 prototype's explicit DUST sync lifecycle without copying its wallet facade or
@@ -252,9 +254,13 @@ per-token balances and note/commitment counts. Its deterministic standalone
 controller verifies the protected role-3 child and drives headless plus mobile
 cancellation/resume flows. The native live increment connects the same port to
 a bounded `graphql-transport-ws` worker over `zswapLedgerEvents`, saves every
-consistent official-state batch, resumes from the next cursor, and retries an
-incompatible cached delta once from zero. Headless environment composition
-accepts the private store for read-only or complete standalone live modes.
+consistent official-state batch, resumes from the next sparse cursor, and
+retries an incompatible cached delta once from zero. Unlike the prototype's
+explicitly provisional inline v1, cold catch-up receives a bounded segment,
+completes and drops its subscription, then replays/checkpoints before
+reconnecting from the observer-accepted cursor. Headless environment
+composition accepts the private store for read-only or complete standalone
+live modes.
 
 Issue #19 and ADR-0034 add a deliberate improvement over the prototype's
 submit-and-wait flow: Oxid-owned submission status plus explicit headless and

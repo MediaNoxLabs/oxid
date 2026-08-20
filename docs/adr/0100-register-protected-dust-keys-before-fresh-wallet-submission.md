@@ -216,6 +216,21 @@ public aggregate balances, counts, and readiness states. A cold PreProd DUST
 replay has a separate 15-minute observation bound; changing that test bound
 does not change standalone or production synchronization policy.
 
+Read-only live attempts on 2026-08-20 exposed transport/performance evidence,
+not a funding mismatch. Before controlled DUST segmentation, an unoptimized
+run stalled because official folding occurred while the subscription remained
+open. Signed commit `26505c81bde1a7c5e4bc13e559232cf0ebf8d97a`
+closed bounded DUST receive segments before folding; its next unoptimized run
+remained truthfully `syncing` with no failure after 218,252 events at the
+observer's 900-second bound. The first `preprod-live` attempt on signed commit
+`2763125bb71a445f608bc6a8a8f98cf51c49495a` then reached the analogous inline
+shielded replay and exceeded that stage's 90-second observation bound before
+emitting output. Signed commit
+`a490dc0f754b9a3f89483c875dc68a77ea7f29d5` applies the same controlled
+complete/drop-before-fold contract to Zswap; a clean live rerun remains
+required. Every failed observer exited before authorization, proving,
+persistence, marker creation, broadcast, or chain write.
+
 ## Required validation
 
 Implementation evidence must include:

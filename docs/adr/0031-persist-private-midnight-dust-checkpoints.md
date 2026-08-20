@@ -53,12 +53,16 @@ at cursor `n` seeds the official ledger state machine and subscribes from
 `n + 1`; mismatched network, public-key fingerprint, schema, or parameter
 identity starts from zero. ADR-0032 additionally permits
 `current_cursor < target_cursor` after a bounded batch so explicit cancellation
-can resume without replaying already folded history. Incoming events are checked
-for exact contiguous IDs and a nondecreasing target, folded into
-`DustLocalState` in small bounded batches, and never accumulated in a
-history-sized queue. Total event count, event size, processed bytes, message
-size, idle time, and overall catch-up time remain
-bounded.
+can resume without replaying already folded history. Incoming identifiers are
+sparse global cursors and must move strictly forward against a nondecreasing
+advertised target. Network input is received into at most 16,384 events or
+16 MiB of decoded serialized event input. After a bounded burst, quiet-time
+boundary, or the advertised target, the client sends GraphQL `complete` and
+drops the socket before any official ledger fold or checkpoint callback. The
+closed segment is then folded into `DustLocalState` in batches of at most 256
+events or 4 MiB, and the next subscription resumes only from the last
+observer-accepted cursor plus one. Total event count, event size, processed
+bytes, message size, idle time, and overall catch-up time remain bounded.
 
 A checkpoint can authorize balancing only after the live subscription proves
 that its cursor reaches the current advertised target. Incompatible cached
@@ -76,9 +80,10 @@ live state.
   is unavailable or its current parameters cannot be obtained.
 - Key-specific private wallet state remains out of Oxid domain types and out of
   the public profile/account JSON stores.
-- Memory consumption is bounded by a small replay batch rather than the
-  prototype's large event channel; long histories remain bounded by explicit
-  total work and time limits.
+- Memory consumption is bounded by one 16,384-event/16 MiB receive segment plus
+  one 256-event/4 MiB replay batch rather than the prototype's 524,288-event
+  channel; long histories remain bounded by explicit total work and time
+  limits.
 - Development custody is intentionally process-local today. Cross-process
   checkpoint hits become useful once the native durable-custody adapter keeps
   the same protected root; this decision does not weaken that production gate.

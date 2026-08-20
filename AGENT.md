@@ -396,7 +396,15 @@ tip so pure Nix does not depend on HTTP loopback, then drives the real bounded
 GraphQL-WebSocket worker. It proves an owned event projects exactly 12 DUST,
 resume subscribes from `cursor + 1`, cancellation retains a 256-event partial
 checkpoint, and transport failure publishes only its redacted stable category.
-Production construction still uses the bounded HTTP chain-tip source.
+Cold replay receives at most 16,384 events/16 MiB, sends GraphQL `complete` and
+drops the socket before any fold/checkpoint callback, retains the 256-event/
+4 MiB durable cadence, and reconnects only from the last observer-accepted
+sparse cursor. The one-million-event/512 MiB/30-minute bounds span reconnects.
+Tests require server-observed completion before the first callback, reject
+target regression across a segment, and keep observer failure out of the one-
+time incompatible-checkpoint fallback. Production construction still uses the
+bounded HTTP chain-tip source. The accepted implementation commit is
+`26505c81bde1a7c5e4bc13e559232cf0ebf8d97a`.
 
 [Issue #18](https://github.com/MediaNoxLabs/oxid/issues/18) and ADR-0033 keep
 shielded Zswap custody, replay, and checkpoints inside the native Midnight
@@ -408,8 +416,13 @@ owned-note/commitment counts. The deterministic standalone session advances on
 polls for headless and mobile cancellation/resume coverage. Explicit live
 headless configurations run a bounded native `zswapLedgerEvents` worker,
 checkpoint every consistent official-state batch, resume at `cursor + 1`, and
-retry an incompatible cached delta once from zero. Production composition
-remains fail-closed pending durable native custody and endpoint discovery.
+retry an incompatible cached delta once from zero. The immutable prototype's
+shielded v1 explicitly left its inline transport/fold as a pipeline follow-up;
+Oxid now uses the same 16,384-event/16 MiB complete/drop-before-fold segmentation,
+256-event/4 MiB checkpoint cadence, whole-run caps, and observer-accepted
+cursor rule as DUST. Production composition remains fail-closed pending durable
+native custody and endpoint discovery. The accepted implementation commit is
+`a490dc0f754b9a3f89483c875dc68a77ea7f29d5`.
 
 [Issue #59](https://github.com/MediaNoxLabs/oxid/issues/59) and ADR-0079 extend
 that boundary to protected shielded spending. Preparation accepts only a fresh
@@ -2101,8 +2114,9 @@ to silence the shell probe.
   freshness, and sanitized failures. The standalone simulator and native worker
   must borrow the role-3 child before starting and retain no secret material.
   Preserve native connect/ack/idle/total timeouts, WebSocket message/frame
-  bounds, linear cursor and non-regressing target checks, 256-event/4 MiB
-  replay batches, and one-million-event/512 MiB run limits.
+  bounds, strictly increasing sparse cursor and non-regressing target checks,
+  16,384-event/16 MiB complete/drop-before-fold receive segments,
+  256-event/4 MiB replay batches, and one-million-event/512 MiB run limits.
 - Transaction attempt status must remain separate from draft lifecycle. Retain
   cancellation primitives inside the Midnight adapter, mark broadcast before
   the node call, restore `Authorized` only after acknowledged pre-broadcast
@@ -2270,13 +2284,23 @@ to silence the shell probe.
   directory, single-use marker, or prover contact. It emits only a closed set
   of public aggregate account/shielded/DUST/readiness fields. Cold PreProd DUST
   replay has a test-only 15-minute bound; ordinary standalone
-  synchronization retains its 120-second bound. On 2026-08-20, a first
-  read-only run reached DUST sync after both account and shielded reads but the
-  cold DUST replay exceeded 120 seconds; a second run later returned a shielded
-  `stalled/timed_out` status at 90 seconds. Both failed before output, created
-  no write marker, proof, or transaction, and leave exact indexed amounts
-  pending a later read. Do not treat these transport observations as a funding
-  mismatch or retry a write because of them.
+  synchronization retains its 120-second bound. On 2026-08-20, early attempts
+  exceeded the old DUST or shielded stage bounds before public output. A plain
+  debug run on signed `26505c81bde1a7c5e4bc13e559232cf0ebf8d97a`
+  proved DUST transport segmentation stayed `syncing` with no failure and
+  reached cursor 227,235 of target 1,445,979 after 218,252 events, but exceeded
+  the observer's 900-second DUST wait. It used the unavailable checkpoint store,
+  so no checkpoint was serialized or persisted. The focused 16,385-event DUST
+  regression took 9.41 seconds in debug and 0.35 seconds in the optimized
+  `preprod-live` profile introduced by signed
+  `2763125bb71a445f608bc6a8a8f98cf51c49495a`. That commit's first optimized
+  live attempt then exceeded the shielded stage's 90-second wait because Zswap
+  still folded inline under an open subscription. Signed
+  `a490dc0f754b9a3f89483c875dc68a77ea7f29d5` closes the analogous shielded
+  backpressure gap; clean live evidence remains pending. All attempts failed
+  before output and created no write marker, checkpoint/journal file, proof,
+  transaction, prover contact, or chain write. Do not treat these transport
+  observations as a funding mismatch or retry a write because of them.
   `just preprod-registration-e2e` is implemented but remains unrun. The
   out-of-band root/case are configured and case 0 has been externally funded,
   but the exact indexed topology still needs a successful read-only
