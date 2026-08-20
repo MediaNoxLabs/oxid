@@ -1,0 +1,65 @@
+name: Factory work item
+description: A bounded, machine-executable slice of work for the AI Software Factory (docs/factory).
+title: "[factory] "
+labels: []
+body:
+  - type: input
+    id: goal
+    attributes:
+      label: Goal
+      description: One sentence. What exists when this item is done that does not exist now?
+      placeholder: Expose resumable X through a Y boundary without Z.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Enumerated, each objectively checkable by a reviewer who did not write the code.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Explicitly out of scope
+      description: What this slice deliberately does not do (prevents scope creep and bulk copies).
+      placeholder: |
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification commands
+      description: Commands that must pass, runnable from a clean checkout (just/run.sh targets preferred).
+      placeholder: |
+        ./run.sh --light --strict
+        cargo test -p <crate>
+    validations:
+      required: true
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size class
+      description: "S: ≤1 crate touched. M: ≤3 crates, no new ADR. L: new ADR or new crate (link the ADR draft)."
+      options:
+        - S
+        - M
+        - L
+    validations:
+      required: true
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: Required worker capabilities
+      description: Host capabilities a worker needs (nix devshell, iOS simulator, Android emulator, network fixtures). Leave empty if plain cargo suffices.
+      placeholder: |
+        - nix develop
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and constraints
+      description: ADRs that bind this work, related issues, migration provenance, and anything AGENT.md says that is easy to violate here.

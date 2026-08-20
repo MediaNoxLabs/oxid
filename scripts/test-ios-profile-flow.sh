@@ -47,18 +47,45 @@ OXID_REPOSITORY_ROOT="$repository_root" \
 
 xcode_developer_dir="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p)"
 host_user="$(id -un)"
-env -i \
-  "DEVELOPER_DIR=$xcode_developer_dir" \
-  "HOME=$HOME" \
-  "LANG=${LANG:-en_US.UTF-8}" \
-  "LOGNAME=$host_user" \
-  "PATH=/usr/bin:/bin:/usr/sbin:/sbin" \
-  "TMPDIR=${TMPDIR:-/tmp}" \
-  "USER=$host_user" \
-  /usr/bin/xcodebuild test \
-  -project "$generated_project_root/OxidMobileSmoke.xcodeproj" \
-  -scheme OxidUITests \
-  -destination "platform=iOS Simulator,id=$device" \
-  -derivedDataPath "$repository_root/target/mobile-tests/ios-derived-data" \
-  -only-testing:OxidUITests/ProfileFlowTests \
-  CODE_SIGNING_ALLOWED=NO
+app_bundle="$repository_root/target/dx/oxid-app/debug/ios/OxidApp.app"
+bundle_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app_bundle/Info.plist")"
+test_source="$repository_root/tests/mobile/ios/OxidUITests/ProfileFlowTests.swift"
+test_names=()
+while IFS= read -r test_name; do
+  test_names+=("$test_name")
+done < <(
+  sed -nE \
+    's/^[[:space:]]*func (test[A-Za-z0-9_]+)\(\)( throws)? \{.*/\1/p' \
+    "$test_source"
+)
+if [ "${#test_names[@]}" -eq 0 ]; then
+  echo "No ProfileFlowTests test methods were discovered in $test_source." >&2
+  exit 1
+fi
+
+# Every scenario owns a clean installation. Several fixtures deliberately have
+# stable replay identifiers, while onboarding deliberately requires no prior
+# profile; sharing one app container makes those independent guarantees depend
+# on XCTest's method order.
+for test_name in "${test_names[@]}"; do
+  echo "Running isolated iOS profile scenario: $test_name"
+  /usr/bin/xcrun simctl terminate "$device" "$bundle_identifier" >/dev/null 2>&1 || true
+  /usr/bin/xcrun simctl uninstall "$device" "$bundle_identifier" >/dev/null 2>&1 || true
+  /usr/bin/xcrun simctl install "$device" "$app_bundle"
+
+  env -i \
+    "DEVELOPER_DIR=$xcode_developer_dir" \
+    "HOME=$HOME" \
+    "LANG=${LANG:-en_US.UTF-8}" \
+    "LOGNAME=$host_user" \
+    "PATH=/usr/bin:/bin:/usr/sbin:/sbin" \
+    "TMPDIR=${TMPDIR:-/tmp}" \
+    "USER=$host_user" \
+    /usr/bin/xcodebuild test \
+    -project "$generated_project_root/OxidMobileSmoke.xcodeproj" \
+    -scheme OxidUITests \
+    -destination "platform=iOS Simulator,id=$device" \
+    -derivedDataPath "$repository_root/target/mobile-tests/ios-derived-data" \
+    -only-testing:"OxidUITests/ProfileFlowTests/$test_name" \
+    CODE_SIGNING_ALLOWED=NO
+done

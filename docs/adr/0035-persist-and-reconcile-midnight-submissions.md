@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/node/client.rs`, transaction construction/proving services, and the Dioxus submission flow
 - Amends: ADR-0024, ADR-0027, ADR-0029, and ADR-0034
 - Implementation state: Bounded public journal, persist-before-broadcast boundary, restart restore/duplicate prevention, finalized-chain reconciliation, headless methods, and mobile recovery presentation implemented
+- Amended by: ADR-0079, ADR-0080
 
 ## Context
 

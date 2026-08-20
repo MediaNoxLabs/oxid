@@ -10,6 +10,7 @@
 - Ledger runtime: `midnight-ledger` commit `d9414884db9da9e9b1f6f3a7f742d79a5732f817`
 - Related: ADR-0010, ADR-0013, ADR-0015, ADR-0020, ADR-0022, ADR-0028, ADR-0043 through ADR-0049, issues #27–29
 - Implementation state: exact generated-runtime/Rust `ProofPreimage` parity, a self-contained authenticated Nix artifact closure, native checked proving and independent verification, the bounded portable envelope, and explicit standalone headless protocol wiring are implemented; mobile packaging remains fail-closed pending the resource and native-custody gates below
+- Amended by: ADR-0083
 
 ## Context
 

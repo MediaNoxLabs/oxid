@@ -510,9 +510,9 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bech32"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d965446196e3b7decd44aa7ee49e31d630118f90ef12f97900f262eb915c951d"
+checksum = "32637268377fc7b10a8c6d51de3e7fba1ce5dd371a96e342b34e6078db558e7f"
 
 [[package]]
 name = "bincode"
@@ -641,7 +641,7 @@ dependencies = [
  "midnight-curves",
  "midnight-proofs",
  "num-bigint",
- "rand 0.8.5",
+ "rand 0.8.7",
  "serde",
  "serde_json",
 ]
@@ -2585,7 +2585,7 @@ checksum = "2d391ba4af7f1d93f01fcf7b2f29e2bc9348e109dfdbf4dcbdc51dfa38dab0b6"
 dependencies = [
  "deunicode",
  "dummy",
- "rand 0.8.5",
+ "rand 0.8.7",
 ]
 
 [[package]]
@@ -2665,7 +2665,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "835c052cb0c08c1acf6ffd71c022172e18723949c8282f2b9f27efbc51e64534"
 dependencies = [
  "byteorder",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rustc-hex",
  "static_assertions",
 ]
@@ -2801,9 +2801,9 @@ dependencies = [
 
 [[package]]
 name = "futures"
-version = "0.3.33"
+version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a88cf1f829d945f548cf8fec32c61b1f202b6d93b45848602fc02af4b12ad218"
+checksum = "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -2816,9 +2816,9 @@ dependencies = [
 
 [[package]]
 name = "futures-channel"
-version = "0.3.33"
+version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "262590f4fe6afeb0bc83be1daa64e52657fe185690a958af7f3ad0e92085c5ae"
+checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -2826,15 +2826,15 @@ dependencies = [
 
 [[package]]
 name = "futures-core"
-version = "0.3.33"
+version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cd50c473c80f6d7c3670a752354b8e569b1a7cbfdc0419ec88e5edad85e0dc7"
+checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
 
 [[package]]
 name = "futures-executor"
-version = "0.3.33"
+version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6754879cc9f2c66f88c6e5c35344bb0bdb0708b0352b1201815667c7eabc7458"
+checksum = "031b47cf1a3c6cc8bc2fc76cd437f521619387907d469316e7c0bc278f1f5432"
 dependencies = [
  "futures-core",
  "futures-task",
@@ -2843,9 +2843,9 @@ dependencies = [
 
 [[package]]
 name = "futures-io"
-version = "0.3.33"
+version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4577ecaa3c4f96589d473f679a71b596316f6641bc350038b962a5daf0085d7a"
+checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
 
 [[package]]
 name = "futures-lite"
@@ -2862,26 +2862,26 @@ dependencies = [
 
 [[package]]
 name = "futures-macro"
-version = "0.3.33"
+version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d6d3cde68c518367be28956066ddfef33813991b77a55005a69dae04bf3b10b"
+checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
 dependencies = [
  "proc-macro2",
  "quote 1.0.47",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
 name = "futures-sink"
-version = "0.3.33"
+version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e34418ac499d6305c2fb5ad0ed2f6ac998c5f8ca209b4510f7f94242c647e307"
+checksum = "1944426bf7d03f1d14f708785e4b33efd750b36d48a157b836b3efc15ede8e1d"
 
 [[package]]
 name = "futures-task"
-version = "0.3.33"
+version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b231ed28831efb4a61a08580c4bc233ec56bc009f4cd8f52da2c3cb97df0c109"
+checksum = "cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd"
 
 [[package]]
 name = "futures-timer"
@@ -2891,9 +2891,9 @@ checksum = "af43fadb8a98512d547e37b4e92e0ced13e205c061b87b4623eff01d918d6968"
 
 [[package]]
 name = "futures-util"
-version = "0.3.33"
+version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a77a90a256fce34da66415271e30f94ee91c57b04b8a2c042d9cf3220179deaa"
+checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -3256,7 +3256,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63"
 dependencies = [
  "ff 0.13.1",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rand_core 0.6.4",
  "rand_xorshift 0.3.0",
  "subtle",
@@ -4298,7 +4298,7 @@ dependencies = [
  "libsecp256k1-core",
  "libsecp256k1-gen-ecmult",
  "libsecp256k1-gen-genmult",
- "rand 0.8.5",
+ "rand 0.8.7",
  "serde",
  "sha2 0.9.9",
  "typenum",
@@ -4604,7 +4604,7 @@ dependencies = [
  "midnight-base-crypto-derive",
  "midnight-serialize",
  "pastey 0.2.3",
- "rand 0.8.5",
+ "rand 0.8.7",
  "reqwest 0.13.4",
  "serde",
  "serde_bytes",
@@ -4642,7 +4642,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rustc-hash 2.1.3",
  "sha2 0.10.9",
  "sha3-circuit",
@@ -4660,7 +4660,7 @@ dependencies = [
  "midnight-serialize",
  "midnight-storage-core",
  "midnight-transient-crypto",
- "rand 0.8.5",
+ "rand 0.8.7",
  "serde",
  "zeroize",
 ]
@@ -4715,7 +4715,7 @@ dependencies = [
  "midnight-storage",
  "midnight-transient-crypto",
  "midnight-zswap",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rayon",
  "serde",
  "sha2 0.11.0",
@@ -4753,7 +4753,7 @@ dependencies = [
  "midnight-serialize",
  "midnight-storage",
  "midnight-transient-crypto",
- "rand 0.8.5",
+ "rand 0.8.7",
  "serde",
  "serde_bytes",
  "tracing",
@@ -4772,7 +4772,7 @@ dependencies = [
  "midnight-serialize",
  "midnight-storage",
  "midnight-transient-crypto",
- "rand 0.8.5",
+ "rand 0.8.7",
  "serde",
  "serde_bytes",
 ]
@@ -4792,7 +4792,7 @@ dependencies = [
  "midnight-serialize",
  "midnight-storage",
  "midnight-transient-crypto",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rpds",
  "serde",
  "serde_bytes",
@@ -4853,7 +4853,7 @@ dependencies = [
  "midnight-serialize",
  "midnight-storage-core",
  "parking_lot",
- "rand 0.8.5",
+ "rand 0.8.7",
  "serde",
  "sha2 0.11.0",
  "sysinfo",
@@ -4878,7 +4878,7 @@ dependencies = [
  "midnight-serialize",
  "midnight-storage-macros",
  "parking_lot",
- "rand 0.8.5",
+ "rand 0.8.7",
  "serde",
  "sha2 0.11.0",
  "sysinfo",
@@ -4922,7 +4922,7 @@ dependencies = [
  "midnight-storage-core",
  "midnight-zk-stdlib",
  "pastey 0.2.3",
- "rand 0.8.5",
+ "rand 0.8.7",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -4949,7 +4949,7 @@ dependencies = [
  "midnight-proofs",
  "num-bigint",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rayon",
  "sha2 0.10.9",
  "sha3-circuit",
@@ -4971,7 +4971,7 @@ dependencies = [
  "midnight-transient-crypto",
  "midnight-zk-stdlib",
  "num-bigint",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rand_chacha 0.3.1",
  "serde",
  "serde_bytes",
@@ -4998,7 +4998,7 @@ dependencies = [
  "midnight-serialize",
  "midnight-storage",
  "midnight-transient-crypto",
- "rand 0.8.5",
+ "rand 0.8.7",
  "serde",
  "tracing",
  "zeroize",
@@ -5575,6 +5575,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-adapter-deployment-profile"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "hex",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "oxid-adapter-diagnostics-memory"
+version = "0.1.0"
+dependencies = [
+ "oxid-diagnostics-application",
+]
+
+[[package]]
 name = "oxid-adapter-did-midnight"
 version = "0.1.0"
 dependencies = [
@@ -5626,11 +5645,12 @@ dependencies = [
  "midnight-transient-crypto",
  "midnight-zkir",
  "midnight-zswap",
+ "oxid-diagnostics-application",
  "oxid-foundation",
  "oxid-platform-ports",
  "oxid-wallet-application",
  "oxid-wallet-domain",
- "rand 0.8.5",
+ "rand 0.8.7",
  "reqwest 0.13.4",
  "rustls",
  "serde",
@@ -5720,7 +5740,7 @@ dependencies = [
  "oxid-passport-vault-application",
  "oxid-passport-vault-domain",
  "oxid-platform-ports",
- "rand 0.8.5",
+ "rand 0.8.7",
  "reqwest 0.13.4",
  "rustls",
  "serde",
@@ -5806,6 +5826,7 @@ name = "oxid-adapter-storage-identity-json"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "oxid-adapter-store-atomic",
  "oxid-identity-application",
  "oxid-identity-domain",
  "serde",
@@ -5858,12 +5879,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-adapter-store-atomic"
+version = "0.1.0"
+
+[[package]]
 name = "oxid-adapter-vc-midnight"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ciborium",
  "ed25519-dalek",
+ "futures",
  "getrandom 0.3.4",
  "hex",
  "midnight-base-crypto",
@@ -5879,7 +5905,7 @@ dependencies = [
  "oxid-presentation-application",
  "oxid-presentation-domain",
  "p256",
- "rand 0.8.5",
+ "rand 0.8.7",
  "serde",
  "serde_arrays",
  "serde_json",
@@ -5892,9 +5918,24 @@ name = "oxid-app"
 version = "0.1.0"
 dependencies = [
  "dioxus",
+ "getrandom 0.2.17",
+ "getrandom 0.4.3",
+ "oxid-brand-build",
  "oxid-composition",
  "oxid-ui-dioxus",
 ]
+
+[[package]]
+name = "oxid-brand-build"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "oxid-capabilities-application"
+version = "0.1.0"
 
 [[package]]
 name = "oxid-composition"
@@ -5911,9 +5952,12 @@ dependencies = [
  "oxid-adapter-backup-complete",
  "oxid-adapter-backup-document-mobile",
  "oxid-adapter-backup-portable",
+ "oxid-adapter-deployment-profile",
+ "oxid-adapter-diagnostics-memory",
  "oxid-adapter-did-midnight",
  "oxid-adapter-identity-ingress",
  "oxid-adapter-midnight",
+ "oxid-adapter-mobile-native",
  "oxid-adapter-openid4vci",
  "oxid-adapter-openid4vp",
  "oxid-adapter-passport-vault",
@@ -5927,12 +5971,15 @@ dependencies = [
  "oxid-adapter-storage-mobile",
  "oxid-adapter-vc-midnight",
  "oxid-credential-application",
+ "oxid-diagnostics-application",
  "oxid-identity-application",
  "oxid-passport-vault-application",
  "oxid-platform-ports",
  "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]
@@ -5951,6 +5998,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxid-diagnostics-application"
+version = "0.1.0"
+
+[[package]]
 name = "oxid-foundation"
 version = "0.1.0"
 
@@ -5961,8 +6012,10 @@ dependencies = [
  "futures",
  "oxid-adapter-openid4vci",
  "oxid-adapter-siopv2",
+ "oxid-capabilities-application",
  "oxid-composition",
  "oxid-credential-application",
+ "oxid-diagnostics-application",
  "oxid-identity-application",
  "oxid-identity-domain",
  "oxid-passport-vault-application",
@@ -5990,6 +6043,16 @@ name = "oxid-identity-domain"
 version = "0.1.0"
 dependencies = [
  "oxid-foundation",
+]
+
+[[package]]
+name = "oxid-mcp"
+version = "0.1.0"
+dependencies = [
+ "oxid-capabilities-application",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -6048,7 +6111,9 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "futures",
+ "oxid-capabilities-application",
  "oxid-credential-application",
+ "oxid-diagnostics-application",
  "oxid-identity-application",
  "oxid-identity-domain",
  "oxid-passport-vault-application",
@@ -6291,7 +6356,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d5285893bb5eb82e6aaf5d59ee909a06a16737a8970984dd7746ba9283498d6"
 dependencies = [
  "phf_shared 0.10.0",
- "rand 0.8.5",
+ "rand 0.8.7",
 ]
 
 [[package]]
@@ -6301,7 +6366,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c80231409c20246a13fddb31776fb942c38553c51e871f8cbd687a4cfb5843d"
 dependencies = [
  "phf_shared 0.11.3",
- "rand 0.8.5",
+ "rand 0.8.7",
 ]
 
 [[package]]
@@ -6847,9 +6912,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.8.5"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -7926,7 +7991,7 @@ dependencies = [
  "midnight-curves",
  "midnight-proofs",
  "num-bigint",
- "rand 0.8.5",
+ "rand 0.8.7",
 ]
 
 [[package]]
@@ -8131,7 +8196,7 @@ dependencies = [
  "pbkdf2",
  "pin-project",
  "poly1305 0.8.0",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rand_chacha 0.3.1",
  "ruzstd",
  "schnorrkel",
@@ -8174,7 +8239,7 @@ dependencies = [
  "lru 0.12.5",
  "parking_lot",
  "pin-project",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rand_chacha 0.3.1",
  "serde",
  "serde_json",
@@ -8206,7 +8271,7 @@ dependencies = [
  "futures",
  "httparse",
  "log",
- "rand 0.8.5",
+ "rand 0.8.7",
  "sha1 0.10.7",
 ]
 
@@ -8844,6 +8909,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",
@@ -9185,7 +9251,7 @@ checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
 dependencies = [
  "cfg-if",
  "digest 0.10.7",
- "rand 0.8.5",
+ "rand 0.8.7",
  "static_assertions",
 ]
 

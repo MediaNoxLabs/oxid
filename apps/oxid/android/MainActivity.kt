@@ -26,6 +26,11 @@ class MainActivity : WryActivity() {
         super.onNewIntent(intent)
     }
 
+    override fun onPause() {
+        OxidMobilePlugin.captureScanHostSuspended()
+        super.onPause()
+    }
+
     @Deprecated("Android activity-result callback required by the device credential prompt")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (!OxidMobilePlugin.captureBackupDocumentResult(
@@ -51,6 +56,8 @@ class MainActivity : WryActivity() {
 
     fun oxidTakeScanResultJson(): String = oxidMobilePlugin.takeScanResultJson()
 
+    fun oxidTimeoutScanJson(): String = oxidMobilePlugin.timeoutScanJson()
+
     fun oxidTakeIdentityLinkJson(): String = oxidMobilePlugin.takeIdentityLinkJson()
 
     fun oxidCopyPublicReceiveAddress(value: String): String =
@@ -58,6 +65,9 @@ class MainActivity : WryActivity() {
 
     fun oxidSharePublicReceiveAddress(value: String): String =
         oxidMobilePlugin.sharePublicReceiveAddress(value)
+
+    fun oxidSetScreenPrivacy(enabled: Boolean): String =
+        oxidMobilePlugin.setScreenPrivacy(enabled)
 
     fun oxidStartBackupExportJson(request: String): String =
         oxidMobilePlugin.startBackupExportJson(request)
@@ -68,4 +78,13 @@ class MainActivity : WryActivity() {
         oxidMobilePlugin.takeBackupDocumentResultJson()
 
     fun oxidCustodyJson(request: String): String = oxidMobilePlugin.custodyJson(request)
+
+    /** Smoke-only JNI failure injection; normal builds have no Rust caller for this method. */
+    fun oxidThrowForJniRecoveryTest(): String {
+        if (BuildConfig.DEBUG) throw IllegalStateException()
+        return "{\"status\":\"unavailable\"}"
+    }
+
+    /** Side-effect-free second call for the smoke-only JNI recovery probe. */
+    fun oxidJniRecoveryProbeJson(): String = "{\"status\":\"ready\"}"
 }

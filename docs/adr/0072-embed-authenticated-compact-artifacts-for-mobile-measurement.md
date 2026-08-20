@@ -5,7 +5,8 @@
 - Blueprint source: Sections 3–7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, Digital Passport presentation and mobile proving paths
 - Tracking: issues #2, #27, #29, and #30
-- Implementation state: the exact runtime-minimal artifact set can be embedded and authenticated in an opt-in iOS/Android native-custody measurement build; normal mobile composition and the visible Dioxus proof-success path remain fail-closed pending background execution, cooperative cancellation, physical-device budgets, and issue #29 release evidence
+- Amended by: ADR-0083
+- Implementation state: the exact runtime-minimal artifact set can be embedded and authenticated in an opt-in iOS/Android native-custody build; ADR-0083 now connects that explicit build to a foreground-only proof worker and visible Dioxus success, while normal mobile composition, physical-device budgets, and issue #29 release evidence remain fail-closed
 
 ## Context
 
@@ -59,10 +60,10 @@ by the launch scripts only as
 ambient artifact path and resolve the exact Nix output themselves. Development
 custody plus the artifact package is rejected.
 
-This feature authenticates and measures packaging only. It deliberately
-retains `CredentialPresentationComposition::Standalone`, so consent still ends
-at `proof_unavailable` and no `MZP1` or `vp_token` is generated. Normal builds
-do not select the feature and carry no Compact presentation artifact payload.
+This feature originally authenticated and measured packaging only. ADR-0083
+amends that execution deferral: the same explicit feature now selects the
+foreground proof worker. Normal builds do not select the feature and carry no
+Compact presentation artifact payload.
 
 The future execution adapter must satisfy all of the following before mobile
 proof success is composed:
@@ -94,7 +95,8 @@ mobile presentation capability remains unavailable.
 - A signed app package does not replace the adapter's exact manifest, digest,
   size, circuit, and verifier-key checks.
 - Successful package authentication is not evidence that proof execution fits
-  a device budget and must not set `compact_presentation_proof_available`.
+  a device budget. ADR-0083 sets `compact_presentation_proof_available` only in
+  the explicit standalone execution harness, not normal mobile composition.
 - Package byte counts are build evidence, not a claim about installed size,
   memory pressure, thermal behavior, or store-download size.
 
@@ -105,9 +107,9 @@ mobile presentation capability remains unavailable.
 - Opt-in measurement packages are large by design. This creates honest package
   and startup evidence before proof execution is enabled.
 - Normal standalone simulator testing remains fast and unchanged.
-- A later ADR or amendment must select and implement the mobile proof worker,
-  cancellation mechanism, lifecycle integration, and reviewed budgets before
-  connecting ADR-0050 proof success to Dioxus.
+- ADR-0083 supplies the standalone proof worker, cancellation, and lifecycle
+  integration. Reviewed physical-device budgets remain required before any
+  production composition can connect ADR-0050 proof success to Dioxus.
 
 ## Current measurement evidence
 

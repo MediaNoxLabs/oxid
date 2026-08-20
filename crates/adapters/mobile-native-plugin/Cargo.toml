@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+android-jni-exception-recovery-test = []
+
 [dependencies]
 manganis.workspace = true
 serde.workspace = true

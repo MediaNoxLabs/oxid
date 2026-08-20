@@ -22,6 +22,7 @@
         packages = [
           pkgs.lychee
           pkgs.mdbook
+          pkgs.mdbook-mermaid
         ];
       };
 

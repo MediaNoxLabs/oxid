@@ -3,6 +3,8 @@ resolver = "3"
 members = [
   "apps/oxid",
   "apps/oxid-headless",
+  "apps/oxid-mcp",
+  "crates/brand-build",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
   "crates/adapters/openid4vci",
@@ -11,12 +13,15 @@ members = [
   "crates/adapters/siopv2",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
+  "crates/adapters/diagnostics-memory",
+  "crates/adapters/deployment-profile",
   "crates/adapters/identity-ingress",
   "crates/adapters/custody-software",
   "crates/adapters/backup-portable",
   "crates/adapters/backup-complete",
   "crates/adapters/backup-document-mobile",
   "crates/adapters/mobile-native-plugin",
+  "crates/adapters/store-atomic",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
@@ -24,8 +29,10 @@ members = [
   "crates/adapters/storage-mobile",
   "crates/adapters/storage-dev",
   "crates/composition",
+  "crates/capabilities/application",
   "crates/credential/application",
   "crates/credential/domain",
+  "crates/diagnostics/application",
   "crates/foundation",
   "crates/identity/application",
   "crates/identity/domain",
@@ -43,6 +50,8 @@ members = [
 default-members = [
   "apps/oxid",
   "apps/oxid-headless",
+  "apps/oxid-mcp",
+  "crates/brand-build",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
   "crates/adapters/openid4vci",
@@ -51,12 +60,15 @@ default-members = [
   "crates/adapters/siopv2",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
+  "crates/adapters/diagnostics-memory",
+  "crates/adapters/deployment-profile",
   "crates/adapters/identity-ingress",
   "crates/adapters/custody-software",
   "crates/adapters/backup-portable",
   "crates/adapters/backup-complete",
   "crates/adapters/backup-document-mobile",
   "crates/adapters/mobile-native-plugin",
+  "crates/adapters/store-atomic",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
@@ -64,8 +76,10 @@ default-members = [
   "crates/adapters/storage-mobile",
   "crates/adapters/storage-dev",
   "crates/composition",
+  "crates/capabilities/application",
   "crates/credential/application",
   "crates/credential/domain",
+  "crates/diagnostics/application",
   "crates/foundation",
   "crates/identity/application",
   "crates/identity/domain",
@@ -93,14 +107,14 @@ authors = ["Oxid contributors"]
 anyhow = { version = "=1.0.104" }
 argon2 = { version = "=0.5.3", default-features = false, features = ["alloc", "zeroize"] }
 base64 = { version = "=0.22.1" }
-bech32 = { version = "=0.11.0" }
+bech32 = { version = "=0.11.1" }
 chacha20poly1305 = { version = "=0.11.0", features = ["zeroize"] }
 ciborium = { version = "=0.2.2" }
 bip32 = { version = "=0.5.3", default-features = false, features = ["secp256k1", "std"] }
 dioxus = { version = "=0.7.10", default-features = false }
 directories = { version = "=6.0.0" }
 ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
-futures = { version = "=0.3.33", default-features = false, features = ["executor"] }
+futures = { version = "=0.3.34", default-features = false, features = ["executor"] }
 getrandom = { version = "=0.3.4", features = ["wasm_js"] }
 hex = { version = "=0.4.3" }
 jni = { version = "=0.21.1" }
@@ -125,7 +139,7 @@ serde_json = { version = "=1.0.151" }
 sha2 = { version = "=0.10.9", default-features = false }
 subtle = { version = "=2.6.1" }
 rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
-rand = { version = "=0.8.5" }
+rand = { version = "=0.8.7" }
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }
 subxt = { version = "=0.44.3" }
 tokio = { version = "=1.53.1", default-features = false, features = ["net", "rt", "time"] }
@@ -141,12 +155,15 @@ oxid-adapter-passport-vault = { version = "=0.1.0", path = "crates/adapters/pass
 oxid-adapter-siopv2 = { version = "=0.1.0", path = "crates/adapters/siopv2" }
 oxid-adapter-vc-midnight = { version = "=0.1.0", path = "crates/adapters/vc-midnight" }
 oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-midnight" }
+oxid-adapter-diagnostics-memory = { version = "=0.1.0", path = "crates/adapters/diagnostics-memory" }
+oxid-adapter-deployment-profile = { version = "=0.1.0", path = "crates/adapters/deployment-profile" }
 oxid-adapter-identity-ingress = { version = "=0.1.0", path = "crates/adapters/identity-ingress" }
 oxid-adapter-custody-software = { version = "=0.1.0", path = "crates/adapters/custody-software" }
 oxid-adapter-backup-portable = { version = "=0.1.0", path = "crates/adapters/backup-portable" }
 oxid-adapter-backup-complete = { version = "=0.1.0", path = "crates/adapters/backup-complete" }
 oxid-adapter-backup-document-mobile = { version = "=0.1.0", path = "crates/adapters/backup-document-mobile" }
 oxid-adapter-mobile-native = { version = "=0.1.0", path = "crates/adapters/mobile-native-plugin" }
+oxid-adapter-store-atomic = { version = "=0.1.0", path = "crates/adapters/store-atomic" }
 oxid-adapter-storage-credential-json = { version = "=0.1.0", path = "crates/adapters/storage-credential-json" }
 oxid-adapter-storage-identity-json = { version = "=0.1.0", path = "crates/adapters/storage-identity-json" }
 oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }
@@ -155,8 +172,11 @@ oxid-adapter-storage-memory = { version = "=0.1.0", path = "crates/adapters/stor
 oxid-adapter-storage-mobile = { version = "=0.1.0", path = "crates/adapters/storage-mobile" }
 oxid-adapter-storage-dev = { version = "=0.1.0", path = "crates/adapters/storage-dev" }
 oxid-composition = { version = "=0.1.0", path = "crates/composition" }
+oxid-capabilities-application = { version = "=0.1.0", path = "crates/capabilities/application" }
+oxid-brand-build = { version = "=0.1.0", path = "crates/brand-build" }
 oxid-credential-application = { version = "=0.1.0", path = "crates/credential/application" }
 oxid-credential-domain = { version = "=0.1.0", path = "crates/credential/domain" }
+oxid-diagnostics-application = { version = "=0.1.0", path = "crates/diagnostics/application" }
 oxid-foundation = { version = "=0.1.0", path = "crates/foundation" }
 oxid-identity-application = { version = "=0.1.0", path = "crates/identity/application" }
 oxid-identity-domain = { version = "=0.1.0", path = "crates/identity/domain" }
@@ -181,3 +201,10 @@ all = "warn"
 codegen-units = 1
 lto = "thin"
 strip = "symbols"
+
+# Live PreProd acceptance exercises the production cryptographic replay path.
+# Keep it optimized while retaining symbols for bounded failure diagnosis.
+[profile.preprod-live]
+inherits = "release"
+debug = 1
+strip = "none"

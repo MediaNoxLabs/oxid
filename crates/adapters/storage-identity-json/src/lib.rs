@@ -4,15 +4,11 @@
 
 use std::{
     collections::BTreeSet,
-    fs,
-    io::{Read as _, Write as _},
     path::{Path, PathBuf},
-    sync::{
-        Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Mutex,
 };
 
+use oxid_adapter_store_atomic as store_atomic;
 use oxid_identity_application::{DidRecordRepository, DidRecordRepositoryError};
 use oxid_identity_domain::{
     DidDocument, DidDocumentMetadata, DidDocumentParts, DidRecord, DidResolution,
@@ -25,8 +21,8 @@ use serde::{Deserialize, Serialize};
 const SCHEMA_VERSION: u32 = 1;
 const MAX_RECORDS: usize = 128;
 const MAX_STORE_BYTES: u64 = 2 * 1_024 * 1_024;
+#[cfg(test)]
 const STORE_FILE_NAME: &str = "did-records.json";
-static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Durable public DID documents, isolated from profile labels and all private
 /// key/credential material.
@@ -50,46 +46,15 @@ impl JsonDidRecordRepository {
     }
 
     fn load_document(&self) -> Result<StoreDocument, DidRecordRepositoryError> {
-        reject_symlink(&self.path)?;
         if let Some(parent) = self.path.parent() {
-            reject_symlink(parent)?;
+            store_atomic::reject_non_private_directory(parent).map_err(map_store_error)?;
         }
-        let file = match fs::File::open(&self.path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(StoreDocument::default());
-            }
-            Err(_) => return Err(DidRecordRepositoryError::Unavailable),
+        let max_bytes = usize::try_from(MAX_STORE_BYTES).unwrap_or(usize::MAX);
+        let Some(bytes) = store_atomic::read_owner_private_bounded(&self.path, max_bytes)
+            .map_err(map_store_error)?
+        else {
+            return Ok(StoreDocument::default());
         };
-        let metadata = file
-            .metadata()
-            .map_err(|_| DidRecordRepositoryError::Unavailable)?;
-        if !metadata.is_file() || metadata.len() > MAX_STORE_BYTES {
-            return Err(DidRecordRepositoryError::Integrity);
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            if metadata.permissions().mode() & 0o077 != 0 {
-                return Err(DidRecordRepositoryError::Integrity);
-            }
-            let parent = self
-                .path
-                .parent()
-                .ok_or(DidRecordRepositoryError::Integrity)?;
-            let parent_metadata =
-                fs::metadata(parent).map_err(|_| DidRecordRepositoryError::Unavailable)?;
-            if !parent_metadata.is_dir() || parent_metadata.permissions().mode() & 0o077 != 0 {
-                return Err(DidRecordRepositoryError::Integrity);
-            }
-        }
-        let mut bytes = Vec::with_capacity(metadata.len() as usize);
-        file.take(MAX_STORE_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| DidRecordRepositoryError::Unavailable)?;
-        if bytes.len() as u64 > MAX_STORE_BYTES {
-            return Err(DidRecordRepositoryError::Integrity);
-        }
         let document: StoreDocument =
             serde_json::from_slice(&bytes).map_err(|_| DidRecordRepositoryError::Integrity)?;
         validate_document(&document)?;
@@ -98,73 +63,12 @@ impl JsonDidRecordRepository {
 
     fn save_document(&self, document: &StoreDocument) -> Result<(), DidRecordRepositoryError> {
         validate_document(document)?;
-        let parent = self
-            .path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-            .ok_or(DidRecordRepositoryError::Unavailable)?;
-        let parent_existed = parent
-            .try_exists()
-            .map_err(|_| DidRecordRepositoryError::Unavailable)?;
-        fs::create_dir_all(parent).map_err(|_| DidRecordRepositoryError::Unavailable)?;
-        reject_symlink(parent)?;
-        reject_symlink(&self.path)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            if parent_existed {
-                let metadata =
-                    fs::metadata(parent).map_err(|_| DidRecordRepositoryError::Unavailable)?;
-                if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
-                    return Err(DidRecordRepositoryError::Integrity);
-                }
-            } else {
-                fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-                    .map_err(|_| DidRecordRepositoryError::Unavailable)?;
-            }
-        }
-
         let bytes = serde_json::to_vec_pretty(document)
             .map_err(|_| DidRecordRepositoryError::Unavailable)?;
         if bytes.len() as u64 > MAX_STORE_BYTES {
             return Err(DidRecordRepositoryError::CapacityExceeded);
         }
-        let temporary_path = temporary_path(&self.path);
-        let mut options = fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&temporary_path)
-            .map_err(|_| DidRecordRepositoryError::Unavailable)?;
-        if file
-            .write_all(&bytes)
-            .and_then(|()| file.sync_all())
-            .is_err()
-        {
-            drop(file);
-            let _ = fs::remove_file(&temporary_path);
-            return Err(DidRecordRepositoryError::Unavailable);
-        }
-        drop(file);
-        #[cfg(windows)]
-        if self.path.exists() {
-            fs::remove_file(&self.path).map_err(|_| DidRecordRepositoryError::Unavailable)?;
-        }
-        if fs::rename(&temporary_path, &self.path).is_err() {
-            let _ = fs::remove_file(&temporary_path);
-            return Err(DidRecordRepositoryError::Unavailable);
-        }
-        #[cfg(unix)]
-        fs::set_permissions(
-            &self.path,
-            std::os::unix::fs::PermissionsExt::from_mode(0o600),
-        )
-        .map_err(|_| DidRecordRepositoryError::Unavailable)?;
-        Ok(())
+        store_atomic::write_owner_private(&self.path, &bytes).map_err(map_store_error)
     }
 }
 
@@ -201,14 +105,10 @@ pub fn decode_portable_did_snapshot(
     records_from_document(&document)
 }
 
-fn reject_symlink(path: &Path) -> Result<(), DidRecordRepositoryError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            Err(DidRecordRepositoryError::Integrity)
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(DidRecordRepositoryError::Unavailable),
+const fn map_store_error(error: store_atomic::AtomicStoreError) -> DidRecordRepositoryError {
+    match error {
+        store_atomic::AtomicStoreError::Integrity => DidRecordRepositoryError::Integrity,
+        store_atomic::AtomicStoreError::Unavailable => DidRecordRepositoryError::Unavailable,
     }
 }
 
@@ -617,17 +517,10 @@ impl StoredRecord {
     }
 }
 
-fn temporary_path(path: &Path) -> PathBuf {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(STORE_FILE_NAME);
-    let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    path.with_file_name(format!(".{name}.tmp-{}-{sequence}", std::process::id()))
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use oxid_identity_domain::{DID_CONTEXT, JWK_CONTEXT};
     use std::{

@@ -30,3 +30,10 @@ payloads and expected Bech32m encodings from
 `25d0c3857fc0e20435e06a9225bd8709ecce1115`. The seed contained in the upstream
 test case is not retained. Midnight Wallet SDK is distributed under the Apache
 License 2.0, the same license used by this repository.
+
+## Mermaid (documentation site only)
+
+`docs/site/mermaid.min.js` is the bundled Mermaid diagram renderer
+(MIT License, https://github.com/mermaid-js/mermaid), installed verbatim by
+`mdbook-mermaid install` and served only on the documentation site. It is
+not part of any wallet binary.

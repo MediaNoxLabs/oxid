@@ -37,6 +37,44 @@ case "$mobile_custody" in
     ;;
 esac
 
+standalone_network_profile="${OXID_STANDALONE_NETWORK_PROFILE:-simulated}"
+case "$standalone_network_profile" in
+  simulated)
+    ;;
+  local)
+    if [ "$mobile_custody" != "development" ]; then
+      echo "OXID_STANDALONE_NETWORK_PROFILE=local requires development custody." >&2
+      exit 1
+    fi
+    mobile_features="$mobile_features,standalone-local"
+    ;;
+  *)
+    echo "OXID_STANDALONE_NETWORK_PROFILE must be 'simulated' or 'local' for iOS Simulator." >&2
+    exit 1
+    ;;
+esac
+
+ui_profile="${OXID_UI_PROFILE:-user}"
+case "$ui_profile" in
+  user)
+    ;;
+  dev)
+    mobile_features="$mobile_features,ui-profile-dev"
+    ;;
+  demo)
+    if [ "$mobile_custody" != "development" ] || \
+      [ "$standalone_network_profile" != "simulated" ]; then
+      echo "OXID_UI_PROFILE=demo requires the simulated development composition." >&2
+      exit 1
+    fi
+    mobile_features="$mobile_features,ui-profile-demo"
+    ;;
+  *)
+    echo "OXID_UI_PROFILE must be 'user', 'dev', or 'demo'." >&2
+    exit 1
+    ;;
+esac
+
 mobile_presentation_proving="${OXID_MOBILE_PRESENTATION_PROVING:-unavailable}"
 presentation_artifacts_dir=""
 case "$mobile_presentation_proving" in
@@ -140,4 +178,4 @@ bundle_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app_bundl
 /usr/bin/xcrun simctl terminate "$device" "$bundle_identifier" >/dev/null 2>&1 || true
 /usr/bin/xcrun simctl launch "$device" "$bundle_identifier"
 
-echo "Launched $bundle_identifier on simulator $device."
+echo "Launched $bundle_identifier ($ui_profile profile, $mobile_custody custody, $standalone_network_profile network) on simulator $device."

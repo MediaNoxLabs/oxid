@@ -9,6 +9,7 @@
 - Related: ADR-0013, ADR-0015, ADR-0017, ADR-0026 through ADR-0028, ADR-0033 through ADR-0035, ADR-0056 through ADR-0061, and issue #31
 - Supersedes: only ADR-0061's implementation-state boundary that NIGHT funding remains pending
 - Implementation state: complete standalone composition funds authorized native create/deposit drafts with synchronized unshielded NIGHT inputs and retains withdraw drafts without funding; claim, DUST completion, proving, durable submission, and finalized reconciliation remain pending
+- Amended by: ADR-0063
 
 ## Context
 

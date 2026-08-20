@@ -36,6 +36,19 @@ pub fn take_scan_result_json() -> Result<String, NativeBridgeError> {
     call_android_activity("oxidTakeScanResultJson")
 }
 
+/// Closes only the active QR capture handoff after the Rust scanner budget
+/// expires. The call carries no payload and cannot route or execute a request.
+#[cfg(target_os = "ios")]
+pub fn timeout_scan_json() -> Result<String, NativeBridgeError> {
+    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
+    timeoutScanJson(&plugin).map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(target_os = "android")]
+pub fn timeout_scan_json() -> Result<String, NativeBridgeError> {
+    call_android_activity("oxidTimeoutScanJson")
+}
+
 #[cfg(target_os = "android")]
 pub fn take_identity_link_json() -> Result<String, NativeBridgeError> {
     call_android_activity("oxidTakeIdentityLinkJson")
@@ -61,6 +74,17 @@ pub fn share_public_receive_address(value: &str) -> Result<String, NativeBridgeE
 #[cfg(target_os = "android")]
 pub fn share_public_receive_address(value: &str) -> Result<String, NativeBridgeError> {
     call_android_activity_with_string("oxidSharePublicReceiveAddress", value)
+}
+
+#[cfg(target_os = "ios")]
+pub fn set_screen_privacy(protected: bool) -> Result<String, NativeBridgeError> {
+    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
+    setScreenPrivacy(&plugin, protected).map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(target_os = "android")]
+pub fn set_screen_privacy(protected: bool) -> Result<String, NativeBridgeError> {
+    call_android_activity_with_bool("oxidSetScreenPrivacy", protected)
 }
 
 #[cfg(target_os = "ios")]
@@ -242,9 +266,8 @@ fn call_android_custody(
 fn call_android_activity(method: &str) -> Result<String, NativeBridgeError> {
     manganis::android::with_activity(|mut environment, activity| {
         let result = (|| {
-            let value = environment
-                .call_method(activity, method, "()Ljava/lang/String;", &[])
-                .map_err(|_| NativeBridgeError::Failed)?;
+            let value = environment.call_method(activity, method, "()Ljava/lang/String;", &[]);
+            let value = android_jni_result(&mut environment, value)?;
             android_string(&mut environment, value)
         })();
         Some(result)
@@ -259,20 +282,34 @@ fn call_android_activity_with_string(
 ) -> Result<String, NativeBridgeError> {
     manganis::android::with_activity(|mut environment, activity| {
         let result = (|| {
-            let value = environment
-                .new_string(value)
-                .map_err(|_| NativeBridgeError::Failed)?;
+            let value = environment.new_string(value);
+            let value = android_jni_result(&mut environment, value)?;
             let argument = manganis::jni::objects::JValue::Object(value.as_ref());
-            let result = environment
-                .call_method(
-                    activity,
-                    method,
-                    "(Ljava/lang/String;)Ljava/lang/String;",
-                    &[argument],
-                )
-                .map_err(|_| NativeBridgeError::Failed)?;
+            let result = environment.call_method(
+                activity,
+                method,
+                "(Ljava/lang/String;)Ljava/lang/String;",
+                &[argument],
+            );
+            let result = android_jni_result(&mut environment, result)?;
             android_string(&mut environment, result)
         })();
+        Some(result)
+    })
+    .ok_or(NativeBridgeError::Unavailable)?
+}
+
+#[cfg(target_os = "android")]
+fn call_android_activity_with_bool(method: &str, value: bool) -> Result<String, NativeBridgeError> {
+    manganis::android::with_activity(|mut environment, activity| {
+        let result = environment.call_method(
+            activity,
+            method,
+            "(Z)Ljava/lang/String;",
+            &[manganis::jni::objects::JValue::Bool(u8::from(value))],
+        );
+        let result = android_jni_result(&mut environment, result)
+            .and_then(|value| android_string(&mut environment, value));
         Some(result)
     })
     .ok_or(NativeBridgeError::Unavailable)?
@@ -283,22 +320,52 @@ fn android_string<'local>(
     environment: &mut manganis::jni::JNIEnv<'local>,
     value: manganis::jni::objects::JValueOwned<'local>,
 ) -> Result<String, NativeBridgeError> {
-    let object = value.l().map_err(|_| NativeBridgeError::Failed)?;
+    let object = value.l();
+    let object = android_jni_result(environment, object)?;
     if object.is_null() {
         return Err(NativeBridgeError::Failed);
     }
     let string = manganis::jni::objects::JString::from(object);
-    environment
-        .get_string(&string)
-        .map(Into::into)
-        .map_err(|_| NativeBridgeError::Failed)
+    let string = environment.get_string(&string);
+    android_jni_result(environment, string).map(Into::into)
+}
+
+#[cfg(target_os = "android")]
+fn android_jni_result<T>(
+    environment: &mut manganis::jni::JNIEnv<'_>,
+    result: manganis::jni::errors::Result<T>,
+) -> Result<T, NativeBridgeError> {
+    result.map_err(|_| {
+        clear_pending_android_exception(environment);
+        NativeBridgeError::Failed
+    })
+}
+
+#[cfg(target_os = "android")]
+fn clear_pending_android_exception(environment: &mut manganis::jni::JNIEnv<'_>) {
+    if matches!(environment.exception_check(), Ok(true)) {
+        let _ = environment.exception_clear();
+    }
+}
+
+/// Proves that a thrown activity exception is cleared before the next bridge call.
+///
+/// This is compiled only into the explicit Android smoke-test composition. It
+/// returns the same payload-free failure as every other native bridge error and
+/// never inspects, describes, or logs the Java exception.
+#[cfg(all(target_os = "android", feature = "android-jni-exception-recovery-test"))]
+pub fn verify_android_jni_exception_recovery() -> Result<(), NativeBridgeError> {
+    if call_android_activity("oxidThrowForJniRecoveryTest") != Err(NativeBridgeError::Failed) {
+        return Err(NativeBridgeError::Failed);
+    }
+    call_android_activity("oxidJniRecoveryProbeJson").map(|_| ())
 }
 
 #[cfg(target_os = "ios")]
 use ios_bridge::{
-    OxidMobilePlugin, copyPublicReceiveAddress, custodyJson, sharePublicReceiveAddress,
-    startBackupExportJson, startBackupImportJson, startScanJson, takeBackupDocumentResultJson,
-    takeScanResultJson,
+    OxidMobilePlugin, copyPublicReceiveAddress, custodyJson, setScreenPrivacy,
+    sharePublicReceiveAddress, startBackupExportJson, startBackupImportJson, startScanJson,
+    takeBackupDocumentResultJson, takeScanResultJson, timeoutScanJson,
 };
 
 #[cfg(target_os = "ios")]
@@ -309,8 +376,10 @@ mod ios_bridge {
         pub type OxidMobilePlugin;
         pub fn startScanJson(this: &OxidMobilePlugin) -> String;
         pub fn takeScanResultJson(this: &OxidMobilePlugin) -> String;
+        pub fn timeoutScanJson(this: &OxidMobilePlugin) -> String;
         pub fn copyPublicReceiveAddress(this: &OxidMobilePlugin, value: String) -> String;
         pub fn sharePublicReceiveAddress(this: &OxidMobilePlugin, value: String) -> String;
+        pub fn setScreenPrivacy(this: &OxidMobilePlugin, protected: bool) -> String;
         pub fn startBackupExportJson(this: &OxidMobilePlugin, request: String) -> String;
         pub fn startBackupImportJson(this: &OxidMobilePlugin) -> String;
         pub fn takeBackupDocumentResultJson(this: &OxidMobilePlugin) -> String;

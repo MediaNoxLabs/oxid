@@ -9,6 +9,7 @@
 - Contract source: `midnight-identity-solution-examples` commit `e4a92a6be2cc6dc34f68261f10c19c9312043807`, distributed byte-identically at `contracts/passport-vault/passport-vault.compact`
 - Related: ADR-0013, ADR-0015, ADR-0017, ADR-0027, ADR-0028, ADR-0051 through ADR-0058, and issue #31
 - Implementation state: a reproducible bounded composer produces Rust-compatible unproven `createLock`, `depositToLock`, and `withdrawFromLock` transactions; protected claim composition, application-port wiring, NIGHT/DUST completion, submission, and reconciliation remain pending
+- Amended by: ADR-0065
 
 ## Context
 

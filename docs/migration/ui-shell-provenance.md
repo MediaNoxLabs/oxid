@@ -52,3 +52,41 @@ cancellation. Oxid reimplements the component over application use cases and
 polls only an adapter-owned worker status. No ledger event, database, transport,
 or key type enters Dioxus, and cached/stalled state is explicitly distinguished
 from live spend readiness.
+
+ADR-0090 keeps those independent DUST and shielded state machines but composes
+them with public account refresh as one Wallet account-sync card. The one
+**Sync now** / **Cancel sync** action invokes only existing application ports;
+combined progress is presentation-only, and cursor/event-count diagnostics no
+longer appear in the normal user surface. The same decision splits onboarding
+into create/restore routes and introduces a timestamp-only application receipt
+so Home/Settings can say **Backed up** only after the native document exporter
+actually succeeds.
+
+ADR-0091 reuses the prototype `AddressCard` / `AddressRow` evidence without
+copying its component state or bridge facade. Home now opens one bounded
+Receive secondary route with a large selected QR, dynamic human address-kind
+selectors, grouped display-only preview, and typed native Copy/Share. Oxid adds
+a stricter protected-account admission rule: simulation fixtures and
+watch-only fallbacks cannot be presented as holder-controlled destinations.
+The existing headless `wallet.address.list|unshielded|shielded` methods remain
+the UI-independent conformance surface; no modal state enters the protocol.
+
+ADR-0092 then replaces the reauthored shell's embedded Oxid palette, mark, and
+product strings with a validated default build-time pack. This does not import
+prototype branding or create runtime configuration: shared components consume
+only generated semantic CSS plus an immutable `BrandProfile`, while fixed
+safety colors and code-owned consent/recovery/submission templates remain
+identical across brands. The default output preserves the established Oxid
+appearance and the original wallet/SSI state machines remain untouched.
+
+The reviewed prototype keeps every fixed-navigation item within a 56 px row,
+reserves the complete fixed-bar height below scrolling content, and presents
+identity scanning as an ordinary content action. Oxid retains its center Scan
+destination but now contains its entire hit target inside the same navigation
+row rather than using the former negative-margin circular protrusion. On a
+physical Samsung SM-S928B running Android 16/API 36, the accessibility tree
+placed the wallet activation control at `[90,1096]–[990,1245]` and Scan at
+`[433,2019]–[646,2185]`; a real Android input tap at the activation center
+started protected account synchronization, kept Oxid foregrounded, and did not
+open the scanner. DOM-only `element.click()` results are not used as this touch
+evidence.

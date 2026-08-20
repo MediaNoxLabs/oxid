@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 3, 7, 12, and 13
 - Implementation state: Policy enforced; protected development derivation and
+- Amended by: ADR-0037, ADR-0038, ADR-0039, ADR-0040, ADR-0041, ADR-0042, ADR-0045, ADR-0046
   signing implemented by #5/#8, native custody still required
 
 ## Context

@@ -9,7 +9,11 @@ src = "src"
 build-dir = "book"
 create-missing = false
 
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
 [output.html]
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
 git-repository-url = "https://github.com/MediaNoxLabs/oxid"
 edit-url-template = "https://github.com/MediaNoxLabs/oxid/edit/develop/docs/site/{path}"
 site-url = "/oxid/"

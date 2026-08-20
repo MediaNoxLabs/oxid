@@ -172,11 +172,12 @@ surfaces without widening the current UI. Headless never reveals a value.
   Final-shaped OpenID4VP/DCQL request matching, exact consent, profile-scoped
   candidates, and single-use sessions. Exact public-input construction,
   authenticated proof construction, and independent verification are available
-  in native headless mode; mobile proving and live transport remain fail-closed.
+  in native headless mode and ADR-0083's explicit mobile conformance build;
+  normal mobile proving and live transport remain fail-closed.
 - Live OID4VCI HTTP/discovery, Authorization Code, by-reference offers,
   Transaction Code, batch/deferred issuance, notification, encrypted responses,
   wallet attestation, deep links, and QR scanning remain later protocol slices.
-- Live OpenID4VP response delivery, mobile proving, ecosystem interoperability,
+- Live OpenID4VP response delivery, production mobile proving, ecosystem interoperability,
   live SIOP verifier transport, and browser/native bridge ingress remain later
   adapters.
 - Active standalone Compact verification now passes issuer, temporal, schema,

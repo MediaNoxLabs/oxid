@@ -20,18 +20,20 @@ before migrating later work.
 | Prototype area | Capabilities observed | Oxid destination | Migration state |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
-| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded plus private DUST/Zswap checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, native shielded replay lifecycle, and staged unshielded transfer through DUST proof, safe pre-broadcast cancellation, and node inclusion implemented for development/headless; shielded spending and durable production custody pending |
-| `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017/0046/0048/0071/0074–0076 accepted; process-local development custody remains the deterministic harness, normal mobile uses a passcode/user-presence-bound iOS Keychain or Android Keystore sealed vault, and one authenticated complete archive restores custody plus profile-scoped state; the complete iOS Simulator picker round trip passes, while Android picker and physical-device release evidence remain pending |
+| `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded plus private DUST/Zswap checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, native shielded replay, fresh-sync-gated shielded spend, and staged public/private transfer through DUST/Zswap proof, safe pre-broadcast cancellation, and finalized node inclusion implemented for standalone/headless/mobile; ADR-0098/#91 prove funded unshielded and genesis-authority shielded headless finality/adapter-reconstruction flows and add signed-profile plus node-genesis production gates; ADR-0100 implements the distinct protected DUST-registration repository/headless/Dioxus boundary, guarded public PreProd funding manifest/read-only observer, test-only signed Midnight profile, and amount-observed one-output/one-note acceptance harness, while the funded PreProd write/recovery, durable production custody, provisioned deployment, funded mobile flows, and physical-device proof budgets remain gated |
+| `wallet-core/secret_storage` and `unlock` | Multi-curve keys, encrypted files, redb, opaque references, boot lock, attempt throttling | wallet-owned session/key-operation ports plus platform-backed and development adapters | ADR-0017/0046/0048/0071/0074–0076 accepted; process-local development custody remains the deterministic harness, normal mobile uses a passcode/user-presence-bound iOS Keychain or Android Keystore sealed vault, and one authenticated complete archive restores custody plus profile-scoped state; complete iOS Simulator and Android emulator picker round trips pass, while physical-device release evidence remains pending |
 | `wallet-core/did` and DID services | `did:midnight` create/resolve/update/deactivate | `identity/domain`, `identity/application`, `adapters/did-midnight`, separate public record storage | Current 0.5.0-shaped resolution, profile inventory/persistence, and standalone Ed25519/P-256/Jubjub create/update/deactivate/signing implemented by issues #21–22 and ADR-0036/0037/0047; live Compact writes pending |
 | `wallet-core/oid4vp_client` | Self-issued DID authentication mislabeled alongside an unimplemented OID4VP presentation action | `protocol/domain`, `protocol/application`, `adapters/siopv2`; `presentation/domain`, `presentation/application`, `adapters/openid4vp` | SIOPv2 draft-13 login implemented by issue #25/ADR-0040; issue #27/ADR-0043 adds strict Final-shaped DCQL request preview, consent, and replay protection; ADR-0048 adds current-holder authorization and ADR-0050 adds explicit native headless Compact proof plus independent `vp_token` verification |
 | `wallet-core/vc_store` and `vc_self_verify` | Signed credential bytes, metadata, self-verification, protected Digital Passport values/openings | `credential/domain`, `credential/application`, `adapters/vc-midnight`, protected credential storage | Profile-scoped protected inventory and strict phase-1 verification implemented by issue #23/ADR-0038; issue #26/ADR-0041/0042 adds atomic opaque material, commitment-bound five-claim Digital Passport interpretation, safe local planning/reveal, restart/deletion, and mobile coverage; ADR-0073 adds active standalone Compact issuer-key, current-time, and pinned-trust policy while status/revocation, production trust, mobile presentation proofs, and remaining native release evidence stay pending |
 | `wallet-core/oid4vci_client` and `oid4vci_issuance_e2e` | Pre-authorized offer, token/nonce, holder proof, credential request/store flow | `protocol/domain`, `protocol/application`, `adapters/openid4vci`, existing DID custody and verified credential sink | OpenID4VCI 1.0 Final embedded-offer standalone flow plus separate authentication and managed Jubjub holder-binding methods implemented by issue #24 and ADR-0039/0047; production transport/discovery and additional grant/response variants pending |
 | `wallet-core/vault` | Passport-vault contract interaction and selective-disclosure claim | `passport-vault/domain`, `passport-vault/application`, product adapter, not generic wallet core | ADR-0051 delivers exact standalone multi-lock behavior; ADR-0052 adds the immutable five-circuit artifact closure and native tagged-state decoding; ADR-0054/0055 authenticate canonical history/state; ADR-0056/0057 add the retained call harness and explicit simulator; ADR-0058 authenticates the generated client/four wallet proof circuits; ADR-0059 through ADR-0063 add closed-schema public-call composition, exact finalized context, protected NIGHT/DUST proving, finalized submission, cancellation, and restart recovery; ADR-0064 through ADR-0066 add authorization-bound managed-custody claim composition and native discovery; ADR-0068 adds durable owner-private standalone accounting/replay state while real-node/mobile live fixtures remain issue #31 |
-| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, first-run complete recovery, complete Settings export plus legacy custody import, account-aware Assets page, receive QR, typed native public-address copy/share, protected development activation, staged transfer, DID lifecycle, protected credential inventory/verification, standalone issuance, consented self-issued DID authentication, Digital Passport local reveal/age plan, OpenID4VP request/consent proof gate, standalone Passport Vault journey, typed native vault-call lifecycle, and scan/app-link identity routing are reimplemented without WebView/iframe bridges; physical-device camera, universal links, device live-node fixtures, and resource baselines remain pending |
-| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, wallet/identity flows, claim-free Digital Passport planning, Final-shaped OpenID4VP proof/verification, strict redacted identity-request routing, and complete standalone Passport Vault create/deposit/claim/replay/withdraw accounting are implemented while raw request URIs and credential/proof private material stay hidden; recovery stays absent from the JSON protocol, with an in-process standalone composition test covering the all-store round trip |
+| `dioxus-wallet` | Mobile/desktop UI, QR bridges, JS eval bridge, DID/credential/vault screens | `ui-dioxus`, platform adapters, protocol/chain adapters | Profile lifecycle, first-run complete recovery, complete Settings export plus legacy custody import, account-aware Wallet page, receive QR, typed native public-address copy/share, protected development activation, public/shielded Send wizard, DID lifecycle, protected credential inventory/verification, standalone issuance, consented self-issued DID authentication, Digital Passport local reveal/age plan, OpenID4VP request/consent proof gate, standalone Passport Vault journey, typed native vault-call lifecycle, and scan/app-link identity routing are reimplemented without WebView/iframe bridges; ADR-0085 through ADR-0097 add safe labels, the bounded route shell, read-only Home, protected transfer, four-question identity consent, the create/restore onboarding fork, evidence-based backup celebration, unified account sync, the protected-address Receive sheet, build-time brands, render-only secret mode with native snapshot protection, a closed developer capability viewer, the consent-stopping standalone demo drawer, and a compile-time physical-phone tailnet route profile without committed endpoints; physical Android QR success/cancel/timeout, warm/cold custom schemes, protected tailnet account sync, and non-overlapping wallet activation pass, while physical iOS camera, verified HTTPS links, funded device live-transaction fixtures, payment requests, and resource baselines remain pending |
+| `headless-wallet` | Line-delimited JSON driver for use cases | `apps/oxid-headless` incoming CLI/test adapter | Safe versioned transport, wallet/identity flows, claim-free Digital Passport planning, Final-shaped OpenID4VP proof/verification, strict redacted identity-request routing, complete standalone Passport Vault accounting, and an ignored double-opt-in funded real-node unshielded finality/restart harness are implemented while raw request URIs, funding roots, and credential/proof private material stay hidden; recovery stays absent from the JSON protocol, with an in-process standalone composition test covering the all-store round trip |
+| `dioxus-wallet/src/logs.rs`, `telemetry_panel.rs`, `proc_stats.rs`, and worker boundaries | Persistent tracing, free-form fields, HTTP/operation/process measurements, and background worker visibility | `diagnostics/application`, `adapters/diagnostics-memory`, composed closed-code sinks, headless snapshot/reset, and the Dioxus Diagnostics page | ADR-0080 reimplements only bounded payload-free runtime health and worker recovery; storage, upload, tracing strings, endpoints, process statistics, and benchmark telemetry remain excluded |
+| capability/worker visibility adjacent to the prototype diagnostics tabs | Useful development discovery was mixed with unsafe log and benchmark surfaces | `capabilities/application`, headless `system.capabilities`, and the opt-in standalone Dioxus developer profile | ADR-0095 keeps only closed public composition facts, corrects confirmation declarations, reports timing as `not_collected`, and proves the normal release excludes the developer marker; ADR-0096 adds a separate compile-time demo drawer that serializes safe setup and stops every protocol fixture at unchanged review |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
-| benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness is measured on iOS/Android; ADR-0072 adds an authenticated executable-embedded presentation artifact measurement package while proof execution and physical-device budgets remain gated; generated artifacts remain uncommitted |
-| Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts plus the shared `adapters/mobile-native-plugin` | Dioxus-generated hosts build and launch explicit development or native-custody standalone composition; the single static Swift/Kotlin plugin packages QR, links, typed clipboard/share, device custody, and bounded backup documents; a disposable iOS Simulator verifies the complete native export/reset/import/recovery round trip, while the Android picker round trip, physical camera/device, universal links, live-node fixtures, and resource baselines remain deferred |
+| benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness is measured on iOS/Android; ADR-0072 adds an authenticated executable-embedded presentation artifact package and ADR-0083 runs it through an explicit foreground worker, while physical-device budgets remain gated; generated artifacts remain uncommitted |
+| Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts plus the shared `adapters/mobile-native-plugin` | Dioxus-generated hosts build and launch explicit development or native-custody standalone composition; the single static Swift/Kotlin plugin packages QR, links, typed clipboard/share, device custody, bounded backup documents, and one boolean screen-privacy operation (`FLAG_SECURE`/iOS background overlay); Android JNI failures clear pending Java exceptions without exposing details, and an emulator throw-then-full-wallet regression covers continued bridge use; disposable iOS Simulator and Android emulator flows verify complete native export/reset/import/recovery round trips through their system document pickers; Samsung SM-S928B / Android 16 physical evidence proves QR success/cancel/timeout, post-return liveness, consent isolation, warm/cold custom schemes, numeric `FLAG_SECURE`, protected tailnet account sync, durable public binding, honest process-local restart state, and real-touch Scan/activation separation; ADR-0097 adds a development-only MagicDNS/TLS physical-phone launcher without copying the prototype's personal endpoint, while physical iOS, multi-vendor screenshot behavior, universal links, funded live transactions, and resource baselines remain deferred |
 
 ## M0 migration decisions
 
@@ -103,9 +105,10 @@ Do not migrate these without explicit review:
 - ledger-relative Cargo path dependencies;
 - vendored npm/WASM packages and WebView JavaScript bridges;
 - local endpoints, standalone secrets, Tailscale instructions, databases, and
-  captured diagnostics;
+  captured/free-form diagnostic logs; ADR-0080 permits only reviewed closed
+  codes in a non-persistent bounded process-local ring;
 - generated Android/iOS project output and signing configuration;
-- benchmark-only probes, tabs, and telemetry panels.
+- benchmark-only probes, tabs, process statistics, and telemetry panels.
 
 ## Fourth post-M0 slice: protected wallet boundaries
 
@@ -214,12 +217,14 @@ the prototype's persisted DUST replay behavior behind a distinct private
 adapter store. The bounded binary envelope preserves the official tagged
 `DustLocalState`, completed cursor, live-parameter identity, network, and a
 one-way public-key fingerprint without persisting the DUST seed or scalar.
-Standalone completion resumes from the next cursor and folds events in small
-batches instead of retaining the prototype's history-sized queue. A current
-checkpoint still needs a successful live subscription; wrong scope or
-parameters replay cleanly, incompatible deltas retry once from zero, and
-transport failure never authorizes a cached-only spend. Headless composition
-accepts the store only with the complete standalone route set.
+Standalone completion resumes from the next sparse cursor, receives at most
+16,384 events/16 MiB, closes the subscription, then folds and checkpoints in
+256-event/4 MiB batches instead of retaining the prototype's history-sized
+queue or folding under transport backpressure. A current checkpoint still
+needs a successful live subscription; wrong scope or parameters replay
+cleanly, incompatible deltas retry once from zero, and transport failure never
+authorizes a cached-only spend. Headless composition accepts the store only
+with the complete standalone route set.
 
 [Issue #17](https://github.com/MediaNoxLabs/oxid/issues/17) and ADR-0032 add the
 prototype's explicit DUST sync lifecycle without copying its wallet facade or
@@ -249,9 +254,13 @@ per-token balances and note/commitment counts. Its deterministic standalone
 controller verifies the protected role-3 child and drives headless plus mobile
 cancellation/resume flows. The native live increment connects the same port to
 a bounded `graphql-transport-ws` worker over `zswapLedgerEvents`, saves every
-consistent official-state batch, resumes from the next cursor, and retries an
-incompatible cached delta once from zero. Headless environment composition
-accepts the private store for read-only or complete standalone live modes.
+consistent official-state batch, resumes from the next sparse cursor, and
+retries an incompatible cached delta once from zero. Unlike the prototype's
+explicitly provisional inline v1, cold catch-up receives a bounded segment,
+completes and drops its subscription, then replays/checkpoints before
+reconnecting from the observer-accepted cursor. Headless environment
+composition accepts the private store for read-only or complete standalone
+live modes.
 
 Issue #19 and ADR-0034 add a deliberate improvement over the prototype's
 submit-and-wait flow: Oxid-owned submission status plus explicit headless and
@@ -318,11 +327,21 @@ verifier, purpose, and exact claim intents without values. Acceptance always
 re-verifies the protected exact Compact bundle, constructs and independently
 checks the generated-circuit public statement, and consumes the session. Without
 an explicit authenticated artifact root it fails with `proof_unavailable`.
+ADR-0083 reuses the same proof/verification boundary only in the explicit
+native-custody mobile artifact build, behind one foreground worker with
+cancel/background/timeout late-result disposal. Normal mobile remains
+proof-disabled.
+ADR-0082 closes the multi-credential consent gap left by the prototype and the
+first mobile adapter: safe candidate previews now include display name, issuer,
+and opaque reference; Dioxus visibly selects a sole match but requires an exact
+card choice before consent when several credentials match. Headless continues
+to require the exact candidate identifier and never exposes claim values.
 ADR-0048 first reloads the credential-bound Jubjub
 method, requires current managed assertion authority, signs and independently
 verifies a disposable authorization over the exact statement, and applies
 explicit same-method rotation semantics. ADR-0050 wires credential-family proof
-execution and an independent proof verifier for native headless mode only.
+execution and an independent proof verifier for native headless mode; ADR-0083
+reuses them only in the explicit mobile conformance build.
 ADR-0073 separately hardens acceptance of each newly issued standalone Compact
 credential: the exact issuer DID assertion method must resolve to the detached
 proof's Jubjub key, issuance/proof/expiry times must be current, and the pinned
@@ -344,10 +363,10 @@ Settings export, fresh-install recovery, and in-process standalone round trip.
 ADR-0078 additionally hardens new complete-wallet exports as strict
 `OXIDBAK1` version 3 with Argon2id at 65,536 KiB/t=3/p=1 while preserving exact
 read-only version-2 compatibility and rejecting cross-version parameter tuples
-before KDF allocation. The complete iOS Simulator document-picker round trip is
-covered by `just ios-backup-smoke`; the Android picker round trip and
-physical-device resource evidence remain issue #33 work and are not represented
-as release parity.
+before KDF allocation. The complete iOS Simulator and Android emulator
+document-picker round trips are covered by `just ios-backup-smoke` and `just
+android-backup-smoke`; physical-device resource evidence remains issue #33 work
+and is not represented as release parity.
 
 [Issue #2](https://github.com/MediaNoxLabs/oxid/issues/2), ADR-0051, and
 [issue #31](https://github.com/MediaNoxLabs/oxid/issues/31) migrate the
@@ -526,12 +545,103 @@ credential claim root and fixes the presentation nonce to `17`; Oxid requires
 opaque managed holder custody and fresh randomness instead of migrating either
 shortcut.
 
-Shielded spending, internal/change address management, replacement handling,
-live DID writes, live OpenID4VP response delivery and mobile Compact proving,
-credential status/revocation plus production issuer trust, physical-camera and
-native-custody physical-device evidence, universal HTTPS links, production
-endpoint discovery, durable recovery, and device resource baselines remain
-separate follow-ups.
+Additional internal/change address management, replacement handling, live DID
+writes, live OpenID4VP response delivery and physical-device Compact proving
+budgets,
+credential status/revocation plus production issuer trust, physical iOS camera
+and native-custody physical-device evidence, universal HTTPS links, production
+endpoint discovery, physical-device recovery interruption/resource evidence,
+and device resource baselines remain separate follow-ups.
+
+The current evidence classification, exact implemented paths,
+dependency-ordered gaps, blockers, and acceptance status are recorded in
+[the 2026-08-20 migration delivery audit](delivery-audit-2026-08-20.md). Stale
+issue checkboxes are not evidence for that assessment.
+
+ADR-0097 reimplements the prototype's runtime-selected localhost/Tailscale
+transport aliasing as separate compile-time development profiles without
+copying its personal endpoint, public genesis wallet, or runtime production
+switch. The physical Android tailnet build derives a protected
+profile account, synchronizes it through the laptop-hosted
+`indexer-standalone:4.0.0`, and persists only its public network/derivation
+coordinates through the same profile repository. A process restart truthfully
+withholds the address because development custody is process-local. The
+prototype's exact unshielded subscription requests neither fee field and
+therefore avoids the schema discrepancy. Oxid's richer history needs the value;
+the live image rejected the singular `fee` selection despite the reviewed
+schema advertising it, so Oxid uses the image-proven `fees { paidFees }`
+response shape. The localhost profile uses the same undeployed chain identity
+and shared profile binding with immutable loopback routes: iOS Simulator reaches
+them directly and Android emulator reaches them through exact `adb reverse`
+mappings for 8088, 9944, and 6300. It is distinct from deterministic simulation
+and cannot be combined with native custody, tailnet routes, or WebAssembly.
+
+ADR-0098 consumes the reviewed prototype's working live-flow semantics without
+copying its public genesis funding fixture. A closed Ed25519-signed canonical
+profile atomically binds Midnight network/genesis/routes and SSI metadata
+routes; the node must prove the signed genesis before opt-in composition, and
+normal composition remains unavailable without reviewed roots and a deployed
+profile. The test-only funding harness receives the development root
+out-of-band, zeroizes it, transfers exactly five NIGHT to a fresh OS-random
+recipient, proves finalized inclusion, reconstructs the public journal with
+included-status restoration through the reconciliation use case, and waits
+boundedly for a stable recipient read. Live evidence
+also corrects indexer v4 millisecond time and sparse monotonic DUST global
+cursors, both matching the prototype's successful path.
+
+Issue #91 extends that guarded evidence beyond the prototype, whose shielded
+sync/balance helpers had no production Dioxus or headless call sites and whose
+final vault flow remained unshielded. Oxid now validates the indexer v4
+`ZswapLedgerEvent` envelope, treats its IDs as sparse monotonic global cursors,
+spends a real genesis-funded native Zswap note after exact consent, waits for
+finality, blocks an unchanged-state duplicate, reconstructs the adapter, and
+proves exact sender/recipient balances after nullifier replay. This remains a
+genesis-authority development proof: the repository now implements typed DUST
+registration, but a fresh protected recipient still needs guarded funded
+registration, later generation/recovery, and spend evidence under issue #92.
+
+ADR-0100 records the registration boundary implemented in Oxid.
+The reviewed prototype is precise about the product sequence—sync, wait for
+NIGHT, register for DUST, then wait for generated DUST—and its indexer fixture
+includes `registeredForDustGeneration`. Its executable wallet did not
+implement the documented `registerNightUtxosForDustGeneration` step, and its
+plan left register/deregister unchecked. Oxid therefore does not copy or claim
+prototype code parity for this operation.
+
+Issue #92 instead maps the accepted ledger revision's native semantics through
+a distinct `WalletDustRegistrationPort`. Preparation requires live public
+`ctime` and unregistered-state evidence, puts the largest-generation owned
+NIGHT input alone in the guaranteed offer, puts the remaining selected inputs
+in the fallible offer, and returns every exact NIGHT amount to the same owner.
+Explicit
+consent then gates the role-0 NIGHT signature while the role-2 DUST child stays
+inside protected custody. Generic proving, registration-domain-separated
+persist-before-broadcast recovery, node finality, and official DUST-event
+observation are separate stages. Public checkpoint schema version two carries
+the eligibility fields; version one is rejected and ignored. The
+repository/headless/Dioxus slice is implemented, including explicit consent,
+transfer-journal separation, and a guarded public PreProd A/B funding manifest.
+A fresh wallet intentionally begins with zero DUST; a test-only signed PreProd
+Midnight profile and ignored acceptance harness are implemented, while funded
+registration-to-generation/authoritative-resynchronization, mobile, restart,
+physical-device, and production results remain open. The funding case binds
+one eligible positive public output carrying all observed public NIGHT and one
+positive shielded note, not balances alone.
+
+ADR-0084 begins the accepted product-UX rollout without copying the
+prototype's ad-hoc stylesheet values. The migrated Dioxus surface now separates
+complete dark/light brand primitives from one semantic component vocabulary;
+fixed safety colors cannot be rebranded, dark remains the only selected scheme,
+and `run.sh` rejects raw component colors plus legacy type/radius/motion drift.
+This is a presentation-only prerequisite for the four-tab route shell and does
+not change wallet state machines, capability truth, consent, or composition.
+ADR-0092 realizes that boundary as a strict build-only pack: `apps/oxid`
+selects `brands/oxid`, generates semantic CSS/logo/typed identity into its own
+`OUT_DIR`, and injects only immutable presentation context. The closed schema,
+two-scheme contrast matrix, exact manifest purpose strings, safe-SVG checks,
+security-copy snapshots, and auto-enumerated Nix checks add reproducible
+white-label infrastructure without importing prototype branding, runtime brand
+selection, or any wallet/SSI authority.
 
 ## Gate for each later slice
 

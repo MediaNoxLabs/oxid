@@ -9,6 +9,7 @@
 - Related: ADR-0042, ADR-0048 through ADR-0050, ADR-0056 through ADR-0064, and issue #31
 - Supersedes: ADR-0059's blanket claim rejection and ADR-0064's implementation-state boundary that the protected DTO has no generated-client consumer
 - Implementation state: authorization-bound protected composition and the shared funding/submission route are implemented; an exact managed-custody generated-client settlement conformance test and public claim capability enablement remain pending
+- Amended by: ADR-0066
 
 ## Context
 

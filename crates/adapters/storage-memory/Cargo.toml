@@ -13,11 +13,9 @@ oxid-credential-application.workspace = true
 oxid-credential-domain.workspace = true
 oxid-identity-application.workspace = true
 oxid-identity-domain.workspace = true
+oxid-foundation.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
-
-[dev-dependencies]
-oxid-foundation.workspace = true
 
 [lints]
 workspace = true

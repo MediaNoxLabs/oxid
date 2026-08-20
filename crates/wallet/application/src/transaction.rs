@@ -5,7 +5,7 @@ use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 use oxid_foundation::{OpaqueIdError, UnixTimestampMillis};
 use oxid_platform_ports::{ClockPort, PlatformError};
 use oxid_wallet_domain::{
-    AssetBalance, ChainAddress, ChainAddressError, ChainAddressKind, WalletProfileId,
+    AssetBalance, ChainAddress, ChainAddressError, ChainAddressKind, ChainAssetId, WalletProfileId,
     WalletTransactionAuthorizationChallenge, WalletTransactionDraftId, WalletTransactionDraftState,
     WalletTransactionFeeState, WalletTransactionSubmissionState, WalletTransactionSubmissionStatus,
     WalletTransferPreview, WalletTransferSubmission, WalletTransferSubmissionMode,
@@ -24,6 +24,7 @@ pub enum WalletTransactionPortError {
     ProtectionLocked,
     AccountNotDerived,
     AccountNotSynchronized,
+    ShieldedStateNotCurrent,
     UnsupportedNetwork,
     InvalidRecipient,
     RecipientNetworkMismatch,
@@ -53,6 +54,9 @@ impl fmt::Display for WalletTransactionPortError {
             Self::ProtectionLocked => "wallet is locked",
             Self::AccountNotDerived => "a protected wallet account must be derived first",
             Self::AccountNotSynchronized => "wallet account must be synchronized first",
+            Self::ShieldedStateNotCurrent => {
+                "shielded wallet state must complete a live synchronization first"
+            }
             Self::UnsupportedNetwork => "wallet network is not supported",
             Self::InvalidRecipient => "transaction recipient is invalid",
             Self::RecipientNetworkMismatch => "transaction recipient belongs to another network",
@@ -89,6 +93,15 @@ impl Error for WalletTransactionPortError {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrepareWalletTransferRequest {
     pub recipient: ChainAddress,
+    pub amount_atomic_units: u128,
+    pub expires_at: UnixTimestampMillis,
+}
+
+/// Adapter-neutral request for constructing one exact shielded transfer intent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrepareShieldedWalletTransferRequest {
+    pub recipient: ChainAddress,
+    pub asset_id: ChainAssetId,
     pub amount_atomic_units: u128,
     pub expires_at: UnixTimestampMillis,
 }
@@ -140,6 +153,14 @@ pub trait WalletTransactionPort: Send + Sync {
         profile_id: &WalletProfileId,
         request: PrepareWalletTransferRequest,
     ) -> Result<WalletTransferPreview, WalletTransactionPortError>;
+
+    fn prepare_shielded(
+        &self,
+        _: &WalletProfileId,
+        _: PrepareShieldedWalletTransferRequest,
+    ) -> Result<WalletTransferPreview, WalletTransactionPortError> {
+        Err(WalletTransactionPortError::Unavailable)
+    }
 
     fn authorize(
         &self,
@@ -197,6 +218,15 @@ pub struct PrepareWalletTransferCommand {
     pub amount_atomic_units: String,
 }
 
+/// Incoming request for preparing a shielded token transfer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrepareShieldedWalletTransferCommand {
+    pub profile_id: String,
+    pub recipient_address: String,
+    pub token_type: String,
+    pub amount_atomic_units: String,
+}
+
 /// Incoming request for authorizing an exact prepared transfer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthorizeWalletTransferCommand {
@@ -245,6 +275,7 @@ pub struct WalletTransferPreviewView {
     pub network_id: String,
     pub account_id: String,
     pub recipient_address: String,
+    pub recipient_kind: String,
     pub amount: WalletTransferAssetView,
     pub change: WalletTransferAssetView,
     pub fee: Option<WalletTransferAssetView>,
@@ -264,6 +295,7 @@ impl From<&WalletTransferPreview> for WalletTransferPreviewView {
             network_id: preview.network_id().as_str().to_owned(),
             account_id: preview.account_id().as_str().to_owned(),
             recipient_address: preview.recipient().value().to_owned(),
+            recipient_kind: address_kind_name(preview.recipient().kind()).to_owned(),
             amount: asset_view(preview.amount()),
             change: asset_view(preview.change()),
             fee: preview.fee().map(asset_view),
@@ -282,6 +314,14 @@ pub trait PrepareWalletTransferUseCase: Send + Sync {
     fn execute(
         &self,
         command: PrepareWalletTransferCommand,
+    ) -> Result<WalletTransferPreviewView, WalletTransactionError>;
+}
+
+/// Incoming use case for creating a retained shielded transfer draft.
+pub trait PrepareShieldedWalletTransferUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: PrepareShieldedWalletTransferCommand,
     ) -> Result<WalletTransferPreviewView, WalletTransactionError>;
 }
 
@@ -425,6 +465,7 @@ pub enum WalletTransactionError {
     InvalidAuthorizationChallenge(OpaqueIdError),
     InvalidRecipient(ChainAddressError),
     InvalidAmount,
+    InvalidTokenType,
     ZeroAmount,
     ConfirmationRequired,
     InvalidConfirmation,
@@ -442,6 +483,8 @@ impl fmt::Display for WalletTransactionError {
             Self::InvalidAmount => {
                 formatter.write_str("transaction amount must be an unsigned integer")
             }
+            Self::InvalidTokenType => formatter
+                .write_str("shielded token type must be exactly 32 lowercase hexadecimal bytes"),
             Self::ZeroAmount => formatter.write_str("transaction amount must be greater than zero"),
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
@@ -511,6 +554,60 @@ where
                 &profile_id,
                 PrepareWalletTransferRequest {
                     recipient,
+                    amount_atomic_units,
+                    expires_at,
+                },
+            )
+            .map_err(WalletTransactionError::Operation)?;
+        Ok(WalletTransferPreviewView::from(&preview))
+    }
+}
+
+impl<T, C> PrepareShieldedWalletTransferUseCase for WalletTransactionService<T, C>
+where
+    T: WalletTransactionPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute(
+        &self,
+        command: PrepareShieldedWalletTransferCommand,
+    ) -> Result<WalletTransferPreviewView, WalletTransactionError> {
+        let profile_id = WalletProfileId::parse(command.profile_id)
+            .map_err(WalletTransactionError::InvalidProfileIdentifier)?;
+        let recipient = ChainAddress::parse(ChainAddressKind::Shielded, command.recipient_address)
+            .map_err(WalletTransactionError::InvalidRecipient)?;
+        if command.token_type.len() != 64
+            || !command
+                .token_type
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(WalletTransactionError::InvalidTokenType);
+        }
+        let asset_id = ChainAssetId::parse(format!("midnight:shielded:{}", command.token_type))
+            .map_err(|_| WalletTransactionError::InvalidTokenType)?;
+        let amount_atomic_units = command
+            .amount_atomic_units
+            .parse::<u128>()
+            .map_err(|_| WalletTransactionError::InvalidAmount)?;
+        if amount_atomic_units == 0 {
+            return Err(WalletTransactionError::ZeroAmount);
+        }
+        let expires_at = self
+            .now()?
+            .value()
+            .checked_add(WALLET_TRANSFER_DRAFT_TTL_MILLIS)
+            .map(UnixTimestampMillis::new)
+            .ok_or(WalletTransactionError::Clock(
+                PlatformError::ClockUnavailable,
+            ))?;
+        let preview = self
+            .transactions
+            .prepare_shielded(
+                &profile_id,
+                PrepareShieldedWalletTransferRequest {
+                    recipient,
+                    asset_id,
                     amount_atomic_units,
                     expires_at,
                 },
@@ -710,6 +807,15 @@ const fn fee_state_name(state: WalletTransactionFeeState) -> &'static str {
     }
 }
 
+const fn address_kind_name(kind: ChainAddressKind) -> &'static str {
+    match kind {
+        ChainAddressKind::Unshielded => "unshielded",
+        ChainAddressKind::Shielded => "shielded",
+        ChainAddressKind::Dust => "dust",
+        ChainAddressKind::Reward => "reward",
+    }
+}
+
 const fn draft_state_name(state: WalletTransactionDraftState) -> &'static str {
     match state {
         WalletTransactionDraftState::Prepared => "prepared",
@@ -796,6 +902,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingTransactions {
         prepare_calls: Mutex<usize>,
+        prepare_shielded_calls: Mutex<usize>,
         authorize_calls: Mutex<usize>,
         submit_calls: Mutex<usize>,
     }
@@ -837,6 +944,44 @@ mod tests {
             assert_eq!(request.expires_at.value(), 1_700_003_600_000);
             *self.prepare_calls.lock().expect("counter is available") += 1;
             Ok(Self::preview(WalletTransactionDraftState::Prepared))
+        }
+
+        fn prepare_shielded(
+            &self,
+            _: &WalletProfileId,
+            request: PrepareShieldedWalletTransferRequest,
+        ) -> Result<WalletTransferPreview, WalletTransactionPortError> {
+            assert_eq!(
+                request.asset_id.as_str(),
+                "midnight:shielded:0000000000000000000000000000000000000000000000000000000000000000"
+            );
+            assert_eq!(request.amount_atomic_units, 1_000_000);
+            assert_eq!(request.expires_at.value(), 1_700_003_600_000);
+            *self
+                .prepare_shielded_calls
+                .lock()
+                .expect("counter is available") += 1;
+            let night = ChainAsset::new(
+                request.asset_id,
+                AssetSymbol::parse("NIGHT").expect("symbol is valid"),
+                6,
+            );
+            WalletTransferPreview::new(
+                WalletTransactionDraftId::parse("txdraft_shielded_test").expect("draft is valid"),
+                WalletTransactionAuthorizationChallenge::parse("txauth_shielded_test")
+                    .expect("challenge is valid"),
+                ChainNetworkId::parse("undeployed").expect("network is valid"),
+                ChainAccountId::parse("midnight_account_0_0").expect("account is valid"),
+                request.recipient,
+                AssetBalance::new(night.clone(), 1_000_000),
+                AssetBalance::new(night, 4_000_000),
+                None,
+                WalletTransactionFeeState::RequiresBalancing,
+                1,
+                request.expires_at,
+                WalletTransactionDraftState::Prepared,
+            )
+            .map_err(|_| WalletTransactionPortError::InvalidData)
         }
 
         fn authorize(
@@ -964,6 +1109,10 @@ mod tests {
                 "wallet account must be synchronized first",
             ),
             (
+                WalletTransactionPortError::ShieldedStateNotCurrent,
+                "shielded wallet state must complete a live synchronization first",
+            ),
+            (
                 WalletTransactionPortError::UnsupportedNetwork,
                 "wallet network is not supported",
             ),
@@ -1089,6 +1238,56 @@ mod tests {
                 },
             ),
             Err(WalletTransactionError::ZeroAmount)
+        );
+    }
+
+    #[test]
+    fn shielded_prepare_requires_canonical_token_type_and_forwards_exact_amount() {
+        let transactions = Arc::new(RecordingTransactions::default());
+        let service =
+            WalletTransactionService::new(Arc::clone(&transactions), Arc::new(FixedClock));
+        let recipient = "mn_shield-addr_undeployed1recipient".to_owned();
+        assert_eq!(
+            PrepareShieldedWalletTransferUseCase::execute(
+                &service,
+                PrepareShieldedWalletTransferCommand {
+                    profile_id: "profile_test".to_owned(),
+                    recipient_address: recipient.clone(),
+                    token_type: "000000000000000000000000000000000000000000000000000000000000000A"
+                        .to_owned(),
+                    amount_atomic_units: "1000000".to_owned(),
+                },
+            ),
+            Err(WalletTransactionError::InvalidTokenType)
+        );
+        assert_eq!(
+            *transactions
+                .prepare_shielded_calls
+                .lock()
+                .expect("counter is available"),
+            0
+        );
+
+        let result = PrepareShieldedWalletTransferUseCase::execute(
+            &service,
+            PrepareShieldedWalletTransferCommand {
+                profile_id: "profile_test".to_owned(),
+                recipient_address: recipient,
+                token_type: "0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_owned(),
+                amount_atomic_units: "1000000".to_owned(),
+            },
+        )
+        .expect("canonical shielded transfer prepares");
+        assert_eq!(result.recipient_kind, "shielded");
+        assert_eq!(result.amount.atomic_units, "1000000");
+        assert_eq!(result.change.atomic_units, "4000000");
+        assert_eq!(
+            *transactions
+                .prepare_shielded_calls
+                .lock()
+                .expect("counter is available"),
+            1
         );
     }
 

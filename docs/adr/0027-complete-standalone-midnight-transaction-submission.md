@@ -5,6 +5,7 @@
 - Source: Blueprint §§3, 7–8, 12–13 and [issue #11](https://github.com/MediaNoxLabs/oxid/issues/11)
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`
 - Implementation state: Implemented for native development/headless composition; ADR-0028 adds local proving while production custody remains fail-closed
+- Amended by: ADR-0028, ADR-0034, ADR-0035
 
 ## Context
 
