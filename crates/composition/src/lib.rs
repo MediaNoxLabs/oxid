@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_adapter_backup_complete::InMemoryRecoveryJournal;
@@ -12,6 +12,8 @@ use oxid_adapter_backup_complete::{FileRecoveryJournal, UnavailableRecoveryJourn
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_backup_document_mobile::NativePortableWalletBackupDocuments;
 use oxid_adapter_backup_portable::PortableCustodyVaultPort;
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_adapter_deployment_profile::AuthenticatedDeploymentProfile;
 use oxid_adapter_diagnostics_memory::InMemoryDiagnosticStore;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_did_midnight::{
@@ -28,7 +30,8 @@ use oxid_adapter_midnight::{
     MidnightIndexerConfigError, MidnightLocalProvingConfig, MidnightLocalProvingConfigError,
     MidnightShieldedCheckpointConfig, MidnightShieldedCheckpointConfigError,
     MidnightStandaloneConfig, MidnightStandaloneConfigError, MidnightSubmissionJournalConfig,
-    MidnightSubmissionJournalConfigError, protected_live_midnight_wallet,
+    MidnightSubmissionJournalConfigError, authenticate_midnight_chain_identity,
+    configuration_placeholder_address, protected_live_midnight_wallet,
     protected_live_midnight_wallet_with_checkpoint_options,
     protected_live_midnight_wallet_with_checkpoints,
     protected_simulated_midnight_wallet_with_submission_journal,
@@ -200,26 +203,35 @@ use oxid_protocol_application::{
 };
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_wallet_application::UnavailablePortableWalletBackupDocuments;
+#[cfg(target_arch = "wasm32")]
+use oxid_wallet_application::UnavailableWalletDustRegistrationPort;
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_wallet_application::WalletDustRegistrationPort;
 use oxid_wallet_application::{
-    AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
-    CancelWalletTransferSubmissionUseCase, CompleteWalletBackupService, CreateWalletProfileService,
-    CreateWalletProfileUseCase, DeleteWalletKeyUseCase, DeriveWalletAccountUseCase,
-    ExportCompleteWalletBackupUseCase, ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase,
-    GetActiveWalletProfileService, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
-    GetWalletBackupReceiptUseCase, GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    AuthorizeWalletDustRegistrationUseCase, AuthorizeWalletTransferUseCase,
+    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
+    CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
+    CompleteWalletBackupService, CreateWalletProfileService, CreateWalletProfileUseCase,
+    DeleteWalletKeyUseCase, DeriveWalletAccountUseCase, ExportCompleteWalletBackupUseCase,
+    ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase, GetActiveWalletProfileService,
+    GetActiveWalletProfileUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
+    GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
+    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
     ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
     ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
     PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferUseCase,
-    PrepareWalletTransferUseCase, ReconcileWalletTransferSubmissionUseCase,
+    PrepareWalletDustRegistrationUseCase, PrepareWalletTransferUseCase,
+    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
     RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupUseCase,
     RecoverPortableWalletBackupUseCase, SelectWalletNetworkUseCase, SelectWalletProfileService,
     SelectWalletProfileUseCase, SignWalletDataUseCase, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
-    WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
-    WalletBackupReceiptService, WalletDustSyncPort, WalletDustSyncService,
+    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
+    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
+    WalletAccountService, WalletBackupReceiptRepository, WalletBackupReceiptService,
+    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
     WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
     WalletNetworkService, WalletPortableBackupPort, WalletPortableBackupService,
     WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
@@ -244,6 +256,18 @@ trait NativeMidnightCompositionCapability {}
 
 #[cfg(target_arch = "wasm32")]
 impl<T> NativeMidnightCompositionCapability for T {}
+
+#[cfg(not(target_arch = "wasm32"))]
+trait NativeWalletDustRegistrationCapability: WalletDustRegistrationPort {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T> NativeWalletDustRegistrationCapability for T where T: WalletDustRegistrationPort {}
+
+#[cfg(target_arch = "wasm32")]
+trait NativeWalletDustRegistrationCapability {}
+
+#[cfg(target_arch = "wasm32")]
+impl<T> NativeWalletDustRegistrationCapability for T {}
 
 /// Application capabilities shared by every incoming adapter.
 #[derive(Clone)]
@@ -293,6 +317,15 @@ pub struct ApplicationServices {
     get_wallet_shielded_sync_status: Arc<dyn GetWalletShieldedSyncStatusUseCase>,
     start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase>,
     cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase>,
+    prepare_wallet_dust_registration: Arc<dyn PrepareWalletDustRegistrationUseCase>,
+    authorize_wallet_dust_registration: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
+    submit_wallet_dust_registration: Arc<dyn SubmitWalletDustRegistrationUseCase>,
+    get_wallet_dust_registration: Arc<dyn GetWalletDustRegistrationUseCase>,
+    get_wallet_dust_registration_status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
+    cancel_wallet_dust_registration_submission:
+        Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
+    reconcile_wallet_dust_registration_submission:
+        Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
     prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase>,
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
@@ -605,6 +638,51 @@ impl ApplicationServices {
     #[must_use]
     pub fn cancel_wallet_shielded_sync(&self) -> Arc<dyn CancelWalletShieldedSyncUseCase> {
         Arc::clone(&self.cancel_wallet_shielded_sync)
+    }
+
+    #[must_use]
+    pub fn prepare_wallet_dust_registration(
+        &self,
+    ) -> Arc<dyn PrepareWalletDustRegistrationUseCase> {
+        Arc::clone(&self.prepare_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn authorize_wallet_dust_registration(
+        &self,
+    ) -> Arc<dyn AuthorizeWalletDustRegistrationUseCase> {
+        Arc::clone(&self.authorize_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn submit_wallet_dust_registration(&self) -> Arc<dyn SubmitWalletDustRegistrationUseCase> {
+        Arc::clone(&self.submit_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn get_wallet_dust_registration(&self) -> Arc<dyn GetWalletDustRegistrationUseCase> {
+        Arc::clone(&self.get_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn get_wallet_dust_registration_status(
+        &self,
+    ) -> Arc<dyn GetWalletDustRegistrationStatusUseCase> {
+        Arc::clone(&self.get_wallet_dust_registration_status)
+    }
+
+    #[must_use]
+    pub fn cancel_wallet_dust_registration_submission(
+        &self,
+    ) -> Arc<dyn CancelWalletDustRegistrationSubmissionUseCase> {
+        Arc::clone(&self.cancel_wallet_dust_registration_submission)
+    }
+
+    #[must_use]
+    pub fn reconcile_wallet_dust_registration_submission(
+        &self,
+    ) -> Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase> {
+        Arc::clone(&self.reconcile_wallet_dust_registration_submission)
     }
 
     #[must_use]
@@ -967,6 +1045,150 @@ fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort> {
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort> {
     Arc::new(InMemoryRecoveryJournal::default())
+}
+
+/// A signed deployment profile after the configured node has also proven the
+/// exact genesis hash bound by that profile.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct AuthenticatedProductionDeployment {
+    profile: AuthenticatedDeploymentProfile,
+    midnight: MidnightStandaloneConfig,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl fmt::Debug for AuthenticatedProductionDeployment {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthenticatedProductionDeployment")
+            .field("profile", &self.profile)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AuthenticatedProductionDeployment {
+    #[must_use]
+    pub const fn profile(&self) -> &AuthenticatedDeploymentProfile {
+        &self.profile
+    }
+}
+
+/// Payload-free failures from the production deployment composition gate.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProductionDeploymentCompositionError {
+    InvalidMidnightProfile,
+    ChainIdentityUnavailable,
+    ChainIdentityMismatch,
+    InvalidSsiProfile,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl fmt::Display for ProductionDeploymentCompositionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidMidnightProfile => "authenticated Midnight deployment profile is invalid",
+            Self::ChainIdentityUnavailable => {
+                "authenticated Midnight chain identity is unavailable"
+            }
+            Self::ChainIdentityMismatch => {
+                "authenticated Midnight chain identity does not match the node"
+            }
+            Self::InvalidSsiProfile => "authenticated SSI deployment profile is invalid",
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::error::Error for ProductionDeploymentCompositionError {}
+
+/// Binds a signed deployment profile to the genesis hash returned by its
+/// reviewed node route. The caller cannot provide alternate endpoints after
+/// this asynchronous gate succeeds.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn authenticate_production_deployment(
+    profile: AuthenticatedDeploymentProfile,
+) -> Result<AuthenticatedProductionDeployment, ProductionDeploymentCompositionError> {
+    let midnight = profile.midnight();
+    let placeholder = configuration_placeholder_address(midnight.network_id())
+        .map_err(|_| ProductionDeploymentCompositionError::InvalidMidnightProfile)?;
+    let config = MidnightStandaloneConfig::new(
+        midnight.network_id(),
+        midnight.indexer_websocket_url(),
+        midnight.indexer_http_url(),
+        midnight.node_websocket_url(),
+        midnight.proof_server_url(),
+        placeholder.value(),
+    )
+    .map_err(|_| ProductionDeploymentCompositionError::InvalidMidnightProfile)?;
+    authenticate_midnight_chain_identity(midnight.node_websocket_url(), midnight.genesis_hash())
+        .await
+        .map_err(|error| match error {
+            oxid_adapter_midnight::MidnightChainIdentityError::GenesisMismatch => {
+                ProductionDeploymentCompositionError::ChainIdentityMismatch
+            }
+            oxid_adapter_midnight::MidnightChainIdentityError::InvalidNodeEndpoint
+            | oxid_adapter_midnight::MidnightChainIdentityError::NodeUnavailable => {
+                ProductionDeploymentCompositionError::ChainIdentityUnavailable
+            }
+        })?;
+    Ok(AuthenticatedProductionDeployment {
+        profile,
+        midnight: config,
+    })
+}
+
+/// Composes the live Midnight path only after profile-signature and node
+/// genesis authentication. The default [`compose`] function remains
+/// fail-closed and never calls this opt-in constructor.
+///
+/// The authenticated DID resolver is enabled from the same signed profile.
+/// Issuer and verifier HTTP protocol adapters remain unavailable until their
+/// independent metadata/transport implementation is reviewed.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn compose_authenticated_production(
+    deployment: AuthenticatedProductionDeployment,
+) -> Result<ApplicationServices, ProductionDeploymentCompositionError> {
+    let did_resolver = HttpDidResolverConfig::new(deployment.profile.ssi().did_resolver_url())
+        .map(HttpDidResolver::new)
+        .map_err(|_| ProductionDeploymentCompositionError::InvalidSsiProfile)?;
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let security = {
+        let clock = Arc::new(SystemClock);
+        let random = Arc::new(OsRandom);
+        Arc::new(MobileWalletSecurity::native(clock, random))
+    };
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let security = Arc::new(UnavailableWalletSecurity);
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let clock = Arc::new(SystemClock);
+    let midnight = Arc::new(
+        protected_standalone_midnight_wallet(
+            deployment.midnight,
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        )
+        .with_profile_association_repository(profiles.clone()),
+    );
+    Ok(compose_with_identity_adapters(
+        profiles,
+        security,
+        midnight,
+        IdentityAdapters {
+            did_repository: Arc::new(UnavailableDidRecordRepository),
+            did_resolver: Arc::new(did_resolver),
+            did_lifecycle: Arc::new(UnavailableDidLifecycle),
+            did_jubjub_challenge_signing: Arc::new(UnavailableDidLifecycle),
+            credential_repository: Arc::new(UnavailableCredentialRepository),
+            credential_inbox: Arc::new(UnavailableCredentialInbox),
+            credential_verifier: Arc::new(UnavailableCredentialVerifier),
+            credential_disclosure: Arc::new(UnavailableCredentialDisclosure),
+            credential_issuance: CredentialIssuanceComposition::Unavailable,
+            self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
+            credential_presentation: CredentialPresentationComposition::Unavailable,
+        },
+        PassportVaultRepositoryComposition::unavailable(),
+    ))
 }
 
 /// Wires the application with persistent public-profile metadata storage.
@@ -1607,9 +1829,9 @@ pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> Applicat
 /// Wires the mobile development harness to an explicitly build-selected
 /// standalone stack without making routes part of the network catalog.
 ///
-/// The app crate exposes this constructor only behind its opt-in
-/// `standalone-tailnet` feature. Normal and native-custody mobile composition
-/// never call it.
+/// The app crate exposes this constructor only behind its opt-in local or
+/// tailnet live-stack route profile. Normal and native-custody mobile
+/// composition never call it.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn compose_mobile_development_standalone_from_routes(
     indexer_websocket_url: &str,
@@ -2302,6 +2524,7 @@ where
         + WalletAccountReadPort
         + WalletAccountDerivationPort
         + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
@@ -2338,6 +2561,7 @@ where
         + WalletAccountReadPort
         + WalletAccountDerivationPort
         + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
@@ -2404,6 +2628,7 @@ where
         + WalletAccountReadPort
         + WalletAccountDerivationPort
         + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
@@ -2539,6 +2764,16 @@ where
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
     let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let shielded = Arc::new(WalletShieldedSyncService::new(Arc::clone(&midnight)));
+    #[cfg(not(target_arch = "wasm32"))]
+    let dust_registrations = Arc::new(WalletDustRegistrationService::new(
+        Arc::clone(&midnight),
+        Arc::clone(&clock),
+    ));
+    #[cfg(target_arch = "wasm32")]
+    let dust_registrations = Arc::new(WalletDustRegistrationService::new(
+        Arc::new(UnavailableWalletDustRegistrationPort),
+        Arc::clone(&clock),
+    ));
     let transactions = Arc::new(WalletTransactionService::new(midnight, Arc::clone(&clock)));
     let identity = Arc::new(DidService::from_ports(
         did_repository,
@@ -2785,6 +3020,22 @@ where
         shielded.clone();
     let start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase> = shielded.clone();
     let cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase> = shielded;
+    let prepare_wallet_dust_registration: Arc<dyn PrepareWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let authorize_wallet_dust_registration: Arc<dyn AuthorizeWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let submit_wallet_dust_registration: Arc<dyn SubmitWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let get_wallet_dust_registration: Arc<dyn GetWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let get_wallet_dust_registration_status: Arc<dyn GetWalletDustRegistrationStatusUseCase> =
+        dust_registrations.clone();
+    let cancel_wallet_dust_registration_submission: Arc<
+        dyn CancelWalletDustRegistrationSubmissionUseCase,
+    > = dust_registrations.clone();
+    let reconcile_wallet_dust_registration_submission: Arc<
+        dyn ReconcileWalletDustRegistrationSubmissionUseCase,
+    > = dust_registrations;
     let prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase> =
         transactions.clone();
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();
@@ -2922,6 +3173,13 @@ where
         get_wallet_shielded_sync_status,
         start_wallet_shielded_sync,
         cancel_wallet_shielded_sync,
+        prepare_wallet_dust_registration,
+        authorize_wallet_dust_registration,
+        submit_wallet_dust_registration,
+        get_wallet_dust_registration,
+        get_wallet_dust_registration_status,
+        cancel_wallet_dust_registration_submission,
+        reconcile_wallet_dust_registration_submission,
         prepare_shielded_wallet_transfer,
         prepare_wallet_transfer,
         authorize_wallet_transfer,
@@ -3070,6 +3328,9 @@ fn headless_did_resolver() -> Arc<dyn DidResolutionPort> {
 fn headless_did_resolver() -> Arc<dyn DidResolutionPort> {
     Arc::new(StandaloneDidResolver)
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod standalone_funding_tests;
 
 #[cfg(test)]
 mod tests {
@@ -3792,6 +4053,20 @@ mod tests {
                 )
             )
         ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn mobile_development_routes_accept_the_reviewed_loopback_stack() {
+        drop(
+            compose_mobile_development_standalone_from_routes(
+                "ws://127.0.0.1:8088/api/v4/graphql/ws",
+                "http://127.0.0.1:8088/api/v4/graphql",
+                "ws://127.0.0.1:9944",
+                "http://127.0.0.1:6300",
+            )
+            .expect("reviewed localhost standalone routes compose without network I/O"),
+        );
     }
 
     #[test]

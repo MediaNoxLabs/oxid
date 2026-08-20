@@ -114,6 +114,7 @@ check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-diagnostics-memory \
   oxid-diagnostics-application
+check_workspace_dependencies oxid-adapter-deployment-profile
 check_workspace_dependencies oxid-adapter-storage-dev \
   oxid-adapter-backup-portable oxid-foundation oxid-platform-ports \
   oxid-wallet-application oxid-wallet-domain
@@ -146,7 +147,8 @@ check_workspace_dependencies oxid-adapter-did-midnight \
 check_workspace_dependencies oxid-adapter-identity-ingress \
   oxid-adapter-mobile-native oxid-platform-ports oxid-protocol-application
 check_workspace_dependencies oxid-adapter-storage-identity-json \
-  oxid-identity-application oxid-identity-domain
+  oxid-adapter-store-atomic oxid-identity-application oxid-identity-domain
+check_workspace_dependencies oxid-adapter-store-atomic
 check_workspace_dependencies oxid-adapter-storage-credential-json \
   oxid-credential-application oxid-credential-domain oxid-foundation
 check_workspace_dependencies oxid-adapter-vc-midnight \
@@ -174,7 +176,8 @@ check_workspace_dependencies oxid-ui-dioxus \
   oxid-protocol-application oxid-wallet-application
 check_workspace_dependencies oxid-composition \
   oxid-adapter-backup-complete oxid-adapter-backup-document-mobile \
-  oxid-adapter-backup-portable oxid-adapter-diagnostics-memory \
+  oxid-adapter-backup-portable oxid-adapter-deployment-profile \
+  oxid-adapter-diagnostics-memory \
   oxid-adapter-did-midnight oxid-adapter-identity-ingress \
   oxid-adapter-openid4vci oxid-adapter-siopv2 \
   oxid-adapter-openid4vp oxid-adapter-passport-vault \
@@ -187,6 +190,7 @@ check_workspace_dependencies oxid-composition \
   oxid-passport-vault-application oxid-platform-ports oxid-presentation-application \
   oxid-protocol-application \
   oxid-wallet-application
+check_workspace_dependencies oxid-mcp
 check_workspace_dependencies oxid-app oxid-brand-build oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
   oxid-capabilities-application oxid-composition oxid-credential-application \

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Tier-2 browser target configuration. `getrandom` 0.3 refuses to build for
+# `wasm32-unknown-unknown` unless the JavaScript backend is selected by a
+# compiler cfg in addition to the crate feature, because the backend calls
+# `Crypto.getRandomValues` and is therefore only sound inside a browser or
+# Web Worker context. The flag is scoped to the browser triple so the Tier-1
+# Android/iOS graphs and the desktop host keep their operating-system entropy
+# backends untouched.
+#
+# See docs/dependencies/wasm-web-entropy.md for the target/feature split.
+
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"']

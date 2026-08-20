@@ -132,6 +132,11 @@ async function openWallet() {
 }
 
 async function createFreshProfile() {
+  await waitFor(
+    `Boolean(${buttonExpression("Create new wallet")}) || Boolean(${buttonExpression("Wallet")})`,
+    "first-run or restored profile readiness",
+    30_000,
+  );
   const createAvailable = await evaluate(`Boolean(${buttonExpression("Create new wallet")})`);
   if (!createAvailable) return;
   await clickButton("Create new wallet");
@@ -308,15 +313,15 @@ try {
       `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'masked'`,
       "default masked secret mode",
     );
-    const maskedPresentation = await evaluate(`(() => {
-      const value = document.querySelector('.privacy-value');
-      if (!value) return false;
-      return getComputedStyle(value).color === 'rgba(0, 0, 0, 0)'
-        && getComputedStyle(value, '::after').content.includes('••••');
-    })()`);
-    if (!maskedPresentation) {
-      throw new Error("secret mode did not visually mask a private value");
-    }
+    await waitFor(
+      `(() => {
+        const value = document.querySelector('.privacy-value');
+        if (!value) return false;
+        return getComputedStyle(value).color === 'rgba(0, 0, 0, 0)'
+          && getComputedStyle(value, '::after').content.includes('••••');
+      })()`,
+      "visually masked private value",
+    );
     await clickButtonByLabel("Show private values for 30 seconds");
     await waitFor(
       `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'revealed'
@@ -899,6 +904,11 @@ try {
     await assertHomeComposition();
     await openWallet();
     await waitForButton("Activate development wallet");
+    await waitFor(
+      "document.body.innerText.includes('Transfer included')",
+      "restored transaction submission",
+      30_000,
+    );
     const walletRestored = await evaluate(`(() => ({
       profileRestored: !document.body.innerText.includes("Create your wallet profile"),
       developmentRootReset: document.body.innerText.includes("Activate protected test account"),

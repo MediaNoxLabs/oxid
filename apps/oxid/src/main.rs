@@ -35,8 +35,26 @@ fn main() {
     #[cfg(all(feature = "ui-profile-demo", not(feature = "standalone-development")))]
     compile_error!("ui-profile-demo requires standalone-development");
 
+    #[cfg(all(
+        feature = "ui-profile-demo",
+        any(feature = "standalone-local", feature = "standalone-tailnet")
+    ))]
+    compile_error!("ui-profile-demo requires deterministic standalone-development routes");
+
     #[cfg(all(feature = "ui-profile-dev", feature = "ui-profile-demo"))]
     compile_error!("select at most one non-user UI profile");
+
+    #[cfg(all(feature = "standalone-local", not(feature = "standalone-development")))]
+    compile_error!("standalone-local requires standalone-development");
+
+    #[cfg(all(feature = "standalone-local", feature = "standalone-native-custody"))]
+    compile_error!("standalone-local is incompatible with native custody");
+
+    #[cfg(all(feature = "standalone-local", feature = "standalone-tailnet"))]
+    compile_error!("select at most one live standalone route profile");
+
+    #[cfg(all(feature = "standalone-local", target_arch = "wasm32"))]
+    compile_error!("standalone-local is available only on native targets");
 
     #[cfg(all(
         feature = "standalone-tailnet",
@@ -74,6 +92,7 @@ fn main() {
         feature = "standalone-development",
         not(feature = "standalone-native-custody"),
         feature = "standalone-tailnet",
+        not(feature = "standalone-local"),
         not(target_arch = "wasm32")
     ))]
     let application = {
@@ -90,7 +109,26 @@ fn main() {
     #[cfg(all(
         feature = "standalone-development",
         not(feature = "standalone-native-custody"),
+        feature = "standalone-local",
         not(feature = "standalone-tailnet"),
+        not(target_arch = "wasm32")
+    ))]
+    let application = {
+        const OXID_STANDALONE_LOCAL_PROFILE: &str = "OXID_STANDALONE_LOCAL_PROFILE";
+        let _ = OXID_STANDALONE_LOCAL_PROFILE;
+        oxid_composition::compose_mobile_development_standalone_from_routes(
+            "ws://127.0.0.1:8088/api/v4/graphql/ws",
+            "http://127.0.0.1:8088/api/v4/graphql",
+            "ws://127.0.0.1:9944",
+            "http://127.0.0.1:6300",
+        )
+        .unwrap_or_else(|error| panic!("standalone wallet configuration is invalid: {error}"))
+    };
+    #[cfg(all(
+        feature = "standalone-development",
+        not(feature = "standalone-native-custody"),
+        not(feature = "standalone-tailnet"),
+        not(feature = "standalone-local"),
         not(target_arch = "wasm32")
     ))]
     let application = oxid_composition::compose_headless_from_environment()
@@ -170,6 +208,17 @@ fn main() {
                 application.get_wallet_dust_sync_status(),
                 application.start_wallet_dust_sync(),
                 application.cancel_wallet_dust_sync(),
+            ),
+            oxid_ui_dioxus::WalletDustRegistrationUiServices::new(
+                application.prepare_wallet_dust_registration(),
+                application.authorize_wallet_dust_registration(),
+                application.submit_wallet_dust_registration(),
+                oxid_ui_dioxus::WalletDustRegistrationRecoveryUiServices::new(
+                    application.get_wallet_dust_registration(),
+                    application.get_wallet_dust_registration_status(),
+                    application.cancel_wallet_dust_registration_submission(),
+                    application.reconcile_wallet_dust_registration_submission(),
+                ),
             ),
             oxid_ui_dioxus::WalletShieldedSyncUiServices::new(
                 application.get_wallet_shielded_sync_status(),

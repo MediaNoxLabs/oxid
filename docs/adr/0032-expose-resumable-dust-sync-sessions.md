@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/dust/syncer.rs` and `mobile-bench/dioxus-wallet/src/app.rs`
 - Amends: ADR-0024 and ADR-0031
 - Implementation state: Oxid-owned status/use cases, simulated and native standalone controllers, v1 headless methods, Assets-page progress/cancellation, partial checkpoint resume, and native GraphQL-WebSocket worker fixtures implemented; production mobile custody remains pending
+- Amended by: ADR-0080
 
 ## Context
 
@@ -48,6 +49,17 @@ an incompatible delta may replay once from zero only before it emits new
 progress. A failure after emitted progress retains that consistent partial
 checkpoint instead of rewinding the visible cursor.
 
+Cold catch-up separates bounded network receive from official ledger replay.
+Each subscription accepts at most 16,384 events or 16 MiB of decoded serialized
+event input and may close after a one-second quiet period once at least one
+256-event batch has arrived. The client sends GraphQL `complete` and drops the
+socket before folding, invoking the checkpoint observer, or publishing
+progress. Replay retains the 256-event/4 MiB checkpoint cadence; only an
+observer-accepted cursor becomes the start of the next subscription. Sparse
+cursor ordering, target monotonicity, cancellation, incompatible-checkpoint
+fallback, and the existing one-million-event/512 MiB/30-minute whole-run limits
+span every reconnect rather than resetting per segment.
+
 A cached checkpoint may be displayed and may seed a later replay, but it is
 never represented as `synced` after an unavailable or failed live catch-up and
 never independently authorizes DUST spending. Transaction submission still
@@ -71,9 +83,13 @@ The native controller contract suite uses a fixed internal chain-tip source so
 pure Nix does not depend on HTTP loopback, then exercises the real bounded
 `graphql-transport-ws` path. It verifies an owned official DUST event produces
 the exact 12 DUST projection, a later run subscribes from `cursor + 1`, a
-256-event batch is checkpointed before cancellation, and transport failures
-publish only the stable redacted category. Production construction continues
-to use the existing bounded HTTP chain-tip source.
+256-event batch is checkpointed before cancellation, the server observes
+subscription completion before the first replay observer, a saturated segment
+resumes from its accepted cursor, target regression across reconnect fails
+closed, and observer failure is not reclassified as an incompatible cached
+delta. Transport failures publish only the stable redacted category.
+Production construction continues to use the existing bounded HTTP chain-tip
+source.
 
 ## Consequences
 

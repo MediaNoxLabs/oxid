@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 3 and 4
 - Implementation state: Enforced; one reviewed Android JNI path boundary is isolated in the profile metadata adapter
+- Amended by: ADR-0044, ADR-0094
 
 ## Context
 

@@ -67,6 +67,45 @@ if [ "$proof_server_ready" != "1" ]; then
   exit 1
 fi
 
+# Container health means the GraphQL service can start, not that it has
+# replayed the node. Transaction proving must not combine a stale indexer tip
+# with current node finality, so wait for the bounded standalone lag first.
+indexer_caught_up=0
+for attempt in {1..600}; do
+  node_height_hex="$(
+    curl --fail --silent --max-time 2 \
+      -H 'content-type: application/json' \
+      --data '{"jsonrpc":"2.0","id":1,"method":"chain_getHeader","params":[]}' \
+      http://127.0.0.1:9944 \
+      | jq -r '.result.number // empty' 2>/dev/null \
+      || true
+  )"
+  indexer_height="$(
+    curl --fail --silent --max-time 2 \
+      -H 'content-type: application/json' \
+      --data '{"query":"query StandaloneReadiness { block { height } }"}' \
+      http://127.0.0.1:8088/api/v4/graphql \
+      | jq -r '.data.block.height // empty' 2>/dev/null \
+      || true
+  )"
+  if [[ "$node_height_hex" =~ ^0x[0-9a-fA-F]+$ ]] \
+    && [[ "$indexer_height" =~ ^[0-9]+$ ]]; then
+    node_height=$((16#${node_height_hex#0x}))
+    if (( indexer_height + 4 >= node_height )); then
+      indexer_caught_up=1
+      break
+    fi
+    if (( attempt % 30 == 0 )); then
+      echo "Waiting for standalone indexer replay: indexer=$indexer_height node=$node_height"
+    fi
+  fi
+  sleep 2
+done
+if [ "$indexer_caught_up" != "1" ]; then
+  echo "The standalone indexer did not catch the node tip within 20 minutes." >&2
+  exit 1
+fi
+
 echo "Oxid standalone node, indexer, and proof server are healthy on loopback."
 
 if [ "$mode" = "local" ]; then

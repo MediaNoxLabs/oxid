@@ -101,8 +101,57 @@ thin-app build decision; no runtime brand configuration was added.
    build now derives and synchronizes a protected account through the real
    laptop stack, persists only public account coordinates, and proves with a
    physical Android tap that the contained Scan navigation target cannot steal
-   the wallet activation action. A compile-time localhost stack profile remains
-   follow-up work for simulator parity.
+   the wallet activation action. The separate compile-time localhost profile
+   sends iOS Simulator directly to loopback and gives Android emulator only the
+   three required `adb reverse` mappings; focused live-account flows distinguish
+   real synchronization from deterministic simulation.
+5. **Authenticated deployment and funded finality** (ADR-0098 / issue #90): a
+   signed atomic profile binds Midnight genesis/network/routes and SSI metadata
+   routes behind audience, validity, revocation, and rollback checks; the node
+   must prove the exact genesis hash before opt-in production composition. No
+   production root/profile is selected. A separate external-seed guarded
+   headless flow proves funded unshielded authorization, DUST proving,
+   finalized inclusion, adapter reconstruction with included-status
+   restoration, bounded indexer convergence, and no duplicate recipient
+   delivery while remaining absent from releases.
+6. **Funded shielded finality and nullifier-safe adapter reconstruction** (ADR-0079/0098 /
+   issue #91): a second double-opt-in headless flow synchronizes real native
+   Zswap genesis notes, uses the shared preview/consent/DUST+Zswap proof and
+   finalized-submission lifecycle, blocks an unchanged-state duplicate, then
+   reconstructs the adapter and proves exact sender/recipient balances after
+   nullifier replay. Live evidence corrects the v4 `ZswapLedgerEvent` typename
+   and sparse cursor contract. Fresh-wallet funded registration, later
+   generation/recovery, and origination evidence remain issue #92; journal
+   compaction after 128 retained barriers remains issue #93.
+7. **Protected DUST registration and fresh-wallet origination** (ADR-0100 /
+   issue #92, repository/headless/Dioxus implementation complete): a distinct
+   registration port and prepare/consent/authorize/submit ceremony. Planning
+   uses only live owned
+   unregistered NIGHT with indexer creation-time evidence, returns exact NIGHT
+   to the same owner, and limits the guaranteed offer and fee allowance to the
+   largest generated candidate. Role-0 authorizes while the role-2 DUST child
+   stays in protected custody. Generic proving, registration-separated durable
+   recovery, finalized inclusion, and later official DUST-event spend readiness
+   remain distinct. A fresh wallet intentionally starts at zero DUST; only
+   later generation and authoritative observation make it spend-ready. The
+   guarded PreProd public funding manifest/read-only observer, test-only signed
+   Midnight profile, and ignored acceptance harness are implemented. Manifest
+   V2 prescribes one positive eligible public output and one positive shielded
+   note but observes their exact values live; it selects half the shielded
+   balance once for the transfer and proves exact deltas. The write preflight
+   runs before the single-use marker, which is shared across local worktrees.
+   The harness isolates the seed from Cargo/build scripts and may retry only
+   the same authorized draft after exact pre-broadcast insufficient DUST.
+   Controlled DUST and Zswap cold catch-up now close bounded receive segments
+   before replay/checkpoint work; the live harness uses an optimized,
+   symbol-retaining evidence profile without changing release artifacts or
+   synchronization caps. Case 0 is externally funded, but exact indexed
+   topology remains unknown: the first clean optimized observer passed shielded
+   sync, then processed 541,357 DUST events without failure before its
+   900-second bound. Its density-based ~1.415M-event/~39-minute estimate is not
+   an exact count; event/time/raw-byte cap policy needs measured review and no
+   cap has changed. The funded live write, durable native restart,
+   physical-device, and production evidence remain open.
 
 ## Phase 5 — Delight & polish (owner-gated)
 
@@ -145,5 +194,8 @@ stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
 (delivered by #82), 2d receive sheet (delivered by #83), 3 white-label infra
 (delivered by #84), 4a secret mode + native privacy ops (delivered by #85),
 4b1 developer profile (delivered by #87), 4b2 demo profile (delivered by #88),
+4c authenticated deployment/funded finality (#90), 4d funded shielded finality
+(#91), 4e protected DUST registration/fresh-wallet shielded origination
+(ADR-0100/#92, repository/headless/Dioxus implemented; funded evidence open),
 5 per-item. Each remaining slice references the relevant spec section as its
 acceptance criteria, factory-work-item style.

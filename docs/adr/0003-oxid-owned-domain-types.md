@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 3, 6, and 18
 - Implementation state: Enforced for the M0 vertical slice
+- Amended by: ADR-0038, ADR-0041, ADR-0045
 
 ## Context
 

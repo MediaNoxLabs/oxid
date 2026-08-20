@@ -9,6 +9,7 @@
 - Related: ADR-0042, ADR-0045, ADR-0048 through ADR-0050, ADR-0056 through ADR-0063, and issue #31
 - Supersedes: ADR-0063's implementation-state boundary that protected claim material has no native preparation path
 - Implementation state: protected claim material preparation is implemented in `vc-midnight`; generated-client composition, funding, proving, submission, and public capability enablement remain pending
+- Amended by: ADR-0065
 
 ## Context
 

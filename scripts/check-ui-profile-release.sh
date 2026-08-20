@@ -30,6 +30,39 @@ if ! rg -q 'ui-profile-demo requires standalone-development' "$failure_log"; the
   exit 1
 fi
 
+# The application guards test oxid-app's own feature names, so a dependency
+# feature path (oxid-ui-dioxus/ui-profile-*) once compiled the profile into an
+# otherwise production-composed binary without reaching them. The guards in
+# crates/ui-dioxus/src/profile_guard.rs close that path; prove both variants
+# stay rejected.
+for dependency_profile in ui-profile-dev ui-profile-demo; do
+  if cargo check -p oxid-app --no-default-features \
+    --features "desktop,oxid-ui-dioxus/$dependency_profile" >"$failure_log" 2>&1; then
+    echo "oxid-ui-dioxus/$dependency_profile compiled through the dependency feature path" >&2
+    exit 1
+  fi
+  if ! rg -q 'a non-user UI profile must be selected through oxid-app' "$failure_log"; then
+    echo "oxid-ui-dioxus/$dependency_profile failed for an unexpected reason" >&2
+    sed -n '1,120p' "$failure_log" >&2
+    exit 1
+  fi
+done
+
+# The same bypass with a standalone composition present must also be rejected:
+# authority comes from the application crate, never from the composition
+# feature being incidentally correct.
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-development,oxid-ui-dioxus/ui-profile-demo \
+  >"$failure_log" 2>&1; then
+  echo "the dependency feature path compiled alongside standalone-development" >&2
+  exit 1
+fi
+if ! rg -q 'a non-user UI profile must be selected through oxid-app' "$failure_log"; then
+  echo "the dependency feature path failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
 if cargo check -p oxid-app --no-default-features \
   --features desktop,standalone-native-custody,ui-profile-demo >"$failure_log" 2>&1; then
   echo "ui-profile-demo compiled with native standalone custody" >&2
@@ -61,6 +94,60 @@ if ! rg -q \
   'standalone-tailnet requires standalone-development on iOS or Android' \
   "$failure_log"; then
   echo "standalone-tailnet failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-local >"$failure_log" 2>&1; then
+  echo "standalone-local compiled without standalone-development" >&2
+  exit 1
+fi
+if ! rg -q 'standalone-local requires standalone-development' "$failure_log"; then
+  echo "standalone-local failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-development,standalone-native-custody,standalone-local \
+  >"$failure_log" 2>&1; then
+  echo "standalone-local compiled with native custody" >&2
+  exit 1
+fi
+if ! rg -q \
+  'select exactly one standalone custody feature|standalone-local is incompatible with native custody' \
+  "$failure_log"; then
+  echo "native custody rejected standalone-local for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-development,standalone-local,standalone-tailnet \
+  >"$failure_log" 2>&1; then
+  echo "standalone-local and standalone-tailnet compiled together" >&2
+  exit 1
+fi
+if ! rg -q 'select at most one live standalone route profile' "$failure_log"; then
+  echo "combined local/tailnet profiles failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
+cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-development,standalone-local
+
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-development,standalone-local,ui-profile-demo \
+  >"$failure_log" 2>&1; then
+  echo "ui-profile-demo compiled with the local live-stack profile" >&2
+  exit 1
+fi
+if ! rg -q \
+  'ui-profile-demo requires deterministic standalone-development routes' \
+  "$failure_log"; then
+  echo "ui-profile-demo rejected the local profile for an unexpected reason" >&2
   sed -n '1,120p' "$failure_log" >&2
   exit 1
 fi
@@ -102,5 +189,23 @@ if rg -a -q 'OXID_STANDALONE_TAILNET_PROFILE' "$release_binary"; then
   echo "normal release binary contains the standalone tailnet profile" >&2
   exit 1
 fi
+if rg -a -q \
+  'OXID_STANDALONE_LOCAL_PROFILE|ws://127\.0\.0\.1:8088/api/v4/graphql/ws|http://127\.0\.0\.1:8088/api/v4/graphql|ws://127\.0\.0\.1:9944|http://127\.0\.0\.1:6300' \
+  "$release_binary"; then
+  echo "normal release binary contains the standalone local profile or its routes" >&2
+  exit 1
+fi
+if rg -a -q \
+  'OXID_STANDALONE_FUNDER_SEED_HEX|OXID_ENABLE_LIVE_STANDALONE_FUNDING|Ephemeral funded recipient|Standalone funding authority|Ephemeral shielded recipient|Standalone shielded funding authority' \
+  "$release_binary"; then
+  echo "normal release binary contains the standalone funding harness" >&2
+  exit 1
+fi
+if rg -a -q \
+  'OXID_PREPROD_MASTER_SEED_HEX|OXID_ENABLE_LIVE_PREPROD_E2E|OXID_PREPROD_E2E_CASE_INDEX|OXID_PREPROD_E2E_STATE_DIR|OXID_ACKNOWLEDGE_PREPROD_PUBLIC_PROVER_PRIVACY|OXID_PREPROD_FUNDING_MANIFEST_V[12]|OXID_PREPROD_FUNDING_OBSERVATION_V1|Preprod E2E wallet A|Preprod E2E wallet B|oxid-preprod-registration-e2e-2026-08|lace-proof-pub\.preprod\.midnight\.network' \
+  "$release_binary"; then
+  echo "normal release binary contains the preprod registration funding harness" >&2
+  exit 1
+fi
 
-echo "UI profile compile guards and dev/demo/tailnet release exclusion passed."
+echo "UI profile compile guards and dev/demo/local/tailnet release exclusion passed."

@@ -7,6 +7,7 @@
 - Supersedes: ADR-0036 statements that DID create, update, and deactivate are queued
 - Amends: ADR-0007, ADR-0008, ADR-0011, ADR-0013, ADR-0017, ADR-0021, ADR-0023, ADR-0024, and ADR-0029
 - Implementation state: complete development-only standalone lifecycle, Ed25519/P-256/Jubjub signing, headless flow, and mobile operation builder implemented; Compact-backed live writes, durable native custody, and recovery remain queued
+- Amended by: ADR-0038, ADR-0040, ADR-0046
 
 ## Context
 

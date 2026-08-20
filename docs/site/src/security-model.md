@@ -62,8 +62,11 @@ custody in constant time.
 
 Exact-pinned dependencies with a committed lockfile, SHA-pinned GitHub
 Actions, a rev-pinned Midnight ledger dependency enforced by script,
-content-addressed Nix builds, cargo-audit/cargo-deny gates, and a dated,
-per-advisory exception register under
+content-addressed Nix builds, cargo-audit/cargo-deny gates, and a checksum-pinned
+`arrayref` 0.3.9 archive verified against its reviewed canonical revision after
+the 2026-08-20 crates.io publication mismatch. The gate also rejects the
+unreviewed `proc-macro1` dependency introduced only by the later registry
+publication. A dated, per-advisory exception register lives under
 [`docs/security/`](https://github.com/MediaNoxLabs/oxid/tree/develop/docs/security).
 
 ## Known limits (the honest part)

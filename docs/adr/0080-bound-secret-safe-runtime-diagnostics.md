@@ -7,6 +7,7 @@
 - Tracking: issues #2, #46, and #60
 - Amends: ADR-0013, ADR-0018, ADR-0021, ADR-0024, ADR-0032 through ADR-0035, and ADR-0077
 - Implementation state: closed-code application port, bounded process-local adapter, standalone composition, headless snapshot/reset, Dioxus health panel, DUST/Zswap panic recovery, transfer-worker loss reporting, and retained Passport Vault call cleanup implemented; persistent logs, telemetry, upload, process statistics, and free-form fields remain excluded
+- Amended by: ADR-0095
 
 ## Context
 

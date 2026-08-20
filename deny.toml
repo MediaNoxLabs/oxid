@@ -32,7 +32,7 @@ skip-tree = [{ crate = "dioxus@0.7.10", depth = 20 }]
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# ADR-0015/ADR-0026 require this official unpublished Cargo source at a full
+# ADR-0015/ADR-0026 require the official unpublished Midnight source at a full
 # immutable revision; scripts/check-midnight-sources.sh validates every direct
 # Midnight package and revision separately.
 allow-git = ["https://github.com/midnightntwrk/midnight-ledger.git"]

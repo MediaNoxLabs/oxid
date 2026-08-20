@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "apps/oxid",
   "apps/oxid-headless",
+  "apps/oxid-mcp",
   "crates/brand-build",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
@@ -13,12 +14,14 @@ members = [
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
   "crates/adapters/diagnostics-memory",
+  "crates/adapters/deployment-profile",
   "crates/adapters/identity-ingress",
   "crates/adapters/custody-software",
   "crates/adapters/backup-portable",
   "crates/adapters/backup-complete",
   "crates/adapters/backup-document-mobile",
   "crates/adapters/mobile-native-plugin",
+  "crates/adapters/store-atomic",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
@@ -47,6 +50,7 @@ members = [
 default-members = [
   "apps/oxid",
   "apps/oxid-headless",
+  "apps/oxid-mcp",
   "crates/brand-build",
   "crates/adapters/platform-system",
   "crates/adapters/midnight",
@@ -57,12 +61,14 @@ default-members = [
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
   "crates/adapters/diagnostics-memory",
+  "crates/adapters/deployment-profile",
   "crates/adapters/identity-ingress",
   "crates/adapters/custody-software",
   "crates/adapters/backup-portable",
   "crates/adapters/backup-complete",
   "crates/adapters/backup-document-mobile",
   "crates/adapters/mobile-native-plugin",
+  "crates/adapters/store-atomic",
   "crates/adapters/storage-credential-json",
   "crates/adapters/storage-identity-json",
   "crates/adapters/storage-json",
@@ -150,12 +156,14 @@ oxid-adapter-siopv2 = { version = "=0.1.0", path = "crates/adapters/siopv2" }
 oxid-adapter-vc-midnight = { version = "=0.1.0", path = "crates/adapters/vc-midnight" }
 oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-midnight" }
 oxid-adapter-diagnostics-memory = { version = "=0.1.0", path = "crates/adapters/diagnostics-memory" }
+oxid-adapter-deployment-profile = { version = "=0.1.0", path = "crates/adapters/deployment-profile" }
 oxid-adapter-identity-ingress = { version = "=0.1.0", path = "crates/adapters/identity-ingress" }
 oxid-adapter-custody-software = { version = "=0.1.0", path = "crates/adapters/custody-software" }
 oxid-adapter-backup-portable = { version = "=0.1.0", path = "crates/adapters/backup-portable" }
 oxid-adapter-backup-complete = { version = "=0.1.0", path = "crates/adapters/backup-complete" }
 oxid-adapter-backup-document-mobile = { version = "=0.1.0", path = "crates/adapters/backup-document-mobile" }
 oxid-adapter-mobile-native = { version = "=0.1.0", path = "crates/adapters/mobile-native-plugin" }
+oxid-adapter-store-atomic = { version = "=0.1.0", path = "crates/adapters/store-atomic" }
 oxid-adapter-storage-credential-json = { version = "=0.1.0", path = "crates/adapters/storage-credential-json" }
 oxid-adapter-storage-identity-json = { version = "=0.1.0", path = "crates/adapters/storage-identity-json" }
 oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }
@@ -193,3 +201,10 @@ all = "warn"
 codegen-units = 1
 lto = "thin"
 strip = "symbols"
+
+# Live PreProd acceptance exercises the production cryptographic replay path.
+# Keep it optimized while retaining symbols for bounded failure diagnosis.
+[profile.preprod-live]
+inherits = "release"
+debug = 1
+strip = "none"

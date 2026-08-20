@@ -102,6 +102,23 @@ wait_for_main_activity() {
   return 1
 }
 
+background_to_android_home() {
+  local resumed=""
+  "$adb_command" -s "$device" shell am start -W \
+    -a android.intent.action.MAIN \
+    -c android.intent.category.HOME >/dev/null
+  for _attempt in $(seq 1 50); do
+    resumed="$("$adb_command" -s "$device" shell dumpsys activity activities 2>/dev/null \
+      | rg 'topResumedActivity|ResumedActivity' || true)"
+    if ! rg -q 'io\.medianox\.oxid/dev\.dioxus\.main\.MainActivity' <<<"$resumed"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "Android did not background Oxid before the secret-mode lifecycle assertion." >&2
+  return 1
+}
+
 dismiss_native_share_chooser() {
   local resumed=""
   for _attempt in $(seq 1 3); do
@@ -168,11 +185,10 @@ assert_screen_privacy_flag() {
 
 run_webview_wallet_flow privacy-reveal
 assert_screen_privacy_flag unprotected
-"$adb_command" -s "$device" shell input keyevent HOME >/dev/null
-sleep 1
-"$adb_command" -s "$device" shell am start \
+background_to_android_home
+"$adb_command" -s "$device" shell am start -W \
   -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
-sleep 1
+wait_for_main_activity
 run_webview_wallet_flow privacy-rearmed
 assert_screen_privacy_flag protected
 run_webview_wallet_flow flow

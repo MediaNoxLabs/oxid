@@ -4,6 +4,7 @@
 
 mod brand;
 mod labels;
+mod profile_guard;
 
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
 #[cfg(feature = "ui-profile-dev")]
@@ -74,32 +75,42 @@ use oxid_protocol_application::{
     RouteIdentityRequestUseCase, SelfIssuedAuthenticationError, SelfIssuedAuthenticationView,
 };
 use oxid_wallet_application::{
-    AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
-    CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
-    CompleteWalletRecoverySummary, CreateWalletProfileCommand, CreateWalletProfileUseCase,
-    DeriveWalletAccountCommand, DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
+    AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
+    AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase,
+    CancelWalletDustRegistrationSubmissionCommand, CancelWalletDustRegistrationSubmissionUseCase,
+    CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
+    CancelWalletTransferSubmissionUseCase, CompleteWalletRecoverySummary,
+    CreateWalletProfileCommand, CreateWalletProfileUseCase, DeriveWalletAccountCommand,
+    DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
     EXPORT_COMPLETE_WALLET_BACKUP_TITLE, ExportCompleteWalletBackupCommand,
     ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
-    GetWalletBackupReceiptUseCase, GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
-    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
-    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
-    ListWalletNetworksUseCase, ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase,
-    LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS, PortableWalletBackupDocumentError,
-    PortableWalletBackupDocumentKind, PortableWalletBackupDocumentPort,
-    PrepareShieldedWalletTransferCommand, PrepareShieldedWalletTransferUseCase,
-    PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
-    RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY, RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
-    RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
-    ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
-    RecoverCompleteWalletBackupCommand, RecoverCompleteWalletBackupUseCase,
-    RecoverPortableWalletBackupCommand, RecoverPortableWalletBackupUseCase,
-    SelectWalletNetworkCommand, SelectWalletNetworkUseCase, SelectWalletProfileCommand,
-    SelectWalletProfileUseCase, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
-    SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountError, WalletAccountPortError,
-    WalletAccountQuery, WalletAccountView, WalletAddressView, WalletBackupReceiptCommand,
-    WalletBackupReceiptView, WalletDustSyncCommand, WalletDustSyncView, WalletNetworkListView,
-    WalletProfileSecurityCommand, WalletProfileView, WalletRecoverySecret,
+    GetWalletBackupReceiptUseCase, GetWalletDustRegistrationCommand,
+    GetWalletDustRegistrationStatusCommand, GetWalletDustRegistrationStatusUseCase,
+    GetWalletDustRegistrationUseCase, GetWalletDustSyncStatusUseCase,
+    GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
+    GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
+    InitializeWalletSecurityUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
+    ListWalletTransferSubmissionsUseCase, LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS,
+    PortableWalletBackupDocumentError, PortableWalletBackupDocumentKind,
+    PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferCommand,
+    PrepareShieldedWalletTransferUseCase, PrepareWalletDustRegistrationCommand,
+    PrepareWalletDustRegistrationUseCase, PrepareWalletTransferCommand,
+    PrepareWalletTransferUseCase, RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY,
+    RECOVER_COMPLETE_WALLET_BACKUP_TITLE, RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY,
+    RECOVER_PORTABLE_WALLET_BACKUP_TITLE, ReconcileWalletDustRegistrationSubmissionCommand,
+    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
+    RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupCommand,
+    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupCommand,
+    RecoverPortableWalletBackupUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
+    SelectWalletProfileCommand, SelectWalletProfileUseCase, SensitiveOperationConfirmation,
+    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
+    SubmitWalletDustRegistrationCommand, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
+    WalletAccountView, WalletAddressView, WalletBackupReceiptCommand, WalletBackupReceiptView,
+    WalletDustRegistrationAssetView, WalletDustRegistrationPreviewView,
+    WalletDustRegistrationSubmissionStatusView, WalletDustSyncCommand, WalletDustSyncView,
+    WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView, WalletRecoverySecret,
     WalletSecurityStatusView, WalletShieldedSyncCommand, WalletShieldedSyncView,
     WalletSyncStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
     WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
@@ -110,6 +121,11 @@ use zeroize::Zeroizing;
 use labels as ui;
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
+const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
+const DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL: &str = "Authorize DUST registration";
+const DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL: &str = "Register on Midnight";
+const DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL: &str =
+    "Reconcile DUST registration with Midnight";
 #[cfg(not(target_arch = "wasm32"))]
 const UI_BLOCKING_TASK_STACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -219,6 +235,15 @@ pub struct WalletUiServices {
     get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
     start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
     cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
+    prepare_wallet_dust_registration: Arc<dyn PrepareWalletDustRegistrationUseCase>,
+    authorize_wallet_dust_registration: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
+    submit_wallet_dust_registration: Arc<dyn SubmitWalletDustRegistrationUseCase>,
+    get_wallet_dust_registration: Arc<dyn GetWalletDustRegistrationUseCase>,
+    get_wallet_dust_registration_status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
+    cancel_wallet_dust_registration_submission:
+        Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
+    reconcile_wallet_dust_registration_submission:
+        Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
     get_wallet_shielded_sync_status: Arc<dyn GetWalletShieldedSyncStatusUseCase>,
     start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase>,
     cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase>,
@@ -394,6 +419,7 @@ impl PassportVaultContractCallUiServices {
 /// service bundles at the incoming composition boundary.
 pub struct WalletOperationalUiServices {
     dust: WalletDustSyncUiServices,
+    dust_registration: WalletDustRegistrationUiServices,
     shielded: WalletShieldedSyncUiServices,
     transactions: WalletTransactionUiServices,
     vault: PassportVaultUiServices,
@@ -403,12 +429,14 @@ impl WalletOperationalUiServices {
     #[must_use]
     pub const fn new(
         dust: WalletDustSyncUiServices,
+        dust_registration: WalletDustRegistrationUiServices,
         shielded: WalletShieldedSyncUiServices,
         transactions: WalletTransactionUiServices,
         vault: PassportVaultUiServices,
     ) -> Self {
         Self {
             dust,
+            dust_registration,
             shielded,
             transactions,
             vault,
@@ -813,6 +841,66 @@ impl WalletDustSyncUiServices {
     }
 }
 
+/// Protected DUST-key registration lifecycle consumed beside account sync.
+///
+/// This remains separate from transfer preparation and submission so an
+/// incoming adapter cannot accidentally present registration as a payment.
+pub struct WalletDustRegistrationUiServices {
+    prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
+    authorize: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
+    submit: Arc<dyn SubmitWalletDustRegistrationUseCase>,
+    get: Arc<dyn GetWalletDustRegistrationUseCase>,
+    get_status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
+    cancel: Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
+    reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
+}
+
+/// Public recovery operations for a retained or ambiguously submitted DUST
+/// registration.
+pub struct WalletDustRegistrationRecoveryUiServices {
+    get: Arc<dyn GetWalletDustRegistrationUseCase>,
+    get_status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
+    cancel: Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
+    reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
+}
+
+impl WalletDustRegistrationRecoveryUiServices {
+    #[must_use]
+    pub const fn new(
+        get: Arc<dyn GetWalletDustRegistrationUseCase>,
+        get_status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
+        cancel: Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
+        reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
+    ) -> Self {
+        Self {
+            get,
+            get_status,
+            cancel,
+            reconcile,
+        }
+    }
+}
+
+impl WalletDustRegistrationUiServices {
+    #[must_use]
+    pub fn new(
+        prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
+        authorize: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
+        submit: Arc<dyn SubmitWalletDustRegistrationUseCase>,
+        recovery: WalletDustRegistrationRecoveryUiServices,
+    ) -> Self {
+        Self {
+            prepare,
+            authorize,
+            submit,
+            get: recovery.get,
+            get_status: recovery.get_status,
+            cancel: recovery.cancel,
+            reconcile: recovery.reconcile,
+        }
+    }
+}
+
 /// Shielded synchronization use cases consumed by the Assets page.
 pub struct WalletShieldedSyncUiServices {
     get_wallet_shielded_sync_status: Arc<dyn GetWalletShieldedSyncStatusUseCase>,
@@ -923,6 +1011,7 @@ impl WalletUiServices {
         screen_privacy: Arc<dyn ScreenPrivacyPort>,
     ) -> Self {
         let dust = operations.dust;
+        let dust_registration = operations.dust_registration;
         let shielded = operations.shielded;
         let transactions = operations.transactions;
         let vault = operations.vault;
@@ -962,6 +1051,13 @@ impl WalletUiServices {
             get_wallet_dust_sync_status: dust.get_wallet_dust_sync_status,
             start_wallet_dust_sync: dust.start_wallet_dust_sync,
             cancel_wallet_dust_sync: dust.cancel_wallet_dust_sync,
+            prepare_wallet_dust_registration: dust_registration.prepare,
+            authorize_wallet_dust_registration: dust_registration.authorize,
+            submit_wallet_dust_registration: dust_registration.submit,
+            get_wallet_dust_registration: dust_registration.get,
+            get_wallet_dust_registration_status: dust_registration.get_status,
+            cancel_wallet_dust_registration_submission: dust_registration.cancel,
+            reconcile_wallet_dust_registration_submission: dust_registration.reconcile,
             get_wallet_shielded_sync_status: shielded.get_wallet_shielded_sync_status,
             start_wallet_shielded_sync: shielded.start_wallet_shielded_sync,
             cancel_wallet_shielded_sync: shielded.cancel_wallet_shielded_sync,
@@ -1141,6 +1237,51 @@ impl WalletUiServices {
     #[must_use]
     pub fn cancel_wallet_dust_sync(&self) -> Arc<dyn CancelWalletDustSyncUseCase> {
         Arc::clone(&self.cancel_wallet_dust_sync)
+    }
+
+    #[must_use]
+    pub fn prepare_wallet_dust_registration(
+        &self,
+    ) -> Arc<dyn PrepareWalletDustRegistrationUseCase> {
+        Arc::clone(&self.prepare_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn authorize_wallet_dust_registration(
+        &self,
+    ) -> Arc<dyn AuthorizeWalletDustRegistrationUseCase> {
+        Arc::clone(&self.authorize_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn submit_wallet_dust_registration(&self) -> Arc<dyn SubmitWalletDustRegistrationUseCase> {
+        Arc::clone(&self.submit_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn get_wallet_dust_registration(&self) -> Arc<dyn GetWalletDustRegistrationUseCase> {
+        Arc::clone(&self.get_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn get_wallet_dust_registration_status(
+        &self,
+    ) -> Arc<dyn GetWalletDustRegistrationStatusUseCase> {
+        Arc::clone(&self.get_wallet_dust_registration_status)
+    }
+
+    #[must_use]
+    pub fn cancel_wallet_dust_registration_submission(
+        &self,
+    ) -> Arc<dyn CancelWalletDustRegistrationSubmissionUseCase> {
+        Arc::clone(&self.cancel_wallet_dust_registration_submission)
+    }
+
+    #[must_use]
+    pub fn reconcile_wallet_dust_registration_submission(
+        &self,
+    ) -> Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase> {
+        Arc::clone(&self.reconcile_wallet_dust_registration_submission)
     }
 
     #[must_use]
@@ -1859,6 +2000,59 @@ enum AccountSyncCardState {
         operation_error: Option<String>,
     },
     Failed(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DustRegistrationAvailability {
+    Ready,
+    ProtectionLocked,
+    AccountNotDerived,
+    AccountNotSynchronized,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DustRegistrationPublicStatus {
+    state: String,
+    registration_observation: String,
+    dust_readiness: String,
+    cancellation_allowed: bool,
+    reconciliation_allowed: bool,
+}
+
+impl From<&WalletDustRegistrationSubmissionStatusView> for DustRegistrationPublicStatus {
+    fn from(status: &WalletDustRegistrationSubmissionStatusView) -> Self {
+        Self {
+            state: status.state.clone(),
+            registration_observation: status.registration_observation.clone(),
+            dust_readiness: status.dust_readiness.clone(),
+            cancellation_allowed: status.cancellation_allowed,
+            reconciliation_allowed: status.reconciliation_allowed,
+        }
+    }
+}
+
+#[derive(Clone)]
+enum DustRegistrationPanelState {
+    Idle,
+    Preparing,
+    Prepared(Box<WalletDustRegistrationPreviewView>),
+    Authorizing(Box<WalletDustRegistrationPreviewView>),
+    Authorized(Box<WalletDustRegistrationPreviewView>),
+    Submitting(Box<WalletDustRegistrationPreviewView>),
+    Cancelling,
+    Pending {
+        preview: Box<WalletDustRegistrationPreviewView>,
+        status: DustRegistrationPublicStatus,
+        reconciling: bool,
+        operation_error: Option<String>,
+    },
+    Registered(Box<WalletDustRegistrationPreviewView>),
+    Cancelled(Box<WalletDustRegistrationPreviewView>),
+    Failed {
+        message: String,
+        retained: Option<Box<WalletDustRegistrationPreviewView>>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -5034,6 +5228,16 @@ fn AssetsPage(active_profile: WalletProfileView, secret_mode: SecretModeControll
                     },
                 }
 
+                DustRegistrationPanel {
+                    profile_id: active_profile.id.clone(),
+                    availability: dust_registration_availability(
+                        protection_unlocked,
+                        protected_account,
+                        account.sync.state == "synced",
+                        unavailable,
+                    ),
+                }
+
                 div { class: "dashboard-grid",
                     article { class: "surface-card",
                         p { class: "card-eyebrow", "Receive" }
@@ -5472,6 +5676,809 @@ fn AccountSyncCard(
                 }
             }
         }
+    }
+}
+
+#[component]
+fn DustRegistrationPanel(
+    profile_id: String,
+    availability: DustRegistrationAvailability,
+) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(initial_dust_registration_panel_state);
+
+    match state.read().clone() {
+        DustRegistrationPanelState::Idle => {
+            let prepare_services = services.clone();
+            let prepare_profile = profile_id.clone();
+            let available = availability == DustRegistrationAvailability::Ready;
+            rsx! {
+                article {
+                    id: "dust-registration",
+                    class: "surface-card account-sync-card",
+                    aria_label: DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL,
+                    p { class: "card-eyebrow", "DUST generation" }
+                    h2 { "Register protected DUST key" }
+                    p {
+                        "Fresh wallets begin with 0 DUST. After NIGHT funding is synchronized, review the public NIGHT aggregate and the generated DUST fee allowance before registering this account's protected DUST key."
+                    }
+                    p { class: "consent-copy", "Registration never starts automatically and does not authorize a transfer." }
+                    if let Some(note) = dust_registration_availability_note(availability) {
+                        p {
+                            class: if availability == DustRegistrationAvailability::Unavailable { "wallet-sync-error" } else { "consent-copy" },
+                            role: if availability == DustRegistrationAvailability::Unavailable { "alert" } else { "status" },
+                            "{note}"
+                        }
+                    }
+                    button {
+                        class: "primary-action",
+                        r#type: "button",
+                        disabled: !available,
+                        aria_label: "Register protected DUST key",
+                        onclick: move |_| {
+                            state.set(DustRegistrationPanelState::Preparing);
+                            let service = prepare_services.prepare_wallet_dust_registration();
+                            let profile_id = prepare_profile.clone();
+                            spawn(async move {
+                                match run_ui_blocking(move || {
+                                    service.execute(PrepareWalletDustRegistrationCommand {
+                                        profile_id,
+                                    })
+                                })
+                                .await
+                                {
+                                    Ok(Ok(preview)) => state.set(
+                                        DustRegistrationPanelState::Prepared(Box::new(preview)),
+                                    ),
+                                    Ok(Err(error)) => state.set(
+                                        DustRegistrationPanelState::Failed {
+                                            message: error.to_string(),
+                                            retained: None,
+                                        },
+                                    ),
+                                    Err(error) => state.set(DustRegistrationPanelState::Failed {
+                                        message: error.to_string(),
+                                        retained: None,
+                                    }),
+                                }
+                            });
+                        },
+                        "{dust_registration_action_label(availability)}"
+                    }
+                }
+            }
+        }
+        DustRegistrationPanelState::Preparing => rsx! {
+            article {
+                id: "dust-registration",
+                class: "surface-card account-sync-card submitting-card",
+                role: "status",
+                aria_live: "polite",
+                aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                div {
+                    p { class: "card-eyebrow", "DUST generation" }
+                    h2 { "Preparing registration review" }
+                    p { "Checking synchronized NIGHT eligibility and the current public DUST fee allowance." }
+                }
+            }
+        },
+        DustRegistrationPanelState::Prepared(preview) => {
+            let authorize_services = services.clone();
+            let authorize_profile = profile_id.clone();
+            let authorize_preview = preview.clone();
+            let command_preview = preview.clone();
+            rsx! {
+                article {
+                    id: "dust-registration",
+                    class: "surface-card account-sync-card review-card",
+                    aria_label: "Review protected DUST registration",
+                    p { class: "card-eyebrow", "Review registration" }
+                    h2 { "Authorize DUST registration?" }
+                    DustRegistrationReview { preview: (*preview).clone() }
+                    p { class: "consent-copy", "Device protection authorizes only this exact registration. Proving and Midnight submission remain a separate action." }
+                    div { class: "transfer-actions",
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            aria_label: "Decline DUST registration authorization",
+                            onclick: move |_| state.set(DustRegistrationPanelState::Idle),
+                            "Not now"
+                        }
+                        button {
+                            class: "primary-action",
+                            r#type: "button",
+                            aria_label: DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL,
+                            onclick: move |_| {
+                                state.set(DustRegistrationPanelState::Authorizing(
+                                    authorize_preview.clone(),
+                                ));
+                                let service = authorize_services
+                                    .authorize_wallet_dust_registration();
+                                let profile_id = authorize_profile.clone();
+                                let preview = command_preview.clone();
+                                let command = AuthorizeWalletDustRegistrationCommand {
+                                    profile_id,
+                                    draft_id: preview.draft_id.clone(),
+                                    authorization_challenge: preview
+                                        .authorization_challenge
+                                        .clone(),
+                                    confirmation: authorize_dust_registration_confirmation(
+                                        &preview,
+                                        true,
+                                    ),
+                                };
+                                spawn(async move {
+                                    match run_ui_blocking(move || service.execute(command)).await {
+                                        Ok(Ok(authorized)) => state.set(
+                                            DustRegistrationPanelState::Authorized(Box::new(
+                                                authorized,
+                                            )),
+                                        ),
+                                        Ok(Err(error)) => state.set(
+                                            DustRegistrationPanelState::Failed {
+                                                message: error.to_string(),
+                                                retained: Some(preview),
+                                            },
+                                        ),
+                                        Err(error) => state.set(
+                                            DustRegistrationPanelState::Failed {
+                                                message: error.to_string(),
+                                                retained: Some(preview),
+                                            },
+                                        ),
+                                    }
+                                });
+                            },
+                            "Authorize DUST registration"
+                        }
+                    }
+                }
+            }
+        }
+        DustRegistrationPanelState::Authorizing(preview) => rsx! {
+            article {
+                id: "dust-registration",
+                class: "surface-card account-sync-card submitting-card",
+                role: "status",
+                aria_live: "polite",
+                aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                div {
+                    p { class: "card-eyebrow", "Authorizing" }
+                    h2 { "Confirm DUST registration with device protection" }
+                    p { "Authorizing {format_dust_registration_asset(&preview.registered_night)} without exposing the protected key or NIGHT inputs." }
+                }
+            }
+        },
+        DustRegistrationPanelState::Authorized(preview) => {
+            let submit_services = services.clone();
+            let submit_profile = profile_id.clone();
+            let submit_preview = preview.clone();
+            let retained_preview = preview.clone();
+            rsx! {
+                article {
+                    id: "dust-registration",
+                    class: "surface-card account-sync-card confirm-sheet",
+                    aria_label: "Authorized protected DUST registration",
+                    p { class: "card-eyebrow", "Device confirmed" }
+                    h2 { "Register on Midnight?" }
+                    DustRegistrationReview { preview: (*preview).clone() }
+                    p { class: "consent-copy", "This separate action proves the registration, saves public recovery state, and submits it to Midnight." }
+                    button {
+                        class: "primary-action",
+                        r#type: "button",
+                        aria_label: DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL,
+                        onclick: move |_| {
+                            state.set(DustRegistrationPanelState::Submitting(
+                                submit_preview.clone(),
+                            ));
+                            let service = submit_services.submit_wallet_dust_registration();
+                            let recovery_services = submit_services.clone();
+                            let profile_id = submit_profile.clone();
+                            let recovery_profile = profile_id.clone();
+                            let preview = retained_preview.clone();
+                            let recovery_preview = preview.clone();
+                            let command = SubmitWalletDustRegistrationCommand {
+                                profile_id,
+                                draft_id: preview.draft_id.clone(),
+                                confirmation: submit_dust_registration_confirmation(
+                                    &preview,
+                                    true,
+                                ),
+                            };
+                            spawn(async move {
+                                match run_ui_future(async move { service.execute(command).await })
+                                    .await
+                                {
+                                    Ok(Ok(submitted)) => state.set(
+                                        DustRegistrationPanelState::Registered(Box::new(
+                                            submitted.registration,
+                                        )),
+                                    ),
+                                    Ok(Err(error)) => {
+                                        let message = error.to_string();
+                                        let fallback = recovery_preview.clone();
+                                        match run_ui_blocking(move || {
+                                            recover_dust_registration_state(
+                                                &recovery_services,
+                                                &recovery_profile,
+                                                &fallback,
+                                                Some(message),
+                                            )
+                                        })
+                                        .await
+                                        {
+                                            Ok(recovered) => state.set(recovered),
+                                            Err(error) => state.set(
+                                                DustRegistrationPanelState::Failed {
+                                                    message: error.to_string(),
+                                                    retained: Some(recovery_preview),
+                                                },
+                                            ),
+                                        }
+                                    }
+                                    Err(error) => state.set(
+                                        DustRegistrationPanelState::Failed {
+                                            message: error.to_string(),
+                                            retained: Some(recovery_preview),
+                                        },
+                                    ),
+                                }
+                            });
+                        },
+                        "Register on Midnight"
+                    }
+                }
+            }
+        }
+        DustRegistrationPanelState::Submitting(preview) => {
+            let cancel_services = services.clone();
+            let cancel_profile = profile_id.clone();
+            let cancel_command_preview = preview.clone();
+            rsx! {
+                article {
+                    id: "dust-registration",
+                    class: "surface-card account-sync-card submitting-card",
+                    role: "status",
+                    aria_live: "polite",
+                    aria_busy: "true",
+                    span { class: "loading-mark", aria_hidden: "true" }
+                    div {
+                        p { class: "card-eyebrow", "Registration pending" }
+                        h2 { "Registering protected DUST key" }
+                        p { "Proving locally and saving public recovery state. Cancellation is safe only before broadcast." }
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            aria_label: "Cancel DUST registration before broadcast",
+                            onclick: move |_| {
+                                state.set(DustRegistrationPanelState::Cancelling);
+                                let services = cancel_services.clone();
+                                let profile_id = cancel_profile.clone();
+                                let preview = cancel_command_preview.clone();
+                                spawn(async move {
+                                    let service = services
+                                        .cancel_wallet_dust_registration_submission();
+                                    let command = CancelWalletDustRegistrationSubmissionCommand {
+                                        profile_id: profile_id.clone(),
+                                        draft_id: preview.draft_id.clone(),
+                                    };
+                                    match run_ui_blocking(move || service.execute(command)).await {
+                                        Ok(Ok(status)) => poll_dust_registration_status(
+                                            services,
+                                            profile_id,
+                                            preview,
+                                            state,
+                                            status,
+                                        ),
+                                        Ok(Err(error)) => state.set(
+                                            DustRegistrationPanelState::Failed {
+                                                message: error.to_string(),
+                                                retained: Some(preview),
+                                            },
+                                        ),
+                                        Err(error) => state.set(
+                                            DustRegistrationPanelState::Failed {
+                                                message: error.to_string(),
+                                                retained: Some(preview),
+                                            },
+                                        ),
+                                    }
+                                });
+                            },
+                            "Cancel before broadcast"
+                        }
+                    }
+                }
+            }
+        }
+        DustRegistrationPanelState::Cancelling => rsx! {
+            article {
+                id: "dust-registration",
+                class: "surface-card account-sync-card submitting-card",
+                role: "status",
+                aria_live: "polite",
+                aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                div {
+                    p { class: "card-eyebrow", "Cancelling" }
+                    h2 { "Stopping DUST registration safely" }
+                    p { "Waiting for the worker to acknowledge a pre-broadcast cancellation boundary." }
+                }
+            }
+        },
+        DustRegistrationPanelState::Pending {
+            preview,
+            status,
+            reconciling,
+            operation_error,
+        } => {
+            let refresh_services = services.clone();
+            let refresh_profile = profile_id.clone();
+            let refresh_preview = preview.clone();
+            let retained_status = status.clone();
+            let reconcile_services = services.clone();
+            let reconcile_profile = profile_id.clone();
+            let reconcile_preview = preview.clone();
+            rsx! {
+                article {
+                    id: "dust-registration",
+                    class: "surface-card account-sync-card submission-recovery-card",
+                    role: "status",
+                    aria_live: "polite",
+                    aria_busy: if reconciling { "true" } else { "false" },
+                    p { class: "card-eyebrow", "Registration pending" }
+                    h2 { "Midnight outcome requires confirmation" }
+                    p { "The wallet will not submit a replacement while this registration may have reached Midnight." }
+                    dl { class: "preview-list",
+                        div { dt { "State" } dd { "{dust_registration_status_label(&status.state)}" } }
+                        div { dt { "Registration" } dd { "{dust_registration_observation_label(&status.registration_observation)}" } }
+                        div { dt { "DUST readiness" } dd { "{dust_registration_readiness_label(&status.dust_readiness)}" } }
+                    }
+                    if let Some(error) = operation_error {
+                        p { class: "wallet-sync-error", role: "alert", "{error}" }
+                    }
+                    div { class: "transfer-actions",
+                        if status.cancellation_allowed {
+                            button {
+                                class: "secondary-action",
+                                r#type: "button",
+                                disabled: reconciling,
+                                aria_label: "Cancel DUST registration before broadcast",
+                                onclick: move |_| {
+                                    state.set(DustRegistrationPanelState::Cancelling);
+                                    let services = refresh_services.clone();
+                                    let profile_id = refresh_profile.clone();
+                                    let preview = refresh_preview.clone();
+                                    let retained_status = retained_status.clone();
+                                    spawn(async move {
+                                        let service = services
+                                            .cancel_wallet_dust_registration_submission();
+                                        let command =
+                                            CancelWalletDustRegistrationSubmissionCommand {
+                                                profile_id: profile_id.clone(),
+                                                draft_id: preview.draft_id.clone(),
+                                            };
+                                        match run_ui_blocking(move || service.execute(command)).await {
+                                            Ok(Ok(status)) => poll_dust_registration_status(
+                                                services,
+                                                profile_id,
+                                                preview,
+                                                state,
+                                                status,
+                                            ),
+                                            Ok(Err(error)) => state.set(
+                                                DustRegistrationPanelState::Pending {
+                                                    preview,
+                                                    status: retained_status.clone(),
+                                                    reconciling: false,
+                                                    operation_error: Some(error.to_string()),
+                                                },
+                                            ),
+                                            Err(error) => state.set(
+                                                DustRegistrationPanelState::Pending {
+                                                    preview,
+                                                    status: retained_status.clone(),
+                                                    reconciling: false,
+                                                    operation_error: Some(error.to_string()),
+                                                },
+                                            ),
+                                        }
+                                    });
+                                },
+                                "Cancel before broadcast"
+                            }
+                        }
+                        if status.reconciliation_allowed {
+                            button {
+                                class: "primary-action",
+                                r#type: "button",
+                                disabled: reconciling,
+                                aria_label: DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL,
+                                onclick: move |_| {
+                                    state.set(DustRegistrationPanelState::Pending {
+                                        preview: reconcile_preview.clone(),
+                                        status: status.clone(),
+                                        reconciling: true,
+                                        operation_error: None,
+                                    });
+                                    let service = reconcile_services
+                                        .reconcile_wallet_dust_registration_submission();
+                                    let profile_id = reconcile_profile.clone();
+                                    let preview = reconcile_preview.clone();
+                                    let draft_id = preview.draft_id.clone();
+                                    let retained_status = status.clone();
+                                    spawn(async move {
+                                        match run_ui_future(async move {
+                                            service
+                                                .execute(
+                                                    ReconcileWalletDustRegistrationSubmissionCommand {
+                                                        profile_id,
+                                                        draft_id,
+                                                    },
+                                                )
+                                                .await
+                                        })
+                                        .await
+                                        {
+                                            Ok(Ok(status)) => state.set(
+                                                dust_registration_state_from_status(
+                                                    preview,
+                                                    &status,
+                                                    None,
+                                                ),
+                                            ),
+                                            Ok(Err(error)) => state.set(
+                                                DustRegistrationPanelState::Pending {
+                                                    preview,
+                                                    status: retained_status,
+                                                    reconciling: false,
+                                                    operation_error: Some(error.to_string()),
+                                                },
+                                            ),
+                                            Err(error) => state.set(
+                                                DustRegistrationPanelState::Pending {
+                                                    preview,
+                                                    status: retained_status,
+                                                    reconciling: false,
+                                                    operation_error: Some(error.to_string()),
+                                                },
+                                            ),
+                                        }
+                                    });
+                                },
+                                if reconciling { "Reconciling…" } else { "Reconcile with Midnight" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        DustRegistrationPanelState::Registered(preview) => rsx! {
+            article {
+                id: "dust-registration",
+                class: "surface-card account-sync-card submitted-card",
+                role: "status",
+                aria_live: "polite",
+                span { class: "transfer-status-mark", aria_hidden: "true", "✓" }
+                p { class: "card-eyebrow", "Registration finalized" }
+                h2 { "DUST key registered" }
+                p { "Waiting for spendable DUST — registration is included, but the protected DUST balance requires DUST synchronization before it can be used." }
+                dl { class: "preview-list",
+                    div { dt { "Registered NIGHT" } dd { "{format_dust_registration_asset(&preview.registered_night)}" } }
+                    div { dt { "DUST readiness" } dd { "Requires DUST synchronization" } }
+                }
+            }
+        },
+        DustRegistrationPanelState::Cancelled(preview) => rsx! {
+            article {
+                id: "dust-registration",
+                class: "surface-card account-sync-card",
+                role: "status",
+                aria_live: "polite",
+                p { class: "card-eyebrow", "Registration cancelled" }
+                h2 { "Nothing was broadcast" }
+                p { "The authorized registration remains available for an explicit retry." }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    aria_label: "Return to authorized DUST registration",
+                    onclick: move |_| state.set(
+                        DustRegistrationPanelState::Authorized(preview.clone()),
+                    ),
+                    "Review registration again"
+                }
+            }
+        },
+        DustRegistrationPanelState::Failed { message, retained } => {
+            let retained_for_retry = retained.clone();
+            rsx! {
+                article {
+                    id: "dust-registration",
+                    class: "surface-card account-sync-card failed-card",
+                    role: "alert",
+                    p { class: "card-eyebrow", "Registration not completed" }
+                    h2 { "Protected DUST registration needs attention" }
+                    p { "{message}" }
+                    if let Some(preview) = retained_for_retry {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            aria_label: "Return to DUST registration review",
+                            onclick: move |_| state.set(
+                                dust_registration_retry_state(preview.clone()),
+                            ),
+                            "Return to registration review"
+                        }
+                    } else {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            onclick: move |_| state.set(DustRegistrationPanelState::Idle),
+                            "Try again"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn DustRegistrationReview(preview: WalletDustRegistrationPreviewView) -> Element {
+    let review = dust_registration_review(&preview);
+    rsx! {
+        dl { class: "preview-list", aria_label: "Public DUST registration summary",
+            div { dt { "NIGHT aggregate" } dd { "{review.registered_night}" } }
+            div { dt { "Eligible inputs" } dd { "{review.input_count}" } }
+            div { dt { "Maximum DUST fee allowance" } dd { "{review.maximum_fee_allowance}" } }
+            div { dt { "Network" } dd { "{ui::midnight_network(&preview.network_id)}" } }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct DustRegistrationReviewCopy {
+    registered_night: String,
+    input_count: u16,
+    maximum_fee_allowance: String,
+}
+
+fn dust_registration_review(
+    preview: &WalletDustRegistrationPreviewView,
+) -> DustRegistrationReviewCopy {
+    DustRegistrationReviewCopy {
+        registered_night: format_dust_registration_asset(&preview.registered_night),
+        input_count: preview.input_count,
+        maximum_fee_allowance: format_dust_registration_asset(&preview.maximum_fee_allowance),
+    }
+}
+
+fn poll_dust_registration_status(
+    services: WalletUiServices,
+    profile_id: String,
+    preview: Box<WalletDustRegistrationPreviewView>,
+    mut state: Signal<DustRegistrationPanelState>,
+    initial: WalletDustRegistrationSubmissionStatusView,
+) {
+    spawn(async move {
+        let mut status = initial;
+        loop {
+            if !matches!(status.state.as_str(), "running" | "cancellation_requested") {
+                state.set(dust_registration_state_from_status(preview, &status, None));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let service = services.get_wallet_dust_registration_status();
+            let command = GetWalletDustRegistrationStatusCommand {
+                profile_id: profile_id.clone(),
+                draft_id: preview.draft_id.clone(),
+            };
+            match run_ui_blocking(move || service.execute(command)).await {
+                Ok(Ok(updated)) => status = updated,
+                Ok(Err(error)) => {
+                    state.set(DustRegistrationPanelState::Pending {
+                        preview,
+                        status: DustRegistrationPublicStatus::from(&status),
+                        reconciling: false,
+                        operation_error: Some(error.to_string()),
+                    });
+                    break;
+                }
+                Err(error) => {
+                    state.set(DustRegistrationPanelState::Pending {
+                        preview,
+                        status: DustRegistrationPublicStatus::from(&status),
+                        reconciling: false,
+                        operation_error: Some(error.to_string()),
+                    });
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn recover_dust_registration_state(
+    services: &WalletUiServices,
+    profile_id: &str,
+    fallback: &WalletDustRegistrationPreviewView,
+    operation_error: Option<String>,
+) -> DustRegistrationPanelState {
+    let preview = services
+        .get_wallet_dust_registration()
+        .execute(GetWalletDustRegistrationCommand {
+            profile_id: profile_id.to_owned(),
+            draft_id: fallback.draft_id.clone(),
+        })
+        .unwrap_or_else(|_| fallback.clone());
+    match services.get_wallet_dust_registration_status().execute(
+        GetWalletDustRegistrationStatusCommand {
+            profile_id: profile_id.to_owned(),
+            draft_id: preview.draft_id.clone(),
+        },
+    ) {
+        Ok(status) => {
+            dust_registration_state_from_status(Box::new(preview), &status, operation_error)
+        }
+        Err(error) => DustRegistrationPanelState::Failed {
+            message: operation_error.unwrap_or_else(|| error.to_string()),
+            retained: Some(Box::new(preview)),
+        },
+    }
+}
+
+fn dust_registration_state_from_status(
+    preview: Box<WalletDustRegistrationPreviewView>,
+    status: &WalletDustRegistrationSubmissionStatusView,
+    operation_error: Option<String>,
+) -> DustRegistrationPanelState {
+    match status.state.as_str() {
+        "included" => DustRegistrationPanelState::Registered(preview),
+        "cancelled" => DustRegistrationPanelState::Cancelled(preview),
+        "not_started" => DustRegistrationPanelState::Failed {
+            message: operation_error
+                .unwrap_or_else(|| "Registration was not submitted to Midnight.".to_owned()),
+            retained: Some(preview),
+        },
+        _ => DustRegistrationPanelState::Pending {
+            preview,
+            status: DustRegistrationPublicStatus::from(status),
+            reconciling: false,
+            operation_error,
+        },
+    }
+}
+
+fn dust_registration_retry_state(
+    preview: Box<WalletDustRegistrationPreviewView>,
+) -> DustRegistrationPanelState {
+    if preview.submission_ready {
+        DustRegistrationPanelState::Authorized(preview)
+    } else {
+        DustRegistrationPanelState::Prepared(preview)
+    }
+}
+
+const fn initial_dust_registration_panel_state() -> DustRegistrationPanelState {
+    DustRegistrationPanelState::Idle
+}
+
+const fn dust_registration_availability(
+    protection_unlocked: bool,
+    protected_account: bool,
+    account_synchronized: bool,
+    unavailable: bool,
+) -> DustRegistrationAvailability {
+    if unavailable {
+        DustRegistrationAvailability::Unavailable
+    } else if !protection_unlocked {
+        DustRegistrationAvailability::ProtectionLocked
+    } else if !protected_account {
+        DustRegistrationAvailability::AccountNotDerived
+    } else if !account_synchronized {
+        DustRegistrationAvailability::AccountNotSynchronized
+    } else {
+        DustRegistrationAvailability::Ready
+    }
+}
+
+const fn dust_registration_action_label(
+    availability: DustRegistrationAvailability,
+) -> &'static str {
+    match availability {
+        DustRegistrationAvailability::Ready => "Register protected DUST key",
+        DustRegistrationAvailability::ProtectionLocked => "Unlock wallet to register",
+        DustRegistrationAvailability::AccountNotDerived => "Derive account to register",
+        DustRegistrationAvailability::AccountNotSynchronized => "Sync NIGHT before registration",
+        DustRegistrationAvailability::Unavailable => "Registration unavailable",
+    }
+}
+
+const fn dust_registration_availability_note(
+    availability: DustRegistrationAvailability,
+) -> Option<&'static str> {
+    match availability {
+        DustRegistrationAvailability::Ready => None,
+        DustRegistrationAvailability::ProtectionLocked => {
+            Some("Unlock wallet protection before reviewing a registration.")
+        }
+        DustRegistrationAvailability::AccountNotDerived => {
+            Some("Derive the protected Midnight account before registration.")
+        }
+        DustRegistrationAvailability::AccountNotSynchronized => {
+            Some("Synchronize funded NIGHT before reviewing registration eligibility.")
+        }
+        DustRegistrationAvailability::Unavailable => {
+            Some("Protected DUST registration is unavailable in this wallet composition.")
+        }
+    }
+}
+
+fn authorize_dust_registration_confirmation(
+    preview: &WalletDustRegistrationPreviewView,
+    confirmed: bool,
+) -> SensitiveOperationConfirmation {
+    SensitiveOperationConfirmation {
+        title: "Authorize DUST registration".to_owned(),
+        summary: format!(
+            "Authorize registration of {} from {} eligible NIGHT inputs on {} with a maximum fee allowance of {}.",
+            format_dust_registration_asset(&preview.registered_night),
+            preview.input_count,
+            ui::midnight_network(&preview.network_id),
+            format_dust_registration_asset(&preview.maximum_fee_allowance),
+        ),
+        confirmed,
+    }
+}
+
+fn submit_dust_registration_confirmation(
+    preview: &WalletDustRegistrationPreviewView,
+    confirmed: bool,
+) -> SensitiveOperationConfirmation {
+    SensitiveOperationConfirmation {
+        title: "Register on Midnight".to_owned(),
+        summary: format!(
+            "Prove and submit the authorized DUST registration for {} on {}.",
+            format_dust_registration_asset(&preview.registered_night),
+            ui::midnight_network(&preview.network_id),
+        ),
+        confirmed,
+    }
+}
+
+fn format_dust_registration_asset(asset: &WalletDustRegistrationAssetView) -> String {
+    ui::format_asset_amount(&asset.atomic_units, asset.decimals, &asset.symbol)
+}
+
+const fn dust_registration_status_label(state: &str) -> &'static str {
+    match state.as_bytes() {
+        b"running" => "Proving and saving recovery state",
+        b"cancellation_requested" => "Cancellation requested",
+        b"broadcasting" => "Broadcasting — cancellation unavailable",
+        b"outcome_unknown" => "Outcome unknown — reconciliation required",
+        b"rejected" => "Rejected by Midnight",
+        b"expired" => "Registration expired",
+        b"included" => "Included",
+        b"cancelled" => "Cancelled before broadcast",
+        _ => "Not started",
+    }
+}
+
+fn dust_registration_observation_label(observation: &str) -> &'static str {
+    if observation == "included" {
+        "DUST key registered"
+    } else {
+        "Not yet observed as included"
+    }
+}
+
+fn dust_registration_readiness_label(readiness: &str) -> &'static str {
+    if readiness == "requires_synchronization" {
+        "Waiting for spendable DUST — requires DUST synchronization"
+    } else {
+        "Not established"
     }
 }
 
@@ -12280,5 +13287,203 @@ mod tests {
         assert!(route_forces_screen_privacy(Route::CredentialRequest));
         assert!(!route_forces_screen_privacy(Route::Home));
         assert!(!route_forces_screen_privacy(Route::Wallet));
+    }
+
+    fn dust_registration_preview(state: &str) -> WalletDustRegistrationPreviewView {
+        WalletDustRegistrationPreviewView {
+            draft_id: "dustreg_do_not_render".to_owned(),
+            authorization_challenge: "dustauth_do_not_render".to_owned(),
+            network_id: "undeployed".to_owned(),
+            account_id: "account_do_not_render".to_owned(),
+            registered_night: WalletDustRegistrationAssetView {
+                asset_id: "midnight:night".to_owned(),
+                symbol: "NIGHT".to_owned(),
+                decimals: 6,
+                atomic_units: "12500000".to_owned(),
+            },
+            input_count: 2,
+            maximum_fee_allowance: WalletDustRegistrationAssetView {
+                asset_id: "midnight:dust".to_owned(),
+                symbol: "DUST".to_owned(),
+                decimals: 15,
+                atomic_units: "2500000000000000".to_owned(),
+            },
+            fee_state: "requires_balancing".to_owned(),
+            expires_at_millis: 1_700_000_000_000,
+            state: state.to_owned(),
+            authorization_ready: state == "prepared",
+            submission_ready: state == "authorized",
+        }
+    }
+
+    fn dust_registration_status(state: &str) -> WalletDustRegistrationSubmissionStatusView {
+        WalletDustRegistrationSubmissionStatusView {
+            draft_id: "dustreg_do_not_render".to_owned(),
+            state: state.to_owned(),
+            transaction_id: Some("transaction_do_not_render".to_owned()),
+            block_id: Some("block_do_not_render".to_owned()),
+            fee: Some(WalletDustRegistrationAssetView {
+                asset_id: "midnight:dust".to_owned(),
+                symbol: "DUST".to_owned(),
+                decimals: 15,
+                atomic_units: "100000000000000".to_owned(),
+            }),
+            mode: Some("live".to_owned()),
+            registration_observation: if state == "included" {
+                "included".to_owned()
+            } else {
+                "not_observed".to_owned()
+            },
+            dust_readiness: if state == "included" {
+                "requires_synchronization".to_owned()
+            } else {
+                "not_established".to_owned()
+            },
+            cancellation_allowed: matches!(state, "running" | "cancellation_requested"),
+            reconciliation_allowed: matches!(state, "broadcasting" | "outcome_unknown"),
+        }
+    }
+
+    #[test]
+    fn dust_registration_has_explicit_accessible_actions() {
+        assert_eq!(
+            DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL,
+            "Protected DUST registration"
+        );
+        assert_eq!(
+            DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL,
+            "Authorize DUST registration"
+        );
+        assert_eq!(
+            DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL,
+            "Register on Midnight"
+        );
+        assert_eq!(
+            DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL,
+            "Reconcile DUST registration with Midnight"
+        );
+    }
+
+    #[test]
+    fn dust_registration_never_starts_or_confirms_implicitly() {
+        assert!(matches!(
+            initial_dust_registration_panel_state(),
+            DustRegistrationPanelState::Idle
+        ));
+        let preview = dust_registration_preview("prepared");
+        let declined = authorize_dust_registration_confirmation(&preview, false);
+        let submit_declined = submit_dust_registration_confirmation(&preview, false);
+        assert!(!declined.confirmed);
+        assert!(!submit_declined.confirmed);
+        assert_eq!(declined.title, "Authorize DUST registration");
+        assert_eq!(submit_declined.title, "Register on Midnight");
+    }
+
+    #[test]
+    fn dust_registration_gates_locked_unsynchronized_and_unavailable_accounts() {
+        assert_eq!(
+            dust_registration_availability(false, true, true, false),
+            DustRegistrationAvailability::ProtectionLocked
+        );
+        assert_eq!(
+            dust_registration_action_label(DustRegistrationAvailability::ProtectionLocked),
+            "Unlock wallet to register"
+        );
+        assert_eq!(
+            dust_registration_availability(true, false, true, false),
+            DustRegistrationAvailability::AccountNotDerived
+        );
+        assert_eq!(
+            dust_registration_availability(true, true, false, false),
+            DustRegistrationAvailability::AccountNotSynchronized
+        );
+        assert_eq!(
+            dust_registration_action_label(DustRegistrationAvailability::AccountNotSynchronized),
+            "Sync NIGHT before registration"
+        );
+        assert_eq!(
+            dust_registration_availability(true, true, true, true),
+            DustRegistrationAvailability::Unavailable
+        );
+        assert!(
+            dust_registration_availability_note(DustRegistrationAvailability::Unavailable)
+                .expect("unavailable note")
+                .contains("unavailable")
+        );
+    }
+
+    #[test]
+    fn dust_registration_review_and_status_are_public_aggregate_only() {
+        let preview = dust_registration_preview("prepared");
+        let review = format!("{:?}", dust_registration_review(&preview));
+        let confirmation = authorize_dust_registration_confirmation(&preview, true);
+        let status = DustRegistrationPublicStatus::from(&dust_registration_status("broadcasting"));
+        let public_status = format!("{status:?}");
+
+        assert!(review.contains("12.5 NIGHT"));
+        assert!(review.contains("2.5 DUST"));
+        assert!(!review.contains(&preview.draft_id));
+        assert!(!review.contains(&preview.authorization_challenge));
+        assert!(!review.contains(&preview.account_id));
+        assert!(!confirmation.summary.contains(&preview.draft_id));
+        assert!(
+            !confirmation
+                .summary
+                .contains(&preview.authorization_challenge)
+        );
+        assert!(!public_status.contains("transaction_do_not_render"));
+        assert!(!public_status.contains("block_do_not_render"));
+        assert!(!public_status.contains("100000000000000"));
+    }
+
+    #[test]
+    fn dust_registration_state_machine_is_distinct_from_transfer_and_truthful_after_inclusion() {
+        assert_ne!(
+            std::any::type_name::<DustRegistrationPanelState>(),
+            std::any::type_name::<TransferPanelState>()
+        );
+        assert!(matches!(
+            dust_registration_retry_state(Box::new(dust_registration_preview("authorized"))),
+            DustRegistrationPanelState::Authorized(_)
+        ));
+        assert!(matches!(
+            dust_registration_state_from_status(
+                Box::new(dust_registration_preview("submitted")),
+                &dust_registration_status("included"),
+                None,
+            ),
+            DustRegistrationPanelState::Registered(_)
+        ));
+        assert_eq!(
+            dust_registration_observation_label("included"),
+            "DUST key registered"
+        );
+        assert_eq!(
+            dust_registration_readiness_label("requires_synchronization"),
+            "Waiting for spendable DUST — requires DUST synchronization"
+        );
+    }
+
+    #[test]
+    fn dust_registration_unknown_outcomes_require_reconciliation() {
+        let status = dust_registration_status("outcome_unknown");
+        match dust_registration_state_from_status(
+            Box::new(dust_registration_preview("submitting")),
+            &status,
+            Some("outcome unknown".to_owned()),
+        ) {
+            DustRegistrationPanelState::Pending {
+                status,
+                reconciling,
+                operation_error,
+                ..
+            } => {
+                assert!(status.reconciliation_allowed);
+                assert!(!status.cancellation_allowed);
+                assert!(!reconciling);
+                assert_eq!(operation_error.as_deref(), Some("outcome unknown"));
+            }
+            _ => panic!("unknown outcome must remain pending"),
+        }
     }
 }

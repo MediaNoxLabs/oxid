@@ -7,6 +7,8 @@ mod checkpoint;
 #[cfg(not(target_arch = "wasm32"))]
 mod dust_checkpoint;
 #[cfg(not(target_arch = "wasm32"))]
+mod dust_registration;
+#[cfg(not(target_arch = "wasm32"))]
 mod dust_sync;
 #[cfg(not(target_arch = "wasm32"))]
 mod indexer;
@@ -50,7 +52,8 @@ pub use shielded_checkpoint::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use submission::{
-    MidnightProvingMode, MidnightStandaloneConfig, MidnightStandaloneConfigError,
+    MidnightChainIdentityError, MidnightProvingMode, MidnightStandaloneConfig,
+    MidnightStandaloneConfigError, authenticate_midnight_chain_identity,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use submission_journal::{
@@ -73,7 +76,19 @@ pub use transaction::{
 #[cfg(not(target_arch = "wasm32"))]
 pub fn standalone_configuration_placeholder_address() -> Result<ChainAddress, WalletAccountPortError>
 {
-    let network = network_id(DEFAULT_NETWORK_ID)?;
+    configuration_placeholder_address(DEFAULT_NETWORK_ID)
+}
+
+/// Returns one public address vector for validating a build-authenticated
+/// deployment profile before protected custody derives the owned account.
+///
+/// The returned value proves neither ownership nor funding and is discarded
+/// as soon as a profile binds its protected derived account.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn configuration_placeholder_address(
+    network_id_value: &str,
+) -> Result<ChainAddress, WalletAccountPortError> {
+    let network = network_id(network_id_value)?;
     fixture_addresses(&network)?
         .into_iter()
         .find(|address| address.kind() == ChainAddressKind::Unshielded)
@@ -404,6 +419,8 @@ pub struct MidnightWalletAdapter<S, D = UnavailableMidnightAccountDeriver> {
         >,
     >,
     #[cfg(not(target_arch = "wasm32"))]
+    dust_registration_drafts: dust_registration::RetainedMidnightDustRegistrations,
+    #[cfg(not(target_arch = "wasm32"))]
     contract_call_submissions: transaction::RetainedContractCallSubmissions,
 }
 
@@ -441,6 +458,8 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(not(target_arch = "wasm32"))]
+            dust_registration_drafts: Arc::new(Mutex::new(HashMap::new())),
             contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -472,6 +491,8 @@ impl<S> MidnightWalletAdapter<S, UnavailableMidnightAccountDeriver> {
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(not(target_arch = "wasm32"))]
+            dust_registration_drafts: Arc::new(Mutex::new(HashMap::new())),
             contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -599,6 +620,8 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(not(target_arch = "wasm32"))]
+            dust_registration_drafts: Arc::new(Mutex::new(HashMap::new())),
             contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -632,6 +655,8 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             #[cfg(not(target_arch = "wasm32"))]
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(not(target_arch = "wasm32"))]
+            dust_registration_drafts: Arc::new(Mutex::new(HashMap::new())),
             contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -660,6 +685,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             ),
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            dust_registration_drafts: Arc::new(Mutex::new(HashMap::new())),
             contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -687,6 +713,7 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             ),
             submission_reconciler: Arc::new(transaction::UnavailableMidnightSubmissionReconciler),
             drafts: Arc::new(Mutex::new(HashMap::new())),
+            dust_registration_drafts: Arc::new(Mutex::new(HashMap::new())),
             contract_call_submissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }

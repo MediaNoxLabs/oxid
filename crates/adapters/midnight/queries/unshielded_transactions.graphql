@@ -34,6 +34,8 @@ subscription OxidUnshieldedTransactions(
         value
         intentHash
         outputIndex
+        ctime
+        registeredForDustGeneration
       }
       spentUtxos {
         owner
@@ -41,6 +43,8 @@ subscription OxidUnshieldedTransactions(
         value
         intentHash
         outputIndex
+        ctime
+        registeredForDustGeneration
       }
     }
     ... on UnshieldedTransactionsProgress {

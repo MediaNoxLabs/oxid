@@ -34,11 +34,13 @@ just check             # the light strict gate: fmt, architecture, clippy, tests
 | `just run` | Launch the Dioxus desktop shell |
 | `just headless` | Launch the NDJSON headless adapter |
 | `just ios-run` / `just android-run` | Standalone development app in a simulator/emulator |
+| `just ios-standalone-local` / `just android-standalone-local` | Compile-time localhost live-stack app for a simulator/emulator |
 | `just ios-dev` / `just android-dev` | Same standalone composition with the persistent developer capability profile |
 | `just ios-dev-smoke` / `just android-dev-smoke` | Fresh-install developer banner and shared capability-manifest checks |
 | `just ios-demo` / `just android-demo` | Compile-time standalone demo profile with the fixture bootstrap drawer |
 | `just ios-demo-smoke` / `just android-demo-smoke` | Fresh-install safe setup and unchanged credential-review boundary |
 | `just ios-smoke` / `just android-smoke` | The scripted mobile end-to-end flows |
+| `just ios-standalone-local-smoke` / `just android-standalone-local-smoke` | Protected live-account sync through the laptop loopback stack |
 | `just standalone-phone-up` / `just standalone-down` | Start/stop the loopback stack and Oxid-owned tailnet TLS routes |
 | `just android-phone` | Build and launch the compile-time standalone tailnet profile on one physical Android device |
 | `just nix-check` | Every hermetic flake check (slow, sandboxed) |
@@ -59,6 +61,15 @@ The **standalone development composition** (`just ios-run`,
 variables) enables process-local development custody, deterministic
 simulations, and the real standalone SSI flows. That is where the demo
 lives; [delivery status](status.md) maps each capability to its mode.
+
+For real local Midnight transport on virtual devices, first run `just
+standalone-up`, then select `just ios-standalone-local` or `just
+android-standalone-local`. The profile is compiled with immutable `undeployed`
+loopback routes and cannot be combined with native custody or the tailnet
+profile. iOS Simulator reaches the laptop loopback directly. Android emulator
+uses verified `adb reverse` mappings only for 8088, 9944, and 6300; physical
+devices are rejected and `10.0.2.2` is not used. Run the corresponding
+`*-standalone-local-smoke` commands sequentially for live-source evidence.
 
 `just ios-dev` and `just android-dev` set only `OXID_UI_PROFILE=dev`. They keep
 the same standalone composition while adding the shared public capability

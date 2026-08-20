@@ -8,6 +8,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/indexer.rs` and `mobile-bench/wallet-core/src/wallet.rs`
 - Related: ADR-0013, ADR-0015, ADR-0017, ADR-0026 through ADR-0028, ADR-0033 through ADR-0035, ADR-0054 through ADR-0060, and issue #31
 - Implementation state: complete standalone composition can prepare and authorize retained native create/deposit/withdraw drafts from canonical replay and exact public Midnight context; claim, NIGHT funding, DUST completion, proving, durable submission, and finalized reconciliation remain pending
+- Amended by: ADR-0062
 
 ## Context
 

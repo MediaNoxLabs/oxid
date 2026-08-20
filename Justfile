@@ -38,6 +38,21 @@ standalone-recovery-smoke:
 standalone-up:
     ./scripts/standalone-up.sh local
 
+standalone-funded-finality:
+    ./scripts/test-standalone-funded-finality.sh
+
+standalone-funded-shielded-finality:
+    ./scripts/test-standalone-funded-shielded-finality.sh
+
+preprod-registration-funding-manifest:
+    ./scripts/derive-preprod-registration-funding-manifest.sh
+
+preprod-registration-observe:
+    ./scripts/observe-preprod-registration-funding.sh
+
+preprod-registration-e2e:
+    ./scripts/test-preprod-registration-e2e.sh
+
 standalone-phone-up:
     ./scripts/standalone-up.sh phone
 
@@ -46,6 +61,9 @@ standalone-down:
 
 ios-run:
     ./scripts/run-ios-simulator.sh
+
+ios-standalone-local:
+    OXID_STANDALONE_NETWORK_PROFILE=local ./scripts/run-ios-simulator.sh
 
 ios-dev:
     OXID_UI_PROFILE=dev ./scripts/run-ios-simulator.sh
@@ -58,6 +76,9 @@ ui-profile-release:
 
 ios-smoke:
     ./scripts/test-ios-profile-flow.sh
+
+ios-standalone-local-smoke:
+    ./scripts/test-ios-standalone-local.sh
 
 ios-dev-smoke:
     ./scripts/test-ios-developer-profile.sh
@@ -73,6 +94,9 @@ ios-native-custody-smoke:
 
 android-run:
     ./scripts/run-android-emulator.sh
+
+android-standalone-local:
+    OXID_STANDALONE_NETWORK_PROFILE=local ./scripts/run-android-emulator.sh
 
 android-dev:
     OXID_UI_PROFILE=dev ./scripts/run-android-emulator.sh
@@ -94,6 +118,9 @@ android-demo-smoke:
 
 android-smoke:
     ./scripts/test-android-profile-flow.sh
+
+android-standalone-local-smoke:
+    ./scripts/test-android-standalone-local.sh
 
 android-backup-smoke:
     ./scripts/test-android-backup-flow.sh

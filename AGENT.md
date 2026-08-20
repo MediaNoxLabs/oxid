@@ -396,7 +396,15 @@ tip so pure Nix does not depend on HTTP loopback, then drives the real bounded
 GraphQL-WebSocket worker. It proves an owned event projects exactly 12 DUST,
 resume subscribes from `cursor + 1`, cancellation retains a 256-event partial
 checkpoint, and transport failure publishes only its redacted stable category.
-Production construction still uses the bounded HTTP chain-tip source.
+Cold replay receives at most 16,384 events/16 MiB, sends GraphQL `complete` and
+drops the socket before any fold/checkpoint callback, retains the 256-event/
+4 MiB durable cadence, and reconnects only from the last observer-accepted
+sparse cursor. The one-million-event/512 MiB/30-minute bounds span reconnects.
+Tests require server-observed completion before the first callback, reject
+target regression across a segment, and keep observer failure out of the one-
+time incompatible-checkpoint fallback. Production construction still uses the
+bounded HTTP chain-tip source. The accepted implementation commit is
+`26505c81bde1a7c5e4bc13e559232cf0ebf8d97a`.
 
 [Issue #18](https://github.com/MediaNoxLabs/oxid/issues/18) and ADR-0033 keep
 shielded Zswap custody, replay, and checkpoints inside the native Midnight
@@ -408,8 +416,13 @@ owned-note/commitment counts. The deterministic standalone session advances on
 polls for headless and mobile cancellation/resume coverage. Explicit live
 headless configurations run a bounded native `zswapLedgerEvents` worker,
 checkpoint every consistent official-state batch, resume at `cursor + 1`, and
-retry an incompatible cached delta once from zero. Production composition
-remains fail-closed pending durable native custody and endpoint discovery.
+retry an incompatible cached delta once from zero. The immutable prototype's
+shielded v1 explicitly left its inline transport/fold as a pipeline follow-up;
+Oxid now uses the same 16,384-event/16 MiB complete/drop-before-fold segmentation,
+256-event/4 MiB checkpoint cadence, whole-run caps, and observer-accepted
+cursor rule as DUST. Production composition remains fail-closed pending durable
+native custody and endpoint discovery. The accepted implementation commit is
+`a490dc0f754b9a3f89483c875dc68a77ea7f29d5`.
 
 [Issue #59](https://github.com/MediaNoxLabs/oxid/issues/59) and ADR-0079 extend
 that boundary to protected shielded spending. Preparation accepts only a fresh
@@ -433,6 +446,29 @@ one whole NIGHT because its simulator keyboard drops the decimal separator.
 Cached, syncing, cancelled, or stalled shielded state must never fund a draft.
 Production still requires native custody and the explicit live stack;
 simulation must remain labelled and must never imply live inclusion.
+Issue #91 adds the first funded live shielded proof, intentionally beyond the
+prototype's unwired shielded helpers. The indexer v4 envelope's exact GraphQL
+typename is `ZswapLedgerEvent`; deserialize its tagged payload and accept only
+`ZswapInput`/`ZswapOutput` details. Zswap IDs, like DUST IDs, are sparse global
+cursors: allow gaps but require strict forward movement, non-regressing
+targets, and exact current/target equality before `synced`.
+`just standalone-funded-shielded-finality` uses ADR-0098's funding opt-in and
+out-of-band development seed. It synchronizes the genesis authority's public
+account and native Zswap allocation, spends exactly 1,000,000 atomic units to
+a fresh OS-random protected recipient, proves finality, blocks the unchanged-
+state fingerprint, reconstructs the adapter from the private checkpoint/public
+journal, restores the already-included status idempotently through the
+reconciliation use case, and proves exact balances after nullifier replay. It
+does not exercise unknown-outcome chain rescanning. This reuses in-process
+development custody and is not process/native-custody restart evidence.
+ADR-0100 now supplies the distinct typed protected-DUST registration boundary;
+fresh-wallet origination remains issue #92 until a funded run proves
+registration, later generated-DUST observation/resynchronization, and a next
+spend. Fingerprint
+lookup must prefer included over unresolved over failed attempts. Capacity may
+evict only rejected/expired records; 128 included/unresolved barriers fail
+unavailable before broadcast
+until issue #93 proves checkpoint-acknowledged compaction.
 
 [Issue #19](https://github.com/MediaNoxLabs/oxid/issues/19) and ADR-0034 expose
 transaction submission status and deliberate pre-broadcast cancellation. The
@@ -449,8 +485,9 @@ The Midnight adapter must save the public fee, extrinsic hash, finalized
 pre-broadcast anchor, expiry/update time, profile/network/draft scope, one-way
 planning fingerprint, mode, and state before calling the node. Store no signed
 or sealed transaction, proof, witness, secret, key, route, or authorization
-payload. The v1 JSON journal is capped at 128 records/256 KiB, rejects symlinks
-and permissive files, and uses owner-only atomic replacement. Development
+payload. The v2 JSON journal is capped at 128 records/256 KiB, rejects symlinks
+and permissive files, and uses owner-only atomic replacement. It reads legacy
+v1 records without finalized block heights. Development
 mobile composition derives its private journal path beside the resolved profile
 store; headless can override it with the normalized absolute
 `OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH`. Restored `Broadcasting` and
@@ -755,19 +792,21 @@ resolved to that exact commit. The separate remote `mobile-prototype` ref
 resolved to `255f2caf8c728c203f554d6bc853d1f3b7e8bc15`; do not treat its older name
 as a successor without a fresh provenance review.
 
-The 2026-08-19 read-only parity audit compares that immutable baseline with
-Oxid repository evidence in
-`docs/migration/live-parity-audit-2026-08-19.md`. It estimates roughly 95% of
-useful prototype behavior implemented, or 100/110 (91%) of the deliberately
-harder migration target, while production-release evidence is about 74%.
+The 2026-08-20 stopping-point audit compares that immutable baseline with Oxid
+repository, test, mobile-host, and live-environment evidence in
+`docs/migration/delivery-audit-2026-08-20.md`. Current evidence is roughly
+98% of useful prototype behavior, or 105/110 (95%) of the deliberately harder
+migration target, while production-release evidence is about 78%.
 These are evidence classifications, not source-line counts. The dependency-
-ordered gaps are physical custody/recovery evidence, authenticated production
-discovery/composition, real-node unshielded completion, real shielded spending,
-physical identity ingress plus verified HTTPS association, production
+ordered gaps are physical custody/recovery evidence, a provisioned production
+deployment, funded DUST registration-to-recovery/fresh-wallet shielded
+origination, physical identity ingress plus verified HTTPS association,
+production
 background synchronization, live identity trust/transport and DID writes,
 Passport Vault live/device evidence, and device resource budgets. The next
-bounded engineering slice is authenticated production discovery plus one
-real-node unshielded end-to-end fixture. Approved domains/association files,
+bounded engineering slice is one funded PreProd registration-to-recovery and
+fresh-wallet shielded spend (#92); checkpoint-safe journal compaction is #93.
+Approved domains/association files,
 release signing identities, physical devices, and funded live infrastructure
 are external evidence inputs and have no repository-only ETA.
 
@@ -991,7 +1030,7 @@ Current package ownership:
 | `crates/adapters/storage-identity-json` | Strict versioned persistence for validated profile-scoped public DID documents only. |
 | `crates/adapters/storage-credential-json` | Development-only authenticated encryption for bounded profile-scoped credential records, original signed bytes, detached proofs, and opaque format-private material. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256/Jubjub generation plus protected BIP32/secp256k1-Schnorr derivation, one-shot signing, and atomic fresh-nonce Jubjub challenge completion. |
-| `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
+| `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained transfer and protected-DUST registration drafts, version-two public eligibility checkpoints, standalone DUST/Zswap proving/submission completion, and domain-separated bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Standalone fixture and exact public Compact-issuer documents, explicit bounded native Midnight DID resolution, plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification, explicit standalone issuer/current-time/trust policy, holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/proving/verification, current managed Jubjub holder reauthorization, a single-proof foreground mobile worker, and public standalone fixtures. |
 | `crates/adapters/passport-vault` | Product-specific bounded in-memory plus owner-private atomic standalone repositories, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing authorization-bound settlement for create/deposit/claim/withdraw; managed-custody claim conformance is exercised through composition. |
@@ -1008,7 +1047,7 @@ Current package ownership:
 | `crates/brand-build` | Build-only closed-schema brand-pack validator, two-scheme contrast checker, safe-SVG/manifest gate, and `OUT_DIR` Rust/CSS/logo generator; never a runtime configuration or wallet capability crate. |
 | `brands` | Reviewed immutable presentation inputs only. Each real directory is one validated pack; no secrets, endpoints, trust, protocol, custody, confirmation, or application state. |
 | `crates/adapters/platform-system` | System clock, OS randomness, and typed public receive-address export implementations. |
-| `crates/ui-dioxus` | Brand-agnostic Dioxus incoming adapter, immutable `BrandProfile` presentation context, bounded mobile route stack, safe read-only Home projection, exact amount/consent presentation state, public receive-QR rendering, standalone Passport Vault UI, and truthfully labelled typed native vault-call review/authorization/submission/cancellation/reconciliation. |
+| `crates/ui-dioxus` | Brand-agnostic Dioxus incoming adapter, immutable `BrandProfile` presentation context, bounded mobile route stack, safe read-only Home projection, exact amount/consent presentation state, public receive-QR rendering, distinct protected-DUST registration review/authorization/submission/cancellation/reconciliation, standalone Passport Vault UI, and truthfully labelled typed native vault-call lifecycle. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
 | `apps/oxid` | Default-brand thin executable shell, literal `brands/oxid` build selection, and platform launch point. |
 | `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |
@@ -1182,6 +1221,17 @@ accept a key, path, seed, endpoint, or checkpoint. The deterministic simulator
 advances on status polls so tests can cover fresh, cancelled, resumed, and
 already-current flows without timing races. Native start returns before network
 or ledger work begins; incoming adapters must poll status and may cancel.
+
+Protected registration is a separate headless lifecycle:
+`wallet.dust.registration.prepare`, `authorize`, `submit`,
+`start_submission`, `draft`, `status`, `cancel_submission`, and
+`reconcile_submission`. Preparation exposes only the aggregate NIGHT amount,
+eligible-input count, maximum generated-DUST fee allowance, expiry, and opaque
+identifiers. Authorization and submission require separate exact confirmations.
+No command accepts or returns UTXOs, paths, seeds, DUST keys, signatures,
+witnesses, proofs, or transaction bytes. An included registration reports
+`requires_synchronization`; only the official DUST event stream can establish
+later spend readiness.
 
 The headless shielded surface mirrors that lifecycle at
 `wallet.shielded.sync.status`, `wallet.shielded.sync.start`, and
@@ -2064,8 +2114,9 @@ to silence the shell probe.
   freshness, and sanitized failures. The standalone simulator and native worker
   must borrow the role-3 child before starting and retain no secret material.
   Preserve native connect/ack/idle/total timeouts, WebSocket message/frame
-  bounds, linear cursor and non-regressing target checks, 256-event/4 MiB
-  replay batches, and one-million-event/512 MiB run limits.
+  bounds, strictly increasing sparse cursor and non-regressing target checks,
+  16,384-event/16 MiB complete/drop-before-fold receive segments,
+  256-event/4 MiB replay batches, and one-million-event/512 MiB run limits.
 - Transaction attempt status must remain separate from draft lifecycle. Retain
   cancellation primitives inside the Midnight adapter, mark broadcast before
   the node call, restore `Authorized` only after acknowledged pre-broadcast
@@ -2073,30 +2124,218 @@ to silence the shell probe.
 - Keep production secret storage behind platform-backed adapters. The in-memory
   adapter is development/test infrastructure and must never be presented as
   durable or secure storage.
-- ADR-0097's `standalone-tailnet` profile is compile-time-only,
-  mobile-development-only, and incompatible with native custody. Never commit a
-  personal tailnet IP, MagicDNS name, standalone password, or endpoint. Use
-  `just standalone-phone-up` to keep Docker services on loopback and expose the
-  indexer/node/prover through Oxid-owned TLS Tailscale Serve routes; use
-  `just standalone-down` to remove only the Serve configuration marked as
-  Oxid-owned. The public undeployed placeholder validates composition only and
-  must be replaced by profile-derived account binding before sync. Every
-  persistent live/standalone composition must attach the same
-  `JsonWalletProfileRepository` instance to the Midnight adapter; otherwise
-  schema-v3 public account coordinates disappear on restart. The exact
-  `indexer-standalone:4.0.0` image rejects the newer singular `fee` query field.
-  The prototype's
+- ADR-0097's `standalone-local` and `standalone-tailnet` profiles are
+  compile-time-only development composition and incompatible with native
+  custody or each other. Never commit a personal tailnet IP, MagicDNS name,
+  standalone password, or endpoint. Use `just standalone-phone-up` to keep
+  Docker services on loopback and expose the indexer/node/prover through
+  Oxid-owned TLS Tailscale Serve routes; use `just standalone-down` to remove
+  only the Serve configuration marked as Oxid-owned. The localhost profile
+  embeds only the reviewed `undeployed` routes
+  `ws://127.0.0.1:8088/api/v4/graphql/ws`,
+  `http://127.0.0.1:8088/api/v4/graphql`, `ws://127.0.0.1:9944`, and
+  `http://127.0.0.1:6300`. iOS Simulator reaches laptop loopback directly;
+  Android emulator must be verified as qemu and use exact `adb reverse`
+  mappings for 8088, 9944, and 6300. Never use `10.0.2.2`: plaintext proving
+  is allowed only to syntactic loopback under ADR-0027. Leave those exact
+  reverse mappings in place for the installed development app; never remove
+  unrelated mappings with `reverse --remove-all`. The prototype exposes its
+  localhost/Tailscale entries through a runtime network picker; Oxid's
+  compile-time split is intentional hardening, not copied behavior. The public
+  undeployed placeholder validates composition only and must be replaced by
+  profile-derived account binding before sync. Every persistent live/standalone
+  composition must attach the same `JsonWalletProfileRepository` instance to
+  the Midnight adapter; otherwise schema-v3 public account coordinates
+  disappear on restart. The exact `indexer-standalone:4.0.0` image rejects the
+  newer singular `fee` query field. The prototype's
   `mobile-bench/wallet-core/queries/midnight-indexer/unshielded_transactions.subscription.graphql`
   deliberately requests neither fee field; Oxid's richer transaction history
   therefore uses the image-compatible `fees { paidFees }` shape. Keep that
   compatibility choice unless a pinned image/schema upgrade is made atomically.
-  Development custody remains
-  process-local: after process death, retain the public association but report
-  uninitialized protection and withhold the former addresses. This private
-  tailnet harness is not verified public App Link or production-discovery
-  evidence. The prototype's separate localhost/Tailscale routes share one
-  undeployed chain identity; Oxid's missing localhost equivalent must be a
-  compile-time development profile, never runtime-selected production behavior.
+  Development custody remains process-local: after process death, retain the
+  public association but report uninitialized protection and withhold the
+  former addresses. This private harness is not verified public App Link or
+  production-discovery evidence. Both live profiles share one undeployed chain
+  identity, the same typed adapters, and the same durable public
+  profile/account binding; only transport differs. Deterministic
+  `standalone-development` remains a third, distinct simulator mode.
+  Local acceptance evidence from 2026-08-20 is reproducible with `just
+  ios-standalone-local-smoke` and `just android-standalone-local-smoke`, run
+  sequentially. The iOS flow passed on iPhone 17 Pro / iOS 26.4; the Android
+  flow passed from a stopped `sdk_gphone64_arm64` AVD on Android 15 / API 35.
+  Both require a newly derived account to report `Live`, synchronized
+  live-source state and both address rails while excluding the simulation
+  labels and balances. Android additionally verifies exact reverse mappings for
+  ports 8088, 9944, and 6300. Android WebView automation must wait for the
+  computed masked-value CSS invariant after `data-secret-mode=masked`; that
+  attribute can settle one render before the transparent text and four-dot
+  overlay. Emulator 34.2.16 can print a crash-report setup
+  notice to standard output before its `-list-avds` result, so AVD discovery
+  must accept only a returned name backed by an actual `.ini` file.
+- ADR-0098 production composition requires an
+  `oxid.deployment-profile.v1` canonical Ed25519 envelope that atomically binds
+  application audience, validity/sequence, Midnight network/genesis and all
+  Midnight/SSI routes. Trust roots and sequence floors must be reviewed
+  build-time inputs; environment variables are never production trust or route
+  authority. After signature verification, require the signed node's exact
+  genesis hash before composition. The default `compose()` remains fail-closed,
+  no production root/profile is currently selected, and issuer/verifier
+  protocol transports remain unavailable. The ignored funded standalone gate
+  is `just standalone-funded-finality`; it additionally requires
+  `OXID_ENABLE_LIVE_STANDALONE_FUNDING=1` and the out-of-band
+  `OXID_STANDALONE_FUNDER_SEED_HEX`. Never print, commit, persist, or place that
+  seed in an issue. It is zeroized after one development-root generation; every
+  recipient and later nonce uses OS randomness. The 2026-08-20 run proved exact
+  five-NIGHT authorization, DUST proof, node finality, public-journal restart
+  reconciliation, bounded recipient indexer convergence, and a stable second
+  read without duplicate delivery. Standalone readiness must compare indexer
+  and node heights because Docker health can become green during replay.
+  Midnight indexer v4 block timestamps are milliseconds and must be divided by
+  1,000 at the ledger boundary. DUST event IDs are sparse global cursors: accept
+  only strict forward movement and a nondecreasing advertised target, not
+  artificial contiguity. These facts match the immutable prototype baseline
+  `074b1a4bccbfee1740ee188374b606a022ecef42` and must remain focused tests.
+  The parallel ignored gate is `just standalone-funded-shielded-finality`. Its
+  2026-08-20 run proved a real 1,000,000-atomic native Zswap transfer from the
+  development genesis authority to a fresh protected recipient, exact consent,
+  DUST/Zswap proof, finalized inclusion, included-fingerprint duplicate
+  blocking, adapter reconstruction, idempotent included-status restoration,
+  nullifier replay, and stable exact balances. It does not prove unknown-
+  outcome chain rescanning. The v4 Zswap envelope typename is
+  `ZswapLedgerEvent`, and its event IDs are sparse monotonic global cursors.
+  Never call this a process/native-custody restart or fresh-wallet origination;
+  issue #92 owns the funded registration-to-generation/resynchronization and
+  stronger spend proof.
+  Until
+  issue #93 adds checkpoint-acknowledged compaction, a full 128-record journal
+  of included/unresolved barriers must fail unavailable before broadcast.
+- ADR-0100 implements protected DUST registration as a separate
+  `WalletDustRegistrationPort`, not a transfer mode or sync side effect. A
+  fresh wallet intentionally starts at zero DUST. Preparation requires a
+  current live account fold with authoritative `ctime` and
+  `registeredForDustGeneration == false`, rejects zero/duplicate inputs, puts
+  only the greatest generated-DUST candidate in the guaranteed offer, returns
+  every exact NIGHT amount to its owner, and caps the fee allowance to that
+  guaranteed candidate. Separate exact confirmations gate role-0 authorization
+  and submission; the role-2 DUST child stays inside custody. Registration and
+  transfer drafts/journal lookups are domain-separated. Inclusion means only
+  that the registration transaction finalized; spend readiness still requires
+  a fully caught-up official DUST event/checkpoint. Public account checkpoints
+  are schema version two; schema-one files are ignored and replay starts from
+  zero rather than fabricating eligibility.
+  The repository/headless/Dioxus lifecycle is implemented and covered by the
+  full Midnight adapter suite plus focused domain/application/UI/headless tests.
+  `just preprod-registration-funding-manifest` is the guarded no-network
+  foundation for live evidence. It additionally requires a clean worktree,
+  `OXID_ENABLE_LIVE_PREPROD_E2E=1`, exactly 64 hexadecimal characters in the
+  secret `OXID_PREPROD_MASTER_SEED_HEX`, and a canonical
+  `OXID_PREPROD_E2E_CASE_INDEX`. Never print or persist that root. The existing
+  hardened BIP44 account index supplies A=`2*caseIndex` and B=A+1 through two
+  separate test-only custody instances. Output is a closed public manifest of
+  exact commit/network/case/account/address indices, A/B NIGHT/shielded receive
+  addresses, positive-value requirements, exact eligible-output/note counts,
+  and the deterministic transfer policy;
+  it contains no DUST address/key, secret, digest, UTXO identifier, or
+  transaction material. Manifest V2 replaces historical V1's fixed amounts;
+  never reinterpret a V1 result as V2. Fund only A with one positive public
+  NIGHT output and one positive shielded NIGHT note. The external
+  service need not supply a predetermined amount: the live test binds the
+  exact observed balances before authorization, requires the one-output/
+  one-note topology, and asserts exact principal and transfer deltas. B begins
+  with no eligible public outputs or shielded notes. Select the A-to-B transfer
+  once as half the observed shielded balance rounded down, with a one-atomic
+  minimum, and freeze that amount through preview/authorization/finality. DUST
+  must not be externally funded. The scripts unset the exported root before
+  Cargo/build scripts run and pass it only to the compiled observer and
+  write-test processes. Case indices are single-use.
+  The live script first runs the no-write observer and requires positive A,
+  one eligible public output, one shielded note, empty B, zero initial DUST,
+  and a prepared registration whose exact principal matches the public
+  balance. It then recompiles and the write test revalidates those facts. Only
+  after that preflight succeeds does it atomically create the ignored
+  owner-only directory
+  `<git-common-dir>/oxid-state/preprod-registration-e2e/case-<index>.started`
+  before the write and refuses reuse across all worktrees in the local clone.
+  Never clear it merely to rerun an unknown outcome. Ephemeral CI must receive
+  a fresh funded case index for every write because the marker is not globally
+  durable. Owner-only checkpoints and the public journal remain below the
+  marker on failure for forensic/manual chain audit only: random profile IDs,
+  process-local development custody, and the fresh-directory guard mean the
+  current harness cannot resume them. Unknown outcomes require external chain
+  audit and case abandonment, not retry. A complete successful run removes only
+  that retained state and leaves the single-use marker; an explicit
+  non-submitting recovery mode remains future work.
+  A static test-only `oxid.deployment-profile.v1` envelope and public Ed25519
+  root bind the exact PreProd v4 indexer paths, node/proof routes, network, and
+  genesis
+  `df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b`.
+  The disposable signing key was generated in memory and discarded. Mandatory
+  SSI fields use `.invalid` hosts and are never composed: this is Midnight-only
+  test authority, not a production or SSI deployment. The ignored write enters
+  the unchanged signature and live node-genesis gate. Its public proving route
+  additionally requires
+  `OXID_ACKNOWLEDGE_PREPROD_PUBLIC_PROVER_PRIVACY=1`, because TLS does not hide
+  proof preimages or timing from the prover operator; never call it production
+  privacy evidence or splice in an unsigned local route.
+  `just preprod-registration-observe` is a clean-commit-bound, no-write
+  preflight. It composes no checkpoint or journal paths. Readiness preparation
+  retains one unsigned process-local draft which is discarded at test exit;
+  there is no authorization, proof, persistence, broadcast, chain write, state
+  directory, single-use marker, or prover contact. It emits only a closed set
+  of public aggregate account/shielded/DUST/readiness fields. Cold PreProd DUST
+  replay has a test-only 15-minute bound; ordinary standalone
+  synchronization retains its 120-second bound. On 2026-08-20, early attempts
+  exceeded the old DUST or shielded stage bounds before public output. A plain
+  debug run on signed `26505c81bde1a7c5e4bc13e559232cf0ebf8d97a`
+  proved DUST transport segmentation stayed `syncing` with no failure and
+  reached cursor 227,235 of target 1,445,979 after 218,252 events, but exceeded
+  the observer's 900-second DUST wait. It used the unavailable checkpoint store,
+  so no checkpoint was serialized or persisted. The focused 16,385-event DUST
+  regression took 9.41 seconds in debug and 0.35 seconds in the optimized
+  `preprod-live` profile introduced by signed
+  `2763125bb71a445f608bc6a8a8f98cf51c49495a`. That commit's first optimized
+  live attempt then exceeded the shielded stage's 90-second wait because Zswap
+  still folded inline under an open subscription. Signed
+  `a490dc0f754b9a3f89483c875dc68a77ea7f29d5` closes the analogous shielded
+  backpressure gap. A clean optimized observer on signed
+  `fba4ad429fc59e73e9baba7d1af9bea4c9b37dea` passed shielded sync and reached
+  DUST cursor 553,478 of target 1,446,220 after 541,357 events at the 900-second
+  wait, still `syncing` with no failure. Its ~602 events/second is 2.5 times the
+  debug rate; applying the observed 97.81% cursor density estimates roughly
+  1.415 million events and 39 minutes. Treat that as inference, not an exact
+  count. It suggests the one-million-event/30-minute caps need an explicit
+  measured review; raw bytes against the 512 MiB cap remain unknown and no cap
+  has been raised. Issue #115 owns a guarded capacity harness: first preserve
+  an offline corpus of at least 131,072 official-shaped events, then perform
+  two profile-backed optimization iterations before repeating the read-only
+  PreProd observation. Keep its aggregate report closed and public-safe. Never
+  raise an event, byte, or time cap from a partial-prefix extrapolation.
+  Issue #116 separately owns an ADR-first, birthday-gated replay-reference
+  design inspired by Moth Wallet's "pre-seed reference" pattern. Its immutable
+  research baseline is Moth commit
+  `f17a8bd9ff57fe58854c86e2a61f92cb20e8eb14`; Moth calls the cacheless
+  genesis benchmark a genuine cold start, while the fast fresh-wallet path
+  starts from a reviewed reference and then catches up live. Oxid must define
+  its own authenticated, bounded Rust artifact and chain-derived account
+  birthday. Imported, restored, legacy, or unknown-birthday wallets must keep
+  full replay, and upstream authenticated sparse synchronization may supersede
+  the proposal. Do not copy Moth's JavaScript, JSON/key-swapping state format,
+  NPM dependencies, generated caches, or pre-seed artifacts.
+  All attempts failed before public output and created no
+  write marker, checkpoint/journal file, proof, transaction, prover contact,
+  or chain write. Do not treat these transport observations as a funding
+  mismatch or retry a write because of them.
+  `just preprod-registration-e2e` is implemented but remains unrun. The
+  out-of-band root/case are configured and case 0 has been externally funded,
+  but the exact indexed topology still needs a successful read-only
+  observation and the public-prover privacy tradeoff still needs explicit user
+  acknowledgement. The write must prove zero initial DUST, registration finality,
+  later generated-DUST observation, application-level adapter reconstruction
+  plus authoritative resynchronization/duplicate suppression, and the exact
+  A-to-B shielded spend. A positive DUST observation is not a fee quote: only
+  exact pre-broadcast `InsufficientDust` may trigger a bounded wait and
+  resubmission of the same authorized draft. It does not traverse the
+  NDJSON headless adapter and does not prove a process/native-custody restart.
 - Physical Android identity-ingress evidence must use
   `scripts/test-android-identity-ingress-physical.sh`. It refuses virtual
   devices and a concurrently booted iOS simulator, never clears application
@@ -2110,6 +2349,20 @@ to silence the shell probe.
   raw private keys to application or UI layers.
 - Record every significant dependency using the review template in the
   blueprint before an adapter becomes production-facing.
+- On 2026-08-20 the crates.io owner yanked `arrayref` 0.3.5 through 0.3.9 and
+  published 0.3.10, while the canonical repository still ended at reviewed
+  commit `f8d0299d863922db6c409d08098941e833b70d69`/version 0.3.9. The registry
+  0.3.10 manifest adds `proc-macro1 1.0.107`, which is absent from that
+  canonical commit. Do not resolve or compile that unreviewed publication.
+  The canonical Git repository then became unavailable after the first signed
+  pin reached `develop`. The already-published 0.3.9 crate archive was compared
+  with that reviewed checkout: all authored source, manifest, examples, README,
+  license, and CI files match; only Cargo publication metadata/normalization is
+  added. Oxid therefore uses the checksum-locked 0.3.9 registry archive
+  (`76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb`)
+  without an unavailable Git fetch. `scripts/check-arrayref-source.sh` enforces
+  the version, source, checksum, and absence of `proc-macro1`. Change this pin
+  only after independent review and a signed, green dependency-source change.
 - Report vulnerabilities through GitHub private vulnerability reporting, not a
   public issue.
 
