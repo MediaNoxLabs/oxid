@@ -29,3 +29,28 @@ Current reviews and source policies:
 - [Midnight local proving](midnight-local-proving.md)
 - [Midnight Compact Digital Passport presentation](midnight-compact-presentation.md)
 - [Midnight DID resolution](midnight-did-resolution.md)
+
+## Automated dependency pull requests
+
+Two bots operate on this repository with deliberately separate jobs:
+
+- **Renovate** (`renovate.json`) owns routine version bumps. It understands
+  the exact `=x.y.z` pinning convention, batches related crates into grouped
+  pull requests, and observes a seven-day cooling window before proposing a
+  release.
+- **Dependabot** owns security updates only. It reacts to advisories against
+  the committed lockfile, so it can propose a bump before Renovate's cooling
+  window would.
+
+Overlapping proposals for the same crate are therefore expected, not
+duplication: prefer the Renovate pull request unless the Dependabot one is
+addressing an advisory, in which case take the security bump first.
+
+Neither bot can satisfy this repository's contribution gates — they cannot add
+a DCO `Signed-off-by` trailer to generated commits, nor author a title and body
+matching the conventional-commit scopes and pull-request template. The DCO and
+pull-request validation workflows therefore skip pull requests authored by
+`dependabot[bot]` and `renovate[bot]`. Every other gate (CI, Quality, Scan) runs
+unchanged: the checks that verify the *change* still apply in full, and only the
+checks that verify *authorship formalities* are skipped.
+
