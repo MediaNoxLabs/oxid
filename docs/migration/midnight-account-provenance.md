@@ -279,7 +279,12 @@ intents through either private local proving or an explicit development proof
 server. Explicit complete-standalone mode may persist key-scoped DUST state.
 Either explicit live mode may persist key-scoped official Zswap state and
 expose only bounded shielded balance/note projections. Protected development
-accounts expose a canonical shielded receive address, but no mode yet supports
-shielded spending or production custody. Development composition now persists
-only public submission recovery metadata; protected roots and signed drafts
-remain process-local.
+accounts expose a canonical shielded receive address and the typed transfer
+boundary supports fresh-sync-gated shielded spending. ADR-0098/#91 proves one
+genesis-authority spend against the real standalone stack, including finalized
+inclusion, adapter reconstruction, included-status restoration, and nullifier
+replay; the funded test does not exercise unknown-outcome chain rescanning and
+it does not prove process/native-custody restart or a fresh recipient's ability
+to pay DUST. Development composition persists owner-private DUST/Zswap
+checkpoints plus public submission recovery metadata; protected roots and
+signed drafts remain process-local. Production custody remains unavailable.

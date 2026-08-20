@@ -328,7 +328,7 @@ fn spawn_shielded_indexer_fixture() -> (String, thread::JoinHandle<()>) {
         runtime.block_on(async move {
             let listener =
                 tokio::net::TcpListener::from_std(listener).expect("listener should convert");
-            for expected_start in [0, 1] {
+            for expected_start in [0, 3] {
                 let (stream, _) = listener
                     .accept()
                     .await
@@ -388,9 +388,9 @@ fn spawn_shielded_indexer_fixture() -> (String, thread::JoinHandle<()>) {
                                 "payload": {
                                     "data": {
                                         "zswapLedgerEvents": {
-                                            "__typename": "ZswapOutput",
-                                            "id": 0,
-                                            "maxId": 0,
+                                            "__typename": "ZswapLedgerEvent",
+                                            "id": 2,
+                                            "maxId": 2,
                                             "raw": FOREIGN_ZSWAP_OUTPUT
                                         }
                                     }
@@ -1560,8 +1560,8 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
     let rebuilt = wait_for_shielded_sync(&mut process, "shielded-live-rebuild");
     let rebuilt = &rebuilt["result"]["shieldedSync"];
     assert_eq!(rebuilt["state"], "synced");
-    assert_eq!(rebuilt["currentCursor"], 0);
-    assert_eq!(rebuilt["targetCursor"], 0);
+    assert_eq!(rebuilt["currentCursor"], 2);
+    assert_eq!(rebuilt["targetCursor"], 2);
     assert_eq!(rebuilt["eventsProcessed"], 1);
     assert_eq!(rebuilt["ownedNoteCount"], 0);
     assert_eq!(rebuilt["commitmentCount"], 1);
@@ -1585,8 +1585,8 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
     let refreshed = wait_for_shielded_sync(&mut process, "shielded-live-current");
     let refreshed = &refreshed["result"]["shieldedSync"];
     assert_eq!(refreshed["state"], "synced");
-    assert_eq!(refreshed["currentCursor"], 0);
-    assert_eq!(refreshed["targetCursor"], 0);
+    assert_eq!(refreshed["currentCursor"], 2);
+    assert_eq!(refreshed["targetCursor"], 2);
     assert_eq!(refreshed["eventsProcessed"], 0);
     assert_eq!(refreshed["ownedNoteCount"], 0);
     assert_eq!(refreshed["commitmentCount"], 1);

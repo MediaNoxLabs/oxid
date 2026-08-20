@@ -9,16 +9,17 @@ types, tests, build gates, and packaged-host evidence count; issue checkboxes,
 labels, fixture copy, or source volume do not.
 
 The original estimate was roughly **95% of useful prototype behavior
-implemented**. After the 2026-08-20 ADR-0098 evidence, the estimate is roughly
-**97%**. Oxid intentionally adds stricter recovery, custody, consent, SSI,
+implemented**. After the 2026-08-20 ADR-0098/#91 evidence, the estimate remains
+roughly **97%** because the prototype itself never wired a real shielded spend.
+Oxid intentionally adds stricter recovery, custody, consent, SSI,
 reproducibility, and headless requirements, so current progress against the
-stated 110% target is approximately **103/110 (94%)**. Production-release
-evidence is lower, approximately **77%**. Physical Android QR/custom-scheme and
+stated 110% target is approximately **104/110 (95%)**. Production-release
+evidence is lower, approximately **78%**. Physical Android QR/custom-scheme and
 tailnet account-sync evidence is real rather than fixture-derived, and guarded
-headless standalone unshielded finality is now funded and proven. Physical
-iOS, verified HTTPS associations, device resource budgets, funded
-mobile/native-custody transactions, and a provisioned production deployment
-remain unproven.
+headless standalone unshielded plus genesis-authority shielded finality are now
+funded and proven. Physical iOS, verified HTTPS associations, device resource
+budgets, fresh-wallet DUST registration, funded mobile/native-custody
+transactions, and a provisioned production deployment remain unproven.
 
 ## Capability matrix
 
@@ -28,8 +29,8 @@ remain unproven.
 | Portable complete recovery | Implemented; device evidence partial | `crates/wallet/application/src/backup.rs`, `crates/adapters/backup-portable`, `crates/adapters/storage-mobile`, ADR-0074–0078, mobile backup tests | Physical-device interruption, picker, storage-pressure, and resource evidence (#33) |
 | Native custody and protected derivation | Implemented; release evidence partial | `crates/adapters/storage-mobile`, `crates/adapters/mobile-native-plugin`, ADR-0071, native custody mobile tests | Physical Keychain/Keystore/user-presence and resource evidence (#30/#33) |
 | Public accounts, receive, sync, and checkpoints | Implemented; physical tailnet and local simulator sync proven | `crates/adapters/midnight/src/indexer.rs`, `crates/adapters/midnight/src/checkpoint.rs`, `crates/adapters/midnight/src/dust_sync.rs`, `crates/adapters/midnight/src/shielded_sync.rs`, shared durable profile association repository, physical Android and focused iOS/Android localhost `live-account` flows | Production background/session policy, provisioned signed deployment, and funded native-custody mobile account |
-| Unshielded transfer lifecycle | Implemented; funded headless standalone E2E proven | `crates/wallet/application/src/transaction.rs`, `crates/adapters/midnight/src/transaction.rs`, `crates/adapters/midnight/src/submission.rs`, `crates/composition/src/standalone_funding_tests.rs`; exact prepare→authorize→DUST prove→submit→finalize→restart/reconcile→stable recipient balance | Funded native-custody mobile journey and real production deployment evidence |
-| Shielded sync and spending | Implemented in standalone; production partial | `crates/adapters/midnight/src/shielded_sync.rs`, `crates/adapters/midnight/src/shielded_transport.rs`, `crates/adapters/midnight/src/transaction.rs`, ADR-0079 | Funded real shielded spend plus physical proof budgets (#59/#30) |
+| Unshielded transfer lifecycle | Implemented; funded headless standalone E2E proven | `crates/wallet/application/src/transaction.rs`, `crates/adapters/midnight/src/transaction.rs`, `crates/adapters/midnight/src/submission.rs`, `crates/composition/src/standalone_funding_tests.rs`; exact prepare→authorize→DUST prove→submit→finalize→adapter reconstruction with included-status restoration→stable recipient balance | Funded native-custody mobile journey and real production deployment evidence |
+| Shielded sync and spending | Implemented; funded headless standalone E2E proven | `crates/adapters/midnight/src/shielded_sync.rs`, `crates/adapters/midnight/src/shielded_transport.rs`, `crates/adapters/midnight/src/transaction.rs`, `crates/composition/src/standalone_funding_tests.rs`, ADR-0079/#91 | Typed DUST registration and fresh-wallet origination (#92), funded mobile/native custody, checkpoint-aware journal compaction (#93), and physical proof budgets (#30) |
 | DID inventory/lifecycle | Implemented standalone; live writes missing | `crates/identity/domain`, `crates/identity/application`, `crates/adapters/did-midnight`, headless DID methods and Dioxus management | Authenticated discovery and live Compact writes |
 | Credential storage and verification | Implemented standalone; production trust/status partial | `crates/credential/domain`, `crates/credential/application`, `crates/adapters/storage-credential-json`, `crates/adapters/vc-midnight` | Production issuer trust, status/revocation, and live transport |
 | OpenID4VCI, SIOPv2, and OpenID4VP consent | Implemented standalone | `crates/protocol`, `crates/presentation`, `crates/adapters/openid4vci`, `crates/adapters/openid4vp`, `crates/adapters/siopv2` | Authenticated production discovery/transport and response delivery |
@@ -55,7 +56,8 @@ dependencies. These are security improvements, not parity gaps.
    independent SSI protocol transports on approved infrastructure. ADR-0098
    supplies signature/rollback/TLS and node-genesis composition gates but does
    not invent a deployment.
-3. Prove a funded real shielded spend and physical Compact budgets (#59/#30).
+3. Implement protected DUST registration and prove a fresh-wallet shielded
+   origination, then a funded mobile/native-custody journey (#92/#30).
 4. Validate physical iOS QR/permission behavior and reviewed universal/app
    links using an approved HTTPS domain, AASA, associated-domain entitlement,
    `assetlinks.json`, and release identities (#32). Android physical
@@ -68,14 +70,19 @@ dependencies. These are security improvements, not parity gaps.
 The compile-time localhost standalone profile shares the tailnet profile's
 exact undeployed chain identity while differing only in loopback transport.
 ADR-0098 implements the authenticated production profile/genesis boundary
-without provisioning a root or deployment and completes the funded real-node
-unshielded headless fixture. The next bounded engineering slice is **one funded
-real shielded spend with restart/nullifier safety**, followed by physical proof
-budgets. Engineering-only work is approximately four to seven bounded waves;
-this is a scope estimate, not a calendar promise. External evidence has no
-honest ETA until approved domains, association files, release signing
-identities, physical devices, funded production accounts, and live deployments
-are available.
+without provisioning a root or deployment and completes funded real-node
+unshielded plus genesis-authority shielded headless fixtures. The shielded run
+also corrected the indexer v4 `ZswapLedgerEvent` envelope and sparse global
+cursor contract, and proved included-fingerprint blocking, included-status
+restoration after adapter reconstruction, and nullifier/balance safety. The
+funded run did not exercise unknown-outcome chain rescanning. The next bounded
+engineering slice is **typed DUST
+registration followed by one fresh-wallet shielded spend** (#92); safe
+checkpoint-acknowledged journal compaction is isolated in #93. Engineering-only
+work is approximately three to six bounded waves; this is a scope estimate,
+not a calendar promise. External evidence has no honest ETA until approved
+domains, association files, release signing identities, physical devices,
+funded production accounts, and live deployments are available.
 
 ## Completion tests
 

@@ -35,7 +35,7 @@ const MAX_REPLAY_BATCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_EVENTS: usize = 1_000_000;
 const MAX_TOTAL_BYTES: usize = 512 * 1024 * 1024;
 const SUBSCRIPTION_ID: &str = "oxid-shielded";
-const PROTOCOL_IDENTITY: &[u8] = b"graphql-transport-ws\0oxid-shielded-v1\0";
+const PROTOCOL_IDENTITY: &[u8] = b"graphql-transport-ws\0oxid-shielded-v2\0";
 
 #[derive(Clone)]
 pub(crate) struct ShieldedSyncProgress {
@@ -187,12 +187,14 @@ pub(crate) async fn synchronize_shielded_with_control(
                                 .ok_or(ShieldedTransportError::InvalidData)?;
                             let decoded = decode_zswap_event(data)
                                 .map_err(|_| ShieldedTransportError::InvalidData)?;
-                            let expected_cursor = last_cursor.map_or(Ok(0), |cursor| {
-                                cursor
-                                    .checked_add(1)
-                                    .ok_or(ShieldedTransportError::InvalidData)
-                            })?;
-                            if decoded.cursor != expected_cursor
+                            let sequence_valid = match last_cursor {
+                                // Zswap IDs are sparse global indexer cursors:
+                                // unrelated ledger activity can create gaps.
+                                // They must still move strictly forward.
+                                Some(last) => decoded.cursor > last,
+                                None => true,
+                            };
+                            if !sequence_valid
                                 || decoded.cursor > decoded.target_cursor
                                 || target_cursor
                                     .is_some_and(|target| decoded.target_cursor < target)
@@ -494,7 +496,7 @@ mod tests {
             "payload": {
                 "data": {
                     "zswapLedgerEvents": {
-                        "__typename": "ZswapOutput",
+                        "__typename": "ZswapLedgerEvent",
                         "id": id,
                         "maxId": max_id,
                         "raw": format!("0x{}", hex::encode(raw))
@@ -585,13 +587,13 @@ mod tests {
     }
 
     #[test]
-    fn bounded_transport_negotiates_replays_and_observes_consistent_batches() {
+    fn bounded_transport_accepts_sparse_cursors_and_observes_consistent_batches() {
         let keys = SecretKeys::from(Seed::from([7; 32]));
         let (endpoint, server) = server(
             0,
             vec![
-                event_value(&output(&keys, 5, 0), 0, 1),
-                event_value(&output(&keys, 7, 1), 1, 1),
+                event_value(&output(&keys, 5, 0), 2, 9),
+                event_value(&output(&keys, 7, 1), 9, 9),
             ],
         );
         let cancellation = AtomicBool::new(false);
@@ -615,14 +617,55 @@ mod tests {
         server.join().expect("server exits");
         assert_eq!(
             (synchronized.current_cursor, synchronized.target_cursor),
-            (1, 1)
+            (9, 9)
         );
         assert_eq!(synchronized.events_processed, 2);
-        assert_eq!(observed, vec![(1, 1)]);
+        assert_eq!(observed, vec![(9, 9)]);
         let projection = project_zswap_state(&synchronized.state).expect("state projects");
         assert_eq!(projection.owned_note_count, 2);
         assert_eq!(projection.commitment_count, 2);
         assert_eq!(projection.balances[0].atomic_units, 12);
+    }
+
+    #[test]
+    fn bounded_transport_rejects_duplicate_backward_regressing_and_incomplete_cursors() {
+        let keys = SecretKeys::from(Seed::from([13; 32]));
+        let cases = [
+            vec![
+                event_value(&output(&keys, 5, 0), 2, 9),
+                event_value(&output(&keys, 7, 1), 2, 9),
+            ],
+            vec![
+                event_value(&output(&keys, 5, 0), 3, 9),
+                event_value(&output(&keys, 7, 1), 2, 9),
+            ],
+            vec![
+                event_value(&output(&keys, 5, 0), 2, 9),
+                event_value(&output(&keys, 7, 1), 3, 8),
+            ],
+            vec![event_value(&output(&keys, 5, 0), 2, 9)],
+        ];
+        for events in cases {
+            let (endpoint, server) = server(0, events);
+            let cancellation = AtomicBool::new(false);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime builds");
+            assert_eq!(
+                runtime
+                    .block_on(synchronize_shielded_with_control(
+                        &endpoint,
+                        &keys,
+                        None,
+                        &cancellation,
+                        &mut |_| Ok(()),
+                    ))
+                    .err(),
+                Some(ShieldedTransportError::InvalidData)
+            );
+            server.join().expect("invalid fixture exits");
+        }
     }
 
     #[test]
@@ -691,6 +734,16 @@ mod tests {
         assert_ne!(
             source_fingerprint("ws://127.0.0.1:1"),
             source_fingerprint("ws://127.0.0.1:2")
+        );
+        let mut legacy = Sha256::new();
+        legacy.update(b"graphql-transport-ws\0oxid-shielded-v1\0");
+        legacy.update(b"ws://127.0.0.1:1");
+        legacy.update([0]);
+        legacy.update(ZSWAP_LEDGER_EVENTS_QUERY.as_bytes());
+        assert_ne!(
+            source_fingerprint("ws://127.0.0.1:1"),
+            <[u8; 32]>::from(legacy.finalize()),
+            "v1 checkpoints must replay under the corrected envelope and cursor contract"
         );
         let cancellation = AtomicBool::new(true);
         let keys = SecretKeys::from(Seed::from([9; 32]));

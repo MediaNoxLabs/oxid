@@ -5,9 +5,9 @@
 - Blueprint source: Sections 3–8, 12–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/tx/balance.rs`, `tx/prove.rs`, and the shielded wallet state
 - Canonical source: `midnight-ledger` commit `d9414884db9da9e9b1f6f3a7f742d79a5732f817`
-- Tracking: issues #2 and #59
+- Tracking: issues #2, #59, #91, and #93
 - Amends: ADR-0026 through ADR-0029, ADR-0033 through ADR-0035, and ADR-0077
-- Implementation state: canonical Zswap planning, exact safe previews, fresh-sync admission, shared authorization/submission recovery, combined DUST/Zswap proving resolver, headless lifecycle, deterministic standalone flow, and Dioxus privacy selection implemented; production mobile custody and physical-device proving remain governed by their existing release gates
+- Implementation state: canonical Zswap planning, exact safe previews, fresh-sync admission, shared authorization/submission recovery, combined DUST/Zswap proving resolver, headless lifecycle, deterministic standalone flow, Dioxus privacy selection, and guarded funded standalone finality/adapter-reconstruction/nullifier evidence implemented; fresh-wallet DUST registration, production mobile custody, and physical-device proving remain governed by their existing gates
 
 ## Context
 
@@ -69,7 +69,21 @@ The existing journal retains only a domain-separated one-way fingerprint of
 the synchronized owned-note state, never raw nullifiers or coins. A
 `broadcasting`, `outcome_unknown`, or `included` record blocks every new plan
 from that unchanged private state until a fresh replay advances it; rejected or
-expired records do not.
+expired records do not. Fingerprint lookup must select an included barrier over
+an unresolved barrier, and either barrier over rejected/expired attempts,
+regardless of record order or timestamp. At bounded capacity, the journal may
+evict only rejected or expired attempts. If all 128 records remain duplicate-
+submission barriers, a new attempt fails unavailable before broadcast rather
+than silently discarding replay protection. Checkpoint-acknowledged safe
+compaction is deferred to issue #93.
+
+The live indexer v4 `zswapLedgerEvents` envelope reports the GraphQL object
+typename `ZswapLedgerEvent`; the input/output variant exists only inside the
+tagged official ledger event. Decode that exact envelope typename, then accept
+only deserialized `ZswapInput` or `ZswapOutput` details. Its event IDs are
+sparse global cursors, so transport accepts gaps while requiring strict forward
+movement, a non-regressing advertised target, and exact equality with the
+target before publishing `synced`.
 
 Authorization promotes only that retained transaction after the existing
 bounded human-readable confirmation. Shielded inputs do not use an unshielded
@@ -100,6 +114,36 @@ fail-closed unless approved custody, live endpoints, checkpoints, and proving
 configuration are supplied. This decision does not waive physical-device
 latency, peak-memory, lifecycle, thermal, or custody release gates.
 
+A separate ignored acceptance test may receive the reviewed public standalone
+genesis root only through ADR-0098's double opt-in, one-shot zeroizing random
+adapter. It synchronizes that protected authority's public account and real
+native Zswap notes, sends one exact shielded amount to a fresh OS-random
+protected recipient, proves finalized inclusion, rejects an unchanged-state
+duplicate, reconstructs the adapter from the owner-private checkpoint and
+public journal, returns the restored included status idempotently through the
+reconciliation use case, and proves exact sender/recipient balances after
+nullifier replay. Because the stored attempt is already included, this run does
+not exercise unknown-outcome chain rescanning. It is adapter reconstruction
+with reused in-process development custody, not process restart or native-
+custody recovery evidence.
+The recipient cannot yet originate a second transaction because Oxid does not
+implement typed DUST registration; issue #92 owns that prerequisite and the
+stronger fresh-wallet spend proof.
+
+## Validation
+
+```bash
+nix develop -c cargo test -p oxid-adapter-midnight shielded
+nix develop -c cargo test -p oxid-adapter-midnight submission_journal::tests
+OXID_ENABLE_LIVE_STANDALONE_FUNDING=1 \
+  OXID_STANDALONE_FUNDER_SEED_HEX=<operator-supplied-development-seed> \
+  nix develop -c just standalone-funded-shielded-finality
+```
+
+The guarded funded command passed against the repository-owned standalone
+node, indexer v4, and proof server on 2026-08-20. No seed, note, nullifier,
+witness, checkpoint, or transaction material is repository or issue evidence.
+
 ## Consequences
 
 - Shielded receive, replay, and spending now share one key/network/source
@@ -116,6 +160,9 @@ latency, peak-memory, lifecycle, thermal, or custody release gates.
 - Prepared shielded witness material is process-local and expires with its
   draft. Durable recovery begins only at the existing public pre-broadcast
   journal boundary; a lost prepared draft must be rebuilt after a fresh sync.
+- Correctness currently takes priority over indefinite journal availability:
+  128 retained included/unresolved barriers refuse a new broadcast until issue
+  #93 proves checkpoint-aware compaction.
 
 ## Rejected alternatives
 

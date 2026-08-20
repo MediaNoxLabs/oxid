@@ -74,7 +74,7 @@ pub(crate) fn decode_zswap_event(data: &Value) -> Result<DecodedZswapEvent, Shie
         .get("__typename")
         .and_then(Value::as_str)
         .ok_or(ShieldedReplayError::InvalidEnvelope)?;
-    if !matches!(typename, "ZswapInput" | "ZswapOutput") {
+    if typename != "ZswapLedgerEvent" {
         return Err(ShieldedReplayError::InvalidEnvelope);
     }
     let raw = object
@@ -88,12 +88,10 @@ pub(crate) fn decode_zswap_event(data: &Value) -> Result<DecodedZswapEvent, Shie
     let bytes = hex::decode(raw).map_err(|_| ShieldedReplayError::InvalidEvent)?;
     let event: Event<DefaultDB> = midnight_serialize::tagged_deserialize(&bytes[..])
         .map_err(|_| ShieldedReplayError::InvalidEvent)?;
-    let matches_typename = matches!(
-        (typename, &event.content),
-        ("ZswapInput", EventDetails::ZswapInput { .. })
-            | ("ZswapOutput", EventDetails::ZswapOutput { .. })
-    );
-    if !matches_typename {
+    if !matches!(
+        &event.content,
+        EventDetails::ZswapInput { .. } | EventDetails::ZswapOutput { .. }
+    ) {
         return Err(ShieldedReplayError::InvalidEvent);
     }
     Ok(DecodedZswapEvent {
@@ -254,7 +252,7 @@ mod tests {
             .expect("official event serializes");
         let decoded = decode_zswap_event(&json!({
             "zswapLedgerEvents": {
-                "__typename": "ZswapOutput",
+                "__typename": "ZswapLedgerEvent",
                 "id": 4,
                 "maxId": 9,
                 "raw": format!("0x{}", hex::encode(&bytes))
@@ -271,7 +269,20 @@ mod tests {
         assert_eq!(
             decode_zswap_event(&json!({
                 "zswapLedgerEvents": {
-                    "__typename": "ZswapInput",
+                    "__typename": "ZswapOutput",
+                    "id": 4,
+                    "maxId": 9,
+                    "raw": format!("0x{}", hex::encode(&bytes))
+                }
+            }))
+            .err(),
+            Some(ShieldedReplayError::InvalidEnvelope)
+        );
+
+        assert_eq!(
+            decode_zswap_event(&json!({
+                "zswapLedgerEvents": {
+                    "__typename": "ZswapLedgerEvent",
                     "id": 4,
                     "maxId": 3,
                     "raw": "00"

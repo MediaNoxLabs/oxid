@@ -433,6 +433,26 @@ one whole NIGHT because its simulator keyboard drops the decimal separator.
 Cached, syncing, cancelled, or stalled shielded state must never fund a draft.
 Production still requires native custody and the explicit live stack;
 simulation must remain labelled and must never imply live inclusion.
+Issue #91 adds the first funded live shielded proof, intentionally beyond the
+prototype's unwired shielded helpers. The indexer v4 envelope's exact GraphQL
+typename is `ZswapLedgerEvent`; deserialize its tagged payload and accept only
+`ZswapInput`/`ZswapOutput` details. Zswap IDs, like DUST IDs, are sparse global
+cursors: allow gaps but require strict forward movement, non-regressing
+targets, and exact current/target equality before `synced`.
+`just standalone-funded-shielded-finality` uses ADR-0098's funding opt-in and
+out-of-band development seed. It synchronizes the genesis authority's public
+account and native Zswap allocation, spends exactly 1,000,000 atomic units to
+a fresh OS-random protected recipient, proves finality, blocks the unchanged-
+state fingerprint, reconstructs the adapter from the private checkpoint/public
+journal, restores the already-included status idempotently through the
+reconciliation use case, and proves exact balances after nullifier replay. It
+does not exercise unknown-outcome chain rescanning. This reuses in-process
+development custody and is not process/native-custody restart evidence.
+Fresh-wallet origination remains issue #92 because
+no typed DUST registration exists. Fingerprint lookup must prefer included over
+unresolved over failed attempts. Capacity may evict only rejected/expired
+records; 128 included/unresolved barriers fail unavailable before broadcast
+until issue #93 proves checkpoint-acknowledged compaction.
 
 [Issue #19](https://github.com/MediaNoxLabs/oxid/issues/19) and ADR-0034 expose
 transaction submission status and deliberate pre-broadcast cancellation. The
@@ -449,8 +469,9 @@ The Midnight adapter must save the public fee, extrinsic hash, finalized
 pre-broadcast anchor, expiry/update time, profile/network/draft scope, one-way
 planning fingerprint, mode, and state before calling the node. Store no signed
 or sealed transaction, proof, witness, secret, key, route, or authorization
-payload. The v1 JSON journal is capped at 128 records/256 KiB, rejects symlinks
-and permissive files, and uses owner-only atomic replacement. Development
+payload. The v2 JSON journal is capped at 128 records/256 KiB, rejects symlinks
+and permissive files, and uses owner-only atomic replacement. It reads legacy
+v1 records without finalized block heights. Development
 mobile composition derives its private journal path beside the resolved profile
 store; headless can override it with the normalized absolute
 `OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH`. Restored `Broadcasting` and
@@ -755,19 +776,19 @@ resolved to that exact commit. The separate remote `mobile-prototype` ref
 resolved to `255f2caf8c728c203f554d6bc853d1f3b7e8bc15`; do not treat its older name
 as a successor without a fresh provenance review.
 
-The 2026-08-19 read-only parity audit compares that immutable baseline with
-Oxid repository evidence in
-`docs/migration/live-parity-audit-2026-08-19.md`. It estimates roughly 95% of
-useful prototype behavior implemented, or 100/110 (91%) of the deliberately
-harder migration target, while production-release evidence is about 74%.
+The 2026-08-19 read-only parity audit, refreshed with 2026-08-20 funded
+evidence, compares that immutable baseline with Oxid repository evidence in
+`docs/migration/live-parity-audit-2026-08-19.md`. Current evidence is roughly
+97% of useful prototype behavior, or 104/110 (95%) of the deliberately harder
+migration target, while production-release evidence is about 78%.
 These are evidence classifications, not source-line counts. The dependency-
-ordered gaps are physical custody/recovery evidence, authenticated production
-discovery/composition, real-node unshielded completion, real shielded spending,
+ordered gaps are physical custody/recovery evidence, a provisioned production
+deployment, typed DUST registration/fresh-wallet shielded origination,
 physical identity ingress plus verified HTTPS association, production
 background synchronization, live identity trust/transport and DID writes,
 Passport Vault live/device evidence, and device resource budgets. The next
-bounded engineering slice is authenticated production discovery plus one
-real-node unshielded end-to-end fixture. Approved domains/association files,
+bounded engineering slice is typed DUST registration plus one fresh-wallet
+shielded spend (#92); checkpoint-safe journal compaction is #93. Approved domains/association files,
 release signing identities, physical devices, and funded live infrastructure
 are external evidence inputs and have no repository-only ETA.
 
@@ -2144,6 +2165,18 @@ to silence the shell probe.
   only strict forward movement and a nondecreasing advertised target, not
   artificial contiguity. These facts match the immutable prototype baseline
   `074b1a4bccbfee1740ee188374b606a022ecef42` and must remain focused tests.
+  The parallel ignored gate is `just standalone-funded-shielded-finality`. Its
+  2026-08-20 run proved a real 1,000,000-atomic native Zswap transfer from the
+  development genesis authority to a fresh protected recipient, exact consent,
+  DUST/Zswap proof, finalized inclusion, included-fingerprint duplicate
+  blocking, adapter reconstruction, idempotent included-status restoration,
+  nullifier replay, and stable exact balances. It does not prove unknown-
+  outcome chain rescanning. The v4 Zswap envelope typename is
+  `ZswapLedgerEvent`, and its event IDs are sparse monotonic global cursors.
+  Never call this a process/native-custody restart or fresh-wallet origination;
+  issue #92 owns protected DUST registration and that stronger proof. Until
+  issue #93 adds checkpoint-acknowledged compaction, a full 128-record journal
+  of included/unresolved barriers must fail unavailable before broadcast.
 - Physical Android identity-ingress evidence must use
   `scripts/test-android-identity-ingress-physical.sh`. It refuses virtual
   devices and a concurrently booted iOS simulator, never clears application

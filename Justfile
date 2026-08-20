@@ -41,6 +41,9 @@ standalone-up:
 standalone-funded-finality:
     ./scripts/test-standalone-funded-finality.sh
 
+standalone-funded-shielded-finality:
+    ./scripts/test-standalone-funded-shielded-finality.sh
+
 standalone-phone-up:
     ./scripts/standalone-up.sh phone
 

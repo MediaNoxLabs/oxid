@@ -111,8 +111,18 @@ thin-app build decision; no runtime brand configuration was added.
    must prove the exact genesis hash before opt-in production composition. No
    production root/profile is selected. A separate external-seed guarded
    headless flow proves funded unshielded authorization, DUST proving,
-   finalized inclusion, restart reconciliation, bounded indexer convergence,
-   and no duplicate recipient delivery while remaining absent from releases.
+   finalized inclusion, adapter reconstruction with included-status
+   restoration, bounded indexer convergence, and no duplicate recipient
+   delivery while remaining absent from releases.
+6. **Funded shielded finality and nullifier-safe adapter reconstruction** (ADR-0079/0098 /
+   issue #91): a second double-opt-in headless flow synchronizes real native
+   Zswap genesis notes, uses the shared preview/consent/DUST+Zswap proof and
+   finalized-submission lifecycle, blocks an unchanged-state duplicate, then
+   reconstructs the adapter and proves exact sender/recipient balances after
+   nullifier replay. Live evidence corrects the v4 `ZswapLedgerEvent` typename
+   and sparse cursor contract. Fresh-wallet origination remains issue #92
+   because protected DUST registration is not yet implemented; journal
+   compaction after 128 retained barriers remains issue #93.
 
 ## Phase 5 — Delight & polish (owner-gated)
 
@@ -155,6 +165,7 @@ stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
 (delivered by #82), 2d receive sheet (delivered by #83), 3 white-label infra
 (delivered by #84), 4a secret mode + native privacy ops (delivered by #85),
 4b1 developer profile (delivered by #87), 4b2 demo profile (delivered by #88),
-4c authenticated deployment/funded finality (#90), 5 per-item. Each remaining
-slice references the relevant spec section as its acceptance criteria,
-factory-work-item style.
+4c authenticated deployment/funded finality (#90), 4d funded shielded finality
+(#91), 4e protected DUST registration/fresh-wallet shielded origination (#92),
+5 per-item. Each remaining slice references the relevant spec section as its
+acceptance criteria, factory-work-item style.
