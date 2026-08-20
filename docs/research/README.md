@@ -9,7 +9,7 @@ re-checked when the other project moves.
 | --- | --- | --- | --- |
 | [moth-wallet.md](moth-wallet.md) | `shieldedtech/moth-wallet` — Shielded Technologies' Midnight reference wallet | 2026-08-20 | Ships the DApp connector Oxid has no code and no ADR for; has no SSI layer at all |
 | [web-bridge-architecture.md](web-bridge-architecture.md) | Chrome-extension-to-phone bridge vs a wasm web target — transports, precedent, threat model | 2026-08-20 | Custody thesis holds; proving is the one real infrastructure dependency; USB is dead on iOS; ship the QR channel first |
-| [midnight-dapp-connector.md](midnight-dapp-connector.md) | The working DApp connection in `midnight-ledger` `dioxus-vc-demo` | 2026-08-20 | Adopt the connector contract; the WebView carrier is already a rejected alternative, and ADR-0050 retired its only real dependency |
+| [midnight-dapp-connector.md](midnight-dapp-connector.md) | The working DApp connection in `midnight-ledger` `dioxus-vc-demo`, and the native Rust codegen in `midnight-identity` | 2026-08-20 | Keep the WebView as a DApp runtime, drop the JS cryptography; `DAppAPIHandler` is the one security boundary |
 
 ## How to use these
 

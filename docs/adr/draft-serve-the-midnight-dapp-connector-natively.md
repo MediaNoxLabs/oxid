@@ -1,15 +1,16 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# ADR-DRAFT: Serve the Midnight DApp connector natively
+# ADR-DRAFT: Host DApps in a WebView behind a native connector handler
 
 - Status: Proposed
 - Date: 2026-08-20
 - Blueprint: §§3–7, 11–13, 16, 18, 21
 - Prototype source: `MediaNoxLabs/midnight-ledger` branch `dioxus-vc-demo`, HEAD `4c795b5`; `mobile-bench/dioxus-wallet/src/{bridge.rs,lib.rs,protocol.rs}` and `mobile-bench/wallet-core/src/{js_bridge.rs,vc_self_verify/mod.rs}`
 - Reference contract: `@midnight-ntwrk/dapp-connector-api` v4.0.1 (mainnet); `enable()`, `state()`, and `balanceAndProveTransaction` were removed in v4.0.0
+- Native Compact source: `MediaNoxLabs/midnight-identity` branch `rust-codegen` (default), HEAD `5cb0590` — seven crates, ~18.5k lines, zero `wasm-bindgen`/`js-sys`/node dependencies; `midnight-did-runtime` carries `compact-runtime` plus a path-mounted `contract/generated.rs`, and `DidContractCall` is a typed enum
 - Related: ADR-0027, ADR-0037, ADR-0050, ADR-0052, ADR-0059, ADR-0062, ADR-0067, ADR-0099; issues #105, #108, #109
 - Analysis: `docs/research/midnight-dapp-connector.md`
-- Implementation state: proposed; no adapter exists. The prototype implements four connector reads and defers balances; its Compact dependency is already retired in Oxid by ADR-0050.
+- Implementation state: proposed; no handler exists. The prototype implements four connector reads and defers balances. Both of its JavaScript-only capabilities now have native Rust implementations — presentations via ADR-0050, DID contract calls via the `midnight-identity` crates — so the WebView is retained only as a third-party DApp runtime, not as a wallet component.
 
 ## Context
 
@@ -54,14 +55,60 @@ iframe, or relative workspace lookup"* as a violation of *"the Rust-first and
 reproducibility boundaries"*. ADR-0037 names the prototype's coupling to *"a
 JavaScript bridge"*; ADR-0059 and ADR-0062 each record a way it failed.
 
-The functional reason the bridge existed is now gone. The prototype needs
-JavaScript for exactly one capability — Compact proof decode and verification
-for `"midnight_compact_vc"` credentials, plus `call_did_circuit` — and it placed
-that behind a `JsBridge` **port** with two adapters, noting that callers
-*"don't care which transport they got"*. ADR-0050 supplies the native adapter:
-Compact presentations are proved and verified in Rust, byte-for-byte conformant
-to Compact runtime 0.15.0, from an authenticated Nix-produced artifact root,
-with `prove_unchecked` forbidden. Oxid contains no JavaScript bridge at all.
+The functional reason the bridge carried *the wallet's own cryptography* is now
+gone, and this is the decisive change. The prototype needs JavaScript for
+exactly two capabilities — Compact proof decode and verification for
+`"midnight_compact_vc"` credentials, and `call_did_circuit` — and it placed both
+behind a `JsBridge` **port** with two adapters, noting that callers *"don't care
+which transport they got"*. Both now have native Rust implementations:
+
+- **Presentations**: ADR-0050 proves and verifies Compact presentations in Rust,
+  byte-for-byte conformant to Compact runtime 0.15.0, from an authenticated
+  Nix-produced artifact root, with `prove_unchecked` forbidden.
+- **DID contract calls**: `MediaNoxLabs/midnight-identity`, branch
+  `rust-codegen`, is a Rust DID implementation — seven crates, ~18.5k lines,
+  **zero `wasm-bindgen`/`js-sys`/node dependencies** — built on Compact-to-Rust
+  codegen. `crates/midnight-did-runtime` declares `compact-runtime`, *"the
+  compact-runtime symbol the generated contract code calls into"*, alongside
+  `midnight-onchain-runtime` and `midnight-base-crypto` as the *"load-bearing
+  pair the generated.rs path-mounted output names directly"*. `DidContractCall`
+  is a **typed enum** — `RotateControllerKey`, `RecoverControllerKey`,
+  `SetVerificationMethod`, `ReadLedger` — with typed payloads, and the crates
+  expose `Backend`, `PrivateStateStore`, and a generated `Witnesses<PS>` as
+  ports.
+
+That last point matters more than it looks. The prototype's plan for
+`didOp.prepareCall` was for **JavaScript to run the circuit and hand Rust an
+opaque hex-serialised `ContractCallPrototype`** to wrap, balance, prove and
+submit sight-unseen. The native path gives Rust a typed call it constructs and
+understands itself. **For DID operations the wallet therefore never needs to
+accept a caller-built opaque blob**, which removes the secret-hygiene tension
+for this path entirely and narrows what issue #105 still has to decide.
+
+**A DApp runtime is nevertheless required, and it is a different concern.**
+Supporting arbitrary third-party DApps means hosting third-party *web* code —
+DApps are web applications, and no amount of native Rust changes that. The
+required shape is:
+
+```
+oxid-wallet → DAppAPIHandler → JsBridge → WebView → Midnight DApp
+                                                    (injected connector object)
+```
+
+Oxid contains no JavaScript bridge today, and the accepted records that reject
+one are specifically about the wallet's own flows: ADR-0067 rejects the
+prototype bridge because it *"would move credential and holder material outside
+the reviewed Rust custody boundary"*, and ADR-0052 rejects *importing the
+prototype's* bridge and Node runtime as a Rust-first and reproducibility
+violation. Neither addresses hosting a counterparty.
+
+The distinction this ADR draws — and must draw explicitly, or it reads as
+contradicting five accepted records — is between a WebView used **as a component
+of the wallet's own cryptography**, which was a custody hole and is now
+unnecessary, and a WebView used **as a sandbox for a counterparty that receives
+only what the wallet chose to emit**. The first is rejected. The second is what
+"support different DApps" means, and it is not a custody boundary violation
+because no credential, holder, witness, or key material crosses it.
 
 ## Decision
 
@@ -75,13 +122,41 @@ excluding the removed v3 methods. Balances and `getDustAddress` remain deferred
 until sync orchestration and dust-address derivation exist, and the adapter
 reports them as unavailable rather than returning a placeholder.
 
-**The carrier.** The adapter is an incoming adapter over the existing NDJSON
-protocol and `system.capabilities` manifest. It reuses `apps/oxid-mcp`'s
-fail-closed filter unchanged in shape: a method is reachable only when its
-manifest entry is `ready`, is not an alias, does not require confirmation, and
-declares no `*Exposed` flag, with an independent authority-verb denylist as
-defence in depth. No WebView, iframe, `postMessage` relay, custom URL scheme,
-embedded JavaScript, or embedded WebAssembly package tree is introduced.
+**The layers.** Four, with one security boundary:
+
+```
+oxid-wallet → DAppAPIHandler → JsBridge → WebView → Midnight DApp
+                    ↑                                (injected connector)
+              security boundary
+```
+
+- **`oxid-wallet`** — existing application use cases. Unchanged.
+- **`DAppAPIHandler`** — a new incoming adapter, and **the only security
+  boundary in this design**. It answers connector methods, holds per-origin
+  session state, and decides what may be asked at all.
+- **`JsBridge`** — a transport port, deliberately dumb. It moves framed messages
+  and makes no policy decisions, so it can be swapped (WebView today, something
+  else later) without touching the boundary. This mirrors the prototype's own
+  `JsBridge` trait, which was the right abstraction in the wrong service.
+- **`WebView`** — a sandbox hosting third-party DApp code, with the connector
+  object injected. It is a **counterparty runtime, not a wallet component**.
+
+**The handler's policy.** `DAppAPIHandler` reuses `apps/oxid-mcp`'s fail-closed
+filter unchanged in shape: a method is reachable only when its manifest entry is
+`ready`, is not an alias, does not require confirmation, and declares no
+`*Exposed` flag, with an independent authority-verb denylist as defence in
+depth. **The filter lives in the handler, never in the injected JavaScript** —
+injected script is attacker-reachable and can only ever be a convenience layer.
+This is the direct inverse of the prototype, whose relay forwarded any
+caller-named method into the bridge.
+
+**Native cryptography.** The wallet's own Compact work is native: ADR-0050 for
+presentations, and the `midnight-identity` `rust-codegen` crates for DID
+contract calls. The prototype's `mn-pkg://` custom protocol, its ~30 MB
+`include_dir!`-embedded JavaScript and WebAssembly package tree, and its
+`@midnight-ntwrk/midnight-did-contract` dependency are **not** adopted. No
+JavaScript participates in producing, proving, or verifying anything the wallet
+signs.
 
 **Secrets.** No secret-bearing method is exposed. There is no
 `getControllerSecretKey` analogue: the controller witness stays inside custody
@@ -118,10 +193,21 @@ configuration surface plus the adapter's security properties; if #105 answers
 
 ## Consequences
 
-The connector becomes reachable by any transport that already speaks the NDJSON
-protocol — the headless surface, the MCP bridge of ADR-0099, and the QR approval
-channel of issue #109 — instead of only from inside a WebView. One surface, one
-filter, one audit.
+Because the policy lives in `DAppAPIHandler` rather than in the transport, the
+same connector surface is reachable from anything that already speaks the NDJSON
+protocol — the headless surface, the MCP bridge of ADR-0099, the QR approval
+channel of issue #109 — as well as from the WebView. One surface, one filter,
+one audit, several carriers.
+
+Adopting the `midnight-identity` `rust-codegen` crates is a dependency decision
+with architecture-boundary consequences that this ADR does not resolve: seven
+new crates carrying `compact-runtime`, `midnight-onchain-runtime`, and
+`midnight-base-crypto`, plus a path-mounted `generated.rs` materialised from a
+Compact flake input. Oxid's 14 core crates are required to have zero external
+dependencies and `scripts/check-architecture.sh` enforces per-crate allowlists,
+so these belong in an adapter tier with an explicit allowlist entry, and the Nix
+closure cost should be measured against the CI budget before adoption rather
+than after.
 
 The `oxid-mcp` filter becomes load-bearing for a **third** consumer, and the
 first exposed to hostile web content. ADR-0099 already warns the manifest
@@ -136,18 +222,36 @@ Deferring balances means a dApp expecting the full v4 surface will find part of
 it unavailable. That is preferable to a placeholder, and it is the same choice
 the prototype made for the same reason.
 
-The prototype's dApp cannot be run unmodified, because its host shim targets the
-`postMessage` relay this ADR declines to build. Bringing that dApp up against
-the native adapter is separate work, and the shim's exact method list should be
-read first — it lives outside the prototype repository.
+Hosting third-party web code is a real, ongoing security burden that this design
+accepts deliberately rather than incidentally: WebView hardening, a fixed
+injected-object surface, per-origin grants, and the standing risk that a DApp
+origin is compromised. The mitigation is that the WebView receives no credential,
+holder, witness, or key material — only connector answers the handler chose to
+emit — so the worst case is a request the user must still approve on a surface
+the wallet renders.
+
+The prototype's own dApp will need its host shim repointed, because that shim
+targets the prototype's relay contract rather than this handler. Its exact
+method list and error mapping should be read first; it lives outside the
+prototype repository.
 
 ## Rejected alternatives
 
-- **Porting the iframe, `postMessage` relay, and `window.midnightWallet`
-  channel.** Already rejected by ADR-0052 and ADR-0067 for moving credential
-  and holder material outside the reviewed Rust custody boundary. Independently,
-  the relay forwards unallowlisted methods and its origin check fails open, so
-  adopting it would import a defect, not just a dependency.
+- **Porting the prototype's relay as-is.** The WebView is retained; its relay
+  is not. That relay forwards any caller-named method into the bridge with no
+  allowlist, its origin check fails open when frame enumeration is unavailable,
+  and its reply origin degrades to `"*"`. Adopting it would import a defect
+  rather than a capability. The policy belongs in `DAppAPIHandler`.
+- **Rejecting the WebView outright.** This was my first reading of ADR-0052 and
+  ADR-0067, and it is too broad. Those records reject moving *credential and
+  holder material* through a JavaScript bridge, and reject importing the
+  prototype's bridge into the wallet's own flows. Supporting third-party DApps
+  requires hosting third-party web code, and a sandbox that receives only
+  emitted connector answers is not the custody hole those records describe.
+  Rejecting it outright would mean shipping no DApp support at all.
+- **Putting the method filter in the injected JavaScript.** Injected script is
+  attacker-reachable in the runtime it is injected into, so a filter there is a
+  convenience, never a control.
 - **Embedding the JavaScript and WebAssembly package tree.** ADR-0052 already
   declined to check in generated JavaScript and proving keys because it *"would
   duplicate large derivable artifacts and weaken source authentication"*; the

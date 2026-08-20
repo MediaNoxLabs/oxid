@@ -267,15 +267,87 @@ scopes.
    `passport-vault-dapp/lib/midnight/mobile-bench-host.ts` per the relay's
    comment, which was not part of the clone. Its exact method list and error
    mapping should be read before finalising the adapter's surface.
-2. **`didOp.prepareCall` / `didOp.submit` are unimplemented**, and their
-   comments describe the intended split — JS runs the Compact circuit against
-   on-chain state and returns a serialised `ContractCallPrototype`; Rust wraps
-   it in an `Intent`, balances dust, proves and submits. **That split is the
-   crux of the byte-signing question in issue #105**, and the prototype stops
-   exactly where the hard decision starts. ADR-0050 suggests Oxid can produce
-   such a prototype natively rather than accept one from JS, but that has not
-   been demonstrated for the contract-call path specifically.
-3. **Whether `call_did_circuit` has a native equivalent yet.** ADR-0050 covers
-   the *presentation* circuit. Contract calls against a deployed DID are a
-   different circuit set, and the prototype's `didOp.*` methods were never
-   finished, so neither side has a working reference.
+## The native contract-call path exists
+
+Questions 2 and 3 of this study are answered, and the answer is better than the
+prototype's own plan.
+
+`MediaNoxLabs/midnight-identity`, branch `rust-codegen` (the repository default,
+HEAD `5cb0590`), is *"Midnight DID implementation in Rust"* — seven crates,
+~18.5k lines, and a `grep` for `wasm-bindgen|js-sys|node|napi` across every
+crate manifest returns **nothing**. It is built on Compact-to-**Rust** codegen:
+`crates/midnight-did-runtime` declares `compact-runtime`, described as *"the
+compact-runtime symbol the generated contract code calls into"*, materialised
+*"from the codegen-rust compact flake input"*, with `midnight-onchain-runtime`
+and `midnight-base-crypto` kept as *"the load-bearing pair the generated.rs
+path-mounted output names directly"*.
+
+The layout is hexagonal — `midnight-did-domain`, `-api`, `-runtime`, `-method`,
+`-uniffi`, `-cli` — with `Backend`, `PrivateStateStore`, and a generated
+`Witnesses<PS>` as ports.
+
+**The important difference is the type.** `DidContractCall` is a typed enum:
+
+```rust
+pub enum DidContractCall {
+    ReadLedger,
+    RotateControllerKey    { new_public_key: [u8; 32] },
+    RecoverControllerKey   { new_public_key: [u8; 32] },
+    SetVerificationMethod  { /* ledger-shaped method */ },
+    // …
+}
+```
+
+The prototype's plan for `didOp.prepareCall` was for **JavaScript to run the
+circuit and hand Rust an opaque hex-serialised `ContractCallPrototype`** to
+wrap, balance, prove, and submit sight-unseen. The native path gives Rust a call
+it constructs and understands itself, with the authorization distinction visible
+in the type system — `RotateControllerKey` is controller-authorized while
+`RecoverControllerKey` is recovery-authority-authorized, and the on-chain
+circuit checks a different signature for each.
+
+**So the wallet never needs to accept a caller-built opaque blob for DID
+operations.** That materially narrows what issue #105 still has to decide: the
+secret-hygiene tension was about accepting foreign bytes, and for this path
+there are none.
+
+**One consequence to size before adopting**, flagged rather than resolved: seven
+new crates carrying `compact-runtime`, `midnight-onchain-runtime`, and
+`midnight-base-crypto`, plus a path-mounted `generated.rs` from a Compact flake
+input. Oxid's 14 core crates must have zero external dependencies and
+`scripts/check-architecture.sh` enforces per-crate allowlists, so these belong
+in an adapter tier with an explicit entry — and the Nix closure cost wants
+measuring against the CI budget first, not after.
+
+## Why a WebView is still required
+
+Retiring the JavaScript *cryptography* does not retire the JavaScript *runtime*,
+and conflating those was the error in this study's first draft.
+
+Supporting arbitrary third-party DApps means hosting third-party **web** code.
+A DApp is a web application; native Rust does not change that. The architecture
+that follows is:
+
+```
+oxid-wallet → DAppAPIHandler → JsBridge → WebView → Midnight DApp
+                    ↑                               (injected connector object)
+              security boundary
+```
+
+The accepted records that reject a JavaScript bridge are about the wallet's own
+flows — ADR-0067 because the prototype bridge *"would move credential and holder
+material outside the reviewed Rust custody boundary"*, ADR-0052 because
+*importing the prototype's* bridge and Node runtime breaks Rust-first and
+reproducibility. Neither addresses hosting a counterparty.
+
+The line that matters is between a WebView used **as a component of the wallet's
+own cryptography** — a custody hole, and now unnecessary — and a WebView used
+**as a sandbox for a counterparty receiving only what the wallet chose to
+emit**. The first stays rejected. The second is what "support different DApps"
+means, and no credential, holder, witness, or key material crosses it.
+
+Which makes every relay finding above *more* load-bearing, not less: the
+`DAppAPIHandler` is the single security boundary, so the method allowlist,
+per-origin grants, fail-closed origin binding, and wallet-derived confirmation
+text all belong there — never in the injected script, which is attacker-reachable
+by definition.
