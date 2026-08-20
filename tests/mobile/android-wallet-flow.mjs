@@ -904,6 +904,11 @@ try {
     await assertHomeComposition();
     await openWallet();
     await waitForButton("Activate development wallet");
+    await waitFor(
+      "document.body.innerText.includes('Transfer included')",
+      "restored transaction submission",
+      30_000,
+    );
     const walletRestored = await evaluate(`(() => ({
       profileRestored: !document.body.innerText.includes("Create your wallet profile"),
       developmentRootReset: document.body.innerText.includes("Activate protected test account"),
