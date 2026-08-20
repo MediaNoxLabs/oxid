@@ -1,6 +1,12 @@
 # Repository-specific dev-loops policy for Oxid.
 version: 1
 
+# Stated explicitly rather than inherited. Oxid's spec-of-record is the pull
+# request plus its ADRs, and every gate here posts findings onto the PR, so the
+# local-first routing is the one that matches where review evidence lives.
+strategy:
+  default: local-first
+
 refinement:
   fanOut: 3
   mode: parallel
@@ -46,7 +52,12 @@ gates:
     required: true
     requireCi: true
   requireFanoutEvidence: true
-  requireFanoutProvenance: false
+  # Evidence without provenance cannot be audited: a gate that records "five
+  # angles reported" but not which reviewer produced which finding cannot be
+  # checked for a collapsed panel, where one reviewer's output is replayed under
+  # several angle names. Provenance is what makes requireFanoutEvidence
+  # falsifiable.
+  requireFanoutProvenance: true
   maxFanoutReviewers: 8
   postFindingsComments: true
   rejectForeignAngles: true
@@ -77,6 +88,17 @@ personas:
       No findings.
     defaultModel: null
 
+# The schema documents humanHandoff as pairing with autonomy.humanMergeOnly,
+# which is already true below. Without it the loop stops at pre-approval with
+# nothing routed to a person, so the handoff is the missing half of a decision
+# this repository has already taken. OFFER-only: the resolver proposes an
+# assignee from CODEOWNERS for the touched paths and the operator confirms.
+approval:
+  humanHandoff:
+    enabled: true
+    candidatesFrom:
+      - codeowners
+
 autonomy:
   stopAt:
     - pre-approval
@@ -87,3 +109,19 @@ workflow:
   requireDraftFirst: true
   requireRetrospective: true
   devModeDefault: false
+
+# Deliberately absent, recorded so the gaps are not mistaken for oversights.
+#
+# models: — per-role model assignment (`models.conductor`, `models.roles`) is
+#   the mechanism behind the factory's provider-agnostic goal, but the package
+#   ships no defaults and documents no model-identifier format, so any value
+#   written here would be a guess that fails at dispatch. Needs one owner
+#   decision naming real identifiers; see docs/factory/runbook.md.
+#
+# worktree: — copyOnInit/linkOnInit provision *gitignored* files into a fresh
+#   worktree. Oxid needs none: the Compact and ZK artifact closures arrive as
+#   devshell environment exports rather than files, `.envrc` is tracked, and
+#   `target/` and `.direnv/` must not be shared between worktrees. The only
+#   remaining candidate is `.pi/npm/node_modules`, which the schema explicitly
+#   warns against targeting. An empty section would be a no-op, so there is
+#   none.
