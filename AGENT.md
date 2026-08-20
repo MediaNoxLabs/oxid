@@ -792,9 +792,9 @@ resolved to that exact commit. The separate remote `mobile-prototype` ref
 resolved to `255f2caf8c728c203f554d6bc853d1f3b7e8bc15`; do not treat its older name
 as a successor without a fresh provenance review.
 
-The 2026-08-19 read-only parity audit, refreshed with 2026-08-20 funded
-evidence, compares that immutable baseline with Oxid repository evidence in
-`docs/migration/live-parity-audit-2026-08-19.md`. Current evidence is roughly
+The 2026-08-20 stopping-point audit compares that immutable baseline with Oxid
+repository, test, mobile-host, and live-environment evidence in
+`docs/migration/delivery-audit-2026-08-20.md`. Current evidence is roughly
 98% of useful prototype behavior, or 105/110 (95%) of the deliberately harder
 migration target, while production-release evidence is about 78%.
 These are evidence classifications, not source-line counts. The dependency-
@@ -2354,11 +2354,15 @@ to silence the shell probe.
   commit `f8d0299d863922db6c409d08098941e833b70d69`/version 0.3.9. The registry
   0.3.10 manifest adds `proc-macro1 1.0.107`, which is absent from that
   canonical commit. Do not resolve or compile that unreviewed publication.
-  Oxid patches crates.io to the canonical full revision, permits only that
-  exact GitHub source through `cargo-deny`, and enforces the source plus absence
-  of `proc-macro1` with `scripts/check-arrayref-source.sh`. Remove the patch
-  only after an independently reviewed upstream resolution and a signed,
-  green dependency-source change.
+  The canonical Git repository then became unavailable after the first signed
+  pin reached `develop`. The already-published 0.3.9 crate archive was compared
+  with that reviewed checkout: all authored source, manifest, examples, README,
+  license, and CI files match; only Cargo publication metadata/normalization is
+  added. Oxid therefore uses the checksum-locked 0.3.9 registry archive
+  (`76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb`)
+  without an unavailable Git fetch. `scripts/check-arrayref-source.sh` enforces
+  the version, source, checksum, and absence of `proc-macro1`. Change this pin
+  only after independent review and a signed, green dependency-source change.
 - Report vulnerabilities through GitHub private vulnerability reporting, not a
   public issue.
 

@@ -553,10 +553,10 @@ and native-custody physical-device evidence, universal HTTPS links, production
 endpoint discovery, physical-device recovery interruption/resource evidence,
 and device resource baselines remain separate follow-ups.
 
-The fresh evidence classification, exact implemented paths, dependency-ordered
-gaps, acceptance tests, and revised percentage are recorded in
-[the 2026-08-19 live parity audit](live-parity-audit-2026-08-19.md). Stale issue
-checkboxes are not evidence for that assessment.
+The current evidence classification, exact implemented paths,
+dependency-ordered gaps, blockers, and acceptance status are recorded in
+[the 2026-08-20 migration delivery audit](delivery-audit-2026-08-20.md). Stale
+issue checkboxes are not evidence for that assessment.
 
 ADR-0097 reimplements the prototype's runtime-selected localhost/Tailscale
 transport aliasing as separate compile-time development profiles without

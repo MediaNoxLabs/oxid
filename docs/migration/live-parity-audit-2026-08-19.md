@@ -1,5 +1,8 @@
 # Live prototype parity audit — 2026-08-19
 
+> Superseded for the current stopping point by the
+> [2026-08-20 migration delivery audit](delivery-audit-2026-08-20.md).
+
 ## Scope and method
 
 This read-only audit compares Oxid with the immutable reviewed

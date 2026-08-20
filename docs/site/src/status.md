@@ -5,6 +5,9 @@ explicit mode label. This page is the reader's map; the authoritative,
 always-current source is the delivery-state column of the
 [ADR index](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/README.md)
 and the repository [issue backlog](https://github.com/MediaNoxLabs/oxid/issues).
+The evidence-based stopping-point assessment, including remaining work and
+external blockers, is the
+[2026-08-20 migration delivery audit](migration-audit.md).
 
 ## The three modes
 
@@ -24,6 +27,7 @@ and the repository [issue backlog](https://github.com/MediaNoxLabs/oxid/issues).
 | Unshielded transfers (prepare → authorize → prove → submit → reconcile) | Standalone functional incl. live node submission path; persist-before-broadcast journal |
 | DUST + shielded sync | Resumable, checkpointed, cancellable; simulated and live-configured variants |
 | Shielded transfers (fresh sync → prepare → authorize → prove → submit) | Standalone functional with adapter-private Zswap notes/witnesses; production mobile gated |
+| Protected DUST registration | Domain/application/adapter/headless/mobile ceremony implemented; funded PreProd registration/recovery/fresh-wallet spend evidence pending |
 | Passport Vault contract calls | Typed lifecycle with canonical finalized replay; claim path gated behind consent + funding + settlement review |
 | Portable + complete-wallet encrypted backup/recovery | Functional with hardened v3 KDF policy and native document pickers |
 | Secret-safe runtime diagnostics | Bounded process-local closed codes in headless and Dioxus; telemetry, payloads, upload, and persistence are off |
@@ -54,7 +58,10 @@ physical-device ingress evidence
 recovery interruption/resource evidence
 ([#33](https://github.com/MediaNoxLabs/oxid/issues/33)), standalone
 issuer time policy ([#34](https://github.com/MediaNoxLabs/oxid/issues/34)),
-plus live protocol transport and production issuer trust policy.
+plus live protocol transport and production issuer trust policy. Full-history
+PreProd replay measurement/optimization is [#115](https://github.com/MediaNoxLabs/oxid/issues/115),
+and birthday-gated fast fresh-wallet replay is
+[#116](https://github.com/MediaNoxLabs/oxid/issues/116).
 
 An independent architecture and quality review of the whole codebase (11
 dimensions, adversarially verified findings) is published as

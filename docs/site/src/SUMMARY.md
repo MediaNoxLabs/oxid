@@ -7,6 +7,7 @@
 - [Getting started](getting-started.md)
 - [The headless protocol](headless-protocol.md)
 - [Delivery status](status.md)
+- [Migration delivery audit](migration-audit.md)
 
 # Understanding Oxid
 
