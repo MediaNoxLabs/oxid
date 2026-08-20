@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+oxid-adapter-store-atomic.workspace = true
 directories.workspace = true
 oxid-identity-application.workspace = true
 oxid-identity-domain.workspace = true
