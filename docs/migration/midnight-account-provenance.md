@@ -3,7 +3,8 @@
 ## Reviewed sources
 
 The account slices were reimplemented from behavior observed at these immutable
-revisions on 2026-08-11 and re-verified on 2026-08-12:
+revisions on 2026-08-11 and re-verified on 2026-08-12. Registration-specific
+evidence was re-reviewed on 2026-08-20:
 
 | Evidence | Revision and path | Retained behavior |
 | --- | --- | --- |
@@ -17,6 +18,8 @@ revisions on 2026-08-11 and re-verified on 2026-08-12:
 | Prototype DUST sync | same prototype revision, `mobile-bench/wallet-core/src/dust/syncer.rs` and `mobile-bench/dioxus-wallet/src/app.rs` (`WalletSyncPane`) | explicit DUST status/progress, next-cursor resume, exact official-state balance, resync control, and a separate NIGHT/DUST presentation lifecycle |
 | Prototype transfer | same prototype revision, `mobile-bench/wallet-core/src/{wallet.rs,unshielded/mod.rs}` | native NIGHT, same-network recipient decoding, descending greedy selection, sorted spends/outputs, change, `0xCAFE` intent segment, one-hour TTL, and BIP340 authorization before DUST/proving/submission |
 | Prototype completion | same prototype revision, `mobile-bench/wallet-core/src/{wallet.rs,dust/snapshot.rs,tx/balance.rs,tx/prove_http.rs,node/client.rs}` | DUST role `2/0`, event replay, live time/parameters, iterative `0xFEED` fee balancing, proof-server wire format, sealing, tagged serialization, and unsigned runtime submission |
+| Prototype DUST onboarding plan | same prototype revision, `mobile-bench/MOBILE_WALLET.md`, `WALLET_PLAN.md`, and `wallet-core/queries/midnight-indexer/e2e.graphql` | documents sync → funding → registration → DUST readiness and the required indexer flag, but leaves registration/deregistration unimplemented |
+| Ledger DUST registration | `midnight-ledger` `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, `ledger/src/dust.rs` | segment-bound NIGHT signature, DUST public-key delegation, generationless fee allowance from guaranteed unregistered owned NIGHT inputs, exact same-owner outputs, and distinct initial DUST state |
 
 No Rust or TypeScript implementation was copied. Oxid owns the domain model,
 ports, simulation, and presentation. Public address payloads remain codec
@@ -43,6 +46,10 @@ accepts recovery material.
 - shielded receive derivation -> protected `m/44'/2400'/account'/3/0`, official
   Zswap public keys serialized into the Wallet SDK's canonical 64-byte payload,
   and a distinct network-specific Bech32m address;
+- DUST registration (repository/headless implemented) -> a distinct
+  `WalletDustRegistrationPort`, live `ctime`/unregistered eligibility, explicit
+  consent, protected role-0 authorization, role-2 DUST custody, and separated
+  inclusion/DUST-readiness observations under ADR-0099;
 - headless commands and Assets page -> two incoming adapters over the same use
   cases.
 
@@ -63,6 +70,36 @@ drafts report `submissionReady: false`; successfully authorized drafts report
 `submissionReady: true`. Drafts expire after one hour and expired signing or
 transaction material is cleared. ADR-0027 adds the subsequent explicitly
 confirmed submit stage and keeps this review boundary intact.
+
+## Protected DUST registration mapping
+
+ADR-0099 and issue #92 define a distinct vertical capability rather than a
+transfer subtype or sync side effect. A registration draft selects only the
+active protected account's native NIGHT UTXOs after a current live indexer fold
+supplies both the canonical creation time and
+`registeredForDustGeneration == false`. Candidates are ordered by generated
+DUST at the authenticated chain time. Exactly the largest-generation input is
+guaranteed, the remaining selected inputs are fallible, and each exact NIGHT
+amount returns to the same owner. Only the guaranteed input contributes the
+maximum generationless registration-fee allowance.
+
+The public preview binds account scope, exact totals/counts, maximum allowance,
+expiry, and opaque challenge identifiers to explicit consent. Authorization
+uses the role-0 NIGHT key for the ledger's segment-one signature. The role-2
+DUST secret at `m/44'/2400'/account'/2/0` remains inside protected custody;
+only its canonical public registration key enters the retained transaction.
+Submission then reuses the official generic proof/finality pipeline and a
+registration-domain-separated persist-before-broadcast journal record.
+
+The public account checkpoint moves to schema version two for creation-time and
+registration-state evidence. Version-one data is rejected and ignored, so the
+account begins from an empty projection and must replay live from zero. It can
+neither render stale public state nor authorize registration. Node-finalized
+inclusion does not make DUST spendable: readiness requires an official DUST
+event and a fully caught-up matching private DUST checkpoint. The
+repository/headless path is implemented; guarded funded preprod, Dioxus/mobile,
+durable native process/custody restart, physical devices, and production live
+nodes are not yet implied by this mapping.
 
 ## Standalone completion mapping
 
@@ -176,20 +213,27 @@ history/quit. No deployment endpoint, seed, or private key is committed.
 [Issue #15](https://github.com/MediaNoxLabs/oxid/issues/15) retains the useful
 offset-plus-state pattern from the prototype backlog while keeping its redb
 wallet aggregate out of Oxid core. An explicit native adapter store records
-only the validated public unshielded fold under `(network, address)`. On
+only the validated public unshielded fold under `(network, address)`. Its
+current version-two shape adds public UTXO creation time and registration state
+to the implemented read/transfer projection so a live replay can authorize
+DUST registration. On
 restart, account reads project the snapshot as `cached`; the next subscription
 uses `current_cursor + 1` and folds the delta over the retained UTXOs and public
 history. Protocol/data incompatibility retries once from zero, while transport
 failure preserves the last values and marks them stalled.
 
-The v1 JSON document is capped at 16 MiB and 128 accounts, encodes every
+The v2 JSON document is capped at 16 MiB and 128 accounts, encodes every
 `u128` as a decimal string, rejects duplicate records and malformed snapshots,
 and uses owner-only atomic replacement. It contains no route, profile label,
 key reference, secret, draft, signature, witness, proof, or transaction bytes.
 Hydration does not unlock spendable inputs; a successful live catch-up in the
-current process is required before transfer preparation. The executable test
-proves initial cursor `0`, restart cursor `3` after a checkpoint at `2`, exact
-delta history/balance, and an offline cached/stalled read in a third process.
+current process is required before transfer preparation. A version-one
+document is ignored and must never fabricate registration eligibility or
+delta-resume into apparently complete metadata; registration requires a live
+replay from zero. The
+executable test proves initial cursor `0`, restart cursor `3` after a checkpoint
+at `2`, exact delta history/balance, and an offline cached/stalled read in a
+third process.
 
 ## Durable private DUST checkpoint mapping
 
@@ -285,6 +329,8 @@ genesis-authority spend against the real standalone stack, including finalized
 inclusion, adapter reconstruction, included-status restoration, and nullifier
 replay; the funded test does not exercise unknown-outcome chain rescanning and
 it does not prove process/native-custody restart or a fresh recipient's ability
-to pay DUST. Development composition persists owner-private DUST/Zswap
+to pay DUST. ADR-0099 implements the typed registration path needed to close
+that repository gap, while guarded funded fresh-wallet evidence remains in
+progress. Development composition persists owner-private DUST/Zswap
 checkpoints plus public submission recovery metadata; protected roots and
 signed drafts remain process-local. Production custody remains unavailable.
