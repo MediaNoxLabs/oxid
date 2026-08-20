@@ -93,11 +93,40 @@ its owning upstream graph drops the crate.
   requires an ADR/dependency review and removal or replacement of the affected
   packages first.
 
+## Yanked crate versions
+
+A yank is a **withdrawal** notice, not a vulnerability. `Cargo.lock` pins the
+exact bytes by checksum, so a yanked-but-pinned dependency is byte-identical to
+the one already audited: a yank removes a version from *new* resolution and
+changes nothing already resolved. Yanks carry no advisory ID, so they cannot be
+expressed in the ignore list above.
+
+Permitted yanks are therefore listed in `allowed_yanked` in
+`scripts/check-advisories.sh` as `name@version`, and **anything yanked and not
+listed there still fails the gate**.
+
+- **`arrayref@0.3.9`** — issue #113. Versions 0.3.5 through 0.3.9 were all
+  yanked on 2026-08-20, and the replacement 0.3.10, published the same day, adds
+  a normal dependency on `proc-macro1`: created that day, nine total downloads,
+  owned by `dtolney` with the display name "David Tolnay" and a repository URL
+  inside `dtolnay`'s namespace, carrying build-dependencies `ureq`, `rustls`,
+  and `base64` — build-time network access in a crate that replaces one with no
+  dependencies at all. Remaining on the checksum-pinned 0.3.9 is the safe
+  action; updating is the unsafe one. Revisit when upstream resolves the
+  suspected account compromise, and re-read the replacement's dependency diff
+  before removing this entry.
+
 ## Enforcement
 
 - New advisory IDs fail CI.
-- The quality gate runs Cargo audit with warnings denied and only these explicit
-  exceptions.
+- The quality gate evaluates Cargo audit's JSON report: **any** vulnerability
+  fails, and any `unmaintained` or `unsound` finding outside the ignore list
+  above fails. Only the `yanked` class is judged against `allowed_yanked`,
+  because `cargo audit --deny` has no granularity below the whole class.
+- That policy is covered by fixture tests: a clean report and a permitted yank
+  pass; a non-permitted yank, an unmaintained finding, and a vulnerability each
+  fail. Re-run them when the gate changes — a gate that cannot fail is worse
+  than no gate.
 - Cargo deny independently enforces license, source, wildcard, and duplicate
   dependency policy.
 - Production custody work cannot proceed while an applicable unsoundness
