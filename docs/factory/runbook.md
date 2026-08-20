@@ -17,6 +17,7 @@ agent merges anything, and nothing routes through a coordination server.
 | `dev-loops` | `0.9.0` | `.pi/settings.json` → project-local `.pi/npm` |
 | `pi-subagents` | `0.42.1` | same |
 | `@input-output-hk/agent-review-pi` | `0.5.0` | same, **GitHub Packages — needs a token** |
+| `agent-review` loader skill | repository | `.pi/skills/agent-review/SKILL.md` |
 
 The devshell's `shellHook` reads `.pi/settings.json`, compares each pinned
 version against `.pi/npm/node_modules/<pkg>/package.json`, and installs only
@@ -32,10 +33,31 @@ accepted, in that order of preference:
 
 ```bash
 export GH_TOKEN="$(gh auth token)"   # if your gh login carries read:packages
-nix develop
+./bootstrap.sh
 ```
 
 Never write that token into repository configuration or diagnostics.
+
+The pinned `agent-review-pi` extension registers correctly, but its `0.5.0`
+skill frontmatter contains an unquoted YAML colon. Pi `0.84.0` therefore omits
+the bundled skill from runtime discovery. The tracked `agent-review` loader is
+a narrow compatibility shim: it checks the exact package version, then tells Pi
+to read and follow the package's complete skill. It does not copy or change the
+review policy. Remove it only after a reviewed package update exposes the
+bundled skill directly.
+
+Validate shell entry, the exact private package, all native review-tool
+registrations, and runtime skill discovery without an LLM call or GitHub
+mutation:
+
+```bash
+./bootstrap.sh --check
+```
+
+From a plain checkout, `./bootstrap.sh --pi` starts Pi inside the same pinned
+shell. `./bootstrap.sh -- <command>` runs any other one-off repository command
+there. The wrapper delegates package provisioning to `nix develop` and never
+reads, prints, or persists credentials.
 
 ## Three concurrency mechanisms, which are easy to confuse
 

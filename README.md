@@ -94,9 +94,21 @@ Install [Nix](https://nixos.org/download/) with flakes enabled, then enter the
 pinned development environment:
 
 ```bash
-nix develop
+./bootstrap.sh
 ./run.sh --light --strict
 ```
+
+The bootstrap wrapper also starts the pinned Pi installation, validates its
+project-local review integration, or runs a one-off command in the shell:
+
+```bash
+./bootstrap.sh --pi
+./bootstrap.sh --check
+./bootstrap.sh -- cargo test --workspace
+```
+
+It does not read, print, or persist credentials. The Nix shell remains the
+single package-provisioning boundary; `nix develop` continues to work directly.
 
 Launch the desktop shell:
 

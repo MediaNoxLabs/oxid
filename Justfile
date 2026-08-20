@@ -26,6 +26,9 @@ architecture:
 sources:
     ./scripts/check-midnight-sources.sh
 
+pi-smoke:
+    ./scripts/check-pi-devshell.sh
+
 run:
     cargo run -p oxid-app
 

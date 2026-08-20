@@ -1447,8 +1447,13 @@ The reviewed WebPKI root store brings Mozilla CA certificate data under
 Nix is the supported environment and the flake lock is authoritative:
 
 ```bash
-nix develop
+./bootstrap.sh
 ```
+
+The tracked bootstrap wrapper delegates directly to the flake: no arguments
+enter the shell, `--pi` starts Pi, `--check` runs the deterministic Pi smoke
+gate, and `-- <command>` runs one command inside the shell. It never reads,
+prints, or persists credentials. Direct `nix develop` remains supported.
 
 The Linux Dioxus desktop graph links `libxdo`; keep `pkgs.xdotool` in both the
 Linux development-shell libraries and package build inputs. macOS validation
@@ -1469,7 +1474,15 @@ The Pi review integration is pinned as
 extension and bundled review skill in Pi metadata; the shell installs them
 together into the ignored project-local `.pi/npm` tree. Installation requires
 an existing GitHub token with package-read access. Never write that token into
-repository configuration or diagnostics.
+repository configuration or diagnostics. Pi `0.84.0` cannot parse the pinned
+package's bundled skill because its YAML description contains an unquoted
+colon. The tracked `.pi/skills/agent-review/SKILL.md` compatibility loader
+checks version `0.5.0` and delegates to the complete package workflow without
+copying it. `./bootstrap.sh --check` (equivalent to
+`nix develop --command just pi-smoke`) deterministically verifies
+the package metadata, all registered native review tools, and runtime skill
+discovery without an LLM call or GitHub mutation. Remove the loader only after
+a reviewed package update passes that same runtime inventory directly.
 
 Fast validation:
 
