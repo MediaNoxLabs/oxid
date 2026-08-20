@@ -2333,6 +2333,16 @@ to silence the shell probe.
   raw private keys to application or UI layers.
 - Record every significant dependency using the review template in the
   blueprint before an adapter becomes production-facing.
+- On 2026-08-20 the crates.io owner yanked `arrayref` 0.3.5 through 0.3.9 and
+  published 0.3.10, while the canonical repository still ended at reviewed
+  commit `f8d0299d863922db6c409d08098941e833b70d69`/version 0.3.9. The registry
+  0.3.10 manifest adds `proc-macro1 1.0.107`, which is absent from that
+  canonical commit. Do not resolve or compile that unreviewed publication.
+  Oxid patches crates.io to the canonical full revision, permits only that
+  exact GitHub source through `cargo-deny`, and enforces the source plus absence
+  of `proc-macro1` with `scripts/check-arrayref-source.sh`. Remove the patch
+  only after an independently reviewed upstream resolution and a signed,
+  green dependency-source change.
 - Report vulnerabilities through GitHub private vulnerability reporting, not a
   public issue.
 

@@ -208,3 +208,10 @@ strip = "symbols"
 inherits = "release"
 debug = 1
 strip = "none"
+
+# The crates.io owner yanked arrayref 0.3.5 through 0.3.9 on 2026-08-20 and
+# published an unreviewed 0.3.10 that is absent from the canonical repository
+# and adds a new proc-macro1 dependency. Keep the reviewed 0.3.9 source pinned
+# to its canonical immutable commit until upstream resolves the incident.
+[patch.crates-io]
+arrayref = { git = "https://github.com/droundy/arrayref.git", rev = "f8d0299d863922db6c409d08098941e833b70d69" }
