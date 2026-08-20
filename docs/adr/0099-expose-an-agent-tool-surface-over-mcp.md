@@ -5,7 +5,10 @@
 - Blueprint source: Sections 1, 3–7, 11–13, 16, 18, and 21
 - Prototype source: `apps/oxid-mcp` in this repository (dependency-free bridge; live-verified against the standalone headless wallet)
 - Tracking: issue #70 (roadmap) and issue #69 (manifest confirmationRequired gap, resolved)
-- Implementation state: proposed; a zero-dependency prototype demonstrates manifest-derived tool generation, the fail-closed tier filter, and a live MCP session (67 of 101 methods exposed, consent/authority methods excluded)
+- Implementation state: proposed; a dependency-free production bridge plus a
+  test-only manifest dependency demonstrate manifest-derived tool generation,
+  the fail-closed tier filter, and combined-manifest conformance; consent,
+  authority, cancellation, and reconciliation methods are excluded
 
 ## Context
 
@@ -38,8 +41,8 @@ fail-closed, three-tier policy:
   `rawCredentialExposed`, `serializedTransactionExposed`,
   `requestUriExposed`), and — as defense in depth after issue #69 — no
   authority verb (`accept`, `authorize`, `sign`, `submit`, `send`,
-  `delete`, `deactivate`, `forget`, `refuse`, `recover`, `restore`,
-  `import`, `quit`) anywhere in the method name. Read/status/preview
+  `delete`, `deactivate`, `forget`, `refuse`, `recover`, `restore`, `cancel`,
+  `reconcile`, `import`, `quit`) anywhere in the method name. Read/status/preview
   methods carry `readOnlyHint: true` annotations.
 - **Tier 2 — never exposed:** every consent, authorization, signing,
   submission, deletion, and recovery ceremony. These stay in the human's
@@ -67,7 +70,9 @@ to stderr.
   as verifiable credentials — a natural fit for an identity wallet), and
   adopting the official `rmcp` SDK (reviewed in `docs/dependencies/rmcp.md`)
   once the surface stabilizes.
-- The prototype deliberately adds zero external dependencies; the hand-
+- The prototype deliberately adds zero external dependencies; its only new
+  test dependency is the workspace capability-manifest crate used to prove
+  the composed policy. The hand-
   rolled JSON-RPC surface is ~100 lines and targets MCP 2025-03-26 stdio,
   which current clients accept. Production hardening (protocol revisions,
   elicitation, listChanged) is where `rmcp` earns its adoption.

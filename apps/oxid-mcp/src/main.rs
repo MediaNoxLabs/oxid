@@ -48,12 +48,14 @@ const DENYLIST: &[&str] = &["system.quit"];
 const AUTHORITY_VERBS: &[&str] = &[
     "accept",
     "authorize",
+    "cancel",
     "deactivate",
     "delete",
     "forget",
     "import",
     "quit",
     "recover",
+    "reconcile",
     "refuse",
     "restore",
     "send",
@@ -384,6 +386,12 @@ impl HeadlessWallet {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use oxid_capabilities_application::{
+        CapabilityManifestContext, CapabilityValue, capability_manifest,
+    };
+
     use super::*;
 
     fn manifest(entries: Value) -> Value {
@@ -452,6 +460,77 @@ mod tests {
             tools[0].wallet_method,
             "wallet.transaction.prepare_unshielded"
         );
+    }
+
+    #[test]
+    fn composed_manifest_excludes_transaction_authority_and_lifecycle_methods() {
+        fn render_value(value: &CapabilityValue) -> Value {
+            match value {
+                CapabilityValue::Text(value) => Value::String(value.clone()),
+                CapabilityValue::Boolean(value) => Value::Bool(*value),
+                CapabilityValue::TextList(values) => {
+                    Value::Array(values.iter().cloned().map(Value::String).collect())
+                }
+                CapabilityValue::Object(facts) => Value::Object(
+                    facts
+                        .iter()
+                        .map(|fact| (fact.key().to_owned(), render_value(fact.value())))
+                        .collect(),
+                ),
+                CapabilityValue::Null => Value::Null,
+            }
+        }
+
+        let methods = capability_manifest(CapabilityManifestContext::new(
+            false,
+            "native_settlement",
+            "owner_private_atomic_file",
+        ))
+        .iter()
+        .map(|capability| {
+            let mut entry = serde_json::Map::from_iter([
+                (
+                    "method".to_owned(),
+                    Value::String(capability.method().to_owned()),
+                ),
+                (
+                    "status".to_owned(),
+                    Value::String(capability.status().to_owned()),
+                ),
+            ]);
+            entry.extend(
+                capability
+                    .facts()
+                    .iter()
+                    .map(|fact| (fact.key().to_owned(), render_value(fact.value()))),
+            );
+            Value::Object(entry)
+        })
+        .collect::<Vec<_>>();
+        let manifest = json!({ "methods": methods });
+        let exposed = agent_safe_tools(&manifest)
+            .into_iter()
+            .map(|tool| tool.wallet_method)
+            .collect::<BTreeSet<_>>();
+
+        for method in [
+            "wallet.dust.registration.prepare",
+            "wallet.dust.registration.draft",
+            "wallet.dust.registration.status",
+        ] {
+            assert!(exposed.contains(method), "{method} remains agent-safe");
+        }
+        for method in [
+            "wallet.transaction.cancel_submission",
+            "wallet.transaction.reconcile_submission",
+            "wallet.dust.registration.authorize",
+            "wallet.dust.registration.submit",
+            "wallet.dust.registration.start_submission",
+            "wallet.dust.registration.cancel_submission",
+            "wallet.dust.registration.reconcile_submission",
+        ] {
+            assert!(!exposed.contains(method), "{method} must fail closed");
+        }
     }
 
     #[test]

@@ -6049,6 +6049,7 @@ dependencies = [
 name = "oxid-mcp"
 version = "0.1.0"
 dependencies = [
+ "oxid-capabilities-application",
  "serde",
  "serde_json",
  "tokio",
