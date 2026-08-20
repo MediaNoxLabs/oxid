@@ -3,7 +3,7 @@
 //! Canonical protected NIGHT-to-DUST registration behind a typed wallet port.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     thread,
 };
@@ -599,6 +599,12 @@ fn plan_registration(
     }
     if eligible.len() > usize::from(oxid_wallet_domain::MAX_WALLET_DUST_REGISTRATION_INPUTS) {
         return Err(WalletDustRegistrationPortError::InvalidData);
+    }
+    let mut identities = HashSet::with_capacity(eligible.len());
+    if eligible.iter().any(|(utxo, _)| {
+        utxo.value == 0 || !identities.insert((utxo.intent_hash, utxo.output_index))
+    }) {
+        return Err(WalletDustRegistrationPortError::InvalidChainState);
     }
     eligible.sort_by(|(left, left_generated), (right, right_generated)| {
         right_generated
@@ -1243,6 +1249,23 @@ mod tests {
                 night_key,
                 DustPublicKey::from(dust),
                 vec![utxo(1_000_000, 1, None, false)],
+                &context,
+                1_700_003_600,
+            )
+            .map(|_| ()),
+            Err(WalletDustRegistrationPortError::InvalidChainState)
+        );
+        let duplicate = utxo(1_000_000, 7, Some(1_700_000_000), false);
+        assert_eq!(
+            plan_registration(
+                &network,
+                midnight_base_crypto::schnorr::SigningKey::from_bytes(&[3; 32])
+                    .expect("test scalar is valid")
+                    .verifying_key(),
+                DustPublicKey::from(midnight_ledger::dust::DustSecretKey::derive_secret_key(
+                    &[4; 32]
+                ),),
+                vec![duplicate.clone(), duplicate],
                 &context,
                 1_700_003_600,
             )
