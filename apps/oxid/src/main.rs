@@ -209,6 +209,17 @@ fn main() {
                 application.start_wallet_dust_sync(),
                 application.cancel_wallet_dust_sync(),
             ),
+            oxid_ui_dioxus::WalletDustRegistrationUiServices::new(
+                application.prepare_wallet_dust_registration(),
+                application.authorize_wallet_dust_registration(),
+                application.submit_wallet_dust_registration(),
+                oxid_ui_dioxus::WalletDustRegistrationRecoveryUiServices::new(
+                    application.get_wallet_dust_registration(),
+                    application.get_wallet_dust_registration_status(),
+                    application.cancel_wallet_dust_registration_submission(),
+                    application.reconcile_wallet_dust_registration_submission(),
+                ),
+            ),
             oxid_ui_dioxus::WalletShieldedSyncUiServices::new(
                 application.get_wallet_shielded_sync_status(),
                 application.start_wallet_shielded_sync(),
