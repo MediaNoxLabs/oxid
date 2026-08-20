@@ -55,13 +55,19 @@ use oxid_protocol_application::{
     SelfIssuedAuthenticationView,
 };
 use oxid_wallet_application::{
-    AuthorizeWalletTransferCommand, CreateWalletProfileCommand, CreateWalletProfileError,
-    DeleteWalletKeyCommand, DeriveWalletAccountCommand, DerivedWalletAccountView,
-    GenerateWalletKeyCommand, PrepareShieldedWalletTransferCommand, PrepareWalletTransferCommand,
-    ReadWalletProfilesError, SelectWalletNetworkCommand, SelectWalletProfileCommand,
-    SelectWalletProfileError, SensitiveOperationConfirmation, SensitiveWalletOperationError,
-    SignWalletDataCommand, SubmitWalletTransferCommand, WalletAccountError, WalletAccountPortError,
-    WalletAccountQuery, WalletAccountView, WalletDustSyncCommand, WalletDustSyncError,
+    AuthorizeWalletDustRegistrationCommand, AuthorizeWalletTransferCommand,
+    CancelWalletDustRegistrationSubmissionCommand, CreateWalletProfileCommand,
+    CreateWalletProfileError, DeleteWalletKeyCommand, DeriveWalletAccountCommand,
+    DerivedWalletAccountView, GenerateWalletKeyCommand, GetWalletDustRegistrationCommand,
+    GetWalletDustRegistrationStatusCommand, PrepareShieldedWalletTransferCommand,
+    PrepareWalletDustRegistrationCommand, PrepareWalletTransferCommand, ReadWalletProfilesError,
+    ReconcileWalletDustRegistrationSubmissionCommand, SelectWalletNetworkCommand,
+    SelectWalletProfileCommand, SelectWalletProfileError, SensitiveOperationConfirmation,
+    SensitiveWalletOperationError, SignWalletDataCommand, SubmitWalletDustRegistrationCommand,
+    SubmitWalletTransferCommand, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
+    WalletAccountView, WalletDustRegistrationError, WalletDustRegistrationPortError,
+    WalletDustRegistrationPreviewView, WalletDustRegistrationSubmissionStatusView,
+    WalletDustRegistrationSubmissionView, WalletDustSyncCommand, WalletDustSyncError,
     WalletDustSyncPortError, WalletDustSyncView, WalletKeyError, WalletKeyView,
     WalletNetworkListView, WalletProfileRepositoryError, WalletProfileSecurityCommand,
     WalletProfileView, WalletSecurityError, WalletSecurityPortError, WalletSecurityStatusView,
@@ -241,6 +247,20 @@ impl HeadlessWallet {
             "wallet.dust.sync.status" => self.dust_sync_status(request),
             "wallet.dust.sync.start" => self.start_dust_sync(request),
             "wallet.dust.sync.cancel" => self.cancel_dust_sync(request),
+            "wallet.dust.registration.prepare" => self.prepare_dust_registration(request),
+            "wallet.dust.registration.authorize" => self.authorize_dust_registration(request),
+            "wallet.dust.registration.submit" => self.submit_dust_registration(request),
+            "wallet.dust.registration.start_submission" => {
+                self.start_dust_registration_submission(request)
+            }
+            "wallet.dust.registration.draft" => self.dust_registration_draft(request),
+            "wallet.dust.registration.status" => self.dust_registration_status(request),
+            "wallet.dust.registration.cancel_submission" => {
+                self.cancel_dust_registration_submission(request)
+            }
+            "wallet.dust.registration.reconcile_submission" => {
+                self.reconcile_dust_registration_submission(request)
+            }
             "wallet.shielded.sync.status" => self.shielded_sync_status(request),
             "wallet.shielded.sync.start" => self.start_shielded_sync(request),
             "wallet.shielded.sync.cancel" => self.cancel_shielded_sync(request),
@@ -1745,6 +1765,333 @@ impl HeadlessWallet {
         }
     }
 
+    fn prepare_dust_registration(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.dust.registration.prepare");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .prepare_wallet_dust_registration()
+            .execute(PrepareWalletDustRegistrationCommand { profile_id })
+        {
+            Ok(preview) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "registration": dust_registration_preview_value(&preview) }),
+            )),
+            Err(error) => Dispatch::continue_with(dust_registration_error(request.id, error)),
+        }
+    }
+
+    fn authorize_dust_registration(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<AuthorizeDustRegistrationParams>(request.params)
+        {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.dust.registration.authorize requires only string draftId and authorizationChallenge fields plus confirmation",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .authorize_wallet_dust_registration()
+            .execute(AuthorizeWalletDustRegistrationCommand {
+                profile_id,
+                draft_id: params.draft_id,
+                authorization_challenge: params.authorization_challenge,
+                confirmation: params.confirmation.into(),
+            }) {
+            Ok(preview) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "registration": dust_registration_preview_value(&preview) }),
+            )),
+            Err(error) => Dispatch::continue_with(dust_registration_error(request.id, error)),
+        }
+    }
+
+    fn submit_dust_registration(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<SubmitTransferParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.dust.registration.submit requires only a string draftId and confirmation",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match futures::executor::block_on(
+            self.application.submit_wallet_dust_registration().execute(
+                SubmitWalletDustRegistrationCommand {
+                    profile_id,
+                    draft_id: params.draft_id,
+                    confirmation: params.confirmation.into(),
+                },
+            ),
+        ) {
+            Ok(submission) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "submission": dust_registration_submission_value(&submission) }),
+            )),
+            Err(error) => Dispatch::continue_with(dust_registration_error(request.id, error)),
+        }
+    }
+
+    fn start_dust_registration_submission(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<SubmitTransferParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.dust.registration.start_submission requires only a string draftId and confirmation",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let preview = match self.application.get_wallet_dust_registration().execute(
+            GetWalletDustRegistrationCommand {
+                profile_id: profile_id.clone(),
+                draft_id: params.draft_id.clone(),
+            },
+        ) {
+            Ok(preview) => preview,
+            Err(error) => {
+                return Dispatch::continue_with(dust_registration_error(request.id, error));
+            }
+        };
+        match preview.state.as_str() {
+            "authorized" | "submitting" | "submitted" => {}
+            "expired" => {
+                return Dispatch::continue_with(dust_registration_port_error(
+                    request.id,
+                    WalletDustRegistrationPortError::DraftExpired,
+                ));
+            }
+            _ => {
+                return Dispatch::continue_with(dust_registration_port_error(
+                    request.id,
+                    WalletDustRegistrationPortError::DraftConflict,
+                ));
+            }
+        }
+
+        let confirmation: SensitiveOperationConfirmation = params.confirmation.into();
+        if let Err(error) = validate_confirmation(&confirmation) {
+            return Dispatch::continue_with(sensitive_error(request.id, error));
+        }
+        let service = self.application.submit_wallet_dust_registration();
+        let command = SubmitWalletDustRegistrationCommand {
+            profile_id: profile_id.clone(),
+            draft_id: params.draft_id.clone(),
+            confirmation,
+        };
+        if thread::Builder::new()
+            .name("oxid-headless-dust-register".to_owned())
+            .spawn(move || {
+                let _ = futures::executor::block_on(service.execute(command));
+            })
+            .is_err()
+        {
+            return Dispatch::continue_with(Response::error(
+                request.id,
+                "unavailable",
+                "DUST registration submission worker could not be started",
+            ));
+        }
+
+        let service = self.application.get_wallet_dust_registration_status();
+        let command = GetWalletDustRegistrationStatusCommand {
+            profile_id,
+            draft_id: params.draft_id,
+        };
+        for _ in 0..100 {
+            match service.execute(command.clone()) {
+                Ok(status) if status.state != "not_started" => {
+                    return Dispatch::continue_with(Response::success(
+                        request.id,
+                        json!({
+                            "registrationStatus": dust_registration_status_value(&status)
+                        }),
+                    ));
+                }
+                Ok(_) => thread::sleep(Duration::from_millis(1)),
+                Err(error) => {
+                    return Dispatch::continue_with(dust_registration_error(request.id, error));
+                }
+            }
+        }
+        Dispatch::continue_with(Response::error(
+            request.id,
+            "unavailable",
+            "DUST registration submission worker did not start",
+        ))
+    }
+
+    fn dust_registration_draft(&self, request: Request) -> Dispatch {
+        self.dust_registration_operation(
+            request,
+            "wallet.dust.registration.draft",
+            |application, profile_id, draft_id| {
+                application.get_wallet_dust_registration().execute(
+                    GetWalletDustRegistrationCommand {
+                        profile_id,
+                        draft_id,
+                    },
+                )
+            },
+            |preview| json!({ "registration": dust_registration_preview_value(&preview) }),
+        )
+    }
+
+    fn dust_registration_status(&self, request: Request) -> Dispatch {
+        self.dust_registration_status_operation(
+            request,
+            "wallet.dust.registration.status",
+            |application, command| {
+                application
+                    .get_wallet_dust_registration_status()
+                    .execute(command)
+            },
+        )
+    }
+
+    fn cancel_dust_registration_submission(&self, request: Request) -> Dispatch {
+        let params = match dust_registration_draft_params(
+            request.id.clone(),
+            request.params,
+            "wallet.dust.registration.cancel_submission",
+        ) {
+            Ok(params) => params,
+            Err(dispatch) => return dispatch,
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match self
+            .application
+            .cancel_wallet_dust_registration_submission()
+            .execute(CancelWalletDustRegistrationSubmissionCommand {
+                profile_id,
+                draft_id: params.draft_id,
+            }) {
+            Ok(status) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "registrationStatus": dust_registration_status_value(&status) }),
+            )),
+            Err(error) => Dispatch::continue_with(dust_registration_error(request.id, error)),
+        }
+    }
+
+    fn reconcile_dust_registration_submission(&self, request: Request) -> Dispatch {
+        let params = match dust_registration_draft_params(
+            request.id.clone(),
+            request.params,
+            "wallet.dust.registration.reconcile_submission",
+        ) {
+            Ok(params) => params,
+            Err(dispatch) => return dispatch,
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match futures::executor::block_on(
+            self.application
+                .reconcile_wallet_dust_registration_submission()
+                .execute(ReconcileWalletDustRegistrationSubmissionCommand {
+                    profile_id,
+                    draft_id: params.draft_id,
+                }),
+        ) {
+            Ok(status) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "registrationStatus": dust_registration_status_value(&status) }),
+            )),
+            Err(error) => Dispatch::continue_with(dust_registration_error(request.id, error)),
+        }
+    }
+
+    fn dust_registration_status_operation(
+        &self,
+        request: Request,
+        method: &'static str,
+        operation: impl FnOnce(
+            &ApplicationServices,
+            GetWalletDustRegistrationStatusCommand,
+        ) -> Result<
+            WalletDustRegistrationSubmissionStatusView,
+            WalletDustRegistrationError,
+        >,
+    ) -> Dispatch {
+        let params =
+            match dust_registration_draft_params(request.id.clone(), request.params, method) {
+                Ok(params) => params,
+                Err(dispatch) => return dispatch,
+            };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match operation(
+            &self.application,
+            GetWalletDustRegistrationStatusCommand {
+                profile_id,
+                draft_id: params.draft_id,
+            },
+        ) {
+            Ok(status) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "registrationStatus": dust_registration_status_value(&status) }),
+            )),
+            Err(error) => Dispatch::continue_with(dust_registration_error(request.id, error)),
+        }
+    }
+
+    fn dust_registration_operation<T>(
+        &self,
+        request: Request,
+        method: &'static str,
+        operation: impl FnOnce(
+            &ApplicationServices,
+            String,
+            String,
+        ) -> Result<T, WalletDustRegistrationError>,
+        projection: impl FnOnce(T) -> Value,
+    ) -> Dispatch {
+        let params =
+            match dust_registration_draft_params(request.id.clone(), request.params, method) {
+                Ok(params) => params,
+                Err(dispatch) => return dispatch,
+            };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        match operation(&self.application, profile_id, params.draft_id) {
+            Ok(value) => Dispatch::continue_with(Response::success(request.id, projection(value))),
+            Err(error) => Dispatch::continue_with(dust_registration_error(request.id, error)),
+        }
+    }
+
     fn shielded_sync_status(&self, request: Request) -> Dispatch {
         self.shielded_sync_operation(
             request,
@@ -3118,6 +3465,14 @@ struct AuthorizeTransferParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AuthorizeDustRegistrationParams {
+    draft_id: String,
+    authorization_challenge: String,
+    confirmation: ConfirmationParams,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TransactionDraftParams {
     draft_id: String,
 }
@@ -3601,6 +3956,20 @@ fn params_are_empty(params: &Value) -> bool {
     params.as_object().is_some_and(serde_json::Map::is_empty)
 }
 
+fn dust_registration_draft_params(
+    id: Option<String>,
+    params: Value,
+    method: &'static str,
+) -> Result<TransactionDraftParams, Dispatch> {
+    serde_json::from_value(params).map_err(|_| {
+        Dispatch::continue_with(Response::error(
+            id,
+            "invalid_params",
+            format!("{method} requires only a string draftId"),
+        ))
+    })
+}
+
 fn profile_error(id: Option<String>, error: CreateWalletProfileError) -> Response {
     match error {
         CreateWalletProfileError::InvalidName(_) => Response::error(
@@ -3757,6 +4126,64 @@ fn dust_sync_value(status: &WalletDustSyncView) -> Value {
         },
         "updatedAtMillis": status.updated_at_millis,
         "failure": status.failure
+    })
+}
+
+fn dust_registration_preview_value(preview: &WalletDustRegistrationPreviewView) -> Value {
+    json!({
+        "draftId": preview.draft_id,
+        "authorizationChallenge": preview.authorization_challenge,
+        "networkId": preview.network_id,
+        "accountId": preview.account_id,
+        "registeredNight": dust_registration_asset_value(&preview.registered_night),
+        "inputCount": preview.input_count,
+        "maximumFeeAllowance": dust_registration_asset_value(&preview.maximum_fee_allowance),
+        "feeState": preview.fee_state,
+        "expiresAtMillis": preview.expires_at_millis,
+        "state": preview.state,
+        "authorizationReady": preview.authorization_ready,
+        "submissionReady": preview.submission_ready,
+        "custodyMode": "protected_role_2"
+    })
+}
+
+fn dust_registration_submission_value(submission: &WalletDustRegistrationSubmissionView) -> Value {
+    json!({
+        "registration": dust_registration_preview_value(&submission.registration),
+        "transactionId": submission.transaction_id,
+        "blockId": submission.block_id,
+        "fee": dust_registration_asset_value(&submission.fee),
+        "mode": submission.mode,
+        "registrationObservation": submission.registration_observation,
+        "dustReadiness": submission.dust_readiness,
+        "custodyMode": "protected_role_2"
+    })
+}
+
+fn dust_registration_status_value(status: &WalletDustRegistrationSubmissionStatusView) -> Value {
+    json!({
+        "draftId": status.draft_id,
+        "state": status.state,
+        "transactionId": status.transaction_id,
+        "blockId": status.block_id,
+        "fee": status.fee.as_ref().map(dust_registration_asset_value),
+        "mode": status.mode,
+        "registrationObservation": status.registration_observation,
+        "dustReadiness": status.dust_readiness,
+        "cancellationAllowed": status.cancellation_allowed,
+        "reconciliationAllowed": status.reconciliation_allowed,
+        "custodyMode": "protected_role_2"
+    })
+}
+
+fn dust_registration_asset_value(
+    asset: &oxid_wallet_application::WalletDustRegistrationAssetView,
+) -> Value {
+    json!({
+        "assetId": asset.asset_id,
+        "symbol": asset.symbol,
+        "decimals": asset.decimals,
+        "atomicUnits": asset.atomic_units,
     })
 }
 
@@ -4386,6 +4813,66 @@ fn transaction_error(id: Option<String>, error: WalletTransactionError) -> Respo
         ),
         WalletTransactionError::Operation(error) => transaction_port_error(id, error),
     }
+}
+
+fn dust_registration_error(id: Option<String>, error: WalletDustRegistrationError) -> Response {
+    match error {
+        WalletDustRegistrationError::InvalidProfileIdentifier(_)
+        | WalletDustRegistrationError::InvalidDraftIdentifier(_)
+        | WalletDustRegistrationError::InvalidAuthorizationChallenge(_) => Response::error(
+            id,
+            "invalid_argument",
+            "DUST registration draft or authorization challenge is invalid",
+        ),
+        WalletDustRegistrationError::ConfirmationRequired => Response::error(
+            id,
+            "confirmation_required",
+            "explicit human-readable confirmation is required",
+        ),
+        WalletDustRegistrationError::InvalidConfirmation => Response::error(
+            id,
+            "invalid_argument",
+            "confirmation title and summary must be non-empty and bounded",
+        ),
+        WalletDustRegistrationError::Clock(_) => Response::error(
+            id,
+            "platform_unavailable",
+            "required platform clock is unavailable",
+        ),
+        WalletDustRegistrationError::Operation(error) => dust_registration_port_error(id, error),
+    }
+}
+
+fn dust_registration_port_error(
+    id: Option<String>,
+    error: WalletDustRegistrationPortError,
+) -> Response {
+    let code = match error {
+        WalletDustRegistrationPortError::Unavailable => "capability_unavailable",
+        WalletDustRegistrationPortError::ProtectionNotInitialized
+        | WalletDustRegistrationPortError::AccountNotDerived
+        | WalletDustRegistrationPortError::AccountNotSynchronized
+        | WalletDustRegistrationPortError::NoEligibleNight
+        | WalletDustRegistrationPortError::InsufficientRegistrationAllowance => {
+            "failed_precondition"
+        }
+        WalletDustRegistrationPortError::ProtectionLocked => "wallet_locked",
+        WalletDustRegistrationPortError::RegistrationAlreadyCurrent => "already_registered",
+        WalletDustRegistrationPortError::DraftNotFound => "not_found",
+        WalletDustRegistrationPortError::DraftExpired
+        | WalletDustRegistrationPortError::DraftConflict
+        | WalletDustRegistrationPortError::SubmissionInProgress
+        | WalletDustRegistrationPortError::SubmissionNotInProgress
+        | WalletDustRegistrationPortError::SubmissionCancellationUnsafe => "conflict",
+        WalletDustRegistrationPortError::AuthorizationChallengeMismatch => "invalid_argument",
+        WalletDustRegistrationPortError::InvalidChainState => "invalid_chain_state",
+        WalletDustRegistrationPortError::ProvingFailed => "proving_failed",
+        WalletDustRegistrationPortError::SubmissionRejected => "submission_rejected",
+        WalletDustRegistrationPortError::SubmissionOutcomeUnknown => "submission_outcome_unknown",
+        WalletDustRegistrationPortError::Timeout => "timeout",
+        WalletDustRegistrationPortError::InvalidData => "internal_error",
+    };
+    Response::error(id, code, error.to_string())
 }
 
 fn transaction_port_error(id: Option<String>, error: WalletTransactionPortError) -> Response {
@@ -8141,6 +8628,180 @@ mod tests {
             resumed_and_current[4]["result"]["dustSync"]["eventsProcessed"],
             0
         );
+    }
+
+    #[test]
+    fn registers_protected_dust_through_explicit_secret_free_headless_stages() {
+        let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+        let created = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"register-create","method":"wallet.profile.create","params":{"displayName":"Registration flow"}}"#,
+        );
+        let profile_id = created[0]["result"]["profile"]["id"]
+            .as_str()
+            .expect("profile id is returned");
+        let setup = execute_with_wallet(
+            &wallet,
+            &format!(
+                "{}\n{}\n{}\n{}",
+                json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "id": "register-select",
+                    "method": "wallet.profile.select",
+                    "params": { "profileId": profile_id }
+                }),
+                r#"{"protocol":"oxid.headless.v1","id":"register-init","method":"wallet.security.initialize","params":{}}"#,
+                r#"{"protocol":"oxid.headless.v1","id":"register-derive","method":"wallet.account.derive","params":{}}"#,
+                r#"{"protocol":"oxid.headless.v1","id":"register-sync","method":"wallet.connect","params":{}}"#,
+            ),
+        );
+        assert!(setup.iter().all(|response| response["ok"] == true));
+
+        let rejected = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"register-secret","method":"wallet.dust.registration.prepare","params":{"seedHex":"never-accept-registration-secret"}}"#,
+        );
+        assert_eq!(rejected[0]["error"]["code"], "invalid_params");
+        assert!(
+            !rejected[0]
+                .to_string()
+                .contains("never-accept-registration-secret")
+        );
+
+        let prepared = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"register-prepare","method":"wallet.dust.registration.prepare","params":{}}"#,
+        );
+        let registration = &prepared[0]["result"]["registration"];
+        assert_eq!(registration["state"], "prepared", "{prepared:?}");
+        assert_eq!(registration["registeredNight"]["atomicUnits"], "5000000");
+        assert_eq!(registration["inputCount"], 3);
+        assert_eq!(registration["authorizationReady"], true);
+        assert_eq!(registration["submissionReady"], false);
+        let draft_id = registration["draftId"]
+            .as_str()
+            .expect("registration draft id is returned");
+        let challenge = registration["authorizationChallenge"]
+            .as_str()
+            .expect("authorization challenge is returned");
+
+        let denied = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "register-denied",
+                "method": "wallet.dust.registration.authorize",
+                "params": {
+                    "draftId": draft_id,
+                    "authorizationChallenge": challenge,
+                    "confirmation": {
+                        "title": "Authorize DUST registration",
+                        "summary": "Register this wallet's eligible NIGHT with its protected DUST key",
+                        "confirmed": false
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(denied[0]["error"]["code"], "confirmation_required");
+
+        let authorized = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "register-authorize",
+                "method": "wallet.dust.registration.authorize",
+                "params": {
+                    "draftId": draft_id,
+                    "authorizationChallenge": challenge,
+                    "confirmation": {
+                        "title": "Authorize DUST registration",
+                        "summary": "Register this wallet's eligible NIGHT with its protected DUST key",
+                        "confirmed": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            authorized[0]["result"]["registration"]["state"],
+            "authorized"
+        );
+        assert_eq!(
+            authorized[0]["result"]["registration"]["submissionReady"],
+            true
+        );
+
+        let submitted = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "register-submit",
+                "method": "wallet.dust.registration.submit",
+                "params": {
+                    "draftId": draft_id,
+                    "confirmation": {
+                        "title": "Submit DUST registration",
+                        "summary": "Prove and submit the authorized registration using only this wallet's generated DUST allowance",
+                        "confirmed": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        let submission = &submitted[0]["result"]["submission"];
+        assert_eq!(submission["mode"], "simulated");
+        assert_eq!(submission["registration"]["state"], "submitted");
+        assert_eq!(submission["registrationObservation"], "included");
+        assert_eq!(submission["dustReadiness"], "requires_synchronization");
+        assert_eq!(submission["fee"]["assetId"], "midnight:dust");
+        let wire = submitted[0].to_string();
+        for forbidden in [
+            "dustSeed",
+            "dustSecret",
+            "signatureHex",
+            "transactionHex",
+            "intentHash",
+            "outputIndex",
+        ] {
+            assert!(
+                !wire.contains(forbidden),
+                "{forbidden} must stay adapter-private"
+            );
+        }
+
+        let status = execute_with_wallet(
+            &wallet,
+            &json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "register-status",
+                "method": "wallet.dust.registration.status",
+                "params": { "draftId": draft_id }
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            status[0]["result"]["registrationStatus"]["state"],
+            "included"
+        );
+        assert_eq!(
+            status[0]["result"]["registrationStatus"]["dustReadiness"],
+            "requires_synchronization"
+        );
+
+        let transfer_history = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"register-transfer-history","method":"wallet.transaction.submission_history","params":{}}"#,
+        );
+        assert_eq!(
+            transfer_history[0]["result"]["submissions"],
+            serde_json::json!([])
+        );
+        let repeated = execute_with_wallet(
+            &wallet,
+            r#"{"protocol":"oxid.headless.v1","id":"register-repeat","method":"wallet.dust.registration.prepare","params":{}}"#,
+        );
+        assert_eq!(repeated[0]["error"]["code"], "already_registered");
     }
 
     #[test]

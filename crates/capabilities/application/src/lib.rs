@@ -406,6 +406,34 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
         CapabilityView::new("wallet.dust.sync.cancel", "ready")
             .text("mode", "standalone")
             .text("checkpoint", "resumable"),
+        CapabilityView::new("wallet.dust.registration.prepare", "ready")
+            .text("mode", "standalone")
+            .text("source", "live_indexer_v4")
+            .text("feeAuthority", "same_profile_generated_dust"),
+        CapabilityView::new("wallet.dust.registration.authorize", "ready")
+            .text("mode", "standalone")
+            .text("custody", "protected_role_2")
+            .boolean("confirmationRequired", true),
+        CapabilityView::new("wallet.dust.registration.submit", "ready")
+            .text("mode", "standalone")
+            .text("finality", "canonical_finalized_inclusion")
+            .boolean("confirmationRequired", true),
+        CapabilityView::new("wallet.dust.registration.start_submission", "ready")
+            .text("mode", "standalone")
+            .text("execution", "adapter_worker")
+            .boolean("confirmationRequired", true),
+        CapabilityView::new("wallet.dust.registration.draft", "ready")
+            .text("mode", "standalone")
+            .text("material", "public_preview_only"),
+        CapabilityView::new("wallet.dust.registration.status", "ready")
+            .text("mode", "standalone")
+            .text("readiness", "requires_separate_dust_sync"),
+        CapabilityView::new("wallet.dust.registration.cancel_submission", "ready")
+            .text("mode", "standalone")
+            .text("boundary", "pre_broadcast_only"),
+        CapabilityView::new("wallet.dust.registration.reconcile_submission", "ready")
+            .text("mode", "standalone")
+            .text("scope", "finalized_chain"),
         CapabilityView::new("wallet.shielded.sync.status", "ready")
             .text("mode", "standalone")
             .texts("sources", &["simulated", "live", "cached", "unavailable"]),
@@ -720,6 +748,9 @@ mod tests {
             "wallet.transaction.submit_shielded",
             "wallet.transaction.send_shielded",
             "wallet.transaction.start_submission",
+            "wallet.dust.registration.authorize",
+            "wallet.dust.registration.submit",
+            "wallet.dust.registration.start_submission",
             "vault.contract_call.authorize",
             "vault.contract_call.submit",
             "vault.lock.create",

@@ -183,6 +183,70 @@ pub trait WalletDustRegistrationPort: Send + Sync {
     ) -> WalletDustRegistrationStatusPortFuture<'a>;
 }
 
+/// Fail-closed registration port for compositions without a native Midnight
+/// transaction/proving stack (for example the browser-only WASM shell).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableWalletDustRegistrationPort;
+
+impl WalletDustRegistrationPort for UnavailableWalletDustRegistrationPort {
+    fn prepare(
+        &self,
+        _: &WalletProfileId,
+        _: PrepareWalletDustRegistrationRequest,
+    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
+        Err(WalletDustRegistrationPortError::Unavailable)
+    }
+
+    fn authorize(
+        &self,
+        _: &WalletProfileId,
+        _: AuthorizeWalletDustRegistrationRequest,
+    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
+        Err(WalletDustRegistrationPortError::Unavailable)
+    }
+
+    fn submit<'a>(
+        &'a self,
+        _: &'a WalletProfileId,
+        _: SubmitWalletDustRegistrationRequest,
+    ) -> WalletDustRegistrationPortFuture<'a> {
+        Box::pin(async { Err(WalletDustRegistrationPortError::Unavailable) })
+    }
+
+    fn get(
+        &self,
+        _: &WalletProfileId,
+        _: &WalletTransactionDraftId,
+        _: UnixTimestampMillis,
+    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
+        Err(WalletDustRegistrationPortError::Unavailable)
+    }
+
+    fn status(
+        &self,
+        _: &WalletProfileId,
+        _: &WalletTransactionDraftId,
+    ) -> Result<WalletDustRegistrationSubmissionStatus, WalletDustRegistrationPortError> {
+        Err(WalletDustRegistrationPortError::Unavailable)
+    }
+
+    fn cancel_submission(
+        &self,
+        _: &WalletProfileId,
+        _: &WalletTransactionDraftId,
+    ) -> Result<WalletDustRegistrationSubmissionStatus, WalletDustRegistrationPortError> {
+        Err(WalletDustRegistrationPortError::Unavailable)
+    }
+
+    fn reconcile_submission<'a>(
+        &'a self,
+        _: &'a WalletProfileId,
+        _: &'a WalletTransactionDraftId,
+    ) -> WalletDustRegistrationStatusPortFuture<'a> {
+        Box::pin(async { Err(WalletDustRegistrationPortError::Unavailable) })
+    }
+}
+
 /// Incoming request to prepare registration of the active account's eligible NIGHT.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrepareWalletDustRegistrationCommand {

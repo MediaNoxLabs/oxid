@@ -203,26 +203,35 @@ use oxid_protocol_application::{
 };
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_wallet_application::UnavailablePortableWalletBackupDocuments;
+#[cfg(target_arch = "wasm32")]
+use oxid_wallet_application::UnavailableWalletDustRegistrationPort;
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_wallet_application::WalletDustRegistrationPort;
 use oxid_wallet_application::{
-    AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
-    CancelWalletTransferSubmissionUseCase, CompleteWalletBackupService, CreateWalletProfileService,
-    CreateWalletProfileUseCase, DeleteWalletKeyUseCase, DeriveWalletAccountUseCase,
-    ExportCompleteWalletBackupUseCase, ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase,
-    GetActiveWalletProfileService, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
-    GetWalletBackupReceiptUseCase, GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    AuthorizeWalletDustRegistrationUseCase, AuthorizeWalletTransferUseCase,
+    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
+    CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
+    CompleteWalletBackupService, CreateWalletProfileService, CreateWalletProfileUseCase,
+    DeleteWalletKeyUseCase, DeriveWalletAccountUseCase, ExportCompleteWalletBackupUseCase,
+    ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase, GetActiveWalletProfileService,
+    GetActiveWalletProfileUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
+    GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
+    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
     ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
     ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
     PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferUseCase,
-    PrepareWalletTransferUseCase, ReconcileWalletTransferSubmissionUseCase,
+    PrepareWalletDustRegistrationUseCase, PrepareWalletTransferUseCase,
+    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
     RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupUseCase,
     RecoverPortableWalletBackupUseCase, SelectWalletNetworkUseCase, SelectWalletProfileService,
     SelectWalletProfileUseCase, SignWalletDataUseCase, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
-    WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
-    WalletBackupReceiptService, WalletDustSyncPort, WalletDustSyncService,
+    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
+    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
+    WalletAccountService, WalletBackupReceiptRepository, WalletBackupReceiptService,
+    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
     WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
     WalletNetworkService, WalletPortableBackupPort, WalletPortableBackupService,
     WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
@@ -247,6 +256,18 @@ trait NativeMidnightCompositionCapability {}
 
 #[cfg(target_arch = "wasm32")]
 impl<T> NativeMidnightCompositionCapability for T {}
+
+#[cfg(not(target_arch = "wasm32"))]
+trait NativeWalletDustRegistrationCapability: WalletDustRegistrationPort {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T> NativeWalletDustRegistrationCapability for T where T: WalletDustRegistrationPort {}
+
+#[cfg(target_arch = "wasm32")]
+trait NativeWalletDustRegistrationCapability {}
+
+#[cfg(target_arch = "wasm32")]
+impl<T> NativeWalletDustRegistrationCapability for T {}
 
 /// Application capabilities shared by every incoming adapter.
 #[derive(Clone)]
@@ -296,6 +317,15 @@ pub struct ApplicationServices {
     get_wallet_shielded_sync_status: Arc<dyn GetWalletShieldedSyncStatusUseCase>,
     start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase>,
     cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase>,
+    prepare_wallet_dust_registration: Arc<dyn PrepareWalletDustRegistrationUseCase>,
+    authorize_wallet_dust_registration: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
+    submit_wallet_dust_registration: Arc<dyn SubmitWalletDustRegistrationUseCase>,
+    get_wallet_dust_registration: Arc<dyn GetWalletDustRegistrationUseCase>,
+    get_wallet_dust_registration_status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
+    cancel_wallet_dust_registration_submission:
+        Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
+    reconcile_wallet_dust_registration_submission:
+        Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
     prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase>,
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
@@ -608,6 +638,51 @@ impl ApplicationServices {
     #[must_use]
     pub fn cancel_wallet_shielded_sync(&self) -> Arc<dyn CancelWalletShieldedSyncUseCase> {
         Arc::clone(&self.cancel_wallet_shielded_sync)
+    }
+
+    #[must_use]
+    pub fn prepare_wallet_dust_registration(
+        &self,
+    ) -> Arc<dyn PrepareWalletDustRegistrationUseCase> {
+        Arc::clone(&self.prepare_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn authorize_wallet_dust_registration(
+        &self,
+    ) -> Arc<dyn AuthorizeWalletDustRegistrationUseCase> {
+        Arc::clone(&self.authorize_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn submit_wallet_dust_registration(&self) -> Arc<dyn SubmitWalletDustRegistrationUseCase> {
+        Arc::clone(&self.submit_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn get_wallet_dust_registration(&self) -> Arc<dyn GetWalletDustRegistrationUseCase> {
+        Arc::clone(&self.get_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn get_wallet_dust_registration_status(
+        &self,
+    ) -> Arc<dyn GetWalletDustRegistrationStatusUseCase> {
+        Arc::clone(&self.get_wallet_dust_registration_status)
+    }
+
+    #[must_use]
+    pub fn cancel_wallet_dust_registration_submission(
+        &self,
+    ) -> Arc<dyn CancelWalletDustRegistrationSubmissionUseCase> {
+        Arc::clone(&self.cancel_wallet_dust_registration_submission)
+    }
+
+    #[must_use]
+    pub fn reconcile_wallet_dust_registration_submission(
+        &self,
+    ) -> Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase> {
+        Arc::clone(&self.reconcile_wallet_dust_registration_submission)
     }
 
     #[must_use]
@@ -2449,6 +2524,7 @@ where
         + WalletAccountReadPort
         + WalletAccountDerivationPort
         + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
@@ -2485,6 +2561,7 @@ where
         + WalletAccountReadPort
         + WalletAccountDerivationPort
         + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
@@ -2551,6 +2628,7 @@ where
         + WalletAccountReadPort
         + WalletAccountDerivationPort
         + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
@@ -2686,6 +2764,16 @@ where
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
     let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let shielded = Arc::new(WalletShieldedSyncService::new(Arc::clone(&midnight)));
+    #[cfg(not(target_arch = "wasm32"))]
+    let dust_registrations = Arc::new(WalletDustRegistrationService::new(
+        Arc::clone(&midnight),
+        Arc::clone(&clock),
+    ));
+    #[cfg(target_arch = "wasm32")]
+    let dust_registrations = Arc::new(WalletDustRegistrationService::new(
+        Arc::new(UnavailableWalletDustRegistrationPort),
+        Arc::clone(&clock),
+    ));
     let transactions = Arc::new(WalletTransactionService::new(midnight, Arc::clone(&clock)));
     let identity = Arc::new(DidService::from_ports(
         did_repository,
@@ -2932,6 +3020,22 @@ where
         shielded.clone();
     let start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase> = shielded.clone();
     let cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase> = shielded;
+    let prepare_wallet_dust_registration: Arc<dyn PrepareWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let authorize_wallet_dust_registration: Arc<dyn AuthorizeWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let submit_wallet_dust_registration: Arc<dyn SubmitWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let get_wallet_dust_registration: Arc<dyn GetWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let get_wallet_dust_registration_status: Arc<dyn GetWalletDustRegistrationStatusUseCase> =
+        dust_registrations.clone();
+    let cancel_wallet_dust_registration_submission: Arc<
+        dyn CancelWalletDustRegistrationSubmissionUseCase,
+    > = dust_registrations.clone();
+    let reconcile_wallet_dust_registration_submission: Arc<
+        dyn ReconcileWalletDustRegistrationSubmissionUseCase,
+    > = dust_registrations;
     let prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase> =
         transactions.clone();
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();
@@ -3069,6 +3173,13 @@ where
         get_wallet_shielded_sync_status,
         start_wallet_shielded_sync,
         cancel_wallet_shielded_sync,
+        prepare_wallet_dust_registration,
+        authorize_wallet_dust_registration,
+        submit_wallet_dust_registration,
+        get_wallet_dust_registration,
+        get_wallet_dust_registration_status,
+        cancel_wallet_dust_registration_submission,
+        reconcile_wallet_dust_registration_submission,
         prepare_shielded_wallet_transfer,
         prepare_wallet_transfer,
         authorize_wallet_transfer,
