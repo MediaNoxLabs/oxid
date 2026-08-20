@@ -5,6 +5,7 @@
 - Blueprint source: Sections 7, 12, 15, and 17
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`
 - Implementation state: Focused ports plus process-local generated roots,
+- Amended by: ADR-0033, ADR-0037, ADR-0038, ADR-0039, ADR-0040, ADR-0041, ADR-0042, ADR-0045, ADR-0046
   exact Jubjub generation/signing, protected BIP32/BIP340 derivation, and
   headless signing are implemented for development; native mobile adapters
   remain required

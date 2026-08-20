@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`
 - Implementation state: Native local DUST proving, bounded authenticated cache, cancellation boundaries, interoperability harness, and iOS/Android measurements implemented; production custody remains fail-closed
 - Supersedes: ADR-0027 only where it deferred local proving or described remote proving as the sole completion path
+- Amended by: ADR-0034, ADR-0044
 
 ## Context
 

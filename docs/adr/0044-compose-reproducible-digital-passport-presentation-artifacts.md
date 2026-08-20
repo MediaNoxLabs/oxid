@@ -7,6 +7,7 @@
 - Toolchain source: `midnight-did` commit `05b237a5e51f9c22853b424e7d4236dfa9384c24`
 - Amends: ADR-0006, ADR-0010, ADR-0013, ADR-0015, ADR-0020, ADR-0022, ADR-0028, ADR-0042, and ADR-0043
 - Implementation state: immutable source/toolchain inputs, an Oxid-owned final Compact composition, real prover/verifier artifact generation, a digest manifest, exact Rust public-input construction, a portable public-input codec, and independent statement reconstruction are implemented; ADR-0046 through ADR-0049 supply the holder boundary, and ADR-0050 implements checked native headless proof execution/encoding, independent proof verification, and internal `vp_token` validation
+- Amended by: ADR-0045, ADR-0046
 
 ## Context
 

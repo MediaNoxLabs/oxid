@@ -7,6 +7,7 @@
 - Supersedes: ADR-0037 statements that credential verification is entirely queued
 - Amends: ADR-0003, ADR-0004, ADR-0007, ADR-0009, ADR-0011, ADR-0013, ADR-0017, ADR-0018, ADR-0020, ADR-0021, ADR-0023, ADR-0024, and ADR-0029
 - Implementation state: protected standalone inventory, strict Midnight phase-1 CBOR proof verification, headless lifecycle, process restoration, and Dioxus mobile inventory implemented; native platform wrapping, protocol ingress, selective disclosure, status/trust policy, and Compact passport proofs remain queued
+- Amended by: ADR-0039, ADR-0041, ADR-0042, ADR-0045
 
 ## Context
 

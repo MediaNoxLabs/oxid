@@ -29,6 +29,7 @@ Current reviews and source policies:
 - [Midnight local proving](midnight-local-proving.md)
 - [Midnight Compact Digital Passport presentation](midnight-compact-presentation.md)
 - [Midnight DID resolution](midnight-did-resolution.md)
+- [Tier-2 browser entropy backends](wasm-web-entropy.md)
 
 ## Automated dependency pull requests
 
@@ -53,4 +54,3 @@ pull-request validation workflows therefore skip pull requests authored by
 `dependabot[bot]` and `renovate[bot]`. Every other gate (CI, Quality, Scan) runs
 unchanged: the checks that verify the *change* still apply in full, and only the
 checks that verify *authorship formalities* are skipped.
-

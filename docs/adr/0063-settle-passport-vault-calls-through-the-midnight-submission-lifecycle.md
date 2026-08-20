@@ -9,6 +9,7 @@
 - Related: ADR-0013, ADR-0015, ADR-0017, ADR-0026 through ADR-0028, ADR-0033 through ADR-0035, ADR-0056 through ADR-0062, and issue #31
 - Supersedes: ADR-0062's implementation-state boundary that DUST completion, proving, submission, and reconciliation are pending
 - Implementation state: complete standalone composition settles native create/deposit/withdraw calls; protected claim composition remains pending
+- Amended by: ADR-0064
 
 ## Context
 

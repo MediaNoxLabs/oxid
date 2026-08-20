@@ -10,6 +10,11 @@ publish = false
 
 [features]
 mobile = ["dioxus/mobile"]
+# Asserts a deliberate, reviewed non-user profile selection. oxid-app's guarded
+# features forward it; adapter-only profile builds state it explicitly.
+# src/profile_guard.rs rejects a profile without it, so an application build
+# cannot pick one up through the dependency path and skip the guards.
+app-profile-authority = []
 ui-profile-dev = ["dep:oxid-capabilities-application"]
 ui-profile-demo = []
 

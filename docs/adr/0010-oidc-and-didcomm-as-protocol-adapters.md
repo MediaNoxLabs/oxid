@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 7 and 11
 - Implementation state: Planned for M4 and M6
+- Amended by: ADR-0039, ADR-0040, ADR-0043, ADR-0044, ADR-0082
 
 ## Context
 

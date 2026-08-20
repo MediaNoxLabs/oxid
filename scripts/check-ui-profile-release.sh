@@ -30,6 +30,39 @@ if ! rg -q 'ui-profile-demo requires standalone-development' "$failure_log"; the
   exit 1
 fi
 
+# The application guards test oxid-app's own feature names, so a dependency
+# feature path (oxid-ui-dioxus/ui-profile-*) once compiled the profile into an
+# otherwise production-composed binary without reaching them. The guards in
+# crates/ui-dioxus/src/profile_guard.rs close that path; prove both variants
+# stay rejected.
+for dependency_profile in ui-profile-dev ui-profile-demo; do
+  if cargo check -p oxid-app --no-default-features \
+    --features "desktop,oxid-ui-dioxus/$dependency_profile" >"$failure_log" 2>&1; then
+    echo "oxid-ui-dioxus/$dependency_profile compiled through the dependency feature path" >&2
+    exit 1
+  fi
+  if ! rg -q 'a non-user UI profile must be selected through oxid-app' "$failure_log"; then
+    echo "oxid-ui-dioxus/$dependency_profile failed for an unexpected reason" >&2
+    sed -n '1,120p' "$failure_log" >&2
+    exit 1
+  fi
+done
+
+# The same bypass with a standalone composition present must also be rejected:
+# authority comes from the application crate, never from the composition
+# feature being incidentally correct.
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,standalone-development,oxid-ui-dioxus/ui-profile-demo \
+  >"$failure_log" 2>&1; then
+  echo "the dependency feature path compiled alongside standalone-development" >&2
+  exit 1
+fi
+if ! rg -q 'a non-user UI profile must be selected through oxid-app' "$failure_log"; then
+  echo "the dependency feature path failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
 if cargo check -p oxid-app --no-default-features \
   --features desktop,standalone-native-custody,ui-profile-demo >"$failure_log" 2>&1; then
   echo "ui-profile-demo compiled with native standalone custody" >&2

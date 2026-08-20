@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 3 and 7
 - Implementation state: Enforced for M0; future port names remain illustrative
+- Amended by: ADR-0038, ADR-0039, ADR-0040, ADR-0094
 
 ## Context
 

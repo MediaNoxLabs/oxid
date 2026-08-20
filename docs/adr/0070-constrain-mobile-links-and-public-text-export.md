@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, whose mobile clipboard adapter is a no-op and whose identity ingress is QR-only
 - Tracking: issues #2 and #32
 - Implementation state: iOS/Android custom-scheme delivery, strict shared routing, explicit dismissal, typed public-address copy/share, consolidated native packaging, headless routing conformance, and simulator/emulator lifecycle evidence are implemented; physical Android warm/foreground and cold custom-scheme delivery are proven on Samsung SM-S928B / Android 16 (API 36); universal HTTPS links, production endpoint discovery, physical iOS evidence, and device resource baselines remain #32
+- Amended by: ADR-0081, ADR-0094
 
 ## Context
 

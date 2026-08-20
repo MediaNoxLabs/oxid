@@ -9,6 +9,7 @@
 - Related: ADR-0003, ADR-0004, ADR-0006, ADR-0013, ADR-0015, ADR-0018, ADR-0020, ADR-0027, ADR-0035, ADR-0051, ADR-0052, ADR-0053, and issue #31
 - Supersedes: ADR-0052's undifferentiated “authenticated indexer acquisition” follow-up with the staged trust model below
 - Implementation state: bounded finalized-height acquisition, canonical action-block verification, native decoding, headless read method, and fail-closed standalone composition are implemented; state-byte replay/proof authentication, caching, and contract calls remain issue #31
+- Amended by: ADR-0055
 
 ## Context
 

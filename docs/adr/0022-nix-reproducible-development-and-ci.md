@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Source: Repository harness requirements and M0 implementation
 - Implementation state: Implemented
+- Amended by: ADR-0044
 
 ## Context
 

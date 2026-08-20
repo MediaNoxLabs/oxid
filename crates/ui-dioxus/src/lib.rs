@@ -4,6 +4,7 @@
 
 mod brand;
 mod labels;
+mod profile_guard;
 
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
 #[cfg(feature = "ui-profile-dev")]

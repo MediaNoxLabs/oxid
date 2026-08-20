@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/node/client.rs`, transaction construction/proving services, and the Dioxus worker boundary
 - Amends: ADR-0024, ADR-0027, ADR-0028, and ADR-0029
 - Implementation state: Oxid-owned submission status/cancel use cases, adapter-owned cooperative control, asynchronous headless lifecycle, and mobile cancel/retry presentation implemented; durable restart reconciliation remains separate work
+- Amended by: ADR-0035
 
 ## Context
 

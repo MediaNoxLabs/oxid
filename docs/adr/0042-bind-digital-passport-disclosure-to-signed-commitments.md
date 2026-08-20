@@ -7,6 +7,7 @@
 - Reference package: `midnight-verifiable-credentials` commit `39b1354212620b396e914b29603e6a38f2656546`
 - Amends: ADR-0007, ADR-0009, ADR-0011, ADR-0013, ADR-0015, ADR-0017, ADR-0020, ADR-0021, ADR-0023, ADR-0029, ADR-0038, ADR-0039, and ADR-0041
 - Implementation state: deterministic standalone Digital Passport issuance, protected private-part validation, schema-neutral disclosure inventory/planning, local Dioxus reveal, headless lifecycle, restart/deletion, and Tier-1 mobile smoke coverage implemented; verifier presentation and predicate-proof generation remain deferred
+- Amended by: ADR-0043, ADR-0044, ADR-0045
 
 ## Context
 

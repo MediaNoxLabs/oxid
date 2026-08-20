@@ -7,6 +7,7 @@
 - Canonical sources: `midnight-ledger` commit `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, `midnight-wallet` commit `25d0c3857fc0e20435e06a9225bd8709ecce1115`, and `midnight-indexer` commit `82759bf186184684f13a9ffa97b58b7b7684f47c`
 - Amends: ADR-0015, ADR-0017, ADR-0024, ADR-0029, and ADR-0030
 - Implementation state: protected role-3 derivation, official shielded address-vector conformance, bounded tagged-event decoding, canonical adapter-private replay, owner-private checkpoint store, Oxid-owned sync lifecycle, deterministic standalone/mobile session, native live worker/checkpoint wiring, and headless/mobile status/balance presentation implemented; ADR-0079 adds shielded spending while production custody remains separately gated
+- Amended by: ADR-0079
 
 ## Context
 

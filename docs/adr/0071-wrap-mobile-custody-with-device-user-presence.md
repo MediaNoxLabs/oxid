@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, especially `wallet-core/secret_storage` and `unlock`
 - Tracking: issues #2, #29, and #30
 - Implementation state: the Rust sealed-vault adapter, iOS Keychain and Android Keystore backends, normal mobile fail-closed composition, opt-in standalone native-custody composition, adapter tests, iOS capability/fail-closed smoke, and Android explicit-authorization/distinct-process/stable-root smoke are implemented; physical-device recovery, lifecycle/resource evidence, mobile Compact proving, and production release review remain open
+- Amended by: ADR-0081
 
 ## Context
 
