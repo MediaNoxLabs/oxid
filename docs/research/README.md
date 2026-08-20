@@ -8,6 +8,7 @@ re-checked when the other project moves.
 | Study | Subject | Date | Headline |
 | --- | --- | --- | --- |
 | [moth-wallet.md](moth-wallet.md) | `shieldedtech/moth-wallet` — Shielded Technologies' Midnight reference wallet | 2026-08-20 | Ships the DApp connector Oxid has no code and no ADR for; has no SSI layer at all |
+| [web-bridge-architecture.md](web-bridge-architecture.md) | Chrome-extension-to-phone bridge vs a wasm web target — transports, precedent, threat model | 2026-08-20 | Custody thesis holds; "no infrastructure" does not; USB is dead on iOS; ship the QR channel first |
 
 ## How to use these
 
