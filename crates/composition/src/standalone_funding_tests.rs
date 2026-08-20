@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    fs,
+    fmt, fs,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -12,6 +12,7 @@ use std::{
 
 use oxid_adapter_midnight::{
     MidnightShieldedCheckpointConfig, MidnightStandaloneConfig, MidnightSubmissionJournalConfig,
+    protected_simulated_midnight_wallet,
     protected_standalone_midnight_wallet_with_checkpoint_options,
 };
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
@@ -20,10 +21,11 @@ use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;
 use oxid_platform_ports::{PlatformError, RandomPort};
 use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, CreateWalletProfileCommand, DeriveWalletAccountCommand,
-    PrepareShieldedWalletTransferCommand, PrepareWalletTransferCommand,
+    PrepareShieldedWalletTransferCommand, PrepareWalletTransferCommand, SelectWalletNetworkCommand,
     SensitiveOperationConfirmation, SubmitWalletTransferCommand, WalletAccountQuery,
-    WalletProfileSecurityCommand, WalletShieldedSyncCommand, WalletShieldedSyncView,
-    WalletTransactionError, WalletTransactionPortError, WalletTransferSubmissionQuery,
+    WalletHdPathComponent, WalletProfileSecurityCommand, WalletShieldedSyncCommand,
+    WalletShieldedSyncView, WalletTransactionError, WalletTransactionPortError,
+    WalletTransferSubmissionQuery,
 };
 use zeroize::Zeroizing;
 
@@ -31,12 +33,313 @@ use super::{ApplicationServices, compose_with_adapters};
 
 const ENABLE_ENV: &str = "OXID_ENABLE_LIVE_STANDALONE_FUNDING";
 const FUNDER_SEED_ENV: &str = "OXID_STANDALONE_FUNDER_SEED_HEX";
+const PREPROD_ENABLE_ENV: &str = "OXID_ENABLE_LIVE_PREPROD_E2E";
+const PREPROD_MASTER_SEED_ENV: &str = "OXID_PREPROD_MASTER_SEED_HEX";
+const PREPROD_CASE_INDEX_ENV: &str = "OXID_PREPROD_E2E_CASE_INDEX";
+const PREPROD_COMMIT_ENV: &str = "OXID_PREPROD_E2E_COMMIT";
+const PREPROD_NETWORK_ID: &str = "preprod";
+const PREPROD_MANIFEST_START: &str = "OXID_PREPROD_FUNDING_MANIFEST_V1";
+const PREPROD_MANIFEST_END: &str = "OXID_PREPROD_FUNDING_MANIFEST_END";
+const MAX_PREPROD_CASE_INDEX: u32 = (WalletHdPathComponent::MAX_INDEX - 1) / 2;
 const TRANSFER_ATOMIC_UNITS: u128 = 5_000_000;
 const SHIELDED_TRANSFER_ATOMIC_UNITS: u128 = 1_000_000;
 const NATIVE_SHIELDED_TOKEN_TYPE: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 
 static PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PreprodHarnessInputError {
+    InvalidMasterSeed,
+    InvalidCaseIndex,
+    InvalidCommit,
+}
+
+impl fmt::Display for PreprodHarnessInputError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::InvalidMasterSeed => {
+                "the preprod master seed must contain exactly 32 hexadecimal bytes"
+            }
+            Self::InvalidCaseIndex => "the preprod E2E case index is invalid",
+            Self::InvalidCommit => "the preprod E2E commit identifier is invalid",
+        };
+        formatter.write_str(message)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PreprodCase {
+    case_index: u32,
+    wallet_a_account_index: u32,
+    wallet_b_account_index: u32,
+}
+
+impl PreprodCase {
+    fn parse(value: &str) -> Result<Self, PreprodHarnessInputError> {
+        if value.is_empty()
+            || !value.bytes().all(|byte| byte.is_ascii_digit())
+            || (value.len() > 1 && value.starts_with('0'))
+        {
+            return Err(PreprodHarnessInputError::InvalidCaseIndex);
+        }
+        let case_index = value
+            .parse::<u32>()
+            .map_err(|_| PreprodHarnessInputError::InvalidCaseIndex)?;
+        if case_index > MAX_PREPROD_CASE_INDEX {
+            return Err(PreprodHarnessInputError::InvalidCaseIndex);
+        }
+        let wallet_a_account_index = case_index
+            .checked_mul(2)
+            .ok_or(PreprodHarnessInputError::InvalidCaseIndex)?;
+        let wallet_b_account_index = wallet_a_account_index
+            .checked_add(1)
+            .ok_or(PreprodHarnessInputError::InvalidCaseIndex)?;
+        Ok(Self {
+            case_index,
+            wallet_a_account_index,
+            wallet_b_account_index,
+        })
+    }
+}
+
+struct OneShotRootRandom {
+    root: Mutex<Option<Zeroizing<[u8; 32]>>>,
+}
+
+impl OneShotRootRandom {
+    fn new(root: Zeroizing<[u8; 32]>) -> Self {
+        Self {
+            root: Mutex::new(Some(root)),
+        }
+    }
+}
+
+impl RandomPort for OneShotRootRandom {
+    fn fill_bytes(&self, destination: &mut [u8]) -> Result<(), PlatformError> {
+        let mut root = self
+            .root
+            .lock()
+            .map_err(|_| PlatformError::RandomnessUnavailable)?;
+        if let Some(seed) = root.take() {
+            if destination.len() != seed.len() {
+                return Err(PlatformError::RandomnessUnavailable);
+            }
+            destination.copy_from_slice(seed.as_ref());
+            return Ok(());
+        }
+        OsRandom.fill_bytes(destination)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PreprodPublicAccount {
+    account_index: u32,
+    address_index: u32,
+    night_unshielded_address: String,
+    night_shielded_address: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PreprodFundingManifest {
+    commit: String,
+    case_index: u32,
+    wallet_a: PreprodPublicAccount,
+    wallet_b: PreprodPublicAccount,
+}
+
+impl fmt::Display for PreprodFundingManifest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(formatter, "{PREPROD_MANIFEST_START}")?;
+        writeln!(formatter, "commit={}", self.commit)?;
+        writeln!(formatter, "network={PREPROD_NETWORK_ID}")?;
+        writeln!(formatter, "caseIndex={}", self.case_index)?;
+        writeln!(
+            formatter,
+            "walletA.accountIndex={}",
+            self.wallet_a.account_index
+        )?;
+        writeln!(
+            formatter,
+            "walletA.addressIndex={}",
+            self.wallet_a.address_index
+        )?;
+        writeln!(
+            formatter,
+            "walletA.nightUnshieldedAddress={}",
+            self.wallet_a.night_unshielded_address
+        )?;
+        writeln!(
+            formatter,
+            "walletA.nightShieldedAddress={}",
+            self.wallet_a.night_shielded_address
+        )?;
+        writeln!(
+            formatter,
+            "walletB.accountIndex={}",
+            self.wallet_b.account_index
+        )?;
+        writeln!(
+            formatter,
+            "walletB.addressIndex={}",
+            self.wallet_b.address_index
+        )?;
+        writeln!(
+            formatter,
+            "walletB.nightUnshieldedAddress={}",
+            self.wallet_b.night_unshielded_address
+        )?;
+        writeln!(
+            formatter,
+            "walletB.nightShieldedAddress={}",
+            self.wallet_b.night_shielded_address
+        )?;
+        formatter.write_str(PREPROD_MANIFEST_END)
+    }
+}
+
+fn parse_master_seed(value: &str) -> Result<Zeroizing<[u8; 32]>, PreprodHarnessInputError> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(PreprodHarnessInputError::InvalidMasterSeed);
+    }
+    let mut root = Zeroizing::new([0_u8; 32]);
+    hex::decode_to_slice(value.as_bytes(), root.as_mut())
+        .map_err(|_| PreprodHarnessInputError::InvalidMasterSeed)?;
+    Ok(root)
+}
+
+fn load_preprod_master_seed() -> Result<Zeroizing<[u8; 32]>, PreprodHarnessInputError> {
+    let encoded = std::env::var_os(PREPROD_MASTER_SEED_ENV)
+        .and_then(|value| value.into_string().ok())
+        .map(Zeroizing::new)
+        .ok_or(PreprodHarnessInputError::InvalidMasterSeed)?;
+    parse_master_seed(encoded.as_str())
+}
+
+fn parse_commit(value: &str) -> Result<String, PreprodHarnessInputError> {
+    if !matches!(value.len(), 40 | 64)
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(PreprodHarnessInputError::InvalidCommit);
+    }
+    Ok(value.to_owned())
+}
+
+fn copy_root(root: &[u8; 32]) -> Zeroizing<[u8; 32]> {
+    let mut copied = Zeroizing::new([0_u8; 32]);
+    copied.as_mut().copy_from_slice(root);
+    copied
+}
+
+fn derive_preprod_public_account(
+    root: Zeroizing<[u8; 32]>,
+    account_index: u32,
+    display_name: &str,
+) -> PreprodPublicAccount {
+    let clock = Arc::new(SystemClock);
+    let profiles = Arc::new(InMemoryWalletProfileRepository::new());
+    let security = Arc::new(DevelopmentWalletSecurity::new(
+        Arc::clone(&clock),
+        Arc::new(OneShotRootRandom::new(root)),
+    ));
+    let midnight = Arc::new(
+        protected_simulated_midnight_wallet(Arc::clone(&clock), Arc::clone(&security))
+            .with_profile_association_repository(profiles.clone()),
+    );
+    let application = compose_with_adapters(profiles, security, midnight);
+    let profile = application
+        .create_wallet_profile()
+        .execute(CreateWalletProfileCommand {
+            display_name: display_name.to_owned(),
+        })
+        .expect("preprod manifest profile creation");
+    let selected = application
+        .select_wallet_network()
+        .execute(SelectWalletNetworkCommand {
+            profile_id: profile.id.clone(),
+            network_id: PREPROD_NETWORK_ID.to_owned(),
+        })
+        .expect("preprod manifest network selection");
+    assert_eq!(selected.selected_network_id, PREPROD_NETWORK_ID);
+    application
+        .initialize_wallet_security()
+        .execute(WalletProfileSecurityCommand {
+            profile_id: profile.id.clone(),
+        })
+        .expect("preprod manifest custody initialization");
+    let account = application
+        .derive_wallet_account()
+        .execute(DeriveWalletAccountCommand {
+            profile_id: profile.id,
+            account_index,
+            address_index: 0,
+        })
+        .expect("preprod manifest protected account derivation");
+    assert_eq!(account.network_id, PREPROD_NETWORK_ID);
+    assert_eq!(account.account_index, account_index);
+    assert_eq!(account.address_index, 0);
+    let night_unshielded_address = account
+        .addresses
+        .iter()
+        .find(|address| address.kind == "unshielded")
+        .expect("preprod account exposes its public NIGHT address")
+        .value
+        .clone();
+    let night_shielded_address = account
+        .addresses
+        .iter()
+        .find(|address| address.kind == "shielded")
+        .expect("preprod account exposes its public shielded address")
+        .value
+        .clone();
+    assert!(night_unshielded_address.starts_with("mn_addr_preprod1"));
+    assert!(night_shielded_address.starts_with("mn_shield-addr_preprod1"));
+    assert!(
+        account
+            .addresses
+            .iter()
+            .all(|address| address.kind != "dust")
+    );
+    PreprodPublicAccount {
+        account_index,
+        address_index: 0,
+        night_unshielded_address,
+        night_shielded_address,
+    }
+}
+
+fn build_preprod_funding_manifest(
+    root: &Zeroizing<[u8; 32]>,
+    selected_case: PreprodCase,
+    commit: String,
+) -> PreprodFundingManifest {
+    let wallet_a = derive_preprod_public_account(
+        copy_root(root),
+        selected_case.wallet_a_account_index,
+        "Preprod E2E wallet A",
+    );
+    let wallet_b = derive_preprod_public_account(
+        copy_root(root),
+        selected_case.wallet_b_account_index,
+        "Preprod E2E wallet B",
+    );
+    assert_ne!(
+        wallet_a.night_unshielded_address, wallet_b.night_unshielded_address,
+        "hardened A/B account separation must change the public NIGHT address"
+    );
+    assert_ne!(
+        wallet_a.night_shielded_address, wallet_b.night_shielded_address,
+        "hardened A/B account separation must change the public shielded address"
+    );
+    PreprodFundingManifest {
+        commit,
+        case_index: selected_case.case_index,
+        wallet_a,
+        wallet_b,
+    }
+}
 
 /// Supplies the externally authorized standalone funding root exactly once,
 /// then delegates every nonce/reference to OS randomness. The retained root is
@@ -328,6 +631,140 @@ fn await_shielded_balance(
         );
         std::thread::sleep(Duration::from_secs(1));
     }
+}
+
+#[test]
+fn preprod_case_indices_are_canonical_bounded_hardened_account_pairs() {
+    assert_eq!(
+        PreprodCase::parse("0"),
+        Ok(PreprodCase {
+            case_index: 0,
+            wallet_a_account_index: 0,
+            wallet_b_account_index: 1,
+        })
+    );
+    assert_eq!(
+        PreprodCase::parse(&MAX_PREPROD_CASE_INDEX.to_string()),
+        Ok(PreprodCase {
+            case_index: MAX_PREPROD_CASE_INDEX,
+            wallet_a_account_index: WalletHdPathComponent::MAX_INDEX - 1,
+            wallet_b_account_index: WalletHdPathComponent::MAX_INDEX,
+        })
+    );
+    for invalid in [
+        "",
+        "00",
+        "01",
+        "+1",
+        "-1",
+        " 1",
+        "1 ",
+        "1a",
+        "1073741824",
+        "4294967296",
+    ] {
+        assert_eq!(
+            PreprodCase::parse(invalid),
+            Err(PreprodHarnessInputError::InvalidCaseIndex)
+        );
+    }
+}
+
+#[test]
+fn preprod_master_seed_and_commit_inputs_fail_without_echoing_values() {
+    let secret = "ab".repeat(32);
+    assert!(parse_master_seed(&secret).is_ok());
+    assert!(parse_master_seed(&secret.to_ascii_uppercase()).is_ok());
+    for invalid in ["", "ab", "0x01", &"gg".repeat(32), &format!("{secret}\n")] {
+        let error = parse_master_seed(invalid).expect_err("invalid seed must fail closed");
+        assert_eq!(error, PreprodHarnessInputError::InvalidMasterSeed);
+        if !invalid.is_empty() {
+            assert!(!error.to_string().contains(invalid));
+        }
+    }
+
+    assert!(parse_commit(&"a".repeat(40)).is_ok());
+    assert!(parse_commit(&"b".repeat(64)).is_ok());
+    for invalid in ["", "A", &"A".repeat(40), &"g".repeat(40)] {
+        let error = parse_commit(invalid).expect_err("invalid commit must fail closed");
+        assert_eq!(error, PreprodHarnessInputError::InvalidCommit);
+        if !invalid.is_empty() {
+            assert!(!error.to_string().contains(invalid));
+        }
+    }
+}
+
+#[test]
+fn preprod_manifest_derives_separate_accounts_and_emits_only_public_allowlisted_fields() {
+    let encoded_root = "01".repeat(32);
+    let root = parse_master_seed(&encoded_root).expect("public conformance root");
+    let selected_case = PreprodCase::parse("7").expect("bounded case index");
+    let manifest = build_preprod_funding_manifest(&root, selected_case, "a".repeat(40));
+    let rendered = manifest.to_string();
+    let keys = rendered
+        .lines()
+        .filter_map(|line| line.split_once('=').map(|(key, _)| key))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        keys,
+        vec![
+            "commit",
+            "network",
+            "caseIndex",
+            "walletA.accountIndex",
+            "walletA.addressIndex",
+            "walletA.nightUnshieldedAddress",
+            "walletA.nightShieldedAddress",
+            "walletB.accountIndex",
+            "walletB.addressIndex",
+            "walletB.nightUnshieldedAddress",
+            "walletB.nightShieldedAddress",
+        ]
+    );
+    assert!(rendered.starts_with(PREPROD_MANIFEST_START));
+    assert!(rendered.ends_with(PREPROD_MANIFEST_END));
+    assert!(rendered.contains("network=preprod"));
+    assert!(rendered.contains("walletA.accountIndex=14"));
+    assert!(rendered.contains("walletB.accountIndex=15"));
+    assert!(!rendered.contains(&encoded_root));
+    for forbidden in [
+        "seed",
+        "digest",
+        "dustAddress",
+        "dustPublicKey",
+        "profileId",
+        "transactionKey",
+        "utxo",
+    ] {
+        assert!(!rendered.contains(forbidden));
+    }
+}
+
+/// Derives the only public values required to fund a deterministic pair of
+/// preprod accounts. This deliberately performs no network I/O. A live
+/// registration/spend test must remain unavailable until a build-reviewed
+/// signed preprod deployment profile and trust root are provisioned and an
+/// authenticated test composition can consume them without runtime route or
+/// trust-root selection.
+#[test]
+#[ignore = "requires explicit preprod opt-in and an out-of-band master seed"]
+fn preprod_deterministic_funding_manifest_exposes_public_addresses_only() {
+    assert_eq!(
+        std::env::var(PREPROD_ENABLE_ENV).ok().as_deref(),
+        Some("1"),
+        "preprod funding manifest requires explicit opt-in"
+    );
+    let root = load_preprod_master_seed().expect("preprod master seed input");
+    let selected_case = std::env::var(PREPROD_CASE_INDEX_ENV)
+        .map_err(|_| PreprodHarnessInputError::InvalidCaseIndex)
+        .and_then(|value| PreprodCase::parse(&value))
+        .expect("bounded preprod case index");
+    let commit = std::env::var(PREPROD_COMMIT_ENV)
+        .map_err(|_| PreprodHarnessInputError::InvalidCommit)
+        .and_then(|value| parse_commit(&value))
+        .expect("exact preprod harness commit");
+    let manifest = build_preprod_funding_manifest(&root, selected_case, commit);
+    println!("{manifest}");
 }
 
 /// Funds a fresh OS-random recipient through the same live typed transaction

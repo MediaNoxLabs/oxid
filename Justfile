@@ -44,6 +44,9 @@ standalone-funded-finality:
 standalone-funded-shielded-finality:
     ./scripts/test-standalone-funded-shielded-finality.sh
 
+preprod-registration-funding-manifest:
+    ./scripts/derive-preprod-registration-funding-manifest.sh
+
 standalone-phone-up:
     ./scripts/standalone-up.sh phone
 
