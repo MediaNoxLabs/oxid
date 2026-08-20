@@ -227,9 +227,18 @@ observer's 900-second bound. The first `preprod-live` attempt on signed commit
 shielded replay and exceeded that stage's 90-second observation bound before
 emitting output. Signed commit
 `a490dc0f754b9a3f89483c875dc68a77ea7f29d5` applies the same controlled
-complete/drop-before-fold contract to Zswap; a clean live rerun remains
-required. Every failed observer exited before authorization, proving,
-persistence, marker creation, broadcast, or chain write.
+complete/drop-before-fold contract to Zswap. A clean optimized observer on
+signed commit `fba4ad429fc59e73e9baba7d1af9bea4c9b37dea` passed shielded
+synchronization, then remained `syncing` with no DUST failure at cursor 553,478
+of target 1,446,220 after 541,357 events when the 900-second observation bound
+expired. That is about 602 events/second and 2.5 times the debug rate. Applying
+the observed 97.81% cursor density to the target estimates about 1.415 million
+events and 39 minutes; this is an inference, not an exact remaining event or
+byte count. It strongly suggests the existing one-million-event and 30-minute
+adapter caps need a separately measured decision. The 512 MiB raw-input cap is
+still unmeasured, and no limit has been raised. Every failed observer exited
+before public funding output, authorization, proving, persistence, marker
+creation, broadcast, or chain write.
 
 ## Required validation
 

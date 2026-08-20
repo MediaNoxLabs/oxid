@@ -82,8 +82,12 @@ evidence slice is **one guarded PreProd DUST registration followed by one
 fresh-wallet shielded spend** (#92). Case 0 is externally funded, but its exact
 one-public-output/one-shielded-note topology is not evidence until the clean
 observer sees it. Read-only attempts exposed and then closed open-subscription
-backpressure independently for DUST and Zswap; the optimized combined live
-rerun is still pending and no write marker or chain action has occurred. Safe
+backpressure independently for DUST and Zswap. The first clean optimized
+combined rerun passed shielded sync, then reached 541,357 DUST events/cursor
+553,478 of target 1,446,220 without failure at its 900-second observer bound.
+The inferred ~1.415M-event/~39-minute history indicates that event/time caps
+need explicit measurement; raw-byte capacity and funding topology remain
+unproven, no cap changed, and no write marker or chain action occurred. Safe
 checkpoint-acknowledged journal compaction is isolated in #93. Engineering-only
 work is approximately three to six bounded waves; this is a scope estimate,
 not a calendar promise. External evidence has no honest ETA until approved

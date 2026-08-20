@@ -146,8 +146,12 @@ thin-app build decision; no runtime brand configuration was added.
    before replay/checkpoint work; the live harness uses an optimized,
    symbol-retaining evidence profile without changing release artifacts or
    synchronization caps. Case 0 is externally funded, but exact indexed
-   topology, the clean read-only rerun, funded live write, durable native
-   restart, physical-device, and production evidence remain open.
+   topology remains unknown: the first clean optimized observer passed shielded
+   sync, then processed 541,357 DUST events without failure before its
+   900-second bound. Its density-based ~1.415M-event/~39-minute estimate is not
+   an exact count; event/time/raw-byte cap policy needs measured review and no
+   cap has changed. The funded live write, durable native restart,
+   physical-device, and production evidence remain open.
 
 ## Phase 5 — Delight & polish (owner-gated)
 

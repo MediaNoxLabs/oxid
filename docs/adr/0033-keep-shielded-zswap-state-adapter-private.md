@@ -103,6 +103,10 @@ is accepted only alongside a complete live indexer configuration.
   observes completion before the first checkpoint callback, reconnect starts
   from the accepted cursor, target regression fails closed, and observer
   failure cannot be mistaken for an incompatible checkpoint.
+- The first clean optimized PreProd observer containing the segmented transport
+  passed the prior 90-second shielded stage and proceeded into long DUST replay.
+  This is live transport evidence, not proof of an owned note, exact balance,
+  durable checkpoint, spend, or production deployment.
 - Checkpoint documents are checksummed, size/record bounded, and keyed by the
   source/protocol identity plus a SHA-256 fingerprint of both Zswap public
   receive keys; key material itself is never serialized beside the local state.

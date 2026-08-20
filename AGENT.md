@@ -2297,10 +2297,18 @@ to silence the shell probe.
   live attempt then exceeded the shielded stage's 90-second wait because Zswap
   still folded inline under an open subscription. Signed
   `a490dc0f754b9a3f89483c875dc68a77ea7f29d5` closes the analogous shielded
-  backpressure gap; clean live evidence remains pending. All attempts failed
-  before output and created no write marker, checkpoint/journal file, proof,
-  transaction, prover contact, or chain write. Do not treat these transport
-  observations as a funding mismatch or retry a write because of them.
+  backpressure gap. A clean optimized observer on signed
+  `fba4ad429fc59e73e9baba7d1af9bea4c9b37dea` passed shielded sync and reached
+  DUST cursor 553,478 of target 1,446,220 after 541,357 events at the 900-second
+  wait, still `syncing` with no failure. Its ~602 events/second is 2.5 times the
+  debug rate; applying the observed 97.81% cursor density estimates roughly
+  1.415 million events and 39 minutes. Treat that as inference, not an exact
+  count. It suggests the one-million-event/30-minute caps need an explicit
+  measured review; raw bytes against the 512 MiB cap remain unknown and no cap
+  has been raised. All attempts failed before public output and created no
+  write marker, checkpoint/journal file, proof, transaction, prover contact,
+  or chain write. Do not treat these transport observations as a funding
+  mismatch or retry a write because of them.
   `just preprod-registration-e2e` is implemented but remains unrun. The
   out-of-band root/case are configured and case 0 has been externally funded,
   but the exact indexed topology still needs a successful read-only
