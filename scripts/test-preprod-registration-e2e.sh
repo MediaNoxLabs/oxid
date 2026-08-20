@@ -3,9 +3,14 @@
 
 set -euo pipefail
 set +x
+umask 077
 
 if [[ "${OXID_ENABLE_LIVE_PREPROD_E2E:-}" != "1" ]]; then
-  echo "Set OXID_ENABLE_LIVE_PREPROD_E2E=1 to authorize deterministic preprod address derivation." >&2
+  echo "Set OXID_ENABLE_LIVE_PREPROD_E2E=1 to authorize the funded PreProd write test." >&2
+  exit 1
+fi
+if [[ "${OXID_ACKNOWLEDGE_PREPROD_PUBLIC_PROVER_PRIVACY:-}" != "1" ]]; then
+  echo "Set OXID_ACKNOWLEDGE_PREPROD_PUBLIC_PROVER_PRIVACY=1 after accepting that the public test prover receives private proof inputs over TLS." >&2
   exit 1
 fi
 if [[ ! "${OXID_PREPROD_MASTER_SEED_HEX:-}" =~ ^[0-9a-fA-F]{64}$ ]]; then
@@ -22,7 +27,7 @@ unset OXID_PREPROD_MASTER_SEED_HEX
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ -n "$(git -C "$repository_root" status --porcelain)" ]]; then
-  echo "The preprod funding manifest requires a clean worktree so its commit is exact." >&2
+  echo "The funded PreProd test requires a clean worktree so its evidence is bound to one commit." >&2
   exit 1
 fi
 
@@ -39,7 +44,7 @@ if ! build_output="$(
 fi
 if [[ -n "$(git -C "$repository_root" status --porcelain)" ]] \
   || [[ "$(git -C "$repository_root" rev-parse --verify HEAD)" != "$OXID_PREPROD_E2E_COMMIT" ]]; then
-  echo "The worktree or HEAD changed while building the manifest helper; refusing unbound output." >&2
+  echo "The worktree or HEAD changed while building the funded helper; refusing an unbound write." >&2
   exit 1
 fi
 test_executable="$(
@@ -52,26 +57,22 @@ if [[ -z "$test_executable" || ! -x "$test_executable" ]]; then
   exit 1
 fi
 
-test_output=""
-if ! test_output="$(
-  OXID_PREPROD_MASTER_SEED_HEX="$preprod_master_seed_hex" \
-    "$test_executable" \
-    standalone_funding_tests::preprod_deterministic_funding_manifest_exposes_public_addresses_only \
-    --ignored --exact --nocapture 2>&1
-)"; then
-  printf '%s\n' "$test_output" >&2
+git_common_dir="$(git -C "$repository_root" rev-parse --git-common-dir)"
+if [[ "$git_common_dir" != /* ]]; then
+  git_common_dir="$repository_root/$git_common_dir"
+fi
+git_common_dir="$(cd "$git_common_dir" && pwd -P)"
+case_marker_root="$git_common_dir/oxid-state/preprod-registration-e2e"
+mkdir -p "$case_marker_root"
+case_marker="$case_marker_root/case-${OXID_PREPROD_E2E_CASE_INDEX}.started"
+if ! mkdir "$case_marker" 2>/dev/null; then
+  echo "This PreProd case index was already started locally. Do not clear the marker or retry a possibly broadcast case; select a fresh funded case index." >&2
   exit 1
 fi
+export OXID_PREPROD_E2E_STATE_DIR="$case_marker/state"
 
-manifest="$(
-  printf '%s\n' "$test_output" | sed -n \
-    '/^OXID_PREPROD_FUNDING_MANIFEST_V1$/,/^OXID_PREPROD_FUNDING_MANIFEST_END$/p'
-)"
-if [[ "$(printf '%s\n' "$manifest" | wc -l | tr -d ' ')" != "22" ]] \
-  || [[ "$(printf '%s\n' "$manifest" | head -n 1)" != "OXID_PREPROD_FUNDING_MANIFEST_V1" ]] \
-  || [[ "$(printf '%s\n' "$manifest" | tail -n 1)" != "OXID_PREPROD_FUNDING_MANIFEST_END" ]]; then
-  echo "The preprod funding manifest did not match its closed public schema." >&2
-  exit 1
-fi
-
-printf '%s\n' "$manifest"
+cd "$repository_root"
+OXID_PREPROD_MASTER_SEED_HEX="$preprod_master_seed_hex" \
+  "$test_executable" \
+  standalone_funding_tests::preprod_funded_registration_observes_dust_and_spends_shielded_night \
+  --ignored --exact --nocapture

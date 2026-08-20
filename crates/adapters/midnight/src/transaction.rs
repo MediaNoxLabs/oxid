@@ -2781,7 +2781,11 @@ const fn map_account_error(
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{Arc, Condvar, Mutex, mpsc},
+        sync::{
+            Arc, Condvar, Mutex,
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        },
         task::{Context, Poll, Waker},
         time::{Duration, Instant},
     };
@@ -2848,6 +2852,32 @@ mod tests {
             _: &[u8; 32],
         ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
             Err(WalletTransactionPortError::ProvingFailed)
+        }
+    }
+
+    #[derive(Default)]
+    struct InsufficientDustOnceCompleter {
+        calls: AtomicUsize,
+        transactions: Mutex<Vec<Vec<u8>>>,
+    }
+
+    impl MidnightTransactionCompleter for InsufficientDustOnceCompleter {
+        fn complete(
+            &self,
+            request: MidnightCompletionRequest,
+            dust_seed: &[u8; 32],
+        ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError> {
+            let mut transaction = Vec::new();
+            midnight_serialize::tagged_serialize(&request.transaction, &mut transaction)
+                .map_err(|_| WalletTransactionPortError::InvalidData)?;
+            self.transactions
+                .lock()
+                .map_err(|_| WalletTransactionPortError::Unavailable)?
+                .push(transaction);
+            if self.calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                return Err(WalletTransactionPortError::InsufficientDust);
+            }
+            SimulatedMidnightTransactionCompleter.complete(request, dust_seed)
         }
     }
 
@@ -3678,6 +3708,62 @@ mod tests {
                 .state(),
             WalletTransactionDraftState::Authorized
         );
+    }
+
+    #[test]
+    fn insufficient_dust_is_prebroadcast_and_retries_the_same_authorized_transaction() {
+        let journal =
+            Arc::new(crate::submission_journal::MemoryMidnightSubmissionJournalStore::default());
+        let completer = Arc::new(InsufficientDustOnceCompleter::default());
+        let adapter = submittable_adapter(completer.clone())
+            .with_submission_recovery(journal.clone(), Arc::new(IncludedReconciler));
+        let authorized = authorize_transfer(&adapter);
+        let request = SubmitWalletTransferRequest {
+            draft_id: authorized.draft_id().clone(),
+            now: UnixTimestampMillis::new(1_000),
+        };
+
+        assert_eq!(
+            futures::executor::block_on(adapter.submit(&profile(), request.clone())),
+            Err(WalletTransactionPortError::InsufficientDust)
+        );
+        assert_eq!(
+            adapter
+                .get(
+                    &profile(),
+                    authorized.draft_id(),
+                    UnixTimestampMillis::new(1_000),
+                )
+                .expect("pre-broadcast fee failure retains the draft")
+                .state(),
+            WalletTransactionDraftState::Authorized
+        );
+        let history = adapter
+            .submission_history(&profile())
+            .expect("pre-broadcast retained status is readable");
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history[0].state(),
+            WalletTransactionSubmissionState::NotStarted
+        );
+        assert_eq!(history[0].transaction_id(), None);
+        assert!(
+            journal
+                .load(&profile(), authorized.draft_id())
+                .expect("pre-broadcast journal is readable")
+                .is_none(),
+            "fee balancing must not persist a broadcast journal entry"
+        );
+
+        let submitted = futures::executor::block_on(adapter.submit(&profile(), request))
+            .expect("the same authorized draft retries after DUST becomes available");
+        assert_eq!(
+            submitted.preview.state(),
+            WalletTransactionDraftState::Submitted
+        );
+        let transactions = completer.transactions.lock().expect("transactions lock");
+        assert_eq!(transactions.len(), 2);
+        assert_eq!(transactions[0], transactions[1]);
     }
 
     #[test]

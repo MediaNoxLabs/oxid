@@ -10,7 +10,11 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use oxid_adapter_deployment_profile::{
+    AuthenticatedDeploymentProfile, DeploymentProfileVerifier, DeploymentTrustRoot,
+};
 use oxid_adapter_midnight::{
+    MidnightAccountCheckpointConfig, MidnightDustCheckpointConfig,
     MidnightShieldedCheckpointConfig, MidnightStandaloneConfig, MidnightSubmissionJournalConfig,
     protected_simulated_midnight_wallet,
     protected_standalone_midnight_wallet_with_checkpoint_options,
@@ -20,12 +24,17 @@ use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
 use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;
 use oxid_platform_ports::{PlatformError, RandomPort};
 use oxid_wallet_application::{
-    AuthorizeWalletTransferCommand, CreateWalletProfileCommand, DeriveWalletAccountCommand,
-    PrepareShieldedWalletTransferCommand, PrepareWalletTransferCommand, SelectWalletNetworkCommand,
-    SensitiveOperationConfirmation, SubmitWalletTransferCommand, WalletAccountQuery,
+    AuthorizeWalletDustRegistrationCommand, AuthorizeWalletTransferCommand,
+    CreateWalletProfileCommand, DeriveWalletAccountCommand, GetWalletDustRegistrationStatusCommand,
+    PrepareShieldedWalletTransferCommand, PrepareWalletDustRegistrationCommand,
+    PrepareWalletTransferCommand, ReconcileWalletDustRegistrationSubmissionCommand,
+    SelectWalletNetworkCommand, SensitiveOperationConfirmation,
+    SubmitWalletDustRegistrationCommand, SubmitWalletTransferCommand, WalletAccountQuery,
+    WalletDustRegistrationError, WalletDustRegistrationPortError,
+    WalletDustRegistrationPreviewView, WalletDustSyncCommand, WalletDustSyncView,
     WalletHdPathComponent, WalletProfileSecurityCommand, WalletShieldedSyncCommand,
     WalletShieldedSyncView, WalletTransactionError, WalletTransactionPortError,
-    WalletTransferSubmissionQuery,
+    WalletTransferDraftQuery, WalletTransferSubmissionQuery,
 };
 use zeroize::Zeroizing;
 
@@ -37,9 +46,35 @@ const PREPROD_ENABLE_ENV: &str = "OXID_ENABLE_LIVE_PREPROD_E2E";
 const PREPROD_MASTER_SEED_ENV: &str = "OXID_PREPROD_MASTER_SEED_HEX";
 const PREPROD_CASE_INDEX_ENV: &str = "OXID_PREPROD_E2E_CASE_INDEX";
 const PREPROD_COMMIT_ENV: &str = "OXID_PREPROD_E2E_COMMIT";
+const PREPROD_PUBLIC_PROVER_ACK_ENV: &str = "OXID_ACKNOWLEDGE_PREPROD_PUBLIC_PROVER_PRIVACY";
+const PREPROD_STATE_DIR_ENV: &str = "OXID_PREPROD_E2E_STATE_DIR";
 const PREPROD_NETWORK_ID: &str = "preprod";
 const PREPROD_MANIFEST_START: &str = "OXID_PREPROD_FUNDING_MANIFEST_V1";
 const PREPROD_MANIFEST_END: &str = "OXID_PREPROD_FUNDING_MANIFEST_END";
+const PREPROD_PROFILE_ID: &str = "oxid-preprod-registration-e2e-2026-08";
+const PREPROD_SIGNING_KEY_ID: &str = "oxid-preprod-e2e-2026-01";
+const PREPROD_PROFILE_VALID_FROM_SECONDS: u64 = 1_782_864_000;
+const PREPROD_PROFILE_VALID_UNTIL_SECONDS: u64 = 1_893_456_000;
+const PREPROD_GENESIS_HASH: [u8; 32] = [
+    0xdf, 0x83, 0x1b, 0x09, 0xa8, 0xba, 0xa9, 0x2b, 0xad, 0xf4, 0x77, 0x62, 0xce, 0x5a, 0xc4, 0x39,
+    0xb7, 0xe4, 0x7e, 0x3e, 0xd3, 0xd3, 0x96, 0x00, 0xcf, 0xdd, 0x44, 0xfa, 0xd5, 0x52, 0x36, 0x1b,
+];
+const PREPROD_PROFILE_VERIFYING_KEY: [u8; 32] = [
+    0x78, 0x67, 0x5f, 0xb8, 0x60, 0xe6, 0xcc, 0xde, 0xaa, 0xf5, 0xe4, 0xd9, 0xc2, 0x7e, 0x0a, 0xa7,
+    0x80, 0xdd, 0x11, 0x7c, 0xbd, 0x58, 0x38, 0x21, 0xb4, 0x6b, 0x77, 0xb9, 0xcd, 0xfd, 0x3f, 0x5f,
+];
+const PREPROD_PROFILE_ENVELOPE: &[u8] =
+    include_bytes!("../tests/fixtures/preprod-registration-deployment-profile.json");
+const PREPROD_EXPECTED_A_NIGHT_ATOMIC_UNITS: u128 = 10_000_000_000;
+const PREPROD_EXPECTED_A_SHIELDED_NIGHT_ATOMIC_UNITS: u128 = 10_000_000;
+const PREPROD_EXPECTED_B_NIGHT_ATOMIC_UNITS: u128 = 0;
+const PREPROD_EXPECTED_B_SHIELDED_NIGHT_ATOMIC_UNITS: u128 = 0;
+const PREPROD_EXPECTED_A_ELIGIBLE_UNSHIELDED_OUTPUT_COUNT: u16 = 1;
+const PREPROD_EXPECTED_A_SHIELDED_NOTE_COUNT: u64 = 1;
+const PREPROD_EXPECTED_B_ELIGIBLE_UNSHIELDED_OUTPUT_COUNT: u16 = 0;
+const PREPROD_EXPECTED_B_SHIELDED_NOTE_COUNT: u64 = 0;
+const PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS: u128 = 1_000_000;
+const MAX_PREPROD_INSUFFICIENT_DUST_RETRIES: u8 = 8;
 const MAX_PREPROD_CASE_INDEX: u32 = (WalletHdPathComponent::MAX_INDEX - 1) / 2;
 const TRANSFER_ATOMIC_UNITS: u128 = 5_000_000;
 const SHIELDED_TRANSFER_ATOMIC_UNITS: u128 = 1_000_000;
@@ -50,19 +85,17 @@ static PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PreprodHarnessInputError {
-    InvalidMasterSeed,
-    InvalidCaseIndex,
-    InvalidCommit,
+    MasterSeed,
+    CaseIndex,
+    Commit,
 }
 
 impl fmt::Display for PreprodHarnessInputError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
-            Self::InvalidMasterSeed => {
-                "the preprod master seed must contain exactly 32 hexadecimal bytes"
-            }
-            Self::InvalidCaseIndex => "the preprod E2E case index is invalid",
-            Self::InvalidCommit => "the preprod E2E commit identifier is invalid",
+            Self::MasterSeed => "the preprod master seed must contain exactly 32 hexadecimal bytes",
+            Self::CaseIndex => "the preprod E2E case index is invalid",
+            Self::Commit => "the preprod E2E commit identifier is invalid",
         };
         formatter.write_str(message)
     }
@@ -81,20 +114,20 @@ impl PreprodCase {
             || !value.bytes().all(|byte| byte.is_ascii_digit())
             || (value.len() > 1 && value.starts_with('0'))
         {
-            return Err(PreprodHarnessInputError::InvalidCaseIndex);
+            return Err(PreprodHarnessInputError::CaseIndex);
         }
         let case_index = value
             .parse::<u32>()
-            .map_err(|_| PreprodHarnessInputError::InvalidCaseIndex)?;
+            .map_err(|_| PreprodHarnessInputError::CaseIndex)?;
         if case_index > MAX_PREPROD_CASE_INDEX {
-            return Err(PreprodHarnessInputError::InvalidCaseIndex);
+            return Err(PreprodHarnessInputError::CaseIndex);
         }
         let wallet_a_account_index = case_index
             .checked_mul(2)
-            .ok_or(PreprodHarnessInputError::InvalidCaseIndex)?;
+            .ok_or(PreprodHarnessInputError::CaseIndex)?;
         let wallet_b_account_index = wallet_a_account_index
             .checked_add(1)
-            .ok_or(PreprodHarnessInputError::InvalidCaseIndex)?;
+            .ok_or(PreprodHarnessInputError::CaseIndex)?;
         Ok(Self {
             case_index,
             wallet_a_account_index,
@@ -146,6 +179,15 @@ struct PreprodFundingManifest {
     case_index: u32,
     wallet_a: PreprodPublicAccount,
     wallet_b: PreprodPublicAccount,
+    wallet_a_expected_night_atomic_units: u128,
+    wallet_a_expected_shielded_night_atomic_units: u128,
+    wallet_b_expected_night_atomic_units: u128,
+    wallet_b_expected_shielded_night_atomic_units: u128,
+    wallet_a_expected_eligible_unshielded_output_count: u16,
+    wallet_a_expected_shielded_note_count: u64,
+    wallet_b_expected_eligible_unshielded_output_count: u16,
+    wallet_b_expected_shielded_note_count: u64,
+    shielded_transfer_atomic_units: u128,
 }
 
 impl fmt::Display for PreprodFundingManifest {
@@ -176,6 +218,26 @@ impl fmt::Display for PreprodFundingManifest {
         )?;
         writeln!(
             formatter,
+            "walletA.expectedUnshieldedNightAtomicUnits={}",
+            self.wallet_a_expected_night_atomic_units
+        )?;
+        writeln!(
+            formatter,
+            "walletA.expectedShieldedNightAtomicUnits={}",
+            self.wallet_a_expected_shielded_night_atomic_units
+        )?;
+        writeln!(
+            formatter,
+            "walletA.expectedEligibleUnshieldedOutputCount={}",
+            self.wallet_a_expected_eligible_unshielded_output_count
+        )?;
+        writeln!(
+            formatter,
+            "walletA.expectedShieldedNoteCount={}",
+            self.wallet_a_expected_shielded_note_count
+        )?;
+        writeln!(
+            formatter,
             "walletB.accountIndex={}",
             self.wallet_b.account_index
         )?;
@@ -194,17 +256,42 @@ impl fmt::Display for PreprodFundingManifest {
             "walletB.nightShieldedAddress={}",
             self.wallet_b.night_shielded_address
         )?;
+        writeln!(
+            formatter,
+            "walletB.expectedUnshieldedNightAtomicUnits={}",
+            self.wallet_b_expected_night_atomic_units
+        )?;
+        writeln!(
+            formatter,
+            "walletB.expectedShieldedNightAtomicUnits={}",
+            self.wallet_b_expected_shielded_night_atomic_units
+        )?;
+        writeln!(
+            formatter,
+            "walletB.expectedEligibleUnshieldedOutputCount={}",
+            self.wallet_b_expected_eligible_unshielded_output_count
+        )?;
+        writeln!(
+            formatter,
+            "walletB.expectedShieldedNoteCount={}",
+            self.wallet_b_expected_shielded_note_count
+        )?;
+        writeln!(
+            formatter,
+            "transfer.shieldedNightAtomicUnits={}",
+            self.shielded_transfer_atomic_units
+        )?;
         formatter.write_str(PREPROD_MANIFEST_END)
     }
 }
 
 fn parse_master_seed(value: &str) -> Result<Zeroizing<[u8; 32]>, PreprodHarnessInputError> {
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(PreprodHarnessInputError::InvalidMasterSeed);
+        return Err(PreprodHarnessInputError::MasterSeed);
     }
     let mut root = Zeroizing::new([0_u8; 32]);
     hex::decode_to_slice(value.as_bytes(), root.as_mut())
-        .map_err(|_| PreprodHarnessInputError::InvalidMasterSeed)?;
+        .map_err(|_| PreprodHarnessInputError::MasterSeed)?;
     Ok(root)
 }
 
@@ -212,7 +299,7 @@ fn load_preprod_master_seed() -> Result<Zeroizing<[u8; 32]>, PreprodHarnessInput
     let encoded = std::env::var_os(PREPROD_MASTER_SEED_ENV)
         .and_then(|value| value.into_string().ok())
         .map(Zeroizing::new)
-        .ok_or(PreprodHarnessInputError::InvalidMasterSeed)?;
+        .ok_or(PreprodHarnessInputError::MasterSeed)?;
     parse_master_seed(encoded.as_str())
 }
 
@@ -222,7 +309,7 @@ fn parse_commit(value: &str) -> Result<String, PreprodHarnessInputError> {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
-        return Err(PreprodHarnessInputError::InvalidCommit);
+        return Err(PreprodHarnessInputError::Commit);
     }
     Ok(value.to_owned())
 }
@@ -338,6 +425,19 @@ fn build_preprod_funding_manifest(
         case_index: selected_case.case_index,
         wallet_a,
         wallet_b,
+        wallet_a_expected_night_atomic_units: PREPROD_EXPECTED_A_NIGHT_ATOMIC_UNITS,
+        wallet_a_expected_shielded_night_atomic_units:
+            PREPROD_EXPECTED_A_SHIELDED_NIGHT_ATOMIC_UNITS,
+        wallet_b_expected_night_atomic_units: PREPROD_EXPECTED_B_NIGHT_ATOMIC_UNITS,
+        wallet_b_expected_shielded_night_atomic_units:
+            PREPROD_EXPECTED_B_SHIELDED_NIGHT_ATOMIC_UNITS,
+        wallet_a_expected_eligible_unshielded_output_count:
+            PREPROD_EXPECTED_A_ELIGIBLE_UNSHIELDED_OUTPUT_COUNT,
+        wallet_a_expected_shielded_note_count: PREPROD_EXPECTED_A_SHIELDED_NOTE_COUNT,
+        wallet_b_expected_eligible_unshielded_output_count:
+            PREPROD_EXPECTED_B_ELIGIBLE_UNSHIELDED_OUTPUT_COUNT,
+        wallet_b_expected_shielded_note_count: PREPROD_EXPECTED_B_SHIELDED_NOTE_COUNT,
+        shielded_transfer_atomic_units: PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS,
     }
 }
 
@@ -383,7 +483,10 @@ impl RandomPort for FundingRandom {
     }
 }
 
-struct FundingStateDirectory(PathBuf);
+struct FundingStateDirectory {
+    path: PathBuf,
+    retain_on_drop: bool,
+}
 
 impl FundingStateDirectory {
     fn fresh() -> Self {
@@ -403,33 +506,75 @@ impl FundingStateDirectory {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
                 .expect("private funding state directory");
         }
-        Self(path)
+        Self {
+            path,
+            retain_on_drop: false,
+        }
     }
 
-    fn journal(&self) -> MidnightSubmissionJournalConfig {
-        MidnightSubmissionJournalConfig::new(self.0.join("submissions.json"))
+    fn retained_preprod(case_index: u32) -> Self {
+        let expected_parent = format!("case-{case_index}.started");
+        let path = std::env::var_os(PREPROD_STATE_DIR_ENV)
+            .map(PathBuf::from)
+            .filter(|path| {
+                path.is_absolute()
+                    && path.file_name().and_then(|name| name.to_str()) == Some("state")
+                    && path
+                        .parent()
+                        .and_then(|parent| parent.file_name())
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name == expected_parent)
+            })
+            .expect("the repository script must supply an absolute private PreProd state path");
+        fs::create_dir(&path).expect("a fresh private PreProd state directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                .expect("private PreProd state directory permissions");
+        }
+        Self {
+            path,
+            retain_on_drop: true,
+        }
+    }
+
+    fn account_checkpoint(&self, label: &str) -> MidnightAccountCheckpointConfig {
+        MidnightAccountCheckpointConfig::new(
+            self.path.join(format!("account-{label}-checkpoints.json")),
+        )
+        .expect("isolated account checkpoint path")
+    }
+
+    fn dust_checkpoint(&self, label: &str) -> MidnightDustCheckpointConfig {
+        MidnightDustCheckpointConfig::new(self.path.join(format!("dust-{label}-checkpoints.bin")))
+            .expect("isolated DUST checkpoint path")
+    }
+
+    fn journal(&self, label: &str) -> MidnightSubmissionJournalConfig {
+        MidnightSubmissionJournalConfig::new(self.path.join(format!("{label}-submissions.json")))
             .expect("isolated journal path")
     }
 
     fn shielded_checkpoint(&self, label: &str) -> MidnightShieldedCheckpointConfig {
         MidnightShieldedCheckpointConfig::new(
-            self.0.join(format!("shielded-{label}-checkpoints.bin")),
+            self.path.join(format!("shielded-{label}-checkpoints.bin")),
         )
         .expect("isolated shielded checkpoint path")
     }
 
     fn cleanup(mut self) {
-        fs::remove_dir_all(&self.0).expect("isolated funding state cleanup");
-        self.0 = PathBuf::new();
+        fs::remove_dir_all(&self.path).expect("isolated funding state cleanup");
+        self.path = PathBuf::new();
     }
 }
 
 impl Drop for FundingStateDirectory {
     fn drop(&mut self) {
-        if self.0.as_os_str().is_empty() {
+        if self.path.as_os_str().is_empty() || self.retain_on_drop {
             return;
         }
-        match fs::remove_dir_all(&self.0) {
+        match fs::remove_dir_all(&self.path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             // Drop must not mask a more useful assertion failure. The directory
@@ -453,10 +598,78 @@ fn standalone_config() -> MidnightStandaloneConfig {
     .expect("reviewed standalone routes")
 }
 
+fn verify_preprod_profile(now_seconds: u64) -> AuthenticatedDeploymentProfile {
+    let root = DeploymentTrustRoot::new(
+        PREPROD_SIGNING_KEY_ID,
+        PREPROD_PROFILE_VERIFYING_KEY,
+        PREPROD_PROFILE_VALID_FROM_SECONDS,
+        PREPROD_PROFILE_VALID_UNTIL_SECONDS,
+        None,
+        1,
+    )
+    .expect("reviewed test-only PreProd trust root");
+    let verifier = DeploymentProfileVerifier::new("io.medianox.oxid", [root], 1)
+        .expect("reviewed test-only PreProd verifier");
+    let profile = verifier
+        .verify(PREPROD_PROFILE_ENVELOPE, now_seconds)
+        .expect("static signed PreProd profile must authenticate");
+    assert_eq!(profile.profile_id(), PREPROD_PROFILE_ID);
+    assert_eq!(profile.signing_key_id(), PREPROD_SIGNING_KEY_ID);
+    assert_eq!(profile.sequence(), 1);
+    assert_eq!(profile.midnight().network_id(), PREPROD_NETWORK_ID);
+    assert_eq!(profile.midnight().genesis_hash(), &PREPROD_GENESIS_HASH);
+    assert_eq!(
+        profile.midnight().indexer_http_url(),
+        "https://indexer.preprod.midnight.network/api/v4/graphql"
+    );
+    assert_eq!(
+        profile.midnight().indexer_websocket_url(),
+        "wss://indexer.preprod.midnight.network/api/v4/graphql/ws"
+    );
+    assert_eq!(
+        profile.midnight().node_websocket_url(),
+        "wss://rpc.preprod.midnight.network"
+    );
+    assert_eq!(
+        profile.midnight().proof_server_url(),
+        "https://lace-proof-pub.preprod.midnight.network"
+    );
+    for inert_ssi_route in [
+        profile.ssi().did_resolver_url(),
+        profile.ssi().issuer_metadata_url(),
+        profile.ssi().verifier_metadata_url(),
+    ] {
+        assert!(
+            inert_ssi_route.contains(".invalid"),
+            "the Midnight-only test profile must not claim an SSI deployment"
+        );
+    }
+    profile
+}
+
+fn authenticated_preprod_config() -> MidnightStandaloneConfig {
+    let now_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock")
+        .as_secs();
+    let profile = verify_preprod_profile(now_seconds);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("PreProd authentication runtime");
+    let deployment = runtime
+        .block_on(super::authenticate_production_deployment(profile))
+        .expect("signed PreProd profile must match the live node genesis");
+    assert_eq!(deployment.profile().profile_id(), PREPROD_PROFILE_ID);
+    deployment.midnight
+}
+
 fn compose_live<N>(
     config: MidnightStandaloneConfig,
     profiles: Arc<InMemoryWalletProfileRepository>,
     security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    dust_checkpoints: Option<MidnightDustCheckpointConfig>,
     shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
     journal: Option<MidnightSubmissionJournalConfig>,
 ) -> ApplicationServices
@@ -467,8 +680,8 @@ where
     let midnight = Arc::new(
         protected_standalone_midnight_wallet_with_checkpoint_options(
             config,
-            None,
-            None,
+            account_checkpoints,
+            dust_checkpoints,
             shielded_checkpoints,
             journal,
             clock,
@@ -479,13 +692,26 @@ where
     compose_with_adapters(profiles, security, midnight)
 }
 
-fn initialize_account(application: &ApplicationServices, name: &str) -> (String, String, String) {
+fn initialize_account(
+    application: &ApplicationServices,
+    name: &str,
+    network_id: &str,
+    account_index: u32,
+) -> (String, String, String) {
     let profile = application
         .create_wallet_profile()
         .execute(CreateWalletProfileCommand {
             display_name: name.to_owned(),
         })
         .expect("profile creation");
+    let selected = application
+        .select_wallet_network()
+        .execute(SelectWalletNetworkCommand {
+            profile_id: profile.id.clone(),
+            network_id: network_id.to_owned(),
+        })
+        .expect("wallet network selection");
+    assert_eq!(selected.selected_network_id, network_id);
     application
         .initialize_wallet_security()
         .execute(WalletProfileSecurityCommand {
@@ -496,10 +722,12 @@ fn initialize_account(application: &ApplicationServices, name: &str) -> (String,
         .derive_wallet_account()
         .execute(DeriveWalletAccountCommand {
             profile_id: profile.id.clone(),
-            account_index: 0,
+            account_index,
             address_index: 0,
         })
         .expect("protected account derivation");
+    assert_eq!(account.network_id, network_id);
+    assert_eq!(account.account_index, account_index);
     let shielded_address = account
         .addresses
         .iter()
@@ -530,6 +758,91 @@ fn live_night_balance(application: &ApplicationServices, profile_id: &str) -> u1
                 .expect("exact NIGHT balance")
         })
         .unwrap_or(0)
+}
+
+fn synchronize_dust(application: &ApplicationServices, profile_id: &str) -> WalletDustSyncView {
+    application
+        .start_wallet_dust_sync()
+        .execute(WalletDustSyncCommand {
+            profile_id: profile_id.to_owned(),
+        })
+        .expect("DUST synchronization starts");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let status = application
+            .get_wallet_dust_sync_status()
+            .execute(WalletDustSyncCommand {
+                profile_id: profile_id.to_owned(),
+            })
+            .expect("DUST synchronization status");
+        match status.state.as_str() {
+            "synced" => return status,
+            "syncing" | "cached" => {}
+            state => panic!(
+                "DUST synchronization stopped in state {state} with failure {:?}",
+                status.failure
+            ),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "DUST synchronization did not finish within 120 seconds"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn dust_balance(status: &WalletDustSyncView) -> u128 {
+    status
+        .balance_atomic_units
+        .as_deref()
+        .unwrap_or("0")
+        .parse::<u128>()
+        .expect("exact DUST balance")
+}
+
+fn await_dust_balance_at_least(
+    application: &ApplicationServices,
+    profile_id: &str,
+    minimum: u128,
+    deadline: Instant,
+) -> WalletDustSyncView {
+    loop {
+        let status = synchronize_dust(application, profile_id);
+        if dust_balance(&status) >= minimum {
+            return status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the generated-DUST observation deadline elapsed before the reviewed threshold"
+        );
+        std::thread::sleep(Duration::from_secs(15));
+    }
+}
+
+fn await_preprod_registration_preview(
+    application: &ApplicationServices,
+    profile_id: &str,
+) -> WalletDustRegistrationPreviewView {
+    let deadline = Instant::now() + Duration::from_secs(15 * 60);
+    loop {
+        match application.prepare_wallet_dust_registration().execute(
+            PrepareWalletDustRegistrationCommand {
+                profile_id: profile_id.to_owned(),
+            },
+        ) {
+            Ok(preview) => return preview,
+            Err(WalletDustRegistrationError::Operation(
+                WalletDustRegistrationPortError::InsufficientRegistrationAllowance,
+            )) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "fresh NIGHT did not accrue a non-zero registration allowance within 15 minutes"
+                );
+                std::thread::sleep(Duration::from_secs(15));
+            }
+            Err(error) => panic!("protected DUST registration preparation failed: {error}"),
+        }
+    }
 }
 
 fn await_live_night_balance(
@@ -665,7 +978,7 @@ fn preprod_case_indices_are_canonical_bounded_hardened_account_pairs() {
     ] {
         assert_eq!(
             PreprodCase::parse(invalid),
-            Err(PreprodHarnessInputError::InvalidCaseIndex)
+            Err(PreprodHarnessInputError::CaseIndex)
         );
     }
 }
@@ -677,7 +990,7 @@ fn preprod_master_seed_and_commit_inputs_fail_without_echoing_values() {
     assert!(parse_master_seed(&secret.to_ascii_uppercase()).is_ok());
     for invalid in ["", "ab", "0x01", &"gg".repeat(32), &format!("{secret}\n")] {
         let error = parse_master_seed(invalid).expect_err("invalid seed must fail closed");
-        assert_eq!(error, PreprodHarnessInputError::InvalidMasterSeed);
+        assert_eq!(error, PreprodHarnessInputError::MasterSeed);
         if !invalid.is_empty() {
             assert!(!error.to_string().contains(invalid));
         }
@@ -687,11 +1000,23 @@ fn preprod_master_seed_and_commit_inputs_fail_without_echoing_values() {
     assert!(parse_commit(&"b".repeat(64)).is_ok());
     for invalid in ["", "A", &"A".repeat(40), &"g".repeat(40)] {
         let error = parse_commit(invalid).expect_err("invalid commit must fail closed");
-        assert_eq!(error, PreprodHarnessInputError::InvalidCommit);
+        assert_eq!(error, PreprodHarnessInputError::Commit);
         if !invalid.is_empty() {
             assert!(!error.to_string().contains(invalid));
         }
     }
+}
+
+#[test]
+fn preprod_midnight_only_profile_is_signed_static_and_test_scoped() {
+    let profile = verify_preprod_profile(1_800_000_000);
+    assert_eq!(
+        profile.valid_until_seconds(),
+        PREPROD_PROFILE_VALID_UNTIL_SECONDS
+    );
+    let debug = format!("{profile:?} {:?}", profile.midnight());
+    assert!(!debug.contains("indexer.preprod.midnight.network"));
+    assert!(!debug.contains("lace-proof-pub.preprod.midnight.network"));
 }
 
 #[test]
@@ -715,10 +1040,19 @@ fn preprod_manifest_derives_separate_accounts_and_emits_only_public_allowlisted_
             "walletA.addressIndex",
             "walletA.nightUnshieldedAddress",
             "walletA.nightShieldedAddress",
+            "walletA.expectedUnshieldedNightAtomicUnits",
+            "walletA.expectedShieldedNightAtomicUnits",
+            "walletA.expectedEligibleUnshieldedOutputCount",
+            "walletA.expectedShieldedNoteCount",
             "walletB.accountIndex",
             "walletB.addressIndex",
             "walletB.nightUnshieldedAddress",
             "walletB.nightShieldedAddress",
+            "walletB.expectedUnshieldedNightAtomicUnits",
+            "walletB.expectedShieldedNightAtomicUnits",
+            "walletB.expectedEligibleUnshieldedOutputCount",
+            "walletB.expectedShieldedNoteCount",
+            "transfer.shieldedNightAtomicUnits",
         ]
     );
     assert!(rendered.starts_with(PREPROD_MANIFEST_START));
@@ -726,6 +1060,15 @@ fn preprod_manifest_derives_separate_accounts_and_emits_only_public_allowlisted_
     assert!(rendered.contains("network=preprod"));
     assert!(rendered.contains("walletA.accountIndex=14"));
     assert!(rendered.contains("walletB.accountIndex=15"));
+    assert!(rendered.contains("walletA.expectedUnshieldedNightAtomicUnits=10000000000"));
+    assert!(rendered.contains("walletA.expectedShieldedNightAtomicUnits=10000000"));
+    assert!(rendered.contains("walletA.expectedEligibleUnshieldedOutputCount=1"));
+    assert!(rendered.contains("walletA.expectedShieldedNoteCount=1"));
+    assert!(rendered.contains("walletB.expectedUnshieldedNightAtomicUnits=0"));
+    assert!(rendered.contains("walletB.expectedShieldedNightAtomicUnits=0"));
+    assert!(rendered.contains("walletB.expectedEligibleUnshieldedOutputCount=0"));
+    assert!(rendered.contains("walletB.expectedShieldedNoteCount=0"));
+    assert!(rendered.contains("transfer.shieldedNightAtomicUnits=1000000"));
     assert!(!rendered.contains(&encoded_root));
     for forbidden in [
         "seed",
@@ -741,11 +1084,9 @@ fn preprod_manifest_derives_separate_accounts_and_emits_only_public_allowlisted_
 }
 
 /// Derives the only public values required to fund a deterministic pair of
-/// preprod accounts. This deliberately performs no network I/O. A live
-/// registration/spend test must remain unavailable until a build-reviewed
-/// signed preprod deployment profile and trust root are provisioned and an
-/// authenticated test composition can consume them without runtime route or
-/// trust-root selection.
+/// preprod accounts. This deliberately performs no network I/O. The separate
+/// ignored live test consumes its build-reviewed signed profile without
+/// runtime route or trust-root selection.
 #[test]
 #[ignore = "requires explicit preprod opt-in and an out-of-band master seed"]
 fn preprod_deterministic_funding_manifest_exposes_public_addresses_only() {
@@ -756,15 +1097,462 @@ fn preprod_deterministic_funding_manifest_exposes_public_addresses_only() {
     );
     let root = load_preprod_master_seed().expect("preprod master seed input");
     let selected_case = std::env::var(PREPROD_CASE_INDEX_ENV)
-        .map_err(|_| PreprodHarnessInputError::InvalidCaseIndex)
+        .map_err(|_| PreprodHarnessInputError::CaseIndex)
         .and_then(|value| PreprodCase::parse(&value))
         .expect("bounded preprod case index");
     let commit = std::env::var(PREPROD_COMMIT_ENV)
-        .map_err(|_| PreprodHarnessInputError::InvalidCommit)
+        .map_err(|_| PreprodHarnessInputError::Commit)
         .and_then(|value| parse_commit(&value))
         .expect("exact preprod harness commit");
     let manifest = build_preprod_funding_manifest(&root, selected_case, commit);
     println!("{manifest}");
+}
+
+/// Proves the complete fresh-wallet PreProd journey with deterministic,
+/// externally funded test accounts and the same application ports used by the
+/// mobile shell. The committed profile authenticates only the Midnight routes;
+/// its inert `.invalid` SSI routes are never composed or contacted here.
+///
+/// The public prover receives private proof preimages over TLS. This ignored
+/// interoperability test therefore requires a separate explicit privacy
+/// acknowledgement and is not production privacy evidence. The repository
+/// script withholds the master seed from Cargo/build scripts and supplies it
+/// only to this final test process; this module never logs or persists it.
+#[test]
+#[ignore = "requires funded PreProd A/B accounts, public-prover acknowledgement, and explicit opt-in"]
+fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
+    assert_eq!(
+        std::env::var(PREPROD_ENABLE_ENV).ok().as_deref(),
+        Some("1"),
+        "live PreProd registration requires explicit opt-in"
+    );
+    assert_eq!(
+        std::env::var(PREPROD_PUBLIC_PROVER_ACK_ENV).ok().as_deref(),
+        Some("1"),
+        "the public PreProd prover privacy tradeoff requires explicit acknowledgement"
+    );
+    let root = load_preprod_master_seed().expect("preprod master seed input");
+    let selected_case = std::env::var(PREPROD_CASE_INDEX_ENV)
+        .map_err(|_| PreprodHarnessInputError::CaseIndex)
+        .and_then(|value| PreprodCase::parse(&value))
+        .expect("bounded PreProd case index");
+    let commit = std::env::var(PREPROD_COMMIT_ENV)
+        .map_err(|_| PreprodHarnessInputError::Commit)
+        .and_then(|value| parse_commit(&value))
+        .expect("exact PreProd harness commit");
+    let expected_manifest = build_preprod_funding_manifest(&root, selected_case, commit);
+    let config = authenticated_preprod_config();
+    let state = FundingStateDirectory::retained_preprod(selected_case.case_index);
+
+    let wallet_a_profiles = Arc::new(InMemoryWalletProfileRepository::new());
+    let wallet_a_security = Arc::new(DevelopmentWalletSecurity::new(
+        Arc::new(SystemClock),
+        Arc::new(OneShotRootRandom::new(copy_root(&root))),
+    ));
+    let wallet_a = compose_live(
+        config.clone(),
+        Arc::clone(&wallet_a_profiles),
+        Arc::clone(&wallet_a_security),
+        Some(state.account_checkpoint("preprod-wallet-a")),
+        Some(state.dust_checkpoint("preprod-wallet-a")),
+        Some(state.shielded_checkpoint("preprod-wallet-a")),
+        Some(state.journal("preprod-wallet-a")),
+    );
+    let (wallet_a_profile_id, wallet_a_night_address, wallet_a_shielded_address) =
+        initialize_account(
+            &wallet_a,
+            "PreProd E2E wallet A",
+            PREPROD_NETWORK_ID,
+            selected_case.wallet_a_account_index,
+        );
+
+    let wallet_b_profiles = Arc::new(InMemoryWalletProfileRepository::new());
+    let wallet_b_security = Arc::new(DevelopmentWalletSecurity::new(
+        Arc::new(SystemClock),
+        Arc::new(OneShotRootRandom::new(copy_root(&root))),
+    ));
+    let wallet_b = compose_live(
+        config.clone(),
+        Arc::clone(&wallet_b_profiles),
+        Arc::clone(&wallet_b_security),
+        Some(state.account_checkpoint("preprod-wallet-b")),
+        Some(state.dust_checkpoint("preprod-wallet-b")),
+        Some(state.shielded_checkpoint("preprod-wallet-b")),
+        Some(state.journal("preprod-wallet-b")),
+    );
+    let (wallet_b_profile_id, wallet_b_night_address, wallet_b_shielded_address) =
+        initialize_account(
+            &wallet_b,
+            "PreProd E2E wallet B",
+            PREPROD_NETWORK_ID,
+            selected_case.wallet_b_account_index,
+        );
+
+    assert_eq!(
+        wallet_a_night_address,
+        expected_manifest.wallet_a.night_unshielded_address
+    );
+    assert_eq!(
+        wallet_a_shielded_address,
+        expected_manifest.wallet_a.night_shielded_address
+    );
+    assert_eq!(
+        wallet_b_night_address,
+        expected_manifest.wallet_b.night_unshielded_address
+    );
+    assert_eq!(
+        wallet_b_shielded_address,
+        expected_manifest.wallet_b.night_shielded_address
+    );
+    assert_eq!(
+        live_night_balance(&wallet_a, &wallet_a_profile_id),
+        PREPROD_EXPECTED_A_NIGHT_ATOMIC_UNITS,
+        "wallet A must receive the exact reviewed unshielded NIGHT funding"
+    );
+    assert_eq!(
+        live_night_balance(&wallet_b, &wallet_b_profile_id),
+        PREPROD_EXPECTED_B_NIGHT_ATOMIC_UNITS,
+        "wallet B must begin with no public NIGHT funding"
+    );
+    assert_eq!(
+        wallet_b
+            .prepare_wallet_dust_registration()
+            .execute(PrepareWalletDustRegistrationCommand {
+                profile_id: wallet_b_profile_id.clone(),
+            }),
+        Err(WalletDustRegistrationError::Operation(
+            WalletDustRegistrationPortError::NoEligibleNight
+        )),
+        "wallet B must begin with no eligible unshielded NIGHT output"
+    );
+
+    let wallet_a_shielded_before = synchronize_shielded(&wallet_a, &wallet_a_profile_id);
+    assert_complete_shielded_snapshot(&wallet_a_shielded_before);
+    assert_eq!(
+        shielded_balance(&wallet_a_shielded_before, NATIVE_SHIELDED_TOKEN_TYPE),
+        PREPROD_EXPECTED_A_SHIELDED_NIGHT_ATOMIC_UNITS,
+        "wallet A must receive the exact reviewed shielded NIGHT funding"
+    );
+    assert_eq!(
+        wallet_a_shielded_before.owned_note_count,
+        Some(PREPROD_EXPECTED_A_SHIELDED_NOTE_COUNT),
+        "wallet A funding must be exactly one shielded NIGHT note"
+    );
+    let wallet_b_shielded_before = synchronize_shielded(&wallet_b, &wallet_b_profile_id);
+    assert_complete_shielded_snapshot(&wallet_b_shielded_before);
+    assert_eq!(
+        shielded_balance(&wallet_b_shielded_before, NATIVE_SHIELDED_TOKEN_TYPE),
+        PREPROD_EXPECTED_B_SHIELDED_NIGHT_ATOMIC_UNITS,
+        "wallet B must begin as an empty shielded recipient"
+    );
+    assert_eq!(
+        wallet_b_shielded_before.owned_note_count,
+        Some(PREPROD_EXPECTED_B_SHIELDED_NOTE_COUNT),
+        "wallet B must begin with no shielded notes"
+    );
+
+    let initial_dust = synchronize_dust(&wallet_a, &wallet_a_profile_id);
+    assert_eq!(initial_dust.state, "synced");
+    assert_eq!(initial_dust.current_cursor, initial_dust.target_cursor);
+    assert_eq!(
+        dust_balance(&initial_dust),
+        0,
+        "a fresh funded wallet intentionally begins with zero DUST"
+    );
+
+    let prepared = await_preprod_registration_preview(&wallet_a, &wallet_a_profile_id);
+    assert_eq!(prepared.state, "prepared");
+    assert!(prepared.authorization_ready);
+    assert!(!prepared.submission_ready);
+    assert_eq!(prepared.network_id, PREPROD_NETWORK_ID);
+    assert_eq!(
+        prepared.registered_night.atomic_units,
+        PREPROD_EXPECTED_A_NIGHT_ATOMIC_UNITS.to_string()
+    );
+    assert_eq!(
+        prepared.input_count, PREPROD_EXPECTED_A_ELIGIBLE_UNSHIELDED_OUTPUT_COUNT,
+        "wallet A funding must be exactly one eligible unshielded NIGHT output"
+    );
+    assert!(
+        prepared
+            .maximum_fee_allowance
+            .atomic_units
+            .parse::<u128>()
+            .expect("exact registration allowance")
+            > 0
+    );
+    assert_eq!(prepared.fee_state, "requires_balancing");
+
+    let authorized = wallet_a
+        .authorize_wallet_dust_registration()
+        .execute(AuthorizeWalletDustRegistrationCommand {
+            profile_id: wallet_a_profile_id.clone(),
+            draft_id: prepared.draft_id.clone(),
+            authorization_challenge: prepared.authorization_challenge.clone(),
+            confirmation: SensitiveOperationConfirmation {
+                title: "Authorize PreProd DUST registration".to_owned(),
+                summary: "Register wallet A's exact reviewed NIGHT for DUST generation".to_owned(),
+                confirmed: true,
+            },
+        })
+        .expect("explicit DUST registration authorization");
+    assert_eq!(authorized.state, "authorized");
+    assert!(authorized.submission_ready);
+
+    let submitted =
+        futures::executor::block_on(wallet_a.submit_wallet_dust_registration().execute(
+            SubmitWalletDustRegistrationCommand {
+                profile_id: wallet_a_profile_id.clone(),
+                draft_id: prepared.draft_id.clone(),
+                confirmation: SensitiveOperationConfirmation {
+                    title: "Submit PreProd DUST registration".to_owned(),
+                    summary: "Prove and submit wallet A's authorized DUST registration".to_owned(),
+                    confirmed: true,
+                },
+            },
+        ))
+        .expect("PreProd DUST registration proof, submission, and finality");
+    assert_eq!(submitted.mode, "live");
+    assert_eq!(submitted.registration.state, "submitted");
+    assert_eq!(submitted.registration_observation, "included");
+    assert_eq!(submitted.dust_readiness, "requires_synchronization");
+    assert!(!submitted.transaction_id.is_empty());
+    assert!(!submitted.block_id.is_empty());
+
+    let included = wallet_a
+        .get_wallet_dust_registration_status()
+        .execute(GetWalletDustRegistrationStatusCommand {
+            profile_id: wallet_a_profile_id.clone(),
+            draft_id: prepared.draft_id.clone(),
+        })
+        .expect("included registration status");
+    assert_eq!(included.state, "included");
+    assert_eq!(included.registration_observation, "included");
+    assert_eq!(included.dust_readiness, "requires_synchronization");
+    assert!(!included.reconciliation_allowed);
+    assert_eq!(
+        live_night_balance(&wallet_a, &wallet_a_profile_id),
+        PREPROD_EXPECTED_A_NIGHT_ATOMIC_UNITS,
+        "registration returns the exact NIGHT principal to wallet A"
+    );
+
+    let registration_fee = submitted
+        .fee
+        .atomic_units
+        .parse::<u128>()
+        .expect("exact registration fee");
+    assert!(
+        registration_fee > 0,
+        "registration must report its exact nonzero fee"
+    );
+    // A positive balance is only a liveness observation, not a quote for the
+    // later shielded transfer. Exact fee balancing happens inside the adapter
+    // immediately before proving and broadcast.
+    let dust_spend_deadline = Instant::now() + Duration::from_secs(15 * 60);
+    let spend_readiness_threshold = 1;
+    let generated_dust = await_dust_balance_at_least(
+        &wallet_a,
+        &wallet_a_profile_id,
+        spend_readiness_threshold,
+        dust_spend_deadline,
+    );
+    assert_eq!(generated_dust.state, "synced");
+    assert_eq!(generated_dust.current_cursor, generated_dust.target_cursor);
+    assert!(dust_balance(&generated_dust) >= spend_readiness_threshold);
+    drop(wallet_a);
+
+    let reconstructed_a = compose_live(
+        config.clone(),
+        Arc::clone(&wallet_a_profiles),
+        Arc::clone(&wallet_a_security),
+        Some(state.account_checkpoint("preprod-wallet-a")),
+        Some(state.dust_checkpoint("preprod-wallet-a")),
+        Some(state.shielded_checkpoint("preprod-wallet-a")),
+        Some(state.journal("preprod-wallet-a")),
+    );
+    let restored_registration = futures::executor::block_on(
+        reconstructed_a
+            .reconcile_wallet_dust_registration_submission()
+            .execute(ReconcileWalletDustRegistrationSubmissionCommand {
+                profile_id: wallet_a_profile_id.clone(),
+                draft_id: prepared.draft_id,
+            }),
+    )
+    .expect("included registration restoration from the public journal");
+    assert_eq!(restored_registration.state, "included");
+    assert_eq!(restored_registration.registration_observation, "included");
+    assert_eq!(
+        restored_registration.dust_readiness,
+        "requires_synchronization"
+    );
+    let reconstructed_dust = synchronize_dust(&reconstructed_a, &wallet_a_profile_id);
+    assert_eq!(reconstructed_dust.state, "synced");
+    assert_eq!(
+        reconstructed_dust.current_cursor,
+        reconstructed_dust.target_cursor
+    );
+    assert!(
+        reconstructed_dust.current_cursor >= generated_dust.current_cursor,
+        "adapter reconstruction must authoritatively resynchronize from no earlier DUST cursor"
+    );
+    assert!(
+        dust_balance(&reconstructed_dust) >= dust_balance(&generated_dust),
+        "adapter reconstruction plus authoritative resynchronization must preserve generated DUST"
+    );
+
+    let transfer = reconstructed_a
+        .prepare_shielded_wallet_transfer()
+        .execute(PrepareShieldedWalletTransferCommand {
+            profile_id: wallet_a_profile_id.clone(),
+            recipient_address: wallet_b_shielded_address,
+            token_type: NATIVE_SHIELDED_TOKEN_TYPE.to_owned(),
+            amount_atomic_units: PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS.to_string(),
+        })
+        .expect("exact PreProd shielded preview after DUST recovery");
+    assert_eq!(transfer.state, "prepared");
+    assert_eq!(
+        transfer.amount.atomic_units,
+        PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS.to_string()
+    );
+    assert_eq!(transfer.recipient_kind, "shielded");
+    let authorized_transfer = reconstructed_a
+        .authorize_wallet_transfer()
+        .execute(AuthorizeWalletTransferCommand {
+            profile_id: wallet_a_profile_id.clone(),
+            draft_id: transfer.draft_id.clone(),
+            authorization_challenge: transfer.authorization_challenge.clone(),
+            confirmation: SensitiveOperationConfirmation {
+                title: "Authorize PreProd shielded transfer".to_owned(),
+                summary: "Send the exact reviewed shielded NIGHT amount from A to empty B"
+                    .to_owned(),
+                confirmed: true,
+            },
+        })
+        .expect("explicit PreProd shielded transfer authorization");
+    assert_eq!(authorized_transfer.state, "authorized");
+    let mut observed_dust = reconstructed_dust;
+    let mut insufficient_dust_retries = 0_u8;
+    let submitted_transfer = loop {
+        assert!(
+            Instant::now() < dust_spend_deadline,
+            "shielded fee balancing did not become ready within 15 minutes"
+        );
+        let result = futures::executor::block_on(reconstructed_a.submit_wallet_transfer().execute(
+            SubmitWalletTransferCommand {
+                profile_id: wallet_a_profile_id.clone(),
+                draft_id: transfer.draft_id.clone(),
+                confirmation: SensitiveOperationConfirmation {
+                    title: "Submit PreProd shielded transfer".to_owned(),
+                    summary: "Prove and submit the authorized A-to-B shielded transfer".to_owned(),
+                    confirmed: true,
+                },
+            },
+        ));
+        match result {
+            Ok(submitted) => break submitted,
+            Err(WalletTransactionError::Operation(
+                WalletTransactionPortError::InsufficientDust,
+            )) => {
+                insufficient_dust_retries = insufficient_dust_retries
+                    .checked_add(1)
+                    .expect("bounded insufficient-DUST retries");
+                assert!(
+                    insufficient_dust_retries <= MAX_PREPROD_INSUFFICIENT_DUST_RETRIES,
+                    "shielded fee balancing remained underfunded after bounded pre-broadcast waits"
+                );
+                let retained = reconstructed_a
+                    .get_wallet_transfer_draft()
+                    .execute(WalletTransferDraftQuery {
+                        profile_id: wallet_a_profile_id.clone(),
+                        draft_id: transfer.draft_id.clone(),
+                    })
+                    .expect("insufficient DUST retains the exact authorized draft");
+                assert_eq!(retained.state, "authorized");
+                assert!(retained.submission_ready);
+                let next_threshold = dust_balance(&observed_dust)
+                    .checked_mul(2)
+                    .filter(|threshold| *threshold > dust_balance(&observed_dust))
+                    .expect("next DUST observation threshold is exact");
+                observed_dust = await_dust_balance_at_least(
+                    &reconstructed_a,
+                    &wallet_a_profile_id,
+                    next_threshold,
+                    dust_spend_deadline,
+                );
+            }
+            Err(error) => panic!(
+                "PreProd shielded proof, submission, and finalized inclusion failed: {error}"
+            ),
+        }
+    };
+    assert_eq!(submitted_transfer.mode, "live");
+    assert_eq!(submitted_transfer.transfer.state, "submitted");
+    assert!(!submitted_transfer.transaction_id.is_empty());
+    assert!(!submitted_transfer.block_id.is_empty());
+    let transfer_transaction_id = submitted_transfer.transaction_id.clone();
+
+    let duplicate = reconstructed_a.prepare_shielded_wallet_transfer().execute(
+        PrepareShieldedWalletTransferCommand {
+            profile_id: wallet_a_profile_id.clone(),
+            recipient_address: transfer.recipient_address.clone(),
+            token_type: NATIVE_SHIELDED_TOKEN_TYPE.to_owned(),
+            amount_atomic_units: PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS.to_string(),
+        },
+    );
+    assert_eq!(
+        duplicate,
+        Err(WalletTransactionError::Operation(
+            WalletTransactionPortError::DraftConflict
+        )),
+        "the included journal barrier must block duplicate delivery before replay"
+    );
+    drop(reconstructed_a);
+
+    let restored_a = compose_live(
+        config,
+        wallet_a_profiles,
+        wallet_a_security,
+        Some(state.account_checkpoint("preprod-wallet-a")),
+        Some(state.dust_checkpoint("preprod-wallet-a")),
+        Some(state.shielded_checkpoint("preprod-wallet-a")),
+        Some(state.journal("preprod-wallet-a")),
+    );
+    let restored_transfer =
+        futures::executor::block_on(restored_a.reconcile_wallet_transfer_submission().execute(
+            WalletTransferSubmissionQuery {
+                profile_id: wallet_a_profile_id.clone(),
+                draft_id: transfer.draft_id,
+            },
+        ))
+        .expect("included shielded transfer restoration from the public journal");
+    assert_eq!(restored_transfer.state, "included");
+    assert_eq!(
+        restored_transfer.transaction_id.as_deref(),
+        Some(transfer_transaction_id.as_str())
+    );
+    let wallet_a_after = await_shielded_balance(
+        &restored_a,
+        &wallet_a_profile_id,
+        PREPROD_EXPECTED_A_SHIELDED_NIGHT_ATOMIC_UNITS - PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS,
+    );
+    assert_complete_shielded_snapshot(&wallet_a_after);
+    let wallet_b_after = await_shielded_balance(
+        &wallet_b,
+        &wallet_b_profile_id,
+        PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS,
+    );
+    assert_complete_shielded_snapshot(&wallet_b_after);
+    assert_eq!(
+        shielded_balance(&wallet_a_after, NATIVE_SHIELDED_TOKEN_TYPE),
+        PREPROD_EXPECTED_A_SHIELDED_NIGHT_ATOMIC_UNITS - PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS
+    );
+    assert_eq!(
+        shielded_balance(&wallet_b_after, NATIVE_SHIELDED_TOKEN_TYPE),
+        PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS
+    );
+    drop(restored_a);
+    drop(wallet_b);
+    state.cleanup();
 }
 
 /// Funds a fresh OS-random recipient through the same live typed transaction
@@ -797,9 +1585,11 @@ fn funded_unshielded_finality_survives_adapter_restart_without_duplicate_deliver
         recipient_security,
         None,
         None,
+        None,
+        None,
     );
     let (recipient_profile_id, recipient_address, _) =
-        initialize_account(&recipient, "Ephemeral funded recipient");
+        initialize_account(&recipient, "Ephemeral funded recipient", "undeployed", 0);
 
     let funder_profiles = Arc::new(InMemoryWalletProfileRepository::new());
     let funder_security = Arc::new(DevelopmentWalletSecurity::new(
@@ -811,9 +1601,12 @@ fn funded_unshielded_finality_survives_adapter_restart_without_duplicate_deliver
         Arc::clone(&funder_profiles),
         Arc::clone(&funder_security),
         None,
-        Some(state.journal()),
+        None,
+        None,
+        Some(state.journal("unshielded-funder")),
     );
-    let (funder_profile_id, _, _) = initialize_account(&funder, "Standalone funding authority");
+    let (funder_profile_id, _, _) =
+        initialize_account(&funder, "Standalone funding authority", "undeployed", 0);
     assert!(
         live_night_balance(&funder, &funder_profile_id) > TRANSFER_ATOMIC_UNITS,
         "the externally selected standalone funding authority is not funded"
@@ -875,7 +1668,9 @@ fn funded_unshielded_finality_survives_adapter_restart_without_duplicate_deliver
         funder_profiles,
         funder_security,
         None,
-        Some(state.journal()),
+        None,
+        None,
+        Some(state.journal("unshielded-funder")),
     );
     let history = restarted
         .list_wallet_transfer_submissions()
@@ -938,11 +1733,13 @@ fn funded_shielded_finality_survives_adapter_reconstruction_and_consumes_the_inp
         config.clone(),
         recipient_profiles,
         recipient_security,
+        None,
+        None,
         Some(state.shielded_checkpoint("recipient")),
         None,
     );
     let (recipient_profile_id, _, recipient_shielded_address) =
-        initialize_account(&recipient, "Ephemeral shielded recipient");
+        initialize_account(&recipient, "Ephemeral shielded recipient", "undeployed", 0);
     let recipient_before = synchronize_shielded(&recipient, &recipient_profile_id);
     assert_complete_shielded_snapshot(&recipient_before);
     assert_eq!(
@@ -960,11 +1757,17 @@ fn funded_shielded_finality_survives_adapter_reconstruction_and_consumes_the_inp
         config.clone(),
         Arc::clone(&funder_profiles),
         Arc::clone(&funder_security),
+        None,
+        None,
         Some(state.shielded_checkpoint("funder")),
-        Some(state.journal()),
+        Some(state.journal("shielded-funder")),
     );
-    let (funder_profile_id, _, _) =
-        initialize_account(&funder, "Standalone shielded funding authority");
+    let (funder_profile_id, _, _) = initialize_account(
+        &funder,
+        "Standalone shielded funding authority",
+        "undeployed",
+        0,
+    );
     assert!(
         live_night_balance(&funder, &funder_profile_id) > 0,
         "the shielded funding authority must synchronize its fee-bearing public account"
@@ -1052,8 +1855,10 @@ fn funded_shielded_finality_survives_adapter_reconstruction_and_consumes_the_inp
         config,
         funder_profiles,
         funder_security,
+        None,
+        None,
         Some(state.shielded_checkpoint("funder")),
-        Some(state.journal()),
+        Some(state.journal("shielded-funder")),
     );
     let history = restarted
         .list_wallet_transfer_submissions()

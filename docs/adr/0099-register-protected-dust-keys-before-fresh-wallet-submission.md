@@ -8,10 +8,10 @@
   `074b1a4bccbfee1740ee188374b606a022ecef42`
 - Ledger source: `midnight-ledger` commit
   `d9414884db9da9e9b1f6f3a7f742d79a5732f817`
-- Implementation state: Repository, headless, and Dioxus implementation plus
-  the guarded public PreProd funding-manifest foundation are complete; funded
-  preprod, mobile, process-restart, physical-device, and production live-node
-  evidence remain open
+- Implementation state: Repository, headless, Dioxus, guarded public PreProd
+  funding manifest, build-reviewed test-only signed profile, and ignored live
+  acceptance harness are complete; funded execution, mobile, process-restart,
+  physical-device, and production live-node evidence remain open
 
 ## Context
 
@@ -108,26 +108,79 @@ from an externally provisioned 32-byte master seed by using the existing
 hardened Midnight BIP44 account index: account A is `2 * caseIndex`, and
 account B is `A + 1`. The seed is accepted only as exactly 64 hexadecimal
 characters from a secret environment variable after a second explicit live-
-test opt-in. It is never accepted over a headless command or written, logged,
-hashed for output, or committed. The public funding manifest may expose only
-the repository commit, PreProd network, case and account/address indices, and
-A/B public NIGHT and shielded receive addresses. DUST is never externally
-funded.
+test opt-in. The scripts copy it into a non-exported shell variable, remove it
+from the environment before Cargo or any build script runs, and supply it only
+to the final compiled test process. It is never accepted over a headless
+command or written, logged, hashed for output, or committed. The public
+funding manifest may expose only the repository commit, PreProd network, case
+and account/address indices, A/B public NIGHT and shielded receive addresses,
+exact expected balances/eligible-output/note counts, and the exact final shielded transfer.
+Wallet A is funded with exactly 10,000,000,000
+atomic unshielded NIGHT in one output and 10,000,000 atomic shielded NIGHT in
+one note; wallet B begins with zero balances, eligible public outputs, and
+shielded notes. Funding the
+same totals through a different topology is not the reviewed test case. The
+final A-to-B shielded transfer is exactly 1,000,000 atomic NIGHT. DUST is never
+externally funded.
 
 The manifest command performs no network I/O and requires a clean worktree so
-its public output is bound to the exact commit. A live write remains unavailable
-until a build-reviewed PreProd deployment trust root and signed atomic profile
-are provisioned and node genesis is authenticated under ADR-0098.
+its public output is bound to the exact commit. A test-only public Ed25519 root
+and static signed canonical envelope are compiled only into tests. The signing
+key was generated in memory and discarded without being written or committed.
+The envelope binds the exact PreProd indexer v4 HTTP/WebSocket paths, node
+WebSocket route, public proof-server route, network, and genesis
+`df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b`.
+The ignored live test verifies that signature at trusted current time and then
+uses the unchanged ADR-0098 chain-identity gate. This authenticates a reviewed
+test configuration and exact chain identity, not endpoint ownership, indexer
+correctness, protocol compatibility, or production authority.
 
-After out-of-band NIGHT/shielded funding, the eventual live flow must prove the
+Deployment-profile v1 requires SSI routes, but this acceptance harness never
+composes SSI. Its signed SSI fields therefore use explicit `.invalid` hosts and
+the profile is documented as Midnight-only. A capability-scoped successor is
+required before such a profile could represent production deployment. The
+signed proof route is the public PreProd prover. Because that operator can see
+private proof preimages plus network timing despite TLS, the ignored write test
+requires the separate
+`OXID_ACKNOWLEDGE_PREPROD_PUBLIC_PROVER_PRIVACY=1` gate. It is interoperability
+evidence, not the production-local privacy evidence required by ADR-0028; the
+test must not silently splice in an unsigned local prover.
+
+After out-of-band NIGHT/shielded funding, the ignored live flow must prove the
 fresh account starts with zero DUST, use the same public prepare, explicit
 consent, protected authorization, official proving/finality, reconciliation,
-and DUST-observation boundaries as any other caller, wait for generated DUST
-to become recoverable
-and fully synchronized, and only then perform A's shielded spend to B. Every
-case index is single-use unless an exact, explicit recovery-resume mode is
-being tested. Test custody, funding code, environment markers, and fixtures
-remain excluded from normal release artifacts.
+and DUST-observation boundaries as any other caller, wait for a positive,
+fully synchronized generated-DUST observation, and only then perform A's
+shielded spend to B. The registration fee is not treated as a transfer-fee
+quote. If and only if canonical fee balancing returns the exact typed
+`InsufficientDust` result before proving and broadcast, the harness verifies
+that the same draft remains authorized, waits for a strictly greater
+authoritative DUST balance, and retries that draft with a fresh confirmation.
+The wait/retry count and total deadline are bounded; ambiguous or post-
+broadcast outcomes are never retried. It reconstructs adapters with the same in-
+process development custody, owner-private checkpoints, and public journals;
+the subsequent DUST assertion proves adapter reconstruction plus authoritative
+resynchronization, not direct checkpoint hydration, a process restart, or a
+native-custody restart. The test drives the same application use cases without
+a UI, but does not traverse the NDJSON
+`oxid.headless.v1` adapter. Exact live NDJSON evidence requires a separate
+incoming-boundary refactor rather than a production-callable development-
+custody factory. Every case index is single-use. The repository script
+atomically creates an ignored,
+owner-only started marker below the shared Git common directory before a write,
+so all worktrees for the same local clone refuse a second run for that case. It
+never automatically clears the marker after success or failure. Private
+account/DUST/Zswap checkpoints and the public submission journal are retained
+owner-only below that marker on failure for forensic/manual chain audit only;
+the current repository has no cross-process recovery command, stable test
+profile IDs, or persisted development custody capable of safely resuming them.
+An unknown broadcast therefore requires external chain audit and abandonment
+of that case, never marker deletion or automatic retry. A complete successful
+run removes only the private state and leaves the started marker. CI must
+provision a fresh case index per funded write because an ephemeral runner
+cannot make the marker globally durable. An explicit non-submitting recovery
+mode is future work. Test custody, funding code, environment markers, and
+fixtures remain excluded from normal release artifacts.
 
 ## Required validation
 

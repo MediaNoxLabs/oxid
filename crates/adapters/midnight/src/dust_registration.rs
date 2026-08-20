@@ -101,8 +101,7 @@ where
             .completer
             .registration_context()
             .map_err(map_transaction_error)?;
-        let chain_time = u64::try_from(context.timestamp.to_secs())
-            .map_err(|_| WalletDustRegistrationPortError::InvalidChainState)?;
+        let chain_time = context.timestamp.to_secs();
         if request.expires_at.value() / 1_000 <= chain_time {
             return Err(WalletDustRegistrationPortError::DraftExpired);
         }
@@ -663,8 +662,7 @@ fn generated_dust(
     created_at_seconds: u64,
     context: &MidnightRegistrationContext,
 ) -> Result<u128, WalletDustRegistrationPortError> {
-    let now = u64::try_from(context.timestamp.to_secs())
-        .map_err(|_| WalletDustRegistrationPortError::InvalidChainState)?;
+    let now = context.timestamp.to_secs();
     let elapsed = now.saturating_sub(created_at_seconds) as u128;
     let cap = utxo
         .value

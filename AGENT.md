@@ -450,7 +450,8 @@ does not exercise unknown-outcome chain rescanning. This reuses in-process
 development custody and is not process/native-custody restart evidence.
 ADR-0099 now supplies the distinct typed protected-DUST registration boundary;
 fresh-wallet origination remains issue #92 until a funded run proves
-registration, later generated-DUST recovery, and a next spend. Fingerprint
+registration, later generated-DUST observation/resynchronization, and a next
+spend. Fingerprint
 lookup must prefer included over unresolved over failed attempts. Capacity may
 evict only rejected/expired records; 128 included/unresolved barriers fail
 unavailable before broadcast
@@ -786,13 +787,13 @@ migration target, while production-release evidence is about 78%.
 These are evidence classifications, not source-line counts. The dependency-
 ordered gaps are physical custody/recovery evidence, a provisioned production
 deployment, funded DUST registration-to-recovery/fresh-wallet shielded
-origination,
-physical identity ingress plus verified HTTPS association, production
+origination, physical identity ingress plus verified HTTPS association,
+production
 background synchronization, live identity trust/transport and DID writes,
 Passport Vault live/device evidence, and device resource budgets. The next
-bounded engineering slice is a signed PreProd profile plus one funded
-registration-to-recovery and fresh-wallet shielded spend (#92); checkpoint-safe
-journal compaction is #93. Approved domains/association files,
+bounded engineering slice is one funded PreProd registration-to-recovery and
+fresh-wallet shielded spend (#92); checkpoint-safe journal compaction is #93.
+Approved domains/association files,
 release signing identities, physical devices, and funded live infrastructure
 are external evidence inputs and have no repository-only ETA.
 
@@ -2189,7 +2190,8 @@ to silence the shell probe.
   outcome chain rescanning. The v4 Zswap envelope typename is
   `ZswapLedgerEvent`, and its event IDs are sparse monotonic global cursors.
   Never call this a process/native-custody restart or fresh-wallet origination;
-  issue #92 owns the funded registration-to-recovery and stronger spend proof.
+  issue #92 owns the funded registration-to-generation/resynchronization and
+  stronger spend proof.
   Until
   issue #93 adds checkpoint-acknowledged compaction, a full 128-record journal
   of included/unresolved barriers must fail unavailable before broadcast.
@@ -2216,19 +2218,50 @@ to silence the shell probe.
   `OXID_PREPROD_E2E_CASE_INDEX`. Never print or persist that root. The existing
   hardened BIP44 account index supplies A=`2*caseIndex` and B=A+1 through two
   separate test-only custody instances. Output is a closed public manifest of
-  exact commit/network/case/account/address indices and A/B NIGHT/shielded
-  receive addresses; it contains no DUST address/key, secret, digest, UTXO, or
-  transaction material. DUST must not be externally funded. Case indices are
-  single-use except for an explicit exact recovery-resume test.
-  The live write remains open until a build-reviewed PreProd trust root and
-  signed atomic deployment profile are provisioned, its node genesis is
-  authenticated, A is funded out of band, and the staged test proves zero
-  initial DUST, registration finality, later generated-DUST recovery,
-  reconstruction/duplicate suppression, and an exact A-to-B shielded spend.
-  A 2026-08-20 read-only probe observed PreProd genesis
-  `df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b`;
-  this observation is not deployment authority and must be reauthenticated by
-  the eventual signed profile.
+  exact commit/network/case/account/address indices, A/B NIGHT/shielded receive
+  addresses, exact expected balances/eligible-output/note counts, and exact
+  transfer amount;
+  it contains no DUST address/key, secret, digest, UTXO identifier, or
+  transaction material. Fund only A with exactly one 10,000,000,000-atomic
+  public NIGHT output and exactly one 10,000,000-atomic shielded NIGHT note. B
+  begins with no eligible public outputs or shielded notes; the final A-to-B
+  transfer is 1,000,000 atomic shielded NIGHT. DUST must not be externally
+  funded. The scripts unset the
+  exported root before Cargo/build scripts run and pass it only to the final
+  compiled test process. Case indices are single-use.
+  The live script atomically creates the ignored owner-only directory
+  `<git-common-dir>/oxid-state/preprod-registration-e2e/case-<index>.started`
+  before the write and refuses reuse across all worktrees in the local clone.
+  Never clear it merely to rerun an unknown outcome. Ephemeral CI must receive
+  a fresh funded case index for every write because the marker is not globally
+  durable. Owner-only checkpoints and the public journal remain below the
+  marker on failure for forensic/manual chain audit only: random profile IDs,
+  process-local development custody, and the fresh-directory guard mean the
+  current harness cannot resume them. Unknown outcomes require external chain
+  audit and case abandonment, not retry. A complete successful run removes only
+  that retained state and leaves the single-use marker; an explicit
+  non-submitting recovery mode remains future work.
+  A static test-only `oxid.deployment-profile.v1` envelope and public Ed25519
+  root bind the exact PreProd v4 indexer paths, node/proof routes, network, and
+  genesis
+  `df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b`.
+  The disposable signing key was generated in memory and discarded. Mandatory
+  SSI fields use `.invalid` hosts and are never composed: this is Midnight-only
+  test authority, not a production or SSI deployment. The ignored write enters
+  the unchanged signature and live node-genesis gate. Its public proving route
+  additionally requires
+  `OXID_ACKNOWLEDGE_PREPROD_PUBLIC_PROVER_PRIVACY=1`, because TLS does not hide
+  proof preimages or timing from the prover operator; never call it production
+  privacy evidence or splice in an unsigned local route.
+  `just preprod-registration-e2e` is implemented but remains unrun until the
+  out-of-band root/case are configured and A receives the exact manifest
+  funding topology. It must prove zero initial DUST, registration finality,
+  later generated-DUST observation, application-level adapter reconstruction
+  plus authoritative resynchronization/duplicate suppression, and the exact
+  A-to-B shielded spend. A positive DUST observation is not a fee quote: only
+  exact pre-broadcast `InsufficientDust` may trigger a bounded wait and
+  resubmission of the same authorized draft. It does not traverse the
+  NDJSON headless adapter and does not prove a process/native-custody restart.
 - Physical Android identity-ingress evidence must use
   `scripts/test-android-identity-ingress-physical.sh`. It refuses virtual
   devices and a concurrently booted iOS simulator, never clears application

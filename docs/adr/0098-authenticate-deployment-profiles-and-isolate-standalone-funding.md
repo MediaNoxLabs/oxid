@@ -95,7 +95,18 @@ does not exercise unknown-outcome chain rescanning and is not evidence for a
 process/native-custody restart. ADR-0099 now implements typed DUST
 registration without fee-authority borrowing. A fresh recipient still cannot
 claim origination evidence until a guarded funded run proves registration,
-later generated-DUST recovery, and the next spend.
+later generated-DUST observation/resynchronization, and the next spend.
+
+ADR-0099 adds one static, test-only signed PreProd envelope and public verifier
+root for its ignored funded registration acceptance flow. It enters through
+this unchanged verifier and node-genesis gate; normal production composition
+does not select it. The profile is explicitly Midnight-only: deployment-
+profile v1's mandatory SSI locations are inert `.invalid` URLs and are never
+composed. Its signed public proving route requires a separate privacy
+acknowledgement because TLS does not hide proof preimages from the prover
+operator. This is compatibility evidence for one reviewed revision, not a
+production trust root, SSI deployment, endpoint-ownership proof, or local-
+proving privacy decision.
 
 Strengthen the standalone launcher so its readiness gate compares node and
 indexer heights rather than trusting shallow container health. Decode indexer
@@ -152,3 +163,7 @@ pushed.
 - No private root, fixture seed, endpoint credential, personal tailnet name,
   transaction material, or device identifier is added to the repository or
   public issue evidence.
+- The test-only PreProd profile can authenticate exact reviewed routes and node
+  genesis without becoming production authority. Deployment-profile v1 still
+  cannot express an authenticated local-proving policy or omit irrelevant SSI
+  capabilities; either change requires a successor ADR/profile format.

@@ -505,6 +505,7 @@ guaranteed offer to fund the maximum registration fee allowance. Exact consent
 then binds role-0 authorization while the role-2 secret remains in protected
 custody; generic proving, a registration-separated public journal, finality,
 and later authoritative DUST-event observation remain separate stages. The
-repository/headless/Dioxus path and public PreProd funding manifest are
-implemented; funded preprod, mobile, restart, and physical-device acceptance
-evidence remain in progress.
+repository/headless/Dioxus path, public PreProd funding manifest, test-only
+signed Midnight profile, and ignored live harness are implemented; funded
+preprod, mobile, restart, and physical-device acceptance evidence remain in
+progress.

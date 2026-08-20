@@ -97,10 +97,14 @@ account begins from an empty projection and must replay live from zero. It can
 neither render stale public state nor authorize registration. Node-finalized
 inclusion does not make DUST spendable: readiness requires an official DUST
 event and a fully caught-up matching private DUST checkpoint. The
-repository/headless/Dioxus path and guarded public PreProd funding manifest are
-implemented; a signed deployment profile/trust root, funded live run, mobile,
-durable native process/custody restart, physical devices, and production live
-nodes are not yet implied by this mapping.
+repository/headless/Dioxus path, guarded public PreProd funding manifest,
+test-only signed Midnight profile, and ignored acceptance harness are
+implemented. Its exact funding topology, shared-worktree single-use marker,
+seed-to-final-test-process isolation, and pre-broadcast-only DUST wait/retry are
+part of the harness contract; retained failures are forensic-only until a
+separate recovery mode exists. The funded live run, mobile, durable native
+process/custody restart, physical devices, and production live nodes are not
+yet implied by this mapping.
 
 ## Standalone completion mapping
 

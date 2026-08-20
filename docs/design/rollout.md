@@ -133,10 +133,14 @@ thin-app build decision; no runtime brand configuration was added.
    stays in protected custody. Generic proving, registration-separated durable
    recovery, finalized inclusion, and later official DUST-event spend readiness
    remain distinct. A fresh wallet intentionally starts at zero DUST; only
-   later generation and authoritative recovery make it spend-ready. The
-   guarded PreProd public funding manifest is test-only and implemented; a
-   reviewed signed deployment profile/trust root, funded live run, durable
-   native restart, physical-device, and production evidence remain open.
+   later generation and authoritative observation make it spend-ready. The
+   guarded PreProd public funding manifest, test-only signed Midnight profile,
+   and ignored acceptance harness are implemented. The harness requires one
+   exact public output and one exact shielded note, shares its single-use marker
+   across local worktrees, isolates the seed from Cargo/build scripts, and may
+   retry only the same authorized draft after exact pre-broadcast insufficient
+   DUST. The funded live run, durable native restart, physical-device, and
+   production evidence remain open.
 
 ## Phase 5 — Delight & polish (owner-gated)
 
