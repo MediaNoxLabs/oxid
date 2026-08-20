@@ -92,9 +92,10 @@ owner-private checkpoint, and public journal; the already-included status is
 restored idempotently through the reconciliation use case, and fresh replay
 must produce the exact sender delta and exact stable recipient balance. This
 does not exercise unknown-outcome chain rescanning and is not evidence for a
-process/native-custody restart. A fresh
-recipient cannot originate the next spend until issue #92 implements typed
-DUST registration without fee-authority borrowing.
+process/native-custody restart. ADR-0099 now implements typed DUST
+registration without fee-authority borrowing. A fresh recipient still cannot
+claim origination evidence until a guarded funded run proves registration,
+later generated-DUST recovery, and the next spend.
 
 Strengthen the standalone launcher so its readiness gate compares node and
 indexer heights rather than trusting shallow container health. Decode indexer
@@ -143,9 +144,11 @@ pushed.
   environment, or production release.
 - Funded unshielded and genesis-authority shielded
   prepare/authorize/prove/submit/finalize/adapter-reconstruction evidence is
-  complete for the headless standalone adapter. Fresh-wallet DUST registration
-  and shielded origination (#92), funded mobile UI journeys, physical proof
-  budgets, and a real production deployment remain open.
+  complete for the headless standalone adapter. Repository/headless/Dioxus
+  protected-DUST registration is implemented under ADR-0099; its funded
+  preprod registration-to-recovery/shielded-origination evidence (#92), funded
+  mobile UI journeys, physical proof budgets, and a real production deployment
+  remain open.
 - No private root, fixture seed, endpoint credential, personal tailnet name,
   transaction material, or device identifier is added to the repository or
   public issue evidence.

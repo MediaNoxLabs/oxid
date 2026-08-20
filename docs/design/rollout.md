@@ -124,7 +124,7 @@ thin-app build decision; no runtime brand configuration was added.
    generation/recovery, and origination evidence remain issue #92; journal
    compaction after 128 retained barriers remains issue #93.
 7. **Protected DUST registration and fresh-wallet origination** (ADR-0099 /
-   issue #92, repository/headless implementation complete): a distinct
+   issue #92, repository/headless/Dioxus implementation complete): a distinct
    registration port and prepare/consent/authorize/submit ceremony. Planning
    uses only live owned
    unregistered NIGHT with indexer creation-time evidence, returns exact NIGHT
@@ -134,8 +134,9 @@ thin-app build decision; no runtime brand configuration was added.
    recovery, finalized inclusion, and later official DUST-event spend readiness
    remain distinct. A fresh wallet intentionally starts at zero DUST; only
    later generation and authoritative recovery make it spend-ready. The
-   guarded preprod flow is test-only; funded preprod, durable native restart,
-   physical-device, and production evidence remain open.
+   guarded PreProd public funding manifest is test-only and implemented; a
+   reviewed signed deployment profile/trust root, funded live run, durable
+   native restart, physical-device, and production evidence remain open.
 
 ## Phase 5 — Delight & polish (owner-gated)
 
@@ -180,6 +181,6 @@ stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
 4b1 developer profile (delivered by #87), 4b2 demo profile (delivered by #88),
 4c authenticated deployment/funded finality (#90), 4d funded shielded finality
 (#91), 4e protected DUST registration/fresh-wallet shielded origination
-(ADR-0099/#92, repository/headless implemented; funded evidence open),
+(ADR-0099/#92, repository/headless/Dioxus implemented; funded evidence open),
 5 per-item. Each remaining slice references the relevant spec section as its
 acceptance criteria, factory-work-item style.

@@ -7,7 +7,14 @@
 - Canonical source: `midnight-ledger` commit `d9414884db9da9e9b1f6f3a7f742d79a5732f817`
 - Tracking: issues #2, #59, #91, and #93
 - Amends: ADR-0026 through ADR-0029, ADR-0033 through ADR-0035, and ADR-0077
-- Implementation state: canonical Zswap planning, exact safe previews, fresh-sync admission, shared authorization/submission recovery, combined DUST/Zswap proving resolver, headless lifecycle, deterministic standalone flow, Dioxus privacy selection, and guarded funded standalone finality/adapter-reconstruction/nullifier evidence implemented; fresh-wallet DUST registration, production mobile custody, and physical-device proving remain governed by their existing gates
+- Implementation state: canonical Zswap planning, exact safe previews,
+  fresh-sync admission, shared authorization/submission recovery, combined
+  DUST/Zswap proving resolver, headless lifecycle, deterministic standalone
+  flow, Dioxus privacy selection, guarded funded standalone finality/adapter-
+  reconstruction/nullifier evidence, and the repository/headless/Dioxus
+  protected-DUST registration prerequisite are implemented; funded fresh-
+  wallet registration-to-recovery/spend, production mobile custody, and
+  physical-device proving remain governed by their existing gates
 
 ## Context
 

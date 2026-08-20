@@ -46,7 +46,7 @@ accepts recovery material.
 - shielded receive derivation -> protected `m/44'/2400'/account'/3/0`, official
   Zswap public keys serialized into the Wallet SDK's canonical 64-byte payload,
   and a distinct network-specific Bech32m address;
-- DUST registration (repository/headless implemented) -> a distinct
+- DUST registration (repository/headless/Dioxus implemented) -> a distinct
   `WalletDustRegistrationPort`, live `ctime`/unregistered eligibility, explicit
   consent, protected role-0 authorization, role-2 DUST custody, and separated
   inclusion/DUST-readiness observations under ADR-0099;
@@ -97,7 +97,8 @@ account begins from an empty projection and must replay live from zero. It can
 neither render stale public state nor authorize registration. Node-finalized
 inclusion does not make DUST spendable: readiness requires an official DUST
 event and a fully caught-up matching private DUST checkpoint. The
-repository/headless path is implemented; guarded funded preprod, Dioxus/mobile,
+repository/headless/Dioxus path and guarded public PreProd funding manifest are
+implemented; a signed deployment profile/trust root, funded live run, mobile,
 durable native process/custody restart, physical devices, and production live
 nodes are not yet implied by this mapping.
 

@@ -8,9 +8,10 @@
   `074b1a4bccbfee1740ee188374b606a022ecef42`
 - Ledger source: `midnight-ledger` commit
   `d9414884db9da9e9b1f6f3a7f742d79a5732f817`
-- Implementation state: Repository and headless implementation complete;
-  guarded funded preprod, mobile, process-restart, physical-device, and
-  production live-node evidence remain open
+- Implementation state: Repository, headless, and Dioxus implementation plus
+  the guarded public PreProd funding-manifest foundation are complete; funded
+  preprod, mobile, process-restart, physical-device, and production live-node
+  evidence remain open
 
 ## Context
 
@@ -102,20 +103,27 @@ advertised live target, and persists the matching private checkpoint. A
 timeout between these observations is an included registration awaiting DUST
 sync, not a failed or safely repeatable registration.
 
-The guarded preprod acceptance flow derives two test-only accounts from an
-externally provisioned 32-byte master seed by using the existing hardened
-Midnight BIP44 account index: account A is `2 * caseIndex`, and account B is
-`A + 1`. The seed is accepted only as exactly 64 hexadecimal characters from a
-secret environment variable after a second explicit live-test opt-in. It is
-never accepted over a headless command or written, logged, hashed for output,
-or committed. The public funding manifest may expose only the repository
-commit, preprod network, case and account/address indices, and A/B public NIGHT
-and shielded receive addresses. DUST is never externally funded.
+The guarded preprod funding-manifest foundation derives two test-only accounts
+from an externally provisioned 32-byte master seed by using the existing
+hardened Midnight BIP44 account index: account A is `2 * caseIndex`, and
+account B is `A + 1`. The seed is accepted only as exactly 64 hexadecimal
+characters from a secret environment variable after a second explicit live-
+test opt-in. It is never accepted over a headless command or written, logged,
+hashed for output, or committed. The public funding manifest may expose only
+the repository commit, PreProd network, case and account/address indices, and
+A/B public NIGHT and shielded receive addresses. DUST is never externally
+funded.
 
-After out-of-band NIGHT/shielded funding, the flow must prove the fresh account
-starts with zero DUST, use the same public prepare, explicit consent, protected
-authorization, official proving/finality, reconciliation, and DUST-observation
-boundaries as any other caller, wait for generated DUST to become recoverable
+The manifest command performs no network I/O and requires a clean worktree so
+its public output is bound to the exact commit. A live write remains unavailable
+until a build-reviewed PreProd deployment trust root and signed atomic profile
+are provisioned and node genesis is authenticated under ADR-0098.
+
+After out-of-band NIGHT/shielded funding, the eventual live flow must prove the
+fresh account starts with zero DUST, use the same public prepare, explicit
+consent, protected authorization, official proving/finality, reconciliation,
+and DUST-observation boundaries as any other caller, wait for generated DUST
+to become recoverable
 and fully synchronized, and only then perform A's shielded spend to B. Every
 case index is single-use unless an exact, explicit recovery-resume mode is
 being tested. Test custody, funding code, environment markers, and fixtures

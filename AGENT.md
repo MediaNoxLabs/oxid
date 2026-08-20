@@ -448,10 +448,12 @@ journal, restores the already-included status idempotently through the
 reconciliation use case, and proves exact balances after nullifier replay. It
 does not exercise unknown-outcome chain rescanning. This reuses in-process
 development custody and is not process/native-custody restart evidence.
-Fresh-wallet origination remains issue #92 because
-no typed DUST registration exists. Fingerprint lookup must prefer included over
-unresolved over failed attempts. Capacity may evict only rejected/expired
-records; 128 included/unresolved barriers fail unavailable before broadcast
+ADR-0099 now supplies the distinct typed protected-DUST registration boundary;
+fresh-wallet origination remains issue #92 until a funded run proves
+registration, later generated-DUST recovery, and a next spend. Fingerprint
+lookup must prefer included over unresolved over failed attempts. Capacity may
+evict only rejected/expired records; 128 included/unresolved barriers fail
+unavailable before broadcast
 until issue #93 proves checkpoint-acknowledged compaction.
 
 [Issue #19](https://github.com/MediaNoxLabs/oxid/issues/19) and ADR-0034 expose
@@ -779,16 +781,18 @@ as a successor without a fresh provenance review.
 The 2026-08-19 read-only parity audit, refreshed with 2026-08-20 funded
 evidence, compares that immutable baseline with Oxid repository evidence in
 `docs/migration/live-parity-audit-2026-08-19.md`. Current evidence is roughly
-97% of useful prototype behavior, or 104/110 (95%) of the deliberately harder
+98% of useful prototype behavior, or 105/110 (95%) of the deliberately harder
 migration target, while production-release evidence is about 78%.
 These are evidence classifications, not source-line counts. The dependency-
 ordered gaps are physical custody/recovery evidence, a provisioned production
-deployment, typed DUST registration/fresh-wallet shielded origination,
+deployment, funded DUST registration-to-recovery/fresh-wallet shielded
+origination,
 physical identity ingress plus verified HTTPS association, production
 background synchronization, live identity trust/transport and DID writes,
 Passport Vault live/device evidence, and device resource budgets. The next
-bounded engineering slice is typed DUST registration plus one fresh-wallet
-shielded spend (#92); checkpoint-safe journal compaction is #93. Approved domains/association files,
+bounded engineering slice is a signed PreProd profile plus one funded
+registration-to-recovery and fresh-wallet shielded spend (#92); checkpoint-safe
+journal compaction is #93. Approved domains/association files,
 release signing identities, physical devices, and funded live infrastructure
 are external evidence inputs and have no repository-only ETA.
 
@@ -1012,7 +1016,7 @@ Current package ownership:
 | `crates/adapters/storage-identity-json` | Strict versioned persistence for validated profile-scoped public DID documents only. |
 | `crates/adapters/storage-credential-json` | Development-only authenticated encryption for bounded profile-scoped credential records, original signed bytes, detached proofs, and opaque format-private material. |
 | `crates/adapters/storage-dev` | Process-local, development-only Ed25519/P-256/Jubjub generation plus protected BIP32/secp256k1-Schnorr derivation, one-shot signing, and atomic fresh-nonce Jubjub challenge completion. |
-| `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained development drafts, standalone DUST/proving/submission completion, and bounded public submission recovery. |
+| `crates/adapters/midnight` | Midnight network/account and native canonical-transaction adapter with fail-closed production, simulation/live sources, protected public-account binding, retained transfer and protected-DUST registration drafts, version-two public eligibility checkpoints, standalone DUST/Zswap proving/submission completion, and domain-separated bounded public submission recovery. |
 | `crates/adapters/did-midnight` | Standalone fixture and exact public Compact-issuer documents, explicit bounded native Midnight DID resolution, plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification, explicit standalone issuer/current-time/trust policy, holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/proving/verification, current managed Jubjub holder reauthorization, a single-proof foreground mobile worker, and public standalone fixtures. |
 | `crates/adapters/passport-vault` | Product-specific bounded in-memory plus owner-private atomic standalone repositories, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing authorization-bound settlement for create/deposit/claim/withdraw; managed-custody claim conformance is exercised through composition. |
@@ -1029,7 +1033,7 @@ Current package ownership:
 | `crates/brand-build` | Build-only closed-schema brand-pack validator, two-scheme contrast checker, safe-SVG/manifest gate, and `OUT_DIR` Rust/CSS/logo generator; never a runtime configuration or wallet capability crate. |
 | `brands` | Reviewed immutable presentation inputs only. Each real directory is one validated pack; no secrets, endpoints, trust, protocol, custody, confirmation, or application state. |
 | `crates/adapters/platform-system` | System clock, OS randomness, and typed public receive-address export implementations. |
-| `crates/ui-dioxus` | Brand-agnostic Dioxus incoming adapter, immutable `BrandProfile` presentation context, bounded mobile route stack, safe read-only Home projection, exact amount/consent presentation state, public receive-QR rendering, standalone Passport Vault UI, and truthfully labelled typed native vault-call review/authorization/submission/cancellation/reconciliation. |
+| `crates/ui-dioxus` | Brand-agnostic Dioxus incoming adapter, immutable `BrandProfile` presentation context, bounded mobile route stack, safe read-only Home projection, exact amount/consent presentation state, public receive-QR rendering, distinct protected-DUST registration review/authorization/submission/cancellation/reconciliation, standalone Passport Vault UI, and truthfully labelled typed native vault-call lifecycle. |
 | `crates/composition` | Concrete dependency wiring with no product rules. |
 | `apps/oxid` | Default-brand thin executable shell, literal `brands/oxid` build selection, and platform launch point. |
 | `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |
@@ -1203,6 +1207,17 @@ accept a key, path, seed, endpoint, or checkpoint. The deterministic simulator
 advances on status polls so tests can cover fresh, cancelled, resumed, and
 already-current flows without timing races. Native start returns before network
 or ledger work begins; incoming adapters must poll status and may cancel.
+
+Protected registration is a separate headless lifecycle:
+`wallet.dust.registration.prepare`, `authorize`, `submit`,
+`start_submission`, `draft`, `status`, `cancel_submission`, and
+`reconcile_submission`. Preparation exposes only the aggregate NIGHT amount,
+eligible-input count, maximum generated-DUST fee allowance, expiry, and opaque
+identifiers. Authorization and submission require separate exact confirmations.
+No command accepts or returns UTXOs, paths, seeds, DUST keys, signatures,
+witnesses, proofs, or transaction bytes. An included registration reports
+`requires_synchronization`; only the official DUST event stream can establish
+later spend readiness.
 
 The headless shielded surface mirrors that lifecycle at
 `wallet.shielded.sync.status`, `wallet.shielded.sync.start`, and
@@ -2174,9 +2189,46 @@ to silence the shell probe.
   outcome chain rescanning. The v4 Zswap envelope typename is
   `ZswapLedgerEvent`, and its event IDs are sparse monotonic global cursors.
   Never call this a process/native-custody restart or fresh-wallet origination;
-  issue #92 owns protected DUST registration and that stronger proof. Until
+  issue #92 owns the funded registration-to-recovery and stronger spend proof.
+  Until
   issue #93 adds checkpoint-acknowledged compaction, a full 128-record journal
   of included/unresolved barriers must fail unavailable before broadcast.
+- ADR-0099 implements protected DUST registration as a separate
+  `WalletDustRegistrationPort`, not a transfer mode or sync side effect. A
+  fresh wallet intentionally starts at zero DUST. Preparation requires a
+  current live account fold with authoritative `ctime` and
+  `registeredForDustGeneration == false`, rejects zero/duplicate inputs, puts
+  only the greatest generated-DUST candidate in the guaranteed offer, returns
+  every exact NIGHT amount to its owner, and caps the fee allowance to that
+  guaranteed candidate. Separate exact confirmations gate role-0 authorization
+  and submission; the role-2 DUST child stays inside custody. Registration and
+  transfer drafts/journal lookups are domain-separated. Inclusion means only
+  that the registration transaction finalized; spend readiness still requires
+  a fully caught-up official DUST event/checkpoint. Public account checkpoints
+  are schema version two; schema-one files are ignored and replay starts from
+  zero rather than fabricating eligibility.
+  The repository/headless/Dioxus lifecycle is implemented and covered by the
+  full Midnight adapter suite plus focused domain/application/UI/headless tests.
+  `just preprod-registration-funding-manifest` is the guarded no-network
+  foundation for live evidence. It additionally requires a clean worktree,
+  `OXID_ENABLE_LIVE_PREPROD_E2E=1`, exactly 64 hexadecimal characters in the
+  secret `OXID_PREPROD_MASTER_SEED_HEX`, and a canonical
+  `OXID_PREPROD_E2E_CASE_INDEX`. Never print or persist that root. The existing
+  hardened BIP44 account index supplies A=`2*caseIndex` and B=A+1 through two
+  separate test-only custody instances. Output is a closed public manifest of
+  exact commit/network/case/account/address indices and A/B NIGHT/shielded
+  receive addresses; it contains no DUST address/key, secret, digest, UTXO, or
+  transaction material. DUST must not be externally funded. Case indices are
+  single-use except for an explicit exact recovery-resume test.
+  The live write remains open until a build-reviewed PreProd trust root and
+  signed atomic deployment profile are provisioned, its node genesis is
+  authenticated, A is funded out of band, and the staged test proves zero
+  initial DUST, registration finality, later generated-DUST recovery,
+  reconstruction/duplicate suppression, and an exact A-to-B shielded spend.
+  A 2026-08-20 read-only probe observed PreProd genesis
+  `df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b`;
+  this observation is not deployment authority and must be reauthenticated by
+  the eventual signed profile.
 - Physical Android identity-ingress evidence must use
   `scripts/test-android-identity-ingress-physical.sh`. It refuses virtual
   devices and a concurrently booted iOS simulator, never clears application
