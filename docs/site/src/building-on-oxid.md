@@ -37,16 +37,35 @@ spawn a process can build on it — test harnesses, backends, CLIs, bots.
 Start with [the headless protocol](headless-protocol.md); the capability
 manifest tells you truthfully what your build can do.
 
-### 3. Connect an AI agent (MCP — proposed)
+### 3. Connect an AI agent (MCP)
 
-The natural next surface: a **Model Context Protocol server** that exposes
-the headless wallet's capability manifest as agent tools — read/status/
-prepare operations available to agents, authorization and consent kept
-human-gated by construction. The proposal, security model, and prototype
-live in the repository (see the `oxid-mcp` proposal issue); when it lands,
-AI agents get Midnight assets, transactions, and the SSI layer as a safe
-tool surface — arguably the first identity-wallet MCP in the Midnight
-ecosystem.
+`apps/oxid-mcp` is a Model Context Protocol server over stdio: it spawns
+`oxid-headless` and derives its tool surface from the wallet's own
+capability manifest at startup, so the tools an agent sees can never drift
+from what the wallet truthfully reports.
+
+```bash
+cargo build -p oxid-mcp -p oxid-headless
+OXID_MCP_HEADLESS_BIN=target/debug/oxid-headless target/debug/oxid-mcp
+```
+
+Any MCP client can then attach it as a stdio server — for example
+`claude mcp add oxid -- target/debug/oxid-mcp`.
+
+What an agent gets is deliberately bounded (ADR-0099): read, status,
+preview, and preparation methods only. Every consent, authorization,
+signing, submission, and recovery ceremony is **absent from the tool
+surface** — those belong to the human's wallet, which is both the EUDI
+"sole control" requirement and the pattern the deployed wallet-agent
+integrations converged on. The filter is fail-closed on four independent
+signals: the manifest's `status`, its `confirmationRequired` flag, any of
+its `*Exposed` flags, and an authority-verb denylist over the method name
+itself, so a single missing manifest field cannot widen the surface.
+
+Production hardening — a policy engine below the tool layer, out-of-band
+human approval for escalation, and agent delegation expressed as
+verifiable credentials the holder issues — is tracked in
+[issue #70](https://github.com/MediaNoxLabs/oxid/issues/70).
 
 ## What the Midnight community can use today
 

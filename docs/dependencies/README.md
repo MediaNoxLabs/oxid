@@ -30,6 +30,7 @@ Current reviews and source policies:
 - [Midnight Compact Digital Passport presentation](midnight-compact-presentation.md)
 - [Midnight DID resolution](midnight-did-resolution.md)
 - [Tier-2 browser entropy backends](wasm-web-entropy.md)
+- [rmcp](rmcp.md) — proposed MCP SDK for the production agent surface (ADR-0099); not yet adopted.
 
 ## Automated dependency pull requests
 
