@@ -2305,7 +2305,23 @@ to silence the shell probe.
   1.415 million events and 39 minutes. Treat that as inference, not an exact
   count. It suggests the one-million-event/30-minute caps need an explicit
   measured review; raw bytes against the 512 MiB cap remain unknown and no cap
-  has been raised. All attempts failed before public output and created no
+  has been raised. Issue #115 owns a guarded capacity harness: first preserve
+  an offline corpus of at least 131,072 official-shaped events, then perform
+  two profile-backed optimization iterations before repeating the read-only
+  PreProd observation. Keep its aggregate report closed and public-safe. Never
+  raise an event, byte, or time cap from a partial-prefix extrapolation.
+  Issue #116 separately owns an ADR-first, birthday-gated replay-reference
+  design inspired by Moth Wallet's "pre-seed reference" pattern. Its immutable
+  research baseline is Moth commit
+  `f17a8bd9ff57fe58854c86e2a61f92cb20e8eb14`; Moth calls the cacheless
+  genesis benchmark a genuine cold start, while the fast fresh-wallet path
+  starts from a reviewed reference and then catches up live. Oxid must define
+  its own authenticated, bounded Rust artifact and chain-derived account
+  birthday. Imported, restored, legacy, or unknown-birthday wallets must keep
+  full replay, and upstream authenticated sparse synchronization may supersede
+  the proposal. Do not copy Moth's JavaScript, JSON/key-swapping state format,
+  NPM dependencies, generated caches, or pre-seed artifacts.
+  All attempts failed before public output and created no
   write marker, checkpoint/journal file, proof, transaction, prover contact,
   or chain write. Do not treat these transport observations as a funding
   mismatch or retry a write because of them.
