@@ -1,6 +1,5 @@
-# Slow or briefly unreachable hosts must not fail the whole check: retry
-# before declaring failure, and allow slow responders (nixos.org has twice
-# timed out from GitHub runners while serving 200s from elsewhere).
+# Slow hosts must not fail the whole check: retry before declaring failure,
+# and allow slow responders.
 max_retries = 3
 timeout = 45
 
@@ -9,10 +8,15 @@ timeout = 45
 # Apple and Android Developer documentation reject automated GitHub-hosted
 # clients, and midnight.network rate-limits them with 429 regardless of
 # pacing; retain the reviewed references while excluding only those exact
-# upstream URLs.
+# upstream URLs. nixos.org joins them: it has now failed four runs from
+# GitHub runners across two days (two timeouts, two connection failures)
+# while serving 200 from developer networks, and the retry policy above did
+# not rescue a connection-level block. Every other one of the ~440 links
+# stays checked.
 exclude = [
   'https://github\.com/MediaNoxLabs/oxid/actions/workflows/ci\.yml/badge\.svg.*',
   'https://midnight\.network/$',
+  'https://nixos\.org/$',
   'https://developer\.apple\.com/documentation/security/protecting-keys-with-the-secure-enclave$',
   'https://developer\.apple\.com/documentation/security/restricting-keychain-item-accessibility$',
   'https://developer\.android\.com/privacy-and-security/keystore$',
