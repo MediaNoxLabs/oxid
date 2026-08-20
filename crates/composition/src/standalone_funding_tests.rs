@@ -763,13 +763,21 @@ fn live_night_balance(application: &ApplicationServices, profile_id: &str) -> u1
 }
 
 fn synchronize_dust(application: &ApplicationServices, profile_id: &str) -> WalletDustSyncView {
+    synchronize_dust_with_timeout(application, profile_id, Duration::from_secs(120))
+}
+
+fn synchronize_dust_with_timeout(
+    application: &ApplicationServices,
+    profile_id: &str,
+    timeout: Duration,
+) -> WalletDustSyncView {
     application
         .start_wallet_dust_sync()
         .execute(WalletDustSyncCommand {
             profile_id: profile_id.to_owned(),
         })
         .expect("DUST synchronization starts");
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + timeout;
     loop {
         let status = application
             .get_wallet_dust_sync_status()
@@ -787,7 +795,12 @@ fn synchronize_dust(application: &ApplicationServices, profile_id: &str) -> Wall
         }
         assert!(
             Instant::now() < deadline,
-            "DUST synchronization did not finish within 120 seconds"
+            "DUST synchronization did not finish within {timeout:?}: state={}, current_cursor={:?}, target_cursor={:?}, events_processed={}, failure={:?}",
+            status.state,
+            status.current_cursor,
+            status.target_cursor,
+            status.events_processed,
+            status.failure
         );
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -1225,8 +1238,16 @@ fn preprod_funding_observation_is_read_only() {
     let wallet_b_night = live_night_balance(&wallet_b, &wallet_b_profile_id);
     let wallet_a_shielded = synchronize_shielded(&wallet_a, &wallet_a_profile_id);
     let wallet_b_shielded = synchronize_shielded(&wallet_b, &wallet_b_profile_id);
-    let wallet_a_dust = synchronize_dust(&wallet_a, &wallet_a_profile_id);
-    let wallet_b_dust = synchronize_dust(&wallet_b, &wallet_b_profile_id);
+    let wallet_a_dust = synchronize_dust_with_timeout(
+        &wallet_a,
+        &wallet_a_profile_id,
+        Duration::from_secs(15 * 60),
+    );
+    let wallet_b_dust = synchronize_dust_with_timeout(
+        &wallet_b,
+        &wallet_b_profile_id,
+        Duration::from_secs(15 * 60),
+    );
     assert_complete_shielded_snapshot(&wallet_a_shielded);
     assert_complete_shielded_snapshot(&wallet_b_shielded);
     assert_eq!(wallet_a_dust.state, "synced");
