@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3–7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/store/backup.rs`, `mobile-bench/wallet-core/src/service/backup_service.rs`, and `mobile-bench/dioxus-wallet/src/session_persist.rs`
 - Tracking: issues #2 and #33
-- Implementation state: public Midnight account associations, strict profile/DID/credential snapshot codecs, exact restored-DID key rebinding, the authenticated complete-wallet archive, the journaled all-store coordinator, fresh-install Dioxus recovery, complete Settings export, an all-store standalone composition round trip, and a complete iOS Simulator document round trip are implemented; ADR-0078 writes the stronger version-3 envelope while retaining version-2 reads; the Android document round trip and physical-device resource evidence remain issue #33 work
+- Implementation state: public Midnight account associations, strict profile/DID/credential snapshot codecs, exact restored-DID key rebinding, the authenticated complete-wallet archive, the journaled all-store coordinator, fresh-install Dioxus recovery, complete Settings export, an all-store standalone composition round trip, and complete iOS Simulator and Android emulator document round trips are implemented; ADR-0078 writes the stronger version-3 envelope while retaining version-2 reads; physical-device resource evidence remains issue #33 work
 
 ## Context
 
@@ -131,9 +131,12 @@ a recovery API directly. Unit coverage also proves that a newly created journal
 directory is mode `0700`, the journal is mode `0600`, and a sibling strict JSON
 DID store can write successfully.
 
-The Android picker round trip and physical-device peak-memory, latency, and
-thermal evidence remain issue #33 release work. Simulator evidence is not a
-physical-device claim.
+`just android-backup-smoke` proves the corresponding Android DocumentsUI flow:
+export into an isolated Downloads directory, app uninstall, emulator reboot,
+exact-APK reinstall, document import, and recovery of the same profile,
+account, DID, and credential state. Physical-device peak-memory, latency,
+interruption, and thermal evidence remain issue #33 release work.
+Simulator/emulator evidence is not a physical-device claim.
 
 ## Rejected alternatives
 

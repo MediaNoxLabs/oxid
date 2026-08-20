@@ -176,15 +176,7 @@ impl MidnightSubmissionJournalStore for MemoryMidnightSubmissionJournalStore {
         self.entries
             .lock()
             .map_err(|_| SubmissionJournalStoreError::Unavailable)
-            .map(|entries| {
-                entries
-                    .iter()
-                    .find(|entry| {
-                        &entry.profile_id == profile_id
-                            && &entry.planning_fingerprint == fingerprint
-                    })
-                    .cloned()
-            })
+            .map(|entries| dominant_fingerprint_entry(&entries, profile_id, fingerprint))
     }
 
     fn list(
@@ -206,7 +198,9 @@ impl MidnightSubmissionJournalStore for MemoryMidnightSubmissionJournalStore {
             .entries
             .lock()
             .map_err(|_| SubmissionJournalStoreError::Unavailable)?;
-        upsert_entry(&mut entries, entry.clone());
+        let mut candidate = entries.clone();
+        upsert_entry(&mut candidate, entry.clone())?;
+        *entries = candidate;
         Ok(())
     }
 }
@@ -337,11 +331,8 @@ impl MidnightSubmissionJournalStore for JsonMidnightSubmissionJournalStore {
             .access
             .lock()
             .map_err(|_| SubmissionJournalStoreError::Unavailable)?;
-        self.load_entries().map(|entries| {
-            entries.into_iter().find(|entry| {
-                &entry.profile_id == profile_id && &entry.planning_fingerprint == fingerprint
-            })
-        })
+        self.load_entries()
+            .map(|entries| dominant_fingerprint_entry(&entries, profile_id, fingerprint))
     }
 
     fn list(
@@ -366,7 +357,7 @@ impl MidnightSubmissionJournalStore for JsonMidnightSubmissionJournalStore {
             .lock()
             .map_err(|_| SubmissionJournalStoreError::Unavailable)?;
         let mut entries = self.load_entries()?;
-        upsert_entry(&mut entries, entry.clone());
+        upsert_entry(&mut entries, entry.clone())?;
         self.save_entries(&entries)
     }
 }
@@ -380,7 +371,7 @@ pub(crate) enum SubmissionJournalStoreError {
 fn upsert_entry(
     entries: &mut Vec<StoredSubmissionJournalEntry>,
     entry: StoredSubmissionJournalEntry,
-) {
+) -> Result<(), SubmissionJournalStoreError> {
     if let Some(existing) = entries.iter_mut().find(|existing| {
         existing.profile_id == entry.profile_id && existing.draft_id == entry.draft_id
     }) {
@@ -389,9 +380,48 @@ fn upsert_entry(
         entries.push(entry);
     }
     entries.sort_by_key(|entry| entry.updated_at.value());
-    if entries.len() > MAX_RECORDS {
-        entries.drain(..entries.len() - MAX_RECORDS);
+    while entries.len() > MAX_RECORDS {
+        let removable = entries
+            .iter()
+            .position(|entry| is_safely_evictable(entry.state))
+            .ok_or(SubmissionJournalStoreError::Unavailable)?;
+        entries.remove(removable);
     }
+    Ok(())
+}
+
+fn dominant_fingerprint_entry(
+    entries: &[StoredSubmissionJournalEntry],
+    profile_id: &WalletProfileId,
+    fingerprint: &[u8; 32],
+) -> Option<StoredSubmissionJournalEntry> {
+    entries
+        .iter()
+        .filter(|entry| {
+            &entry.profile_id == profile_id && &entry.planning_fingerprint == fingerprint
+        })
+        .max_by_key(|entry| {
+            (
+                submission_barrier_priority(entry.state),
+                entry.updated_at.value(),
+            )
+        })
+        .cloned()
+}
+
+const fn submission_barrier_priority(state: StoredSubmissionState) -> u8 {
+    match state {
+        StoredSubmissionState::Included => 3,
+        StoredSubmissionState::Broadcasting | StoredSubmissionState::OutcomeUnknown => 2,
+        StoredSubmissionState::Rejected | StoredSubmissionState::Expired => 1,
+    }
+}
+
+const fn is_safely_evictable(state: StoredSubmissionState) -> bool {
+    matches!(
+        state,
+        StoredSubmissionState::Rejected | StoredSubmissionState::Expired
+    )
 }
 
 fn sorted_profile_entries(
@@ -761,6 +791,137 @@ mod tests {
                 .expect("legacy schema remains readable");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].block_height, None);
+    }
+
+    #[test]
+    fn fingerprint_lookup_prefers_a_submission_barrier_over_newer_or_older_failures() {
+        let profile_id = WalletProfileId::parse("profile-test").expect("profile");
+        let fingerprint = [1; 32];
+
+        let memory = MemoryMidnightSubmissionJournalStore::default();
+        let mut rejected = entry(StoredSubmissionState::Rejected);
+        rejected.draft_id = WalletTransactionDraftId::parse("txdraft-rejected").expect("draft");
+        rejected.updated_at = UnixTimestampMillis::new(30);
+        memory.save(&rejected).expect("rejected attempt saves");
+        let mut unresolved = entry(StoredSubmissionState::OutcomeUnknown);
+        unresolved.draft_id = WalletTransactionDraftId::parse("txdraft-unresolved").expect("draft");
+        unresolved.updated_at = UnixTimestampMillis::new(20);
+        memory.save(&unresolved).expect("unresolved attempt saves");
+        assert_eq!(
+            memory
+                .find_planning_fingerprint(&profile_id, &fingerprint)
+                .expect("memory lookup succeeds")
+                .map(|stored| stored.state),
+            Some(StoredSubmissionState::OutcomeUnknown)
+        );
+
+        let directory = TestDirectory::new("fingerprint-barrier");
+        let json = JsonMidnightSubmissionJournalStore::new(
+            MidnightSubmissionJournalConfig::new(directory.path().join("journal.json"))
+                .expect("valid path"),
+        );
+        json.save(&rejected).expect("rejected attempt saves");
+        let mut included = entry(StoredSubmissionState::Included);
+        included.draft_id = WalletTransactionDraftId::parse("txdraft-included").expect("draft");
+        included.updated_at = UnixTimestampMillis::new(10);
+        json.save(&included).expect("included attempt saves");
+        json.save(&unresolved).expect("unresolved attempt saves");
+        assert_eq!(
+            json.find_planning_fingerprint(&profile_id, &fingerprint)
+                .expect("JSON lookup succeeds")
+                .map(|stored| stored.state),
+            Some(StoredSubmissionState::Included)
+        );
+    }
+
+    #[test]
+    fn journal_capacity_never_evicts_duplicate_submission_barriers() {
+        let store = MemoryMidnightSubmissionJournalStore::default();
+        for index in 0..MAX_RECORDS {
+            let mut included = entry(StoredSubmissionState::Included);
+            included.draft_id =
+                WalletTransactionDraftId::parse(format!("txdraft-{index}")).expect("unique draft");
+            included.updated_at = UnixTimestampMillis::new(index as u64 + 1);
+            store.save(&included).expect("barrier saves");
+        }
+
+        let mut extra = entry(StoredSubmissionState::Broadcasting);
+        extra.draft_id = WalletTransactionDraftId::parse("txdraft-capacity").expect("draft");
+        extra.updated_at = UnixTimestampMillis::new(MAX_RECORDS as u64 + 1);
+        assert_eq!(
+            store.save(&extra),
+            Err(SubmissionJournalStoreError::Unavailable)
+        );
+        assert_eq!(
+            store
+                .list(&extra.profile_id)
+                .expect("existing barriers remain readable")
+                .len(),
+            MAX_RECORDS
+        );
+        assert_eq!(
+            store
+                .load(&extra.profile_id, &extra.draft_id)
+                .expect("failed save is atomic"),
+            None
+        );
+
+        let directory = TestDirectory::new("capacity-barriers");
+        let path = directory.path().join("journal.json");
+        let json = JsonMidnightSubmissionJournalStore::new(
+            MidnightSubmissionJournalConfig::new(path.clone()).expect("valid path"),
+        );
+        for index in 0..MAX_RECORDS {
+            let mut included = entry(StoredSubmissionState::Included);
+            included.draft_id =
+                WalletTransactionDraftId::parse(format!("txdraft-{index}")).expect("unique draft");
+            included.updated_at = UnixTimestampMillis::new(index as u64 + 1);
+            json.save(&included).expect("JSON barrier saves");
+        }
+        let before = fs::read(&path).expect("full journal is readable");
+        assert_eq!(
+            json.save(&extra),
+            Err(SubmissionJournalStoreError::Unavailable)
+        );
+        assert_eq!(
+            fs::read(&path).expect("failed save leaves journal readable"),
+            before,
+            "a capacity failure must leave the durable barrier set unchanged"
+        );
+    }
+
+    #[test]
+    fn journal_capacity_evicts_the_oldest_failed_attempt_before_a_barrier() {
+        let store = MemoryMidnightSubmissionJournalStore::default();
+        let mut rejected = entry(StoredSubmissionState::Rejected);
+        rejected.draft_id = WalletTransactionDraftId::parse("txdraft-old-failure").expect("draft");
+        rejected.updated_at = UnixTimestampMillis::new(1);
+        store.save(&rejected).expect("failure saves");
+        for index in 1..MAX_RECORDS {
+            let mut included = entry(StoredSubmissionState::Included);
+            included.draft_id =
+                WalletTransactionDraftId::parse(format!("txdraft-{index}")).expect("unique draft");
+            included.updated_at = UnixTimestampMillis::new(index as u64 + 1);
+            store.save(&included).expect("barrier saves");
+        }
+
+        let mut extra = entry(StoredSubmissionState::OutcomeUnknown);
+        extra.draft_id = WalletTransactionDraftId::parse("txdraft-new-barrier").expect("draft");
+        extra.updated_at = UnixTimestampMillis::new(MAX_RECORDS as u64 + 1);
+        store.save(&extra).expect("new barrier replaces failure");
+        assert_eq!(
+            store
+                .load(&rejected.profile_id, &rejected.draft_id)
+                .expect("lookup succeeds"),
+            None
+        );
+        assert_eq!(
+            store
+                .load(&extra.profile_id, &extra.draft_id)
+                .expect("lookup succeeds")
+                .map(|stored| stored.state),
+            Some(StoredSubmissionState::OutcomeUnknown)
+        );
     }
 
     #[test]

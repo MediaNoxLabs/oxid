@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/vc_store/` and `wallet-core/src/oid4vci_client/credential/digital_passport.rs`
 - Amends: ADR-0003, ADR-0007, ADR-0009, ADR-0011, ADR-0013, ADR-0017, ADR-0020, ADR-0021, ADR-0023, ADR-0038, and ADR-0039
 - Implementation state: opaque bounded private material, issuance/import propagation, and encrypted-store schema migration implemented; Digital Passport interpretation, disclosure preview, and UI are delivered by ADR-0042
+- Amended by: ADR-0042, ADR-0045
 
 ## Context
 

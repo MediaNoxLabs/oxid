@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Source: Blueprint Sections 14, 17, 18, and 19 plus prototype review
 - Implementation state: M0 profile, wallet presentation shell, headless harness, and persistent profile lifecycle slices implemented
+- Amended by: ADR-0036, ADR-0037, ADR-0038, ADR-0039, ADR-0040, ADR-0041, ADR-0042, ADR-0043, ADR-0045, ADR-0046, ADR-0080
 
 ## Context
 

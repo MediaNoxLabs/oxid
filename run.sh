@@ -47,6 +47,7 @@ run_core() {
   fi
   cargo fmt --all --check
   ./scripts/check-architecture.sh
+  ./scripts/check-arrayref-source.sh
   ./scripts/check-midnight-sources.sh
   cargo clippy --workspace --all-targets -- -D warnings
   if $run_workspace_tests; then
@@ -62,10 +63,23 @@ run_coverage_excluded_tests() {
 }
 
 run_ui() {
+  ./scripts/check-brand-packs.sh
+  ./scripts/check-ui-css-classes.sh
+  ./scripts/check-ui-design-tokens.sh
+  ./scripts/check-ui-copy-labels.sh
+  ./scripts/check-ui-profile-release.sh
   cargo check -p oxid-ui-dioxus
+  # Adapter-only profile builds type-check the profile code itself, so they
+  # state app-profile-authority deliberately. An application build must reach
+  # the same code through oxid-app's guarded features instead.
+  cargo check -p oxid-ui-dioxus --features ui-profile-dev,app-profile-authority
+  cargo check -p oxid-ui-dioxus --features ui-profile-demo,app-profile-authority
+  cargo test -p oxid-ui-dioxus --features ui-profile-demo,app-profile-authority
   cargo check -p oxid-app
   cargo check -p oxid-app --no-default-features --features mobile
   cargo check -p oxid-app --no-default-features --features mobile,standalone-development
+  cargo check -p oxid-app --no-default-features --features mobile,standalone-development,ui-profile-dev
+  cargo check -p oxid-app --no-default-features --features mobile,standalone-development,ui-profile-demo
 }
 
 run_headless() {
@@ -91,6 +105,7 @@ require_command() {
 }
 
 run_quality() {
+  ./scripts/check-adr-links.sh
   require_command cargo-audit
   require_command cargo-deny
   ./scripts/check-advisories.sh

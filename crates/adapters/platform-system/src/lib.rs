@@ -7,12 +7,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_mobile_native::{
     NativeBridgeError, copy_public_receive_address as native_copy_public_receive_address,
+    set_screen_privacy as native_set_screen_privacy,
     share_public_receive_address as native_share_public_receive_address,
 };
 use oxid_foundation::UnixTimestampMillis;
 use oxid_platform_ports::{
     ClockPort, PlatformError, PublicReceiveAddress, PublicTextExportError, PublicTextExportPort,
-    RandomPort,
+    RandomPort, ScreenPrivacyError, ScreenPrivacyPort,
 };
 
 /// Clock backed by the host system.
@@ -58,6 +59,40 @@ impl PublicTextExportPort for NativePublicTextExporter {
         address: PublicReceiveAddress,
     ) -> Result<(), PublicTextExportError> {
         share_public_receive_address(address)
+    }
+}
+
+/// Native snapshot-protection adapter. It receives only a boolean policy bit:
+/// no balance, address, identity, or credential value crosses this boundary.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeScreenPrivacy;
+
+impl ScreenPrivacyPort for NativeScreenPrivacy {
+    fn set_protected(&self, protected: bool) -> Result<(), ScreenPrivacyError> {
+        set_screen_privacy(protected)
+    }
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn set_screen_privacy(protected: bool) -> Result<(), ScreenPrivacyError> {
+    let status = native_set_screen_privacy(protected).map_err(map_screen_privacy_bridge_error)?;
+    match (protected, status.as_str()) {
+        (true, "protected") | (false, "unprotected") => Ok(()),
+        (_, "unavailable") => Err(ScreenPrivacyError::Unavailable),
+        _ => Err(ScreenPrivacyError::Failed),
+    }
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn set_screen_privacy(_protected: bool) -> Result<(), ScreenPrivacyError> {
+    Err(ScreenPrivacyError::Unavailable)
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+const fn map_screen_privacy_bridge_error(error: NativeBridgeError) -> ScreenPrivacyError {
+    match error {
+        NativeBridgeError::Unavailable => ScreenPrivacyError::Unavailable,
+        NativeBridgeError::Failed => ScreenPrivacyError::Failed,
     }
 }
 
@@ -137,6 +172,14 @@ mod tests {
         assert_eq!(
             NativePublicTextExporter.share_receive_address(address),
             Err(PublicTextExportError::Unavailable)
+        );
+        assert_eq!(
+            NativeScreenPrivacy.set_protected(true),
+            Err(ScreenPrivacyError::Unavailable)
+        );
+        assert_eq!(
+            NativeScreenPrivacy.set_protected(false),
+            Err(ScreenPrivacyError::Unavailable)
         );
     }
 }

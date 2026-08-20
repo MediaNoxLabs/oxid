@@ -6,11 +6,13 @@ use std::{collections::BTreeMap, sync::RwLock};
 
 use oxid_credential_application::{CredentialRepository, CredentialRepositoryError};
 use oxid_credential_domain::{CredentialId, CredentialProfileId, CredentialRecord};
+use oxid_foundation::UnixTimestampMillis;
 use oxid_identity_application::{DidRecordRepository, DidRecordRepositoryError};
 use oxid_identity_domain::{DidRecord, IdentityProfileId, MidnightDid};
 use oxid_wallet_application::{
-    WalletProfileAssociationRepository, WalletProfileAssociationRepositoryError,
-    WalletProfileAssociations, WalletProfileRepository, WalletProfileRepositoryError,
+    WalletBackupReceiptRepository, WalletProfileAssociationRepository,
+    WalletProfileAssociationRepositoryError, WalletProfileAssociations, WalletProfileRepository,
+    WalletProfileRepositoryError,
 };
 use oxid_wallet_domain::{WalletProfile, WalletProfileId};
 
@@ -22,6 +24,7 @@ pub struct InMemoryWalletProfileRepository {
     profiles: RwLock<BTreeMap<String, WalletProfile>>,
     active_profile_id: RwLock<Option<String>>,
     associations: RwLock<BTreeMap<String, WalletProfileAssociations>>,
+    complete_backup_receipts: RwLock<BTreeMap<String, UnixTimestampMillis>>,
 }
 
 impl InMemoryWalletProfileRepository {
@@ -73,6 +76,10 @@ impl WalletProfileRepository for InMemoryWalletProfileRepository {
             .write()
             .map_err(|_| WalletProfileRepositoryError::Unavailable)?
             .remove(id.as_str());
+        self.complete_backup_receipts
+            .write()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?
+            .remove(id.as_str());
         Ok(())
     }
 
@@ -114,6 +121,51 @@ impl WalletProfileRepository for InMemoryWalletProfileRepository {
             .cloned()
             .map(Some)
             .ok_or(WalletProfileRepositoryError::NotFound)
+    }
+}
+
+impl WalletBackupReceiptRepository for InMemoryWalletProfileRepository {
+    fn load_complete_backup_at(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<Option<UnixTimestampMillis>, WalletProfileRepositoryError> {
+        if !self
+            .profiles
+            .read()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?
+            .contains_key(profile_id.as_str())
+        {
+            return Err(WalletProfileRepositoryError::NotFound);
+        }
+        self.complete_backup_receipts
+            .read()
+            .map(|receipts| receipts.get(profile_id.as_str()).copied())
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)
+    }
+
+    fn record_complete_backup_at(
+        &self,
+        profile_id: &WalletProfileId,
+        completed_at: UnixTimestampMillis,
+    ) -> Result<(), WalletProfileRepositoryError> {
+        if !self
+            .profiles
+            .read()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?
+            .contains_key(profile_id.as_str())
+        {
+            return Err(WalletProfileRepositoryError::NotFound);
+        }
+        let mut receipts = self
+            .complete_backup_receipts
+            .write()
+            .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
+        let stored = receipts
+            .get(profile_id.as_str())
+            .copied()
+            .map_or(completed_at, |previous| previous.max(completed_at));
+        receipts.insert(profile_id.as_str().to_owned(), stored);
+        Ok(())
     }
 }
 
@@ -362,6 +414,39 @@ mod tests {
         assert_eq!(
             repository.active().expect("selection should persist"),
             Some(profile)
+        );
+    }
+
+    #[test]
+    fn backup_receipts_are_profile_scoped_monotonic_and_removed_with_the_profile() {
+        let repository = InMemoryWalletProfileRepository::new();
+        let profile = profile();
+        let profile_id = profile.id().clone();
+        repository.save(profile).expect("profile saves");
+
+        assert_eq!(
+            repository
+                .load_complete_backup_at(&profile_id)
+                .expect("receipt query succeeds"),
+            None
+        );
+        repository
+            .record_complete_backup_at(&profile_id, UnixTimestampMillis::new(20))
+            .expect("receipt saves");
+        repository
+            .record_complete_backup_at(&profile_id, UnixTimestampMillis::new(10))
+            .expect("older observation does not regress");
+        assert_eq!(
+            repository
+                .load_complete_backup_at(&profile_id)
+                .expect("receipt loads"),
+            Some(UnixTimestampMillis::new(20))
+        );
+
+        repository.remove(&profile_id).expect("profile removes");
+        assert_eq!(
+            repository.load_complete_backup_at(&profile_id),
+            Err(WalletProfileRepositoryError::NotFound)
         );
     }
 

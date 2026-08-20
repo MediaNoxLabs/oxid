@@ -9,7 +9,9 @@ use std::{collections::VecDeque, sync::Mutex};
 #[cfg(target_os = "android")]
 use oxid_adapter_mobile_native::take_identity_link_json;
 #[cfg(any(target_os = "ios", target_os = "android"))]
-use oxid_adapter_mobile_native::{NativeBridgeError, start_scan_json, take_scan_result_json};
+use oxid_adapter_mobile_native::{
+    NativeBridgeError, start_scan_json, take_scan_result_json, timeout_scan_json,
+};
 use oxid_platform_ports::{
     IdentityLinkIngressError, IdentityLinkIngressPort, InboundIdentityLink, QrScanError,
     QrScanFuture, QrScannerPort, ScannedQrPayload,
@@ -17,7 +19,7 @@ use oxid_platform_ports::{
 use oxid_protocol_application::{
     IdentityRequestKind, IdentityRequestRouterPort, IdentityRequestRoutingError,
 };
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 use serde::Deserialize;
 use url::Url;
 
@@ -98,7 +100,7 @@ impl IdentityRequestRouterPort for StrictIdentityRequestRouter {
 
 fn validate_credential_offer_route(url: &Url) -> Result<(), IdentityRequestRoutingError> {
     if url.has_host()
-        || !url.path().is_empty()
+        || !matches!(url.path(), "" | "/")
         || url.fragment().is_some()
         || !url.username().is_empty()
         || url.password().is_some()
@@ -235,26 +237,26 @@ fn take_native_identity_link() -> Result<Option<InboundIdentityLink>, IdentityLi
 #[cfg(any(target_os = "ios", target_os = "android"))]
 async fn scan_native() -> Result<ScannedQrPayload, QrScanError> {
     let started = start_scan_json().map_err(map_qr_bridge_error)?;
-    let status: NativeScanStatus =
-        serde_json::from_str(&started).map_err(|_| QrScanError::Failed)?;
-    if status.status != "scanning" {
-        return Err(map_native_status(&status.status));
-    }
+    decode_scan_start(&started)?;
 
     for _ in 0..SCAN_POLL_LIMIT {
         tokio::time::sleep(SCAN_POLL_INTERVAL).await;
         let response = take_scan_result_json().map_err(map_qr_bridge_error)?;
-        let status: NativeScanStatus =
-            serde_json::from_str(&response).map_err(|_| QrScanError::Failed)?;
-        match status.status.as_str() {
-            "scanning" => {}
-            "succeeded" => {
-                return ScannedQrPayload::new(status.payload.ok_or(QrScanError::InvalidPayload)?);
-            }
-            other => return Err(map_native_status(other)),
+        if let Some(payload) = decode_scan_poll(&response)? {
+            return Ok(payload);
         }
     }
-    Err(QrScanError::TimedOut)
+
+    // The timeout belongs to the Rust port contract, but the native
+    // coordinator must acknowledge it so a stale capture cannot occupy the
+    // one-scanner slot or deliver into a later request.
+    let timed_out = timeout_scan_json().map_err(map_qr_bridge_error)?;
+    match decode_scan_poll(&timed_out) {
+        Ok(Some(payload)) => Ok(payload),
+        Err(QrScanError::TimedOut) => Err(QrScanError::TimedOut),
+        Err(error) => Err(error),
+        _ => Err(QrScanError::Failed),
+    }
 }
 
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
@@ -262,13 +264,41 @@ async fn scan_native() -> Result<ScannedQrPayload, QrScanError> {
     Err(QrScanError::Unavailable)
 }
 
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NativeScanStatus {
     status: String,
     #[serde(default)]
     payload: Option<String>,
+}
+
+#[cfg(any(target_os = "ios", target_os = "android", test))]
+fn decode_scan_start(response: &str) -> Result<(), QrScanError> {
+    let status: NativeScanStatus =
+        serde_json::from_str(response).map_err(|_| QrScanError::Failed)?;
+    if status.payload.is_some() {
+        return Err(QrScanError::Failed);
+    }
+    if status.status == "scanning" {
+        Ok(())
+    } else {
+        Err(map_native_status(&status.status))
+    }
+}
+
+#[cfg(any(target_os = "ios", target_os = "android", test))]
+fn decode_scan_poll(response: &str) -> Result<Option<ScannedQrPayload>, QrScanError> {
+    let status: NativeScanStatus =
+        serde_json::from_str(response).map_err(|_| QrScanError::Failed)?;
+    match (status.status.as_str(), status.payload) {
+        ("scanning", None) => Ok(None),
+        ("succeeded", Some(payload)) => ScannedQrPayload::new(payload).map(Some),
+        ("cancelled" | "denied" | "unavailable" | "timed_out" | "invalid" | "failed", None) => {
+            Err(map_native_status(&status.status))
+        }
+        _ => Err(QrScanError::Failed),
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -280,11 +310,13 @@ struct NativeIdentityLinkStatus {
     payload: Option<String>,
 }
 
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 fn map_native_status(status: &str) -> QrScanError {
     match status {
         "cancelled" => QrScanError::Cancelled,
+        "denied" => QrScanError::Denied,
         "unavailable" => QrScanError::Unavailable,
+        "timed_out" => QrScanError::TimedOut,
         "invalid" => QrScanError::InvalidPayload,
         _ => QrScanError::Failed,
     }
@@ -331,6 +363,18 @@ mod tests {
         assert_eq!(
             router().route(PRESENTATION),
             Ok(IdentityRequestKind::CredentialPresentation)
+        );
+    }
+
+    #[test]
+    fn routes_androids_empty_authority_offer_serialization() {
+        assert_eq!(
+            router().route("openid-credential-offer:///?credential_offer=%7B%7D"),
+            Ok(IdentityRequestKind::CredentialIssuance)
+        );
+        assert_eq!(
+            router().route("openid-credential-offer:///unexpected?credential_offer=%7B%7D"),
+            Err(IdentityRequestRoutingError::InvalidRequest)
         );
     }
 
@@ -390,6 +434,64 @@ mod tests {
         assert_eq!(
             ingress.capture(" openid4vp://authorize".to_owned()),
             Err(IdentityLinkIngressError::InvalidLink)
+        );
+    }
+
+    #[test]
+    fn native_scan_statuses_are_closed_payload_free_and_exact() {
+        assert_eq!(decode_scan_start(r#"{"status":"scanning"}"#), Ok(()));
+        assert_eq!(decode_scan_poll(r#"{"status":"scanning"}"#), Ok(None));
+        assert_eq!(
+            decode_scan_poll(r#"{"status":"succeeded","payload":"openid4vp://authorize"}"#)
+                .map(|payload| payload.map(ScannedQrPayload::into_inner)),
+            Ok(Some("openid4vp://authorize".to_owned()))
+        );
+
+        for (status, expected) in [
+            ("cancelled", QrScanError::Cancelled),
+            ("denied", QrScanError::Denied),
+            ("unavailable", QrScanError::Unavailable),
+            ("timed_out", QrScanError::TimedOut),
+            ("invalid", QrScanError::InvalidPayload),
+            ("failed", QrScanError::Failed),
+        ] {
+            assert_eq!(
+                decode_scan_poll(&format!(r#"{{"status":"{status}"}}"#)),
+                Err(expected)
+            );
+        }
+
+        assert_eq!(
+            decode_scan_start(r#"{"status":"scanning","payload":"must-not-cross"}"#),
+            Err(QrScanError::Failed)
+        );
+        assert_eq!(
+            decode_scan_poll(r#"{"status":"cancelled","payload":"must-not-cross"}"#),
+            Err(QrScanError::Failed)
+        );
+        assert_eq!(
+            decode_scan_poll(r#"{"status":"new-native-status"}"#),
+            Err(QrScanError::Failed)
+        );
+        assert_eq!(
+            decode_scan_poll(r#"{"status":"failed","detail":"native error"}"#),
+            Err(QrScanError::Failed)
+        );
+    }
+
+    #[test]
+    fn native_scan_success_rejects_empty_and_oversized_payloads() {
+        assert_eq!(
+            decode_scan_poll(r#"{"status":"succeeded","payload":""}"#),
+            Err(QrScanError::InvalidPayload)
+        );
+        let oversized = serde_json::json!({
+            "status": "succeeded",
+            "payload": "x".repeat(32 * 1_024 + 1),
+        });
+        assert_eq!(
+            decode_scan_poll(&oversized.to_string()),
+            Err(QrScanError::InvalidPayload)
         );
     }
 }

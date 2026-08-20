@@ -11,6 +11,10 @@ publish = false
 [features]
 default = []
 mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
+android-jni-exception-recovery-test = [
+  "dep:oxid-adapter-mobile-native",
+  "oxid-adapter-mobile-native/android-jni-exception-recovery-test",
+]
 
 [dependencies]
 hex.workspace = true
@@ -18,9 +22,12 @@ oxid-adapter-backup-complete.workspace = true
 oxid-adapter-backup-portable.workspace = true
 oxid-adapter-did-midnight.workspace = true
 oxid-adapter-backup-document-mobile.workspace = true
+oxid-adapter-diagnostics-memory.workspace = true
+oxid-adapter-deployment-profile.workspace = true
 oxid-adapter-identity-ingress.workspace = true
 oxid-adapter-storage-credential-json.workspace = true
 oxid-adapter-midnight.workspace = true
+oxid-adapter-mobile-native = { workspace = true, optional = true }
 oxid-adapter-openid4vci.workspace = true
 oxid-adapter-openid4vp.workspace = true
 oxid-adapter-passport-vault.workspace = true
@@ -33,6 +40,7 @@ oxid-adapter-storage-dev.workspace = true
 oxid-adapter-storage-identity-json.workspace = true
 oxid-adapter-vc-midnight.workspace = true
 oxid-credential-application.workspace = true
+oxid-diagnostics-application.workspace = true
 oxid-identity-application.workspace = true
 oxid-presentation-application.workspace = true
 oxid-passport-vault-application.workspace = true
@@ -48,6 +56,8 @@ midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-zswap.workspace = true
+tokio.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

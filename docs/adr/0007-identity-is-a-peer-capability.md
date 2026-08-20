@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 1, 4, 5, and 6
 - Implementation state: Architectural commitment; identity modules begin at M3
+- Amended by: ADR-0036, ADR-0037, ADR-0038, ADR-0039, ADR-0040, ADR-0041, ADR-0042, ADR-0043, ADR-0045
 
 ## Context
 

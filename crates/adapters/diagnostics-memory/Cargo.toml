@@ -1,0 +1,15 @@
+[package]
+name = "oxid-adapter-diagnostics-memory"
+description = "Bounded process-local diagnostic adapter for Oxid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+oxid-diagnostics-application.workspace = true
+
+[lints]
+workspace = true

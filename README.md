@@ -104,12 +104,67 @@ Launch the desktop shell:
 cargo run -p oxid-app
 ```
 
+The default thin app validates and embeds `brands/oxid` at build time. Check
+every pack, or inspect the default generated semantic CSS, with:
+
+```bash
+./scripts/check-brand-packs.sh
+cargo run -p oxid-brand-build --bin oxid-brand-check -- --css brands/oxid
+```
+
+Brand packs cannot select wallet adapters, protocols, custody, trust, consent,
+or safety copy. See [ADR-0092](docs/adr/0092-generate-validated-build-time-brand-packs.md)
+and the [white-label design](docs/design/white-label.md).
+
 Launch the fully capable standalone mobile application with deterministic,
 process-local development custody:
 
 ```bash
 just ios-run
 just android-run
+```
+
+For the standalone-only developer presentation, including the persistent build
+banner and the shared `system.capabilities` viewer, use:
+
+```bash
+just ios-dev
+just android-dev
+```
+
+These are aliases for `OXID_UI_PROFILE=dev` on the same launchers. They do not
+change custody, storage, fixtures, or network composition; normal release
+builds exclude the developer profile.
+
+Focused simulator/emulator checks prove the banner is present before
+onboarding and that the developer route renders the safe shared manifest:
+
+```bash
+just ios-dev-smoke
+just android-dev-smoke
+```
+
+For the compile-time standalone demo presentation, use:
+
+```bash
+just ios-demo
+just android-demo
+```
+
+The non-dismissible banner identifies fixture data. Its opt-in drawer can
+idempotently select or create the isolated `Oxid Demo Wallet` profile, leaving
+unrelated active profiles untouched, initialize or unlock standalone custody,
+derive account `0/0`, create a managed DID, receive the public inbox fixture,
+and load funding only from the exact undeployed simulator. Offer, login, and
+presentation actions stop on their existing review screens and never automate
+consent, authorization, proving, or submission. Normal and native-custody builds
+reject this profile, and normal release artifacts exclude its code markers.
+
+Focused fresh-install evidence is available after the standard UI gates pass:
+
+```bash
+just ios-demo-smoke
+just android-demo-smoke
 ```
 
 To exercise the same standalone wallet/SSI stack through native device custody,
@@ -120,8 +175,8 @@ OXID_MOBILE_CUSTODY=native just ios-run
 OXID_MOBILE_CUSTODY=native just android-run
 ```
 
-An opt-in resource-measurement build embeds and authenticates the exact Compact
-presentation runtime package without enabling proof execution in Dioxus:
+An opt-in standalone conformance build embeds and authenticates the exact
+Compact presentation runtime package and enables one foreground proof worker:
 
 ```bash
 OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just ios-run
@@ -129,10 +184,13 @@ OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just andro
 ```
 
 The launchers resolve the artifact package from the pinned Nix derivation and
-print the resulting app/APK byte count. Presentation consent still fails closed
-at `proof_unavailable`; this mode is for packaging and startup-authentication
-evidence only. The ordinary `just ios-run` and `just android-run` paths remain
-unchanged.
+print the resulting app/APK byte count. This explicit mode can generate and
+independently verify the standalone OpenID4VP proof. Cancellation,
+backgrounding, and timeout discard the result only after the worker stops; a
+retry requires a fresh preview and consent. It remains an experimental
+simulator/emulator harness, not physical-device or production readiness. The
+ordinary `just ios-run` and `just android-run` paths remain unchanged and
+proof-disabled.
 
 `just ios-native-custody-smoke` accepts either a supported passcode-bound
 Keychain capability or a truthful fail-closed simulator result. The Android
@@ -169,6 +227,17 @@ The recovery secret is never stored in the app. Resetting app data is
 destructive to the selected simulator's local Oxid state, so keep the exported
 document outside the app container before doing so.
 
+The same standalone simulator build can exercise protected NIGHT spending.
+Create and activate a development wallet, connect the account, run **Sync
+shielded assets** until its state is **Synced**, then choose **Shielded NIGHT**
+in the Assets send card. Select **Use my receive address** to fill the shielded
+receive address, enter an amount no greater than the deterministic 5 NIGHT
+balance, review the
+exact privacy/amount/change preview, authorize, and submit. The resulting
+transaction and block identifiers are standalone simulation evidence, not
+live-chain inclusion. Simulator results do not satisfy the physical-device
+custody, proving latency, memory, lifecycle, or thermal release gates.
+
 Exercise the same application services through the versioned NDJSON harness:
 
 ```bash
@@ -188,12 +257,27 @@ lock accounting and claim replay across restarts without becoming chain state;
 set `OXID_PASSPORT_VAULT_STORE_PATH` to a normalized absolute file path when an
 isolated harness route is required.
 
+Inspect the bounded, payload-free runtime-health ring through the same
+standalone process:
+
+```bash
+printf '%s\n' '{"protocol":"oxid.headless.v1","id":"health-1","method":"system.diagnostics.snapshot","params":{}}' | cargo run --quiet -p oxid-headless
+```
+
+The Dioxus **Diagnostics → Process-local diagnostics** panel exposes the same
+closed codes. Telemetry, persistence, uploads, request payloads, endpoints,
+credential data, and transaction material are not retained. Clearing the
+headless ring requires `confirmed: true` plus the exact
+`CLEAR_LOCAL_DIAGNOSTICS` intent; the ring also disappears on process exit.
+
 The implemented account methods are `wallet.network.list`,
 `wallet.network.select`, `wallet.account.derive`, `wallet.account.get`, `wallet.address.list`,
 `wallet.address.unshielded`, `wallet.address.shielded`, `wallet.balance.snapshot`,
 `wallet.transaction.history`, `wallet.transaction.prepare_unshielded`,
-`wallet.transaction.authorize_unshielded`, `wallet.transaction.draft`,
+`wallet.transaction.prepare_shielded`, `wallet.transaction.authorize_unshielded`,
+`wallet.transaction.authorize_shielded`, `wallet.transaction.draft`,
 `wallet.transaction.submit_unshielded`, `wallet.transaction.send_unshielded`,
+`wallet.transaction.submit_shielded`, `wallet.transaction.send_shielded`,
 `wallet.transaction.start_submission`, `wallet.transaction.submission_status`,
 `wallet.transaction.submission_history`, `wallet.transaction.reconcile_submission`,
 `wallet.transaction.cancel_submission`,
@@ -226,7 +310,9 @@ closed with `proof_unavailable`. A native headless process launched from
 `nix develop` uses the explicit authenticated `OXID_PRESENTATION_ARTIFACTS_DIR`
 closure to create the real k=18 Compact proof, independently verify it, and
 validate an internal `vp_token`; ordinary headless views expose neither proof
-nor token bytes.
+nor token bytes. ADR-0083 composes the same checked proof and independent
+verification only in the explicit native-custody mobile artifact build; normal
+mobile remains fail-closed.
 Standalone self-issued login adds `identity.authentication.prepare`,
 `identity.authentication.accept`, `identity.authentication.refuse`,
 `identity.authentication.get`, and `identity.authentication.list`. Results are
@@ -377,9 +463,10 @@ export OXID_MIDNIGHT_PROVING_CACHE_DIR='<absolute-app-private-cache-path>'
 cargo run -p oxid-headless
 ```
 
-The local cache accepts only hash-pinned official DUST artifacts, is bounded to
-8 MiB, and never stores witnesses. To use the remote development alternative,
-unset the cache variable and set the proof-server route instead:
+The local cache accepts only hash-pinned official DUST and Zswap artifacts, is
+bounded to 64 entries and 256 MiB, applies smaller per-artifact bounds, and
+never stores witnesses. To use the remote development alternative, unset the
+cache variable and set the proof-server route instead:
 
 ```bash
 unset OXID_MIDNIGHT_PROVING_CACHE_DIR
@@ -533,6 +620,9 @@ iPhone simulator with:
 just ios-run
 ```
 
+Use `just ios-dev` (or `OXID_UI_PROFILE=dev just ios-run`) to launch the
+standalone developer capability profile. The default remains the user profile.
+
 The repository iOS and Android launch scripts explicitly enable
 `oxid-app/standalone-development`. Native builds select the same
 environment-aware composition as the headless harness: with no live variables,
@@ -542,6 +632,24 @@ labels simulated results. A complete reviewed
 standalone configuration selects authenticated native settlement; partial or
 invalid configuration fails startup. A normal `cargo run -p oxid-app` does not
 enable this feature and stays fail-closed.
+
+To run the mobile UI against the real laptop-hosted standalone indexer, node,
+and prover rather than deterministic simulation, select the separate localhost
+profile at build time:
+
+```bash
+just standalone-up
+just ios-standalone-local
+# after stopping the iOS simulator:
+just android-standalone-local
+```
+
+Both builds use the immutable `undeployed` loopback routes from ADR-0097. iOS
+Simulator reaches host loopback directly. Android emulator receives only exact
+`adb reverse` mappings for ports 8088, 9944, and 6300; the launcher rejects a
+physical device. Do not substitute `10.0.2.2`, because the plaintext local
+prover policy intentionally accepts only syntactic loopback. These profiles are
+compile-time development composition, not a runtime production network picker.
 
 The standalone mobile header includes **Scan QR**. A successful physical-device
 scan strictly routes an OpenID credential offer or one of the registered
@@ -580,17 +688,31 @@ claim-replay restoration:
 
 ```bash
 just ios-smoke
+just ios-standalone-local-smoke
 just ios-backup-smoke
 just android-smoke
+just android-standalone-local-smoke
+just android-backup-smoke
 ```
+
+The two `standalone-local-smoke` commands start or reuse the repository-owned
+stack, reset only Oxid data on the selected virtual device, activate a protected
+profile account, and require `Live` plus `Synced · Live source` with both
+derived address rails. They reject deterministic balances/labels. Run them
+sequentially; do not keep the iOS Simulator and Android emulator active at the
+same time when collecting evidence.
 
 `just ios-backup-smoke` creates and later deletes a disposable iPhone
 simulator. It exports a populated complete wallet through Files, uninstalls the
 app, resets and reboots the simulator, reinstalls the standalone-development
 build, imports the selected document through Files, and verifies the restored
 profile, account association, DID, and credential. This is simulator evidence;
-Android picker interaction and physical-device measurements remain separate
-release gates.
+`just android-backup-smoke` performs the equivalent flow on an Android
+emulator through DocumentsUI. It writes only to a uniquely named directory in
+Downloads, removes and reboots the app, reinstalls the exact built APK, imports
+the selected document, verifies the same restored state, and then removes only
+that test directory. Both commands are simulator/emulator evidence;
+physical-device measurements remain separate release gates.
 
 ## Repository layout
 

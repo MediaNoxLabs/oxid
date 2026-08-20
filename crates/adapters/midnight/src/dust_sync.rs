@@ -4,8 +4,10 @@
 
 use std::{
     collections::HashMap,
+    future::Future,
+    pin::Pin,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -13,6 +15,9 @@ use std::{
 
 use midnight_base_crypto::time::Timestamp;
 use midnight_ledger::dust::{DustPublicKey, DustSecretKey};
+use oxid_diagnostics_application::{
+    DiagnosticCode, DiagnosticEventSinkPort, DiagnosticSeverity, NoopDiagnosticEventSink,
+};
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
     WalletDerivedSecretUsePort, WalletDustSyncPortError, WalletHdPath, WalletHdPathComponent,
@@ -29,8 +34,8 @@ use crate::{
         DustCheckpointStoreError, MidnightDustCheckpointStore, StoredDustCheckpoint,
     },
     submission::{
-        DustSyncProgress, MidnightStandaloneConfig, ensure_submission_active, fetch_chain_tip,
-        synchronize_dust_with_control,
+        ChainTip, DustSyncProgress, MidnightStandaloneConfig, ensure_submission_active,
+        fetch_chain_tip, synchronize_dust_with_control,
     },
 };
 
@@ -40,6 +45,8 @@ const SIMULATED_TARGET_CURSOR: u64 = 2;
 const SIMULATED_BALANCE_ATOMIC_UNITS: u128 = 12 * SPECKS_PER_DUST;
 
 pub(crate) trait MidnightDustSyncController: Send + Sync {
+    fn attach_diagnostic_sink(&self, _: Arc<dyn DiagnosticEventSinkPort>) {}
+
     fn status(
         &self,
         profile_id: &WalletProfileId,
@@ -237,14 +244,36 @@ struct LiveSession {
     running: bool,
 }
 
+trait MidnightDustChainTipSource: Send + Sync {
+    fn fetch<'a>(
+        &'a self,
+        endpoint: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<ChainTip, WalletTransactionPortError>> + Send + 'a>>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct HttpMidnightDustChainTipSource;
+
+impl MidnightDustChainTipSource for HttpMidnightDustChainTipSource {
+    fn fetch<'a>(
+        &'a self,
+        endpoint: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<ChainTip, WalletTransactionPortError>> + Send + 'a>>
+    {
+        Box::pin(fetch_chain_tip(endpoint))
+    }
+}
+
 /// Native standalone controller. Network I/O and ledger folding run only on a
 /// dedicated worker thread; incoming adapters read bounded snapshots.
 pub(crate) struct LiveMidnightDustSyncController<C, K> {
     config: MidnightStandaloneConfig,
     checkpoints: Arc<dyn MidnightDustCheckpointStore>,
+    chain_tips: Arc<dyn MidnightDustChainTipSource>,
     clock: Arc<C>,
     keys: Arc<K>,
     sessions: Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+    diagnostics: RwLock<Arc<dyn DiagnosticEventSinkPort>>,
 }
 
 impl<C, K> LiveMidnightDustSyncController<C, K> {
@@ -254,12 +283,30 @@ impl<C, K> LiveMidnightDustSyncController<C, K> {
         clock: Arc<C>,
         keys: Arc<K>,
     ) -> Self {
+        Self::with_chain_tip_source(
+            config,
+            checkpoints,
+            Arc::new(HttpMidnightDustChainTipSource),
+            clock,
+            keys,
+        )
+    }
+
+    fn with_chain_tip_source(
+        config: MidnightStandaloneConfig,
+        checkpoints: Arc<dyn MidnightDustCheckpointStore>,
+        chain_tips: Arc<dyn MidnightDustChainTipSource>,
+        clock: Arc<C>,
+        keys: Arc<K>,
+    ) -> Self {
         Self {
             config,
             checkpoints,
+            chain_tips,
             clock,
             keys,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            diagnostics: RwLock::new(Arc::new(NoopDiagnosticEventSink)),
         }
     }
 }
@@ -269,6 +316,12 @@ where
     C: ClockPort + 'static,
     K: WalletDerivedSecretUsePort + 'static,
 {
+    fn attach_diagnostic_sink(&self, sink: Arc<dyn DiagnosticEventSinkPort>) {
+        if let Ok(mut diagnostics) = self.diagnostics.write() {
+            *diagnostics = sink;
+        }
+    }
+
     fn status(
         &self,
         profile_id: &WalletProfileId,
@@ -331,26 +384,59 @@ where
 
         let config = self.config.clone();
         let checkpoints = Arc::clone(&self.checkpoints);
+        let chain_tips = Arc::clone(&self.chain_tips);
         let clock = Arc::clone(&self.clock);
         let keys = Arc::clone(&self.keys);
         let sessions = Arc::clone(&self.sessions);
         let profile = profile_id.clone();
         let network = network_id.clone();
         let worker_cancellation = Arc::clone(&cancellation);
+        let diagnostics = self.diagnostics.read().map_or_else(
+            |_| Arc::new(NoopDiagnosticEventSink) as Arc<dyn DiagnosticEventSinkPort>,
+            |sink| Arc::clone(&*sink),
+        );
+        let worker_key = key.clone();
         let spawn = thread::Builder::new()
             .name("oxid-midnight-dust-sync".to_owned())
             .spawn(move || {
-                run_live_sync(
-                    &config,
-                    checkpoints.as_ref(),
-                    clock.as_ref(),
-                    keys.as_ref(),
-                    &sessions,
-                    &profile,
-                    &network,
-                    account_index,
-                    &worker_cancellation,
-                );
+                let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_live_sync(
+                        &config,
+                        checkpoints.as_ref(),
+                        chain_tips.as_ref(),
+                        clock.as_ref(),
+                        keys.as_ref(),
+                        &sessions,
+                        &profile,
+                        &network,
+                        account_index,
+                        &worker_cancellation,
+                    );
+                }));
+                if completed.is_err() {
+                    finish_with_failure(
+                        &sessions,
+                        &worker_key,
+                        &worker_cancellation,
+                        WalletDustSyncFailure::TransportUnavailable,
+                    );
+                    diagnostics.record(
+                        DiagnosticCode::MidnightDustSyncWorkerPanicked,
+                        DiagnosticSeverity::Error,
+                    );
+                    return;
+                }
+                let failed = sessions.lock().ok().and_then(|sessions| {
+                    sessions
+                        .get(&worker_key)
+                        .map(|session| session.snapshot.failure().is_some())
+                });
+                if failed == Some(true) {
+                    diagnostics.record(
+                        DiagnosticCode::MidnightDustSyncFailed,
+                        DiagnosticSeverity::Warning,
+                    );
+                }
             });
         if spawn.is_err() {
             finish_with_failure(
@@ -359,6 +445,16 @@ where
                 &cancellation,
                 WalletDustSyncFailure::TransportUnavailable,
             );
+            self.diagnostics
+                .read()
+                .map_or_else(
+                    |_| Arc::new(NoopDiagnosticEventSink) as Arc<dyn DiagnosticEventSinkPort>,
+                    |sink| Arc::clone(&*sink),
+                )
+                .record(
+                    DiagnosticCode::MidnightDustSyncWorkerSpawnFailed,
+                    DiagnosticSeverity::Error,
+                );
             return Err(WalletDustSyncPortError::Unavailable);
         }
         Ok(started)
@@ -399,6 +495,7 @@ where
 fn run_live_sync<C, K>(
     config: &MidnightStandaloneConfig,
     checkpoints: &dyn MidnightDustCheckpointStore,
+    chain_tips: &dyn MidnightDustChainTipSource,
     clock: &C,
     keys: &K,
     sessions: &Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
@@ -428,6 +525,7 @@ fn run_live_sync<C, K>(
         sync_result = Some(sync_live_with_seed(
             config,
             checkpoints,
+            chain_tips,
             clock,
             sessions,
             &key,
@@ -456,6 +554,7 @@ fn run_live_sync<C, K>(
 fn sync_live_with_seed<C>(
     config: &MidnightStandaloneConfig,
     checkpoints: &dyn MidnightDustCheckpointStore,
+    chain_tips: &dyn MidnightDustChainTipSource,
     clock: &C,
     sessions: &Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
     key: &(WalletProfileId, ChainNetworkId),
@@ -495,7 +594,7 @@ where
         .build()
         .map_err(|_| WalletTransactionPortError::Unavailable)?;
     runtime.block_on(async {
-        let chain_tip = fetch_chain_tip(config.indexer_http_url()).await?;
+        let chain_tip = chain_tips.fetch(config.indexer_http_url()).await?;
         ensure_submission_active(cancellation)?;
         let checkpoint =
             latest.filter(|checkpoint| checkpoint.state.params == chain_tip.parameters.dust);
@@ -590,8 +689,14 @@ fn finish_with_snapshot(
     cancellation: &Arc<AtomicBool>,
     snapshot: WalletDustSyncSnapshot,
 ) {
-    if let Ok(mut sessions) = sessions.lock()
-        && let Some(session) = sessions.get_mut(key)
+    let mut sessions = match sessions.lock() {
+        Ok(sessions) => sessions,
+        Err(poisoned) => {
+            sessions.clear_poison();
+            poisoned.into_inner()
+        }
+    };
+    if let Some(session) = sessions.get_mut(key)
         && Arc::ptr_eq(&session.cancellation, cancellation)
     {
         session.snapshot = snapshot;
@@ -630,8 +735,14 @@ fn finish_with_failure(
     cancellation: &Arc<AtomicBool>,
     failure: WalletDustSyncFailure,
 ) {
-    if let Ok(mut sessions) = sessions.lock()
-        && let Some(session) = sessions.get_mut(key)
+    let mut sessions = match sessions.lock() {
+        Ok(sessions) => sessions,
+        Err(poisoned) => {
+            sessions.clear_poison();
+            poisoned.into_inner()
+        }
+    };
+    if let Some(session) = sessions.get_mut(key)
         && Arc::ptr_eq(&session.cancellation, cancellation)
     {
         let state = match (
@@ -775,6 +886,7 @@ const fn sync_failure(error: WalletTransactionPortError) -> WalletDustSyncFailur
         }
         WalletTransactionPortError::AccountNotDerived
         | WalletTransactionPortError::AccountNotSynchronized
+        | WalletTransactionPortError::ShieldedStateNotCurrent
         | WalletTransactionPortError::InvalidRecipient
         | WalletTransactionPortError::RecipientNetworkMismatch
         | WalletTransactionPortError::InsufficientFunds
@@ -819,8 +931,34 @@ const fn map_dust_to_transaction_error(
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        net::TcpListener,
+        sync::{
+            atomic::AtomicUsize,
+            mpsc::{self, Receiver},
+        },
+        thread,
+        time::Duration,
+    };
+
+    use futures::{SinkExt as _, StreamExt as _};
+    use midnight_base_crypto::{hash::HashOutput, time::Timestamp};
+    use midnight_ledger::{
+        dust::{DustGenerationInfo, InitialNonce, QualifiedDustOutput, dust_first_nonce},
+        events::{Event, EventDetails, EventSource},
+        structure::{INITIAL_PARAMETERS, STARS_PER_NIGHT, TransactionHash},
+    };
+    use midnight_storage::DefaultDB;
     use oxid_foundation::UnixTimestampMillis;
     use oxid_platform_ports::PlatformError;
+    use serde_json::{Value, json};
+    use tokio_tungstenite::{
+        accept_hdr_async,
+        tungstenite::{
+            Message,
+            handshake::server::{Request, Response},
+        },
+    };
 
     use super::*;
 
@@ -858,12 +996,571 @@ mod tests {
         }
     }
 
+    struct PanickingKeys;
+
+    impl WalletDerivedSecretUsePort for PanickingKeys {
+        fn use_derived_secret(
+            &self,
+            _: &WalletProfileId,
+            _: &WalletHdPath,
+            _: &mut dyn FnMut(&[u8; 32]) -> Result<(), WalletSecurityPortError>,
+        ) -> Result<(), WalletSecurityPortError> {
+            panic!("test-only DUST worker panic")
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingDiagnosticSink {
+        events: Mutex<Vec<(DiagnosticCode, DiagnosticSeverity)>>,
+    }
+
+    impl DiagnosticEventSinkPort for RecordingDiagnosticSink {
+        fn record(&self, code: DiagnosticCode, severity: DiagnosticSeverity) {
+            self.events
+                .lock()
+                .expect("diagnostic event lock")
+                .push((code, severity));
+        }
+    }
+
+    struct MemoryCheckpointStore {
+        checkpoint: Mutex<Option<StoredDustCheckpoint>>,
+        saves: AtomicUsize,
+    }
+
+    impl MidnightDustCheckpointStore for MemoryCheckpointStore {
+        fn load_latest(
+            &self,
+            _: &ChainNetworkId,
+            _: &DustPublicKey,
+        ) -> Result<Option<StoredDustCheckpoint>, DustCheckpointStoreError> {
+            self.checkpoint
+                .lock()
+                .map_err(|_| DustCheckpointStoreError::Unavailable)
+                .map(|checkpoint| checkpoint.clone())
+        }
+
+        fn load(
+            &self,
+            _: &ChainNetworkId,
+            _: &DustPublicKey,
+            parameters: midnight_ledger::dust::DustParameters,
+        ) -> Result<Option<StoredDustCheckpoint>, DustCheckpointStoreError> {
+            self.checkpoint
+                .lock()
+                .map_err(|_| DustCheckpointStoreError::Unavailable)
+                .map(|checkpoint| {
+                    checkpoint
+                        .clone()
+                        .filter(|checkpoint| checkpoint.state.params == parameters)
+                })
+        }
+
+        fn save(
+            &self,
+            _: &ChainNetworkId,
+            _: &DustPublicKey,
+            checkpoint: &StoredDustCheckpoint,
+        ) -> Result<(), DustCheckpointStoreError> {
+            *self
+                .checkpoint
+                .lock()
+                .map_err(|_| DustCheckpointStoreError::Unavailable)? = Some(checkpoint.clone());
+            self.saves.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    struct FixedChainTipSource {
+        calls: AtomicUsize,
+    }
+
+    impl MidnightDustChainTipSource for FixedChainTipSource {
+        fn fetch<'a>(
+            &'a self,
+            _: &'a str,
+        ) -> Pin<Box<dyn Future<Output = Result<ChainTip, WalletTransactionPortError>> + Send + 'a>>
+        {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async {
+                Ok(ChainTip {
+                    timestamp: Timestamp::from_secs(1_700_000_000),
+                    parameters: INITIAL_PARAMETERS,
+                })
+            })
+        }
+    }
+
+    struct FailingChainTipSource {
+        calls: AtomicUsize,
+    }
+
+    impl MidnightDustChainTipSource for FailingChainTipSource {
+        fn fetch<'a>(
+            &'a self,
+            _: &'a str,
+        ) -> Pin<Box<dyn Future<Output = Result<ChainTip, WalletTransactionPortError>> + Send + 'a>>
+        {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async { Err(WalletTransactionPortError::Unavailable) })
+        }
+    }
+
+    struct DustSubscriptionScenario {
+        expected_start: u64,
+        events: Vec<(u64, u64, String)>,
+        pause_after: Option<(usize, Receiver<()>)>,
+    }
+
+    const ADDRESS: &str =
+        "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+
+    fn live_config(websocket_url: &str) -> MidnightStandaloneConfig {
+        MidnightStandaloneConfig::new(
+            "devnet",
+            websocket_url,
+            "http://127.0.0.1:8088/api/v1/graphql",
+            "ws://127.0.0.1:9944",
+            "http://127.0.0.1:6300",
+            ADDRESS,
+        )
+        .expect("live fixture configuration is valid")
+    }
+
+    fn dust_event(content: EventDetails<DefaultDB>) -> String {
+        let event = Event::<DefaultDB> {
+            source: EventSource {
+                transaction_hash: TransactionHash::default(),
+                logical_segment: 0,
+                physical_segment: 0,
+            },
+            content,
+        };
+        let mut bytes = Vec::new();
+        midnight_serialize::tagged_serialize(&event, &mut bytes).expect("event serializes");
+        hex::encode(bytes)
+    }
+
+    fn initial_dust_event_hex() -> String {
+        let secret_key = DustSecretKey::derive_secret_key(&[7; 32]);
+        let owner = DustPublicKey::from(secret_key);
+        let backing_night = InitialNonce(HashOutput([0x2a; 32]));
+        let ctime = Timestamp::from_secs(1_700_000_000);
+        dust_event(EventDetails::DustInitialUtxo {
+            output: QualifiedDustOutput {
+                initial_value: SIMULATED_BALANCE_ATOMIC_UNITS,
+                owner,
+                nonce: dust_first_nonce(&backing_night, &owner),
+                seq: 0,
+                ctime,
+                backing_night,
+                mt_index: 0,
+            },
+            generation: DustGenerationInfo {
+                value: 3 * STARS_PER_NIGHT,
+                owner,
+                nonce: backing_night,
+                dtime: Timestamp::MAX,
+            },
+            generation_index: 0,
+            block_time: ctime,
+        })
+    }
+
+    fn parameter_change_event_hex() -> String {
+        dust_event(EventDetails::ParamChange(midnight_storage::arena::Sp::new(
+            INITIAL_PARAMETERS,
+        )))
+    }
+
+    // Tungstenite fixes the handshake callback's error to a large HTTP response.
+    #[allow(clippy::result_large_err)]
+    fn serve_dust_subscriptions(
+        scenarios: Vec<DustSubscriptionScenario>,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback binds");
+        listener
+            .set_nonblocking(true)
+            .expect("listener becomes nonblocking");
+        let address = listener.local_addr().expect("address exists");
+        let handle = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime builds");
+            runtime.block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener)
+                    .expect("Tokio listener accepts sockets");
+                for scenario in scenarios {
+                    let (stream, _) = listener.accept().await.expect("client connects");
+                    let mut socket =
+                        accept_hdr_async(stream, |request: &Request, mut response: Response| {
+                            assert_eq!(
+                                request
+                                    .headers()
+                                    .get("Sec-WebSocket-Protocol")
+                                    .and_then(|value| value.to_str().ok()),
+                                Some("graphql-transport-ws")
+                            );
+                            response.headers_mut().insert(
+                                "Sec-WebSocket-Protocol",
+                                "graphql-transport-ws".parse().expect("header is valid"),
+                            );
+                            Ok(response)
+                        })
+                        .await
+                        .expect("WebSocket accepts");
+                    let initialization = socket
+                        .next()
+                        .await
+                        .expect("initialization exists")
+                        .expect("initialization reads");
+                    assert_eq!(
+                        serde_json::from_str::<Value>(
+                            initialization.into_text().expect("text").as_str()
+                        )
+                        .expect("initialization is JSON")["type"],
+                        "connection_init"
+                    );
+                    socket
+                        .send(Message::Text(
+                            json!({ "type": "connection_ack", "payload": {} })
+                                .to_string()
+                                .into(),
+                        ))
+                        .await
+                        .expect("ack sends");
+                    let subscription = socket
+                        .next()
+                        .await
+                        .expect("subscription exists")
+                        .expect("subscription reads");
+                    let subscription: Value =
+                        serde_json::from_str(subscription.into_text().expect("text").as_str())
+                            .expect("subscription is JSON");
+                    assert_eq!(
+                        subscription
+                            .pointer("/payload/variables/id")
+                            .and_then(Value::as_u64),
+                        Some(scenario.expected_start)
+                    );
+                    if scenario.events.is_empty() {
+                        socket
+                            .send(Message::Text(
+                                json!({ "type": "complete", "id": "oxid-dust" })
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await
+                            .expect("completion sends");
+                        continue;
+                    }
+                    let mut pause_after = scenario.pause_after;
+                    for (index, (id, max_id, raw)) in scenario.events.into_iter().enumerate() {
+                        if socket
+                            .send(Message::Text(
+                                json!({
+                                    "type": "next",
+                                    "id": "oxid-dust",
+                                    "payload": {
+                                        "data": {
+                                            "dustLedgerEvents": {
+                                                "id": id,
+                                                "maxId": max_id,
+                                                "raw": raw
+                                            }
+                                        }
+                                    }
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        if pause_after
+                            .as_ref()
+                            .is_some_and(|(count, _)| index + 1 == *count)
+                        {
+                            let (_, resume) = pause_after.take().expect("pause gate exists");
+                            resume
+                                .recv_timeout(Duration::from_secs(5))
+                                .expect("test releases paused fixture");
+                        }
+                    }
+                }
+            });
+        });
+        (format!("ws://{address}/api/v1/graphql/ws"), handle)
+    }
+
+    fn wait_for_terminal(
+        sync: &LiveMidnightDustSyncController<FixedClock, AvailableKeys>,
+        network: &ChainNetworkId,
+    ) -> WalletDustSyncSnapshot {
+        for _ in 0..500 {
+            let status = sync.status(&profile(), network).expect("status reads");
+            if !matches!(
+                status.state(),
+                WalletDustSyncState::Syncing | WalletDustSyncState::Cached
+            ) {
+                return status;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("live DUST worker did not reach a terminal state")
+    }
+
+    fn wait_for_cursor(
+        sync: &LiveMidnightDustSyncController<FixedClock, AvailableKeys>,
+        network: &ChainNetworkId,
+        cursor: u64,
+    ) -> WalletDustSyncSnapshot {
+        for _ in 0..500 {
+            let status = sync.status(&profile(), network).expect("status reads");
+            if status.current_cursor() == Some(cursor) {
+                return status;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("live DUST worker did not publish cursor {cursor}")
+    }
+
+    fn wait_for_worker_stop(
+        sync: &LiveMidnightDustSyncController<FixedClock, AvailableKeys>,
+        network: &ChainNetworkId,
+    ) {
+        let key = (profile(), network.clone());
+        for _ in 0..500 {
+            let stopped = sync
+                .sessions
+                .lock()
+                .expect("sessions lock")
+                .get(&key)
+                .is_some_and(|session| !session.running);
+            if stopped {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("live DUST worker did not stop")
+    }
+
     fn profile() -> WalletProfileId {
         WalletProfileId::parse("profile_test").expect("profile is valid")
     }
 
     fn network() -> ChainNetworkId {
         ChainNetworkId::parse("undeployed").expect("network is valid")
+    }
+
+    #[test]
+    fn live_sync_replays_an_exact_balance_and_resumes_from_the_next_cursor() {
+        let (endpoint, server) = serve_dust_subscriptions(vec![
+            DustSubscriptionScenario {
+                expected_start: 0,
+                events: vec![(0, 0, initial_dust_event_hex())],
+                pause_after: None,
+            },
+            DustSubscriptionScenario {
+                expected_start: 1,
+                events: Vec::new(),
+                pause_after: None,
+            },
+        ]);
+        let config = live_config(&endpoint);
+        let network = config.indexer().network_id().clone();
+        let checkpoints = Arc::new(MemoryCheckpointStore {
+            checkpoint: Mutex::new(None),
+            saves: AtomicUsize::new(0),
+        });
+        let checkpoint_adapter: Arc<dyn MidnightDustCheckpointStore> = checkpoints.clone();
+        let chain_tips = Arc::new(FixedChainTipSource {
+            calls: AtomicUsize::new(0),
+        });
+        let chain_tip_source: Arc<dyn MidnightDustChainTipSource> = chain_tips.clone();
+        let sync = LiveMidnightDustSyncController::with_chain_tip_source(
+            config,
+            checkpoint_adapter,
+            chain_tip_source,
+            Arc::new(FixedClock),
+            Arc::new(AvailableKeys(7)),
+        );
+
+        sync.start(&profile(), &network, 7).expect("worker starts");
+        let first = wait_for_terminal(&sync, &network);
+        assert_eq!(first.state(), WalletDustSyncState::Synced);
+        assert_eq!(
+            (first.current_cursor(), first.target_cursor()),
+            (Some(0), Some(0))
+        );
+        assert_eq!(first.events_processed(), 1);
+        assert_eq!(
+            first.balance_atomic_units(),
+            Some(SIMULATED_BALANCE_ATOMIC_UNITS)
+        );
+        assert_eq!(first.failure(), None);
+
+        let resumed = sync.start(&profile(), &network, 7).expect("resume starts");
+        assert_eq!(resumed.current_cursor(), Some(0));
+        let current = wait_for_terminal(&sync, &network);
+        assert_eq!(current.state(), WalletDustSyncState::Synced);
+        assert_eq!(
+            (current.current_cursor(), current.target_cursor()),
+            (Some(0), Some(0))
+        );
+        assert_eq!(current.events_processed(), 0);
+        assert_eq!(
+            current.balance_atomic_units(),
+            Some(SIMULATED_BALANCE_ATOMIC_UNITS)
+        );
+        assert_eq!(current.failure(), None);
+
+        server.join().expect("fixture server exits");
+        assert_eq!(checkpoints.saves.load(Ordering::Relaxed), 2);
+        assert_eq!(chain_tips.calls.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn live_sync_cancels_after_publishing_a_consistent_partial_checkpoint() {
+        let raw = parameter_change_event_hex();
+        let events = (0_u64..=256)
+            .map(|id| (id, 256, raw.clone()))
+            .collect::<Vec<_>>();
+        let (release_fixture, resume_fixture) = mpsc::channel();
+        let (endpoint, server) = serve_dust_subscriptions(vec![DustSubscriptionScenario {
+            expected_start: 0,
+            events,
+            pause_after: Some((256, resume_fixture)),
+        }]);
+        let config = live_config(&endpoint);
+        let network = config.indexer().network_id().clone();
+        let checkpoints = Arc::new(MemoryCheckpointStore {
+            checkpoint: Mutex::new(None),
+            saves: AtomicUsize::new(0),
+        });
+        let checkpoint_adapter: Arc<dyn MidnightDustCheckpointStore> = checkpoints.clone();
+        let chain_tips = Arc::new(FixedChainTipSource {
+            calls: AtomicUsize::new(0),
+        });
+        let chain_tip_source: Arc<dyn MidnightDustChainTipSource> = chain_tips.clone();
+        let sync = LiveMidnightDustSyncController::with_chain_tip_source(
+            config,
+            checkpoint_adapter,
+            chain_tip_source,
+            Arc::new(FixedClock),
+            Arc::new(AvailableKeys(7)),
+        );
+
+        sync.start(&profile(), &network, 7).expect("worker starts");
+        let partial = wait_for_cursor(&sync, &network, 255);
+        assert_eq!(partial.state(), WalletDustSyncState::Syncing);
+        assert_eq!(partial.target_cursor(), Some(256));
+        assert_eq!(partial.events_processed(), 256);
+        assert_eq!(partial.balance_atomic_units(), Some(0));
+        let cancelled = sync.cancel(&profile(), &network).expect("worker cancels");
+        assert_eq!(cancelled.state(), WalletDustSyncState::Cancelled);
+        release_fixture.send(()).expect("fixture resumes");
+        server.join().expect("fixture server exits");
+        wait_for_worker_stop(&sync, &network);
+
+        let final_status = sync.status(&profile(), &network).expect("status reads");
+        assert_eq!(final_status.state(), WalletDustSyncState::Cancelled);
+        assert_eq!(final_status.current_cursor(), Some(255));
+        assert_eq!(final_status.target_cursor(), Some(256));
+        assert_eq!(final_status.events_processed(), 256);
+        assert_eq!(final_status.balance_atomic_units(), Some(0));
+        let checkpoint = checkpoints
+            .checkpoint
+            .lock()
+            .expect("checkpoint lock")
+            .clone()
+            .expect("partial checkpoint persists");
+        assert_eq!(checkpoint.current_cursor, 255);
+        assert_eq!(checkpoint.target_cursor, 256);
+        assert_eq!(checkpoints.saves.load(Ordering::Relaxed), 1);
+        assert_eq!(chain_tips.calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn live_sync_publishes_a_redacted_transport_failure() {
+        let config = live_config("ws://127.0.0.1:9/api/v1/graphql/ws");
+        let network = config.indexer().network_id().clone();
+        let checkpoints: Arc<dyn MidnightDustCheckpointStore> = Arc::new(MemoryCheckpointStore {
+            checkpoint: Mutex::new(None),
+            saves: AtomicUsize::new(0),
+        });
+        let chain_tips = Arc::new(FailingChainTipSource {
+            calls: AtomicUsize::new(0),
+        });
+        let chain_tip_source: Arc<dyn MidnightDustChainTipSource> = chain_tips.clone();
+        let sync = LiveMidnightDustSyncController::with_chain_tip_source(
+            config,
+            checkpoints,
+            chain_tip_source,
+            Arc::new(FixedClock),
+            Arc::new(AvailableKeys(7)),
+        );
+
+        sync.start(&profile(), &network, 7).expect("worker starts");
+        let failed = wait_for_terminal(&sync, &network);
+        assert_eq!(failed.state(), WalletDustSyncState::Stalled);
+        assert_eq!(failed.current_cursor(), None);
+        assert_eq!(failed.target_cursor(), None);
+        assert_eq!(failed.balance_atomic_units(), None);
+        assert_eq!(
+            failed.failure(),
+            Some(WalletDustSyncFailure::TransportUnavailable)
+        );
+        assert_eq!(chain_tips.calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn live_sync_worker_panic_becomes_a_terminal_redacted_snapshot() {
+        let config = live_config("ws://127.0.0.1:9/api/v1/graphql/ws");
+        let network = config.indexer().network_id().clone();
+        let checkpoints: Arc<dyn MidnightDustCheckpointStore> = Arc::new(MemoryCheckpointStore {
+            checkpoint: Mutex::new(None),
+            saves: AtomicUsize::new(0),
+        });
+        let chain_tips: Arc<dyn MidnightDustChainTipSource> = Arc::new(FixedChainTipSource {
+            calls: AtomicUsize::new(0),
+        });
+        let sync = LiveMidnightDustSyncController::with_chain_tip_source(
+            config,
+            checkpoints,
+            chain_tips,
+            Arc::new(FixedClock),
+            Arc::new(PanickingKeys),
+        );
+        let diagnostics = Arc::new(RecordingDiagnosticSink::default());
+        sync.attach_diagnostic_sink(diagnostics.clone());
+
+        sync.start(&profile(), &network, 7).expect("worker starts");
+        let mut terminal = None;
+        for _ in 0..100 {
+            let status = sync.status(&profile(), &network).expect("status reads");
+            if status.state() != WalletDustSyncState::Syncing {
+                terminal = Some(status);
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let terminal = terminal.expect("panic becomes terminal");
+        assert_eq!(terminal.state(), WalletDustSyncState::Stalled);
+        assert_eq!(
+            terminal.failure(),
+            Some(WalletDustSyncFailure::TransportUnavailable)
+        );
+        assert_eq!(
+            diagnostics.events.lock().expect("events").as_slice(),
+            &[(
+                (DiagnosticCode::MidnightDustSyncWorkerPanicked),
+                DiagnosticSeverity::Error
+            )]
+        );
     }
 
     #[test]

@@ -51,6 +51,7 @@ impl fmt::Debug for ScannedQrPayload {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QrScanError {
     Cancelled,
+    Denied,
     Unavailable,
     TimedOut,
     InvalidPayload,
@@ -61,6 +62,7 @@ impl fmt::Display for QrScanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Cancelled => "QR scan was cancelled",
+            Self::Denied => "camera access was denied",
             Self::Unavailable => "QR scanning is unavailable on this device",
             Self::TimedOut => "QR scan timed out",
             Self::InvalidPayload => "QR payload is invalid",
@@ -208,6 +210,32 @@ pub trait PublicTextExportPort: Send + Sync {
     ) -> Result<(), PublicTextExportError>;
 }
 
+/// Stable, payload-free screen-privacy failures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScreenPrivacyError {
+    Unavailable,
+    Failed,
+}
+
+impl fmt::Display for ScreenPrivacyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unavailable => "screen privacy is unavailable on this device",
+            Self::Failed => "screen privacy could not be changed",
+        })
+    }
+}
+
+impl Error for ScreenPrivacyError {}
+
+/// Applies only operating-system snapshot protection.
+///
+/// Presentation masking remains an incoming-adapter concern. Implementations
+/// must not inspect wallet state or receive any rendered value.
+pub trait ScreenPrivacyPort: Send + Sync {
+    fn set_protected(&self, protected: bool) -> Result<(), ScreenPrivacyError>;
+}
+
 /// Fail-closed scanner used by non-mobile and unavailable composition.
 pub struct UnavailableQrScanner;
 
@@ -246,6 +274,15 @@ impl PublicTextExportPort for UnavailablePublicTextExporter {
         _address: PublicReceiveAddress,
     ) -> Result<(), PublicTextExportError> {
         Err(PublicTextExportError::Unavailable)
+    }
+}
+
+/// Fail-closed screen-privacy edge for targets without a native window.
+pub struct UnavailableScreenPrivacy;
+
+impl ScreenPrivacyPort for UnavailableScreenPrivacy {
+    fn set_protected(&self, _protected: bool) -> Result<(), ScreenPrivacyError> {
+        Err(ScreenPrivacyError::Unavailable)
     }
 }
 
@@ -305,6 +342,13 @@ mod tests {
     }
 
     #[test]
+    fn scanner_denial_is_distinct_and_payload_free() {
+        assert_eq!(QrScanError::Denied.to_string(), "camera access was denied");
+        assert_ne!(QrScanError::Denied, QrScanError::Unavailable);
+        assert_ne!(QrScanError::Denied, QrScanError::Cancelled);
+    }
+
+    #[test]
     fn app_links_are_bounded_and_redacted() {
         let link = InboundIdentityLink::new("openid4vp://authorize?request_uri=private".to_owned())
             .expect("bounded app link");
@@ -345,6 +389,14 @@ mod tests {
         assert_eq!(
             UnavailablePublicTextExporter.share_receive_address(address),
             Err(PublicTextExportError::Unavailable)
+        );
+        assert_eq!(
+            UnavailableScreenPrivacy.set_protected(true),
+            Err(ScreenPrivacyError::Unavailable)
+        );
+        assert_eq!(
+            UnavailableScreenPrivacy.set_protected(false),
+            Err(ScreenPrivacyError::Unavailable)
         );
     }
 }

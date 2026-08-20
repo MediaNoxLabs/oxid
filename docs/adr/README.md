@@ -52,9 +52,9 @@ ADR status and delivery state answer different questions:
 | [0028](0028-keep-midnight-proof-witnesses-local.md) Keep Midnight proof witnesses local by default | Accepted | §§3–5, 7–8, 12–13 and issue #12 | Native local DUST proving and iOS/Android resource harness implemented; production custody remains fail-closed |
 | [0029](0029-expose-standalone-wallet-flows-on-mobile.md) Expose standalone wallet flows on mobile | Accepted | §§3, 6–8, 12–13, 16–18 and issue #14 | Explicit development mobile composition, receive QR, and protected simulated transfer journey implemented; production remains fail-closed |
 | [0030](0030-persist-public-midnight-account-checkpoints.md) Persist public Midnight account checkpoints outside wallet core | Accepted | §§3, 5–8, 12–13, 17–18 and issue #15 | Public unshielded restart/cache/resume implemented; private DUST and shielded state are governed separately by ADR-0031/0033 |
-| [0031](0031-persist-private-midnight-dust-checkpoints.md) Persist private Midnight DUST checkpoints behind live catch-up | Accepted | §§3, 5–8, 12–13, 17–18 and issue #16 | Scoped DUST resume, bounded incremental replay, and live-before-spend gate implemented; shielded Zswap is governed by ADR-0033 |
-| [0032](0032-expose-resumable-dust-sync-sessions.md) Expose resumable DUST synchronization as an adapter-owned session | Accepted | §§3, 5–8, 12–13, 16–18 and issue #17 | Native worker, partial checkpoints, headless lifecycle, and Assets progress implemented; production custody pending |
-| [0033](0033-keep-shielded-zswap-state-adapter-private.md) Keep shielded Zswap keys and replay state inside the Midnight adapter | Accepted | §§3, 5–8, 12–13, 16–18 and issue #18 | Protected receive address, bounded native replay/worker, private checkpoints, and headless/mobile lifecycle implemented; spending and production custody pending |
+| [0031](0031-persist-private-midnight-dust-checkpoints.md) Persist private Midnight DUST checkpoints behind live catch-up | Accepted | §§3, 5–8, 12–13, 17–18 and issue #16 | Scoped DUST resume, controlled segmented cold replay, and live-before-spend gate implemented; shielded Zswap is governed by ADR-0033 |
+| [0032](0032-expose-resumable-dust-sync-sessions.md) Expose resumable DUST synchronization as an adapter-owned session | Accepted | §§3, 5–8, 12–13, 16–18 and issue #17 | Native worker, complete/drop-before-fold GraphQL-WebSocket replay/resume/cancel fixtures, partial checkpoints, headless lifecycle, and Assets progress implemented; production custody pending |
+| [0033](0033-keep-shielded-zswap-state-adapter-private.md) Keep shielded Zswap keys and replay state inside the Midnight adapter | Accepted | §§3, 5–8, 12–13, 16–18 and issue #18 | Protected receive address, controlled segmented native replay/worker, private checkpoints, shielded spending, and headless/mobile lifecycle implemented; production custody pending |
 | [0034](0034-expose-safe-transaction-submission-cancellation.md) Expose transaction submission status and safe cancellation | Accepted | §§7–8, 12–13, 16–18 and issue #19 | Adapter-owned pre-broadcast cancel boundary plus headless/mobile status, cancel, and retry implemented; durable follow-up delivered by ADR-0035 |
 | [0035](0035-persist-and-reconcile-midnight-submissions.md) Persist and reconcile Midnight transaction submissions | Accepted | §§3, 5–8, 12–13, 16–18 and issue #20 | Public persist-before-broadcast journal, restart duplicate prevention, finalized reconciliation, and headless/mobile recovery implemented |
 | [0036](0036-resolve-and-retain-public-midnight-dids.md) Resolve and retain public Midnight DIDs | Accepted | §§3–7, 9–13, 16–18 and issue #21 | Identity hexagon, bounded standalone/live resolution, separate public store, headless inventory, and mobile DIDs page implemented |
@@ -71,7 +71,7 @@ ADR status and delivery state answer different questions:
 | [0047](0047-bind-standalone-compact-credentials-to-managed-jubjub-did-methods.md) Bind standalone Compact credentials to managed Jubjub DID methods | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone DID creation and exact Compact issuance bind a managed Jubjub assertion method; ADR-0048 adds presentation-time re-authorization while native custody, issuer anchoring, and proving remain fail-closed |
 | [0048](0048-reauthorize-compact-holder-methods-at-presentation-time.md) Reauthorize Compact holder methods at presentation time | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone preflight requires current protected control of the exact credential-bound method with explicit same-method rotation semantics; ADR-0050 consumes it in native headless proving while native custody/mobile remain fail-closed |
 | [0049](0049-sign-compact-holder-challenges-inside-opaque-custody.md) Sign Compact holder challenges inside opaque custody | Accepted | §§3, 5–7, 9–13, 16–18 and issues #27–29 | Standalone custody constructs and independently verifies the exact credential-family holder `Proof` through a synchronous public-transcript callback; ADR-0050 consumes it in native headless proving |
-| [0050](0050-prove-and-independently-verify-compact-presentations.md) Prove and independently verify Compact presentations | Accepted | §§3–7, 9–13, 16–18, 21 and issues #27–29 | Exact generated-runtime/Rust preimage parity, authenticated offline artifacts, checked proving, bounded `MZP1`, independent verification, headless OpenID4VP success, tamper/replay/restart tests, and resource baselines implemented; mobile proving remains gated |
+| [0050](0050-prove-and-independently-verify-compact-presentations.md) Prove and independently verify Compact presentations | Accepted | §§3–7, 9–13, 16–18, 21 and issues #27–29 | Exact generated-runtime/Rust preimage parity, authenticated offline artifacts, checked proving, bounded `MZP1`, independent verification, headless OpenID4VP success, tamper/replay/restart tests, and resource baselines implemented; ADR-0083 enables only the explicit mobile conformance harness while production remains gated |
 | [0051](0051-isolate-passport-vault-as-product-specific-hexagon.md) Isolate Passport Vault as a product-specific hexagon | Accepted | §§3–7, 9–13, 16–18, prototype vault flow, and issues #2/#31 | Standalone multi-lock domain, exact Digital Passport policy adapter, headless flow, mobile journey, and ADR-0068 durable state implemented; real-node/device evidence remains #31 |
 | [0052](0052-authenticate-and-decode-passport-vault-contract-state.md) Authenticate and decode Passport Vault contract state natively | Accepted | §§3–8, 12–13, 16–18, 21, prototype vault bridge, and issue #31 | Immutable five-circuit Nix closure, exact native tagged-state decoder, and headless fixture implemented; authenticated acquisition and contract-call transactions pending #31 |
 | [0053](0053-distribute-passport-vault-source-from-oxid.md) Distribute the reviewed Passport Vault source from Oxid | Accepted | §§3–8, 12–13, 16–18, 21 and issue #31 | Byte-identical Apache-2.0 contract source and digest assertion replace the private upstream flake input so public CI remains secret-free; generated artifacts stay in Nix |
@@ -90,16 +90,38 @@ ADR status and delivery state answer different questions:
 | [0066](0066-enable-native-vault-claim-discovery-after-managed-conformance.md) Enable native vault claim discovery after managed conformance | Accepted | §§3–7, 9–13, 16–18, 21, standalone issuance/custody/composer flow, and issue #31 | Full managed-DID and holder-bound credential conformance reaches terminal native submission through the packaged composer; `native_settlement` now advertises all four wallet operations |
 | [0067](0067-drive-mobile-vault-settlement-through-typed-application-use-cases.md) Drive mobile vault settlement through typed application use cases | Accepted | §§3–8, 12–13, 16–18, 21, prototype mobile vault surface, and issue #31 | Dioxus reads truthfully labelled contract state and drives all four calls through explicit prepare/authorize/prove/submit/cancel/reconcile stages without WebView or secret-bearing bridges |
 | [0068](0068-persist-the-standalone-passport-vault-ledger.md) Persist the standalone Passport Vault ledger | Accepted | §§3–7, 12–13, 16–18, 21, prototype vault/headless flow, and issues #2/#31 | Owner-private bounded atomic storage preserves standalone accounting and claim replay across headless/mobile restarts without becoming native contract-state authority |
-| [0069](0069-route-native-identity-ingress-through-strict-protocol-links.md) Route native identity ingress through strict protocol links | Accepted | §§3–7, 9–13, 16–18, 21, prototype QR/mobile flow, and issues #2/#32 | Native QR adapters and strict shared routing hand standalone requests to existing preview/consent flows; ADR-0070 adds OS delivery while physical-camera evidence remains #32 |
-| [0070](0070-constrain-mobile-links-and-public-text-export.md) Constrain mobile links and public text export | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#32 | Warm/cold custom-scheme links reuse the strict router and typed public receive addresses alone reach native clipboard/share; universal links, physical-device evidence, discovery, and resource baselines remain #32 |
+| [0069](0069-route-native-identity-ingress-through-strict-protocol-links.md) Route native identity ingress through strict protocol links | Accepted | §§3–7, 9–13, 16–18, 21, prototype QR/mobile flow, and issues #2/#32 | Native QR adapters close exact cancellation/denial-or-unavailable/timeout generations and strict shared routing hands only bounded requests to existing preview/consent; physical Android success/cancel/timeout pass, while physical iOS remains #32 |
+| [0070](0070-constrain-mobile-links-and-public-text-export.md) Constrain mobile links and public text export | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#32 | Packaged warm/cold custom-scheme links reuse the strict router and typed public receive addresses alone reach native clipboard/share; physical Android custom schemes pass, while verified HTTPS links, discovery, and iOS/resource evidence remain #32 |
 | [0071](0071-wrap-mobile-custody-with-device-user-presence.md) Wrap mobile custody with device user presence | Accepted | §§3, 7, 12–13, 16–18, prototype secret storage, and issues #2/#29/#30 | Normal mobile composition uses a bounded OS-wrapped sealed vault; locked public reads stay non-interactive and Android explicit-authorization/distinct-process/stable-root plus iOS capability/fail-closed simulator evidence exist, while physical-device and mobile-prover gates remain open |
-| [0072](0072-embed-authenticated-compact-artifacts-for-mobile-measurement.md) Embed authenticated Compact artifacts for mobile measurement | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | Opt-in native-custody mobile builds embed and authenticate the exact runtime-minimal Nix closure; proof execution, lifecycle/resource budgets, and Dioxus success remain gated |
+| [0072](0072-embed-authenticated-compact-artifacts-for-mobile-measurement.md) Embed authenticated Compact artifacts for mobile measurement | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | Opt-in native-custody mobile builds embed and authenticate the exact runtime-minimal Nix closure; ADR-0083 adds standalone worker execution while physical-device lifecycle/resource budgets remain gated |
 | [0073](0073-anchor-standalone-compact-credential-policy.md) Anchor standalone Compact credential policy | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#29/#34 | Standalone composition resolves and authorizes the exact issuer Jubjub method, enforces current-time/expiry policy, and requires a pinned trust anchor; status remains not checked and production remains unavailable |
 | [0074](0074-package-portable-custody-for-one-shot-recovery.md) Package portable custody for one-shot recovery | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Versioned Argon2id/XChaCha20-Poly1305 custody packages restore exact keys only into empty development/mobile vaults; ADR-0075 adds native file UX and ADR-0076 composes custody into complete wallet recovery |
 | [0075](0075-transfer-wallet-backups-through-native-document-pickers.md) Transfer wallet backups through native document pickers | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33 | Capability-selected fixed filenames and bounded iOS/Android document pickers serve complete export/fresh-install recovery plus the legacy custody-only importer; physical-device recovery remains #33 |
-| [0076](0076-recover-complete-wallet-state-as-one-transaction.md) Recover complete wallet state as one transaction | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#33 | One-envelope journaled all-store recovery, fresh-install Dioxus UX, and an exact standalone composition round trip are implemented; complete mobile document-round-trip/resource evidence remains #33 |
+| [0076](0076-recover-complete-wallet-state-as-one-transaction.md) Recover complete wallet state as one transaction | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#33 | One-envelope journaled all-store recovery, fresh-install Dioxus UX, exact standalone composition, and iOS/Android virtual-device document round trips are implemented; physical interruption/resource evidence remains #33 |
 | [0077](0077-run-blocking-wallet-work-off-the-dioxus-executor.md) Run blocking wallet work off the Dioxus executor | Accepted | §§3, 6–7, 12–13, 16, 18, prototype mobile worker, and issues #2/#42 | Native synchronous and async-future wallet/SSI work uses an executor-neutral 8 MiB worker; only audited pure parsing, published snapshots, and non-waiting adapter-worker controls remain direct |
 | [0078](0078-harden-complete-wallet-backup-derivation.md) Harden complete-wallet backup derivation | Accepted | §§3, 7, 9–13, 16–18, 21 and issues #2/#33/#48 | New complete-wallet exports use a strict 64 MiB/t=3 Argon2id version-3 envelope; exact version-2 complete-wallet and version-1 custody policies remain readable without attacker-selected KDF work |
+| [0079](0079-spend-shielded-assets-from-current-adapter-private-state.md) Spend shielded assets from current adapter-private state | Accepted | §§3–8, 12–13, 16–18, 21 and issues #2/#59/#91 | Fresh-sync-gated canonical Zswap planning reuses staged authorization, DUST proving, and durable recovery; guarded real standalone finality/adapter-reconstruction/nullifier evidence and the typed protected-DUST registration prerequisite are complete, while funded registration-to-recovery/origination and physical gates remain open |
+| [0080](0080-bound-secret-safe-runtime-diagnostics.md) Bound runtime diagnostics to secret-safe closed codes | Accepted | §§3–7, 12–13, 16–18, 21, prototype diagnostics/worker boundaries, and issues #2/#46/#60 | Bounded process-local closed-code snapshots/reset are composed in headless and Dioxus; DUST/Zswap/transfer/vault worker loss is sanitized and cannot wedge active runtime state; persistent logs and telemetry remain excluded |
+| [0081](0081-clear-android-jni-exceptions-at-the-native-boundary.md) Clear Android JNI exceptions at the native boundary | Accepted | §§3–7, 12–13, 16–18, 21 and issues #2/#41 | All fallible shared-plugin JNI conversions clear pending Java exceptions before returning a payload-free failure; the Android smoke injects a debug-only throw and then completes the standalone wallet journey |
+| [0082](0082-require-explicit-presentation-credential-selection.md) Require explicit presentation credential selection | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#64 | Claim-free previews name the issuer and opaque credential reference; Dioxus visibly auto-selects only a sole match and requires an explicit card choice before multi-candidate consent |
+| [0083](0083-run-mobile-compact-proofs-on-a-foreground-worker.md) Run mobile Compact proofs on a foreground worker | Accepted | §§3–7, 9–13, 16–18, 21 and issues #2/#27/#29/#30 | The explicit native-custody artifact build admits one foreground proof, independently verifies it, and safely reports cancel/background/timeout only after worker completion; physical-device release budgets remain open |
+| [0084](0084-enforce-two-layer-ui-design-tokens.md) Enforce two-layer UI design tokens | Accepted | §§1, 3–7, 9, 12–13, 16, 18, 21 and issues #2/#65/#67 | Dark/light brand primitives map into one semantic component vocabulary; fixed safety colors and a repository lint prevent brand drift and raw presentation literals |
+| [0085](0085-centralize-user-facing-machine-labels.md) Centralize user-facing machine labels | Accepted | §§1, 3–7, 9–13, 16, 18, 21 and issues #2/#65/#77 | One Dioxus label/format seam hides unknown values, names capability truth, formats exact assets/dates, and rejects raw machine copy |
+| [0086](0086-compose-the-mobile-shell-with-a-bounded-route-stack.md) Compose the mobile shell with a bounded route stack | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1a; issues #2/#65/#78 | Four primary tabs and center Scan use an app-owned root-plus-secondary stack; every migrated page remains reachable without a new router dependency |
+| [0087](0087-compose-home-as-a-safe-read-only-projection.md) Compose Home as a safe read-only projection | Accepted | §§1, 3–7, 12–13, 16, 18; design Phase 1b; issues #2/#65/#79 | Home projects existing safe views and routes to existing flows; Wallet remains operational authority and security/activity copy cannot overclaim |
+| [0088](0088-present-night-transfer-as-a-bounded-send-wizard.md) Present NIGHT transfer as a bounded Send wizard | Accepted | §§3–7, 12–13, 16, 18; design Phase 2a; issues #2/#65/#80 | Two editable screens lead into preview-derived review, separate authorization/submission intents, and only the recovery permitted by the existing nine-state machine |
+| [0089](0089-compose-identity-consent-as-four-question-ceremonies.md) Compose identity consent as four-question ceremonies | Accepted | §§3–7, 9–13, 16, 18, 21; design Phase 2b; issues #2/#27/#65/#81 | OpenID4VP, OpenID4VCI, and SIOPv2 expose truthful WHO → WHAT → FROM → WHY review without changing exact consent intents or protocol authority |
+| [0090](0090-compose-onboarding-backup-receipts-and-account-sync.md) Compose onboarding, backup receipts, and account sync | Accepted | §§3–8, 12–13, 16, 18; design Phase 2c; issues #2/#33/#65/#82 | First launch forks create/restore, complete native export records the sole truthful backup receipt, and Wallet composes account/DUST/shielded refresh into one action without merging authority |
+| [0091](0091-present-receive-as-a-typed-address-sheet.md) Present receive as a typed address sheet | Accepted | §§3, 6–8, 12–13, 16, 18; Receive journey; issues #2/#65/#83 | Home opens a bounded modal over existing safe account and typed public-export ports; only protected returned address rails become selectable QR/Copy/Share destinations |
+| [0092](0092-generate-validated-build-time-brand-packs.md) Generate validated build-time brand packs | Accepted | §§1–6, 12–18, 21; white-label design/Phase 3; issues #2/#65/#84 | Default thin app generates immutable identity/CSS/logo from a strict pack; contrast, safety copy, manifest, and every enumerated Nix pack fail closed |
+| [0093](0093-mask-private-wallet-values-as-a-render-only-ui-profile.md) Mask private wallet values as a render-only UI profile | Accepted | §§1–7, 9–13, 16–18, 21; UI profiles P1–P5/Phase 4a; issues #2/#65/#85 | Every Dioxus build defaults to a process-local mask, permits one timed reveal, re-arms on lifecycle/unlock, and leaves exact consent objects visible |
+| [0094](0094-protect-mobile-snapshots-through-a-boolean-platform-port.md) Protect mobile snapshots through a boolean platform port | Accepted | §§3–7, 12–13, 16–18, 21; UI profile P6/Phase 4a; issues #2/#32/#65/#85 | One payload-free port sets Android `FLAG_SECURE` or an honest iOS background overlay; backup/reveal routes force protection and unsupported targets fail closed |
+| [0095](0095-share-a-closed-capability-manifest-with-developer-ui.md) Share a closed capability manifest with the developer UI | Accepted | §§3–7, 12–13, 16–18, 21; UI profiles P1/P2/P7/P9/P10; issues #2/#65/#69/#87 | One dependency-free manifest feeds headless JSON and an opt-in standalone developer viewer; confirmation metadata, feature guards, and normal-release marker exclusion are checked |
+| [0096](0096-sequence-standalone-fixtures-through-a-demo-drawer.md) Sequence standalone fixtures through a demo drawer | Accepted | §§3–7, 12–13, 16, 18, 21; UI profiles P1/P2/P5/P8–P10; issues #2/#65/#88 | An opt-in standalone-development drawer isolates setup in the named demo profile, sequences only existing safe fixtures, gates simulated funding, and stops offer/login/presentation fixtures at their unchanged review screens |
+| [0097](0097-build-standalone-phone-routes-at-compile-time.md) Build standalone mobile routes at compile time | Accepted | §§3–8, 12–13, 16–18, 21; reviewed prototype route profiles; issues #2/#32/#89 | Separate opt-in development builds use immutable localhost routes for simulators/desktop or local MagicDNS/TLS routes for a phone; production and native-custody composition remain unchanged |
+| [0098](0098-authenticate-deployment-profiles-and-isolate-standalone-funding.md) Authenticate deployment profiles and isolate standalone funding | Accepted | §§3–8, 12–13, 16–18, 21; reviewed prototype live path; issues #2/#90/#91 | Signed atomic Midnight/SSI routes plus node genesis gate are implemented without selecting a deployment; guarded harnesses prove funded unshielded finality/restart and genesis-authority shielded finality/adapter-reconstruction safety |
+| [0099](0099-expose-an-agent-tool-surface-over-mcp.md) Agent tool surface over MCP | Proposed | §§1, 3–7, 11–13, 16, 18, 21 and issues #69/#70 | Dependency-free stdio bridge in apps/oxid-mcp derives its tools from the capability manifest; a test-only workspace dependency proves the composed surface excludes consent, authorization, signing, cancellation, and reconciliation ceremonies; production SDK adoption and the policy engine remain issue #70 |
+| [0100](0100-register-protected-dust-keys-before-fresh-wallet-submission.md) Register protected DUST keys before fresh-wallet submission | Accepted | §§3–8, 12–13, 16–18, 21; prototype onboarding plan; ledger registration semantics; issues #2/#92 | Implemented in repository/headless/Dioxus with guarded public PreProd funding-manifest/read-only-observation foundations and an amount-observed one-output/one-note acceptance harness: a distinct prepare/consent/authorize/submit port registers only current owned NIGHT inputs through protected role-0/role-2 custody; a fresh wallet intentionally starts with zero DUST, and authoritative generated-DUST observation remains a separate spend-readiness gate |
 
 ## Current boundaries
 
@@ -137,9 +159,9 @@ Enclave/StrongBox keys or authorize the still-resource-gated mobile prover.
 ADR-0072 selects an executable-embedded, runtime-minimal Compact artifact
 package for explicit native-custody mobile measurement builds. The adapter
 authenticates that Nix-selected package without runtime discovery or extraction,
-but mobile presentation still ends at `proof_unavailable` until a non-UI proof
-worker, cooperative cancellation, physical-device budgets, and the remaining
-ADR-0071 release gate are accepted.
+and ADR-0083 connects it to a non-UI, single-proof foreground worker only in the
+explicit conformance build. Normal mobile remains `proof_unavailable`, and
+physical-device budgets plus the remaining ADR-0071 release gate stay open.
 ADR-0073 preserves ADR-0045's proof-only constructor for immutable conformance
 vectors and gives active standalone composition an explicit issuer resolver,
 clock, and pinned trust anchor. Exact DID controller, assertion relationship,
@@ -190,6 +212,60 @@ versions 1, 2, and 3 to exact reviewed policies before allocating KDF work;
 version 2 remains read-only compatibility for existing complete-wallet files,
 and version 1 remains the legacy custody-only format. Physical-device latency,
 peak-memory, low-memory, interruption, and thermal evidence remains issue #33.
+ADR-0080 permits useful runtime-health visibility without reversing the
+telemetry-off or staged-migration exclusions. Only closed payload-free codes
+enter a bounded process-local ring; headless and Dioxus can snapshot/reset it,
+but it has no persistence, upload, free-form fields, timestamps, endpoints, or
+process measurements and never participates in wallet authority. DUST and
+shielded worker panics publish terminal sanitized snapshots; retained Passport
+Vault completion unwind always releases its active process reservation.
+ADR-0081 makes pending Java-exception cleanup a mandatory part of every failed
+Android JNI conversion in the shared native plugin. It discards exception
+details, returns the existing closed bridge error, and uses an emulator-only
+throw-then-full-wallet smoke without adding a headless or application API.
+ADR-0082 preserves the presentation application's exact candidate contract at
+the Dioxus boundary. A sole matching credential is visible and preselected;
+multiple matches require a radio-card choice before consent, and changing that
+choice clears consent. Preview metadata remains bounded to opaque credential
+identifier, display name, and issuer with no claim values or proof material.
+ADR-0083 connects ADR-0050 proof success only to ADR-0072's explicit native
+mobile artifact build. A dedicated worker admits one foreground proof;
+profile-scoped cancel, background, and timeout signals cause late-result
+disposal and are acknowledged only after the non-interruptible prover stops.
+Retry starts from a fresh single-use OpenID4VP preview and consent. Normal
+production and ordinary standalone builds remain proof-disabled, while
+physical-device custody and resource budgets remain issues #29 and #30.
+ADR-0093 keeps secret mode entirely inside the Dioxus incoming adapter. It
+changes only rendering of reviewed public view strings, defaults to masked,
+uses generation-bound timed reveal, re-arms after lifecycle and wallet-unlock
+boundaries, and never masks exact consent or authorization objects. ADR-0094
+adds the distinct host snapshot boundary: one boolean platform port sets
+Android `FLAG_SECURE` or an iOS scene-background overlay and carries no wallet
+value. iOS does not claim screenshot prevention, and physical-device evidence
+remains issue #32.
+ADR-0095 removes capability discovery from the headless adapter's private JSON
+implementation. One dependency-free application manifest now feeds headless
+serialization and the opt-in standalone Dioxus developer view. Its closed facts
+cannot carry payloads, identifiers, claims, endpoints, logs, or telemetry;
+unknown composition labels fail to `unavailable`. The developer profile has a
+persistent build banner, cannot compile with normal composition, and a normal
+release binary must not contain its marker.
+ADR-0096 adds the separate presentation-only demo profile. Its drawer first
+selects or creates the named `Oxid Demo Wallet`, leaving unrelated active
+profiles untouched, then uses the existing custody, derivation, DID,
+credential-inbox, account-sync, and
+strict identity-routing boundaries; the funding step admits only the exact
+undeployed simulator. Full setup stops at the existing credential-offer review,
+and login/presentation fixtures likewise occupy the one-item pending review
+without accepting, authorizing, proving, or submitting anything. Production
+and native-standalone builds reject the feature, and normal release artifacts
+exclude its stable markers.
+ADR-0084 makes presentation theming a two-layer build boundary. Components
+consume only the fixed semantic surface/text/accent/product/type/space/radius/
+motion/elevation vocabulary, while raw palette values remain confined to
+complete dark/light brand primitives. Safety-state colors are not brandable,
+dark stays the only selected scheme, and the repository gate rejects drift;
+this does not alter application truth, consent, or masking policy.
 ADR-0034 separates submission-attempt status from retained draft state and
 permits cancellation only before the adapter atomically enters broadcast.
 ADR-0035 makes that boundary durable, restores safe public outcomes after a
@@ -342,5 +418,95 @@ standalone `openid4vp` routes require exact registered endpoint pairs and
 unknown pairs fail closed. Scanning only navigates to the existing preview and
 consent surfaces. ADR-0070 adds OS link delivery through the same router and a
 separate typed public-address export boundary. Production endpoint discovery,
-universal links, physical-camera evidence, and resource baselines remain issue
-#32.
+verified HTTPS links, physical iOS camera evidence, and resource baselines
+remain issue #32; physical Android QR and custom-scheme evidence is complete
+for locally supported paths.
+ADR-0085 makes product copy a Dioxus-owned truth boundary. Serialized states,
+modes, sources, authentication classes, formats, and reason codes must cross
+one reviewed label module; unknown values are hidden rather than echoed. Exact
+NIGHT/DUST amounts and UTC dates replace internal subunit/timestamp copy, while
+sync cursors remain adapter state instead of user vocabulary. This changes no
+application transition, consent, capability, or settlement authority.
+ADR-0086 replaces the prototype-derived flat destination signal with a bounded
+Dioxus route stack. Home, Wallet, Documents, and Activity are the only primary
+destinations; Scan remains a classified action, while Vault, DID management,
+Settings, Diagnostics, and profiles are explicit secondary routes. Selecting a
+primary clears the secondary stack and Back only pops presentation state. Home
+and Wallet intentionally share the complete account view until Phase 1b splits
+their presentation; no application state machine or adapter boundary moves.
+ADR-0087 completes that split with a Dioxus-only read projection over existing
+account, security, shielded-sync, credential, and Vault use cases. Home routes
+actions to the existing operational surfaces and keeps optional failures
+payload-free. Backup completion, biometric enrollment, identity/Vault activity,
+secret masking, and all state-changing ceremonies remain outside this decision.
+ADR-0088 presents the existing protected public/shielded transfer lifecycle as
+two bounded editable screens followed by exact review, confirmation, and
+status. It preserves separate authorization and prove/submit intents, safe
+pre-broadcast cancellation, durable unknown-outcome reconciliation, and the
+nine-state application machine. Clipboard import, payment scanning, and recent
+recipients remain absent until reviewed ports exist.
+ADR-0089 composes the existing OpenID4VP, OpenID4VCI, and SIOPv2 public plans as
+ordered WHO, WHAT, FROM, and WHY consent ceremonies. Standalone endpoints are
+explicitly unverified, required presentation claims remain locked to the exact
+prepared plan, the supported age predicate includes negative reassurance, and
+the existing literal confirmations, exact intents, credential chooser,
+managed-DID custody, refusal, replay, verification, and fail-closed proof gates
+remain authoritative. Verified endpoint discovery and optional claim selection
+remain absent until dedicated trust and authorization ports exist.
+ADR-0090 completes the next mobile ceremony slice: first launch forks cleanly
+between create and restore, profile creation offers truthful skippable device
+protection without exposing its opaque id, and Wallet presents public account,
+DUST, and shielded refresh through one action without merging their authority.
+A new profile-scoped timestamp-only application receipt is recorded only after
+complete backup encryption and the fixed-kind native document export both
+succeed; it is excluded from archives and is the sole authority for **Backed
+up** copy and celebration.
+
+ADR-0091 presents Receive as a Dioxus-owned non-primary sheet over the existing
+safe account view and typed public export ports. Home remains the root under the
+modal; only protected derived address rails returned by the account use case
+become selectable Public/Private/Fee destinations, and the selected full value
+alone feeds QR, Copy, and Share. Fixture/watch-only addresses fail closed to a
+Wallet activation path, while the existing headless address methods remain the
+UI-independent conformance harness.
+
+ADR-0092 moves brand identity out of shared Dioxus source and into immutable
+build-time packs selected by thin app crates. Closed metadata/token schemas,
+bounded safe SVG, two-scheme contrast, exact manifest purpose templates, fixed
+safety colors, and security-copy snapshots fail closed; generated semantic CSS
+and `BrandProfile` are the only UI inputs. Nix and `run.sh` enumerate every
+pack, while runtime brand selection and brand-controlled capability/security
+semantics remain forbidden.
+
+ADR-0097 replaces the prototype's runtime-selected localhost/personal-Tailscale
+entries with separate compile-time-only development profiles. iOS Simulator
+uses immutable loopback routes directly; Android emulator uses exact `adb
+reverse` mappings so ADR-0027 still sees the prover as loopback. The phone
+profile exposes repository-owned loopback services through temporary
+TLS-terminated Tailscale Serve routes. The normal release gate rejects both
+profile markers and the localhost endpoints, native custody cannot select
+either, and verified public app links remain a separate open gate.
+
+ADR-0098 adds a signed, canonical, audience/validity/sequence-bound deployment
+profile that atomically carries Midnight chain identity/routes and SSI metadata
+routes. Composition additionally requires the signed node to expose the exact
+genesis hash, while normal composition stays unavailable and no production
+trust root/profile is selected. A separate double-opt-in test harness accepts
+an out-of-band zeroizing standalone funding root and proves exact unshielded
+finality, public-journal restart reconciliation, bounded indexer convergence,
+and no duplicate recipient delivery. The working prototype's millisecond chain
+time and sparse global DUST cursors are retained behind Oxid's strict bounds;
+the genesis fixture itself is not copied.
+
+ADR-0100 accepts a distinct protected DUST-registration capability instead of
+hiding registration in transfer or sync. Preparation requires live indexer
+creation-time and unregistered-state evidence, conserves each selected NIGHT
+input to its owner, and permits only the largest generated candidate in the
+guaranteed offer to fund the maximum registration fee allowance. Exact consent
+then binds role-0 authorization while the role-2 secret remains in protected
+custody; generic proving, a registration-separated public journal, finality,
+and later authoritative DUST-event observation remain separate stages. The
+repository/headless/Dioxus path, public PreProd manifest/read-only observer,
+test-only signed Midnight profile, and amount-observed ignored live harness are
+implemented; the funded write, mobile, restart, and physical-device acceptance
+evidence remain in progress.

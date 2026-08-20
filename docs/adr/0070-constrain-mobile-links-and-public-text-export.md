@@ -5,7 +5,8 @@
 - Blueprint source: Sections 3–7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, whose mobile clipboard adapter is a no-op and whose identity ingress is QR-only
 - Tracking: issues #2 and #32
-- Implementation state: iOS/Android custom-scheme delivery, strict shared routing, explicit dismissal, typed public-address copy/share, consolidated native packaging, headless routing conformance, and simulator/emulator lifecycle evidence are implemented; universal HTTPS links, production endpoint discovery, physical-camera evidence, and device resource baselines remain #32
+- Implementation state: iOS/Android custom-scheme delivery, strict shared routing, explicit dismissal, typed public-address copy/share, consolidated native packaging, headless routing conformance, and simulator/emulator lifecycle evidence are implemented; physical Android warm/foreground and cold custom-scheme delivery are proven on Samsung SM-S928B / Android 16 (API 36); universal HTTPS links, production endpoint discovery, physical iOS evidence, and device resource baselines remain #32
+- Amended by: ADR-0081, ADR-0094
 
 ## Context
 
@@ -40,7 +41,11 @@ Register only the two protocol schemes in `apps/oxid/Dioxus.toml`:
   cannot race component registration.
 - Android uses the repository-owned `MainActivity` with `singleTop`; `onCreate`
   captures cold links and `onNewIntent` captures warm links. Only `ACTION_VIEW`
-  intents with an exact registered scheme enter the bounded native queue.
+  intents with an exact registered scheme enter the bounded native queue. Wry
+  does not translate a foreground Android `onNewIntent` into Tao `Opened`, so
+  the rendered Android component polls only that one-item native handoff every
+  250 ms. The hook is paused when the component is not rendered; it never logs
+  or carries the link itself.
 
 Native capture never classifies or executes a request. Dioxus drains a pending
 link only after a profile is active and sends it through the same
@@ -83,9 +88,12 @@ worker thread.
   and credential material are deliberately outside its API.
 - One pending request cannot replace another. Queue saturation is a stable,
   payload-free failure, never permission to discard the active review.
-- Simulator/emulator tests prove packaging and lifecycle behavior. They do not
-  prove physical camera success, application-link/domain association, or
-  production requester discovery.
+- Simulator/emulator tests prove packaging and lifecycle behavior. The
+  repository physical harness additionally proves one-item warm and cold
+  Android custom-scheme delivery into review, with explicit dismissal and no
+  native classification, persistence, execution, or request logging. Neither
+  kind of evidence proves application-link/domain association or production
+  requester discovery.
 
 ## Consequences
 
@@ -99,7 +107,10 @@ worker thread.
   future Dioxus upgrade may remove the single-package constraint, but splitting
   the bridge still requires a full native lifecycle and packaging review.
 - Universal HTTPS links and arbitrary production OpenID4VP discovery remain
-  unavailable until their trust and association policies are accepted.
+  unavailable until their trust and association policies are accepted. No
+  reviewed public domain or valid `assetlinks.json` currently exists, so the
+  Android App Link requirement is an external blocker rather than a simulated
+  pass.
 
 ## Rejected alternatives
 

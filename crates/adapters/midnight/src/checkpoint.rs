@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::indexer::IndexerSnapshot;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const MAX_CHECKPOINT_COUNT: usize = 128;
 const MAX_CHECKPOINT_BYTES: u64 = 16 * 1024 * 1024;
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -416,6 +416,8 @@ mod tests {
             value,
             intent_hash: intent.to_string().repeat(64),
             output_index: 0,
+            created_at_seconds: Some(1_700_000_000),
+            registered_for_dust_generation: false,
         }
     }
 
@@ -487,6 +489,16 @@ mod tests {
         assert_eq!(loaded.updated_at, expected.updated_at);
         assert_eq!(loaded.snapshot, expected.snapshot);
         assert_eq!(loaded.snapshot.utxos[0].value, u128::MAX);
+        assert_eq!(
+            loaded.snapshot.utxos[0].created_at_seconds,
+            Some(1_700_000_000)
+        );
+        assert!(!loaded.snapshot.utxos[0].registered_for_dust_generation);
+        let document: serde_json::Value = serde_json::from_slice(
+            &fs::read(directory.file()).expect("checkpoint bytes should be readable"),
+        )
+        .expect("checkpoint JSON should parse");
+        assert_eq!(document["schemaVersion"], serde_json::json!(2));
         assert!(
             store
                 .load(
@@ -495,6 +507,72 @@ mod tests {
                 )
                 .expect("different scope should be readable")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn legacy_schema_one_checkpoint_fails_closed_and_fresh_state_replaces_it() {
+        let directory = TestDirectory::new();
+        let path = directory.file();
+        let store = store(path.clone());
+        let expected = StoredIndexerCheckpoint {
+            updated_at: UnixTimestampMillis::new(10),
+            snapshot: snapshot(),
+        };
+        store
+            .save(&network(), &address(), &expected)
+            .expect("current checkpoint should save");
+
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).expect("checkpoint bytes should be readable"))
+                .expect("checkpoint JSON should parse");
+        legacy["schemaVersion"] = serde_json::json!(1);
+        let snapshot = &mut legacy["checkpoints"][0]["snapshot"];
+        for utxo in snapshot["utxos"]
+            .as_array_mut()
+            .expect("UTXO records should be an array")
+        {
+            let utxo = utxo
+                .as_object_mut()
+                .expect("UTXO record should be an object");
+            utxo.remove("createdAtSeconds");
+            utxo.remove("registeredForDustGeneration");
+        }
+        for transaction in snapshot["transactions"]
+            .as_array_mut()
+            .expect("transaction records should be an array")
+        {
+            for field in ["created", "spent"] {
+                for utxo in transaction[field]
+                    .as_array_mut()
+                    .expect("transaction UTXOs should be an array")
+                {
+                    let utxo = utxo
+                        .as_object_mut()
+                        .expect("UTXO record should be an object");
+                    utxo.remove("createdAtSeconds");
+                    utxo.remove("registeredForDustGeneration");
+                }
+            }
+        }
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&legacy).expect("legacy checkpoint should serialize"),
+        )
+        .expect("legacy checkpoint should write");
+
+        assert_eq!(
+            store.load(&network(), &address()),
+            Err(CheckpointStoreError::InvalidData)
+        );
+        store
+            .save(&network(), &address(), &expected)
+            .expect("fresh state should replace legacy data");
+        assert_eq!(
+            store
+                .load(&network(), &address())
+                .expect("replacement should load"),
+            Some(expected)
         );
     }
 

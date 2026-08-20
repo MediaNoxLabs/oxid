@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_adapter_backup_complete::InMemoryRecoveryJournal;
@@ -13,6 +13,9 @@ use oxid_adapter_backup_complete::{FileRecoveryJournal, UnavailableRecoveryJourn
 use oxid_adapter_backup_document_mobile::NativePortableWalletBackupDocuments;
 use oxid_adapter_backup_portable::PortableCustodyVaultPort;
 #[cfg(not(target_arch = "wasm32"))]
+use oxid_adapter_deployment_profile::AuthenticatedDeploymentProfile;
+use oxid_adapter_diagnostics_memory::InMemoryDiagnosticStore;
+#[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_did_midnight::{
     HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
 };
@@ -20,7 +23,6 @@ use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
 use oxid_adapter_identity_ingress::StrictIdentityRequestRouter;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_identity_ingress::{NativeIdentityLinkIngress, NativeQrScanner};
-use oxid_adapter_midnight::MidnightPublicCallContextSource;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
     MidnightAccountCheckpointConfig, MidnightAccountCheckpointConfigError,
@@ -28,7 +30,8 @@ use oxid_adapter_midnight::{
     MidnightIndexerConfigError, MidnightLocalProvingConfig, MidnightLocalProvingConfigError,
     MidnightShieldedCheckpointConfig, MidnightShieldedCheckpointConfigError,
     MidnightStandaloneConfig, MidnightStandaloneConfigError, MidnightSubmissionJournalConfig,
-    MidnightSubmissionJournalConfigError, protected_live_midnight_wallet,
+    MidnightSubmissionJournalConfigError, authenticate_midnight_chain_identity,
+    configuration_placeholder_address, protected_live_midnight_wallet,
     protected_live_midnight_wallet_with_checkpoint_options,
     protected_live_midnight_wallet_with_checkpoints,
     protected_simulated_midnight_wallet_with_submission_journal,
@@ -45,6 +48,7 @@ use oxid_adapter_midnight::{
     MidnightContractCallSubmissionRequest, MidnightContractCallSubmissionState,
     MidnightContractCallSubmissionStatus,
 };
+use oxid_adapter_midnight::{MidnightDiagnosticAttachPort, MidnightPublicCallContextSource};
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 use oxid_adapter_openid4vci::{
     DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
@@ -96,7 +100,7 @@ pub const fn simulated_passport_vault_contract_address_hex() -> &'static str {
     SIMULATED_PASSPORT_VAULT_CONTRACT_ADDRESS_HEX
 }
 #[cfg(any(target_os = "ios", target_os = "android"))]
-use oxid_adapter_platform_system::NativePublicTextExporter;
+use oxid_adapter_platform_system::{NativePublicTextExporter, NativeScreenPrivacy};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_credential_json::EncryptedJsonCredentialRepository;
 use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
@@ -109,6 +113,11 @@ use oxid_adapter_storage_memory::{
 };
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_storage_mobile::MobileWalletSecurity;
+#[cfg(all(
+    feature = "mobile-compact-artifacts",
+    any(target_os = "ios", target_os = "android")
+))]
+use oxid_adapter_vc_midnight::ForegroundCompactPresentationProofWorker;
 use oxid_adapter_vc_midnight::{
     CompactHolderProofPort, DigitalPassportDisclosureAdapter, ManagedDidJubjubHolderAuthorization,
     MidnightCredentialVerifier, PreflightOnlyCompactPresentationProof,
@@ -128,6 +137,10 @@ use oxid_credential_application::{
     PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase, RevealCredentialClaimUseCase,
     ReverifyCredentialUseCase, UnavailableCredentialDisclosure, UnavailableCredentialInbox,
     UnavailableCredentialRepository, UnavailableCredentialVerifier,
+};
+use oxid_diagnostics_application::{
+    ClearDiagnosticsUseCase, DiagnosticEventSinkPort, DiagnosticsService,
+    GetDiagnosticSnapshotUseCase,
 };
 use oxid_identity_application::{
     CreateDidUseCase, DeactivateDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort,
@@ -156,18 +169,27 @@ use oxid_passport_vault_application::{
     PassportVaultCallSubmissionState, PassportVaultCallSubmissionStatus,
     PassportVaultContractStateSnapshot,
 };
-use oxid_platform_ports::{IdentityLinkIngressPort, PublicTextExportPort, QrScannerPort};
+use oxid_platform_ports::{
+    IdentityLinkIngressPort, PublicTextExportPort, QrScannerPort, ScreenPrivacyPort,
+};
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_platform_ports::{
     UnavailableIdentityLinkIngress, UnavailablePublicTextExporter, UnavailableQrScanner,
+    UnavailableScreenPrivacy,
 };
 use oxid_presentation_application::{
-    AcceptCredentialPresentationUseCase, CredentialPresentationProtocolPort,
-    CredentialPresentationService, GetCredentialPresentationUseCase,
-    ListCredentialPresentationsUseCase, PrepareCredentialPresentationUseCase,
-    RefuseCredentialPresentationUseCase, UnavailableCredentialPresentationProtocol,
+    AcceptCredentialPresentationUseCase, CancelCredentialPresentationUseCase,
+    CredentialPresentationProtocolPort, CredentialPresentationService,
+    GetCredentialPresentationUseCase, ListCredentialPresentationsUseCase,
+    PrepareCredentialPresentationUseCase, RefuseCredentialPresentationUseCase,
+    SetCredentialPresentationForegroundUseCase, UnavailableCredentialPresentationProtocol,
     UnavailablePresentationVerifier,
 };
+#[cfg(all(
+    feature = "mobile-compact-artifacts",
+    any(target_os = "ios", target_os = "android")
+))]
+use oxid_presentation_application::{PresentationProofControlPort, PresentationProofPort};
 use oxid_protocol_application::{
     AcceptCredentialIssuanceUseCase, AcceptSelfIssuedAuthenticationUseCase,
     CredentialIssuanceProtocolPort, CredentialIssuanceService, GetCredentialIssuanceUseCase,
@@ -181,24 +203,35 @@ use oxid_protocol_application::{
 };
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_wallet_application::UnavailablePortableWalletBackupDocuments;
+#[cfg(target_arch = "wasm32")]
+use oxid_wallet_application::UnavailableWalletDustRegistrationPort;
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_wallet_application::WalletDustRegistrationPort;
 use oxid_wallet_application::{
-    AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
-    CancelWalletTransferSubmissionUseCase, CompleteWalletBackupService, CreateWalletProfileService,
-    CreateWalletProfileUseCase, DeleteWalletKeyUseCase, DeriveWalletAccountUseCase,
-    ExportCompleteWalletBackupUseCase, ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase,
-    GetActiveWalletProfileService, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
+    AuthorizeWalletDustRegistrationUseCase, AuthorizeWalletTransferUseCase,
+    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
+    CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
+    CompleteWalletBackupService, CreateWalletProfileService, CreateWalletProfileUseCase,
+    DeleteWalletKeyUseCase, DeriveWalletAccountUseCase, ExportCompleteWalletBackupUseCase,
+    ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase, GetActiveWalletProfileService,
+    GetActiveWalletProfileUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
+    GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
     GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
     ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
     ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
-    PortableWalletBackupDocumentPort, PrepareWalletTransferUseCase,
-    ReconcileWalletTransferSubmissionUseCase, RecoverCompleteWalletBackupUseCase,
+    PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferUseCase,
+    PrepareWalletDustRegistrationUseCase, PrepareWalletTransferUseCase,
+    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
+    RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupUseCase,
     RecoverPortableWalletBackupUseCase, SelectWalletNetworkUseCase, SelectWalletProfileService,
     SelectWalletProfileUseCase, SignWalletDataUseCase, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
-    WalletAccountReadPort, WalletAccountService, WalletDustSyncPort, WalletDustSyncService,
+    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
+    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
+    WalletAccountService, WalletBackupReceiptRepository, WalletBackupReceiptService,
+    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
     WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
     WalletNetworkService, WalletPortableBackupPort, WalletPortableBackupService,
     WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
@@ -224,12 +257,28 @@ trait NativeMidnightCompositionCapability {}
 #[cfg(target_arch = "wasm32")]
 impl<T> NativeMidnightCompositionCapability for T {}
 
+#[cfg(not(target_arch = "wasm32"))]
+trait NativeWalletDustRegistrationCapability: WalletDustRegistrationPort {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T> NativeWalletDustRegistrationCapability for T where T: WalletDustRegistrationPort {}
+
+#[cfg(target_arch = "wasm32")]
+trait NativeWalletDustRegistrationCapability {}
+
+#[cfg(target_arch = "wasm32")]
+impl<T> NativeWalletDustRegistrationCapability for T {}
+
 /// Application capabilities shared by every incoming adapter.
 #[derive(Clone)]
 pub struct ApplicationServices {
+    diagnostic_events: Arc<dyn DiagnosticEventSinkPort>,
+    get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
+    clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
     qr_scanner: Arc<dyn QrScannerPort>,
     identity_link_ingress: Arc<dyn IdentityLinkIngressPort>,
     public_text_exporter: Arc<dyn PublicTextExportPort>,
+    screen_privacy: Arc<dyn ScreenPrivacyPort>,
     portable_wallet_backup_documents: Arc<dyn PortableWalletBackupDocumentPort>,
     route_identity_request: Arc<dyn RouteIdentityRequestUseCase>,
     midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource>,
@@ -243,6 +292,8 @@ pub struct ApplicationServices {
     list_wallet_profiles: Arc<dyn ListWalletProfilesUseCase>,
     select_wallet_profile: Arc<dyn SelectWalletProfileUseCase>,
     get_active_wallet_profile: Arc<dyn GetActiveWalletProfileUseCase>,
+    get_wallet_backup_receipt: Arc<dyn GetWalletBackupReceiptUseCase>,
+    record_wallet_backup_receipt: Arc<dyn RecordWalletBackupReceiptUseCase>,
     get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase>,
     initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
     unlock_wallet: Arc<dyn UnlockWalletUseCase>,
@@ -266,6 +317,16 @@ pub struct ApplicationServices {
     get_wallet_shielded_sync_status: Arc<dyn GetWalletShieldedSyncStatusUseCase>,
     start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase>,
     cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase>,
+    prepare_wallet_dust_registration: Arc<dyn PrepareWalletDustRegistrationUseCase>,
+    authorize_wallet_dust_registration: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
+    submit_wallet_dust_registration: Arc<dyn SubmitWalletDustRegistrationUseCase>,
+    get_wallet_dust_registration: Arc<dyn GetWalletDustRegistrationUseCase>,
+    get_wallet_dust_registration_status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
+    cancel_wallet_dust_registration_submission:
+        Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
+    reconcile_wallet_dust_registration_submission:
+        Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
+    prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase>,
     prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
@@ -302,6 +363,8 @@ pub struct ApplicationServices {
     list_self_issued_authentications: Arc<dyn ListSelfIssuedAuthenticationsUseCase>,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
+    cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
+    set_credential_presentation_foreground: Arc<dyn SetCredentialPresentationForegroundUseCase>,
     refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
     get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase>,
     list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase>,
@@ -344,6 +407,11 @@ enum CredentialPresentationComposition {
     Standalone,
     #[cfg(not(target_arch = "wasm32"))]
     StandaloneZk(Arc<NativeCompactPresentationRuntime>),
+    #[cfg(all(
+        feature = "mobile-compact-artifacts",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    StandaloneMobileZk(Arc<NativeCompactPresentationRuntime>),
 }
 
 struct IdentityAdapters {
@@ -383,6 +451,21 @@ impl PassportVaultRepositoryComposition {
 
 impl ApplicationServices {
     #[must_use]
+    pub fn diagnostic_events(&self) -> Arc<dyn DiagnosticEventSinkPort> {
+        Arc::clone(&self.diagnostic_events)
+    }
+
+    #[must_use]
+    pub fn get_diagnostic_snapshot(&self) -> Arc<dyn GetDiagnosticSnapshotUseCase> {
+        Arc::clone(&self.get_diagnostic_snapshot)
+    }
+
+    #[must_use]
+    pub fn clear_diagnostics(&self) -> Arc<dyn ClearDiagnosticsUseCase> {
+        Arc::clone(&self.clear_diagnostics)
+    }
+
+    #[must_use]
     pub fn qr_scanner(&self) -> Arc<dyn QrScannerPort> {
         Arc::clone(&self.qr_scanner)
     }
@@ -395,6 +478,11 @@ impl ApplicationServices {
     #[must_use]
     pub fn public_text_exporter(&self) -> Arc<dyn PublicTextExportPort> {
         Arc::clone(&self.public_text_exporter)
+    }
+
+    #[must_use]
+    pub fn screen_privacy(&self) -> Arc<dyn ScreenPrivacyPort> {
+        Arc::clone(&self.screen_privacy)
     }
 
     #[must_use]
@@ -425,6 +513,16 @@ impl ApplicationServices {
     #[must_use]
     pub fn get_active_wallet_profile(&self) -> Arc<dyn GetActiveWalletProfileUseCase> {
         Arc::clone(&self.get_active_wallet_profile)
+    }
+
+    #[must_use]
+    pub fn get_wallet_backup_receipt(&self) -> Arc<dyn GetWalletBackupReceiptUseCase> {
+        Arc::clone(&self.get_wallet_backup_receipt)
+    }
+
+    #[must_use]
+    pub fn record_wallet_backup_receipt(&self) -> Arc<dyn RecordWalletBackupReceiptUseCase> {
+        Arc::clone(&self.record_wallet_backup_receipt)
     }
 
     #[must_use]
@@ -543,8 +641,60 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn prepare_wallet_dust_registration(
+        &self,
+    ) -> Arc<dyn PrepareWalletDustRegistrationUseCase> {
+        Arc::clone(&self.prepare_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn authorize_wallet_dust_registration(
+        &self,
+    ) -> Arc<dyn AuthorizeWalletDustRegistrationUseCase> {
+        Arc::clone(&self.authorize_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn submit_wallet_dust_registration(&self) -> Arc<dyn SubmitWalletDustRegistrationUseCase> {
+        Arc::clone(&self.submit_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn get_wallet_dust_registration(&self) -> Arc<dyn GetWalletDustRegistrationUseCase> {
+        Arc::clone(&self.get_wallet_dust_registration)
+    }
+
+    #[must_use]
+    pub fn get_wallet_dust_registration_status(
+        &self,
+    ) -> Arc<dyn GetWalletDustRegistrationStatusUseCase> {
+        Arc::clone(&self.get_wallet_dust_registration_status)
+    }
+
+    #[must_use]
+    pub fn cancel_wallet_dust_registration_submission(
+        &self,
+    ) -> Arc<dyn CancelWalletDustRegistrationSubmissionUseCase> {
+        Arc::clone(&self.cancel_wallet_dust_registration_submission)
+    }
+
+    #[must_use]
+    pub fn reconcile_wallet_dust_registration_submission(
+        &self,
+    ) -> Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase> {
+        Arc::clone(&self.reconcile_wallet_dust_registration_submission)
+    }
+
+    #[must_use]
     pub fn prepare_wallet_transfer(&self) -> Arc<dyn PrepareWalletTransferUseCase> {
         Arc::clone(&self.prepare_wallet_transfer)
+    }
+
+    #[must_use]
+    pub fn prepare_shielded_wallet_transfer(
+        &self,
+    ) -> Arc<dyn PrepareShieldedWalletTransferUseCase> {
+        Arc::clone(&self.prepare_shielded_wallet_transfer)
     }
 
     #[must_use]
@@ -739,6 +889,18 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn cancel_credential_presentation(&self) -> Arc<dyn CancelCredentialPresentationUseCase> {
+        Arc::clone(&self.cancel_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn set_credential_presentation_foreground(
+        &self,
+    ) -> Arc<dyn SetCredentialPresentationForegroundUseCase> {
+        Arc::clone(&self.set_credential_presentation_foreground)
+    }
+
+    #[must_use]
     pub fn refuse_credential_presentation(&self) -> Arc<dyn RefuseCredentialPresentationUseCase> {
         Arc::clone(&self.refuse_credential_presentation)
     }
@@ -885,6 +1047,150 @@ fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort> {
     Arc::new(InMemoryRecoveryJournal::default())
 }
 
+/// A signed deployment profile after the configured node has also proven the
+/// exact genesis hash bound by that profile.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct AuthenticatedProductionDeployment {
+    profile: AuthenticatedDeploymentProfile,
+    midnight: MidnightStandaloneConfig,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl fmt::Debug for AuthenticatedProductionDeployment {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthenticatedProductionDeployment")
+            .field("profile", &self.profile)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AuthenticatedProductionDeployment {
+    #[must_use]
+    pub const fn profile(&self) -> &AuthenticatedDeploymentProfile {
+        &self.profile
+    }
+}
+
+/// Payload-free failures from the production deployment composition gate.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProductionDeploymentCompositionError {
+    InvalidMidnightProfile,
+    ChainIdentityUnavailable,
+    ChainIdentityMismatch,
+    InvalidSsiProfile,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl fmt::Display for ProductionDeploymentCompositionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidMidnightProfile => "authenticated Midnight deployment profile is invalid",
+            Self::ChainIdentityUnavailable => {
+                "authenticated Midnight chain identity is unavailable"
+            }
+            Self::ChainIdentityMismatch => {
+                "authenticated Midnight chain identity does not match the node"
+            }
+            Self::InvalidSsiProfile => "authenticated SSI deployment profile is invalid",
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::error::Error for ProductionDeploymentCompositionError {}
+
+/// Binds a signed deployment profile to the genesis hash returned by its
+/// reviewed node route. The caller cannot provide alternate endpoints after
+/// this asynchronous gate succeeds.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn authenticate_production_deployment(
+    profile: AuthenticatedDeploymentProfile,
+) -> Result<AuthenticatedProductionDeployment, ProductionDeploymentCompositionError> {
+    let midnight = profile.midnight();
+    let placeholder = configuration_placeholder_address(midnight.network_id())
+        .map_err(|_| ProductionDeploymentCompositionError::InvalidMidnightProfile)?;
+    let config = MidnightStandaloneConfig::new(
+        midnight.network_id(),
+        midnight.indexer_websocket_url(),
+        midnight.indexer_http_url(),
+        midnight.node_websocket_url(),
+        midnight.proof_server_url(),
+        placeholder.value(),
+    )
+    .map_err(|_| ProductionDeploymentCompositionError::InvalidMidnightProfile)?;
+    authenticate_midnight_chain_identity(midnight.node_websocket_url(), midnight.genesis_hash())
+        .await
+        .map_err(|error| match error {
+            oxid_adapter_midnight::MidnightChainIdentityError::GenesisMismatch => {
+                ProductionDeploymentCompositionError::ChainIdentityMismatch
+            }
+            oxid_adapter_midnight::MidnightChainIdentityError::InvalidNodeEndpoint
+            | oxid_adapter_midnight::MidnightChainIdentityError::NodeUnavailable => {
+                ProductionDeploymentCompositionError::ChainIdentityUnavailable
+            }
+        })?;
+    Ok(AuthenticatedProductionDeployment {
+        profile,
+        midnight: config,
+    })
+}
+
+/// Composes the live Midnight path only after profile-signature and node
+/// genesis authentication. The default [`compose`] function remains
+/// fail-closed and never calls this opt-in constructor.
+///
+/// The authenticated DID resolver is enabled from the same signed profile.
+/// Issuer and verifier HTTP protocol adapters remain unavailable until their
+/// independent metadata/transport implementation is reviewed.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn compose_authenticated_production(
+    deployment: AuthenticatedProductionDeployment,
+) -> Result<ApplicationServices, ProductionDeploymentCompositionError> {
+    let did_resolver = HttpDidResolverConfig::new(deployment.profile.ssi().did_resolver_url())
+        .map(HttpDidResolver::new)
+        .map_err(|_| ProductionDeploymentCompositionError::InvalidSsiProfile)?;
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let security = {
+        let clock = Arc::new(SystemClock);
+        let random = Arc::new(OsRandom);
+        Arc::new(MobileWalletSecurity::native(clock, random))
+    };
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let security = Arc::new(UnavailableWalletSecurity);
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let clock = Arc::new(SystemClock);
+    let midnight = Arc::new(
+        protected_standalone_midnight_wallet(
+            deployment.midnight,
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        )
+        .with_profile_association_repository(profiles.clone()),
+    );
+    Ok(compose_with_identity_adapters(
+        profiles,
+        security,
+        midnight,
+        IdentityAdapters {
+            did_repository: Arc::new(UnavailableDidRecordRepository),
+            did_resolver: Arc::new(did_resolver),
+            did_lifecycle: Arc::new(UnavailableDidLifecycle),
+            did_jubjub_challenge_signing: Arc::new(UnavailableDidLifecycle),
+            credential_repository: Arc::new(UnavailableCredentialRepository),
+            credential_inbox: Arc::new(UnavailableCredentialInbox),
+            credential_verifier: Arc::new(UnavailableCredentialVerifier),
+            credential_disclosure: Arc::new(UnavailableCredentialDisclosure),
+            credential_issuance: CredentialIssuanceComposition::Unavailable,
+            self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
+            credential_presentation: CredentialPresentationComposition::Unavailable,
+        },
+        PassportVaultRepositoryComposition::unavailable(),
+    ))
+}
+
 /// Wires the application with persistent public-profile metadata storage.
 #[must_use]
 pub fn compose() -> ApplicationServices {
@@ -926,6 +1232,32 @@ pub fn compose() -> ApplicationServices {
 #[cfg(any(target_os = "ios", target_os = "android"))]
 #[must_use]
 pub fn compose_mobile_native_standalone() -> ApplicationServices {
+    compose_mobile_native_standalone_with_presentation(
+        CredentialPresentationComposition::Standalone,
+    )
+}
+
+/// Wires the explicit standalone native-custody mobile harness to the
+/// authenticated embedded Compact runtime through the foreground-only worker.
+/// Normal production and ordinary standalone mobile composition do not call
+/// this constructor.
+#[cfg(all(
+    feature = "mobile-compact-artifacts",
+    any(target_os = "ios", target_os = "android")
+))]
+pub fn compose_mobile_native_standalone_with_compact_presentation()
+-> Result<ApplicationServices, CompactPresentationRuntimeError> {
+    let runtime =
+        Arc::new(oxid_adapter_vc_midnight::load_embedded_mobile_compact_presentation_runtime()?);
+    Ok(compose_mobile_native_standalone_with_presentation(
+        CredentialPresentationComposition::StandaloneMobileZk(runtime),
+    ))
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn compose_mobile_native_standalone_with_presentation(
+    credential_presentation: CredentialPresentationComposition,
+) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(MobileWalletSecurity::native(
@@ -953,17 +1285,23 @@ pub fn compose_mobile_native_standalone() -> ApplicationServices {
         profiles,
         security,
         Arc::new(midnight),
-        CredentialPresentationComposition::Standalone,
+        credential_presentation,
     );
     with_simulated_passport_vault_calls(services)
 }
 
+/// Runs the explicit Android smoke probe for JNI exception recovery.
+#[cfg(all(target_os = "android", feature = "android-jni-exception-recovery-test"))]
+pub fn verify_android_jni_exception_recovery()
+-> Result<(), oxid_adapter_mobile_native::NativeBridgeError> {
+    oxid_adapter_mobile_native::verify_android_jni_exception_recovery()
+}
+
 /// Authenticates the immutable Compact presentation package selected by an
-/// explicit mobile resource-measurement build without enabling proof creation.
+/// explicit mobile conformance build without changing composition by itself.
 ///
-/// Loading is deliberately separate from mobile composition: Dioxus remains on
-/// the preflight-only proof port until a reviewed background, cancellation, and
-/// process-lifecycle runner exists.
+/// Callers that need proof execution must select
+/// [`compose_mobile_native_standalone_with_compact_presentation`].
 #[cfg(all(
     feature = "mobile-compact-artifacts",
     any(target_os = "ios", target_os = "android")
@@ -1322,19 +1660,18 @@ fn compose_headless_live_with_checkpoint_options_and_presentation(
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let midnight = Arc::new(protected_live_midnight_wallet_with_checkpoint_options(
-        config,
-        account_checkpoints,
-        shielded_checkpoints,
-        Arc::clone(&clock),
-        Arc::clone(&security),
-    ));
-    compose_with_adapters_and_presentation(
-        Arc::new(JsonWalletProfileRepository::at_default_location()),
-        security,
-        midnight,
-        credential_presentation,
-    )
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let midnight = Arc::new(
+        protected_live_midnight_wallet_with_checkpoint_options(
+            config,
+            account_checkpoints,
+            shielded_checkpoints,
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        )
+        .with_profile_association_repository(profiles.clone()),
+    );
+    compose_with_adapters_and_presentation(profiles, security, midnight, credential_presentation)
 }
 
 /// Wires any reviewed combination of standalone checkpoint stores.
@@ -1370,6 +1707,7 @@ fn compose_headless_standalone_with_checkpoint_options_and_presentation(
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
     let midnight = Arc::new(
         protected_standalone_midnight_wallet_with_checkpoint_options(
             config,
@@ -1379,11 +1717,12 @@ fn compose_headless_standalone_with_checkpoint_options_and_presentation(
             submission_journal,
             Arc::clone(&clock),
             Arc::clone(&security),
-        ),
+        )
+        .with_profile_association_repository(profiles.clone()),
     );
     with_passport_vault_state_source(
         compose_with_adapters_and_presentation(
-            Arc::new(JsonWalletProfileRepository::at_default_location()),
+            profiles,
             security,
             midnight,
             credential_presentation,
@@ -1412,13 +1751,17 @@ fn compose_headless_with_submission_journal_and_presentation(
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let midnight = Arc::new(protected_simulated_midnight_wallet_with_submission_journal(
-        journal,
-        Arc::clone(&clock),
-        Arc::clone(&security),
-    ));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let midnight = Arc::new(
+        protected_simulated_midnight_wallet_with_submission_journal(
+            journal,
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        )
+        .with_profile_association_repository(profiles.clone()),
+    );
     with_simulated_passport_vault_calls(compose_with_adapters_and_presentation(
-        Arc::new(JsonWalletProfileRepository::at_default_location()),
+        profiles,
         security,
         midnight,
         credential_presentation,
@@ -1433,16 +1776,12 @@ pub fn compose_headless_live(config: MidnightIndexerConfig) -> ApplicationServic
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let midnight = Arc::new(protected_live_midnight_wallet(
-        config,
-        Arc::clone(&clock),
-        Arc::clone(&security),
-    ));
-    compose_with_adapters(
-        Arc::new(JsonWalletProfileRepository::at_default_location()),
-        security,
-        midnight,
-    )
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let midnight = Arc::new(
+        protected_live_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
+            .with_profile_association_repository(profiles.clone()),
+    );
+    compose_with_adapters(profiles, security, midnight)
 }
 
 /// Wires development custody and a public checkpoint store to a live indexer.
@@ -1455,17 +1794,17 @@ pub fn compose_headless_live_with_checkpoints(
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let midnight = Arc::new(protected_live_midnight_wallet_with_checkpoints(
-        config,
-        checkpoints,
-        Arc::clone(&clock),
-        Arc::clone(&security),
-    ));
-    compose_with_adapters(
-        Arc::new(JsonWalletProfileRepository::at_default_location()),
-        security,
-        midnight,
-    )
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let midnight = Arc::new(
+        protected_live_midnight_wallet_with_checkpoints(
+            config,
+            checkpoints,
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        )
+        .with_profile_association_repository(profiles.clone()),
+    );
+    compose_with_adapters(profiles, security, midnight)
 }
 
 /// Wires development custody to the complete, explicitly configured standalone stack.
@@ -1476,19 +1815,46 @@ pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> Applicat
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let midnight = Arc::new(protected_standalone_midnight_wallet(
-        config,
-        Arc::clone(&clock),
-        Arc::clone(&security),
-    ));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let midnight = Arc::new(
+        protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
+            .with_profile_association_repository(profiles.clone()),
+    );
     with_passport_vault_state_source(
-        compose_with_adapters(
-            Arc::new(JsonWalletProfileRepository::at_default_location()),
-            security,
-            midnight,
-        ),
+        compose_with_adapters(profiles, security, midnight),
         passport_vault_state_source,
     )
+}
+
+/// Wires the mobile development harness to an explicitly build-selected
+/// standalone stack without making routes part of the network catalog.
+///
+/// The app crate exposes this constructor only behind its opt-in local or
+/// tailnet live-stack route profile. Normal and native-custody mobile
+/// composition never call it.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn compose_mobile_development_standalone_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
+    let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
+        .map_err(|_| {
+            HeadlessCompositionError::InvalidMidnightStandaloneConfiguration(
+                MidnightStandaloneConfigError::Indexer(MidnightIndexerConfigError::InvalidAddress),
+            )
+        })?;
+    let config = MidnightStandaloneConfig::new(
+        "undeployed",
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+        placeholder.value(),
+    )
+    .map_err(HeadlessCompositionError::InvalidMidnightStandaloneConfiguration)?;
+    Ok(compose_headless_standalone(config))
 }
 
 /// Wires the complete standalone stack with durable public account checkpoints.
@@ -1502,18 +1868,18 @@ pub fn compose_headless_standalone_with_checkpoints(
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let midnight = Arc::new(protected_standalone_midnight_wallet_with_checkpoints(
-        config,
-        checkpoints,
-        Arc::clone(&clock),
-        Arc::clone(&security),
-    ));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let midnight = Arc::new(
+        protected_standalone_midnight_wallet_with_checkpoints(
+            config,
+            checkpoints,
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        )
+        .with_profile_association_repository(profiles.clone()),
+    );
     with_passport_vault_state_source(
-        compose_with_adapters(
-            Arc::new(JsonWalletProfileRepository::at_default_location()),
-            security,
-            midnight,
-        ),
+        compose_with_adapters(profiles, security, midnight),
         passport_vault_state_source,
     )
 }
@@ -1529,18 +1895,18 @@ pub fn compose_headless_standalone_with_dust_checkpoints(
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let midnight = Arc::new(protected_standalone_midnight_wallet_with_dust_checkpoints(
-        config,
-        dust_checkpoints,
-        Arc::clone(&clock),
-        Arc::clone(&security),
-    ));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let midnight = Arc::new(
+        protected_standalone_midnight_wallet_with_dust_checkpoints(
+            config,
+            dust_checkpoints,
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        )
+        .with_profile_association_repository(profiles.clone()),
+    );
     with_passport_vault_state_source(
-        compose_with_adapters(
-            Arc::new(JsonWalletProfileRepository::at_default_location()),
-            security,
-            midnight,
-        ),
+        compose_with_adapters(profiles, security, midnight),
         passport_vault_state_source,
     )
 }
@@ -1557,19 +1923,19 @@ pub fn compose_headless_standalone_with_all_checkpoints(
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let midnight = Arc::new(protected_standalone_midnight_wallet_with_all_checkpoints(
-        config,
-        account_checkpoints,
-        dust_checkpoints,
-        Arc::clone(&clock),
-        Arc::clone(&security),
-    ));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let midnight = Arc::new(
+        protected_standalone_midnight_wallet_with_all_checkpoints(
+            config,
+            account_checkpoints,
+            dust_checkpoints,
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        )
+        .with_profile_association_repository(profiles.clone()),
+    );
     with_passport_vault_state_source(
-        compose_with_adapters(
-            Arc::new(JsonWalletProfileRepository::at_default_location()),
-            security,
-            midnight,
-        ),
+        compose_with_adapters(profiles, security, midnight),
         passport_vault_state_source,
     )
 }
@@ -2025,6 +2391,7 @@ const fn map_wallet_transaction_error(
         WalletError::ProtectionLocked => PassportVaultCallPortError::ProtectionLocked,
         WalletError::AccountNotDerived => PassportVaultCallPortError::AccountNotDerived,
         WalletError::AccountNotSynchronized => PassportVaultCallPortError::AccountNotSynchronized,
+        WalletError::ShieldedStateNotCurrent => PassportVaultCallPortError::InvalidChainState,
         WalletError::UnsupportedNetwork => PassportVaultCallPortError::UnsupportedNetwork,
         WalletError::InvalidRecipient | WalletError::RecipientNetworkMismatch => {
             PassportVaultCallPortError::InvalidData
@@ -2143,7 +2510,10 @@ fn compose_with_adapters<R, S, M>(
     midnight: Arc<M>,
 ) -> ApplicationServices
 where
-    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
         + WalletJubjubChallengeSigningPort
@@ -2154,9 +2524,11 @@ where
         + WalletAccountReadPort
         + WalletAccountDerivationPort
         + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
         + NativeMidnightCompositionCapability
         + 'static,
 {
@@ -2175,7 +2547,10 @@ fn compose_with_adapters_and_presentation<R, S, M>(
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices
 where
-    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
         + WalletJubjubChallengeSigningPort
@@ -2186,9 +2561,11 @@ where
         + WalletAccountReadPort
         + WalletAccountDerivationPort
         + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
         + NativeMidnightCompositionCapability
         + 'static,
 {
@@ -2237,7 +2614,10 @@ fn compose_with_identity_adapters<R, S, M>(
     passport_vault_repository: PassportVaultRepositoryComposition,
 ) -> ApplicationServices
 where
-    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
         + WalletJubjubChallengeSigningPort
@@ -2248,12 +2628,20 @@ where
         + WalletAccountReadPort
         + WalletAccountDerivationPort
         + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
         + WalletShieldedSyncPort
         + WalletTransactionPort
         + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
         + NativeMidnightCompositionCapability
         + 'static,
 {
+    let diagnostic_repository = Arc::new(InMemoryDiagnosticStore::default());
+    let diagnostic_events: Arc<dyn DiagnosticEventSinkPort> = diagnostic_repository.clone();
+    midnight.attach_diagnostic_sink(Arc::clone(&diagnostic_events));
+    let diagnostics = Arc::new(DiagnosticsService::new(diagnostic_repository));
+    let get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase> = diagnostics.clone();
+    let clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase> = diagnostics;
     let IdentityAdapters {
         did_repository,
         did_resolver,
@@ -2306,6 +2694,10 @@ where
     let public_text_exporter: Arc<dyn PublicTextExportPort> =
         Arc::new(UnavailablePublicTextExporter);
     #[cfg(any(target_os = "ios", target_os = "android"))]
+    let screen_privacy: Arc<dyn ScreenPrivacyPort> = Arc::new(NativeScreenPrivacy);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let screen_privacy: Arc<dyn ScreenPrivacyPort> = Arc::new(UnavailableScreenPrivacy);
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     let portable_wallet_backup_documents: Arc<dyn PortableWalletBackupDocumentPort> =
         Arc::new(NativePortableWalletBackupDocuments);
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
@@ -2318,10 +2710,15 @@ where
         CredentialIssuanceComposition::Standalone
     );
     #[cfg(not(target_arch = "wasm32"))]
-    let compact_presentation_proof_available = matches!(
-        &credential_presentation,
-        CredentialPresentationComposition::StandaloneZk(_)
-    );
+    let compact_presentation_proof_available = match &credential_presentation {
+        CredentialPresentationComposition::StandaloneZk(_) => true,
+        #[cfg(all(
+            feature = "mobile-compact-artifacts",
+            any(target_os = "ios", target_os = "android")
+        ))]
+        CredentialPresentationComposition::StandaloneMobileZk(_) => true,
+        _ => false,
+    };
     #[cfg(target_arch = "wasm32")]
     let compact_presentation_proof_available = false;
     let clock = Arc::new(SystemClock);
@@ -2347,7 +2744,12 @@ where
     ));
     let list_wallet_profiles = Arc::new(ListWalletProfilesService::new(Arc::clone(&repository)));
     let select_wallet_profile = Arc::new(SelectWalletProfileService::new(Arc::clone(&repository)));
-    let get_active_wallet_profile = Arc::new(GetActiveWalletProfileService::new(repository));
+    let get_active_wallet_profile =
+        Arc::new(GetActiveWalletProfileService::new(Arc::clone(&repository)));
+    let backup_receipts = Arc::new(WalletBackupReceiptService::new(
+        repository,
+        Arc::clone(&clock),
+    ));
     let protection = Arc::new(WalletProtectionService::new(Arc::clone(&security)));
     let portable_backup = Arc::new(WalletPortableBackupService::new(Arc::clone(&security)));
     let keys = Arc::new(WalletKeyService::new(security));
@@ -2362,6 +2764,16 @@ where
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
     let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let shielded = Arc::new(WalletShieldedSyncService::new(Arc::clone(&midnight)));
+    #[cfg(not(target_arch = "wasm32"))]
+    let dust_registrations = Arc::new(WalletDustRegistrationService::new(
+        Arc::clone(&midnight),
+        Arc::clone(&clock),
+    ));
+    #[cfg(target_arch = "wasm32")]
+    let dust_registrations = Arc::new(WalletDustRegistrationService::new(
+        Arc::new(UnavailableWalletDustRegistrationPort),
+        Arc::clone(&clock),
+    ));
     let transactions = Arc::new(WalletTransactionService::new(midnight, Arc::clone(&clock)));
     let identity = Arc::new(DidService::from_ports(
         did_repository,
@@ -2483,6 +2895,46 @@ where
                     clock.clone(),
                 ))
             }
+            #[cfg(all(
+                feature = "mobile-compact-artifacts",
+                any(target_os = "ios", target_os = "android")
+            ))]
+            CredentialPresentationComposition::StandaloneMobileZk(runtime) => {
+                let list: Arc<dyn ListCredentialsUseCase> = credentials.clone();
+                let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
+                let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
+                let verifier_get_did = Arc::clone(&get_did);
+                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+                let holder_authorization =
+                    Arc::new(ManagedDidJubjubHolderAuthorization::with_challenge_signing(
+                        get_did,
+                        sign_did,
+                        did_jubjub_challenge_signing,
+                    ));
+                let holder_proof: Arc<dyn CompactHolderProofPort> = holder_authorization.clone();
+                let proof = Arc::new(ForegroundCompactPresentationProofWorker::new(Arc::new(
+                    PreflightOnlyCompactPresentationProof::with_runtime(
+                        presentation_credential_repository,
+                        clock.clone(),
+                        holder_authorization,
+                        holder_proof,
+                        Arc::clone(&runtime),
+                    ),
+                )));
+                let proof_port: Arc<dyn PresentationProofPort> = proof.clone();
+                let proof_control: Arc<dyn PresentationProofControlPort> = proof;
+                Arc::new(StandaloneOpenId4VpVerifier::with_proof_control(
+                    Arc::new(CredentialDisclosureCandidateSource::new(list, disclosure)),
+                    proof_port,
+                    proof_control,
+                    Arc::new(NativeCompactPresentationVerifier::new(
+                        runtime,
+                        clock.clone(),
+                        verifier_get_did,
+                    )),
+                    clock.clone(),
+                ))
+            }
         };
     let credential_presentation =
         Arc::new(CredentialPresentationService::new(presentation_protocol));
@@ -2550,6 +3002,8 @@ where
         complete_backup.clone();
     let recover_complete_wallet_backup: Arc<dyn RecoverCompleteWalletBackupUseCase> =
         complete_backup;
+    let get_wallet_backup_receipt: Arc<dyn GetWalletBackupReceiptUseCase> = backup_receipts.clone();
+    let record_wallet_backup_receipt: Arc<dyn RecordWalletBackupReceiptUseCase> = backup_receipts;
     let generate_wallet_key: Arc<dyn GenerateWalletKeyUseCase> = keys.clone();
     let list_wallet_keys: Arc<dyn ListWalletKeysUseCase> = keys.clone();
     let sign_wallet_data: Arc<dyn SignWalletDataUseCase> = keys.clone();
@@ -2566,6 +3020,24 @@ where
         shielded.clone();
     let start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase> = shielded.clone();
     let cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase> = shielded;
+    let prepare_wallet_dust_registration: Arc<dyn PrepareWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let authorize_wallet_dust_registration: Arc<dyn AuthorizeWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let submit_wallet_dust_registration: Arc<dyn SubmitWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let get_wallet_dust_registration: Arc<dyn GetWalletDustRegistrationUseCase> =
+        dust_registrations.clone();
+    let get_wallet_dust_registration_status: Arc<dyn GetWalletDustRegistrationStatusUseCase> =
+        dust_registrations.clone();
+    let cancel_wallet_dust_registration_submission: Arc<
+        dyn CancelWalletDustRegistrationSubmissionUseCase,
+    > = dust_registrations.clone();
+    let reconcile_wallet_dust_registration_submission: Arc<
+        dyn ReconcileWalletDustRegistrationSubmissionUseCase,
+    > = dust_registrations;
+    let prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase> =
+        transactions.clone();
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();
     let authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase> = transactions.clone();
     let submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase> = transactions.clone();
@@ -2614,6 +3086,11 @@ where
         credential_presentation.clone();
     let accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase> =
         credential_presentation.clone();
+    let cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase> =
+        credential_presentation.clone();
+    let set_credential_presentation_foreground: Arc<
+        dyn SetCredentialPresentationForegroundUseCase,
+    > = credential_presentation.clone();
     let refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase> =
         credential_presentation.clone();
     let get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase> =
@@ -2651,9 +3128,13 @@ where
     > = passport_vault_contract_calls;
 
     ApplicationServices {
+        diagnostic_events,
+        get_diagnostic_snapshot,
+        clear_diagnostics,
         qr_scanner,
         identity_link_ingress,
         public_text_exporter,
+        screen_privacy,
         portable_wallet_backup_documents,
         route_identity_request,
         midnight_public_call_context,
@@ -2667,6 +3148,8 @@ where
         list_wallet_profiles,
         select_wallet_profile,
         get_active_wallet_profile,
+        get_wallet_backup_receipt,
+        record_wallet_backup_receipt,
         get_wallet_security_status,
         initialize_wallet_security,
         unlock_wallet,
@@ -2690,6 +3173,14 @@ where
         get_wallet_shielded_sync_status,
         start_wallet_shielded_sync,
         cancel_wallet_shielded_sync,
+        prepare_wallet_dust_registration,
+        authorize_wallet_dust_registration,
+        submit_wallet_dust_registration,
+        get_wallet_dust_registration,
+        get_wallet_dust_registration_status,
+        cancel_wallet_dust_registration_submission,
+        reconcile_wallet_dust_registration_submission,
+        prepare_shielded_wallet_transfer,
         prepare_wallet_transfer,
         authorize_wallet_transfer,
         submit_wallet_transfer,
@@ -2726,6 +3217,8 @@ where
         list_self_issued_authentications,
         prepare_credential_presentation,
         accept_credential_presentation,
+        cancel_credential_presentation,
+        set_credential_presentation_foreground,
         refuse_credential_presentation,
         get_credential_presentation,
         list_credential_presentations,
@@ -2836,6 +3329,9 @@ fn headless_did_resolver() -> Arc<dyn DidResolutionPort> {
     Arc::new(StandaloneDidResolver)
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod standalone_funding_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2877,8 +3373,9 @@ mod tests {
         EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY, EXPORT_COMPLETE_WALLET_BACKUP_TITLE,
         ExportCompleteWalletBackupCommand, RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY,
         RECOVER_COMPLETE_WALLET_BACKUP_TITLE, RecoverCompleteWalletBackupCommand,
-        SensitiveOperationConfirmation, WalletAccountQuery, WalletDustSyncCommand,
-        WalletProfileSecurityCommand, WalletRecoverySecret, WalletShieldedSyncCommand,
+        SensitiveOperationConfirmation, WalletAccountQuery, WalletBackupReceiptCommand,
+        WalletDustSyncCommand, WalletProfileSecurityCommand, WalletRecoverySecret,
+        WalletShieldedSyncCommand,
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -3030,6 +3527,21 @@ mod tests {
             })
             .expect("source profile");
         source
+            .record_wallet_backup_receipt()
+            .execute(WalletBackupReceiptCommand {
+                profile_id: profile.id.clone(),
+            })
+            .expect("prior complete-document export receipt");
+        assert!(
+            source
+                .get_wallet_backup_receipt()
+                .execute(WalletBackupReceiptCommand {
+                    profile_id: profile.id.clone(),
+                })
+                .expect("source receipt query")
+                .is_some()
+        );
+        source
             .initialize_wallet_security()
             .execute(WalletProfileSecurityCommand {
                 profile_id: profile.id.clone(),
@@ -3123,6 +3635,15 @@ mod tests {
         assert_eq!(summary.restored_credential_count, 1);
         assert_eq!(
             destination
+                .get_wallet_backup_receipt()
+                .execute(WalletBackupReceiptCommand {
+                    profile_id: summary.profile_id.clone(),
+                })
+                .expect("recovered receipt query"),
+            None
+        );
+        assert_eq!(
+            destination
                 .get_active_wallet_profile()
                 .execute()
                 .expect("active profile")
@@ -3153,7 +3674,7 @@ mod tests {
             destination
                 .list_credentials()
                 .execute(CredentialProfileQuery {
-                    profile_id: summary.profile_id,
+                    profile_id: summary.profile_id.clone(),
                 })
                 .expect("recovered credentials")
                 .len(),
@@ -3505,6 +4026,47 @@ mod tests {
 
         drop(compose());
         drop(compose_headless());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn mobile_development_routes_require_tls_for_remote_proving() {
+        drop(
+            compose_mobile_development_standalone_from_routes(
+                "wss://laptop.example.invalid:8443/api/v4/graphql/ws",
+                "https://laptop.example.invalid:8443/api/v4/graphql",
+                "wss://laptop.example.invalid:10000",
+                "https://laptop.example.invalid",
+            )
+            .expect("explicit TLS standalone routes compose without network I/O"),
+        );
+        assert!(matches!(
+            compose_mobile_development_standalone_from_routes(
+                "ws://100.64.0.1:8088/api/v4/graphql/ws",
+                "http://100.64.0.1:8088/api/v4/graphql",
+                "ws://100.64.0.1:9944",
+                "http://100.64.0.1:6300",
+            ),
+            Err(
+                HeadlessCompositionError::InvalidMidnightStandaloneConfiguration(
+                    MidnightStandaloneConfigError::InvalidProofEndpoint
+                )
+            )
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn mobile_development_routes_accept_the_reviewed_loopback_stack() {
+        drop(
+            compose_mobile_development_standalone_from_routes(
+                "ws://127.0.0.1:8088/api/v4/graphql/ws",
+                "http://127.0.0.1:8088/api/v4/graphql",
+                "ws://127.0.0.1:9944",
+                "http://127.0.0.1:6300",
+            )
+            .expect("reviewed localhost standalone routes compose without network I/O"),
+        );
     }
 
     #[test]

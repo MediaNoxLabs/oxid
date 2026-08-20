@@ -9,6 +9,7 @@
 - Contract reference: `midnight-identity-solution-examples` commit `e4a92a6be2cc6dc34f68261f10c19c9312043807`, `packages/contracts/vault/src/passport-vault.compact`, SHA-256 `2ebc5b34dd440bc9a9736408f29f5003e7a78f26a564b392be2af36de69102f4`
 - Related: ADR-0001, ADR-0003, ADR-0004, ADR-0006, ADR-0013, ADR-0015, ADR-0017, ADR-0020, ADR-0021, ADR-0024, ADR-0038, ADR-0042, ADR-0045, ADR-0050, issues #2 and #31
 - Implementation state: the exact public multi-lock behavior, Compact Digital Passport policy verification, standalone product adapter, owner-private durable standalone ledger, headless flow, and Dioxus mobile journey are implemented; live Compact state and transactions remain issue #31
+- Amended by: ADR-0068
 
 ## Context
 

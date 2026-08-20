@@ -11,16 +11,22 @@ final class NativeCustodyTests: XCTestCase {
     func testNativeCompositionUsesDeviceCustodyOrFailsClosed() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         application.launch()
-        let createButton = application.buttons["Create and continue"]
-        if createButton.waitForExistence(timeout: 5) {
+        let createWallet = application.buttons["Create new wallet"]
+        if createWallet.waitForExistence(timeout: 5) {
             XCTAssertTrue(
-                application.buttons["Choose complete wallet backup and recover"].exists,
+                application.buttons["Restore from backup"].exists,
                 "a fresh installation must expose complete-wallet recovery before profile creation"
             )
-            createButton.tap()
+            createWallet.tap()
+            application.buttons["Create and continue"].tap()
+            XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
+            application.buttons["Skip for now"].tap()
         }
 
-        let settings = application.buttons["Settings"]
+        let profileMenu = application.buttons["Open profile menu"]
+        XCTAssertTrue(profileMenu.waitForExistence(timeout: 15))
+        profileMenu.tap()
+        let settings = application.buttons["Open settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 15))
         settings.tap()
         let uninitialized = application.staticTexts["Uninitialized · Operating system"]
@@ -40,7 +46,7 @@ final class NativeCustodyTests: XCTestCase {
             return
         }
 
-        application.buttons["Assets"].tap()
+        application.buttons["Wallet"].tap()
         let activate = application.buttons["Activate protected Midnight account"]
         XCTAssertTrue(activate.waitForExistence(timeout: 10))
         activate.tap()

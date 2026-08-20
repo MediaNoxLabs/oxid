@@ -7,10 +7,14 @@
 
 use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
-use oxid_foundation::OpaqueIdError;
+use oxid_foundation::{OpaqueIdError, UnixTimestampMillis};
+use oxid_platform_ports::{ClockPort, PlatformError};
 use oxid_wallet_domain::WalletProfileId;
 
-use crate::{SensitiveOperationConfirmation, SensitiveWalletOperationError, validate_confirmation};
+use crate::{
+    SensitiveOperationConfirmation, SensitiveWalletOperationError, WalletProfileRepositoryError,
+    validate_confirmation,
+};
 
 /// Maximum encrypted package accepted at the application boundary.
 ///
@@ -41,6 +45,137 @@ pub const RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY: &str =
     "Recover one complete wallet into an empty destination.";
 /// Fixed filename for the complete-wallet successor to custody-only backups.
 pub const COMPLETE_WALLET_BACKUP_FILE_NAME: &str = "oxid-wallet.oxidbak";
+
+/// Profile-scoped fact recording the latest complete-wallet document export
+/// that both encrypted successfully and was accepted by the operating-system
+/// document exporter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WalletBackupReceiptView {
+    pub completed_at_millis: u64,
+}
+
+/// Input for profile-scoped backup receipt commands and queries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletBackupReceiptCommand {
+    pub profile_id: String,
+}
+
+/// Outgoing persistence boundary for the non-secret completion fact only.
+///
+/// Implementations must not persist the selected path, filename, encrypted
+/// archive bytes, recovery secret, native authorization result, or key data.
+pub trait WalletBackupReceiptRepository: Send + Sync {
+    fn load_complete_backup_at(
+        &self,
+        profile_id: &WalletProfileId,
+    ) -> Result<Option<UnixTimestampMillis>, WalletProfileRepositoryError>;
+
+    fn record_complete_backup_at(
+        &self,
+        profile_id: &WalletProfileId,
+        completed_at: UnixTimestampMillis,
+    ) -> Result<(), WalletProfileRepositoryError>;
+}
+
+/// Incoming query for the latest successful complete-wallet document export.
+pub trait GetWalletBackupReceiptUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: WalletBackupReceiptCommand,
+    ) -> Result<Option<WalletBackupReceiptView>, WalletBackupReceiptError>;
+}
+
+/// Incoming command called only after the document exporter reports success.
+pub trait RecordWalletBackupReceiptUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: WalletBackupReceiptCommand,
+    ) -> Result<WalletBackupReceiptView, WalletBackupReceiptError>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WalletBackupReceiptError {
+    InvalidProfileIdentifier(OpaqueIdError),
+    Platform(PlatformError),
+    Persistence(WalletProfileRepositoryError),
+}
+
+impl fmt::Display for WalletBackupReceiptError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidProfileIdentifier(error) => error.fmt(formatter),
+            Self::Platform(error) => error.fmt(formatter),
+            Self::Persistence(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for WalletBackupReceiptError {}
+
+/// Application service that keeps backup completion profile-scoped and
+/// monotonic even if the platform clock moves backwards.
+pub struct WalletBackupReceiptService<R, C> {
+    repository: Arc<R>,
+    clock: Arc<C>,
+}
+
+impl<R, C> WalletBackupReceiptService<R, C> {
+    #[must_use]
+    pub const fn new(repository: Arc<R>, clock: Arc<C>) -> Self {
+        Self { repository, clock }
+    }
+}
+
+impl<R, C> GetWalletBackupReceiptUseCase for WalletBackupReceiptService<R, C>
+where
+    R: WalletBackupReceiptRepository + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute(
+        &self,
+        command: WalletBackupReceiptCommand,
+    ) -> Result<Option<WalletBackupReceiptView>, WalletBackupReceiptError> {
+        let profile_id = WalletProfileId::parse(command.profile_id)
+            .map_err(WalletBackupReceiptError::InvalidProfileIdentifier)?;
+        self.repository
+            .load_complete_backup_at(&profile_id)
+            .map(|receipt| {
+                receipt.map(|completed_at| WalletBackupReceiptView {
+                    completed_at_millis: completed_at.value(),
+                })
+            })
+            .map_err(WalletBackupReceiptError::Persistence)
+    }
+}
+
+impl<R, C> RecordWalletBackupReceiptUseCase for WalletBackupReceiptService<R, C>
+where
+    R: WalletBackupReceiptRepository + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute(
+        &self,
+        command: WalletBackupReceiptCommand,
+    ) -> Result<WalletBackupReceiptView, WalletBackupReceiptError> {
+        let profile_id = WalletProfileId::parse(command.profile_id)
+            .map_err(WalletBackupReceiptError::InvalidProfileIdentifier)?;
+        let previous = self
+            .repository
+            .load_complete_backup_at(&profile_id)
+            .map_err(WalletBackupReceiptError::Persistence)?;
+        let observed = self
+            .clock
+            .now()
+            .map_err(WalletBackupReceiptError::Platform)?;
+        let completed_at = previous.map_or(observed, |previous| previous.max(observed));
+        self.repository
+            .record_complete_backup_at(&profile_id, completed_at)
+            .map_err(WalletBackupReceiptError::Persistence)?;
+        Ok(WalletBackupReceiptView {
+            completed_at_millis: completed_at.value(),
+        })
+    }
+}
 
 /// Validated recovery secret. Formatting and logging never expose its contents.
 pub struct WalletRecoverySecret(Vec<u8>);
@@ -542,12 +677,84 @@ fn validate_exact_confirmation(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    };
 
     use super::*;
 
     #[derive(Default)]
     struct RecordingPort(Mutex<usize>);
+
+    struct ReceiptRepository {
+        receipt: Mutex<Option<UnixTimestampMillis>>,
+    }
+
+    impl WalletBackupReceiptRepository for ReceiptRepository {
+        fn load_complete_backup_at(
+            &self,
+            profile_id: &WalletProfileId,
+        ) -> Result<Option<UnixTimestampMillis>, WalletProfileRepositoryError> {
+            if profile_id.as_str() != "profile_test" {
+                return Err(WalletProfileRepositoryError::NotFound);
+            }
+            self.receipt
+                .lock()
+                .map(|receipt| *receipt)
+                .map_err(|_| WalletProfileRepositoryError::Unavailable)
+        }
+
+        fn record_complete_backup_at(
+            &self,
+            profile_id: &WalletProfileId,
+            completed_at: UnixTimestampMillis,
+        ) -> Result<(), WalletProfileRepositoryError> {
+            if profile_id.as_str() != "profile_test" {
+                return Err(WalletProfileRepositoryError::NotFound);
+            }
+            *self
+                .receipt
+                .lock()
+                .map_err(|_| WalletProfileRepositoryError::Unavailable)? = Some(completed_at);
+            Ok(())
+        }
+    }
+
+    struct AdjustableClock(AtomicU64);
+
+    impl ClockPort for AdjustableClock {
+        fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
+            Ok(UnixTimestampMillis::new(self.0.load(Ordering::Relaxed)))
+        }
+    }
+
+    struct FailingClock;
+
+    impl ClockPort for FailingClock {
+        fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
+            Err(PlatformError::ClockUnavailable)
+        }
+    }
+
+    struct UnavailableReceiptRepository;
+
+    impl WalletBackupReceiptRepository for UnavailableReceiptRepository {
+        fn load_complete_backup_at(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<Option<UnixTimestampMillis>, WalletProfileRepositoryError> {
+            Err(WalletProfileRepositoryError::Unavailable)
+        }
+
+        fn record_complete_backup_at(
+            &self,
+            _: &WalletProfileId,
+            _: UnixTimestampMillis,
+        ) -> Result<(), WalletProfileRepositoryError> {
+            Err(WalletProfileRepositoryError::Unavailable)
+        }
+    }
 
     impl WalletPortableBackupPort for RecordingPort {
         fn export_portable_backup(
@@ -716,5 +923,104 @@ mod tests {
             PortableWalletBackupDocumentKind::CompleteWallet.file_name(),
             "oxid-wallet.oxidbak"
         );
+    }
+
+    #[test]
+    fn backup_receipt_is_absent_until_recorded_and_never_regresses() {
+        let repository = Arc::new(ReceiptRepository {
+            receipt: Mutex::new(None),
+        });
+        let clock = Arc::new(AdjustableClock(AtomicU64::new(200)));
+        let service = WalletBackupReceiptService::new(repository, Arc::clone(&clock));
+        let command = || WalletBackupReceiptCommand {
+            profile_id: "profile_test".to_owned(),
+        };
+
+        assert_eq!(
+            GetWalletBackupReceiptUseCase::execute(&service, command())
+                .expect("initial query succeeds"),
+            None
+        );
+        assert_eq!(
+            RecordWalletBackupReceiptUseCase::execute(&service, command())
+                .expect("receipt records"),
+            WalletBackupReceiptView {
+                completed_at_millis: 200,
+            }
+        );
+        clock.0.store(100, Ordering::Relaxed);
+        assert_eq!(
+            RecordWalletBackupReceiptUseCase::execute(&service, command())
+                .expect("older clock observation is accepted monotonically"),
+            WalletBackupReceiptView {
+                completed_at_millis: 200,
+            }
+        );
+    }
+
+    #[test]
+    fn backup_receipt_rejects_unknown_profiles() {
+        let service = WalletBackupReceiptService::new(
+            Arc::new(ReceiptRepository {
+                receipt: Mutex::new(None),
+            }),
+            Arc::new(AdjustableClock(AtomicU64::new(200))),
+        );
+
+        assert_eq!(
+            RecordWalletBackupReceiptUseCase::execute(
+                &service,
+                WalletBackupReceiptCommand {
+                    profile_id: "profile_unknown".to_owned(),
+                },
+            ),
+            Err(WalletBackupReceiptError::Persistence(
+                WalletProfileRepositoryError::NotFound,
+            ))
+        );
+    }
+
+    #[test]
+    fn backup_receipt_preserves_invalid_clock_and_persistence_failures() {
+        let repository = Arc::new(ReceiptRepository {
+            receipt: Mutex::new(None),
+        });
+        let failing_clock = WalletBackupReceiptService::new(repository, Arc::new(FailingClock));
+        assert_eq!(
+            RecordWalletBackupReceiptUseCase::execute(
+                &failing_clock,
+                WalletBackupReceiptCommand {
+                    profile_id: "profile_test".to_owned(),
+                },
+            ),
+            Err(WalletBackupReceiptError::Platform(
+                PlatformError::ClockUnavailable,
+            ))
+        );
+
+        let unavailable = WalletBackupReceiptService::new(
+            Arc::new(UnavailableReceiptRepository),
+            Arc::new(AdjustableClock(AtomicU64::new(200))),
+        );
+        assert_eq!(
+            GetWalletBackupReceiptUseCase::execute(
+                &unavailable,
+                WalletBackupReceiptCommand {
+                    profile_id: "profile_test".to_owned(),
+                },
+            ),
+            Err(WalletBackupReceiptError::Persistence(
+                WalletProfileRepositoryError::Unavailable,
+            ))
+        );
+        assert!(matches!(
+            GetWalletBackupReceiptUseCase::execute(
+                &unavailable,
+                WalletBackupReceiptCommand {
+                    profile_id: "not a profile".to_owned(),
+                },
+            ),
+            Err(WalletBackupReceiptError::InvalidProfileIdentifier(_))
+        ));
     }
 }

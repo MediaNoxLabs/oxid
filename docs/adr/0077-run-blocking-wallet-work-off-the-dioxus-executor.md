@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/dioxus-wallet/src/worker/mod.rs`
 - Tracking: issues #2 and #42
 - Implementation state: every native Dioxus use-case path that may reach persistence, custody, cryptography, transport, or non-trivial protocol work executes or is polled on an 8 MiB background thread; the remaining direct paths are the explicitly bounded parser, published-snapshot, and adapter-worker cancellation controls listed below, completing issue #42's call-site classification
+- Amended by: ADR-0079, ADR-0080
 
 ## Context
 
