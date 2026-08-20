@@ -7,9 +7,11 @@ use std::{error::Error, fmt};
 use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
 
 mod chain;
+mod dust_registration;
 mod transaction;
 
 pub use chain::*;
+pub use dust_registration::*;
 pub use transaction::*;
 
 /// Stable identifier for one wallet profile.

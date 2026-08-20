@@ -11,6 +11,7 @@ use oxid_wallet_domain::{ProfileName, ProfileNameError, WalletProfile, WalletPro
 mod backup;
 mod chain;
 mod dust;
+mod dust_registration;
 mod security;
 mod shielded;
 mod transaction;
@@ -18,6 +19,7 @@ mod transaction;
 pub use backup::*;
 pub use chain::*;
 pub use dust::*;
+pub use dust_registration::*;
 pub use security::*;
 pub use shielded::*;
 pub use transaction::*;
