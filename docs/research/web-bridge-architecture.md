@@ -10,9 +10,10 @@
 ## Verdict
 
 **The custody half of the thesis is right, well-evidenced, and already shipped
-by someone else in this exact ecosystem. The no-infrastructure half does not
-survive contact with the browser platform or with Midnight's proving model. And
-the transport the brief leads with — USB — is the one that cannot work.**
+by someone else in this exact ecosystem. The no-infrastructure half survives —
+network peers are not infrastructure we operate — with one exception the bridge
+cannot engineer away: proving. And the transport the brief leads with — USB — is
+the one that cannot work.**
 
 The recommendation is to **invert the build order**: ship a QR-based remote
 approval channel first, settle the byte-signing question by ADR second, treat
@@ -34,17 +35,45 @@ browsers**."* That last clause cuts both ways: it rules out the phone as prover
 behind any local transport, **and it independently kills the wasm-web-wallet
 alternative on mobile.**
 
-**2. "No infrastructure" is already untrue, and the real principle is
-narrower.** Oxid requires an indexer, a node, and a proof server on
-`OXID_MIDNIGHT_PROOF_SERVER_URL` (port 6300, which the docs say *"should not be
-changed"*); ADR-0097's development phone profile terminates TLS through
-Tailscale Serve. The blueprint's actual wording is *no mandatory Oxid-hosted
-backend* — i.e. **no Oxid-operated relay that sees user traffic.** That is
-achievable and worth defending. "No infrastructure" is not, and conflating them
-will produce bad decisions. The escape hatch for proving already exists as a
-specification: MPS-0004's TEE-attested delegated proving, which
-`midnight-confidential-space-attestation` already implements with
-`requireHwModel: ['GCP_AMD_SEV_SNP']` and attestation-gated `prove()`.
+**2. The no-infrastructure principle mostly holds — but it has exactly one
+soft spot, and it is the proof server.** Two kinds of service dependency get
+conflated here and they are not comparable:
+
+- **Network peer services.** The indexer and the substrate node are offered by
+  Midnight network peers, and Midnight publishes their endpoints. Depending on
+  them is *network participation*, not infrastructure we operate — the same
+  relationship a Bitcoin wallet has with a public Electrum server or an
+  Ethereum wallet with an RPC provider. They are an **availability**
+  dependency, they are swappable, and they see only what any chain observer
+  sees. They do not count against the principle.
+- **The proof server is categorically different**, because it receives
+  **witness material** — the secret inputs to the circuit. That makes it a
+  **trust** dependency, not merely an availability one. It is why the default
+  is loopback (`127.0.0.1:6300`, and the docs say the port *"should not be
+  changed"*), why ADR-0027 permits plain HTTP only on loopback and requires
+  HTTPS for anything else, and why Midnight has a whole problem statement
+  (MPS-0004) about making delegated proving trustworthy rather than just
+  available.
+
+So the accurate statement is narrower than my first pass: **the wallet has no
+Oxid-operated backend, and its only trust-bearing service dependency is a proof
+server the user controls.** That is a strong position and worth defending
+verbatim as the principle.
+
+What actually breaks is a *smaller* claim than "no infrastructure": the idea
+that a phone-held wallet behind a local transport could avoid a proof server
+**by proving on the phone**. It cannot — proving is *"infeasible in WASM on
+mobile browsers"* per MPS-0004, prover keys are 10–80 MB against a 1 MB
+native-messaging cap, and shielded spends are proof-authorized rather than
+signature-authorized. The bridge therefore inherits the proof-server dependency
+rather than eliminating it, and the honest design question is *whose* proof
+server and under what attestation — which MPS-0004 answers with TEE-attested
+delegated proving, already implemented in
+`midnight-confidential-space-attestation` with `requireHwModel:
+['GCP_AMD_SEV_SNP']` and attestation-gated `prove()`. Note that ADR-0097's
+development phone profile already terminates TLS through Tailscale Serve, so
+the "user-controlled but not on this device" case is one we have solved once
+before, for development.
 
 **3. FIDO built the proposed design, measured it, and abandoned it.** caBLE v1
 carried data over BLE GATT. Adam Langley, who designed it: *"BLE GATT
