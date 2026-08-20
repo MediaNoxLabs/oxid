@@ -68,9 +68,12 @@ run_ui() {
   ./scripts/check-ui-copy-labels.sh
   ./scripts/check-ui-profile-release.sh
   cargo check -p oxid-ui-dioxus
-  cargo check -p oxid-ui-dioxus --features ui-profile-dev
-  cargo check -p oxid-ui-dioxus --features ui-profile-demo
-  cargo test -p oxid-ui-dioxus --features ui-profile-demo
+  # Adapter-only profile builds type-check the profile code itself, so they
+  # state app-profile-authority deliberately. An application build must reach
+  # the same code through oxid-app's guarded features instead.
+  cargo check -p oxid-ui-dioxus --features ui-profile-dev,app-profile-authority
+  cargo check -p oxid-ui-dioxus --features ui-profile-demo,app-profile-authority
+  cargo test -p oxid-ui-dioxus --features ui-profile-demo,app-profile-authority
   cargo check -p oxid-app
   cargo check -p oxid-app --no-default-features --features mobile
   cargo check -p oxid-app --no-default-features --features mobile,standalone-development

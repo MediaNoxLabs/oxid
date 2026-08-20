@@ -16,10 +16,10 @@ mobile = ["dioxus/mobile", "oxid-ui-dioxus/mobile"]
 web = ["dioxus/web"]
 # Opt-in developer presentation profile. Composition authority remains with a
 # standalone feature and is compile-time guarded in main.rs.
-ui-profile-dev = ["oxid-ui-dioxus/ui-profile-dev"]
+ui-profile-dev = ["oxid-ui-dioxus/ui-profile-dev", "oxid-ui-dioxus/app-profile-authority"]
 # Opt-in fixture bootstrap presentation. It is accepted only with the
 # deterministic standalone-development composition.
-ui-profile-demo = ["oxid-ui-dioxus/ui-profile-demo"]
+ui-profile-demo = ["oxid-ui-dioxus/ui-profile-demo", "oxid-ui-dioxus/app-profile-authority"]
 # Explicit simulator/emulator composition. This never changes the default
 # production-facing composition selected by a normal application build.
 standalone-development = []
