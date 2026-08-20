@@ -51,6 +51,8 @@ const PREPROD_STATE_DIR_ENV: &str = "OXID_PREPROD_E2E_STATE_DIR";
 const PREPROD_NETWORK_ID: &str = "preprod";
 const PREPROD_MANIFEST_START: &str = "OXID_PREPROD_FUNDING_MANIFEST_V1";
 const PREPROD_MANIFEST_END: &str = "OXID_PREPROD_FUNDING_MANIFEST_END";
+const PREPROD_OBSERVATION_START: &str = "OXID_PREPROD_FUNDING_OBSERVATION_V1";
+const PREPROD_OBSERVATION_END: &str = "OXID_PREPROD_FUNDING_OBSERVATION_END";
 const PREPROD_PROFILE_ID: &str = "oxid-preprod-registration-e2e-2026-08";
 const PREPROD_SIGNING_KEY_ID: &str = "oxid-preprod-e2e-2026-01";
 const PREPROD_PROFILE_VALID_FROM_SECONDS: u64 = 1_782_864_000;
@@ -845,6 +847,33 @@ fn await_preprod_registration_preview(
     }
 }
 
+fn observe_registration_readiness(
+    application: &ApplicationServices,
+    profile_id: &str,
+) -> (&'static str, Option<u16>, Option<String>) {
+    match application.prepare_wallet_dust_registration().execute(
+        PrepareWalletDustRegistrationCommand {
+            profile_id: profile_id.to_owned(),
+        },
+    ) {
+        Ok(preview) => (
+            "prepared",
+            Some(preview.input_count),
+            Some(preview.registered_night.atomic_units),
+        ),
+        Err(WalletDustRegistrationError::Operation(
+            WalletDustRegistrationPortError::NoEligibleNight,
+        )) => ("no_eligible_night", Some(0), Some("0".to_owned())),
+        Err(WalletDustRegistrationError::Operation(
+            WalletDustRegistrationPortError::RegistrationAlreadyCurrent,
+        )) => ("already_registered", None, None),
+        Err(WalletDustRegistrationError::Operation(
+            WalletDustRegistrationPortError::InsufficientRegistrationAllowance,
+        )) => ("allowance_pending", None, None),
+        Err(error) => panic!("read-only registration readiness observation failed: {error}"),
+    }
+}
+
 fn await_live_night_balance(
     application: &ApplicationServices,
     profile_id: &str,
@@ -1106,6 +1135,156 @@ fn preprod_deterministic_funding_manifest_exposes_public_addresses_only() {
         .expect("exact preprod harness commit");
     let manifest = build_preprod_funding_manifest(&root, selected_case, commit);
     println!("{manifest}");
+}
+
+/// Reads the deterministic PreProd A/B funding topology without creating a
+/// checkpoint, journal, proof, transaction, or single-use case marker. The
+/// emitted fields are public aggregate observations only; address derivation
+/// is checked against the same manifest without reproducing seed material.
+#[test]
+#[ignore = "requires explicit preprod opt-in, an out-of-band master seed, and live indexer reads"]
+fn preprod_funding_observation_is_read_only() {
+    assert_eq!(
+        std::env::var(PREPROD_ENABLE_ENV).ok().as_deref(),
+        Some("1"),
+        "read-only PreProd observation requires explicit opt-in"
+    );
+    let root = load_preprod_master_seed().expect("preprod master seed input");
+    let selected_case = std::env::var(PREPROD_CASE_INDEX_ENV)
+        .map_err(|_| PreprodHarnessInputError::CaseIndex)
+        .and_then(|value| PreprodCase::parse(&value))
+        .expect("bounded PreProd case index");
+    let commit = std::env::var(PREPROD_COMMIT_ENV)
+        .map_err(|_| PreprodHarnessInputError::Commit)
+        .and_then(|value| parse_commit(&value))
+        .expect("exact PreProd observation commit");
+    let expected_manifest = build_preprod_funding_manifest(&root, selected_case, commit.clone());
+    let config = authenticated_preprod_config();
+
+    let wallet_a_profiles = Arc::new(InMemoryWalletProfileRepository::new());
+    let wallet_a_security = Arc::new(DevelopmentWalletSecurity::new(
+        Arc::new(SystemClock),
+        Arc::new(OneShotRootRandom::new(copy_root(&root))),
+    ));
+    let wallet_a = compose_live(
+        config.clone(),
+        wallet_a_profiles,
+        wallet_a_security,
+        None,
+        None,
+        None,
+        None,
+    );
+    let (wallet_a_profile_id, wallet_a_night_address, wallet_a_shielded_address) =
+        initialize_account(
+            &wallet_a,
+            "PreProd observation wallet A",
+            PREPROD_NETWORK_ID,
+            selected_case.wallet_a_account_index,
+        );
+    assert_eq!(
+        wallet_a_night_address,
+        expected_manifest.wallet_a.night_unshielded_address
+    );
+    assert_eq!(
+        wallet_a_shielded_address,
+        expected_manifest.wallet_a.night_shielded_address
+    );
+
+    let wallet_b_profiles = Arc::new(InMemoryWalletProfileRepository::new());
+    let wallet_b_security = Arc::new(DevelopmentWalletSecurity::new(
+        Arc::new(SystemClock),
+        Arc::new(OneShotRootRandom::new(copy_root(&root))),
+    ));
+    let wallet_b = compose_live(
+        config,
+        wallet_b_profiles,
+        wallet_b_security,
+        None,
+        None,
+        None,
+        None,
+    );
+    let (wallet_b_profile_id, wallet_b_night_address, wallet_b_shielded_address) =
+        initialize_account(
+            &wallet_b,
+            "PreProd observation wallet B",
+            PREPROD_NETWORK_ID,
+            selected_case.wallet_b_account_index,
+        );
+    assert_eq!(
+        wallet_b_night_address,
+        expected_manifest.wallet_b.night_unshielded_address
+    );
+    assert_eq!(
+        wallet_b_shielded_address,
+        expected_manifest.wallet_b.night_shielded_address
+    );
+
+    let wallet_a_night = live_night_balance(&wallet_a, &wallet_a_profile_id);
+    let wallet_b_night = live_night_balance(&wallet_b, &wallet_b_profile_id);
+    let wallet_a_shielded = synchronize_shielded(&wallet_a, &wallet_a_profile_id);
+    let wallet_b_shielded = synchronize_shielded(&wallet_b, &wallet_b_profile_id);
+    let wallet_a_dust = synchronize_dust(&wallet_a, &wallet_a_profile_id);
+    let wallet_b_dust = synchronize_dust(&wallet_b, &wallet_b_profile_id);
+    assert_complete_shielded_snapshot(&wallet_a_shielded);
+    assert_complete_shielded_snapshot(&wallet_b_shielded);
+    assert_eq!(wallet_a_dust.state, "synced");
+    assert_eq!(wallet_a_dust.failure, None);
+    assert_eq!(wallet_b_dust.state, "synced");
+    assert_eq!(wallet_b_dust.failure, None);
+    let (wallet_a_registration, wallet_a_input_count, wallet_a_registered_night) =
+        observe_registration_readiness(&wallet_a, &wallet_a_profile_id);
+    let (wallet_b_registration, wallet_b_input_count, wallet_b_registered_night) =
+        observe_registration_readiness(&wallet_b, &wallet_b_profile_id);
+
+    println!("{PREPROD_OBSERVATION_START}");
+    println!("commit={commit}");
+    println!("network={PREPROD_NETWORK_ID}");
+    println!("caseIndex={}", selected_case.case_index);
+    println!("walletA.unshieldedNightAtomicUnits={wallet_a_night}");
+    println!(
+        "walletA.shieldedNightAtomicUnits={}",
+        shielded_balance(&wallet_a_shielded, NATIVE_SHIELDED_TOKEN_TYPE)
+    );
+    println!(
+        "walletA.shieldedNoteCount={}",
+        wallet_a_shielded
+            .owned_note_count
+            .expect("complete A note count")
+    );
+    println!("walletA.dustAtomicUnits={}", dust_balance(&wallet_a_dust));
+    println!("walletA.registrationStatus={wallet_a_registration}");
+    println!(
+        "walletA.eligibleUnshieldedOutputCount={}",
+        wallet_a_input_count.map_or_else(|| "unknown".to_owned(), |count| count.to_string())
+    );
+    println!(
+        "walletA.registeredNightAtomicUnits={}",
+        wallet_a_registered_night.unwrap_or_else(|| "unknown".to_owned())
+    );
+    println!("walletB.unshieldedNightAtomicUnits={wallet_b_night}");
+    println!(
+        "walletB.shieldedNightAtomicUnits={}",
+        shielded_balance(&wallet_b_shielded, NATIVE_SHIELDED_TOKEN_TYPE)
+    );
+    println!(
+        "walletB.shieldedNoteCount={}",
+        wallet_b_shielded
+            .owned_note_count
+            .expect("complete B note count")
+    );
+    println!("walletB.dustAtomicUnits={}", dust_balance(&wallet_b_dust));
+    println!("walletB.registrationStatus={wallet_b_registration}");
+    println!(
+        "walletB.eligibleUnshieldedOutputCount={}",
+        wallet_b_input_count.map_or_else(|| "unknown".to_owned(), |count| count.to_string())
+    );
+    println!(
+        "walletB.registeredNightAtomicUnits={}",
+        wallet_b_registered_night.unwrap_or_else(|| "unknown".to_owned())
+    );
+    println!("{PREPROD_OBSERVATION_END}");
 }
 
 /// Proves the complete fresh-wallet PreProd journey with deterministic,

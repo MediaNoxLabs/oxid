@@ -47,6 +47,9 @@ standalone-funded-shielded-finality:
 preprod-registration-funding-manifest:
     ./scripts/derive-preprod-registration-funding-manifest.sh
 
+preprod-registration-observe:
+    ./scripts/observe-preprod-registration-funding.sh
+
 preprod-registration-e2e:
     ./scripts/test-preprod-registration-e2e.sh
 
