@@ -5913,6 +5913,8 @@ name = "oxid-app"
 version = "0.1.0"
 dependencies = [
  "dioxus",
+ "getrandom 0.2.17",
+ "getrandom 0.4.3",
  "oxid-brand-build",
  "oxid-composition",
  "oxid-ui-dioxus",
