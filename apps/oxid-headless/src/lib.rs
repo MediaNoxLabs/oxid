@@ -1980,7 +1980,7 @@ impl HeadlessWallet {
             "wallet.dust.registration.cancel_submission",
         ) {
             Ok(params) => params,
-            Err(dispatch) => return dispatch,
+            Err(response) => return Dispatch::continue_with(response),
         };
         let profile_id = match self.active_profile_id(request.id.clone()) {
             Ok(profile_id) => profile_id,
@@ -2008,7 +2008,7 @@ impl HeadlessWallet {
             "wallet.dust.registration.reconcile_submission",
         ) {
             Ok(params) => params,
-            Err(dispatch) => return dispatch,
+            Err(response) => return Dispatch::continue_with(response),
         };
         let profile_id = match self.active_profile_id(request.id.clone()) {
             Ok(profile_id) => profile_id,
@@ -2045,7 +2045,7 @@ impl HeadlessWallet {
         let params =
             match dust_registration_draft_params(request.id.clone(), request.params, method) {
                 Ok(params) => params,
-                Err(dispatch) => return dispatch,
+                Err(response) => return Dispatch::continue_with(response),
             };
         let profile_id = match self.active_profile_id(request.id.clone()) {
             Ok(profile_id) => profile_id,
@@ -2080,7 +2080,7 @@ impl HeadlessWallet {
         let params =
             match dust_registration_draft_params(request.id.clone(), request.params, method) {
                 Ok(params) => params,
-                Err(dispatch) => return dispatch,
+                Err(response) => return Dispatch::continue_with(response),
             };
         let profile_id = match self.active_profile_id(request.id.clone()) {
             Ok(profile_id) => profile_id,
@@ -3960,13 +3960,13 @@ fn dust_registration_draft_params(
     id: Option<String>,
     params: Value,
     method: &'static str,
-) -> Result<TransactionDraftParams, Dispatch> {
+) -> Result<TransactionDraftParams, Response> {
     serde_json::from_value(params).map_err(|_| {
-        Dispatch::continue_with(Response::error(
+        Response::error(
             id,
             "invalid_params",
             format!("{method} requires only a string draftId"),
-        ))
+        )
     })
 }
 

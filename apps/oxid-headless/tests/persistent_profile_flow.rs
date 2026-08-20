@@ -471,7 +471,9 @@ fn utxo(owner: &str, intent_byte: &str, output_index: i64, value: &str) -> Value
         "tokenType": NIGHT_TOKEN_TYPE,
         "value": value,
         "intentHash": intent_byte.repeat(32),
-        "outputIndex": output_index
+        "outputIndex": output_index,
+        "ctime": 1_700_000_000,
+        "registeredForDustGeneration": false
     })
 }
 
