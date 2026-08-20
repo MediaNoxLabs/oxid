@@ -3,13 +3,11 @@
 
 set -euo pipefail
 
-expected_revision="f8d0299d863922db6c409d08098941e833b70d69"
-expected_patch="arrayref = { git = \"https://github.com/droundy/arrayref.git\", rev = \"${expected_revision}\" }"
-expected_lock_source="source = \"git+https://github.com/droundy/arrayref.git?rev=${expected_revision}#${expected_revision}\""
-expected_nix_hash='arrayrefOutputHash = "sha256-INuaZ5B8eEFnizANKFvSsHnBmQGoSEo1Jvxo1RLWxLY=";'
+expected_lock_source='source = "registry+https://github.com/rust-lang/crates.io-index"'
+expected_checksum='checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"'
 
-if ! grep -Fqx "$expected_patch" Cargo.toml; then
-  echo "arrayref must remain pinned to the reviewed canonical revision ${expected_revision}." >&2
+if grep -Eq '^arrayref[[:space:]]*=' Cargo.toml; then
+  echo "arrayref must not be patched to an independently fetched source." >&2
   exit 1
 fi
 
@@ -21,8 +19,9 @@ arrayref_lock_block=$(awk '
 ' Cargo.lock)
 
 if [[ "$arrayref_lock_block" != *'version = "0.3.9"'* ]] ||
-  [[ "$arrayref_lock_block" != *"$expected_lock_source"* ]]; then
-  echo "Cargo.lock does not resolve the reviewed arrayref 0.3.9 Git source." >&2
+  [[ "$arrayref_lock_block" != *"$expected_lock_source"* ]] ||
+  [[ "$arrayref_lock_block" != *"$expected_checksum"* ]]; then
+  echo "Cargo.lock does not resolve the reviewed arrayref 0.3.9 registry archive." >&2
   exit 1
 fi
 
@@ -31,11 +30,10 @@ if grep -Fqx 'name = "proc-macro1"' Cargo.lock; then
   exit 1
 fi
 
-if ! grep -Fqx "      ${expected_nix_hash}" nix/packages/default.nix ||
-  [[ $(grep -Fxc '            "arrayref-0.3.9" = arrayrefOutputHash;' nix/packages/default.nix) -ne 2 ]] ||
-  [[ $(grep -Fxc '              "arrayref-0.3.9" = arrayrefOutputHash;' nix/packages/default.nix) -ne 1 ]]; then
-  echo "Every Nix Cargo vendor derivation must use the reviewed arrayref output hash." >&2
+if grep -Fq 'arrayrefOutputHash' nix/packages/default.nix ||
+  grep -Eq '"arrayref-0\.3\.9"[[:space:]]*=' nix/packages/default.nix; then
+  echo "Nix must consume the checksum-locked registry archive without a Git output hash." >&2
   exit 1
 fi
 
-echo "arrayref canonical source pin passed."
+echo "arrayref reviewed registry archive pin passed."

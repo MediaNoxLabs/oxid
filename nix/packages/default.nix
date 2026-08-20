@@ -4,7 +4,6 @@
   perSystem =
     { pkgs, self', ... }:
     let
-      arrayrefOutputHash = "sha256-INuaZ5B8eEFnizANKFvSsHnBmQGoSEo1Jvxo1RLWxLY=";
       midnightDidPackages = inputs.midnight-did-toolchain.packages.${pkgs.stdenv.hostPlatform.system};
       presentationCompactArtifacts = pkgs.callPackage ./presentation-compact-artifacts.nix {
         compactMidnight = midnightDidPackages.compact-midnight;
@@ -31,7 +30,6 @@
         cargoLock = {
           lockFile = ../../Cargo.lock;
           outputHashes = {
-            "arrayref-0.3.9" = arrayrefOutputHash;
             "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
           };
         };
@@ -67,7 +65,6 @@
         cargoLock = {
           lockFile = ../../Cargo.lock;
           outputHashes = {
-            "arrayref-0.3.9" = arrayrefOutputHash;
             "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
           };
         };
@@ -129,7 +126,6 @@
           cargoLock = {
             lockFile = ../../Cargo.lock;
             outputHashes = {
-              "arrayref-0.3.9" = arrayrefOutputHash;
               "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
             };
           };
