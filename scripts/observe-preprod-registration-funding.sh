@@ -32,7 +32,8 @@ OXID_PREPROD_E2E_COMMIT="$(git -C "$repository_root" rev-parse --verify HEAD)"
 build_output=""
 if ! build_output="$(
   cd "$repository_root"
-  cargo test --locked --no-run --message-format=json -p oxid-composition --lib 2>&1
+  cargo test --locked --profile preprod-live --no-run --message-format=json \
+    -p oxid-composition --lib 2>&1
 )"; then
   printf '%s\n' "$build_output" >&2
   exit 1

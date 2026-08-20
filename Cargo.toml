@@ -201,3 +201,10 @@ all = "warn"
 codegen-units = 1
 lto = "thin"
 strip = "symbols"
+
+# Live PreProd acceptance exercises the production cryptographic replay path.
+# Keep it optimized while retaining symbols for bounded failure diagnosis.
+[profile.preprod-live]
+inherits = "release"
+debug = 1
+strip = "none"

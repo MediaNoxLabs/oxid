@@ -141,6 +141,19 @@ uses the unchanged ADR-0098 chain-identity gate. This authenticates a reviewed
 test configuration and exact chain identity, not endpoint ownership, indexer
 correctness, protocol compatibility, or production authority.
 
+The read-only observer and guarded write helper compile their ignored tests
+through the repository-defined `preprod-live` Cargo profile. It inherits the
+release optimizer used by production cryptographic code while retaining debug
+symbols for bounded failure diagnosis. Plain debug replay is not accepted as a
+live performance result: on the 2026-08-20 PreProd history it remained
+correctly `syncing` without a transport failure but processed only 218,252
+events in 900 seconds. The controlled 16,385-event segmentation regression took
+9.41 seconds in the ordinary debug profile and 0.35 seconds in `preprod-live`
+on the same host, while retaining the assertion that the subscription is closed
+before the first fold. The optimized profile changes evidence tooling only; it
+does not select routes, raise resource limits, enable a write, or alter a
+production artifact.
+
 Deployment-profile v1 requires SSI routes, but this acceptance harness never
 composes SSI. Its signed SSI fields therefore use explicit `.invalid` hosts and
 the profile is documented as Midnight-only. A capability-scoped successor is
