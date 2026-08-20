@@ -733,6 +733,8 @@ fn map_spendable_utxo(utxo: &IndexerUtxo) -> Result<MidnightSpendableUtxo, Walle
         value: utxo.value,
         intent_hash,
         output_index: utxo.output_index,
+        created_at_seconds: utxo.created_at_seconds,
+        registered_for_dust_generation: utxo.registered_for_dust_generation,
     })
 }
 
@@ -1015,6 +1017,8 @@ pub(crate) struct IndexerUtxo {
     pub(crate) value: u128,
     pub(crate) intent_hash: String,
     pub(crate) output_index: u32,
+    pub(crate) created_at_seconds: Option<u64>,
+    pub(crate) registered_for_dust_generation: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1343,6 +1347,8 @@ struct GraphqlUtxo {
     value: String,
     intent_hash: String,
     output_index: i64,
+    ctime: Value,
+    registered_for_dust_generation: bool,
 }
 
 fn decode_event(
@@ -1436,6 +1442,8 @@ fn decode_utxo(
             .map_err(|_| IndexerTransportError::InvalidData)?,
         intent_hash: normalize_hex_32(&utxo.intent_hash)?,
         output_index,
+        created_at_seconds: optional_nonnegative_i64(&utxo.ctime)?,
+        registered_for_dust_generation: utxo.registered_for_dust_generation,
     })
 }
 
@@ -1449,6 +1457,17 @@ fn normalize_hex_32(value: &str) -> Result<String, IndexerTransportError> {
 
 fn nonnegative_i64(value: i64) -> Result<u64, IndexerTransportError> {
     u64::try_from(value).map_err(|_| IndexerTransportError::InvalidData)
+}
+
+fn optional_nonnegative_i64(value: &Value) -> Result<Option<u64>, IndexerTransportError> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_i64()
+        .ok_or(IndexerTransportError::InvalidData)
+        .and_then(nonnegative_i64)
+        .map(Some)
 }
 
 fn map_indexer_snapshot(
@@ -1756,6 +1775,8 @@ mod tests {
             value,
             intent_hash: intent.to_string().repeat(64),
             output_index,
+            created_at_seconds: Some(1_700_000_000),
+            registered_for_dust_generation: false,
         }
     }
 
@@ -1867,6 +1888,11 @@ mod tests {
     #[test]
     fn standalone_query_matches_the_reviewed_indexer_v4_fee_shape() {
         assert!(INDEXER_QUERY.contains("fees {\n            paidFees\n          }"));
+        assert_eq!(INDEXER_QUERY.matches("ctime").count(), 2);
+        assert_eq!(
+            INDEXER_QUERY.matches("registeredForDustGeneration").count(),
+            2
+        );
         assert!(!INDEXER_QUERY.lines().any(|line| line.trim() == "fee"));
     }
 
@@ -2039,7 +2065,9 @@ mod tests {
                         "tokenType": NATIVE_NIGHT_TOKEN_TYPE,
                         "value": value,
                         "intentHash": "cd".repeat(32),
-                        "outputIndex": 0
+                        "outputIndex": 0,
+                        "ctime": 1_700_000_000,
+                        "registeredForDustGeneration": false
                     }],
                     "spentUtxos": []
                 }
@@ -2064,6 +2092,92 @@ mod tests {
             ),
             Err(IndexerTransportError::InvalidData)
         );
+    }
+
+    #[test]
+    fn decoder_requires_nonnegative_creation_time_and_registration_state() {
+        let expected = address();
+        let fixture = || {
+            json!({
+                "unshieldedTransactions": {
+                    "__typename": "UnshieldedTransaction",
+                    "transaction": {
+                        "id": 1,
+                        "hash": "ab".repeat(32),
+                        "block": { "height": 1, "timestamp": 2 },
+                        "__typename": "RegularTransaction",
+                        "transactionResult": { "status": "SUCCESS" },
+                        "fees": { "paidFees": "3" }
+                    },
+                    "createdUtxos": [{
+                        "owner": expected.value(),
+                        "tokenType": NATIVE_NIGHT_TOKEN_TYPE,
+                        "value": "1",
+                        "intentHash": "cd".repeat(32),
+                        "outputIndex": 0,
+                        "ctime": 1_700_000_000,
+                        "registeredForDustGeneration": true
+                    }],
+                    "spentUtxos": []
+                }
+            })
+        };
+
+        let decoded = decode_event(&fixture(), expected.value())
+            .expect("complete v4 UTXO metadata should decode");
+        let IndexerEvent::Transaction { transaction, .. } = decoded else {
+            panic!("fixture should decode as a transaction");
+        };
+        assert_eq!(
+            transaction.created[0].created_at_seconds,
+            Some(1_700_000_000)
+        );
+        assert!(transaction.created[0].registered_for_dust_generation);
+
+        for invalid_ctime in [json!(-1), json!("1700000000"), json!(1.5)] {
+            let mut invalid = fixture();
+            invalid["unshieldedTransactions"]["createdUtxos"][0]["ctime"] = invalid_ctime;
+            assert_eq!(
+                decode_event(&invalid, expected.value()),
+                Err(IndexerTransportError::InvalidData)
+            );
+        }
+
+        let mut null_ctime = fixture();
+        null_ctime["unshieldedTransactions"]["createdUtxos"][0]["ctime"] = Value::Null;
+        let decoded = decode_event(&null_ctime, expected.value())
+            .expect("the reviewed v4 schema permits a null creation time");
+        let IndexerEvent::Transaction { transaction, .. } = decoded else {
+            panic!("fixture should decode as a transaction");
+        };
+        assert_eq!(transaction.created[0].created_at_seconds, None);
+
+        let mut missing_ctime = fixture();
+        missing_ctime["unshieldedTransactions"]["createdUtxos"][0]
+            .as_object_mut()
+            .expect("UTXO fixture should be an object")
+            .remove("ctime");
+        assert_eq!(
+            decode_event(&missing_ctime, expected.value()),
+            Err(IndexerTransportError::InvalidData)
+        );
+
+        for missing_or_null in [true, false] {
+            let mut invalid = fixture();
+            if missing_or_null {
+                invalid["unshieldedTransactions"]["createdUtxos"][0]
+                    .as_object_mut()
+                    .expect("UTXO fixture should be an object")
+                    .remove("registeredForDustGeneration");
+            } else {
+                invalid["unshieldedTransactions"]["createdUtxos"][0]["registeredForDustGeneration"] =
+                    Value::Null;
+            }
+            assert_eq!(
+                decode_event(&invalid, expected.value()),
+                Err(IndexerTransportError::InvalidData)
+            );
+        }
     }
 
     #[test]
@@ -2220,14 +2334,12 @@ mod tests {
         ));
 
         resolve(source.sync(&profile(), &network())).expect("live catchup should succeed");
-        assert_eq!(
-            source
-                .spendable_account(&profile(), &network())
-                .expect("live inputs should become available")
-                .utxos
-                .len(),
-            1
-        );
+        let spendable = source
+            .spendable_account(&profile(), &network())
+            .expect("live inputs should become available");
+        assert_eq!(spendable.utxos.len(), 1);
+        assert_eq!(spendable.utxos[0].created_at_seconds, Some(1_700_000_000));
+        assert!(!spendable.utxos[0].registered_for_dust_generation);
         assert_eq!(
             *transport
                 .starting_cursors
