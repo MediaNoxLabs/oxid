@@ -1,0 +1,186 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Factory runbook — phase 1
+
+How to actually run the factory on this repository. The charter says *why*
+([charter.md](charter.md)), the FSM says *what state work is in*
+([fsm.md](fsm.md)); this says *what to type* and *what will refuse to work*.
+
+Phase 1 is deliberately narrow: **many agents review, one human merges.** No
+agent merges anything, and nothing routes through a coordination server.
+
+## What is installed, and from where
+
+| Piece | Version | Source |
+| --- | --- | --- |
+| `pi-coding-agent` | nixpkgs pin | `nix/devshells/default.nix`, `devShells.default` |
+| `dev-loops` | `0.9.0` | `.pi/settings.json` → project-local `.pi/npm` |
+| `pi-subagents` | `0.42.1` | same |
+| `@input-output-hk/agent-review-pi` | `0.5.0` | same, **GitHub Packages — needs a token** |
+
+The devshell's `shellHook` reads `.pi/settings.json`, compares each pinned
+version against `.pi/npm/node_modules/<pkg>/package.json`, and installs only
+what is missing or mismatched. Two properties worth knowing: it is skipped
+entirely when `CI` is set, because CI never needs Pi tooling and the block
+performs unpinned network installs; and the private review package is skipped
+with a printed notice when no token is present, so the shell still works
+without one.
+
+**To get the review package**, export a GitHub token with `read:packages`
+before entering the shell — `GITHUB_TOKEN`, `GH_TOKEN`, or `GH_TOKENS` are all
+accepted, in that order of preference:
+
+```bash
+export GH_TOKEN="$(gh auth token)"   # if your gh login carries read:packages
+nix develop
+```
+
+Never write that token into repository configuration or diagnostics.
+
+## Three concurrency mechanisms, which are easy to confuse
+
+This is the part most likely to be misread, because all three look like
+"running several agents at once" and they compose rather than compete.
+
+| | What fans out | Configured in | Who decides |
+| --- | --- | --- | --- |
+| **Gate fan-out** | Review **angles** over one diff — `scope`, `correctness`, `coverage`, `architecture`, `security` | `.devloops` → `refinement.fanOut: 3`, `mode: parallel`, `roles` | dev-loops, automatically at a gate |
+| **Sub-agent delegation** | Child **pi sessions** with their own jobs | `pi-subagents`, prompt-driven — no config file | the agent, when asked |
+| **Panel review** | Multiple **requested reviewers** on a PR | GitHub review requests + the `ai-review` label | a human, by requesting review |
+
+**Gate fan-out** is the one that runs without being asked. `refinement.fanOut`
+is how many angle reviews run concurrently; `roles` is the pool they are drawn
+from. `gates.maxFanoutReviewers: 8` caps it.
+
+**Sub-agent delegation** ships six builtins — `scout` (codebase recon),
+`researcher` (external facts with sources), `worker` (implementation),
+`reviewer` (review and small fixes), `oracle` (second opinion, edits nothing),
+`delegate` (general). Installing the extension **does not** start a background
+reviewer; it gives the session a delegation tool. If every implementation
+should be reviewed, the project instructions have to say so. Rule of thumb from
+the package: `scout` before you understand the code, `researcher` before you
+trust an external fact, `worker` to implement, `reviewer` to check, `oracle`
+when the decision itself is the risky part.
+
+**Panel review** is `agent-peer-review`'s mechanism: when several reviewers are
+requested, the **first to claim becomes the anchor** and posts the primary
+review; every later claimant is an **enricher** that adds one consolidated
+second opinion after the primary lands. That ordering is what stops five agents
+posting five overlapping reviews.
+
+## The label profile
+
+`agent-peer-review` treats **GitHub as the source of truth**, so routing is
+labels plus native review requests — not a queue we operate. The profile is
+bootstrapped on this repository:
+
+- **`ai-review`** (`#0e8a16`) — the trigger. Without it nothing routes.
+- **Skill labels** (`#5319e7`) — `security`, `architecture`, `performance`,
+  `testing`, `api`, `react-native`, `did`, `oid4vc`, `cryptography`,
+  `second-opinion`. Each loads the matching review skill.
+
+> `documentation` is part of the package's default profile but already existed
+> here for issue triage, so it was **left untouched** rather than recoloured.
+> A future `agent-review labels bootstrap` will try to reconcile it; that is
+> cosmetic, and worth declining if it would confuse issue triage.
+
+Typical request:
+
+```bash
+agent-review request --repo MediaNoxLabs/oxid --pr 42 --reviewers yshyn-iohk --skills security,architecture
+```
+
+`claim` pins the reviewed commit SHA in a claim-marker comment, so a review
+cannot silently be attributed to a later push. `complete` posts a native PR
+review.
+
+## Running a loop
+
+```bash
+npx dev-loops@0.9.0 doctor    # environment readiness
+npx dev-loops@0.9.0 gates     # resolve and print every configured angle
+```
+
+`gates` is the authoritative config validator — it exercises the real loader,
+so a `.devloops` that `gates` parses is a `.devloops` that will run. Prefer it
+over a YAML lint.
+
+**`doctor` reports 3/4 and that is expected.** The warning is *"Subagent command
+available"*, because `doctor` looks for a standalone `subagent` executable while
+`pi-subagents@0.42.1` exposes the capability as a Pi extension. **Do not add a
+dummy binary to make the check pass** — it would make a real absence
+undetectable later. The check that matters is `gates` parsing.
+
+## What will refuse to work, by design
+
+- **No agent merges.** `autonomy.humanMergeOnly: true` and
+  `stopAt: [pre-approval, merge]`. `approval.humanHandoff` offers an assignee
+  drawn from CODEOWNERS at the pre-approval boundary; the operator confirms it.
+- **Fan-out must show its work.** `gates.requireFanoutEvidence: true` and
+  `requireFanoutProvenance: true` — a gate must record not just that five
+  angles reported, but which reviewer produced which finding. Provenance is what
+  makes a collapsed panel detectable, where one reviewer's output is replayed
+  under several angle names.
+- **Foreign angles are rejected.** `gates.rejectForeignAngles: true`, so an
+  angle name not in the configured set cannot smuggle itself into evidence.
+- **Draft first.** `workflow.requireDraftFirst: true`, and
+  `requireRetrospective: true`.
+- **No Copilot gate.** `refinement.maxCopilotRounds: 0` selects
+  local-harness-only review (`draft_gate → pre_approval_gate`), which is correct
+  while this repository has no Copilot reviewer configured. Raising it above `0`
+  without configuring one will stall the loop.
+
+## One decision still needed from the owner
+
+**`models:` is deliberately absent.** Per-role model assignment
+(`models.conductor`, `models.roles`) is the mechanism behind the factory's
+provider-agnostic goal — a cheap model for mechanical angles, a strong one for
+`security` and `architecture` — and it is where the cost/quality tuning lives.
+
+It is unset because `dev-loops@0.9.0` ships **no defaults for it and documents
+no model-identifier format**, so any value written here would be a guess that
+fails at dispatch rather than at load. Closing it needs one decision naming real
+identifiers for the conductor and for each of the five roles. Until then every
+angle runs on whatever the session's default model is, which works but wastes
+the cheapest available saving.
+
+`personas.*.defaultModel` is `null` for the same reason, and should be filled in
+the same pass.
+
+## Why there is no `worktree:` section
+
+`copyOnInit` / `linkOnInit` provision **gitignored** files into a fresh
+worktree. Oxid needs neither: the Compact and ZK artifact closures arrive as
+devshell environment exports rather than files, `.envrc` is tracked, and
+`target/` and `.direnv/` must not be shared between worktrees — `.direnv`
+carries absolute paths and `target` is both huge and machine-specific. The only
+remaining candidate is `.pi/npm/node_modules`, which the schema explicitly warns
+against targeting.
+
+Recorded here because an empty section and a considered absence look identical
+in a diff.
+
+## Operating notes
+
+- **Space out merges.** CI uses `cancel-in-progress`, so several merges in quick
+  succession cancel intermediate `develop` runs and leave only the tip verified.
+  Either pace them or state explicitly that verification is tip-only.
+- **Verify then merge, in separate commands.** Chaining a check and a merge with
+  `||` or `&&` has already merged a red PR once here. Assert zero non-passing
+  checks as its own command:
+  ```bash
+  gh pr checks <n> -R MediaNoxLabs/oxid | awk -F'\t' '$2!="pass"'
+  ```
+- **A red gate is not always a reason to act.** A withdrawn dependency reports as
+  a failure while the safe action is to change nothing — see issue #113. Read
+  what the gate is actually asserting before remediating it.
+
+## Phase 2 candidates, not built
+
+- `models:` per-role assignment (above) — the only blocking one.
+- CI-built review references so the private package is not a per-machine
+  install.
+- Wiring `.pi/settings.json`'s `skills` key once a repository skill tree exists;
+  it is absent today, so there is nothing to point at.
+- Raising `pi-subagents` from `0.42.1` toward `0.52.1`; ten minor versions have
+  shipped, and the pin is deliberate but ageing.

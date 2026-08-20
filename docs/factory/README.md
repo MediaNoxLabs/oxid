@@ -12,6 +12,7 @@ human holds merge authority.
 | [fsm.md](fsm.md) | The work-item finite state machine: states, transitions, gate conditions, failure edges. |
 | [claim-protocol.md](claim-protocol.md) | Decentralized claim/lease protocol so agents on different machines never double-work an item. |
 | [metrics.md](metrics.md) | The measurements the factory watches and the current baselines. |
+| [runbook.md](runbook.md) | Phase 1 operations: what is installed, the three concurrency mechanisms, the label profile, and what refuses to work by design. |
 
 Tooling lives in [`.pi/extensions/factory.ts`](../../.pi/extensions/factory.ts)
 (a [pi](https://pi.dev) repo-local extension) so any engineer or agent with the
