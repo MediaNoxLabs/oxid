@@ -771,10 +771,29 @@ identifier is follow-up work, not a reason to silently rename issued records.
 
 [Issue #13](https://github.com/MediaNoxLabs/oxid/issues/13) tracks the separate
 Tier-2 browser build: `cargo check -p oxid-app --no-default-features --features
-web --target wasm32-unknown-unknown` currently stops in the pre-existing
-`getrandom 0.2` graph because its JavaScript backend feature is not enabled.
-Keep that repair target-scoped; it must not add browser-only dependencies to
-the green Tier-1 Android and iOS graphs.
+web --target wasm32-unknown-unknown`. The `getrandom` entropy split is
+**resolved** — `.cargo/config.toml` supplies the `getrandom_backend="wasm_js"`
+cfg for the browser triple and `apps/oxid/Cargo.toml` declares all three
+majors with their JavaScript backends, as recorded in
+`docs/dependencies/wasm-web-entropy.md`. Measured 2026-08-21 in the pinned
+devshell, the check now reaches `blst`'s C build and fails there on the Nix
+compiler wrapper rather than on any Oxid dependency:
+
+```
+Warning: supplying the --target wasm32-unknown-unknown != <host> argument to a
+nix-wrapped compiler may not work correctly - cc-wrapper is currently not
+designed with multi-target compilers in mind.
+clang: error: unsupported option '-fzero-call-used-regs=used-gpr' for target
+'wasm32-unknown-unknown'
+```
+
+The devshell's clang does support wasm targets; the wrapper injects host
+hardening flags that clang rejects for that target, and the wrapper says so
+itself. So the next step is a target-scoped compiler override, not a
+dependency change. Keep that repair target-scoped; it must not add
+browser-only dependencies to the green Tier-1 Android and iOS graphs, and it
+must not relax hardening flags for the host targets to satisfy the browser
+one.
 
 ## Prototype provenance
 
