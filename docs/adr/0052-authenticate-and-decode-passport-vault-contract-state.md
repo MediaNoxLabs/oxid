@@ -9,6 +9,7 @@
 - Contract source: `midnight-identity-solution-examples` commit `e4a92a6be2cc6dc34f68261f10c19c9312043807`, `packages/contracts/vault/src/passport-vault.compact`, SHA-256 `2ebc5b34dd440bc9a9736408f29f5003e7a78f26a564b392be2af36de69102f4`
 - Related: ADR-0003, ADR-0004, ADR-0006, ADR-0015, ADR-0020, ADR-0022, ADR-0035, ADR-0044, ADR-0050, ADR-0051, and issue #31
 - Implementation state: immutable Nix artifact composition, exact native Rust state decoding, deterministic generated-client fixture, and a read-only headless decoding method are implemented; authenticated indexer acquisition, cached/freshness composition, and contract-call transactions remain issue #31
+- Amended by: ADR-0053, ADR-0054
 
 ## Context
 

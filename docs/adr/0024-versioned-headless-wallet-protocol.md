@@ -6,7 +6,7 @@
 - Implementation state: Version 1 transport, profile lifecycle,
   development-only protected-key and Midnight account-derivation flows, live
   account/DUST sync, canonical transfer authorization, and shutdown implemented
-- Amended by: ADR-0032 adds non-blocking adapter-owned DUST sessions
+- Amended by: ADR-0032 adds non-blocking adapter-owned DUST sessions; also amended by ADR-0033, ADR-0034, ADR-0035, ADR-0036, ADR-0037, ADR-0038, ADR-0039, ADR-0040, ADR-0046, ADR-0080, ADR-0095
 
 ## Context
 

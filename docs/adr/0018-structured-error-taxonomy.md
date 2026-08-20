@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 10 and 13
 - Implementation state: Partially exercised in M0; cross-domain policy pending
+- Amended by: ADR-0038, ADR-0039, ADR-0040, ADR-0080
 
 ## Context
 

@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/dioxus-wallet/src/format.rs`, and the Dioxus wallet screens
 - Tracking: issues #2, #65, and #77
 - Implementation state: Dioxus routes user-visible machine values through one reviewed module; exact asset/date formatting and a repository copy gate are active
+- Amended by: ADR-0095
 
 ## Context
 

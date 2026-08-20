@@ -8,6 +8,7 @@
 - Supersedes: ADR-0010 and ADR-0039 statements that all SIOP behavior is queued
 - Amends: ADR-0004, ADR-0007, ADR-0010, ADR-0011, ADR-0013, ADR-0017, ADR-0018, ADR-0020, ADR-0021, ADR-0023, ADR-0024, ADR-0029, ADR-0037, and ADR-0039
 - Implementation state: deterministic request-by-reference, consented self-issued DID authentication, signed ID Token response, independent standalone verifier, headless flow, and Dioxus mobile flow are implemented; OpenID4VP credential presentation, live transport, native ingress, and production custody remain unavailable
+- Amended by: ADR-0043
 
 ## Context
 

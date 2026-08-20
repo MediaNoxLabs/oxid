@@ -4,6 +4,7 @@
 - Date: 2026-08-12
 - Source: Blueprint §§3, 7–8, 12–13 and [issue #9](https://github.com/MediaNoxLabs/oxid/issues/9)
 - Implementation state: Canonical unshielded NIGHT prepare/authorize/draft flow implemented; ADR-0027 now supplies the subsequent native development/headless submission stage
+- Amended by: ADR-0079
 
 ## Context
 

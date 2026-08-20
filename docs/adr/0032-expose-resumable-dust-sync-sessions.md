@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/dust/syncer.rs` and `mobile-bench/dioxus-wallet/src/app.rs`
 - Amends: ADR-0024 and ADR-0031
 - Implementation state: Oxid-owned status/use cases, simulated and native standalone controllers, v1 headless methods, Assets-page progress/cancellation, partial checkpoint resume, and native GraphQL-WebSocket worker fixtures implemented; production mobile custody remains pending
+- Amended by: ADR-0080
 
 ## Context
 

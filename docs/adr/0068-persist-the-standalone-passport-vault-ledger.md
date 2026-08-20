@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3–7, 12–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/vault.rs` and headless vault verbs
 - Tracking: issues #2 and #31
-- Supersedes: ADR-0051's process-local-only standalone repository choice
+- Supersedes: ADR-0051's process-local-only standalone repository choice and ADR-0067's standalone-ledger persistence choice
 - Implementation state: bounded owner-private JSON persistence, environment-aware composition, headless three-process conformance, truthful mobile copy, and iOS/Android restart assertions are implemented
 
 ## Context
