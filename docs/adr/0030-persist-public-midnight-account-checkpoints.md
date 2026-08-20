@@ -5,6 +5,7 @@
 - Source: Blueprint §§3, 5–8, 12–13, 17–18 and [issue #15](https://github.com/MediaNoxLabs/oxid/issues/15)
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/BACKLOG.md` Path B
 - Implementation state: Versioned public unshielded checkpoint, incremental resume, clean-replay recovery, and executable restart/outage coverage implemented; private DUST and shielded checkpoints are implemented separately under ADR-0031/0033
+- Amended by: ADR-0033
 
 ## Context
 

@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, Dioxus `WalletBackupCard`, and `mobile-bench/wallet-core/src/store/backup.rs`
 - Tracking: issues #2 and #33
 - Implementation state: iOS and Android document transport, complete-wallet Settings export and first-run recovery, an explicit legacy custody-only importer, and fresh-install complete-wallet iOS Simulator and Android emulator picker round trips are implemented; physical-device evidence remains issue #33 work
+- Amended by: ADR-0081
 
 ## Context
 

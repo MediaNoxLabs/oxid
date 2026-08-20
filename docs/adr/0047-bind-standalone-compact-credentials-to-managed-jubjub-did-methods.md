@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, Digital Passport holder and DID paths
 - Reference package: `midnight-verifiable-credentials` commit `39b1354212620b396e914b29603e6a38f2656546`
 - Related: ADR-0037, ADR-0039, ADR-0045, ADR-0046, issues #27–29
+- Amends: ADR-0039 by requiring issuance to select a managed Jubjub assertion method
 - Implementation state: standalone DID creation, OpenID4VCI consent, and exact Compact re-issuance bind a protected Jubjub assertion method to the credential holder reference; ADR-0048 implements presentation-time re-authorization, while native custody, issuer anchoring, and proof execution remain fail-closed
 
 ## Context

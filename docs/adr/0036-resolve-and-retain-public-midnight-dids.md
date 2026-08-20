@@ -7,6 +7,7 @@
 - Standards source: `midnight-did` commit `6016f094f16228d008cc35c40eb2aa1bc1f7b01` and `midnight-did-resolver` commit `70bec499287e31736f0775ad8e210bc59799749b`
 - Amends: ADR-0007, ADR-0008, ADR-0013, ADR-0021, ADR-0023, ADR-0024, and ADR-0029
 - Implementation state: DID inventory, bounded live/standalone resolution, public persistence, headless flow, and mobile presentation implemented; lifecycle mutation and native production storage remain queued
+- Amended by: ADR-0037
 
 ## Context
 

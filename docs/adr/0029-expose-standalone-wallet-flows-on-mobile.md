@@ -5,6 +5,7 @@
 - Source: Blueprint §§3, 6–8, 12–13, 16–18 and [issue #14](https://github.com/MediaNoxLabs/oxid/issues/14)
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`
 - Implementation state: Explicit development mobile composition, protected account activation, receive QR, and staged simulated transfer UI implemented; native custody and live production routes remain fail-closed
+- Amended by: ADR-0033, ADR-0034, ADR-0035, ADR-0036, ADR-0037, ADR-0038, ADR-0039, ADR-0040, ADR-0042, ADR-0043, ADR-0079, ADR-0094, ADR-0096
 
 ## Context
 

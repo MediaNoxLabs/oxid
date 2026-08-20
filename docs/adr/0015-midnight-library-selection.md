@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 8 and 17
 - Implementation state: Binding for M2; account reads, protected derivation,
+- Amended by: ADR-0033, ADR-0042, ADR-0043, ADR-0044, ADR-0045
   canonical submission, and measured native local DUST proving are implemented
 
 ## Context

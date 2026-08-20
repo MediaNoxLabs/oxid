@@ -104,6 +104,7 @@ require_command() {
 }
 
 run_quality() {
+  ./scripts/check-adr-links.sh
   require_command cargo-audit
   require_command cargo-deny
   ./scripts/check-advisories.sh
