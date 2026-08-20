@@ -92,12 +92,12 @@ owner-private checkpoint, and public journal; the already-included status is
 restored idempotently through the reconciliation use case, and fresh replay
 must produce the exact sender delta and exact stable recipient balance. This
 does not exercise unknown-outcome chain rescanning and is not evidence for a
-process/native-custody restart. ADR-0099 now implements typed DUST
+process/native-custody restart. ADR-0100 now implements typed DUST
 registration without fee-authority borrowing. A fresh recipient still cannot
 claim origination evidence until a guarded funded run proves registration,
 later generated-DUST observation/resynchronization, and the next spend.
 
-ADR-0099 adds one static, test-only signed PreProd envelope and public verifier
+ADR-0100 adds one static, test-only signed PreProd envelope and public verifier
 root for its ignored funded registration acceptance flow. It enters through
 this unchanged verifier and node-genesis gate; normal production composition
 does not select it. The profile is explicitly Midnight-only: deployment-
@@ -156,7 +156,7 @@ pushed.
 - Funded unshielded and genesis-authority shielded
   prepare/authorize/prove/submit/finalize/adapter-reconstruction evidence is
   complete for the headless standalone adapter. Repository/headless/Dioxus
-  protected-DUST registration is implemented under ADR-0099; its funded
+  protected-DUST registration is implemented under ADR-0100; its funded
   preprod registration-to-recovery/shielded-origination evidence (#92), funded
   mobile UI journeys, physical proof budgets, and a real production deployment
   remain open.

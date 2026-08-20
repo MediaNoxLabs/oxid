@@ -190,6 +190,7 @@ check_workspace_dependencies oxid-composition \
   oxid-passport-vault-application oxid-platform-ports oxid-presentation-application \
   oxid-protocol-application \
   oxid-wallet-application
+check_workspace_dependencies oxid-mcp
 check_workspace_dependencies oxid-app oxid-brand-build oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
   oxid-capabilities-application oxid-composition oxid-credential-application \

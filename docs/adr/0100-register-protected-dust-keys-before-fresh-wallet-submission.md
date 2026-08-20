@@ -1,4 +1,4 @@
-# ADR-0099: Register protected DUST keys before fresh-wallet submission
+# ADR-0100: Register protected DUST keys before fresh-wallet submission
 
 - Status: Accepted
 - Date: 2026-08-20

@@ -49,7 +49,7 @@ accepts recovery material.
 - DUST registration (repository/headless/Dioxus implemented) -> a distinct
   `WalletDustRegistrationPort`, live `ctime`/unregistered eligibility, explicit
   consent, protected role-0 authorization, role-2 DUST custody, and separated
-  inclusion/DUST-readiness observations under ADR-0099;
+  inclusion/DUST-readiness observations under ADR-0100;
 - headless commands and Assets page -> two incoming adapters over the same use
   cases.
 
@@ -73,7 +73,7 @@ confirmed submit stage and keeps this review boundary intact.
 
 ## Protected DUST registration mapping
 
-ADR-0099 and issue #92 define a distinct vertical capability rather than a
+ADR-0100 and issue #92 define a distinct vertical capability rather than a
 transfer subtype or sync side effect. A registration draft selects only the
 active protected account's native NIGHT UTXOs after a current live indexer fold
 supplies both the canonical creation time and
@@ -334,7 +334,7 @@ genesis-authority spend against the real standalone stack, including finalized
 inclusion, adapter reconstruction, included-status restoration, and nullifier
 replay; the funded test does not exercise unknown-outcome chain rescanning and
 it does not prove process/native-custody restart or a fresh recipient's ability
-to pay DUST. ADR-0099 implements the typed registration path needed to close
+to pay DUST. ADR-0100 implements the typed registration path needed to close
 that repository gap, while guarded funded fresh-wallet evidence remains in
 progress. Development composition persists owner-private DUST/Zswap
 checkpoints plus public submission recovery metadata; protected roots and

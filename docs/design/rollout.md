@@ -123,7 +123,7 @@ thin-app build decision; no runtime brand configuration was added.
    and sparse cursor contract. Fresh-wallet funded registration, later
    generation/recovery, and origination evidence remain issue #92; journal
    compaction after 128 retained barriers remains issue #93.
-7. **Protected DUST registration and fresh-wallet origination** (ADR-0099 /
+7. **Protected DUST registration and fresh-wallet origination** (ADR-0100 /
    issue #92, repository/headless/Dioxus implementation complete): a distinct
    registration port and prepare/consent/authorize/submit ceremony. Planning
    uses only live owned
@@ -188,6 +188,6 @@ stack + shell (delivered by #78), 1b Home (delivered by #79), 2a send wizard
 4b1 developer profile (delivered by #87), 4b2 demo profile (delivered by #88),
 4c authenticated deployment/funded finality (#90), 4d funded shielded finality
 (#91), 4e protected DUST registration/fresh-wallet shielded origination
-(ADR-0099/#92, repository/headless/Dioxus implemented; funded evidence open),
+(ADR-0100/#92, repository/headless/Dioxus implemented; funded evidence open),
 5 per-item. Each remaining slice references the relevant spec section as its
 acceptance criteria, factory-work-item style.

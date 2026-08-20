@@ -448,7 +448,7 @@ journal, restores the already-included status idempotently through the
 reconciliation use case, and proves exact balances after nullifier replay. It
 does not exercise unknown-outcome chain rescanning. This reuses in-process
 development custody and is not process/native-custody restart evidence.
-ADR-0099 now supplies the distinct typed protected-DUST registration boundary;
+ADR-0100 now supplies the distinct typed protected-DUST registration boundary;
 fresh-wallet origination remains issue #92 until a funded run proves
 registration, later generated-DUST observation/resynchronization, and a next
 spend. Fingerprint
@@ -2195,7 +2195,7 @@ to silence the shell probe.
   Until
   issue #93 adds checkpoint-acknowledged compaction, a full 128-record journal
   of included/unresolved barriers must fail unavailable before broadcast.
-- ADR-0099 implements protected DUST registration as a separate
+- ADR-0100 implements protected DUST registration as a separate
   `WalletDustRegistrationPort`, not a transfer mode or sync side effect. A
   fresh wallet intentionally starts at zero DUST. Preparation requires a
   current live account fold with authoritative `ctime` and
