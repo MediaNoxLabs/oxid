@@ -49,7 +49,7 @@ const PREPROD_COMMIT_ENV: &str = "OXID_PREPROD_E2E_COMMIT";
 const PREPROD_PUBLIC_PROVER_ACK_ENV: &str = "OXID_ACKNOWLEDGE_PREPROD_PUBLIC_PROVER_PRIVACY";
 const PREPROD_STATE_DIR_ENV: &str = "OXID_PREPROD_E2E_STATE_DIR";
 const PREPROD_NETWORK_ID: &str = "preprod";
-const PREPROD_MANIFEST_START: &str = "OXID_PREPROD_FUNDING_MANIFEST_V1";
+const PREPROD_MANIFEST_START: &str = "OXID_PREPROD_FUNDING_MANIFEST_V2";
 const PREPROD_MANIFEST_END: &str = "OXID_PREPROD_FUNDING_MANIFEST_END";
 const PREPROD_OBSERVATION_START: &str = "OXID_PREPROD_FUNDING_OBSERVATION_V1";
 const PREPROD_OBSERVATION_END: &str = "OXID_PREPROD_FUNDING_OBSERVATION_END";
@@ -67,15 +67,13 @@ const PREPROD_PROFILE_VERIFYING_KEY: [u8; 32] = [
 ];
 const PREPROD_PROFILE_ENVELOPE: &[u8] =
     include_bytes!("../tests/fixtures/preprod-registration-deployment-profile.json");
-const PREPROD_EXPECTED_A_NIGHT_ATOMIC_UNITS: u128 = 10_000_000_000;
-const PREPROD_EXPECTED_A_SHIELDED_NIGHT_ATOMIC_UNITS: u128 = 10_000_000;
+const PREPROD_TRANSFER_POLICY: &str = "half_observed_shielded_night_minimum_one";
 const PREPROD_EXPECTED_B_NIGHT_ATOMIC_UNITS: u128 = 0;
 const PREPROD_EXPECTED_B_SHIELDED_NIGHT_ATOMIC_UNITS: u128 = 0;
 const PREPROD_EXPECTED_A_ELIGIBLE_UNSHIELDED_OUTPUT_COUNT: u16 = 1;
 const PREPROD_EXPECTED_A_SHIELDED_NOTE_COUNT: u64 = 1;
 const PREPROD_EXPECTED_B_ELIGIBLE_UNSHIELDED_OUTPUT_COUNT: u16 = 0;
 const PREPROD_EXPECTED_B_SHIELDED_NOTE_COUNT: u64 = 0;
-const PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS: u128 = 1_000_000;
 const MAX_PREPROD_INSUFFICIENT_DUST_RETRIES: u8 = 8;
 const MAX_PREPROD_CASE_INDEX: u32 = (WalletHdPathComponent::MAX_INDEX - 1) / 2;
 const TRANSFER_ATOMIC_UNITS: u128 = 5_000_000;
@@ -181,15 +179,12 @@ struct PreprodFundingManifest {
     case_index: u32,
     wallet_a: PreprodPublicAccount,
     wallet_b: PreprodPublicAccount,
-    wallet_a_expected_night_atomic_units: u128,
-    wallet_a_expected_shielded_night_atomic_units: u128,
     wallet_b_expected_night_atomic_units: u128,
     wallet_b_expected_shielded_night_atomic_units: u128,
     wallet_a_expected_eligible_unshielded_output_count: u16,
     wallet_a_expected_shielded_note_count: u64,
     wallet_b_expected_eligible_unshielded_output_count: u16,
     wallet_b_expected_shielded_note_count: u64,
-    shielded_transfer_atomic_units: u128,
 }
 
 impl fmt::Display for PreprodFundingManifest {
@@ -218,16 +213,8 @@ impl fmt::Display for PreprodFundingManifest {
             "walletA.nightShieldedAddress={}",
             self.wallet_a.night_shielded_address
         )?;
-        writeln!(
-            formatter,
-            "walletA.expectedUnshieldedNightAtomicUnits={}",
-            self.wallet_a_expected_night_atomic_units
-        )?;
-        writeln!(
-            formatter,
-            "walletA.expectedShieldedNightAtomicUnits={}",
-            self.wallet_a_expected_shielded_night_atomic_units
-        )?;
+        writeln!(formatter, "walletA.unshieldedNightRequirement=positive")?;
+        writeln!(formatter, "walletA.shieldedNightRequirement=positive")?;
         writeln!(
             formatter,
             "walletA.expectedEligibleUnshieldedOutputCount={}",
@@ -278,11 +265,7 @@ impl fmt::Display for PreprodFundingManifest {
             "walletB.expectedShieldedNoteCount={}",
             self.wallet_b_expected_shielded_note_count
         )?;
-        writeln!(
-            formatter,
-            "transfer.shieldedNightAtomicUnits={}",
-            self.shielded_transfer_atomic_units
-        )?;
+        writeln!(formatter, "transfer.policy={PREPROD_TRANSFER_POLICY}")?;
         formatter.write_str(PREPROD_MANIFEST_END)
     }
 }
@@ -427,9 +410,6 @@ fn build_preprod_funding_manifest(
         case_index: selected_case.case_index,
         wallet_a,
         wallet_b,
-        wallet_a_expected_night_atomic_units: PREPROD_EXPECTED_A_NIGHT_ATOMIC_UNITS,
-        wallet_a_expected_shielded_night_atomic_units:
-            PREPROD_EXPECTED_A_SHIELDED_NIGHT_ATOMIC_UNITS,
         wallet_b_expected_night_atomic_units: PREPROD_EXPECTED_B_NIGHT_ATOMIC_UNITS,
         wallet_b_expected_shielded_night_atomic_units:
             PREPROD_EXPECTED_B_SHIELDED_NIGHT_ATOMIC_UNITS,
@@ -439,7 +419,6 @@ fn build_preprod_funding_manifest(
         wallet_b_expected_eligible_unshielded_output_count:
             PREPROD_EXPECTED_B_ELIGIBLE_UNSHIELDED_OUTPUT_COUNT,
         wallet_b_expected_shielded_note_count: PREPROD_EXPECTED_B_SHIELDED_NOTE_COUNT,
-        shielded_transfer_atomic_units: PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS,
     }
 }
 
@@ -887,6 +866,10 @@ fn observe_registration_readiness(
     }
 }
 
+fn preprod_shielded_transfer_amount(observed_balance: u128) -> Option<u128> {
+    (observed_balance > 0).then(|| (observed_balance / 2).max(1))
+}
+
 fn await_live_night_balance(
     application: &ApplicationServices,
     profile_id: &str,
@@ -1082,8 +1065,8 @@ fn preprod_manifest_derives_separate_accounts_and_emits_only_public_allowlisted_
             "walletA.addressIndex",
             "walletA.nightUnshieldedAddress",
             "walletA.nightShieldedAddress",
-            "walletA.expectedUnshieldedNightAtomicUnits",
-            "walletA.expectedShieldedNightAtomicUnits",
+            "walletA.unshieldedNightRequirement",
+            "walletA.shieldedNightRequirement",
             "walletA.expectedEligibleUnshieldedOutputCount",
             "walletA.expectedShieldedNoteCount",
             "walletB.accountIndex",
@@ -1094,7 +1077,7 @@ fn preprod_manifest_derives_separate_accounts_and_emits_only_public_allowlisted_
             "walletB.expectedShieldedNightAtomicUnits",
             "walletB.expectedEligibleUnshieldedOutputCount",
             "walletB.expectedShieldedNoteCount",
-            "transfer.shieldedNightAtomicUnits",
+            "transfer.policy",
         ]
     );
     assert!(rendered.starts_with(PREPROD_MANIFEST_START));
@@ -1102,15 +1085,15 @@ fn preprod_manifest_derives_separate_accounts_and_emits_only_public_allowlisted_
     assert!(rendered.contains("network=preprod"));
     assert!(rendered.contains("walletA.accountIndex=14"));
     assert!(rendered.contains("walletB.accountIndex=15"));
-    assert!(rendered.contains("walletA.expectedUnshieldedNightAtomicUnits=10000000000"));
-    assert!(rendered.contains("walletA.expectedShieldedNightAtomicUnits=10000000"));
+    assert!(rendered.contains("walletA.unshieldedNightRequirement=positive"));
+    assert!(rendered.contains("walletA.shieldedNightRequirement=positive"));
     assert!(rendered.contains("walletA.expectedEligibleUnshieldedOutputCount=1"));
     assert!(rendered.contains("walletA.expectedShieldedNoteCount=1"));
     assert!(rendered.contains("walletB.expectedUnshieldedNightAtomicUnits=0"));
     assert!(rendered.contains("walletB.expectedShieldedNightAtomicUnits=0"));
     assert!(rendered.contains("walletB.expectedEligibleUnshieldedOutputCount=0"));
     assert!(rendered.contains("walletB.expectedShieldedNoteCount=0"));
-    assert!(rendered.contains("transfer.shieldedNightAtomicUnits=1000000"));
+    assert!(rendered.contains("transfer.policy=half_observed_shielded_night_minimum_one"));
     assert!(!rendered.contains(&encoded_root));
     for forbidden in [
         "seed",
@@ -1123,6 +1106,19 @@ fn preprod_manifest_derives_separate_accounts_and_emits_only_public_allowlisted_
     ] {
         assert!(!rendered.contains(forbidden));
     }
+}
+
+#[test]
+fn preprod_transfer_policy_is_positive_bounded_and_amount_observed() {
+    assert_eq!(preprod_shielded_transfer_amount(0), None);
+    assert_eq!(preprod_shielded_transfer_amount(1), Some(1));
+    assert_eq!(preprod_shielded_transfer_amount(2), Some(1));
+    assert_eq!(preprod_shielded_transfer_amount(3), Some(1));
+    assert_eq!(preprod_shielded_transfer_amount(4), Some(2));
+    assert_eq!(
+        preprod_shielded_transfer_amount(u128::MAX),
+        Some(u128::MAX / 2)
+    );
 }
 
 /// Derives the only public values required to fund a deterministic pair of
@@ -1150,10 +1146,11 @@ fn preprod_deterministic_funding_manifest_exposes_public_addresses_only() {
     println!("{manifest}");
 }
 
-/// Reads the deterministic PreProd A/B funding topology without creating a
-/// checkpoint, journal, proof, transaction, or single-use case marker. The
-/// emitted fields are public aggregate observations only; address derivation
-/// is checked against the same manifest without reproducing seed material.
+/// Reads the deterministic PreProd A/B funding topology without authorization,
+/// proof, persistence, broadcast, or a single-use case marker. Registration
+/// readiness retains one unsigned process-local draft that is discarded with
+/// the test process. Emitted fields are public aggregate observations only;
+/// address derivation is checked without reproducing seed material.
 #[test]
 #[ignore = "requires explicit preprod opt-in, an out-of-band master seed, and live indexer reads"]
 fn preprod_funding_observation_is_read_only() {
@@ -1317,7 +1314,8 @@ fn preprod_funding_observation_is_read_only() {
 /// interoperability test therefore requires a separate explicit privacy
 /// acknowledgement and is not production privacy evidence. The repository
 /// script withholds the master seed from Cargo/build scripts and supplies it
-/// only to this final test process; this module never logs or persists it.
+/// only to the compiled observer and write-test processes; this module never
+/// logs or persists it.
 #[test]
 #[ignore = "requires funded PreProd A/B accounts, public-prover acknowledgement, and explicit opt-in"]
 fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
@@ -1404,10 +1402,10 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
         wallet_b_shielded_address,
         expected_manifest.wallet_b.night_shielded_address
     );
-    assert_eq!(
-        live_night_balance(&wallet_a, &wallet_a_profile_id),
-        PREPROD_EXPECTED_A_NIGHT_ATOMIC_UNITS,
-        "wallet A must receive the exact reviewed unshielded NIGHT funding"
+    let wallet_a_night_before = live_night_balance(&wallet_a, &wallet_a_profile_id);
+    assert!(
+        wallet_a_night_before > 0,
+        "wallet A must receive positive unshielded NIGHT funding"
     );
     assert_eq!(
         live_night_balance(&wallet_b, &wallet_b_profile_id),
@@ -1428,10 +1426,11 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
 
     let wallet_a_shielded_before = synchronize_shielded(&wallet_a, &wallet_a_profile_id);
     assert_complete_shielded_snapshot(&wallet_a_shielded_before);
-    assert_eq!(
-        shielded_balance(&wallet_a_shielded_before, NATIVE_SHIELDED_TOKEN_TYPE),
-        PREPROD_EXPECTED_A_SHIELDED_NIGHT_ATOMIC_UNITS,
-        "wallet A must receive the exact reviewed shielded NIGHT funding"
+    let wallet_a_shielded_night_before =
+        shielded_balance(&wallet_a_shielded_before, NATIVE_SHIELDED_TOKEN_TYPE);
+    assert!(
+        wallet_a_shielded_night_before > 0,
+        "wallet A must receive positive shielded NIGHT funding"
     );
     assert_eq!(
         wallet_a_shielded_before.owned_note_count,
@@ -1451,7 +1450,11 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
         "wallet B must begin with no shielded notes"
     );
 
-    let initial_dust = synchronize_dust(&wallet_a, &wallet_a_profile_id);
+    let initial_dust = synchronize_dust_with_timeout(
+        &wallet_a,
+        &wallet_a_profile_id,
+        Duration::from_secs(15 * 60),
+    );
     assert_eq!(initial_dust.state, "synced");
     assert_eq!(initial_dust.current_cursor, initial_dust.target_cursor);
     assert_eq!(
@@ -1467,7 +1470,8 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
     assert_eq!(prepared.network_id, PREPROD_NETWORK_ID);
     assert_eq!(
         prepared.registered_night.atomic_units,
-        PREPROD_EXPECTED_A_NIGHT_ATOMIC_UNITS.to_string()
+        wallet_a_night_before.to_string(),
+        "the one eligible output must register the exact observed NIGHT principal"
     );
     assert_eq!(
         prepared.input_count, PREPROD_EXPECTED_A_ELIGIBLE_UNSHIELDED_OUTPUT_COUNT,
@@ -1532,7 +1536,7 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
     assert!(!included.reconciliation_allowed);
     assert_eq!(
         live_night_balance(&wallet_a, &wallet_a_profile_id),
-        PREPROD_EXPECTED_A_NIGHT_ATOMIC_UNITS,
+        wallet_a_night_before,
         "registration returns the exact NIGHT principal to wallet A"
     );
 
@@ -1600,20 +1604,27 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
         "adapter reconstruction plus authoritative resynchronization must preserve generated DUST"
     );
 
+    let shielded_transfer_atomic_units =
+        preprod_shielded_transfer_amount(wallet_a_shielded_night_before)
+            .expect("positive observed shielded balance");
+    let wallet_a_expected_shielded_night_after = wallet_a_shielded_night_before
+        .checked_sub(shielded_transfer_atomic_units)
+        .expect("the deterministic shielded transfer is bounded by the observed balance");
     let transfer = reconstructed_a
         .prepare_shielded_wallet_transfer()
         .execute(PrepareShieldedWalletTransferCommand {
             profile_id: wallet_a_profile_id.clone(),
             recipient_address: wallet_b_shielded_address,
             token_type: NATIVE_SHIELDED_TOKEN_TYPE.to_owned(),
-            amount_atomic_units: PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS.to_string(),
+            amount_atomic_units: shielded_transfer_atomic_units.to_string(),
         })
-        .expect("exact PreProd shielded preview after DUST recovery");
+        .expect("deterministic PreProd shielded preview after DUST recovery");
     assert_eq!(transfer.state, "prepared");
     assert_eq!(
         transfer.amount.atomic_units,
-        PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS.to_string()
+        shielded_transfer_atomic_units.to_string()
     );
+    assert_eq!(transfer.input_count, 1);
     assert_eq!(transfer.recipient_kind, "shielded");
     let authorized_transfer = reconstructed_a
         .authorize_wallet_transfer()
@@ -1623,7 +1634,7 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
             authorization_challenge: transfer.authorization_challenge.clone(),
             confirmation: SensitiveOperationConfirmation {
                 title: "Authorize PreProd shielded transfer".to_owned(),
-                summary: "Send the exact reviewed shielded NIGHT amount from A to empty B"
+                summary: "Send the deterministic observed-balance share from A to empty B"
                     .to_owned(),
                 confirmed: true,
             },
@@ -1670,8 +1681,7 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
                 assert_eq!(retained.state, "authorized");
                 assert!(retained.submission_ready);
                 let next_threshold = dust_balance(&observed_dust)
-                    .checked_mul(2)
-                    .filter(|threshold| *threshold > dust_balance(&observed_dust))
+                    .checked_add(1)
                     .expect("next DUST observation threshold is exact");
                 observed_dust = await_dust_balance_at_least(
                     &reconstructed_a,
@@ -1696,7 +1706,7 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
             profile_id: wallet_a_profile_id.clone(),
             recipient_address: transfer.recipient_address.clone(),
             token_type: NATIVE_SHIELDED_TOKEN_TYPE.to_owned(),
-            amount_atomic_units: PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS.to_string(),
+            amount_atomic_units: shielded_transfer_atomic_units.to_string(),
         },
     );
     assert_eq!(
@@ -1733,23 +1743,28 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
     let wallet_a_after = await_shielded_balance(
         &restored_a,
         &wallet_a_profile_id,
-        PREPROD_EXPECTED_A_SHIELDED_NIGHT_ATOMIC_UNITS - PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS,
+        wallet_a_expected_shielded_night_after,
     );
     assert_complete_shielded_snapshot(&wallet_a_after);
     let wallet_b_after = await_shielded_balance(
         &wallet_b,
         &wallet_b_profile_id,
-        PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS,
+        shielded_transfer_atomic_units,
     );
     assert_complete_shielded_snapshot(&wallet_b_after);
     assert_eq!(
         shielded_balance(&wallet_a_after, NATIVE_SHIELDED_TOKEN_TYPE),
-        PREPROD_EXPECTED_A_SHIELDED_NIGHT_ATOMIC_UNITS - PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS
+        wallet_a_expected_shielded_night_after
     );
     assert_eq!(
         shielded_balance(&wallet_b_after, NATIVE_SHIELDED_TOKEN_TYPE),
-        PREPROD_SHIELDED_TRANSFER_ATOMIC_UNITS
+        shielded_transfer_atomic_units
     );
+    assert_eq!(
+        wallet_a_after.owned_note_count,
+        Some(u64::from(wallet_a_expected_shielded_night_after > 0))
+    );
+    assert_eq!(wallet_b_after.owned_note_count, Some(1));
     drop(restored_a);
     drop(wallet_b);
     state.cleanup();

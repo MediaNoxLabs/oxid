@@ -2219,17 +2219,27 @@ to silence the shell probe.
   hardened BIP44 account index supplies A=`2*caseIndex` and B=A+1 through two
   separate test-only custody instances. Output is a closed public manifest of
   exact commit/network/case/account/address indices, A/B NIGHT/shielded receive
-  addresses, exact expected balances/eligible-output/note counts, and exact
-  transfer amount;
+  addresses, positive-value requirements, exact eligible-output/note counts,
+  and the deterministic transfer policy;
   it contains no DUST address/key, secret, digest, UTXO identifier, or
-  transaction material. Fund only A with exactly one 10,000,000,000-atomic
-  public NIGHT output and exactly one 10,000,000-atomic shielded NIGHT note. B
-  begins with no eligible public outputs or shielded notes; the final A-to-B
-  transfer is 1,000,000 atomic shielded NIGHT. DUST must not be externally
-  funded. The scripts unset the
-  exported root before Cargo/build scripts run and pass it only to the final
-  compiled test process. Case indices are single-use.
-  The live script atomically creates the ignored owner-only directory
+  transaction material. Manifest V2 replaces historical V1's fixed amounts;
+  never reinterpret a V1 result as V2. Fund only A with one positive public
+  NIGHT output and one positive shielded NIGHT note. The external
+  service need not supply a predetermined amount: the live test binds the
+  exact observed balances before authorization, requires the one-output/
+  one-note topology, and asserts exact principal and transfer deltas. B begins
+  with no eligible public outputs or shielded notes. Select the A-to-B transfer
+  once as half the observed shielded balance rounded down, with a one-atomic
+  minimum, and freeze that amount through preview/authorization/finality. DUST
+  must not be externally funded. The scripts unset the exported root before
+  Cargo/build scripts run and pass it only to the compiled observer and
+  write-test processes. Case indices are single-use.
+  The live script first runs the no-write observer and requires positive A,
+  one eligible public output, one shielded note, empty B, zero initial DUST,
+  and a prepared registration whose exact principal matches the public
+  balance. It then recompiles and the write test revalidates those facts. Only
+  after that preflight succeeds does it atomically create the ignored
+  owner-only directory
   `<git-common-dir>/oxid-state/preprod-registration-e2e/case-<index>.started`
   before the write and refuses reuse across all worktrees in the local clone.
   Never clear it merely to rerun an unknown outcome. Ephemeral CI must receive
@@ -2253,9 +2263,25 @@ to silence the shell probe.
   `OXID_ACKNOWLEDGE_PREPROD_PUBLIC_PROVER_PRIVACY=1`, because TLS does not hide
   proof preimages or timing from the prover operator; never call it production
   privacy evidence or splice in an unsigned local route.
-  `just preprod-registration-e2e` is implemented but remains unrun until the
-  out-of-band root/case are configured and A receives the exact manifest
-  funding topology. It must prove zero initial DUST, registration finality,
+  `just preprod-registration-observe` is a clean-commit-bound, no-write
+  preflight. It composes no checkpoint or journal paths. Readiness preparation
+  retains one unsigned process-local draft which is discarded at test exit;
+  there is no authorization, proof, persistence, broadcast, chain write, state
+  directory, single-use marker, or prover contact. It emits only a closed set
+  of public aggregate account/shielded/DUST/readiness fields. Cold PreProd DUST
+  replay has a test-only 15-minute bound; ordinary standalone
+  synchronization retains its 120-second bound. On 2026-08-20, a first
+  read-only run reached DUST sync after both account and shielded reads but the
+  cold DUST replay exceeded 120 seconds; a second run later returned a shielded
+  `stalled/timed_out` status at 90 seconds. Both failed before output, created
+  no write marker, proof, or transaction, and leave exact indexed amounts
+  pending a later read. Do not treat these transport observations as a funding
+  mismatch or retry a write because of them.
+  `just preprod-registration-e2e` is implemented but remains unrun. The
+  out-of-band root/case are configured and case 0 has been externally funded,
+  but the exact indexed topology still needs a successful read-only
+  observation and the public-prover privacy tradeoff still needs explicit user
+  acknowledgement. The write must prove zero initial DUST, registration finality,
   later generated-DUST observation, application-level adapter reconstruction
   plus authoritative resynchronization/duplicate suppression, and the exact
   A-to-B shielded spend. A positive DUST observation is not a fee quote: only

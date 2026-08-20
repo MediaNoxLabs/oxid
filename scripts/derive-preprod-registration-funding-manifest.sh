@@ -65,11 +65,40 @@ fi
 
 manifest="$(
   printf '%s\n' "$test_output" | sed -n \
-    '/^OXID_PREPROD_FUNDING_MANIFEST_V1$/,/^OXID_PREPROD_FUNDING_MANIFEST_END$/p'
+    '/^OXID_PREPROD_FUNDING_MANIFEST_V2$/,/^OXID_PREPROD_FUNDING_MANIFEST_END$/p'
+)"
+expected_keys="$({
+  printf '%s\n' \
+    commit \
+    network \
+    caseIndex \
+    walletA.accountIndex \
+    walletA.addressIndex \
+    walletA.nightUnshieldedAddress \
+    walletA.nightShieldedAddress \
+    walletA.unshieldedNightRequirement \
+    walletA.shieldedNightRequirement \
+    walletA.expectedEligibleUnshieldedOutputCount \
+    walletA.expectedShieldedNoteCount \
+    walletB.accountIndex \
+    walletB.addressIndex \
+    walletB.nightUnshieldedAddress \
+    walletB.nightShieldedAddress \
+    walletB.expectedUnshieldedNightAtomicUnits \
+    walletB.expectedShieldedNightAtomicUnits \
+    walletB.expectedEligibleUnshieldedOutputCount \
+    walletB.expectedShieldedNoteCount \
+    transfer.policy
+})"
+observed_keys="$(
+  printf '%s\n' "$manifest" \
+    | sed '1d;$d' \
+    | sed 's/=.*//'
 )"
 if [[ "$(printf '%s\n' "$manifest" | wc -l | tr -d ' ')" != "22" ]] \
-  || [[ "$(printf '%s\n' "$manifest" | head -n 1)" != "OXID_PREPROD_FUNDING_MANIFEST_V1" ]] \
-  || [[ "$(printf '%s\n' "$manifest" | tail -n 1)" != "OXID_PREPROD_FUNDING_MANIFEST_END" ]]; then
+  || [[ "$(printf '%s\n' "$manifest" | head -n 1)" != "OXID_PREPROD_FUNDING_MANIFEST_V2" ]] \
+  || [[ "$(printf '%s\n' "$manifest" | tail -n 1)" != "OXID_PREPROD_FUNDING_MANIFEST_END" ]] \
+  || [[ "$observed_keys" != "$expected_keys" ]]; then
   echo "The preprod funding manifest did not match its closed public schema." >&2
   exit 1
 fi

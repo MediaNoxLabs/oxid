@@ -22,10 +22,26 @@ if [[ ! "${OXID_PREPROD_E2E_CASE_INDEX:-}" =~ ^(0|[1-9][0-9]*)$ ]]; then
   exit 1
 fi
 
+repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+git_common_dir="$(git -C "$repository_root" rev-parse --git-common-dir)"
+if [[ "$git_common_dir" != /* ]]; then
+  git_common_dir="$repository_root/$git_common_dir"
+fi
+git_common_dir="$(cd "$git_common_dir" && pwd -P)"
+case_marker_root="$git_common_dir/oxid-state/preprod-registration-e2e"
+case_marker="$case_marker_root/case-${OXID_PREPROD_E2E_CASE_INDEX}.started"
+if [[ -e "$case_marker" ]]; then
+  echo "This PreProd case index was already started locally. Do not clear the marker or retry a possibly broadcast case; select a fresh funded case index." >&2
+  exit 1
+fi
+OXID_ENABLE_LIVE_PREPROD_E2E=1 \
+OXID_PREPROD_MASTER_SEED_HEX="$OXID_PREPROD_MASTER_SEED_HEX" \
+OXID_PREPROD_E2E_CASE_INDEX="$OXID_PREPROD_E2E_CASE_INDEX" \
+  "$repository_root/scripts/observe-preprod-registration-funding.sh"
+
 preprod_master_seed_hex="$OXID_PREPROD_MASTER_SEED_HEX"
 unset OXID_PREPROD_MASTER_SEED_HEX
 
-repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ -n "$(git -C "$repository_root" status --porcelain)" ]]; then
   echo "The funded PreProd test requires a clean worktree so its evidence is bound to one commit." >&2
   exit 1
@@ -57,14 +73,7 @@ if [[ -z "$test_executable" || ! -x "$test_executable" ]]; then
   exit 1
 fi
 
-git_common_dir="$(git -C "$repository_root" rev-parse --git-common-dir)"
-if [[ "$git_common_dir" != /* ]]; then
-  git_common_dir="$repository_root/$git_common_dir"
-fi
-git_common_dir="$(cd "$git_common_dir" && pwd -P)"
-case_marker_root="$git_common_dir/oxid-state/preprod-registration-e2e"
 mkdir -p "$case_marker_root"
-case_marker="$case_marker_root/case-${OXID_PREPROD_E2E_CASE_INDEX}.started"
 if ! mkdir "$case_marker" 2>/dev/null; then
   echo "This PreProd case index was already started locally. Do not clear the marker or retry a possibly broadcast case; select a fresh funded case index." >&2
   exit 1

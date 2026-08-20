@@ -100,3 +100,31 @@ if [[ "$(printf '%s\n' "$observation" | head -n 1)" != "OXID_PREPROD_FUNDING_OBS
 fi
 
 printf '%s\n' "$observation"
+
+observation_value() {
+  local key="$1"
+  printf '%s\n' "$observation" | awk -F= -v expected="$key" '$1 == expected { sub(/^[^=]*=/, ""); print; exit }'
+}
+
+wallet_a_unshielded="$(observation_value walletA.unshieldedNightAtomicUnits)"
+wallet_a_shielded="$(observation_value walletA.shieldedNightAtomicUnits)"
+wallet_a_registered="$(observation_value walletA.registeredNightAtomicUnits)"
+if [[ ! "$wallet_a_unshielded" =~ ^[1-9][0-9]*$ ]] \
+  || [[ ! "$wallet_a_shielded" =~ ^[1-9][0-9]*$ ]] \
+  || [[ "$wallet_a_registered" != "$wallet_a_unshielded" ]] \
+  || [[ "$(observation_value walletA.shieldedNoteCount)" != "1" ]] \
+  || [[ "$(observation_value walletA.dustAtomicUnits)" != "0" ]] \
+  || [[ "$(observation_value walletA.registrationStatus)" != "prepared" ]] \
+  || [[ "$(observation_value walletA.eligibleUnshieldedOutputCount)" != "1" ]] \
+  || [[ "$(observation_value walletB.unshieldedNightAtomicUnits)" != "0" ]] \
+  || [[ "$(observation_value walletB.shieldedNightAtomicUnits)" != "0" ]] \
+  || [[ "$(observation_value walletB.shieldedNoteCount)" != "0" ]] \
+  || [[ "$(observation_value walletB.dustAtomicUnits)" != "0" ]] \
+  || [[ "$(observation_value walletB.registrationStatus)" != "no_eligible_night" ]] \
+  || [[ "$(observation_value walletB.eligibleUnshieldedOutputCount)" != "0" ]] \
+  || [[ "$(observation_value walletB.registeredNightAtomicUnits)" != "0" ]]; then
+  echo "The observed PreProd funding is not yet ready for the one-output/one-note write case." >&2
+  exit 1
+fi
+
+echo "Read-only PreProd funding observation is ready for the guarded write case."

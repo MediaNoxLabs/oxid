@@ -9,9 +9,10 @@
 - Ledger source: `midnight-ledger` commit
   `d9414884db9da9e9b1f6f3a7f742d79a5732f817`
 - Implementation state: Repository, headless, Dioxus, guarded public PreProd
-  funding manifest, build-reviewed test-only signed profile, and ignored live
-  acceptance harness are complete; funded execution, mobile, process-restart,
-  physical-device, and production live-node evidence remain open
+  funding manifest and read-only observer, build-reviewed test-only signed
+  profile, and ignored live acceptance harness are complete; funded write
+  execution, mobile, process-restart, physical-device, and production
+  live-node evidence remain open
 
 ## Context
 
@@ -110,18 +111,23 @@ account B is `A + 1`. The seed is accepted only as exactly 64 hexadecimal
 characters from a secret environment variable after a second explicit live-
 test opt-in. The scripts copy it into a non-exported shell variable, remove it
 from the environment before Cargo or any build script runs, and supply it only
-to the final compiled test process. It is never accepted over a headless
-command or written, logged, hashed for output, or committed. The public
+to the compiled observer and write-test processes. It is never accepted over a
+headless command or written, logged, hashed for output, or committed. The public
 funding manifest may expose only the repository commit, PreProd network, case
 and account/address indices, A/B public NIGHT and shielded receive addresses,
-exact expected balances/eligible-output/note counts, and the exact final shielded transfer.
-Wallet A is funded with exactly 10,000,000,000
-atomic unshielded NIGHT in one output and 10,000,000 atomic shielded NIGHT in
-one note; wallet B begins with zero balances, eligible public outputs, and
-shielded notes. Funding the
-same totals through a different topology is not the reviewed test case. The
-final A-to-B shielded transfer is exactly 1,000,000 atomic NIGHT. DUST is never
-externally funded.
+positive-value requirements, exact eligible-output/note counts, and the final
+transfer-selection policy. Wallet A receives one positive unshielded NIGHT
+output and one positive shielded NIGHT note; wallet B
+begins with zero balances, eligible public outputs, and shielded notes. The
+external funding service need not provide a predetermined amount. The ignored
+test records the exact observed A balances before authorization and proves
+same-principal registration plus exact post-transfer deltas. A different
+topology remains outside the reviewed test case. The final A-to-B shielded
+transfer is selected once as half the observed shielded balance, rounded down
+but with a minimum of one atomic unit; it is then frozen through preview,
+authorization, duplicate checks, and final-balance evidence. DUST is never
+externally funded. This amount-observed schema is manifest V2; V1's fixed
+amounts remain historical and must not be silently reinterpreted.
 
 The manifest command performs no network I/O and requires a clean worktree so
 its public output is bound to the exact commit. A test-only public Ed25519 root
@@ -166,7 +172,10 @@ a UI, but does not traverse the NDJSON
 `oxid.headless.v1` adapter. Exact live NDJSON evidence requires a separate
 incoming-boundary refactor rather than a production-callable development-
 custody factory. Every case index is single-use. The repository script
-atomically creates an ignored,
+first requires the separate read-only observation to prove the current funding
+topology and readiness without a marker, then recompiles and revalidates the
+same facts inside the write test. Only after the preflight succeeds does it
+atomically create an ignored,
 owner-only started marker below the shared Git common directory before a write,
 so all worktrees for the same local clone refuse a second run for that case. It
 never automatically clears the marker after success or failure. Private
@@ -181,6 +190,18 @@ provision a fresh case index per funded write because an ephemeral runner
 cannot make the marker globally durable. An explicit non-submitting recovery
 mode is future work. Test custody, funding code, environment markers, and
 fixtures remain excluded from normal release artifacts.
+
+`just preprod-registration-observe` is the separately guarded read-only
+preflight. It composes ephemeral custody with no checkpoint or journal paths,
+derives the manifest addresses again, and may perform only live account,
+shielded, DUST, and registration-readiness operations. Readiness preparation
+retains one unsigned process-local draft, discarded when the test exits; the
+observer performs no authorization, proof, persistence, broadcast, or chain
+write, and creates no state directory or single-use marker. It does not require
+the public-prover privacy acknowledgement. Its closed output contains only
+public aggregate balances, counts, and readiness states. A cold PreProd DUST
+replay has a separate 15-minute observation bound; changing that test bound
+does not change standalone or production synchronization policy.
 
 ## Required validation
 
