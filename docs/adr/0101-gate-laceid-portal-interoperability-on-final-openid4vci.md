@@ -5,7 +5,8 @@
 - Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124)
 - Portal source: `lace-id-portal` commit [`804de0a9e58cf48ece3cc6c24b2245bb70bc80f1`](https://github.com/input-output-hk/lace-id-portal/commit/804de0a9e58cf48ece3cc6c24b2245bb70bc80f1)
 - Related decisions: ADR-0039 and ADR-0097
-- Implementation state: Source-derived negative contract evidence is implemented at the existing strict OpenID4VCI adapter boundaries; no positive Portal interoperability path is implemented
+- Amended by: ADR-0102
+- Implementation state at this decision: source-derived negative contract evidence for Portal `804de0a9` is implemented at the existing strict OpenID4VCI adapter boundaries; ADR-0102 separately admits the later pinned Final profile in native headless development without rewriting this historical evidence
 
 ## Context
 
@@ -99,14 +100,16 @@ Source inspection supplies the separate origin-reflection, proof-verification,
 and replay/lifetime findings; the fixtures do not simulate those runtime
 behaviors.
 
-There is no positive Portal acceptance, live HTTP composition, headless
-issuance, simulator/emulator issuance, physical-device issuance, or tailnet
-evidence. Issue #124 remains open for that work.
+This ADR contains no positive Portal acceptance or runtime evidence. ADR-0102
+owns the later positive native-headless Portal integration; simulator/emulator
+framework evidence and physical-device/tailnet evidence remain separately
+labelled. Issue #124 remains open until its deferred phases are truthfully met.
 
 ## Consequences
 
-- Oxid cannot interoperate positively with the pinned Portal contract, and this
-  ADR must not be cited as completion of issue #124.
+- Oxid deliberately cannot interoperate positively with the incompatible
+  `804de0a9` contract recorded here; ADR-0102's later profile must not be used to
+  erase this regression evidence or claim completion of issue #124.
 - Portal changes can be evaluated against one exact Final contract without
   weakening production parsing or transport policy.
 - Future headless, simulator, device, and tailnet evidence must use real Portal

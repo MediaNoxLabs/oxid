@@ -28,6 +28,7 @@ pub const STANDALONE_COMPACT_PASSPORT_ISSUER_DID: &str =
 const MAX_RESPONSE_BYTES: usize = 512 * 1_024;
 const MAX_JSON_DEPTH: usize = 16;
 const MAX_METADATA_TEXT: usize = 2_048;
+const LEGACY_JWK_2020_CONTEXT: &str = "https://w3c.github.io/vc-jws-2020/contexts/v1";
 
 /// Deterministic resolver for the single documented standalone DID. It never
 /// manufactures successful results for arbitrary identifiers.
@@ -506,7 +507,11 @@ fn parse_document(value: &Value) -> Result<DidDocument, DidResolutionPortError> 
         MidnightDid::MAX_CHARACTERS,
     )?)
     .map_err(|_| DidResolutionPortError::InvalidResponse)?;
-    let contexts = parse_required_string_array(document.get("@context"), 32, MAX_METADATA_TEXT)?;
+    let mut contexts =
+        parse_required_string_array(document.get("@context"), 32, MAX_METADATA_TEXT)?;
+    if contexts.get(1).map(String::as_str) == Some(LEGACY_JWK_2020_CONTEXT) {
+        contexts[1] = JWK_CONTEXT.to_owned();
+    }
     let controllers = match document.get("controller") {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::String(value)) => vec![
@@ -547,11 +552,16 @@ fn parse_document(value: &Value) -> Result<DidDocument, DidResolutionPortError> 
     .into_iter()
     .filter_map(|(key, relationship)| {
         document.get(key).map(|value| {
-            parse_required_string_array(Some(value), DidDocument::MAX_METHODS, MAX_METADATA_TEXT)
-                .map(|ids| VerificationRelationshipEntry::new(relationship, ids))
+            parse_optional_string_array(Some(value), DidDocument::MAX_METHODS, MAX_METADATA_TEXT)
+                .map(|ids| {
+                    (!ids.is_empty()).then(|| VerificationRelationshipEntry::new(relationship, ids))
+                })
         })
     })
-    .collect::<Result<Vec<_>, _>>()?;
+    .collect::<Result<Vec<_>, _>>()?
+    .into_iter()
+    .flatten()
+    .collect();
     let services = parse_services(document.get("service"))?;
     DidDocument::new(DidDocumentParts {
         contexts,
@@ -669,12 +679,11 @@ fn parse_methods(
 }
 
 fn parse_services(value: Option<&Value>) -> Result<Vec<Service>, DidResolutionPortError> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
+    let values = match value {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(values)) => values,
+        Some(_) => return Err(DidResolutionPortError::InvalidResponse),
     };
-    let values = value
-        .as_array()
-        .ok_or(DidResolutionPortError::InvalidResponse)?;
     if values.len() > DidDocument::MAX_SERVICES {
         return Err(DidResolutionPortError::InvalidResponse);
     }
@@ -843,6 +852,31 @@ mod tests {
             ),
             Err(DidResolutionPortError::InvalidResponse)
         );
+    }
+
+    #[test]
+    fn accepts_empty_or_null_optional_collections_from_the_live_resolver() {
+        let resolution = standalone_resolution().expect("fixture");
+        let mut value = resolution_to_json_value(&resolution);
+        value["didDocument"]["assertionMethod"] = json!([]);
+        value["didDocument"]["keyAgreement"] = Value::Null;
+        value["didDocument"]["capabilityInvocation"] = Value::Null;
+        value["didDocument"]["capabilityDelegation"] = Value::Null;
+        value["didDocument"]["service"] = Value::Null;
+        value["didDocument"]["@context"][1] = json!(LEGACY_JWK_2020_CONTEXT);
+        let parsed = parse_resolution_bytes(
+            &serde_json::to_vec(&value).expect("JSON"),
+            DidResolutionSource::Live,
+        )
+        .expect("empty optional relationship arrays are not malformed");
+        assert!(
+            parsed
+                .document()
+                .relationships()
+                .iter()
+                .all(|relationship| { !relationship.method_ids().is_empty() })
+        );
+        assert_eq!(parsed.document().contexts()[1], JWK_CONTEXT);
     }
 
     #[test]

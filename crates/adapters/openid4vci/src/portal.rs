@@ -39,6 +39,12 @@ use super::{
     required_unique_strings, resolve_holder_binding, validate_endpoint,
 };
 
+#[path = "portal_response.rs"]
+mod response;
+use response::*;
+
+pub const PORTAL_INTEGRATION_COMMIT: &str = "925ec8d04882eabd4ac7b784c70fc2f0c152faae";
+pub const PORTAL_INTEGRATION_TREE: &str = "58b4597524f88a0ae2253439a44dab0dc60cbb6f";
 pub const PORTAL_PR_HEAD: &str = "9c82db23eabe8b6d758b2731f2225910ea627c14";
 pub const PORTAL_PROFILE_SOURCE: &str = "76e8edf394a4cb37ca822037272d543c68f25f71";
 pub const PORTAL_PROVENANCE_SHA256: &str =
@@ -111,6 +117,8 @@ pub struct PortalPublicJwk {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PortalDeploymentManifest {
+    integration_commit: String,
+    integration_tree: String,
     issuer_did: String,
     issuer_jubjub_jwk: PortalPublicJwk,
     issuer_jubjub_jwk_sha256: String,
@@ -139,6 +147,13 @@ impl PortalDeploymentManifest {
         let metadata = file
             .metadata()
             .map_err(|_| PortalDeploymentManifestError::InvalidFile)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            if link_metadata.dev() != metadata.dev() || link_metadata.ino() != metadata.ino() {
+                return Err(PortalDeploymentManifestError::InvalidFile);
+            }
+        }
         if !metadata.file_type().is_file()
             || metadata.len() == 0
             || metadata.len() > MAX_DEPLOYMENT_MANIFEST_BYTES as u64
@@ -183,7 +198,9 @@ impl PortalDeploymentManifest {
     }
 
     fn validate(&self) -> Result<(), PortalDeploymentManifestError> {
-        if self.schema != "oxid-portal-deployment-v1"
+        if self.schema != "oxid-portal-deployment-v2"
+            || self.integration_commit != PORTAL_INTEGRATION_COMMIT
+            || self.integration_tree != PORTAL_INTEGRATION_TREE
             || self.portal_pr_head != PORTAL_PR_HEAD
             || self.profile_source_commit != PORTAL_PROFILE_SOURCE
             || self.provenance_sha256 != PORTAL_PROVENANCE_SHA256
@@ -242,6 +259,11 @@ impl PortalDeploymentManifest {
     pub fn issuer_jubjub_jwk(&self) -> &PortalPublicJwk {
         &self.issuer_jubjub_jwk
     }
+
+    #[must_use]
+    pub fn issuer_jubjub_jwk_sha256(&self) -> &str {
+        &self.issuer_jubjub_jwk_sha256
+    }
 }
 
 /// Authenticates the exact raw upstream provenance and the immutable source
@@ -256,6 +278,8 @@ pub fn authenticate_bundled_portal_source() -> Result<(), PortalDeploymentManife
         .as_object()
         .ok_or(PortalDeploymentManifestError::SourceLockMismatch)?;
     let lock_keys = [
+        "integrationCommit",
+        "integrationTree",
         "portalPrHead",
         "profileSourceCommit",
         "provenancePath",
@@ -264,11 +288,13 @@ pub fn authenticate_bundled_portal_source() -> Result<(), PortalDeploymentManife
     ];
     if lock.len() != lock_keys.len()
         || !lock_keys.iter().all(|key| lock.contains_key(*key))
+        || lock["integrationCommit"] != PORTAL_INTEGRATION_COMMIT
+        || lock["integrationTree"] != PORTAL_INTEGRATION_TREE
         || lock["portalPrHead"] != PORTAL_PR_HEAD
         || lock["profileSourceCommit"] != PORTAL_PROFILE_SOURCE
         || lock["provenancePath"] != "openid4vci-final/provenance.json"
         || lock["provenanceSha256"] != PORTAL_PROVENANCE_SHA256
-        || lock["schema"] != "oxid-portal-source-lock-v1"
+        || lock["schema"] != "oxid-portal-source-lock-v2"
     {
         return Err(PortalDeploymentManifestError::SourceLockMismatch);
     }
@@ -389,10 +415,130 @@ struct PortalPreparedSecret {
     pre_authorized_code: Zeroizing<String>,
 }
 
+struct PortalRuntime {
+    handle: tokio::runtime::Handle,
+    shutdown: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+impl PortalRuntime {
+    fn new() -> Result<Self, PortalDeploymentManifestError> {
+        let (handle_sender, handle_receiver) = std::sync::mpsc::sync_channel(1);
+        let (shutdown_sender, shutdown_receiver) = std::sync::mpsc::channel();
+        let thread = std::thread::Builder::new()
+            .name("oxid-portal-http".to_owned())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .enable_all()
+                    .build();
+                let Ok(runtime) = runtime else {
+                    return;
+                };
+                if handle_sender.send(runtime.handle().clone()).is_err() {
+                    return;
+                }
+                let _ = shutdown_receiver.recv();
+            })
+            .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)?;
+        let handle = handle_receiver
+            .recv()
+            .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)?;
+        Ok(Self {
+            handle,
+            shutdown: Mutex::new(Some(shutdown_sender)),
+            thread: Mutex::new(Some(thread)),
+        })
+    }
+}
+
+impl Drop for PortalRuntime {
+    fn drop(&mut self) {
+        if let Ok(shutdown) = self.shutdown.get_mut()
+            && let Some(shutdown) = shutdown.take()
+        {
+            let _ = shutdown.send(());
+        }
+        if let Ok(thread) = self.thread.get_mut()
+            && let Some(thread) = thread.take()
+        {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Authenticated, preflighted Portal client factory owned by native headless
+/// composition. Building the request client is fallible only at startup; the
+/// later application-port wiring is infallible and cannot silently fall back.
+#[derive(Clone)]
+pub struct PortalOid4vciClientFactory {
+    deployment: PortalDeploymentManifest,
+    client: Client,
+    runtime: Arc<PortalRuntime>,
+}
+
+impl PortalOid4vciClientFactory {
+    pub fn new(
+        deployment: PortalDeploymentManifest,
+    ) -> Result<Self, PortalDeploymentManifestError> {
+        deployment.validate()?;
+        let runtime = Arc::new(PortalRuntime::new()?);
+        Ok(Self {
+            deployment,
+            client: build_portal_http_client()?,
+            runtime,
+        })
+    }
+
+    #[must_use]
+    pub fn deployment(&self) -> &PortalDeploymentManifest {
+        &self.deployment
+    }
+
+    #[must_use]
+    pub fn build(
+        self,
+        proof: Arc<dyn CredentialHolderProofPort>,
+        get_did: Arc<dyn GetDidRecordUseCase>,
+        decoder: Arc<dyn PortalCredentialMaterialDecoder>,
+    ) -> PortalOid4vciClient {
+        PortalOid4vciClient {
+            deployment: self.deployment,
+            client: self.client,
+            runtime: self.runtime,
+            proof,
+            get_did,
+            decoder,
+            sessions: Mutex::new(BTreeMap::new()),
+            next_id: std::sync::atomic::AtomicU64::new(1),
+        }
+    }
+}
+
+fn build_portal_http_client() -> Result<Client, PortalDeploymentManifestError> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let roots = TLS_SERVER_ROOT_CERTS
+        .iter()
+        .map(|certificate| Certificate::from_der(certificate.as_ref()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)?;
+    Client::builder()
+        .no_proxy()
+        .redirect(Policy::none())
+        .retry(reqwest::retry::never())
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .user_agent("oxid-portal-openid4vci/0.1")
+        .tls_certs_only(roots)
+        .build()
+        .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)
+}
+
 /// Strict one-profile HTTP implementation of the existing issuance port.
 pub struct PortalOid4vciClient {
     deployment: PortalDeploymentManifest,
     client: Client,
+    runtime: Arc<PortalRuntime>,
     proof: Arc<dyn CredentialHolderProofPort>,
     get_did: Arc<dyn GetDidRecordUseCase>,
     decoder: Arc<dyn PortalCredentialMaterialDecoder>,
@@ -407,32 +553,7 @@ impl PortalOid4vciClient {
         get_did: Arc<dyn GetDidRecordUseCase>,
         decoder: Arc<dyn PortalCredentialMaterialDecoder>,
     ) -> Result<Self, PortalDeploymentManifestError> {
-        deployment.validate()?;
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let roots = TLS_SERVER_ROOT_CERTS
-            .iter()
-            .map(|certificate| Certificate::from_der(certificate.as_ref()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)?;
-        let client = Client::builder()
-            .no_proxy()
-            .redirect(Policy::none())
-            .retry(reqwest::retry::never())
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .user_agent("oxid-portal-openid4vci/0.1")
-            .tls_certs_only(roots)
-            .build()
-            .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)?;
-        Ok(Self {
-            deployment,
-            client,
-            proof,
-            get_did,
-            decoder,
-            sessions: Mutex::new(BTreeMap::new()),
-            next_id: std::sync::atomic::AtomicU64::new(1),
-        })
+        Ok(PortalOid4vciClientFactory::new(deployment)?.build(proof, get_did, decoder))
     }
 
     fn sessions(
@@ -457,180 +578,214 @@ impl PortalOid4vciClient {
     }
 }
 
+impl PortalOid4vciClient {
+    async fn prepare_inner(
+        &self,
+        request: PrepareIssuanceRequest,
+    ) -> Result<PreparedCredentialOffer, IssuanceProtocolError> {
+        let offer = parse_portal_offer(&request.offer, self.deployment.issuer_origin())?;
+        let issuer_url = self.endpoint("/.well-known/openid-credential-issuer")?;
+        let issuer_bytes = get_json(&self.client, issuer_url, MAX_METADATA_BYTES).await?;
+        let issuer_metadata =
+            parse_issuer_metadata(&issuer_bytes, EndpointPolicy::StandaloneLoopback)?;
+        validate_portal_issuer_metadata_shape(&issuer_bytes)?;
+        if issuer_metadata.issuer != offer.issuer
+            || issuer_metadata.issuer != self.deployment.issuer_origin
+            || issuer_metadata.authorization_servers != [self.deployment.issuer_origin.clone()]
+            || issuer_metadata.configurations.len() != 1
+            || !issuer_metadata
+                .configurations
+                .contains_key(PORTAL_CONFIGURATION_ID)
+        {
+            return Err(IssuanceProtocolError::InvalidMetadata);
+        }
+        validate_portal_endpoint(
+            &issuer_metadata.credential_endpoint,
+            self.deployment.issuer_origin(),
+            "/api/issuer/credentials",
+        )?;
+        validate_portal_endpoint(
+            &issuer_metadata.nonce_endpoint,
+            self.deployment.issuer_origin(),
+            "/api/issuer/nonce",
+        )?;
+
+        let authorization_url = self.endpoint("/.well-known/oauth-authorization-server")?;
+        let authorization_bytes =
+            get_json(&self.client, authorization_url, MAX_METADATA_BYTES).await?;
+        let authorization = parse_portal_authorization_metadata(
+            &authorization_bytes,
+            self.deployment.issuer_origin(),
+        )?;
+        let display_names = offer
+            .configuration_ids
+            .iter()
+            .map(|id| {
+                issuer_metadata
+                    .configurations
+                    .get(id)
+                    .map(|configuration| configuration.display_name.clone())
+                    .ok_or(IssuanceProtocolError::UnsupportedCredential)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let preview = CredentialOfferPreview::new(
+            offer.issuer.clone(),
+            offer.configuration_ids.clone(),
+            display_names,
+        )
+        .map_err(|_| IssuanceProtocolError::InvalidOffer)?;
+        let id = self.next_id()?;
+        let secret = PortalPreparedSecret {
+            profile_id: request.profile_id.as_str().to_owned(),
+            issuer: offer.issuer,
+            configuration_id: PORTAL_CONFIGURATION_ID.to_owned(),
+            token_endpoint: authorization,
+            nonce_endpoint: issuer_metadata.nonce_endpoint,
+            credential_endpoint: issuer_metadata.credential_endpoint,
+            pre_authorized_code: Zeroizing::new(offer.pre_authorized_code),
+        };
+        if self
+            .sessions()?
+            .insert(id.as_str().to_owned(), secret)
+            .is_some()
+        {
+            return Err(IssuanceProtocolError::Unavailable);
+        }
+        Ok(PreparedCredentialOffer { id, preview })
+    }
+
+    async fn issue_inner(
+        &self,
+        request: ProtocolIssueRequest,
+    ) -> Result<IssuedCredentialBytes, IssuanceProtocolError> {
+        let secret = self
+            .sessions()?
+            .remove(request.issuance_id.as_str())
+            .ok_or(IssuanceProtocolError::InvalidOffer)?;
+        if secret.profile_id != request.profile_id.as_str()
+            || request.method_id == request.holder_binding_method_id
+        {
+            return Err(IssuanceProtocolError::InvalidProof);
+        }
+        validate_managed_authentication_method(
+            self.get_did.as_ref(),
+            &request.profile_id,
+            &request.holder_did,
+            &request.method_id,
+        )?;
+        let binding = resolve_holder_binding(
+            self.get_did.as_ref(),
+            &request.profile_id,
+            &request.holder_did,
+            &request.holder_binding_method_id,
+        )?;
+        if binding.holder_binding_method_id != request.holder_binding_method_id {
+            return Err(IssuanceProtocolError::InvalidProof);
+        }
+
+        validate_portal_endpoint(
+            &secret.token_endpoint,
+            self.deployment.issuer_origin(),
+            "/api/issuer/token",
+        )?;
+        let token_response = self
+            .client
+            .post(&secret.token_endpoint)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .form(&[
+                ("grant_type", PRE_AUTHORIZED_GRANT),
+                ("pre-authorized_code", secret.pre_authorized_code.as_str()),
+            ])
+            .send()
+            .await
+            .map_err(|_| IssuanceProtocolError::Unavailable)?;
+        let token_bytes =
+            Zeroizing::new(read_json_response(token_response, MAX_TOKEN_BYTES).await?);
+        let access_token = Zeroizing::new(parse_token_response(&token_bytes)?);
+
+        validate_portal_endpoint(
+            &secret.nonce_endpoint,
+            self.deployment.issuer_origin(),
+            "/api/issuer/nonce",
+        )?;
+        let nonce_response = self
+            .client
+            .post(&secret.nonce_endpoint)
+            .send()
+            .await
+            .map_err(|_| IssuanceProtocolError::Unavailable)?;
+        let nonce_bytes =
+            Zeroizing::new(read_json_response(nonce_response, MAX_NONCE_BYTES).await?);
+        let nonce = Zeroizing::new(parse_nonce_response(&nonce_bytes)?);
+
+        let proof = Zeroizing::new(
+            self.proof
+                .create(HolderProofRequest {
+                    profile_id: request.profile_id,
+                    holder_did: request.holder_did.clone(),
+                    method_id: request.method_id,
+                    audience: secret.issuer.clone(),
+                    nonce: nonce.to_string(),
+                })
+                .await
+                .map_err(map_holder_proof_error)?,
+        );
+        let credential_request = json!({
+            "credential_configuration_id": secret.configuration_id,
+            "midnight": {"holderBindingMethod": request.holder_binding_method_id},
+            "proofs": {"jwt": [proof.as_str()]}
+        });
+        validate_portal_endpoint(
+            &secret.credential_endpoint,
+            self.deployment.issuer_origin(),
+            "/api/issuer/credentials",
+        )?;
+        let credential_response = self
+            .client
+            .post(&secret.credential_endpoint)
+            .bearer_auth(access_token.as_str())
+            .json(&credential_request)
+            .send()
+            .await
+            .map_err(|_| IssuanceProtocolError::Unavailable)?;
+        let response_bytes =
+            Zeroizing::new(read_json_response(credential_response, MAX_CREDENTIAL_BYTES).await?);
+        parse_portal_credential_response(
+            &response_bytes,
+            &request.holder_did,
+            &binding.holder_binding_method_id,
+            nonce.as_str(),
+            self.decoder.as_ref(),
+        )
+    }
+}
+
 impl CredentialIssuanceProtocolPort for PortalOid4vciClient {
     fn prepare<'a>(&'a self, request: PrepareIssuanceRequest) -> PrepareIssuancePortFuture<'a> {
         Box::pin(async move {
-            let offer = parse_portal_offer(&request.offer, self.deployment.issuer_origin())?;
-            let issuer_url = self.endpoint("/.well-known/openid-credential-issuer")?;
-            let issuer_bytes = get_json(&self.client, issuer_url, MAX_METADATA_BYTES).await?;
-            let issuer_metadata =
-                parse_issuer_metadata(&issuer_bytes, EndpointPolicy::StandaloneLoopback)?;
-            validate_portal_issuer_metadata_shape(&issuer_bytes)?;
-            if issuer_metadata.issuer != offer.issuer
-                || issuer_metadata.issuer != self.deployment.issuer_origin
-                || issuer_metadata.authorization_servers != [self.deployment.issuer_origin.clone()]
-                || issuer_metadata.configurations.len() != 1
-                || !issuer_metadata
-                    .configurations
-                    .contains_key(PORTAL_CONFIGURATION_ID)
-            {
-                return Err(IssuanceProtocolError::InvalidMetadata);
+            if tokio::runtime::Handle::try_current().is_ok() {
+                return self.prepare_inner(request).await;
             }
-            validate_portal_endpoint(
-                &issuer_metadata.credential_endpoint,
-                self.deployment.issuer_origin(),
-                "/api/issuer/credentials",
-            )?;
-            validate_portal_endpoint(
-                &issuer_metadata.nonce_endpoint,
-                self.deployment.issuer_origin(),
-                "/api/issuer/nonce",
-            )?;
-
-            let authorization_url = self.endpoint("/.well-known/oauth-authorization-server")?;
-            let authorization_bytes =
-                get_json(&self.client, authorization_url, MAX_METADATA_BYTES).await?;
-            let authorization = parse_portal_authorization_metadata(
-                &authorization_bytes,
-                self.deployment.issuer_origin(),
-            )?;
-            let display_names = offer
-                .configuration_ids
-                .iter()
-                .map(|id| {
-                    issuer_metadata
-                        .configurations
-                        .get(id)
-                        .map(|configuration| configuration.display_name.clone())
-                        .ok_or(IssuanceProtocolError::UnsupportedCredential)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let preview = CredentialOfferPreview::new(
-                offer.issuer.clone(),
-                offer.configuration_ids.clone(),
-                display_names,
-            )
-            .map_err(|_| IssuanceProtocolError::InvalidOffer)?;
-            let id = self.next_id()?;
-            let secret = PortalPreparedSecret {
-                profile_id: request.profile_id.as_str().to_owned(),
-                issuer: offer.issuer,
-                configuration_id: PORTAL_CONFIGURATION_ID.to_owned(),
-                token_endpoint: authorization,
-                nonce_endpoint: issuer_metadata.nonce_endpoint,
-                credential_endpoint: issuer_metadata.credential_endpoint,
-                pre_authorized_code: Zeroizing::new(offer.pre_authorized_code),
-            };
-            if self
-                .sessions()?
-                .insert(id.as_str().to_owned(), secret)
-                .is_some()
-            {
-                return Err(IssuanceProtocolError::Unavailable);
-            }
-            Ok(PreparedCredentialOffer { id, preview })
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(move || self.runtime.handle.block_on(self.prepare_inner(request)))
+                    .join()
+            })
+            .map_err(|_| IssuanceProtocolError::Unavailable)?
         })
     }
 
     fn issue<'a>(&'a self, request: ProtocolIssueRequest) -> IssueCredentialPortFuture<'a> {
         Box::pin(async move {
-            let secret = self
-                .sessions()?
-                .remove(request.issuance_id.as_str())
-                .ok_or(IssuanceProtocolError::InvalidOffer)?;
-            if secret.profile_id != request.profile_id.as_str()
-                || request.method_id == request.holder_binding_method_id
-            {
-                return Err(IssuanceProtocolError::InvalidProof);
+            if tokio::runtime::Handle::try_current().is_ok() {
+                return self.issue_inner(request).await;
             }
-            validate_managed_authentication_method(
-                self.get_did.as_ref(),
-                &request.profile_id,
-                &request.holder_did,
-                &request.method_id,
-            )?;
-            let binding = resolve_holder_binding(
-                self.get_did.as_ref(),
-                &request.profile_id,
-                &request.holder_did,
-                &request.holder_binding_method_id,
-            )?;
-            if binding.holder_binding_method_id != request.holder_binding_method_id {
-                return Err(IssuanceProtocolError::InvalidProof);
-            }
-
-            validate_portal_endpoint(
-                &secret.token_endpoint,
-                self.deployment.issuer_origin(),
-                "/api/issuer/token",
-            )?;
-            let token_response = self
-                .client
-                .post(&secret.token_endpoint)
-                .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-                .form(&[
-                    ("grant_type", PRE_AUTHORIZED_GRANT),
-                    ("pre-authorized_code", secret.pre_authorized_code.as_str()),
-                ])
-                .send()
-                .await
-                .map_err(|_| IssuanceProtocolError::Unavailable)?;
-            let token_bytes = read_json_response(token_response, MAX_TOKEN_BYTES).await?;
-            let access_token = Zeroizing::new(parse_token_response(&token_bytes)?);
-
-            validate_portal_endpoint(
-                &secret.nonce_endpoint,
-                self.deployment.issuer_origin(),
-                "/api/issuer/nonce",
-            )?;
-            let nonce_response = self
-                .client
-                .post(&secret.nonce_endpoint)
-                .send()
-                .await
-                .map_err(|_| IssuanceProtocolError::Unavailable)?;
-            let nonce_bytes = read_json_response(nonce_response, MAX_NONCE_BYTES).await?;
-            let nonce = Zeroizing::new(parse_nonce_response(&nonce_bytes)?);
-
-            let proof = Zeroizing::new(
-                self.proof
-                    .create(HolderProofRequest {
-                        profile_id: request.profile_id,
-                        holder_did: request.holder_did.clone(),
-                        method_id: request.method_id,
-                        audience: secret.issuer.clone(),
-                        nonce: nonce.to_string(),
-                    })
-                    .await
-                    .map_err(map_holder_proof_error)?,
-            );
-            let credential_request = json!({
-                "credential_configuration_id": secret.configuration_id,
-                "midnight": {"holderBindingMethod": request.holder_binding_method_id},
-                "proofs": {"jwt": [proof.as_str()]}
-            });
-            validate_portal_endpoint(
-                &secret.credential_endpoint,
-                self.deployment.issuer_origin(),
-                "/api/issuer/credentials",
-            )?;
-            let credential_response = self
-                .client
-                .post(&secret.credential_endpoint)
-                .bearer_auth(access_token.as_str())
-                .json(&credential_request)
-                .send()
-                .await
-                .map_err(|_| IssuanceProtocolError::Unavailable)?;
-            let response_bytes =
-                read_json_response(credential_response, MAX_CREDENTIAL_BYTES).await?;
-            parse_portal_credential_response(
-                &response_bytes,
-                &request.holder_did,
-                &binding.holder_binding_method_id,
-                nonce.as_str(),
-                self.decoder.as_ref(),
-            )
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(move || self.runtime.handle.block_on(self.issue_inner(request)))
+                    .join()
+            })
+            .map_err(|_| IssuanceProtocolError::Unavailable)?
         })
     }
 
@@ -824,340 +979,6 @@ fn validate_portal_issuer_metadata_shape(bytes: &[u8]) -> Result<(), IssuancePro
     if required_string(display, "locale", 16)? != "en"
         || required_string(display, "name", 256)? != "Digital Passport"
     {
-        return Err(IssuanceProtocolError::InvalidMetadata);
-    }
-    Ok(())
-}
-
-fn parse_portal_authorization_metadata(
-    bytes: &[u8],
-    expected_origin: &str,
-) -> Result<String, IssuanceProtocolError> {
-    let value = parse_strict_json(bytes)?;
-    let object = value
-        .as_object()
-        .ok_or(IssuanceProtocolError::InvalidMetadata)?;
-    exact_keys(
-        object,
-        &[
-            "grant_types_supported",
-            "issuer",
-            "pre-authorized_grant_anonymous_access_supported",
-            "token_endpoint",
-        ],
-        IssuanceProtocolError::InvalidMetadata,
-    )?;
-    if required_string(object, "issuer", 2_048)? != expected_origin
-        || object
-            .get("pre-authorized_grant_anonymous_access_supported")
-            .and_then(Value::as_bool)
-            != Some(true)
-        || required_unique_strings(object, "grant_types_supported", 1, 256)?
-            != [PRE_AUTHORIZED_GRANT]
-    {
-        return Err(IssuanceProtocolError::InvalidMetadata);
-    }
-    let token = required_string(object, "token_endpoint", 2_048)?;
-    validate_portal_endpoint(&token, expected_origin, "/api/issuer/token")?;
-    Ok(token)
-}
-
-fn parse_token_response(bytes: &[u8]) -> Result<String, IssuanceProtocolError> {
-    let value = parse_strict_json(bytes)?;
-    let object = value
-        .as_object()
-        .ok_or(IssuanceProtocolError::IssuerRejected)?;
-    exact_keys(
-        object,
-        &["access_token", "expires_in", "token_type"],
-        IssuanceProtocolError::IssuerRejected,
-    )?;
-    let token = object
-        .get("access_token")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty() && value.len() <= MAX_SECRET_BYTES)
-        .ok_or(IssuanceProtocolError::IssuerRejected)?;
-    if object.get("token_type").and_then(Value::as_str) != Some("Bearer")
-        || object.get("expires_in").and_then(Value::as_u64).is_none()
-    {
-        return Err(IssuanceProtocolError::IssuerRejected);
-    }
-    Ok(token.to_owned())
-}
-
-fn parse_nonce_response(bytes: &[u8]) -> Result<String, IssuanceProtocolError> {
-    let value = parse_strict_json(bytes)?;
-    let object = value
-        .as_object()
-        .ok_or(IssuanceProtocolError::IssuerRejected)?;
-    exact_keys(
-        object,
-        &["c_nonce", "c_nonce_expires_in"],
-        IssuanceProtocolError::IssuerRejected,
-    )?;
-    if object
-        .get("c_nonce_expires_in")
-        .and_then(Value::as_u64)
-        .is_none()
-    {
-        return Err(IssuanceProtocolError::IssuerRejected);
-    }
-    object
-        .get("c_nonce")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty() && value.len() <= MAX_SECRET_BYTES)
-        .map(str::to_owned)
-        .ok_or(IssuanceProtocolError::IssuerRejected)
-}
-
-fn parse_portal_credential_response(
-    bytes: &[u8],
-    expected_holder_did: &str,
-    expected_binding_method: &str,
-    expected_nonce: &str,
-    decoder: &dyn PortalCredentialMaterialDecoder,
-) -> Result<IssuedCredentialBytes, IssuanceProtocolError> {
-    let value =
-        parse_strict_json(bytes).map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?;
-    let root = value
-        .as_object()
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    exact_keys(
-        root,
-        &["credentials"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    let credentials = root
-        .get("credentials")
-        .and_then(Value::as_array)
-        .filter(|values| values.len() == 1)
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    let item = credentials[0]
-        .as_object()
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    exact_keys(
-        item,
-        &["credential", "midnight"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    let signed = item
-        .get("credential")
-        .and_then(Value::as_str)
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)
-        .and_then(decode_payload)?;
-    let midnight = required_response_object(item, "midnight")?;
-    exact_keys(
-        midnight,
-        &[
-            "credentialFamily",
-            "credentialPrivateParts",
-            "credentialProof",
-            "encoding",
-            "expiresAt",
-            "hasExpiration",
-            "holderBinding",
-            "schemaId",
-            "schemaVersion",
-        ],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(midnight, "credentialFamily")? != PORTAL_FAMILY
-        || response_string(midnight, "encoding")? != PORTAL_ENCODING
-        || response_string(midnight, "schemaId")? != PORTAL_SCHEMA_ID
-        || response_string(midnight, "schemaVersion")? != PORTAL_SCHEMA_VERSION
-        || midnight
-            .get("hasExpiration")
-            .and_then(Value::as_bool)
-            .is_none()
-        || response_string(midnight, "expiresAt")?.len() > 64
-    {
-        return Err(IssuanceProtocolError::InvalidCredentialResponse);
-    }
-    let proof = required_response_object(midnight, "credentialProof")?;
-    exact_keys(
-        proof,
-        &["encoding", "payload"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(proof, "encoding")? != PORTAL_ENCODING {
-        return Err(IssuanceProtocolError::InvalidCredentialResponse);
-    }
-    let detached_proof = decode_payload(response_string(proof, "payload")?)?;
-    let holder = required_response_object(midnight, "holderBinding")?;
-    exact_keys(
-        holder,
-        &["challenge", "holderDidMethod", "method"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(holder, "challenge")? != expected_nonce
-        || response_string(holder, "method")? != "explicit_did_method"
-    {
-        return Err(IssuanceProtocolError::InvalidCredentialResponse);
-    }
-    let method = required_response_object(holder, "holderDidMethod")?;
-    exact_keys(
-        method,
-        &["did", "keyType", "methodId"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(method, "did")? != expected_holder_did
-        || response_string(method, "methodId")? != expected_binding_method
-        || response_string(method, "keyType")? != "jubjub"
-    {
-        return Err(IssuanceProtocolError::InvalidCredentialResponse);
-    }
-    let private_value = midnight
-        .get("credentialPrivateParts")
-        .filter(|value| value.is_object())
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    let private_json = Zeroizing::new(
-        serde_json::to_vec(private_value)
-            .map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?,
-    );
-    let private_material = decoder
-        .decode(&signed, private_json.as_slice())
-        .map_err(|error| match error {
-            PortalCredentialMaterialError::Invalid => {
-                IssuanceProtocolError::InvalidCredentialResponse
-            }
-            PortalCredentialMaterialError::Unavailable => {
-                IssuanceProtocolError::ProtectionUnavailable
-            }
-        })?;
-    if signed.is_empty() || detached_proof.is_empty() || private_material.is_empty() {
-        return Err(IssuanceProtocolError::InvalidCredentialResponse);
-    }
-    Ok(IssuedCredentialBytes {
-        signed_bytes: signed,
-        detached_proof: Some(detached_proof),
-        private_material: Some(private_material),
-    })
-}
-
-fn decode_payload(value: &str) -> Result<Vec<u8>, IssuanceProtocolError> {
-    if value.is_empty() || value.len() > MAX_CREDENTIAL_BYTES * 2 {
-        return Err(IssuanceProtocolError::InvalidCredentialResponse);
-    }
-    let bytes = general_purpose::URL_SAFE_NO_PAD
-        .decode(value)
-        .map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?;
-    if general_purpose::URL_SAFE_NO_PAD.encode(&bytes) != value {
-        return Err(IssuanceProtocolError::InvalidCredentialResponse);
-    }
-    Ok(bytes)
-}
-
-fn required_response_object<'a>(
-    object: &'a Map<String, Value>,
-    key: &str,
-) -> Result<&'a Map<String, Value>, IssuanceProtocolError> {
-    object
-        .get(key)
-        .and_then(Value::as_object)
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)
-}
-
-fn response_string<'a>(
-    object: &'a Map<String, Value>,
-    key: &str,
-) -> Result<&'a str, IssuanceProtocolError> {
-    object
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| {
-            !value.is_empty() && value.len() <= 2_048 && !value.chars().any(char::is_control)
-        })
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)
-}
-
-fn exact_keys(
-    object: &Map<String, Value>,
-    expected: &[&str],
-    error: IssuanceProtocolError,
-) -> Result<(), IssuanceProtocolError> {
-    if object.len() != expected.len() || !expected.iter().all(|key| object.contains_key(*key)) {
-        return Err(error);
-    }
-    Ok(())
-}
-
-fn validate_portal_endpoint(
-    value: &str,
-    expected_origin: &str,
-    expected_path: &str,
-) -> Result<Url, IssuanceProtocolError> {
-    let endpoint = validate_endpoint(value, EndpointPolicy::StandaloneLoopback)?;
-    if endpoint.origin().ascii_serialization() != expected_origin
-        || endpoint.path() != expected_path
-        || endpoint.query().is_some()
-    {
-        return Err(IssuanceProtocolError::InvalidMetadata);
-    }
-    Ok(endpoint)
-}
-
-async fn get_json(
-    client: &Client,
-    url: Url,
-    limit: usize,
-) -> Result<Vec<u8>, IssuanceProtocolError> {
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|_| IssuanceProtocolError::Unavailable)?;
-    read_json_response(response, limit).await
-}
-
-async fn read_json_response(
-    response: Response,
-    limit: usize,
-) -> Result<Vec<u8>, IssuanceProtocolError> {
-    if response.status() != StatusCode::OK {
-        return Err(IssuanceProtocolError::IssuerRejected);
-    }
-    if response.headers().contains_key(CONTENT_ENCODING) {
-        return Err(IssuanceProtocolError::InvalidMetadata);
-    }
-    let content_type = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .ok_or(IssuanceProtocolError::InvalidMetadata)?;
-    validate_json_content_type(content_type)?;
-    if response
-        .headers()
-        .get(CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err(IssuanceProtocolError::InvalidMetadata);
-    }
-    let mut stream = response.bytes_stream();
-    let mut bytes = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| IssuanceProtocolError::Unavailable)?;
-        if bytes.len().saturating_add(chunk.len()) > limit {
-            return Err(IssuanceProtocolError::InvalidMetadata);
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    std::str::from_utf8(&bytes).map_err(|_| IssuanceProtocolError::InvalidMetadata)?;
-    Ok(bytes)
-}
-
-fn validate_json_content_type(value: &str) -> Result<(), IssuanceProtocolError> {
-    let mut parts = value.split(';');
-    if parts.next().map(str::trim) != Some("application/json") {
-        return Err(IssuanceProtocolError::InvalidMetadata);
-    }
-    match parts.next().map(str::trim) {
-        None | Some("") => {}
-        Some(parameter) if parameter.eq_ignore_ascii_case("charset=utf-8") => {}
-        _ => return Err(IssuanceProtocolError::InvalidMetadata),
-    }
-    if parts.any(|part| !part.trim().is_empty()) {
         return Err(IssuanceProtocolError::InvalidMetadata);
     }
     Ok(())

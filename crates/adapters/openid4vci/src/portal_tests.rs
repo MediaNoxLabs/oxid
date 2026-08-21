@@ -26,7 +26,7 @@ fn manifest_bytes(origin: &str) -> Vec<u8> {
     let jwk_digest = sha256(jwk.as_bytes());
     format!(
         concat!(
-            r#"{{"issuerDid":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","issuerJubjubJwk":{jwk},"issuerJubjubJwkSha256":"{jwk_digest}","issuerMethod":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef#key-assert","issuerOrigin":"{origin}","issuerResolverOrigin":"{origin}","portalPrHead":"9c82db23eabe8b6d758b2731f2225910ea627c14","profileSourceCommit":"76e8edf394a4cb37ca822037272d543c68f25f71","provenanceSha256":"cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87","schema":"oxid-portal-deployment-v1"}}"#
+            r#"{{"integrationCommit":"925ec8d04882eabd4ac7b784c70fc2f0c152faae","integrationTree":"58b4597524f88a0ae2253439a44dab0dc60cbb6f","issuerDid":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","issuerJubjubJwk":{jwk},"issuerJubjubJwkSha256":"{jwk_digest}","issuerMethod":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef#key-assert","issuerOrigin":"{origin}","issuerResolverOrigin":"{origin}","portalPrHead":"9c82db23eabe8b6d758b2731f2225910ea627c14","profileSourceCommit":"76e8edf394a4cb37ca822037272d543c68f25f71","provenanceSha256":"cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87","schema":"oxid-portal-deployment-v2"}}"#
         ),
         jwk = jwk,
         jwk_digest = jwk_digest,
@@ -81,6 +81,14 @@ fn deployment_manifest_requires_exact_digest_source_profile_and_canonical_public
 
     for replacement in [
         (
+            "925ec8d04882eabd4ac7b784c70fc2f0c152faae",
+            "a25ec8d04882eabd4ac7b784c70fc2f0c152faae",
+        ),
+        (
+            "58b4597524f88a0ae2253439a44dab0dc60cbb6f",
+            "68b4597524f88a0ae2253439a44dab0dc60cbb6f",
+        ),
+        (
             "9c82db23eabe8b6d758b2731f2225910ea627c14",
             "ac82db23eabe8b6d758b2731f2225910ea627c14",
         ),
@@ -119,7 +127,7 @@ fn deployment_manifest_rejects_hostile_origins_jwk_drift_and_duplicate_fields() 
             .replace("https://issuer.example", "https://issuer.example/path"),
         String::from_utf8(valid.clone()).expect("utf8").replace(
             "\"schema\":",
-            "\"schema\":\"oxid-portal-deployment-v1\",\"schema\":",
+            "\"schema\":\"oxid-portal-deployment-v2\",\"schema\":",
         ),
         String::from_utf8(valid.clone())
             .expect("utf8")

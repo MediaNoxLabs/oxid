@@ -47,8 +47,10 @@ mod portal;
     not(target_os = "android")
 ))]
 pub use portal::{
+    PORTAL_INTEGRATION_COMMIT, PORTAL_INTEGRATION_TREE, PORTAL_PR_HEAD, PORTAL_PROFILE_SOURCE,
     PortalCredentialMaterialDecoder, PortalCredentialMaterialError, PortalDeploymentManifest,
-    PortalDeploymentManifestError, PortalOid4vciClient, authenticate_bundled_portal_source,
+    PortalDeploymentManifestError, PortalOid4vciClient, PortalOid4vciClientFactory,
+    authenticate_bundled_portal_source,
 };
 #[cfg(all(
     test,

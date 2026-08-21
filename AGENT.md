@@ -560,8 +560,10 @@ composition.
 
 [Issue #24](https://github.com/MediaNoxLabs/oxid/issues/24) and ADR-0039 add a
 dependency-free protocol domain/application hexagon plus an exact OpenID4VCI
-1.0 Final standalone subset. The only implemented journey is an embedded offer
-using the pre-authorized-code grant without Transaction Code. The in-process
+1.0 Final standalone subset. Embedded standalone issuance remains the mobile
+and deterministic test journey; ADR-0102 adds one separately authenticated
+native desktop/headless Portal HTTP journey using the same pre-authorized-code
+grant without Transaction Code. The in-process
 adapter strictly separates Credential Issuer and OAuth metadata, uses the Nonce
 Endpoint model, builds `proofs.jwt`, parses the final `credentials` array, and
 imports through the valid-only ADR-0038 sink. Offer preview and exact
@@ -569,9 +571,9 @@ imports through the valid-only ADR-0038 sink. Offer preview and exact
 tokens, nonces, proofs, signing input, and credential bytes never enter incoming
 DTOs. Plain HTTP is loopback-only in this standalone adapter; production
 endpoint policy is HTTPS-only and normal `compose()` wires unavailable protocol
-ports. Live HTTP/discovery, Authorization Code, by-reference offers,
-Transaction Code, batch/deferred issuance, OpenID4VP, deep links, and scanning
-remain separate slices.
+ports. Production HTTP/discovery, Authorization Code, by-reference offers,
+Transaction Code, batch/deferred issuance, and runtime mobile Portal selection
+remain unavailable.
 The standalone issuer must independently resolve the selected public DID
 method and verify the Ed25519/P-256 proof JWS, nonce, anonymous-flow `iss`
 omission, audience, algorithm, and bounded `iat`; structural JWT validation is
@@ -581,15 +583,18 @@ persisted ownership. Credential issuance must select an active authentication
 method from this set; never infer control merely because a resolved or restored
 public DID document contains an authentication relationship.
 
-ADR-0101 gates LaceID Portal interoperability: the fixtures pinned to Portal
-`804de0a9e58cf48ece3cc6c24b2245bb70bc80f1` are source-derived negative
-contract evidence only, not runtime capture, Portal acceptance, or
-headless/simulator/device/tailnet proof. Keep ADR-0039's exact Final decoder,
-HTTPS-only non-loopback and loopback-only HTTP policy, and ADR-0097's
-compile-time `standalone-local`/`standalone-tailnet` isolation; never add a
-permissive Portal decoder, and keep positive HTTP composition and
-trust/provenance-manifest consumption blocked on the linked upstream work in
-issue #124.
+ADR-0101 keeps Portal `804de0a9e58cf48ece3cc6c24b2245bb70bc80f1`
+as source-derived negative contract evidence only. ADR-0102 separately pins the
+landed Portal `integration` squash `925ec8d04882eabd4ac7b784c70fc2f0c152faae`,
+its tree-identical historical PR head `9c82db23eabe8b6d758b2731f2225910ea627c14`,
+and profile source `76e8edf394a4cb37ca822037272d543c68f25f71`.
+Only native desktop/headless development may select that strict HTTP adapter,
+through an absolute manifest path plus exact digest. Keep ADR-0039's Final-only
+wire contract, HTTPS-only nonloopback/loopback-only plaintext, explicit consent,
+distinct managed authentication and Jubjub methods, exact three-part verified
+import, encrypted persistence, unavailable production composition, and
+compile-time mobile isolation. Never add a permissive Portal decoder or runtime
+production/mobile route switch.
 
 [Issue #25](https://github.com/MediaNoxLabs/oxid/issues/25) and ADR-0040 migrate
 the prototype's actual `oid4vp_client` behavior as a separate SIOPv2 draft-13
@@ -1063,7 +1068,7 @@ Current package ownership:
 | `crates/adapters/did-midnight` | Standalone fixture and exact public Compact-issuer documents, explicit bounded native Midnight DID resolution, plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification, explicit standalone issuer/current-time/trust policy, holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/proving/verification, current managed Jubjub holder reauthorization, a single-proof foreground mobile worker, and public standalone fixtures. |
 | `crates/adapters/passport-vault` | Product-specific bounded in-memory plus owner-private atomic standalone repositories, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing authorization-bound settlement for create/deposit/claim/withdraw; managed-custody claim conformance is exercised through composition. |
-| `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final embedded pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, DID proof bridge, and verified credential sink. |
+| `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, native-headless pinned Portal HTTP client, DID proof bridge, and verified credential sink. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, fail-closed Compact proof gate, independent verification, and proof-worker completion control. |
 | `crates/adapters/identity-ingress` | Strict credential-offer/registered-OpenID4VP classifier plus payload-redacted native iOS/Android QR scanner adapters. |
@@ -1077,7 +1082,7 @@ Current package ownership:
 | `brands` | Reviewed immutable presentation inputs only. Each real directory is one validated pack; no secrets, endpoints, trust, protocol, custody, confirmation, or application state. |
 | `crates/adapters/platform-system` | System clock, OS randomness, and typed public receive-address export implementations. |
 | `crates/ui-dioxus` | Brand-agnostic Dioxus incoming adapter, immutable `BrandProfile` presentation context, bounded mobile route stack, safe read-only Home projection, exact amount/consent presentation state, public receive-QR rendering, distinct protected-DUST registration review/authorization/submission/cancellation/reconciliation, standalone Passport Vault UI, and truthfully labelled typed native vault-call lifecycle. |
-| `crates/composition` | Concrete dependency wiring with no product rules. |
+| `crates/composition` | Concrete dependency wiring with no product rules, including the authenticated native-headless-only Portal bridge that remains absent from production/mobile composition. |
 | `apps/oxid` | Default-brand thin executable shell, literal `brands/oxid` build selection, and platform launch point. |
 | `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |
 

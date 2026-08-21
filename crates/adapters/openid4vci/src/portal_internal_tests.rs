@@ -128,6 +128,8 @@ fn deployment(origin: &str) -> PortalDeploymentManifest {
     };
     let jwk_digest = sha256_hex(&serde_json::to_vec(&jwk).expect("jwk"));
     let manifest = PortalDeploymentManifest {
+            integration_commit: PORTAL_INTEGRATION_COMMIT.to_owned(),
+            integration_tree: PORTAL_INTEGRATION_TREE.to_owned(),
             issuer_did: "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
             issuer_jubjub_jwk: jwk,
             issuer_jubjub_jwk_sha256: jwk_digest,
@@ -137,7 +139,7 @@ fn deployment(origin: &str) -> PortalDeploymentManifest {
             portal_pr_head: PORTAL_PR_HEAD.to_owned(),
             profile_source_commit: PORTAL_PROFILE_SOURCE.to_owned(),
             provenance_sha256: PORTAL_PROVENANCE_SHA256.to_owned(),
-            schema: "oxid-portal-deployment-v1".to_owned(),
+            schema: "oxid-portal-deployment-v2".to_owned(),
         };
     let bytes = serde_json::to_vec(&manifest).expect("manifest");
     PortalDeploymentManifest::from_bytes(&bytes, &sha256_hex(&bytes)).expect("deployment")

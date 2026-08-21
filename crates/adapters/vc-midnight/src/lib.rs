@@ -63,9 +63,9 @@ pub use digital_passport::{
     standalone_private_material,
 };
 pub use passport_policy::{
-    DigitalPassportIssuerTrustAnchor, DigitalPassportPolicyError, DigitalPassportPolicyEvidence,
-    DigitalPassportPolicyRequest, standalone_digital_passport_issuer_trust_anchor,
-    verify_digital_passport_policy,
+    DigitalPassportIssuerTrustAnchor, DigitalPassportIssuerTrustAnchorError,
+    DigitalPassportPolicyError, DigitalPassportPolicyEvidence, DigitalPassportPolicyRequest,
+    standalone_digital_passport_issuer_trust_anchor, verify_digital_passport_policy,
 };
 pub use protected_presentation::{
     PreparedDigitalPassportPresentation, ProtectedDigitalPassportPresentationError,

@@ -2,6 +2,13 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "ios"),
+    not(target_os = "android")
+))]
+mod portal;
+
 use std::{fmt, sync::Arc};
 
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
@@ -50,6 +57,12 @@ use oxid_adapter_midnight::{
 };
 use oxid_adapter_midnight::{MidnightDiagnosticAttachPort, MidnightPublicCallContextSource};
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "ios"),
+    not(target_os = "android")
+))]
+use oxid_adapter_openid4vci::PortalOid4vciClientFactory;
 use oxid_adapter_openid4vci::{
     DidCredentialHolderProof, StandaloneOid4vciIssuer, VerifiedCredentialSink,
 };
@@ -70,6 +83,12 @@ use oxid_adapter_passport_vault::{
     InMemoryPassportVaultRepository, StandalonePassportVaultCredential,
 };
 use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "ios"),
+    not(target_os = "android")
+))]
+use portal::{PortalIdentityConfiguration, PortalPrivateMaterialDecoder};
 
 /// Returns the public embedded offer for the deterministic standalone issuer.
 /// Production composition keeps the issuer port unavailable.
@@ -389,10 +408,26 @@ pub struct ApplicationServices {
     compact_presentation_proof_available: bool,
 }
 
-#[derive(Clone, Copy)]
 enum CredentialIssuanceComposition {
     Unavailable,
     Standalone,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        not(target_os = "ios"),
+        not(target_os = "android")
+    ))]
+    Portal(Box<PortalOid4vciClientFactory>),
+}
+
+#[derive(Clone, Copy)]
+enum HeadlessCredentialProfile {
+    Standalone,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        not(target_os = "ios"),
+        not(target_os = "android")
+    ))]
+    Portal,
 }
 
 #[derive(Clone, Copy)]
@@ -1322,6 +1357,29 @@ pub fn compose_headless() -> ApplicationServices {
 fn compose_headless_with_presentation(
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
+    compose_headless_with_credential_profile(
+        credential_presentation,
+        HeadlessCredentialProfile::Standalone,
+        None,
+    )
+}
+
+fn compose_headless_with_credential_profile(
+    credential_presentation: CredentialPresentationComposition,
+    credential_profile: HeadlessCredentialProfile,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        not(target_os = "ios"),
+        not(target_os = "android")
+    ))]
+    portal: Option<PortalIdentityConfiguration>,
+    #[cfg(not(all(
+        not(target_arch = "wasm32"),
+        not(target_os = "ios"),
+        not(target_os = "android")
+    )))]
+    _portal: Option<()>,
+) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
@@ -1350,11 +1408,24 @@ fn compose_headless_with_presentation(
     );
     #[cfg(not(target_arch = "wasm32"))]
     let midnight = Arc::new(midnight);
-    let services = compose_with_adapters_and_presentation(
+    let services = compose_with_adapters_and_credential_profile(
         profiles,
         security,
         midnight,
         credential_presentation,
+        credential_profile,
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        ))]
+        portal,
+        #[cfg(not(all(
+            not(target_arch = "wasm32"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        )))]
+        _portal,
     );
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -1417,6 +1488,14 @@ pub const DID_STORE_PATH_ENV: &str = "OXID_DID_STORE_PATH";
 pub const CREDENTIAL_STORE_PATH_ENV: &str = "OXID_CREDENTIAL_STORE_PATH";
 /// Environment variable holding the development-only credential wrapping key.
 pub const CREDENTIAL_KEY_PATH_ENV: &str = "OXID_CREDENTIAL_KEY_PATH";
+/// Environment variable holding the absolute authenticated Portal deployment manifest path.
+#[cfg(not(target_arch = "wasm32"))]
+pub const OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH_ENV: &str =
+    "OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH";
+/// Environment variable holding the expected SHA-256 of the exact Portal deployment manifest.
+#[cfg(not(target_arch = "wasm32"))]
+pub const OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256_ENV: &str =
+    "OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256";
 /// Environment variable holding the owner-private standalone Passport Vault file.
 #[cfg(not(target_arch = "wasm32"))]
 pub const PASSPORT_VAULT_STORE_PATH_ENV: &str = "OXID_PASSPORT_VAULT_STORE_PATH";
@@ -1442,6 +1521,10 @@ pub enum HeadlessCompositionError {
     PassportVaultHistoryRequiresStandalone,
     InvalidCompactPresentationRuntime(CompactPresentationRuntimeError),
     IncompleteCredentialStoreConfiguration,
+    IncompletePortalConfiguration,
+    PortalConfigurationUnavailable,
+    PortalRequiresStandaloneSimulation,
+    InvalidPortalConfiguration,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1481,6 +1564,16 @@ impl std::fmt::Display for HeadlessCompositionError {
             Self::IncompleteCredentialStoreConfiguration => {
                 "credential store and key paths must be configured together"
             }
+            Self::IncompletePortalConfiguration => {
+                "Portal manifest path and digest must be configured together"
+            }
+            Self::PortalConfigurationUnavailable => {
+                "Portal issuance is available only to native desktop headless development"
+            }
+            Self::PortalRequiresStandaloneSimulation => {
+                "Portal issuance cannot be combined with live Midnight or alternate resolver configuration"
+            }
+            Self::InvalidPortalConfiguration => "invalid Portal deployment configuration",
         };
         formatter.write_str(message)
     }
@@ -1495,6 +1588,14 @@ impl std::error::Error for HeadlessCompositionError {}
 #[cfg(not(target_arch = "wasm32"))]
 pub fn compose_headless_from_environment() -> Result<ApplicationServices, HeadlessCompositionError>
 {
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    if std::env::var_os(OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH_ENV).is_some()
+        || std::env::var_os(OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256_ENV).is_some()
+    {
+        return Err(HeadlessCompositionError::PortalConfigurationUnavailable);
+    }
+    #[cfg(all(not(target_os = "ios"), not(target_os = "android")))]
+    let portal = parse_optional_portal_configuration()?;
     let credential_presentation =
         read_optional_environment(PRESENTATION_COMPACT_ARTIFACTS_DIR_ENV)?
             .map(|root| {
@@ -1518,10 +1619,12 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
         .map(PassportVaultStoreConfig::new)
         .transpose()
         .map_err(HeadlessCompositionError::InvalidPassportVaultStoreConfiguration)?;
-    read_optional_environment(MIDNIGHT_DID_RESOLVER_URL_ENV)?
+    let midnight_did_resolver = read_optional_environment(MIDNIGHT_DID_RESOLVER_URL_ENV)?
         .map(HttpDidResolverConfig::new)
         .transpose()
         .map_err(HeadlessCompositionError::InvalidMidnightDidResolverConfiguration)?;
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let _ = &midnight_did_resolver;
     let values = [
         read_optional_environment(MIDNIGHT_NETWORK_ID_ENV)?,
         read_optional_environment(MIDNIGHT_INDEXER_WS_URL_ENV)?,
@@ -1552,6 +1655,19 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
     )?;
     let passport_vault_composer = read_optional_environment(PASSPORT_VAULT_COMPOSER_ENV)?;
     let midnight_config = parse_optional_midnight_config(values)?;
+    #[cfg(all(not(target_os = "ios"), not(target_os = "android")))]
+    if portal.is_some()
+        && (midnight_config.is_some()
+            || midnight_did_resolver.is_some()
+            || checkpoints.is_some()
+            || dust_checkpoints.is_some()
+            || shielded_checkpoints.is_some()
+            || submission_journal.is_some()
+            || passport_vault_deployment_height.is_some()
+            || passport_vault_composer.is_some())
+    {
+        return Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation);
+    }
     if passport_vault_deployment_height.is_some()
         && !matches!(
             &midnight_config,
@@ -1619,15 +1735,25 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
         {
             Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
         }
-        None => Ok(submission_journal.map_or_else(
-            || compose_headless_with_presentation(credential_presentation.clone()),
-            |journal| {
-                compose_headless_with_submission_journal_and_presentation(
-                    journal,
-                    credential_presentation.clone(),
-                )
-            },
-        )),
+        None => {
+            #[cfg(all(not(target_os = "ios"), not(target_os = "android")))]
+            if let Some(portal) = portal {
+                return Ok(compose_headless_with_credential_profile(
+                    credential_presentation,
+                    HeadlessCredentialProfile::Portal,
+                    Some(portal),
+                ));
+            }
+            Ok(submission_journal.map_or_else(
+                || compose_headless_with_presentation(credential_presentation.clone()),
+                |journal| {
+                    compose_headless_with_submission_journal_and_presentation(
+                        journal,
+                        credential_presentation.clone(),
+                    )
+                },
+            ))
+        }
         Some(HeadlessMidnightConfig::Indexer(_)) => {
             Err(HeadlessCompositionError::IncompleteMidnightIndexerConfiguration)
         }
@@ -1938,6 +2064,27 @@ pub fn compose_headless_standalone_with_all_checkpoints(
         compose_with_adapters(profiles, security, midnight),
         passport_vault_state_source,
     )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "ios"),
+    not(target_os = "android")
+))]
+fn parse_optional_portal_configuration()
+-> Result<Option<PortalIdentityConfiguration>, HeadlessCompositionError> {
+    let values = (
+        read_optional_environment(OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH_ENV)?,
+        read_optional_environment(OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256_ENV)?,
+    );
+    match values {
+        (None, None) => Ok(None),
+        (Some(path), Some(digest)) => PortalIdentityConfiguration::from_file(&path, &digest)
+            .map(Some)
+            .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration),
+        _ => Err(HeadlessCompositionError::IncompletePortalConfiguration),
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2569,6 +2716,58 @@ where
         + NativeMidnightCompositionCapability
         + 'static,
 {
+    compose_with_adapters_and_credential_profile(
+        repository,
+        security,
+        midnight,
+        credential_presentation,
+        HeadlessCredentialProfile::Standalone,
+        None,
+    )
+}
+
+fn compose_with_adapters_and_credential_profile<R, S, M>(
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    credential_presentation: CredentialPresentationComposition,
+    credential_profile: HeadlessCredentialProfile,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        not(target_os = "ios"),
+        not(target_os = "android")
+    ))]
+    portal: Option<PortalIdentityConfiguration>,
+    #[cfg(not(all(
+        not(target_arch = "wasm32"),
+        not(target_os = "ios"),
+        not(target_os = "android")
+    )))]
+    _portal: Option<()>,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + 'static,
+    S: WalletProtectionPort
+        + WalletKeyOperationPort
+        + WalletJubjubChallengeSigningPort
+        + WalletPortableBackupPort
+        + PortableCustodyVaultPort
+        + 'static,
+    M: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletAccountDerivationPort
+        + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
+        + WalletShieldedSyncPort
+        + WalletTransactionPort
+        + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
+        + NativeMidnightCompositionCapability
+        + 'static,
+{
     let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
     let challenge_signing: Arc<dyn WalletJubjubChallengeSigningPort> = security.clone();
     let did_lifecycle = Arc::new(StandaloneDidLifecycle::with_jubjub_challenge_signing(
@@ -2578,12 +2777,32 @@ where
     let did_lifecycle_port: Arc<dyn DidLifecyclePort> = did_lifecycle.clone();
     let did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort> = did_lifecycle;
     let did_resolver = headless_did_resolver();
+    let (compact_issuer_resolver, trust_anchor, credential_issuance) = match credential_profile {
+        HeadlessCredentialProfile::Standalone => (
+            Arc::new(StandaloneDidResolver) as Arc<dyn DidResolutionPort>,
+            standalone_digital_passport_issuer_trust_anchor(),
+            CredentialIssuanceComposition::Standalone,
+        ),
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        ))]
+        HeadlessCredentialProfile::Portal => {
+            let portal = portal.expect("Portal headless profile requires authenticated config");
+            (
+                portal.issuer_resolver,
+                portal.trust_anchor,
+                CredentialIssuanceComposition::Portal(Box::new(portal.client_factory)),
+            )
+        }
+    };
     let verifier: Arc<dyn CredentialVerificationPort> =
         Arc::new(MidnightCredentialVerifier::with_compact_policy(
             Arc::clone(&did_resolver),
-            Arc::new(StandaloneDidResolver),
+            compact_issuer_resolver,
             Arc::new(SystemClock),
-            standalone_digital_passport_issuer_trust_anchor(),
+            trust_anchor,
         ));
     compose_with_identity_adapters(
         repository,
@@ -2598,7 +2817,7 @@ where
             credential_inbox: Arc::new(StandaloneCredentialInbox),
             credential_verifier: verifier,
             credential_disclosure: Arc::new(DigitalPassportDisclosureAdapter),
-            credential_issuance: CredentialIssuanceComposition::Standalone,
+            credential_issuance,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
             credential_presentation,
         },
@@ -2705,9 +2924,9 @@ where
         Arc::new(UnavailablePortableWalletBackupDocuments);
     let presentation_credential_repository = Arc::clone(&credential_repository);
     let vault_credential_repository = Arc::clone(&credential_repository);
-    let standalone_passport_vault = matches!(
-        credential_issuance,
-        CredentialIssuanceComposition::Standalone
+    let standalone_passport_vault = !matches!(
+        &credential_issuance,
+        CredentialIssuanceComposition::Unavailable
     );
     #[cfg(not(target_arch = "wasm32"))]
     let compact_presentation_proof_available = match &credential_presentation {
@@ -2827,6 +3046,25 @@ where
                     clock.clone(),
                     Arc::new(StandaloneBoundCompactCredentialIssuer::new(clock.clone())),
                 )),
+                Arc::new(VerifiedCredentialSink::new(importer)),
+            )
+        }
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        ))]
+        CredentialIssuanceComposition::Portal(factory) => {
+            let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
+            let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+            let proof = Arc::new(DidCredentialHolderProof::new(
+                Arc::clone(&get_did),
+                sign_did,
+                clock.clone(),
+            ));
+            let importer: Arc<dyn ImportVerifiedCredentialUseCase> = credentials.clone();
+            (
+                Arc::new(factory.build(proof, get_did, Arc::new(PortalPrivateMaterialDecoder))),
                 Arc::new(VerifiedCredentialSink::new(importer)),
             )
         }

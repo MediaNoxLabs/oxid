@@ -4,9 +4,15 @@
 //! verifier adapters. This module owns schema interpretation; vault state and
 //! money movement remain outside the reusable credential adapter.
 
+use base64::{Engine as _, engine::general_purpose};
 use midnight_base_crypto::fab::AlignedValue;
-use midnight_transient_crypto::{curve::EmbeddedGroupAffine, fab::ValueReprAlignedValue};
+use midnight_transient_crypto::{
+    curve::{EmbeddedGroupAffine, Fr},
+    fab::ValueReprAlignedValue,
+};
 use oxid_credential_domain::VerificationOutcome;
+use oxid_identity_domain::MidnightDid;
+use sha2::{Digest as _, Sha256};
 
 use crate::{
     compact_digital_passport::{
@@ -24,7 +30,95 @@ pub struct DigitalPassportIssuerTrustAnchor {
     public_key_hash: [u8; 32],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DigitalPassportIssuerTrustAnchorError {
+    InvalidIssuer,
+    InvalidMethod,
+    InvalidPublicKey,
+    PublicKeyDigestMismatch,
+}
+
+impl std::fmt::Display for DigitalPassportIssuerTrustAnchorError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidIssuer => "invalid Digital Passport issuer DID",
+            Self::InvalidMethod => "invalid Digital Passport issuer method",
+            Self::InvalidPublicKey => "invalid Digital Passport issuer public key",
+            Self::PublicKeyDigestMismatch => "Digital Passport issuer public-key digest mismatch",
+        })
+    }
+}
+
+impl std::error::Error for DigitalPassportIssuerTrustAnchorError {}
+
 impl DigitalPassportIssuerTrustAnchor {
+    /// Builds the explicit standalone Portal trust anchor from the exact
+    /// deployment-manifest issuer and canonical Jubjub JWK. The supplied digest
+    /// authenticates the canonical public JWK bytes; the verifier's native
+    /// point hash is derived only after the coordinates decode to a valid,
+    /// non-identity Jubjub point.
+    pub fn from_portal_jubjub(
+        issuer_did: &str,
+        issuer_method: &str,
+        x: &str,
+        y: &str,
+        expected_jwk_sha256: &str,
+    ) -> Result<Self, DigitalPassportIssuerTrustAnchorError> {
+        MidnightDid::parse(issuer_did.to_owned())
+            .map_err(|_| DigitalPassportIssuerTrustAnchorError::InvalidIssuer)?;
+        let fragment = issuer_method
+            .strip_prefix(issuer_did)
+            .filter(|value| value.starts_with('#'))
+            .ok_or(DigitalPassportIssuerTrustAnchorError::InvalidMethod)?;
+        if fragment.len() > 32
+            || fragment.len() < 2
+            || !fragment.bytes().skip(1).all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b':' | b'%')
+            })
+        {
+            return Err(DigitalPassportIssuerTrustAnchorError::InvalidMethod);
+        }
+        let mut method_id = [0_u8; 32];
+        method_id[..fragment.len()].copy_from_slice(fragment.as_bytes());
+        let decode = |value: &str| {
+            general_purpose::URL_SAFE_NO_PAD
+                .decode(value)
+                .ok()
+                .filter(|bytes| general_purpose::URL_SAFE_NO_PAD.encode(bytes) == value)
+                .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+                .and_then(|bytes| Fr::from_le_bytes(&bytes))
+                .ok_or(DigitalPassportIssuerTrustAnchorError::InvalidPublicKey)
+        };
+        let x_coordinate = decode(x)?;
+        let y_coordinate = decode(y)?;
+        let point =
+            std::panic::catch_unwind(|| EmbeddedGroupAffine::new(x_coordinate, y_coordinate))
+                .ok()
+                .flatten()
+                .filter(|point| !point.is_identity())
+                .ok_or(DigitalPassportIssuerTrustAnchorError::InvalidPublicKey)?;
+        if expected_jwk_sha256.len() != 64
+            || !expected_jwk_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        {
+            return Err(DigitalPassportIssuerTrustAnchorError::PublicKeyDigestMismatch);
+        }
+        let canonical_jwk = serde_json::json!({"crv":"Jubjub","kty":"EC","x":x,"y":y});
+        let canonical_jwk = serde_json::to_vec(&canonical_jwk)
+            .map_err(|_| DigitalPassportIssuerTrustAnchorError::InvalidPublicKey)?;
+        if hex::encode(Sha256::digest(&canonical_jwk)) != expected_jwk_sha256 {
+            return Err(DigitalPassportIssuerTrustAnchorError::PublicKeyDigestMismatch);
+        }
+        Ok(Self {
+            issuer_did: issuer_did.to_owned(),
+            method_id,
+            public_key: point_bytes(point)
+                .ok_or(DigitalPassportIssuerTrustAnchorError::InvalidPublicKey)?,
+            public_key_hash: persistent_hash(&ValueReprAlignedValue(AlignedValue::from(point))),
+        })
+    }
+
     #[must_use]
     pub fn issuer_did(&self) -> &str {
         &self.issuer_did
@@ -189,6 +283,59 @@ mod tests {
             required_issuing_state: None,
             required_document_number: None,
             current_time_seconds: credential.issued_at + 1,
+        }
+    }
+
+    #[test]
+    fn portal_trust_anchor_requires_exact_method_point_and_canonical_jwk_digest() {
+        let expected = standalone_digital_passport_issuer_trust_anchor();
+        let proof = parse_proof(&standalone_compact_proof()).expect("proof");
+        let coordinates = point_bytes(proof.public_key).expect("coordinates");
+        let x = general_purpose::URL_SAFE_NO_PAD.encode(&coordinates[..32]);
+        let y = general_purpose::URL_SAFE_NO_PAD.encode(&coordinates[32..]);
+        let jwk = serde_json::json!({"crv":"Jubjub","kty":"EC","x":x,"y":y});
+        let digest = hex::encode(Sha256::digest(serde_json::to_vec(&jwk).expect("jwk")));
+        let fragment_end = expected
+            .method_id
+            .iter()
+            .rposition(|byte| *byte != 0)
+            .map_or(0, |index| index + 1);
+        let fragment = std::str::from_utf8(&expected.method_id[..fragment_end]).expect("method");
+        let method = format!("{}{fragment}", expected.issuer_did());
+        let actual = DigitalPassportIssuerTrustAnchor::from_portal_jubjub(
+            expected.issuer_did(),
+            &method,
+            jwk["x"].as_str().expect("x"),
+            jwk["y"].as_str().expect("y"),
+            &digest,
+        )
+        .expect("valid Portal anchor");
+        assert_eq!(actual, expected);
+
+        for result in [
+            DigitalPassportIssuerTrustAnchor::from_portal_jubjub(
+                expected.issuer_did(),
+                expected.issuer_did(),
+                jwk["x"].as_str().expect("x"),
+                jwk["y"].as_str().expect("y"),
+                &digest,
+            ),
+            DigitalPassportIssuerTrustAnchor::from_portal_jubjub(
+                expected.issuer_did(),
+                &method,
+                &format!("{}=", jwk["x"].as_str().expect("x")),
+                jwk["y"].as_str().expect("y"),
+                &digest,
+            ),
+            DigitalPassportIssuerTrustAnchor::from_portal_jubjub(
+                expected.issuer_did(),
+                &method,
+                jwk["x"].as_str().expect("x"),
+                jwk["y"].as_str().expect("y"),
+                &"0".repeat(64),
+            ),
+        ] {
+            assert!(result.is_err());
         }
     }
 

@@ -26,9 +26,16 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
+hex.workspace = true
+oxid-adapter-did-midnight.workspace = true
 oxid-adapter-openid4vci.workspace = true
+oxid-adapter-platform-system.workspace = true
 oxid-adapter-siopv2.workspace = true
+oxid-adapter-vc-midnight.workspace = true
+sha2.workspace = true
 tokio.workspace = true
+url.workspace = true
 tokio-tungstenite.workspace = true
 
 [lints]
