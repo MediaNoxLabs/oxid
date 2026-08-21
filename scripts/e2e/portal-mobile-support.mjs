@@ -77,9 +77,14 @@ function runLogged(command, args, cwd = portalTree) {
 }
 
 function runSilent(command, args, cwd = portalTree) {
+  const hostEnvironment = { ...process.env, DEVELOPER_DIR: "/Applications/Xcode.app/Contents/Developer" };
+  for (const name of ["SDKROOT", "CC", "CXX", "LD", "AR", "NIX_CFLAGS_COMPILE", "NIX_LDFLAGS"]) {
+    delete hostEnvironment[name];
+  }
+  hostEnvironment.PATH = `/usr/bin:/bin:/usr/sbin:/sbin:${process.env.PATH ?? ""}`;
   const result = spawnSync(command, args, {
     cwd,
-    env: process.env,
+    env: hostEnvironment,
     stdio: "ignore",
   });
   if (result.error || result.status !== 0) {
