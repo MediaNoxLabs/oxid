@@ -53,6 +53,7 @@ const counters = {
   credential: 0,
   issuerMetadata: 0,
   issuerResolution: 0,
+  issuerResolutionSuccess: 0,
   kyc: 0,
   nonce: 0,
   other: 0,
@@ -227,6 +228,9 @@ const issuerResolverProxy = http.createServer((request, response) => {
     path: "/resolve",
     headers: { ...request.headers, host: "127.0.0.1:9092" },
   }, (upstreamResponse) => {
+    if ((upstreamResponse.statusCode ?? 500) >= 200 && (upstreamResponse.statusCode ?? 500) < 300) {
+      counters.issuerResolutionSuccess += 1;
+    }
     response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
     upstreamResponse.pipe(response);
   });
