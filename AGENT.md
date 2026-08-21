@@ -581,6 +581,16 @@ persisted ownership. Credential issuance must select an active authentication
 method from this set; never infer control merely because a resolved or restored
 public DID document contains an authentication relationship.
 
+ADR-0101 gates LaceID Portal interoperability: the fixtures pinned to Portal
+`804de0a9e58cf48ece3cc6c24b2245bb70bc80f1` are source-derived negative
+contract evidence only, not runtime capture, Portal acceptance, or
+headless/simulator/device/tailnet proof. Keep ADR-0039's exact Final decoder,
+HTTPS-only non-loopback and loopback-only HTTP policy, and ADR-0097's
+compile-time `standalone-local`/`standalone-tailnet` isolation; never add a
+permissive Portal decoder, and keep positive HTTP composition and
+trust/provenance-manifest consumption blocked on the linked upstream work in
+issue #124.
+
 [Issue #25](https://github.com/MediaNoxLabs/oxid/issues/25) and ADR-0040 migrate
 the prototype's actual `oid4vp_client` behavior as a separate SIOPv2 draft-13
 self-issued-authentication capability. It is not credential presentation: this
