@@ -76,27 +76,48 @@ fn pinned_provenance_and_fixture_digests_are_intact() {
         assert_eq!(source["sha256"], digest, "source digest drift for {path}");
     }
 
-    let fixtures = [
-        ("credential-offer.json", CREDENTIAL_OFFER),
-        ("issuer-metadata.json", ISSUER_METADATA),
-        ("credential-request.json", CREDENTIAL_REQUEST),
-        ("credential-response.json", CREDENTIAL_RESPONSE),
+    let fixtures: [(&str, &[u8], &[&str]); 4] = [
+        (
+            "credential-offer.json",
+            CREDENTIAL_OFFER,
+            &["crates/issuer-services/src/credential_offer.rs"],
+        ),
+        (
+            "issuer-metadata.json",
+            ISSUER_METADATA,
+            &[
+                "crates/issuer-http/src/well_known.rs",
+                "crates/credential-digital-passport/src/metadata.rs",
+            ],
+        ),
+        (
+            "credential-request.json",
+            CREDENTIAL_REQUEST,
+            &[
+                "crates/issuer-http/src/routes_issuer.rs",
+                "crates/issuer-integration/tests/http_integration.rs",
+            ],
+        ),
+        (
+            "credential-response.json",
+            CREDENTIAL_RESPONSE,
+            &["crates/issuer-services/src/credential.rs"],
+        ),
     ];
     let recorded = provenance["fixtures"]
         .as_array()
         .expect("provenance fixtures must be an array");
     assert_eq!(recorded.len(), fixtures.len());
-    for (name, bytes) in fixtures {
+    for (name, bytes, expected_source_paths) in fixtures {
         let fixture = recorded
             .iter()
             .find(|fixture| fixture["path"] == name)
             .unwrap_or_else(|| panic!("missing provenance for fixture {name}"));
         assert_eq!(fixture["sha256"], sha256(bytes), "fixture drift for {name}");
-        assert!(
-            fixture["source_paths"]
-                .as_array()
-                .is_some_and(|paths| !paths.is_empty()),
-            "fixture {name} must name its exact upstream sources"
+        assert_eq!(
+            fixture["source_paths"],
+            json!(expected_source_paths),
+            "fixture source paths drift for {name}"
         );
     }
     assert_eq!(
