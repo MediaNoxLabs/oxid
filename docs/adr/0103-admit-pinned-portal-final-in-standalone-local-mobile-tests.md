@@ -87,8 +87,8 @@ and both files are deleted immediately. The QEMU gate verifies exact reverse
 entries for 8088, 9944, 6300, Portal 18090, and resolver 9092. It never installs
 `10.0.2.2` and never uses `reverse --remove-all`.
 
-The suites cover warm/cold delivery, one review item, refusal, malformed input,
-unavailable transport, bounded timeout, explicit consent, success, process
+The suites collectively cover warm/cold delivery, one review item, refusal,
+malformed input, unavailable transport, bounded timeout, explicit consent, success, process
 restart, truthful development-custody reset/reactivation, encrypted list, and
 reverification. iOS also proves simulator camera unavailability. The existing
 Android ingress suite remains the authority for scanner cancellation, timeout,

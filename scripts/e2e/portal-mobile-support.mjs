@@ -39,6 +39,7 @@ const composeFiles = ["compose", "-f", "docker/docker-compose.yml", "-f", overri
 let phase = "startup";
 let holderDocument = null;
 let holderGeneration = 0;
+let iosDevice = null;
 let offer = null;
 let proxyMode = "normal";
 let complete = false;
@@ -72,6 +73,17 @@ function runLogged(command, args, cwd = portalTree) {
   });
   if (result.error || result.status !== 0) {
     throw new Error(`${command} failed in ${phase}`);
+  }
+}
+
+function runSilent(command, args, cwd = portalTree) {
+  const result = spawnSync(command, args, {
+    cwd,
+    env: process.env,
+    stdio: "ignore",
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(`${path.basename(command)} failed in ${phase}`);
   }
 }
 
@@ -250,6 +262,27 @@ const controlServer = http.createServer(async (request, response) => {
       holderDocument = transformStoredDid(await readBounded(request));
       holderGeneration += 1;
       return sendJson(response, 200, { generation: holderGeneration });
+    }
+    if (request.method === "POST" && request.url === "/ios-device") {
+      const candidate = (await readBounded(request, 64)).toString("utf8");
+      if (!/^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/.test(candidate)) {
+        return sendJson(response, 400, { error: "invalid_device" });
+      }
+      iosDevice = candidate;
+      return sendJson(response, 200, { ok: true });
+    }
+    if (request.method === "POST" && request.url === "/deliver-ios") {
+      const delivery = (await readBounded(request, 32)).toString("utf8");
+      if (!iosDevice || !offer || !new Set(["real", "real-cold"]).has(delivery)) {
+        return sendJson(response, 400, { error: "invalid_delivery" });
+      }
+      if (delivery === "real-cold") {
+        try {
+          runSilent("/usr/bin/xcrun", ["simctl", "terminate", iosDevice, "io.medianox.oxid"]);
+        } catch {}
+      }
+      runSilent("/usr/bin/xcrun", ["simctl", "openurl", iosDevice, offer]);
+      return sendJson(response, 200, { kind: delivery === "real-cold" ? "cold" : "warm" });
     }
     if (request.method === "POST" && request.url === "/proxy-mode") {
       const mode = (await readBounded(request, 32)).toString("utf8");

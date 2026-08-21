@@ -68,11 +68,8 @@ final class PortalFlowTests: XCTestCase {
         return try XCTUnwrap(result.load()).get()
     }
 
-    private func portalOffer() throws -> URL {
-        let data = try control("/offer")
-        let value = try XCTUnwrap(String(data: data, encoding: .utf8))
-        XCTAssertTrue(value.hasPrefix("openid-credential-offer://"))
-        return try XCTUnwrap(URL(string: value))
+    private func deliver(_ kind: String) throws {
+        _ = try control("/deliver-ios", method: "POST", body: Data(kind.utf8))
     }
 
     private func setProxyMode(_ mode: String) throws {
@@ -152,10 +149,9 @@ final class PortalFlowTests: XCTestCase {
     func testRealPortalOfferUsesStrictWarmColdConsentAndRestoresEncryptedCredential() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         try ensureProfileAndManagedDid(in: application)
-        let offer = try portalOffer()
 
         // Warm OS delivery reaches the one-item router but never auto-previews or consents.
-        application.open(offer)
+        try deliver("real")
         assertRoutedOffer(in: application)
         previewImportedOffer(in: application)
         XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 20))
@@ -177,17 +173,9 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertEqual(try counters()["token"], 0)
         application.buttons["Dismiss identity request"].tap()
 
-        // A malformed fixture is classified but rejected by strict Final parsing.
-        let malformed = try XCTUnwrap(URL(string: "openid-credential-offer://?credential_offer=%7B%7D"))
-        application.open(malformed)
-        assertRoutedOffer(in: application)
-        previewImportedOffer(in: application)
-        XCTAssertTrue(application.staticTexts["The credential offer is not valid"].waitForExistence(timeout: 10))
-        application.buttons["Dismiss identity request"].tap()
-
         // Adapter transport failures remain payload-free and fail closed in the mobile framework.
         try setProxyMode("unavailable")
-        application.open(offer)
+        try deliver("real")
         assertRoutedOffer(in: application)
         previewImportedOffer(in: application)
         XCTAssertTrue(application.staticTexts[
@@ -197,7 +185,7 @@ final class PortalFlowTests: XCTestCase {
         application.buttons["Dismiss identity request"].tap()
 
         try setProxyMode("timeout")
-        application.open(offer)
+        try deliver("real")
         assertRoutedOffer(in: application)
         previewImportedOffer(in: application)
         XCTAssertTrue(application.staticTexts[
@@ -207,7 +195,7 @@ final class PortalFlowTests: XCTestCase {
         application.buttons["Dismiss identity request"].tap()
 
         // The unchanged explicit consent path selects managed authentication and a distinct Jubjub assertion method.
-        application.open(offer)
+        try deliver("real")
         assertRoutedOffer(in: application)
         previewImportedOffer(in: application)
         XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 20))
@@ -234,8 +222,7 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertEqual(try counters()["credential"], 1)
 
         // Cold OS delivery is still routed without consent. The consumed offer is not executed.
-        application.terminate()
-        application.open(offer)
+        try deliver("real-cold")
         assertRoutedOffer(in: application)
         application.buttons["Dismiss identity request"].tap()
 

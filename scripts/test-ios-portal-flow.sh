@@ -40,6 +40,8 @@ app_bundle="$repository_root/target/dx/oxid-app/debug/ios/OxidApp.app"
 bundle_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app_bundle/Info.plist")"
 [ "$bundle_identifier" = "io.medianox.oxid" ] || { portal_mobile_fail app-id; exit 1; }
 app_container="$(/usr/bin/xcrun simctl get_app_container "$device" "$bundle_identifier" data)"
+printf '%s' "$device" | curl --noproxy '*' --fail --silent --show-error \
+  -X POST --data-binary @- "$PORTAL_MOBILE_CONTROL_ORIGIN/ios-device" >/dev/null
 did_store="$app_container/Library/Application Support/io.medianox.oxid/private/did-records.json"
 node "$repository_root/scripts/e2e/portal-mobile-holder-sync.mjs" \
   "$did_store" "$PORTAL_MOBILE_CONTROL_ORIGIN" \
@@ -112,7 +114,7 @@ jq -cn \
     oxid:{head:$head},
     portal:{integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
     platform:{kind:"ios_simulator",model:$model,os:$os,applicationId:$app,profile:"standalone-local-development-portal"},
-    acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,malformedDenied:true,unavailableDenied:true,timeoutDenied:true,cameraUnavailable:true,secretFreeEvidence:true}
+    acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,unavailableDenied:true,timeoutDenied:true,cameraUnavailable:true,secretFreeEvidence:true}
   }' >"$evidence"
 if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|John|Doe|AB1234567|private.?parts|signed.?bytes|detached.?proof|[0-9A-F]{8}-[0-9A-F-]{27}' "$evidence"; then
   portal_mobile_fail evidence-schema
