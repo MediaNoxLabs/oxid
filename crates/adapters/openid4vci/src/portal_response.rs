@@ -277,7 +277,7 @@ pub(super) async fn get_json(
     client: &Client,
     url: Url,
     limit: usize,
-) -> Result<Vec<u8>, IssuanceProtocolError> {
+) -> Result<Zeroizing<Vec<u8>>, IssuanceProtocolError> {
     let response = client
         .get(url)
         .send()
@@ -289,7 +289,7 @@ pub(super) async fn get_json(
 pub(super) async fn read_json_response(
     response: Response,
     limit: usize,
-) -> Result<Vec<u8>, IssuanceProtocolError> {
+) -> Result<Zeroizing<Vec<u8>>, IssuanceProtocolError> {
     if response.status() != StatusCode::OK {
         return Err(IssuanceProtocolError::IssuerRejected);
     }
@@ -312,7 +312,7 @@ pub(super) async fn read_json_response(
         return Err(IssuanceProtocolError::InvalidMetadata);
     }
     let mut stream = response.bytes_stream();
-    let mut bytes = Vec::new();
+    let mut bytes = Zeroizing::new(Vec::new());
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| IssuanceProtocolError::Unavailable)?;
         if bytes.len().saturating_add(chunk.len()) > limit {
