@@ -22,7 +22,17 @@ serde_json.workspace = true
 url.workspace = true
 zeroize.workspace = true
 
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "ios"), not(target_os = "android")))'.dependencies]
+futures.workspace = true
+hex.workspace = true
+reqwest = { workspace = true, features = ["form", "stream"] }
+rustls.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+webpki-root-certs.workspace = true
+
 [dev-dependencies]
+hex.workspace = true
 oxid-adapter-did-midnight.workspace = true
 oxid-adapter-platform-system.workspace = true
 oxid-adapter-storage-dev.workspace = true
@@ -31,6 +41,8 @@ oxid-credential-domain.workspace = true
 oxid-identity-domain.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

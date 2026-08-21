@@ -5678,6 +5678,8 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
+ "futures",
+ "hex",
  "oxid-adapter-did-midnight",
  "oxid-adapter-platform-system",
  "oxid-adapter-storage-dev",
@@ -5692,9 +5694,14 @@ dependencies = [
  "oxid-wallet-application",
  "oxid-wallet-domain",
  "p256",
+ "reqwest 0.13.4",
+ "rustls",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tokio",
  "url",
+ "webpki-root-certs 1.0.9",
  "zeroize",
 ]
 
@@ -6009,9 +6016,14 @@ version = "0.1.0"
 name = "oxid-headless"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "futures",
+ "hex",
+ "oxid-adapter-did-midnight",
  "oxid-adapter-openid4vci",
+ "oxid-adapter-platform-system",
  "oxid-adapter-siopv2",
+ "oxid-adapter-vc-midnight",
  "oxid-capabilities-application",
  "oxid-composition",
  "oxid-credential-application",
@@ -6026,8 +6038,10 @@ dependencies = [
  "oxid-wallet-domain",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tokio-tungstenite",
+ "url",
 ]
 
 [[package]]
@@ -7243,6 +7257,7 @@ dependencies = [
  "rustls-platform-verifier 0.7.0",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

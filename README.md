@@ -21,7 +21,10 @@ than layers bolted onto one chain-specific frontend.
 > inventory through standalone or explicitly configured native adapters. A
 > deterministic OpenID4VCI 1.0 Final adapter now exercises embedded-offer
 > preview, explicit consent, DID-bound proof, strict verification, and protected
-> credential storage end to end. A separate deterministic SIOPv2 draft-13
+> credential storage end to end. Native headless development can additionally
+> select the exact authenticated Portal `integration` profile for real HTTP
+> issuance without exposing that route to production or mobile builds. A
+> separate deterministic SIOPv2 draft-13
 > adapter previews a standalone verifier request, requires explicit consent,
 > and independently verifies a single-use self-issued DID login without
 > exposing the ID Token. The standalone issuer now delivers the prototype's
@@ -411,6 +414,35 @@ remains absent from ordinary incoming DTOs. The Digital Passport adapter
 interprets it only after recomputing all five official Midnight commitments and
 the signed claim root. Headless exposes safe candidate/plan metadata but no
 reveal operation.
+The separate ADR-0102 Portal route is native desktop/headless development only.
+It requires an absolute regular non-symlink deployment manifest plus its exact
+SHA-256 in a pair; partial or mismatched configuration fails startup:
+
+```bash
+export OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH='<absolute-public-manifest.json>'
+export OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256='<lowercase-sha256>'
+cargo run -p oxid-headless
+```
+
+The manifest and bundled source lock distinguish Portal's landed
+`integration@925ec8d`, the tree-identical historical PR #17 head `9c82db2`, and
+the `76e8edf` profile-source/provenance identity. The HTTP client accepts only
+the strict Final profile, disables redirects/proxies/retries, keeps plaintext
+loopback-only, converts private parts through the exact Digital Passport
+commitment boundary, and reuses the existing valid-only encrypted import.
+Normal `compose()` remains unavailable and iOS/Android/WASM graphs cannot name
+the Portal client. To reproduce the real landed-service flow, including mock
+KYC, encrypted persistence, process restart, and reverification:
+
+```bash
+PORTAL_SOURCE_TREE=/absolute/clean/lace-id-portal-checkout just portal-headless-e2e
+```
+
+The command requires Nix, Docker Compose v2, and the exact fetchable Portal
+commits. It tears down only its uniquely named project and retains one
+allow-listed secret-free evidence JSON, bound to the clean tested Oxid commit,
+under `target/portal-headless-e2e/`.
+
 The Dioxus card permits explicit device-local first/last reveal and age
 threshold planning. A separate OpenID4VP 1.0 Final-shaped DCQL panel previews a
 deterministic standalone verifier request, matching credential, and exact claim

@@ -35,6 +35,9 @@ run:
 headless:
     cargo run -p oxid-headless
 
+portal-headless-e2e:
+    ./scripts/e2e/portal-headless-e2e.sh
+
 standalone-recovery-smoke:
     cargo test -p oxid-composition standalone_composition_recovers_a_complete_wallet_into_a_fresh_instance
 
