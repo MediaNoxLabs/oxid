@@ -461,8 +461,9 @@ The harness authenticates the same Portal pins, starts its exact composition,
 creates approved mock KYC, embeds a canonical public manifest at build time,
 and keeps the real offer out of shell arguments, rendered editable fields,
 logs, and evidence. XCUITest proves warm/cold custom-scheme delivery directly.
-Android proves QEMU plus exact reverse entries for 8088, 9944, 6300, Portal
-18090, and resolver 18093; it never uses `10.0.2.2`. Both drive the existing
+Android cold-reboots and proves QEMU with host-aligned time, then exact reverse
+entries for 8088, 9944, 6300, Portal 18090, and resolver 18093; it never uses
+`10.0.2.2`. Both drive the existing
 one-item router, preview/refusal, explicit consent, managed authentication plus
 distinct Jubjub binding, strict Final exchange, exact verified import,
 encrypted persistence, and restart/reactivation/list/reverify path. Evidence is
