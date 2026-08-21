@@ -124,8 +124,8 @@ try {
   await ensureProfile();
   if (mode === "prepare-holder") {
     await click("Wallet");
-    if (await evaluate(`Boolean(${button("Activate protected Midnight account")})`)) {
-      await click("Activate protected Midnight account");
+    if (await evaluate(`Boolean(${button("Activate development wallet")})`)) {
+      await click("Activate development wallet");
       await waitFor(`Boolean(${button("Use my receive address")})`, "activated local account", 45_000);
     }
     await click("Documents");
@@ -196,8 +196,8 @@ try {
     await click("Dismiss identity request");
   } else if (mode === "restored") {
     await click("Wallet");
-    await waitFor(`Boolean(${button("Activate protected Midnight account")})`, "truthful development-custody reset");
-    await click("Activate protected Midnight account");
+    await waitFor(`Boolean(${button("Activate development wallet")})`, "truthful development-custody reset");
+    await click("Activate development wallet");
     await waitFor(`Boolean(${button("Use my receive address")})`, "reactivated local account", 45_000);
     await click("Documents");
     await waitFor(
