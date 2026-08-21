@@ -3,6 +3,23 @@
 import Foundation
 import XCTest
 
+private final class PortalControlResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Result<Data, Error>?
+
+    func store(_ result: Result<Data, Error>) {
+        lock.lock()
+        value = result
+        lock.unlock()
+    }
+
+    func load() -> Result<Data, Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
 final class PortalFlowTests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -37,20 +54,20 @@ final class PortalFlowTests: XCTestCase {
         request.httpBody = body
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         let completed = expectation(description: "Portal control \(route)")
-        var result: Result<Data, Error>?
+        let result = PortalControlResult()
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error {
-                result = .failure(error)
+                result.store(.failure(error))
             } else if let response = response as? HTTPURLResponse,
                       (200..<300).contains(response.statusCode), let data {
-                result = .success(data)
+                result.store(.success(data))
             } else {
-                result = .failure(NSError(domain: "PortalControl", code: 1))
+                result.store(.failure(NSError(domain: "PortalControl", code: 1)))
             }
             completed.fulfill()
         }.resume()
         XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: timeout + 2), .completed)
-        return try XCTUnwrap(result).get()
+        return try XCTUnwrap(result.load()).get()
     }
 
     private func portalOffer() throws -> URL {
@@ -208,7 +225,10 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertTrue(application.staticTexts[
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
         ].waitForExistence(timeout: 20))
-        XCTAssertEqual(application.staticTexts["Valid"].count, 1)
+        XCTAssertEqual(
+            application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid")).count,
+            1
+        )
         XCTAssertFalse(application.staticTexts["John"].exists)
         XCTAssertFalse(application.staticTexts["Doe"].exists)
         XCTAssertEqual(try counters()["token"], 1)
@@ -228,7 +248,10 @@ final class PortalFlowTests: XCTestCase {
         reactivate.tap()
         XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 30))
         application.buttons["Documents"].tap()
-        XCTAssertEqual(application.staticTexts["Valid"].count, 1)
+        XCTAssertEqual(
+            application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid")).count,
+            1
+        )
         let reverify = application.buttons["Reverify"]
         XCTAssertTrue(reverify.waitForExistence(timeout: 15))
         scrollTo(reverify, in: application)
