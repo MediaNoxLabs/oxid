@@ -158,7 +158,7 @@ try {
   } else if (mode === "malformed") {
     await assertRouted();
     await preview();
-    await waitFor('document.body.innerText.includes("The credential offer is not valid")', "strict malformed rejection");
+    await waitFor('document.body.innerText.includes("The issuer metadata is not valid")', "strict malformed rejection");
     await click("Dismiss identity request");
   } else if (mode === "protocol-error") {
     await assertRouted();
