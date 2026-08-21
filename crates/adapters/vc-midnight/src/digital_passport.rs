@@ -22,8 +22,9 @@ use oxid_credential_domain::{
     CredentialClaimPrivacy, CredentialDisclosureCandidate, CredentialDisclosureManifest,
     MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES, MAX_SIGNED_CREDENTIAL_BYTES,
 };
+use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const PACKAGE_ID: &str = "midnight:vc:digital-passport";
 pub const SCHEMA_ID: &str = "digital-passport:v1";
@@ -362,6 +363,103 @@ fn parse_public_commitments(
     })
 }
 
+/// Payload-free failure returned when Portal private claim/opening JSON cannot
+/// be converted into Oxid's adapter-owned private-material envelope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PortalPrivateMaterialError {
+    Invalid,
+}
+
+impl std::fmt::Display for PortalPrivateMaterialError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("invalid Portal credential private material")
+    }
+}
+
+impl std::error::Error for PortalPrivateMaterialError {}
+
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PortalClaimValues {
+    first_name_value_padded: String,
+    last_name_value_padded: String,
+    date_of_birth_days: u32,
+    document_number_value: String,
+    issuing_state_value: String,
+}
+
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PortalOpenings {
+    first_name_opening: String,
+    last_name_opening: String,
+    date_of_birth_opening: String,
+    document_number_opening: String,
+    issuing_state_opening: String,
+}
+
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PortalPrivateParts {
+    claim_values: PortalClaimValues,
+    openings: PortalOpenings,
+}
+
+/// Strictly converts Portal's `credentialPrivateParts` JSON object to the
+/// canonical existing five-field CBOR private envelope and verifies that every
+/// value/opening pair matches the commitments in `signed_credential`.
+///
+/// This boundary deliberately accepts only bytes. It exposes neither claims
+/// nor application-layer types to the OpenID adapter.
+pub fn convert_portal_private_parts(
+    signed_credential: &[u8],
+    portal_json: &[u8],
+) -> Result<Vec<u8>, PortalPrivateMaterialError> {
+    if portal_json.is_empty() || portal_json.len() > MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES {
+        return Err(PortalPrivateMaterialError::Invalid);
+    }
+    let mut deserializer = serde_json::Deserializer::from_slice(portal_json);
+    let value = PortalPrivateParts::deserialize(&mut deserializer)
+        .map_err(|_| PortalPrivateMaterialError::Invalid)?;
+    deserializer
+        .end()
+        .map_err(|_| PortalPrivateMaterialError::Invalid)?;
+
+    fn decode<const N: usize>(input: &str) -> Result<[u8; N], PortalPrivateMaterialError> {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let bytes = general_purpose::URL_SAFE_NO_PAD
+            .decode(input)
+            .map_err(|_| PortalPrivateMaterialError::Invalid)?;
+        let bytes = <[u8; N]>::try_from(bytes).map_err(|_| PortalPrivateMaterialError::Invalid)?;
+        if general_purpose::URL_SAFE_NO_PAD.encode(bytes) != input {
+            return Err(PortalPrivateMaterialError::Invalid);
+        }
+        Ok(bytes)
+    }
+
+    let parts = PrivateParts {
+        values: ClaimValues {
+            first_name: decode(&value.claim_values.first_name_value_padded)?,
+            last_name: decode(&value.claim_values.last_name_value_padded)?,
+            date_of_birth_days: value.claim_values.date_of_birth_days,
+            document_number: decode(&value.claim_values.document_number_value)?,
+            issuing_state: decode(&value.claim_values.issuing_state_value)?,
+        },
+        openings: ClaimOpenings {
+            first_name: decode(&value.openings.first_name_opening)?,
+            last_name: decode(&value.openings.last_name_opening)?,
+            date_of_birth: decode(&value.openings.date_of_birth_opening)?,
+            document_number: decode(&value.openings.document_number_opening)?,
+            issuing_state: decode(&value.openings.issuing_state_opening)?,
+        },
+    };
+    let encoded = encode_private_parts(&parts).map_err(|_| PortalPrivateMaterialError::Invalid)?;
+    validated_private_parts(signed_credential, &encoded)
+        .map_err(|_| PortalPrivateMaterialError::Invalid)?;
+    Ok(encoded)
+}
+
 fn parse_private_parts(bytes: &[u8]) -> Result<PrivateParts, CredentialDisclosurePortError> {
     if bytes.is_empty() || bytes.len() > MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES {
         return Err(CredentialDisclosurePortError::InvalidPrivateMaterial);
@@ -668,6 +766,85 @@ mod tests {
             parse_private_parts(&bytes).err(),
             Some(CredentialDisclosurePortError::InvalidPrivateMaterial)
         );
+    }
+
+    fn portal_private_parts_fixture() -> Vec<u8> {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let parts = standalone_private_parts();
+        serde_json::to_vec(&serde_json::json!({
+            "claimValues": {
+                "firstNameValuePadded": general_purpose::URL_SAFE_NO_PAD.encode(parts.values.first_name),
+                "lastNameValuePadded": general_purpose::URL_SAFE_NO_PAD.encode(parts.values.last_name),
+                "dateOfBirthDays": parts.values.date_of_birth_days,
+                "documentNumberValue": general_purpose::URL_SAFE_NO_PAD.encode(parts.values.document_number),
+                "issuingStateValue": general_purpose::URL_SAFE_NO_PAD.encode(parts.values.issuing_state)
+            },
+            "openings": {
+                "firstNameOpening": general_purpose::URL_SAFE_NO_PAD.encode(parts.openings.first_name),
+                "lastNameOpening": general_purpose::URL_SAFE_NO_PAD.encode(parts.openings.last_name),
+                "dateOfBirthOpening": general_purpose::URL_SAFE_NO_PAD.encode(parts.openings.date_of_birth),
+                "documentNumberOpening": general_purpose::URL_SAFE_NO_PAD.encode(parts.openings.document_number),
+                "issuingStateOpening": general_purpose::URL_SAFE_NO_PAD.encode(parts.openings.issuing_state)
+            }
+        }))
+        .expect("fixture")
+    }
+
+    #[test]
+    fn portal_private_parts_convert_to_the_exact_validated_cbor_envelope() {
+        let converted =
+            convert_portal_private_parts(&standalone_credential(), &portal_private_parts_fixture())
+                .expect("exact Portal private parts should convert");
+        assert_eq!(converted, standalone_private_material());
+        validated_private_parts(&standalone_credential(), &converted)
+            .expect("converted material must satisfy signed commitments");
+    }
+
+    #[test]
+    fn portal_private_parts_reject_missing_extra_duplicate_malformed_and_tampered_fields() {
+        let signed = standalone_credential();
+        let fixture = portal_private_parts_fixture();
+        let value: serde_json::Value = serde_json::from_slice(&fixture).expect("fixture");
+
+        let mut missing = value.clone();
+        missing["openings"]
+            .as_object_mut()
+            .expect("object")
+            .remove("firstNameOpening");
+        let mut extra = value.clone();
+        extra
+            .as_object_mut()
+            .expect("object")
+            .insert("claims".to_owned(), serde_json::Value::Null);
+        let duplicate = format!(
+            "{{\"claimValues\":{},\"claimValues\":{},\"openings\":{}}}",
+            value["claimValues"], value["claimValues"], value["openings"]
+        );
+        let mut malformed = value.clone();
+        malformed["claimValues"]["firstNameValuePadded"] =
+            serde_json::Value::String("not+base64".to_owned());
+        let mut tampered = value;
+        let opening = tampered["openings"]["firstNameOpening"]
+            .as_str()
+            .expect("opening");
+        let replacement = if opening.starts_with('A') { 'B' } else { 'A' };
+        tampered["openings"]["firstNameOpening"] =
+            serde_json::Value::String(format!("{replacement}{}", &opening[1..]));
+
+        for rejected in [
+            serde_json::to_vec(&missing).expect("json"),
+            serde_json::to_vec(&extra).expect("json"),
+            duplicate.into_bytes(),
+            serde_json::to_vec(&malformed).expect("json"),
+            serde_json::to_vec(&tampered).expect("json"),
+            b"{} trailing".to_vec(),
+        ] {
+            assert_eq!(
+                convert_portal_private_parts(&signed, &rejected),
+                Err(PortalPrivateMaterialError::Invalid),
+            );
+        }
     }
 
     #[test]

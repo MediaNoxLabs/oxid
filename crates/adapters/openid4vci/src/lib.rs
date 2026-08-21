@@ -35,6 +35,29 @@ use serde_json::{Map, Number, Value, json};
 use url::Url;
 use zeroize::Zeroizing;
 
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "ios"),
+    not(target_os = "android")
+))]
+mod portal;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "ios"),
+    not(target_os = "android")
+))]
+pub use portal::{
+    PortalCredentialMaterialDecoder, PortalCredentialMaterialError, PortalDeploymentManifest,
+    PortalDeploymentManifestError, PortalOid4vciClient, authenticate_bundled_portal_source,
+};
+#[cfg(all(
+    test,
+    not(target_arch = "wasm32"),
+    not(target_os = "ios"),
+    not(target_os = "android")
+))]
+mod portal_tests;
+
 pub const STANDALONE_CREDENTIAL_ISSUER: &str = "http://127.0.0.1:32191/issuer";
 pub const STANDALONE_AUTHORIZATION_SERVER: &str = "http://127.0.0.1:32191/auth";
 pub const STANDALONE_CONFIGURATION_ID: &str = "oxid_digital_passport";

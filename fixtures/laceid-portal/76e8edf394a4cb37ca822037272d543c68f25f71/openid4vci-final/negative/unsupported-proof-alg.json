@@ -1,0 +1,11 @@
+{
+  "credential_configuration_id": "digital_passport_v1",
+  "proofs": {
+    "jwt": [
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6Im9wZW5pZDR2Y2ktcHJvb2Yrand0Iiwia2lkIjoiZGlkOmV4YW1wbGU6c3ludGhldGljLWhvbGRlciNhdXRoIn0.e30.AA"
+    ]
+  },
+  "midnight": {
+    "holderBindingMethod": "did:example:synthetic-holder#assert"
+  }
+}
