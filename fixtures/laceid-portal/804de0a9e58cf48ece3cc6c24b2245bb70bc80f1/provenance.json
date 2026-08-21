@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "repository": "https://github.com/input-output-hk/lace-id-portal",
+    "commit": "804de0a9e58cf48ece3cc6c24b2245bb70bc80f1",
+    "license": "Apache-2.0"
+  },
+  "derivation": "Source-derived wire shapes with visibly synthetic fixture token, nonce, JWT, credential, private-credential, and issuer-origin values; not an HTTP capture.",
+  "sources": [
+    {
+      "path": "crates/credential-digital-passport/src/metadata.rs",
+      "sha256": "e7e5667fcc307d165928c01f9da290650caf0c65a60f6757378f3ea47d5d98cf"
+    },
+    {
+      "path": "crates/issuer-http/src/routes_issuer.rs",
+      "sha256": "573004e23f015a7592dbab71675bef4ee0bf9c5eb70f0f31a44d600082ca4690"
+    },
+    {
+      "path": "crates/issuer-http/src/well_known.rs",
+      "sha256": "4dff93d21e02b221598c325a8afdc9ff7311b3c5041727652cea9ecac81419b1"
+    },
+    {
+      "path": "crates/issuer-integration/tests/http_integration.rs",
+      "sha256": "c931f99da1880a18e01e1149b6f54f2d2698ba8df21a8e4f3175ed18a194aa40"
+    },
+    {
+      "path": "crates/issuer-services/src/credential.rs",
+      "sha256": "3d397eba61ef76fd3b978bac175bc8399f52fce8466e7336f32ae43ccbdf003c"
+    },
+    {
+      "path": "crates/issuer-services/src/credential_offer.rs",
+      "sha256": "35629c3462af6d83210f046c9adabda6c00d75cc247df111f17387d8e62f5b60"
+    }
+  ],
+  "fixtures": [
+    {
+      "path": "credential-offer.json",
+      "sha256": "ae8d0dac973379b6a71f04d55489777cb8d8cd71d3ed405ec57aa482f6312275",
+      "source_paths": [
+        "crates/issuer-services/src/credential_offer.rs"
+      ]
+    },
+    {
+      "path": "issuer-metadata.json",
+      "sha256": "dd876a3d1345bacd4269a4ed43bb14644dc3f9e87e12e902e5eddbda2bc22677",
+      "source_paths": [
+        "crates/issuer-http/src/well_known.rs",
+        "crates/credential-digital-passport/src/metadata.rs"
+      ]
+    },
+    {
+      "path": "credential-request.json",
+      "sha256": "df6c9f8852aa648653a75155a9bca87f095d465760bffb7191d66b7eb68582d7",
+      "source_paths": [
+        "crates/issuer-http/src/routes_issuer.rs",
+        "crates/issuer-integration/tests/http_integration.rs"
+      ]
+    },
+    {
+      "path": "credential-response.json",
+      "sha256": "73d6891626bb0f82bc6557f06b1a63c5d123e64d71ca54af932de8ddd9007c11",
+      "source_paths": [
+        "crates/issuer-services/src/credential.rs"
+      ]
+    }
+  ],
+  "notes": {
+    "issuer_origin": "Extra source-produced credential-offer query parameter outside the embedded offer."
+  }
+}

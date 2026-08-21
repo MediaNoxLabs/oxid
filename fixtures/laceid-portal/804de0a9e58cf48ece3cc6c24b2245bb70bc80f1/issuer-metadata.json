@@ -1,0 +1,27 @@
+{
+  "credential_issuer": "https://issuer.fixture.example",
+  "credential_endpoint": "https://issuer.fixture.example/api/issuer/credentials",
+  "token_endpoint": "https://issuer.fixture.example/api/issuer/token",
+  "credential_configurations_supported": {
+    "digital_passport_v1": {
+      "format": "midnight_compact_vc",
+      "scope": "digital-passport",
+      "cryptographic_binding_methods_supported": [
+        "explicit_did_method"
+      ],
+      "proof_types_supported": {
+        "jwt": {
+          "proof_signing_alg_values_supported": [
+            "EdDSA"
+          ]
+        }
+      },
+      "display": [
+        {
+          "name": "Digital Passport",
+          "locale": "en"
+        }
+      ]
+    }
+  }
+}

@@ -5678,6 +5678,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
+ "hex",
  "oxid-adapter-did-midnight",
  "oxid-adapter-platform-system",
  "oxid-adapter-storage-dev",
@@ -5694,6 +5695,7 @@ dependencies = [
  "p256",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "url",
  "zeroize",
 ]

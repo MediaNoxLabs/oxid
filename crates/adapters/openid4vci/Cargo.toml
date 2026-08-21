@@ -23,6 +23,7 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+hex.workspace = true
 oxid-adapter-did-midnight.workspace = true
 oxid-adapter-platform-system.workspace = true
 oxid-adapter-storage-dev.workspace = true
@@ -31,6 +32,7 @@ oxid-credential-domain.workspace = true
 oxid-identity-domain.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true
