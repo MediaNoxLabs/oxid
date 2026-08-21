@@ -21,6 +21,8 @@ private final class PortalControlResult: @unchecked Sendable {
 }
 
 final class PortalFlowTests: XCTestCase {
+    private var acceptExternalLinks = false
+
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
@@ -68,8 +70,13 @@ final class PortalFlowTests: XCTestCase {
         return try XCTUnwrap(result.load()).get()
     }
 
-    private func deliver(_ kind: String) throws {
+    @MainActor
+    private func deliver(_ kind: String, in application: XCUIApplication) throws {
+        acceptExternalLinks = true
         _ = try control("/deliver-ios", method: "POST", body: Data(kind.utf8))
+        // A host-driven custom scheme can present SpringBoard's one-time
+        // confirmation. This payload-free tap invokes the registered monitor.
+        application.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
     }
 
     private func setProxyMode(_ mode: String) throws {
@@ -101,7 +108,15 @@ final class PortalFlowTests: XCTestCase {
         let createWallet = application.buttons["Create new wallet"]
         if createWallet.waitForExistence(timeout: 5) {
             createWallet.tap()
-            application.buttons["Create and continue"].tap()
+            let createAndContinue = application.buttons["Create and continue"]
+            if !createAndContinue.waitForExistence(timeout: 3) {
+                // A stale host-link confirmation from an interrupted prior run
+                // can consume the first synthesized tap. The monitor has now
+                // dismissed it, so retry only the bounded onboarding action.
+                createWallet.tap()
+            }
+            XCTAssertTrue(createAndContinue.waitForExistence(timeout: 5))
+            createAndContinue.tap()
             XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
             application.buttons["Skip for now"].tap()
         }
@@ -148,10 +163,17 @@ final class PortalFlowTests: XCTestCase {
     @MainActor
     func testRealPortalOfferUsesStrictWarmColdConsentAndRestoresEncryptedCredential() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
+        addUIInterruptionMonitor(withDescription: "External Oxid link") { [weak self] alert in
+            let label = self?.acceptExternalLinks == true ? "Open" : "Cancel"
+            let button = alert.buttons[label]
+            guard button.exists else { return false }
+            button.tap()
+            return true
+        }
         try ensureProfileAndManagedDid(in: application)
 
         // Warm OS delivery reaches the one-item router but never auto-previews or consents.
-        try deliver("real")
+        try deliver("real", in: application)
         assertRoutedOffer(in: application)
         previewImportedOffer(in: application)
         XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 20))
@@ -175,7 +197,7 @@ final class PortalFlowTests: XCTestCase {
 
         // Adapter transport failures remain payload-free and fail closed in the mobile framework.
         try setProxyMode("unavailable")
-        try deliver("real")
+        try deliver("real", in: application)
         assertRoutedOffer(in: application)
         previewImportedOffer(in: application)
         XCTAssertTrue(application.staticTexts[
@@ -185,7 +207,7 @@ final class PortalFlowTests: XCTestCase {
         application.buttons["Dismiss identity request"].tap()
 
         try setProxyMode("timeout")
-        try deliver("real")
+        try deliver("real", in: application)
         assertRoutedOffer(in: application)
         previewImportedOffer(in: application)
         XCTAssertTrue(application.staticTexts[
@@ -195,7 +217,7 @@ final class PortalFlowTests: XCTestCase {
         application.buttons["Dismiss identity request"].tap()
 
         // The unchanged explicit consent path selects managed authentication and a distinct Jubjub assertion method.
-        try deliver("real")
+        try deliver("real", in: application)
         assertRoutedOffer(in: application)
         previewImportedOffer(in: application)
         XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 20))
@@ -222,7 +244,7 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertEqual(try counters()["credential"], 1)
 
         // Cold OS delivery is still routed without consent. The consumed offer is not executed.
-        try deliver("real-cold")
+        try deliver("real-cold", in: application)
         assertRoutedOffer(in: application)
         application.buttons["Dismiss identity request"].tap()
 
