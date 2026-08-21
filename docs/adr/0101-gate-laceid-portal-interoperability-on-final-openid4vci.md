@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-21
 - Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124)
-- Portal source: `lace-id-portal` commit [`804de0a9e58cf48ece3cc6c24b2245bb70bc80f1`](https://github.com/input-output-hk/lace-id-portal/commit/804de0a9e58cf48ece3cc6c24b2245bb70bc80f1)
+- Portal source: `lace-id-portal` commit `804de0a9e58cf48ece3cc6c24b2245bb70bc80f1`
 - Related decisions: ADR-0039 and ADR-0097
 - Amended by: ADR-0102
 - Implementation state at this decision: source-derived negative contract evidence for Portal `804de0a9` is implemented at the existing strict OpenID4VCI adapter boundaries; ADR-0102 separately admits the later pinned Final profile in native headless development without rewriting this historical evidence

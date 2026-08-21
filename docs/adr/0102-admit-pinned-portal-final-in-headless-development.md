@@ -2,8 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-08-21
-- Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124) and Portal [PR #17](https://github.com/input-output-hk/lace-id-portal/pull/17)
-- Portal integration source: squash commit [`925ec8d04882eabd4ac7b784c70fc2f0c152faae`](https://github.com/input-output-hk/lace-id-portal/commit/925ec8d04882eabd4ac7b784c70fc2f0c152faae), tree `58b4597524f88a0ae2253439a44dab0dc60cbb6f`
+- Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124) and Portal PR #17
+- Portal integration source: squash commit `925ec8d04882eabd4ac7b784c70fc2f0c152faae`, tree `58b4597524f88a0ae2253439a44dab0dc60cbb6f`
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14` (the same tree as the landed squash commit)
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; exact provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039 and ADR-0101
