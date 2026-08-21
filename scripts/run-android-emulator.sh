@@ -86,6 +86,42 @@ if [ "$ui_profile" = "demo" ] && [ "$standalone_network_profile" != "simulated" 
   exit 1
 fi
 
+portal_profile="${OXID_MOBILE_PORTAL_PROFILE:-unavailable}"
+portal_manifest_path=""
+portal_manifest_sha256=""
+case "$portal_profile" in
+  unavailable)
+    ;;
+  local)
+    if [ "$mobile_custody" != "development" ] || \
+      [ "$standalone_network_profile" != "local" ]; then
+      echo "OXID_MOBILE_PORTAL_PROFILE=local requires the standalone-local development profile." >&2
+      exit 1
+    fi
+    portal_manifest_path="${OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH:-}"
+    portal_manifest_sha256="${OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256:-}"
+    if [[ "$portal_manifest_path" != /* ]] || [ ! -f "$portal_manifest_path" ] || \
+      [ -L "$portal_manifest_path" ]; then
+      echo "OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH must name an absolute regular non-symlink file." >&2
+      exit 1
+    fi
+    if ! [[ "$portal_manifest_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256 must be lowercase SHA-256." >&2
+      exit 1
+    fi
+    actual_manifest_sha256="$(shasum -a 256 "$portal_manifest_path" | awk '{print $1}')"
+    if [ "$actual_manifest_sha256" != "$portal_manifest_sha256" ]; then
+      echo "The Portal deployment manifest digest does not match." >&2
+      exit 1
+    fi
+    mobile_features="$mobile_features,standalone-portal"
+    ;;
+  *)
+    echo "OXID_MOBILE_PORTAL_PROFILE must be 'unavailable' or 'local'." >&2
+    exit 1
+    ;;
+esac
+
 android_jni_recovery_test="${OXID_ANDROID_JNI_RECOVERY_TEST:-0}"
 case "$android_jni_recovery_test" in
   0)
@@ -237,11 +273,15 @@ if [ "$standalone_network_profile" = "local" ]; then
     echo "The local standalone profile requires an Android emulator; use the tailnet profile for a physical phone." >&2
     exit 1
   fi
-  for local_port in 8088 9944 6300; do
+  reverse_ports=(8088 9944 6300)
+  if [ "$portal_profile" = "local" ]; then
+    reverse_ports+=(18090 9092)
+  fi
+  for local_port in "${reverse_ports[@]}"; do
     "$adb_command" -s "$device" reverse "tcp:$local_port" "tcp:$local_port"
   done
   reverse_list="$($adb_command -s "$device" reverse --list)"
-  for local_port in 8088 9944 6300; do
+  for local_port in "${reverse_ports[@]}"; do
     if ! awk -v route="tcp:$local_port" '$2 == route && $3 == route { found = 1 } END { exit !found }' \
       <<<"$reverse_list"; then
       echo "Android emulator reverse route tcp:$local_port was not installed." >&2
@@ -283,6 +323,8 @@ dioxus_cli="$dioxus_output/bin/dx"
 ANDROID_HOME="$android_sdk" \
 ANDROID_SDK_ROOT="$android_sdk" \
 ANDROID_NDK_HOME="$android_ndk" \
+OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$portal_manifest_path" \
+OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$portal_manifest_sha256" \
 OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
 PATH="$rust_toolchain_bin:$android_sdk/platform-tools:/usr/bin:$PATH" \
   "$dioxus_cli" build \
@@ -313,4 +355,4 @@ if [ -z "$($adb_command -s "$device" shell pidof io.medianox.oxid | tr -d '\r')"
   exit 1
 fi
 
-echo "Launched io.medianox.oxid ($ui_profile profile, $mobile_custody custody, $standalone_network_profile network) on Android device $device."
+echo "Launched io.medianox.oxid ($ui_profile profile, $mobile_custody custody, $standalone_network_profile network, $portal_profile Portal) on Android device $device."

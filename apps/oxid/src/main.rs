@@ -13,6 +13,21 @@ fn main() {
     ))]
     compile_error!("android-jni-exception-recovery-test is available only on Android");
 
+    #[cfg(all(
+        feature = "standalone-portal",
+        not(any(target_os = "ios", target_os = "android"))
+    ))]
+    compile_error!("standalone-portal is available only on iOS and Android");
+
+    #[cfg(all(feature = "standalone-portal", target_arch = "wasm32"))]
+    compile_error!("standalone-portal is unavailable on WASM");
+
+    #[cfg(all(
+        feature = "standalone-portal",
+        any(feature = "standalone-tailnet", feature = "standalone-native-custody")
+    ))]
+    compile_error!("standalone-portal is incompatible with tailnet and native custody");
+
     #[cfg(all(feature = "android-jni-exception-recovery-test", target_os = "android"))]
     oxid_composition::verify_android_jni_exception_recovery()
         .unwrap_or_else(|_| panic!("Android JNI exception recovery smoke probe failed"));
@@ -71,6 +86,29 @@ fn main() {
     ))]
     compile_error!("standalone-native-proving-artifacts is available only on iOS and Android");
 
+    #[cfg(all(
+        feature = "standalone-portal",
+        feature = "standalone-development",
+        feature = "standalone-local",
+        not(feature = "standalone-tailnet"),
+        not(feature = "standalone-native-custody"),
+        not(target_arch = "wasm32"),
+        any(target_os = "ios", target_os = "android")
+    ))]
+    let application = {
+        const OXID_STANDALONE_PORTAL_PROFILE: &str = "OXID_STANDALONE_PORTAL_PROFILE";
+        let _ = OXID_STANDALONE_PORTAL_PROFILE;
+        oxid_composition::compose_mobile_development_portal_standalone_from_routes(
+            "ws://127.0.0.1:8088/api/v4/graphql/ws",
+            "http://127.0.0.1:8088/api/v4/graphql",
+            "ws://127.0.0.1:9944",
+            "http://127.0.0.1:6300",
+            include_bytes!(concat!(env!("OUT_DIR"), "/portal-deployment.json")),
+            env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
+        )
+        .unwrap_or_else(|error| panic!("standalone Portal configuration is invalid: {error}"))
+    };
+
     #[cfg(feature = "standalone-native-proving-artifacts")]
     let application =
         oxid_composition::compose_mobile_native_standalone_with_compact_presentation()
@@ -111,6 +149,7 @@ fn main() {
         not(feature = "standalone-native-custody"),
         feature = "standalone-local",
         not(feature = "standalone-tailnet"),
+        not(feature = "standalone-portal"),
         not(target_arch = "wasm32")
     ))]
     let application = {
@@ -144,16 +183,32 @@ fn main() {
         feature = "standalone-native-custody"
     )))]
     let application = oxid_composition::compose();
+    #[cfg(all(
+        any(
+            feature = "standalone-development",
+            feature = "standalone-native-custody"
+        ),
+        not(feature = "standalone-portal")
+    ))]
+    let standalone_credential_offer = Some(oxid_composition::standalone_oid4vci_offer());
+    #[cfg(any(
+        feature = "standalone-portal",
+        not(any(
+            feature = "standalone-development",
+            feature = "standalone-native-custody"
+        ))
+    ))]
+    let standalone_credential_offer = None;
     #[cfg(any(
         feature = "standalone-development",
         feature = "standalone-native-custody"
     ))]
-    let standalone_credential_offer = Some(oxid_composition::standalone_oid4vci_offer());
+    let credential_issuance_ready = true;
     #[cfg(not(any(
         feature = "standalone-development",
         feature = "standalone-native-custody"
     )))]
-    let standalone_credential_offer = None;
+    let credential_issuance_ready = false;
     #[cfg(any(
         feature = "standalone-development",
         feature = "standalone-native-custody"
@@ -289,6 +344,7 @@ fn main() {
                     application.accept_credential_issuance(),
                     application.refuse_credential_issuance(),
                     standalone_credential_offer,
+                    credential_issuance_ready,
                 ),
                 oxid_ui_dioxus::CredentialPresentationUiServices::new(
                     application.prepare_credential_presentation(),

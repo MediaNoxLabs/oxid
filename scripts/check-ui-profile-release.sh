@@ -138,6 +138,37 @@ fi
 cargo check -p oxid-app --no-default-features \
   --features desktop,standalone-development,standalone-local
 
+# Portal is a separate mobile-only test profile. Host/desktop, tailnet, and
+# native-custody combinations must fail before they can select composition.
+if cargo check -p oxid-app --no-default-features \
+  --features standalone-portal >"$failure_log" 2>&1; then
+  echo "standalone-portal compiled for a non-mobile host" >&2
+  exit 1
+fi
+if ! rg -q 'standalone-portal is available only on iOS and Android' "$failure_log"; then
+  echo "standalone-portal host rejection failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+
+for conflicting_profile in standalone-tailnet standalone-native-custody; do
+  if cargo check -p oxid-app --no-default-features \
+    --features "standalone-portal,$conflicting_profile" >"$failure_log" 2>&1; then
+    echo "standalone-portal compiled with $conflicting_profile" >&2
+    exit 1
+  fi
+  if ! rg -q 'standalone-portal is incompatible with tailnet and native custody' "$failure_log"; then
+    echo "standalone-portal/$conflicting_profile failed for an unexpected reason" >&2
+    sed -n '1,120p' "$failure_log" >&2
+    exit 1
+  fi
+done
+
+# The adapter feature is intentionally inert on WASM: its mobile-only optional
+# HTTP dependencies and Portal module are not selected for the browser target.
+cargo check -p oxid-adapter-openid4vci --target wasm32-unknown-unknown \
+  --features portal-http-mobile
+
 if cargo check -p oxid-app --no-default-features \
   --features desktop,standalone-development,standalone-local,ui-profile-demo \
   >"$failure_log" 2>&1; then
@@ -187,6 +218,10 @@ if rg -a -q \
 fi
 if rg -a -q 'OXID_STANDALONE_TAILNET_PROFILE' "$release_binary"; then
   echo "normal release binary contains the standalone tailnet profile" >&2
+  exit 1
+fi
+if rg -a -q 'OXID_STANDALONE_PORTAL_PROFILE' "$release_binary"; then
+  echo "normal release binary contains the standalone Portal profile" >&2
   exit 1
 fi
 if rg -a -q \

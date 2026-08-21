@@ -54,6 +54,42 @@ case "$standalone_network_profile" in
     ;;
 esac
 
+portal_profile="${OXID_MOBILE_PORTAL_PROFILE:-unavailable}"
+portal_manifest_path=""
+portal_manifest_sha256=""
+case "$portal_profile" in
+  unavailable)
+    ;;
+  local)
+    if [ "$mobile_custody" != "development" ] || \
+      [ "$standalone_network_profile" != "local" ]; then
+      echo "OXID_MOBILE_PORTAL_PROFILE=local requires the standalone-local development profile." >&2
+      exit 1
+    fi
+    portal_manifest_path="${OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH:-}"
+    portal_manifest_sha256="${OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256:-}"
+    if [[ "$portal_manifest_path" != /* ]] || [ ! -f "$portal_manifest_path" ] || \
+      [ -L "$portal_manifest_path" ]; then
+      echo "OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH must name an absolute regular non-symlink file." >&2
+      exit 1
+    fi
+    if ! [[ "$portal_manifest_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256 must be lowercase SHA-256." >&2
+      exit 1
+    fi
+    actual_manifest_sha256="$(shasum -a 256 "$portal_manifest_path" | awk '{print $1}')"
+    if [ "$actual_manifest_sha256" != "$portal_manifest_sha256" ]; then
+      echo "The Portal deployment manifest digest does not match." >&2
+      exit 1
+    fi
+    mobile_features="$mobile_features,standalone-portal"
+    ;;
+  *)
+    echo "OXID_MOBILE_PORTAL_PROFILE must be 'unavailable' or 'local'." >&2
+    exit 1
+    ;;
+esac
+
 ui_profile="${OXID_UI_PROFILE:-user}"
 case "$ui_profile" in
   user)
@@ -117,6 +153,8 @@ xcode_developer_dir="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p)"
 
 PATH="$rust_toolchain_bin:/usr/bin:$PATH" \
   DEVELOPER_DIR="$xcode_developer_dir" \
+  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$portal_manifest_path" \
+  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$portal_manifest_sha256" \
   OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
   env -u SDKROOT \
   "$dioxus_cli" build \
@@ -178,4 +216,4 @@ bundle_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app_bundl
 /usr/bin/xcrun simctl terminate "$device" "$bundle_identifier" >/dev/null 2>&1 || true
 /usr/bin/xcrun simctl launch "$device" "$bundle_identifier"
 
-echo "Launched $bundle_identifier ($ui_profile profile, $mobile_custody custody, $standalone_network_profile network) on simulator $device."
+echo "Launched $bundle_identifier ($ui_profile profile, $mobile_custody custody, $standalone_network_profile network, $portal_profile Portal) on simulator $device."

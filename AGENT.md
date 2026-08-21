@@ -560,10 +560,11 @@ composition.
 
 [Issue #24](https://github.com/MediaNoxLabs/oxid/issues/24) and ADR-0039 add a
 dependency-free protocol domain/application hexagon plus an exact OpenID4VCI
-1.0 Final standalone subset. Embedded standalone issuance remains the mobile
-and deterministic test journey; ADR-0102 adds one separately authenticated
-native desktop/headless Portal HTTP journey using the same pre-authorized-code
-grant without Transaction Code. The in-process
+1.0 Final standalone subset. Embedded standalone issuance remains the ordinary
+mobile and deterministic test journey; ADR-0102 adds one separately
+authenticated native desktop/headless Portal HTTP journey and ADR-0103 admits
+that same strict client only to an explicit standalone-local iOS/Android test
+profile using the same pre-authorized-code grant without Transaction Code. The in-process
 adapter strictly separates Credential Issuer and OAuth metadata, uses the Nonce
 Endpoint model, builds `proofs.jwt`, parses the final `credentials` array, and
 imports through the valid-only ADR-0038 sink. Offer preview and exact
@@ -588,13 +589,17 @@ as source-derived negative contract evidence only. ADR-0102 separately pins the
 landed Portal `integration` squash `925ec8d04882eabd4ac7b784c70fc2f0c152faae`,
 its tree-identical historical PR head `9c82db23eabe8b6d758b2731f2225910ea627c14`,
 and profile source `76e8edf394a4cb37ca822037272d543c68f25f71`.
-Only native desktop/headless development may select that strict HTTP adapter,
-through an absolute manifest path plus exact digest. Keep ADR-0039's Final-only
-wire contract, HTTPS-only nonloopback/loopback-only plaintext, explicit consent,
-distinct managed authentication and Jubjub methods, exact three-part verified
-import, encrypted persistence, unavailable production composition, and
-compile-time mobile isolation. Never add a permissive Portal decoder or runtime
-production/mobile route switch.
+Native desktop/headless development selects that strict HTTP adapter through an
+absolute manifest path plus exact digest. ADR-0103 additionally permits
+`oxid-app/standalone-portal` only on iOS/Android with
+`standalone-development + standalone-local`; the build authenticates and embeds
+the exact public manifest. Normal mobile, native custody, tailnet, production,
+and WASM remain closed. Keep ADR-0039's Final-only wire contract, HTTPS-only
+nonloopback/loopback-only plaintext, explicit consent, distinct managed
+authentication and Jubjub methods, exact three-part verified import, encrypted
+persistence, unavailable production composition, and compile-time profile
+isolation. Never add a permissive Portal decoder or runtime production/mobile
+route switch.
 
 [Issue #25](https://github.com/MediaNoxLabs/oxid/issues/25) and ADR-0040 migrate
 the prototype's actual `oid4vp_client` behavior as a separate SIOPv2 draft-13
@@ -2213,7 +2218,15 @@ to silence the shell probe.
   Both require a newly derived account to report `Live`, synchronized
   live-source state and both address rails while excluding the simulation
   labels and balances. Android additionally verifies exact reverse mappings for
-  ports 8088, 9944, and 6300. Android WebView automation must wait for the
+  ports 8088, 9944, and 6300. ADR-0103's separately selected Portal suite adds
+  exact reverse entries for issuer proxy 18090 and issuer resolver 9092, while
+  `just portal-mobile-smoke` runs iOS then Android and tears each exact Portal
+  compose project down before the next platform. Its body-blind proxy proves
+  refusal makes zero token/nonce/credential calls; the offer is never a shell
+  argument, rendered editable value, log, or evidence field. Development
+  custody truthfully resets on process restart before encrypted credential
+  list/reverification. This remains mock-KYC, undeployed-holder,
+  virtual-device-only evidence. Android WebView automation must wait for the
   computed masked-value CSS invariant after `data-secret-mode=masked`; that
   attribute can settle one render before the transparent text and four-dot
   overlay. Emulator 34.2.16 can print a crash-report setup

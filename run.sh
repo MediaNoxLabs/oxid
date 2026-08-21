@@ -68,6 +68,7 @@ run_ui() {
   ./scripts/check-ui-design-tokens.sh
   ./scripts/check-ui-copy-labels.sh
   ./scripts/check-ui-profile-release.sh
+  ./scripts/check-portal-mobile-harness.sh
   cargo check -p oxid-ui-dioxus
   # Adapter-only profile builds type-check the profile code itself, so they
   # state app-profile-authority deliberately. An application build must reach

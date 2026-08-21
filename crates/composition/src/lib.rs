@@ -4,8 +4,13 @@
 
 #[cfg(all(
     not(target_arch = "wasm32"),
-    not(target_os = "ios"),
-    not(target_os = "android")
+    any(
+        all(not(target_os = "ios"), not(target_os = "android")),
+        all(
+            feature = "mobile-portal",
+            any(target_os = "ios", target_os = "android")
+        )
+    )
 ))]
 mod portal;
 
@@ -59,8 +64,13 @@ use oxid_adapter_midnight::{MidnightDiagnosticAttachPort, MidnightPublicCallCont
 use oxid_adapter_midnight::{protected_simulated_midnight_wallet, unavailable_midnight_wallet};
 #[cfg(all(
     not(target_arch = "wasm32"),
-    not(target_os = "ios"),
-    not(target_os = "android")
+    any(
+        all(not(target_os = "ios"), not(target_os = "android")),
+        all(
+            feature = "mobile-portal",
+            any(target_os = "ios", target_os = "android")
+        )
+    )
 ))]
 use oxid_adapter_openid4vci::PortalOid4vciClientFactory;
 use oxid_adapter_openid4vci::{
@@ -85,8 +95,13 @@ use oxid_adapter_passport_vault::{
 use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
 #[cfg(all(
     not(target_arch = "wasm32"),
-    not(target_os = "ios"),
-    not(target_os = "android")
+    any(
+        all(not(target_os = "ios"), not(target_os = "android")),
+        all(
+            feature = "mobile-portal",
+            any(target_os = "ios", target_os = "android")
+        )
+    )
 ))]
 use portal::{PortalIdentityConfiguration, PortalPrivateMaterialDecoder};
 
@@ -413,8 +428,13 @@ enum CredentialIssuanceComposition {
     Standalone,
     #[cfg(all(
         not(target_arch = "wasm32"),
-        not(target_os = "ios"),
-        not(target_os = "android")
+        any(
+            all(not(target_os = "ios"), not(target_os = "android")),
+            all(
+                feature = "mobile-portal",
+                any(target_os = "ios", target_os = "android")
+            )
+        )
     ))]
     Portal(Box<PortalOid4vciClientFactory>),
 }
@@ -424,8 +444,13 @@ enum HeadlessCredentialProfile {
     Standalone,
     #[cfg(all(
         not(target_arch = "wasm32"),
-        not(target_os = "ios"),
-        not(target_os = "android")
+        any(
+            all(not(target_os = "ios"), not(target_os = "android")),
+            all(
+                feature = "mobile-portal",
+                any(target_os = "ios", target_os = "android")
+            )
+        )
     ))]
     Portal,
 }
@@ -1369,14 +1394,24 @@ fn compose_headless_with_credential_profile(
     credential_profile: HeadlessCredentialProfile,
     #[cfg(all(
         not(target_arch = "wasm32"),
-        not(target_os = "ios"),
-        not(target_os = "android")
+        any(
+            all(not(target_os = "ios"), not(target_os = "android")),
+            all(
+                feature = "mobile-portal",
+                any(target_os = "ios", target_os = "android")
+            )
+        )
     ))]
     portal: Option<PortalIdentityConfiguration>,
     #[cfg(not(all(
         not(target_arch = "wasm32"),
-        not(target_os = "ios"),
-        not(target_os = "android")
+        any(
+            all(not(target_os = "ios"), not(target_os = "android")),
+            all(
+                feature = "mobile-portal",
+                any(target_os = "ios", target_os = "android")
+            )
+        )
     )))]
     _portal: Option<()>,
 ) -> ApplicationServices {
@@ -1416,14 +1451,24 @@ fn compose_headless_with_credential_profile(
         credential_profile,
         #[cfg(all(
             not(target_arch = "wasm32"),
-            not(target_os = "ios"),
-            not(target_os = "android")
+            any(
+                all(not(target_os = "ios"), not(target_os = "android")),
+                all(
+                    feature = "mobile-portal",
+                    any(target_os = "ios", target_os = "android")
+                )
+            )
         ))]
         portal,
         #[cfg(not(all(
             not(target_arch = "wasm32"),
-            not(target_os = "ios"),
-            not(target_os = "android")
+            any(
+                all(not(target_os = "ios"), not(target_os = "android")),
+                all(
+                    feature = "mobile-portal",
+                    any(target_os = "ios", target_os = "android")
+                )
+            )
         )))]
         _portal,
     );
@@ -1965,13 +2010,80 @@ pub fn compose_mobile_development_standalone_from_routes(
     node_websocket_url: &str,
     proof_server_url: &str,
 ) -> Result<ApplicationServices, HeadlessCompositionError> {
+    let config = mobile_standalone_config_from_routes(
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+    )?;
+    Ok(compose_headless_standalone(config))
+}
+
+/// Wires the exact manifest-authenticated Portal identity profile into the
+/// explicit standalone-local mobile development composition.
+///
+/// Routes and deployment authority are build inputs owned by `oxid-app`'s
+/// `standalone-portal` profile. No runtime environment, production, tailnet,
+/// native-custody, or WebAssembly composition calls this constructor.
+#[cfg(all(
+    feature = "mobile-portal",
+    any(target_os = "ios", target_os = "android"),
+    not(target_arch = "wasm32")
+))]
+pub fn compose_mobile_development_portal_standalone_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+    deployment_manifest: &[u8],
+    deployment_manifest_sha256: &str,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
+    let config = mobile_standalone_config_from_routes(
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+    )?;
+    let portal =
+        PortalIdentityConfiguration::from_bytes(deployment_manifest, deployment_manifest_sha256)
+            .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
+    let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(OsRandom);
+    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let midnight = Arc::new(
+        protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
+            .with_profile_association_repository(profiles.clone()),
+    );
+    let services = compose_with_adapters_and_credential_profile(
+        profiles,
+        security,
+        midnight,
+        CredentialPresentationComposition::Standalone,
+        HeadlessCredentialProfile::Portal,
+        Some(portal),
+    );
+    Ok(with_passport_vault_state_source(
+        services,
+        passport_vault_state_source,
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn mobile_standalone_config_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+) -> Result<MidnightStandaloneConfig, HeadlessCompositionError> {
     let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
         .map_err(|_| {
             HeadlessCompositionError::InvalidMidnightStandaloneConfiguration(
                 MidnightStandaloneConfigError::Indexer(MidnightIndexerConfigError::InvalidAddress),
             )
         })?;
-    let config = MidnightStandaloneConfig::new(
+    MidnightStandaloneConfig::new(
         "undeployed",
         indexer_websocket_url,
         indexer_http_url,
@@ -1979,8 +2091,7 @@ pub fn compose_mobile_development_standalone_from_routes(
         proof_server_url,
         placeholder.value(),
     )
-    .map_err(HeadlessCompositionError::InvalidMidnightStandaloneConfiguration)?;
-    Ok(compose_headless_standalone(config))
+    .map_err(HeadlessCompositionError::InvalidMidnightStandaloneConfiguration)
 }
 
 /// Wires the complete standalone stack with durable public account checkpoints.
@@ -2734,14 +2845,24 @@ fn compose_with_adapters_and_credential_profile<R, S, M>(
     credential_profile: HeadlessCredentialProfile,
     #[cfg(all(
         not(target_arch = "wasm32"),
-        not(target_os = "ios"),
-        not(target_os = "android")
+        any(
+            all(not(target_os = "ios"), not(target_os = "android")),
+            all(
+                feature = "mobile-portal",
+                any(target_os = "ios", target_os = "android")
+            )
+        )
     ))]
     portal: Option<PortalIdentityConfiguration>,
     #[cfg(not(all(
         not(target_arch = "wasm32"),
-        not(target_os = "ios"),
-        not(target_os = "android")
+        any(
+            all(not(target_os = "ios"), not(target_os = "android")),
+            all(
+                feature = "mobile-portal",
+                any(target_os = "ios", target_os = "android")
+            )
+        )
     )))]
     _portal: Option<()>,
 ) -> ApplicationServices
@@ -2785,8 +2906,13 @@ where
         ),
         #[cfg(all(
             not(target_arch = "wasm32"),
-            not(target_os = "ios"),
-            not(target_os = "android")
+            any(
+                all(not(target_os = "ios"), not(target_os = "android")),
+                all(
+                    feature = "mobile-portal",
+                    any(target_os = "ios", target_os = "android")
+                )
+            )
         ))]
         HeadlessCredentialProfile::Portal => {
             let portal = portal.expect("Portal headless profile requires authenticated config");
@@ -3051,8 +3177,13 @@ where
         }
         #[cfg(all(
             not(target_arch = "wasm32"),
-            not(target_os = "ios"),
-            not(target_os = "android")
+            any(
+                all(not(target_os = "ios"), not(target_os = "android")),
+                all(
+                    feature = "mobile-portal",
+                    any(target_os = "ios", target_os = "android")
+                )
+            )
         ))]
         CredentialIssuanceComposition::Portal(factory) => {
             let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
@@ -3551,7 +3682,10 @@ fn headless_passport_vault_repository() -> PassportVaultRepositoryComposition {
     PassportVaultRepositoryComposition::process_local()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
 fn headless_did_resolver() -> Arc<dyn DidResolutionPort> {
     std::env::var_os(MIDNIGHT_DID_RESOLVER_URL_ENV)
         .and_then(|value| value.into_string().ok())
@@ -3562,7 +3696,7 @@ fn headless_did_resolver() -> Arc<dyn DidResolutionPort> {
         )
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", target_os = "ios", target_os = "android"))]
 fn headless_did_resolver() -> Arc<dyn DidResolutionPort> {
     Arc::new(StandaloneDidResolver)
 }

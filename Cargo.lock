@@ -5930,6 +5930,7 @@ dependencies = [
  "oxid-brand-build",
  "oxid-composition",
  "oxid-ui-dioxus",
+ "sha2 0.10.9",
 ]
 
 [[package]]

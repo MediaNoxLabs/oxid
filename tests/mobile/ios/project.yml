@@ -16,6 +16,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: true
         PRODUCT_BUNDLE_IDENTIFIER: io.medianox.oxid.uitests
+        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: true
         TARGETED_DEVICE_FAMILY: "1"
 schemes:
   OxidUITests:

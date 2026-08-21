@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Strict native-host-only HTTP client for the exact Portal PR #17 profile.
+//! Strict native HTTP client for the exact Portal PR #17 profile. Mobile
+//! compilation is available only through the adapter's explicit feature.
 
 use std::{
     collections::BTreeMap,

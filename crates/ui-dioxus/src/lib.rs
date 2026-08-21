@@ -275,6 +275,7 @@ pub struct WalletUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     standalone_credential_offer: Option<String>,
+    credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
@@ -469,6 +470,7 @@ pub struct CredentialUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     standalone_credential_offer: Option<String>,
+    credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
@@ -510,6 +512,7 @@ pub struct CredentialIssuanceUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     standalone_credential_offer: Option<String>,
+    credential_issuance_ready: bool,
 }
 
 /// Consent-driven OpenID4VP capabilities consumed by the Credentials page.
@@ -594,12 +597,14 @@ impl CredentialIssuanceUiServices {
         accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
         refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
         standalone_credential_offer: Option<String>,
+        credential_issuance_ready: bool,
     ) -> Self {
         Self {
             prepare_credential_issuance,
             accept_credential_issuance,
             refuse_credential_issuance,
             standalone_credential_offer,
+            credential_issuance_ready,
         }
     }
 }
@@ -625,6 +630,7 @@ impl CredentialUiServices {
             accept_credential_issuance: issuance.accept_credential_issuance,
             refuse_credential_issuance: issuance.refuse_credential_issuance,
             standalone_credential_offer: issuance.standalone_credential_offer,
+            credential_issuance_ready: issuance.credential_issuance_ready,
             prepare_credential_presentation: presentation.prepare,
             accept_credential_presentation: presentation.accept,
             cancel_credential_presentation: presentation.cancel,
@@ -1090,6 +1096,7 @@ impl WalletUiServices {
             accept_credential_issuance: credentials.accept_credential_issuance,
             refuse_credential_issuance: credentials.refuse_credential_issuance,
             standalone_credential_offer: credentials.standalone_credential_offer,
+            credential_issuance_ready: credentials.credential_issuance_ready,
             prepare_credential_presentation: credentials.prepare_credential_presentation,
             accept_credential_presentation: credentials.accept_credential_presentation,
             cancel_credential_presentation: credentials.cancel_credential_presentation,
@@ -1447,6 +1454,11 @@ impl WalletUiServices {
     #[must_use]
     pub fn standalone_credential_offer(&self) -> Option<String> {
         self.standalone_credential_offer.clone()
+    }
+
+    #[must_use]
+    pub const fn credential_issuance_ready(&self) -> bool {
+        self.credential_issuance_ready
     }
 
     #[must_use]
@@ -1857,6 +1869,53 @@ enum CredentialPageState {
 struct PendingIdentityRequest {
     kind: IdentityRequestKind,
     request_uri: String,
+}
+
+#[derive(Default)]
+struct CredentialOfferDraft {
+    value: Zeroizing<String>,
+    imported: bool,
+}
+
+impl CredentialOfferDraft {
+    fn editable(value: String) -> Self {
+        Self {
+            value: Zeroizing::new(value),
+            imported: false,
+        }
+    }
+
+    fn imported(value: String) -> Self {
+        Self {
+            value: Zeroizing::new(value),
+            imported: true,
+        }
+    }
+
+    fn import(&mut self, value: String) {
+        *self = Self::imported(value);
+    }
+
+    fn has_imported_offer(&self) -> bool {
+        self.imported
+    }
+
+    fn rendered_editable_value(&self) -> &str {
+        if self.imported {
+            ""
+        } else {
+            self.value.as_str()
+        }
+    }
+
+    fn offer_for_prepare(&self) -> &str {
+        self.value.as_str()
+    }
+
+    fn clear_imported_after_prepare(&mut self) {
+        self.value.clear();
+        self.imported = false;
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -10923,7 +10982,7 @@ fn CredentialsPage(
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| CredentialPageState::Loading);
-    let mut offer_input = use_signal(String::new);
+    let mut offer_draft = use_signal(CredentialOfferDraft::default);
     let mut prepared_issuance = use_signal(|| None::<CredentialIssuanceView>);
     let mut issuance_consent = use_signal(|| false);
     let mut issuance_busy = use_signal(|| false);
@@ -10933,7 +10992,7 @@ fn CredentialsPage(
         if let Some(request) = pending
             && request.kind == IdentityRequestKind::CredentialIssuance
         {
-            offer_input.set(request.request_uri);
+            offer_draft.write().import(request.request_uri);
             prepared_issuance.set(None);
             issuance_consent.set(false);
             issuance_notice.set(Some(
@@ -11011,15 +11070,24 @@ fn CredentialsPage(
                     p { class: "card-eyebrow", "OpenID4VCI 1.0 Final" }
                     h2 { "Accept a credential offer" }
                     p { class: "form-hint", "Preview an embedded offer before consent. The pre-authorized code, access token, nonce, and signed proof remain inside the protocol adapter." }
-                    label { r#for: "credential-offer", "Credential offer URI" }
-                    textarea {
-                        id: "credential-offer",
-                        maxlength: 32768,
-                        rows: 4,
-                        autocomplete: "off",
-                        spellcheck: false,
-                        value: "{offer_input}",
-                        oninput: move |event| offer_input.set(event.value()),
+                    if offer_draft.read().has_imported_offer() {
+                        p {
+                            class: "form-hint",
+                            aria_label: "Imported credential offer retained privately",
+                            "A credential offer was delivered by the operating system. Its one-time grant is hidden while you review it."
+                        }
+                    } else {
+                        label { r#for: "credential-offer", "Credential offer URI" }
+                        textarea {
+                            id: "credential-offer",
+                            aria_label: "Credential offer URI",
+                            maxlength: 32768,
+                            rows: 4,
+                            autocomplete: "off",
+                            spellcheck: false,
+                            value: "{offer_draft.read().rendered_editable_value()}",
+                            oninput: move |event| offer_draft.set(CredentialOfferDraft::editable(event.value())),
+                        }
                     }
                     if let Some(offer) = demo_offer {
                         button {
@@ -11027,7 +11095,7 @@ fn CredentialsPage(
                             r#type: "button",
                             disabled: issuance_busy(),
                             onclick: move |_| {
-                                offer_input.set(offer.clone());
+                                offer_draft.set(CredentialOfferDraft::editable(offer.clone()));
                                 prepared_issuance.set(None);
                                 issuance_consent.set(false);
                                 issuance_notice.set(Some("Standalone credential offer loaded. Preview it before accepting.".to_owned()));
@@ -11038,14 +11106,14 @@ fn CredentialsPage(
                     button {
                         class: "primary-action",
                         r#type: "button",
-                        disabled: issuance_busy() || offer_input.read().trim().is_empty(),
+                        disabled: issuance_busy() || offer_draft.read().offer_for_prepare().trim().is_empty(),
                         onclick: {
                             let service = services.prepare_credential_issuance();
                             let profile_id = profile_id.clone();
                             move |_| {
                                 let service = service.clone();
                                 let profile_id = profile_id.clone();
-                                let offer = offer_input.read().trim().to_owned();
+                                let offer = offer_draft.read().offer_for_prepare().trim().to_owned();
                                 issuance_busy.set(true);
                                 issuance_notice.set(None);
                                 spawn(async move {
@@ -11055,6 +11123,7 @@ fn CredentialsPage(
                                     .await
                                     {
                                         Ok(Ok(preview)) => {
+                                            offer_draft.write().clear_imported_after_prepare();
                                             prepared_issuance.set(Some(preview));
                                             issuance_consent.set(false);
                                             issuance_notice.set(Some("Offer preview ready. Review the issuer and requested credential before consenting.".to_owned()));
@@ -11396,7 +11465,7 @@ enum LocalDiagnosticsPageState {
 #[component]
 fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
-    let credential_protocol_ready = services.standalone_credential_offer().is_some();
+    let credential_protocol_ready = services.credential_issuance_ready();
     let mut account_state = use_signal(|| AccountPageState::Loading);
     let mut diagnostic_state = use_signal(|| LocalDiagnosticsPageState::Loading);
     let profile_id = active_profile.id.clone();
@@ -12481,6 +12550,23 @@ mod tests {
         assert!(!identity_request_dismiss_is_visible(true, false));
         assert!(!identity_request_dismiss_is_visible(false, true));
         assert!(!identity_request_dismiss_is_visible(false, false));
+    }
+
+    #[test]
+    fn imported_credential_offer_is_never_rendered_and_is_cleared_after_prepare() {
+        let raw_offer = "openid-credential-offer://?credential_offer=do_not_render";
+        let mut draft = CredentialOfferDraft::default();
+
+        draft.import(raw_offer.to_owned());
+
+        assert!(draft.has_imported_offer());
+        assert_eq!(draft.rendered_editable_value(), "");
+        assert_eq!(draft.offer_for_prepare(), raw_offer);
+
+        draft.clear_imported_after_prepare();
+
+        assert!(!draft.has_imported_offer());
+        assert!(draft.offer_for_prepare().is_empty());
     }
 
     #[test]

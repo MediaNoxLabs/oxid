@@ -414,8 +414,10 @@ remains absent from ordinary incoming DTOs. The Digital Passport adapter
 interprets it only after recomputing all five official Midnight commitments and
 the signed claim root. Headless exposes safe candidate/plan metadata but no
 reveal operation.
-The separate ADR-0102 Portal route is native desktop/headless development only.
-It requires an absolute regular non-symlink deployment manifest plus its exact
+The ADR-0102 Portal route is native desktop/headless development by default.
+ADR-0103 separately admits the same strict client only to the explicit
+`standalone-portal` iOS/Android `standalone-local` test profile. Headless
+requires an absolute regular non-symlink deployment manifest plus its exact
 SHA-256 in a pair; partial or mismatched configuration fails startup:
 
 ```bash
@@ -430,9 +432,11 @@ the `76e8edf` profile-source/provenance identity. The HTTP client accepts only
 the strict Final profile, disables redirects/proxies/retries, keeps plaintext
 loopback-only, converts private parts through the exact Digital Passport
 commitment boundary, and reuses the existing valid-only encrypted import.
-Normal `compose()` remains unavailable and iOS/Android/WASM graphs cannot name
-the Portal client. To reproduce the real landed-service flow, including mock
-KYC, encrypted persistence, process restart, and reverification:
+Normal `compose()`, native-custody, tailnet, and WASM composition remain
+unavailable. Ordinary iOS/Android graphs do not compile the Portal client; only
+`standalone-portal` enables its mobile HTTP dependencies. To reproduce the real
+landed-service headless flow, including mock KYC, encrypted persistence,
+process restart, and reverification:
 
 ```bash
 PORTAL_SOURCE_TREE=/absolute/clean/lace-id-portal-checkout just portal-headless-e2e
@@ -442,6 +446,29 @@ The command requires Nix, Docker Compose v2, and the exact fetchable Portal
 commits. It tears down only its uniquely named project and retains one
 allow-listed secret-free evidence JSON, bound to the clean tested Oxid commit,
 under `target/portal-headless-e2e/`.
+
+For the real Portal flow in the existing native mobile test frameworks, run the
+fixed sequential wrapper or either platform command independently:
+
+```bash
+PORTAL_SOURCE_TREE=/absolute/clean/lace-id-portal-checkout just portal-mobile-smoke
+# Equivalent individual commands; never run them concurrently:
+just ios-portal-smoke
+just android-portal-smoke
+```
+
+The harness authenticates the same Portal pins, starts its exact composition,
+creates approved mock KYC, embeds a canonical public manifest at build time,
+and keeps the real offer out of shell arguments, rendered editable fields,
+logs, and evidence. XCUITest proves warm/cold custom-scheme delivery directly.
+Android proves QEMU plus exact reverse entries for 8088, 9944, 6300, Portal
+18090, and resolver 9092; it never uses `10.0.2.2`. Both drive the existing
+one-item router, preview/refusal, explicit consent, managed authentication plus
+distinct Jubjub binding, strict Final exchange, exact verified import,
+encrypted persistence, and restart/reactivation/list/reverify path. Evidence is
+ignored under `target/portal-mobile-e2e/` and is virtual-device/mock-KYC evidence
+only—not camera, physical-device, tailnet, real-KYC, production-trust, or live
+holder-DID evidence.
 
 The Dioxus card permits explicit device-local first/last reveal and age
 threshold planning. A separate OpenID4VP 1.0 Final-shaped DCQL panel previews a
@@ -690,8 +717,9 @@ just android-standalone-local
 
 Both builds use the immutable `undeployed` loopback routes from ADR-0097. iOS
 Simulator reaches host loopback directly. Android emulator receives only exact
-`adb reverse` mappings for ports 8088, 9944, and 6300; the launcher rejects a
-physical device. Do not substitute `10.0.2.2`, because the plaintext local
+`adb reverse` mappings for ports 8088, 9944, and 6300; the explicit Portal
+profile additionally installs 18090 and 9092. The launcher rejects a physical
+device. Do not substitute `10.0.2.2`, because the plaintext local
 prover policy intentionally accepts only syntactic loopback. These profiles are
 compile-time development composition, not a runtime production network picker.
 
@@ -737,6 +765,8 @@ just ios-backup-smoke
 just android-smoke
 just android-standalone-local-smoke
 just android-backup-smoke
+# Real Portal suites, fixed iOS-then-Android sequence:
+just portal-mobile-smoke
 ```
 
 The two `standalone-local-smoke` commands start or reuse the repository-owned

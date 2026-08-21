@@ -38,6 +38,18 @@ headless:
 portal-headless-e2e:
     ./scripts/e2e/portal-headless-e2e.sh
 
+# Runs the real landed Portal through the two native mobile test frameworks in
+# a fixed sequence. Never parallelize these platform suites.
+portal-mobile-smoke:
+    ./scripts/test-ios-portal-flow.sh
+    ./scripts/test-android-portal-flow.sh
+
+ios-portal-smoke:
+    ./scripts/test-ios-portal-flow.sh
+
+android-portal-smoke:
+    ./scripts/test-android-portal-flow.sh
+
 standalone-recovery-smoke:
     cargo test -p oxid-composition standalone_composition_recovers_a_complete_wallet_into_a_fresh_instance
 

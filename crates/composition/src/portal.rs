@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native desktop/headless-only composition bridge for the exact authenticated
-//! Portal PR #17 deployment profile. Production and mobile composition cannot
-//! compile this module.
+//! Native development composition bridge for the exact authenticated Portal
+//! PR #17 deployment profile. Desktop/headless uses an absolute manifest file;
+//! the explicit standalone-local mobile profile uses build-embedded bytes.
+//! Production, native-custody, tailnet, and WebAssembly compositions cannot
+//! select this module.
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+use std::path::Path;
 
 use oxid_adapter_did_midnight::{
     HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
@@ -24,6 +29,7 @@ pub(crate) enum PortalIdentityConfigurationError {
     Manifest(PortalDeploymentManifestError),
     Resolver(HttpDidResolverConfigError),
     TrustAnchor(DigitalPassportIssuerTrustAnchorError),
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     ManifestPathMustBeAbsolute,
 }
 
@@ -33,6 +39,7 @@ impl std::fmt::Display for PortalIdentityConfigurationError {
             Self::Manifest(error) => error.fmt(formatter),
             Self::Resolver(error) => error.fmt(formatter),
             Self::TrustAnchor(error) => error.fmt(formatter),
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
             Self::ManifestPathMustBeAbsolute => {
                 formatter.write_str("Portal deployment manifest path must be absolute")
             }
@@ -49,6 +56,7 @@ pub(crate) struct PortalIdentityConfiguration {
 }
 
 impl PortalIdentityConfiguration {
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     pub(crate) fn from_file(
         path: &str,
         expected_sha256: &str,
@@ -58,6 +66,19 @@ impl PortalIdentityConfiguration {
             return Err(PortalIdentityConfigurationError::ManifestPathMustBeAbsolute);
         }
         let deployment = PortalDeploymentManifest::from_file(path, expected_sha256)
+            .map_err(PortalIdentityConfigurationError::Manifest)?;
+        Self::new(deployment)
+    }
+
+    #[cfg(all(
+        feature = "mobile-portal",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    pub(crate) fn from_bytes(
+        bytes: &[u8],
+        expected_sha256: &str,
+    ) -> Result<Self, PortalIdentityConfigurationError> {
+        let deployment = PortalDeploymentManifest::from_bytes(bytes, expected_sha256)
             .map_err(PortalIdentityConfigurationError::Manifest)?;
         Self::new(deployment)
     }

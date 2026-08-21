@@ -27,6 +27,15 @@ standalone-development = []
 # stack. Routes are immutable loopback constants; Android emulators reach them
 # only through repository-owned adb reverse mappings.
 standalone-local = []
+# Simulator/emulator-only Portal profile. These feature dependencies make the
+# required mobile development/local composition explicit; main.rs rejects all
+# other targets and conflicting route/custody profiles.
+standalone-portal = [
+  "mobile",
+  "standalone-development",
+  "standalone-local",
+  "oxid-composition/mobile-portal",
+]
 # Opt-in physical-device route profile for a TLS-terminated standalone stack.
 # Every route is supplied at compile time by the repository launcher; normal
 # and native-custody builds cannot select it.
@@ -70,6 +79,7 @@ getrandom_04 = { package = "getrandom", version = "=0.4.3", features = [
 
 [build-dependencies]
 oxid-brand-build.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

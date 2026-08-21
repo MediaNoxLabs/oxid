@@ -11,6 +11,9 @@ publish = false
 [features]
 default = []
 mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
+# Native-mobile Portal identity/HTTP composition. The app profile owns the
+# stronger mobile + standalone-development + standalone-local guards.
+mobile-portal = ["oxid-adapter-openid4vci/portal-http-mobile"]
 android-jni-exception-recovery-test = [
   "dep:oxid-adapter-mobile-native",
   "oxid-adapter-mobile-native/android-jni-exception-recovery-test",

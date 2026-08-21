@@ -7,7 +7,7 @@
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14` (the same tree as the landed squash commit)
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; exact provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039 and ADR-0101
-- Implementation state: strict native desktop/headless Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; production and mobile Portal HTTP composition remain unavailable
+- Implementation state: strict native desktop/headless Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; ADR-0103 separately admits the same client to an explicit standalone-local iOS/Android test profile, while production/native-custody/tailnet Portal composition remains unavailable
 
 ## Context
 
@@ -37,8 +37,11 @@ manifest must bind Portal integration commit/tree, historical PR head, profile
 source, provenance digest, issuer/resolver origins, issuer DID/full assertion
 method, and canonical Jubjub public JWK digest. Partial, malformed, mismatched,
 or alternate-resolver/live-Midnight combinations fail startup without fallback.
-Normal `compose()` remains unavailable, and iOS, Android, and WebAssembly cannot
-compile or name the Portal client/configuration variant.
+Normal `compose()` remains unavailable. Under this decision iOS, Android, and
+WebAssembly could not compile or name the Portal client/configuration variant;
+ADR-0103 later adds only an explicit compile-time standalone-local iOS/Android
+test profile and leaves WebAssembly, production, native custody, and tailnet
+closed.
 
 The Portal client accepts only the pinned Final profile: by-value offer,
 separate issuer and authorization-server metadata, form token request, empty
@@ -78,18 +81,22 @@ proof JWTs, credentials, private parts, claims, DIDs, routes, logs, PIDs, and
 timestamps are excluded. Scripted HTTP/component tests remain separate from
 this live evidence.
 
-The iOS simulator and Android emulator continue to exercise the same incoming
-router, explicit consent, managed-method, verification, encrypted-persistence,
-and restart flows through their compile-time standalone test framework. They do
-not compile or claim the native-headless Portal HTTP route.
+The original iOS simulator and Android emulator evidence exercised the same
+incoming router, explicit consent, managed-method, verification,
+encrypted-persistence, and restart flows through the embedded standalone
+issuer. ADR-0103 adds separately labelled evidence using this exact Portal HTTP
+client in the compile-time standalone-local mobile test profile; neither result
+is physical-device or production evidence.
 
 ## Consequences
 
 - Portal `integration` is now a positive, immutable local interoperability
   input without weakening ADR-0101's historical negative regression gate.
-- Production discovery/trust, runtime production-route selection, native mobile
-  Portal transport, real KYC, live holder DID deployment, physical-device
-  camera/tailnet evidence, and promotion beyond integration remain separate.
+- Production discovery/trust, runtime production-route selection, native-custody
+  or tailnet Portal transport, real KYC, live holder DID deployment,
+  physical-device camera/tailnet evidence, and promotion beyond integration
+  remain separate. ADR-0103 admits only standalone-local virtual-device test
+  transport.
 - A new Portal head, integration tree, profile source, or provenance digest is
   rejected until this source lock and decision are deliberately reviewed.
 - Operator-selected local source/manifest authentication must not be described
