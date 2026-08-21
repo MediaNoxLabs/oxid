@@ -81,8 +81,14 @@ async function ensureProfile() {
     "onboarding or wallet",
     60_000,
   );
-  if (await evaluate(`Boolean(${button("Create new wallet")})`)) await click("Create new wallet");
-  if (await evaluate(`Boolean(${button("Create and continue")})`)) await click("Create and continue");
+  if (await evaluate(`Boolean(${button("Create new wallet")})`)) {
+    await click("Create new wallet");
+    await waitFor(`Boolean(${button("Create and continue")})`, "wallet-name step");
+  }
+  if (await evaluate(`Boolean(${button("Create and continue")})`)) {
+    await click("Create and continue");
+    await waitFor(`Boolean(${button("Skip for now")})`, "wallet-protection step", 60_000);
+  }
   if (await evaluate(`Boolean(${button("Skip for now")})`)) await click("Skip for now", 60_000);
   await waitFor(`Boolean(${button("Home")})`, "composed wallet", 60_000);
 }
