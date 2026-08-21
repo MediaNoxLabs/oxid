@@ -20,7 +20,7 @@ const ISSUER_ORIGIN = `http://127.0.0.1:${PORTAL_PROXY_PORT}`;
 const MAX_CONTROL_BODY = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 
-const portalTree = process.env.PORTAL_INTEGRATION_TREE;
+const portalTree = process.env.PORTAL_INTEGRATION_CHECKOUT;
 const stateDirectory = process.env.OXID_PORTAL_MOBILE_STATE_DIR;
 const readyFifo = process.env.OXID_PORTAL_MOBILE_READY_FIFO;
 if (!portalTree || !path.isAbsolute(portalTree) || !stateDirectory || !path.isAbsolute(stateDirectory) || !readyFifo) {

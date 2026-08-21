@@ -114,7 +114,7 @@ portal_mobile_start() {
   mkfifo "$ready_fifo"
   chmod 600 "$ready_fifo"
   COMPOSE_PROJECT_NAME="oxidportal124${PORTAL_MOBILE_PLATFORM}$$" \
-  PORTAL_INTEGRATION_TREE="$PORTAL_MOBILE_RUN_TREE" \
+  PORTAL_INTEGRATION_CHECKOUT="$PORTAL_MOBILE_RUN_TREE" \
   OXID_PORTAL_MOBILE_STATE_DIR="$PORTAL_MOBILE_STATE_DIR" \
   OXID_PORTAL_MOBILE_READY_FIFO="$ready_fifo" \
     node "$repository_root/scripts/e2e/portal-mobile-support.mjs" \
