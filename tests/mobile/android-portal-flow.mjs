@@ -126,7 +126,11 @@ try {
     await click("Wallet");
     if (await evaluate(`Boolean(${button("Activate development wallet")})`)) {
       await click("Activate development wallet");
-      await waitFor(`Boolean(${button("Use my receive address")})`, "activated local account", 45_000);
+      await waitFor(
+        `!Boolean(${button("Activate development wallet")}) && Boolean(${button("Use my receive address")})`,
+        "activated local account",
+        45_000,
+      );
     }
     await click("Documents");
     await click("Manage identities");
@@ -203,7 +207,11 @@ try {
     await click("Wallet");
     await waitFor(`Boolean(${button("Activate development wallet")})`, "truthful development-custody reset");
     await click("Activate development wallet");
-    await waitFor(`Boolean(${button("Use my receive address")})`, "reactivated local account", 45_000);
+    await waitFor(
+      `!Boolean(${button("Activate development wallet")}) && Boolean(${button("Use my receive address")})`,
+      "reactivated local account",
+      45_000,
+    );
     await click("Documents");
     await waitFor(
       'document.querySelectorAll(".credential-record").length === 1 && document.body.innerText.includes("Valid")',
