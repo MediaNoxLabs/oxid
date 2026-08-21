@@ -176,11 +176,16 @@ try {
     await waitFor('Boolean(document.querySelector("#credential-issuance-consent"))', "issuance consent");
     await evaluate('document.querySelector("#credential-issuance-consent").click()');
     await click("Accept and issue credential");
-    await waitFor(
-      'document.body.innerText.includes("Credential issued, verified, and stored in the protected inventory.")',
-      "Portal issuance",
-      90_000,
-    );
+    try {
+      await waitFor(
+        'document.body.innerText.includes("Credential issued, verified, and stored in the protected inventory.")',
+        "Portal issuance",
+        90_000,
+      );
+    } catch (error) {
+      const diagnosticCounts = await counters();
+      throw new Error(`Portal issuance failed with payload-free counters ${JSON.stringify(diagnosticCounts)}: ${error.message}`);
+    }
     const result = await evaluate(`({
       valid: Array.from(document.querySelectorAll(".credential-record")).length === 1
         && document.body.innerText.includes("Valid"),

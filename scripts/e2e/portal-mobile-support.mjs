@@ -52,6 +52,7 @@ const counters = {
   authorizationMetadata: 0,
   credential: 0,
   issuerMetadata: 0,
+  issuerResolution: 0,
   kyc: 0,
   nonce: 0,
   other: 0,
@@ -218,6 +219,7 @@ const issuerResolverProxy = http.createServer((request, response) => {
   if (request.method !== "POST" || request.url !== "/resolve") {
     return sendJson(response, 404, { error: "not_found" });
   }
+  counters.issuerResolution += 1;
   const upstream = http.request({
     host: "127.0.0.1",
     port: 9092,
