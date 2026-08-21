@@ -2219,7 +2219,7 @@ to silence the shell probe.
   live-source state and both address rails while excluding the simulation
   labels and balances. Android additionally verifies exact reverse mappings for
   ports 8088, 9944, and 6300. ADR-0103's separately selected Portal suite adds
-  exact reverse entries for issuer proxy 18090 and issuer resolver 9092, while
+  exact reverse entries for issuer proxy 18090 and issuer resolver 18093, while
   `just portal-mobile-smoke` runs iOS then Android and tears each exact Portal
   compose project down before the next platform. Its body-blind proxy proves
   refusal makes zero token/nonce/credential calls; the offer is never a shell

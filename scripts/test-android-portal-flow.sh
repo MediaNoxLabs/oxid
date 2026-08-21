@@ -38,7 +38,7 @@ if [[ -z "$device" || "$device" != emulator-* ]] || \
   exit 1
 fi
 reverse_list="$($adb_command -s "$device" reverse --list)"
-for local_port in 8088 9944 6300 18090 9092; do
+for local_port in 8088 9944 6300 18090 18093; do
   if ! awk -v route="tcp:$local_port" '$2 == route && $3 == route { found = 1 } END { exit !found }' <<<"$reverse_list"; then
     portal_mobile_fail "adb-reverse-$local_port"
     exit 1
@@ -177,7 +177,7 @@ jq -cn \
     schema:"oxid-portal-mobile-evidence-v1",
     oxid:{head:$head},
     portal:{integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
-    platform:{kind:"android_qemu_emulator",model:$model,os:$os,apiLevel:$api,applicationId:"io.medianox.oxid",profile:"standalone-local-development-portal",adbReversePorts:[6300,8088,9092,9944,18090]},
+    platform:{kind:"android_qemu_emulator",model:$model,os:$os,apiLevel:$api,applicationId:"io.medianox.oxid",profile:"standalone-local-development-portal",adbReversePorts:[6300,8088,9944,18090,18093]},
     acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,malformedDenied:true,unavailableDenied:true,timeoutDenied:true,qemuVerified:true,noEmulatorAlias:true,secretFreeEvidence:true}
   }' >"$evidence"
 if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|John|Doe|AB1234567|private.?parts|signed.?bytes|detached.?proof|emulator-[0-9]+' "$evidence"; then

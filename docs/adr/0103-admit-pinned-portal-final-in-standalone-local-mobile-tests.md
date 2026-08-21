@@ -84,7 +84,7 @@ XCUITest retrieves the offer inside the test process and calls
 stages the offer through owner-only ephemeral files and executes one static
 ActivityManager command; neither the host command nor output contains the URL,
 and both files are deleted immediately. The QEMU gate verifies exact reverse
-entries for 8088, 9944, 6300, Portal 18090, and resolver 9092. It never installs
+entries for 8088, 9944, 6300, Portal 18090, and resolver 18093. It never installs
 `10.0.2.2` and never uses `reverse --remove-all`.
 
 The suites collectively cover warm/cold delivery, one review item, refusal,

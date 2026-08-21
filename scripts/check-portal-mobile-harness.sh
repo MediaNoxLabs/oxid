@@ -44,7 +44,7 @@ for marker in \
   }
 done
 
-for port in 6300 8088 9092 9944 18090; do
+for port in 6300 8088 18093 9944 18090; do
   rg -q "${port}" scripts/test-android-portal-flow.sh || {
     echo "Android Portal harness is missing exact reverse port $port." >&2
     exit 1

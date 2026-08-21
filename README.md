@@ -462,7 +462,7 @@ creates approved mock KYC, embeds a canonical public manifest at build time,
 and keeps the real offer out of shell arguments, rendered editable fields,
 logs, and evidence. XCUITest proves warm/cold custom-scheme delivery directly.
 Android proves QEMU plus exact reverse entries for 8088, 9944, 6300, Portal
-18090, and resolver 9092; it never uses `10.0.2.2`. Both drive the existing
+18090, and resolver 18093; it never uses `10.0.2.2`. Both drive the existing
 one-item router, preview/refusal, explicit consent, managed authentication plus
 distinct Jubjub binding, strict Final exchange, exact verified import,
 encrypted persistence, and restart/reactivation/list/reverify path. Evidence is
@@ -718,7 +718,7 @@ just android-standalone-local
 Both builds use the immutable `undeployed` loopback routes from ADR-0097. iOS
 Simulator reaches host loopback directly. Android emulator receives only exact
 `adb reverse` mappings for ports 8088, 9944, and 6300; the explicit Portal
-profile additionally installs 18090 and 9092. The launcher rejects a physical
+profile additionally installs 18090 and 18093. The launcher rejects a physical
 device. Do not substitute `10.0.2.2`, because the plaintext local
 prover policy intentionally accepts only syntactic loopback. These profiles are
 compile-time development composition, not a runtime production network picker.

@@ -15,7 +15,8 @@ const PORTAL_PROVENANCE_SHA256 = "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a534
 const PORTAL_PROXY_PORT = 18090;
 const CONTROL_PORT = 18091;
 const HOLDER_RESOLVER_PORT = 18092;
-const ISSUER_RESOLVER_ORIGIN = "http://127.0.0.1:9092";
+const ISSUER_RESOLVER_PROXY_PORT = 18093;
+const ISSUER_RESOLVER_ORIGIN = `http://127.0.0.1:${ISSUER_RESOLVER_PROXY_PORT}`;
 const ISSUER_ORIGIN = `http://127.0.0.1:${PORTAL_PROXY_PORT}`;
 const MAX_CONTROL_BODY = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -213,6 +214,26 @@ const proxyServer = http.createServer((request, response) => {
   request.pipe(upstream);
 });
 
+const issuerResolverProxy = http.createServer((request, response) => {
+  if (request.method !== "POST" || request.url !== "/resolve") {
+    return sendJson(response, 404, { error: "not_found" });
+  }
+  const upstream = http.request({
+    host: "127.0.0.1",
+    port: 9092,
+    method: "POST",
+    path: "/resolve",
+    headers: { ...request.headers, host: "127.0.0.1:9092" },
+  }, (upstreamResponse) => {
+    response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+    upstreamResponse.pipe(response);
+  });
+  proxiedSockets.add(upstream);
+  upstream.once("close", () => proxiedSockets.delete(upstream));
+  upstream.on("error", () => response.destroy());
+  request.pipe(upstream);
+});
+
 const holderServer = http.createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
     return sendJson(response, 200, { ok: true });
@@ -373,7 +394,7 @@ async function cleanup() {
   proxyMode = "unavailable";
   for (const socket of heldSockets) socket.destroy();
   for (const request of proxiedSockets) request.destroy();
-  for (const server of [controlServer, holderServer, proxyServer]) server.close();
+  for (const server of [controlServer, holderServer, issuerResolverProxy, proxyServer]) server.close();
   if (stackStarted) {
     phase = "compose-down";
     try { runLogged("just", ["compose-down"]); } catch (error) { appendPrivate(error.stack ?? String(error)); }
@@ -393,6 +414,7 @@ try {
     listen(proxyServer, PORTAL_PROXY_PORT),
     listen(controlServer, CONTROL_PORT),
     listen(holderServer, HOLDER_RESOLVER_PORT),
+    listen(issuerResolverProxy, ISSUER_RESOLVER_PROXY_PORT),
   ]);
   fs.writeFileSync(overridePath, [
     "services:",
@@ -450,7 +472,7 @@ try {
     manifestPath,
     manifestSha256,
     portalProxyPort: PORTAL_PROXY_PORT,
-    portalResolverPort: 9092,
+    portalResolverPort: ISSUER_RESOLVER_PROXY_PORT,
     schema: "oxid-portal-mobile-ready-v1",
   };
   fs.writeFileSync(readyPath, JSON.stringify(ready), { mode: 0o600 });

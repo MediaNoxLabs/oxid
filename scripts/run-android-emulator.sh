@@ -275,7 +275,7 @@ if [ "$standalone_network_profile" = "local" ]; then
   fi
   reverse_ports=(8088 9944 6300)
   if [ "$portal_profile" = "local" ]; then
-    reverse_ports+=(18090 9092)
+    reverse_ports+=(18090 18093)
   fi
   for local_port in "${reverse_ports[@]}"; do
     "$adb_command" -s "$device" reverse "tcp:$local_port" "tcp:$local_port"
