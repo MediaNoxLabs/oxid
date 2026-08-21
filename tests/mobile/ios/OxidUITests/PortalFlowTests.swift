@@ -267,7 +267,7 @@ final class PortalFlowTests: XCTestCase {
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
         ].waitForExistence(timeout: 30))
 
-        application.buttons["Scan"].tap()
+        application.buttons["Scan identity QR code"].tap()
         XCTAssertTrue(application.staticTexts[
             "Camera scanning is unavailable here. Paste or load the request in the identity page instead."
         ].waitForExistence(timeout: 10))
