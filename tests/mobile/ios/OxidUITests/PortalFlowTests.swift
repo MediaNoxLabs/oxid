@@ -35,9 +35,7 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertLessThanOrEqual(element.frame.maxY, safeBottom)
     }
 
-    private var controlOrigin: String {
-        ProcessInfo.processInfo.environment["OXID_PORTAL_CONTROL_ORIGIN"] ?? ""
-    }
+    private let controlOrigin = "http://127.0.0.1:18091"
 
     private func control(
         _ route: String,
@@ -45,9 +43,9 @@ final class PortalFlowTests: XCTestCase {
         body: Data? = nil,
         timeout: TimeInterval = 35
     ) throws -> Data {
-        guard controlOrigin == "http://127.0.0.1:18091",
-              let url = URL(string: controlOrigin + route) else {
-            throw XCTSkip("Portal control origin is unavailable")
+        guard let url = URL(string: controlOrigin + route) else {
+            XCTFail("Portal control route is invalid")
+            throw NSError(domain: "PortalControl", code: 2)
         }
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = method
