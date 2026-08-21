@@ -75,6 +75,7 @@ fi
 
 if ! PORTAL_INTEGRATION_TREE="$RUN_TREE" \
   OXID_PORTAL_EVIDENCE_PATH="$EVIDENCE" \
+  OXID_PORTAL_EVIDENCE_HEAD="$OXID_HEAD" \
   cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p oxid-headless \
     --test portal_live_flow \
     landed_portal_service_issues_to_headless_and_restores_in_new_process \
