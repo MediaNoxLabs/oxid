@@ -251,7 +251,10 @@ final class PortalFlowTests: XCTestCase {
             "This protocol is unavailable in the current build"
         ].waitForExistence(timeout: 10))
         try setProxyMode("normal")
-        application.buttons["Dismiss identity request"].tap()
+        XCTAssertTrue(
+            application.buttons["Dismiss identity request"].waitForNonExistence(timeout: 10),
+            "A failed preparation must clear the retained router request"
+        )
 
         try setProxyMode("timeout")
         try deliver("real", in: application)
@@ -267,7 +270,10 @@ final class PortalFlowTests: XCTestCase {
             "This protocol is unavailable in the current build"
         ].waitForExistence(timeout: 30))
         try setProxyMode("normal")
-        application.buttons["Dismiss identity request"].tap()
+        XCTAssertTrue(
+            application.buttons["Dismiss identity request"].waitForNonExistence(timeout: 10),
+            "A failed preparation must clear the retained router request"
+        )
 
         // The unchanged explicit consent path selects managed authentication and a distinct Jubjub assertion method.
         try deliver("real", in: application)
