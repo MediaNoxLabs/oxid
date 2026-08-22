@@ -85,9 +85,23 @@ final class PortalFlowTests: XCTestCase {
     private func deliver(_ kind: String, in application: XCUIApplication) throws {
         acceptExternalLinks = true
         _ = try control("/deliver-ios", method: "POST", body: Data(kind.utf8))
-        // A host-driven custom scheme can present SpringBoard's one-time
-        // confirmation. This payload-free tap invokes the registered monitor.
-        application.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
+        if kind == "real-cold" {
+            // The target app is intentionally terminated, so interact with
+            // SpringBoard rather than asking XCTest for a snapshot of a dead
+            // application. A previously approved scheme may launch directly;
+            // otherwise accept the one-time system confirmation.
+            let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            let open = springboard.buttons["Open"]
+            if open.waitForExistence(timeout: 5) {
+                open.tap()
+            }
+            XCTAssertTrue(application.wait(for: .runningForeground, timeout: 15))
+        } else {
+            // A warm host-driven custom scheme can present SpringBoard's
+            // one-time confirmation. This payload-free tap invokes the
+            // registered monitor.
+            application.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
+        }
     }
 
     private func setProxyMode(_ mode: String) throws {

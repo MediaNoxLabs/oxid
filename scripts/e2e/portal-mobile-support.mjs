@@ -319,6 +319,10 @@ const controlServer = http.createServer(async (request, response) => {
         try {
           runSilent("/usr/bin/xcrun", ["simctl", "terminate", iosDevice, "io.medianox.oxid"]);
         } catch {}
+        // `simctl terminate` can return before SpringBoard completes the
+        // process transition. Opening immediately can deliver the trigger to
+        // the dying process and lose the cold-start handoff.
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
       // Never pass `offer` here: it is the real single-use pre-authorized
       // grant and must not appear in this host process's argv. The fixed,
