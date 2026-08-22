@@ -2238,7 +2238,11 @@ to silence the shell probe.
   needs no broad Docker, worktree, target, virtual-device, or reverse cleanup.
   The body-blind proxy proves refusal makes zero token/nonce/credential calls;
   the offer is never a shell argument, rendered editable value, log, or
-  evidence field. Development custody truthfully resets on process restart
+  evidence field. Starting imported-offer preparation synchronously scrubs the
+  global raw URI and retains only a payload-free marker that pins the credential
+  review route. Preparation failure clears that marker; success retains it
+  until explicit acceptance or refusal, so dismissal or navigation cannot
+  strand a secret-bearing protocol session. Development custody truthfully resets on process restart
   before encrypted credential list/reverification. This remains mock-KYC,
   undeployed-holder, virtual-device-only evidence, with credential status
   `not_checked`. Android WebView automation must wait for the
