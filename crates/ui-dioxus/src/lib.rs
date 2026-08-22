@@ -1985,6 +1985,15 @@ fn wipe_pending_identity_request(
     wipe_pending_identity_request_value(&mut guard, kind);
 }
 
+fn retained_identity_review_route(pending: &Option<PendingIdentityRequest>) -> Option<Route> {
+    pending
+        .as_ref()
+        .filter(|request| {
+            request.kind == IdentityRequestKind::CredentialIssuance && !request.has_raw_uri()
+        })
+        .map(|_| Route::CredentialRequest)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SecurityCapabilityState {
     Loading,
@@ -3365,11 +3374,14 @@ pub fn App() -> Element {
 
     let active_route = navigation.read().current();
     let receive_sheet_open = active_route == Route::Receive;
-    let content_route = if receive_sheet_open {
-        navigation.read().root()
-    } else {
-        active_route
-    };
+    let content_route = retained_identity_review_route(&pending_identity_request.read())
+        .unwrap_or_else(|| {
+            if receive_sheet_open {
+                navigation.read().root()
+            } else {
+                active_route
+            }
+        });
     let active_primary = navigation.read().active_primary();
     let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name, brand.wordmark());
@@ -11230,6 +11242,10 @@ fn CredentialsPage(
                                 let service = service.clone();
                                 let profile_id = profile_id.clone();
                                 let offer = offer_draft.read().offer_for_prepare().trim().to_owned();
+                                scrub_pending_identity_request(
+                                    &mut pending_identity_request,
+                                    IdentityRequestKind::CredentialIssuance,
+                                );
                                 issuance_busy.set(true);
                                 issuance_notice.set(None);
                                 spawn(async move {
@@ -11249,10 +11265,20 @@ fn CredentialsPage(
                                             issuance_notice.set(Some("Offer preview ready. Review the issuer and requested credential before consenting.".to_owned()));
                                         }
                                         Ok(Err(error)) => {
+                                            wipe_pending_identity_request(
+                                                &mut pending_identity_request,
+                                                Some(IdentityRequestKind::CredentialIssuance),
+                                            );
+                                            offer_draft.write().clear_imported();
                                             prepared_issuance.set(None);
                                             issuance_notice.set(Some(credential_issuance_message(error)));
                                         }
                                         Err(error) => {
+                                            wipe_pending_identity_request(
+                                                &mut pending_identity_request,
+                                                Some(IdentityRequestKind::CredentialIssuance),
+                                            );
+                                            offer_draft.write().clear_imported();
                                             prepared_issuance.set(None);
                                             issuance_notice.set(Some(error.to_string()));
                                         }
@@ -12766,6 +12792,10 @@ mod tests {
             true,
             scrubbed_guard.has_raw_uri()
         ));
+        assert_eq!(
+            retained_identity_review_route(&matching_pending),
+            Some(Route::CredentialRequest)
+        );
         assert!(!identity_request_admits_new_link(
             matching_pending.is_some()
         ));
@@ -12775,6 +12805,7 @@ mod tests {
             Some(IdentityRequestKind::CredentialIssuance),
         ));
         assert!(matching_pending.is_none());
+        assert_eq!(retained_identity_review_route(&matching_pending), None);
         assert!(identity_request_admits_new_link(matching_pending.is_some()));
     }
 

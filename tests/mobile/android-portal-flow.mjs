@@ -247,7 +247,7 @@ try {
     await assertRouted();
     await preview();
     await waitFor('document.body.innerText.includes("The issuer metadata is not valid")', "strict malformed rejection");
-    await click("Dismiss identity request");
+    await waitFor(`!Boolean(${button("Dismiss identity request")})`, "malformed request cleanup");
   } else if (mode === "protocol-error" || mode === "protocol-timeout") {
     await assertRouted();
     await preview();
@@ -263,7 +263,7 @@ try {
       "payload-free protocol failure",
       35_000,
     );
-    await click("Dismiss identity request");
+    await waitFor(`!Boolean(${button("Dismiss identity request")})`, "failed request cleanup");
   } else if (mode === "issue") {
     await assertRouted();
     await preview();
