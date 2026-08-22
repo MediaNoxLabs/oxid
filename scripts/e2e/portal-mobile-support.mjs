@@ -27,11 +27,18 @@ const ISSUER_RESOLVER_ORIGIN = `http://127.0.0.1:${ISSUER_RESOLVER_PROXY_PORT}`;
 const ISSUER_ORIGIN = `http://127.0.0.1:${PORTAL_PROXY_PORT}`;
 const MAX_CONTROL_BODY = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
+const CHILD_COMMAND_TIMEOUT_MS = 10 * 60_000;
+const HOST_COMMAND_TIMEOUT_MS = 30_000;
+const CLEANUP_COMMAND_TIMEOUT_MS = 15_000;
 
 const portalTree = process.env.PORTAL_INTEGRATION_CHECKOUT;
 const stateDirectory = process.env.OXID_PORTAL_MOBILE_STATE_DIR;
 const readyFifo = process.env.OXID_PORTAL_MOBILE_READY_FIFO;
-if (!portalTree || !path.isAbsolute(portalTree) || !stateDirectory || !path.isAbsolute(stateDirectory) || !readyFifo) {
+const composeProjectName = process.env.COMPOSE_PROJECT_NAME;
+const xcodeDeveloperDirectory = process.env.OXID_XCODE_DEVELOPER_DIR;
+if (!portalTree || !path.isAbsolute(portalTree) || !stateDirectory || !path.isAbsolute(stateDirectory)
+    || !readyFifo || !path.isAbsolute(readyFifo)
+    || !/^[a-z0-9][a-z0-9_-]+$/.test(composeProjectName ?? "")) {
   process.stderr.write("portal-mobile-support: FAIL phase=configuration\n");
   process.exit(2);
 }
@@ -53,6 +60,7 @@ let proxyMode = "normal";
 let complete = false;
 let stackStarted = false;
 let cleanupStarted = false;
+let signalExitCode = 0;
 const heldSockets = new Set();
 const proxiedSockets = new Set();
 const counters = {
@@ -75,11 +83,13 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function runLogged(command, args, cwd = portalTree) {
+function runLogged(command, args, cwd = portalTree, timeoutMs = CHILD_COMMAND_TIMEOUT_MS) {
   const result = spawnSync(command, args, {
     cwd,
     env: process.env,
     stdio: ["ignore", privateLog, privateLog],
+    killSignal: "SIGKILL",
+    timeout: timeoutMs,
   });
   if (result.error || result.status !== 0) {
     throw new Error(`${command} failed in ${phase}`);
@@ -87,7 +97,10 @@ function runLogged(command, args, cwd = portalTree) {
 }
 
 function runSilent(command, args, cwd = portalTree) {
-  const hostEnvironment = { ...process.env, DEVELOPER_DIR: "/Applications/Xcode.app/Contents/Developer" };
+  if (!xcodeDeveloperDirectory || !path.isAbsolute(xcodeDeveloperDirectory)) {
+    throw new Error(`selected Xcode developer directory unavailable in ${phase}`);
+  }
+  const hostEnvironment = { ...process.env, DEVELOPER_DIR: xcodeDeveloperDirectory };
   for (const name of ["SDKROOT", "CC", "CXX", "LD", "AR", "NIX_CFLAGS_COMPILE", "NIX_LDFLAGS"]) {
     delete hostEnvironment[name];
   }
@@ -96,18 +109,22 @@ function runSilent(command, args, cwd = portalTree) {
     cwd,
     env: hostEnvironment,
     stdio: "ignore",
+    killSignal: "SIGKILL",
+    timeout: HOST_COMMAND_TIMEOUT_MS,
   });
   if (result.error || result.status !== 0) {
     throw new Error(`${path.basename(command)} failed in ${phase}`);
   }
 }
 
-function runCaptured(command, args, cwd = portalTree) {
+function runCaptured(command, args, cwd = portalTree, timeoutMs = CHILD_COMMAND_TIMEOUT_MS) {
   const result = spawnSync(command, args, {
     cwd,
     env: process.env,
     encoding: "utf8",
+    killSignal: "SIGKILL",
     maxBuffer: 1024 * 1024,
+    timeout: timeoutMs,
   });
   if (result.stderr) fs.writeSync(privateLog, result.stderr);
   if (result.error || result.status !== 0) {
@@ -412,19 +429,35 @@ function canonicalManifest(issuerDid, issuerMethod, sourceJwk) {
 async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
+  let cleanupFailure = null;
   proxyMode = "unavailable";
   for (const socket of heldSockets) socket.destroy();
   for (const request of proxiedSockets) request.destroy();
   for (const server of [controlServer, holderServer, issuerResolverProxy, proxyServer]) server.close();
   if (stackStarted) {
     phase = "compose-down";
-    try { runLogged("just", ["compose-down"]); } catch (error) { appendPrivate(error.stack ?? String(error)); }
+    try {
+      runLogged("just", ["compose-down"], portalTree, CLEANUP_COMMAND_TIMEOUT_MS);
+      const remaining = ["container", "network", "volume"].flatMap((resource) => {
+        const args = [resource, "ls"];
+        if (resource === "container") args.push("--all");
+        args.push("--quiet", "--filter", `label=com.docker.compose.project=${composeProjectName}`);
+        const output = runCaptured("docker", args, portalTree, CLEANUP_COMMAND_TIMEOUT_MS);
+        return output === "" ? [] : output.split(/\s+/);
+      });
+      if (remaining.length !== 0) throw new Error("named compose project was not empty after compose-down");
+    } catch (error) {
+      appendPrivate(error.stack ?? String(error));
+      cleanupFailure = error;
+    }
   }
   fs.closeSync(privateLog);
+  if (cleanupFailure) throw cleanupFailure;
 }
 
-for (const signal of ["SIGINT", "SIGTERM"]) {
+for (const [signal, status] of [["SIGINT", 130], ["SIGTERM", 143]]) {
   process.on(signal, () => {
+    signalExitCode = status;
     completeResolve();
   });
 }
@@ -501,12 +534,20 @@ try {
   process.stdout.write("portal-mobile-support: READY\n");
 
   await completion;
-  if (!complete) appendPrivate("support terminated before platform completion");
+  if (!complete) {
+    appendPrivate("support terminated before platform completion");
+    process.exitCode = signalExitCode || 1;
+  }
 } catch (error) {
   appendPrivate(error.stack ?? String(error));
   try { fs.writeFileSync(readyFifo, `FAIL:${phase}\n`); } catch {}
   process.stderr.write(`portal-mobile-support: FAIL phase=${phase}\n`);
   process.exitCode = 1;
 } finally {
-  await cleanup();
+  try {
+    await cleanup();
+  } catch {
+    process.stderr.write(`portal-mobile-support: FAIL phase=${phase}\n`);
+    process.exitCode = 1;
+  }
 }

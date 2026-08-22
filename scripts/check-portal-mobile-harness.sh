@@ -13,7 +13,7 @@ node --check scripts/e2e/portal-mobile-support.mjs
 node --check scripts/e2e/portal-mobile-holder-sync.mjs
 node --check tests/mobile/android-portal-flow.mjs
 
-if rg -n '10\.0\.2\.2|set -x|reverse --remove-all' \
+if rg -n '10\.0\.2\.2|set -x|(?:reverse|forward) --remove-all' \
   scripts/e2e/portal-mobile-* \
   scripts/test-ios-portal-flow.sh \
   scripts/test-android-portal-flow.sh \
@@ -64,32 +64,70 @@ fi
 # The activation button changes its visible label to `Activating…` before the
 # development custody task is complete. Waiting only for the old label to
 # disappear races route navigation against that task and can cancel it when the
-# Wallet page unmounts. Require the Android flow to wait for the stable aria
-# control itself to leave the DOM before it creates a managed DID.
+# Wallet page unmounts. Both initial activation and restored reactivation must
+# reuse the stable aria control predicate before navigating away.
 activation_complete_wait='!document.querySelector('\''button[aria-label="Activate protected Midnight account"]'\'') && Boolean(${button("Use my receive address")})'
-if ! rg -qF "$activation_complete_wait" tests/mobile/android-portal-flow.mjs; then
-  echo "Android Portal flow must wait for development custody activation to complete." >&2
+if [ "$(rg -cF "$activation_complete_wait" tests/mobile/android-portal-flow.mjs)" -ne 2 ]; then
+  echo "Both Android custody waits must use the stable activation-control predicate." >&2
   exit 1
 fi
 
-# A startup failure (fetch, worktree add, support spawn, ready wait, manifest
-# check) must still remove whatever was already created. That only holds if
-# portal_mobile_cleanup is trapped before any of those side effects run, so
-# require the trap to be the very first statement in portal_mobile_start and
-# to be installed exactly once.
+# A startup failure (lock, fetch, worktree add, support spawn, bounded ready
+# wait, manifest check) must still remove whatever was already created. EXIT is
+# the single cleanup owner; INT/TERM must stop control flow with conventional
+# statuses rather than run cleanup and then resume an interrupted statement.
 start_body="$(awk '
   /^portal_mobile_start\(\) \{/ { capture=1; next }
   capture && /^}/ { exit }
   capture { print }
 ' scripts/e2e/portal-mobile-harness-lib.sh)"
 first_statement="$(awk 'NF && $0 !~ /^[[:space:]]*#/ { print; exit }' <<<"$start_body")"
-if [[ "$first_statement" != *"trap 'portal_mobile_cleanup' EXIT INT TERM"* ]]; then
-  echo "portal_mobile_start must install its cleanup trap before its first side effect." >&2
+if [[ "$first_statement" != *"trap 'portal_mobile_cleanup' EXIT"* ]]; then
+  echo "portal_mobile_start must install its EXIT cleanup trap before its first side effect." >&2
   exit 1
 fi
-trap_installations="$(grep -c "trap 'portal_mobile_cleanup' EXIT INT TERM" scripts/e2e/portal-mobile-harness-lib.sh)"
-if [ "$trap_installations" -ne 1 ]; then
-  echo "portal_mobile_cleanup must be trapped exactly once, at the top of portal_mobile_start." >&2
+for signal_trap in "trap 'exit 130' INT" "trap 'exit 143' TERM"; do
+  if [ "$(grep -cF "$signal_trap" scripts/e2e/portal-mobile-harness-lib.sh)" -ne 1 ]; then
+    echo "Portal mobile signal handler is missing or duplicated: $signal_trap" >&2
+    exit 1
+  fi
+done
+if [ "$(grep -cF "trap 'portal_mobile_cleanup' EXIT" scripts/e2e/portal-mobile-harness-lib.sh)" -ne 1 ]; then
+  echo "portal_mobile_cleanup must have exactly one early EXIT trap." >&2
+  exit 1
+fi
+
+for bounded_startup_marker in \
+  'exec 9<>"$ready_fifo"' \
+  'read -r -t "$PORTAL_MOBILE_READY_TIMEOUT_SECONDS" -u 9' \
+  'portal_mobile_wait_bounded' \
+  '--max-time "$PORTAL_MOBILE_CURL_TIMEOUT_SECONDS"'; do
+  rg -qF -- "$bounded_startup_marker" scripts/e2e/portal-mobile-harness-lib.sh || {
+    echo "Portal support lifecycle bound is missing: $bounded_startup_marker" >&2
+    exit 1
+  }
+done
+if rg -n '^[[:space:]]*wait "\$PORTAL_MOBILE_(SUPPORT|HOLDER_SYNC)_PID"' \
+  scripts/e2e/portal-mobile-harness-lib.sh scripts/test-ios-portal-flow.sh; then
+  echo "Portal support processes must never use an unbounded direct wait." >&2
+  exit 1
+fi
+if ! rg -qF 'rm -rf "$PORTAL_MOBILE_STATE_DIR"' scripts/e2e/portal-mobile-harness-lib.sh ||
+  rg -qF 'private failure artifacts=' scripts/e2e/portal-mobile-harness-lib.sh; then
+  echo "Portal private runtime must be removed on every exit." >&2
+  exit 1
+fi
+
+# Every synchronous support command is bounded, cleanup failures become the
+# child status observed by the shell, and iOS delivery uses xcode-select's
+# selected developer directory rather than a machine-specific Xcode path.
+if [ "$(rg -c 'timeout: (timeoutMs|HOST_COMMAND_TIMEOUT_MS)' scripts/e2e/portal-mobile-support.mjs)" -ne 3 ] ||
+  [ "$(rg -c 'killSignal: "SIGKILL"' scripts/e2e/portal-mobile-support.mjs)" -ne 3 ] ||
+  ! rg -qF 'named compose project was not empty after compose-down' scripts/e2e/portal-mobile-support.mjs ||
+  ! rg -qF 'process.exitCode = 1' scripts/e2e/portal-mobile-support.mjs ||
+  ! rg -qF 'DEVELOPER_DIR: xcodeDeveloperDirectory' scripts/e2e/portal-mobile-support.mjs ||
+  rg -qF '/Applications/Xcode.app/Contents/Developer' scripts/e2e/portal-mobile-support.mjs; then
+  echo "Portal support command bounds, cleanup propagation, or selected Xcode wiring regressed." >&2
   exit 1
 fi
 
@@ -135,4 +173,64 @@ for worker_bound in \
   }
 done
 
-echo "Portal mobile harness syntax, sequence, compile-time markers, route exclusions, secret-free OS delivery, and cleanup-trap ordering passed."
+# Evidence is bound to the startup-clean Oxid revision, never a later HEAD.
+for platform_script in scripts/test-ios-portal-flow.sh scripts/test-android-portal-flow.sh; do
+  rg -qF 'portal_mobile_assert_evidence_source || exit 1' "$platform_script" &&
+    rg -qF -- '--arg head "$PORTAL_MOBILE_OXID_HEAD"' "$platform_script" || {
+    echo "Portal evidence source pin is missing in $platform_script." >&2
+    exit 1
+  }
+done
+if [ "$(rg -cF 'portal_mobile_assert_evidence_source' scripts/e2e/portal-mobile-harness-lib.sh)" -ne 1 ]; then
+  echo "Portal evidence must fail closed through the shared source check." >&2
+  exit 1
+fi
+
+# CDP uses a dynamically allocated, exactly owned forward. Both opening the
+# socket and every command are bounded, and terminal WebSocket events reject
+# all pending commands so top-level await cannot remain unsettled.
+for cdp_marker in \
+  '"tcp:0" "localabstract:webview_devtools_remote_$process_id"' \
+  'forward --remove "tcp:$devtools_port"' \
+  'CDP_OPEN_TIMEOUT_MS' \
+  'CDP_COMMAND_TIMEOUT_MS' \
+  'rejectPending(new Error("CDP connection closed"))' \
+  'rejectPending(new Error("CDP connection failed"))'; do
+  rg -qF "$cdp_marker" scripts/test-android-portal-flow.sh tests/mobile/android-portal-flow.mjs || {
+    echo "Bounded exact CDP ownership marker is missing: $cdp_marker" >&2
+    exit 1
+  }
+done
+
+# Android scalar values strip both line-ending characters, and epoch values are
+# checked before shell arithmetic. Timeout tests must observe the disabled,
+# accessible loading control before they accept the terminal error.
+if rg -n "tr -d '\\\\r'|tr -d '\\\\n'" scripts/test-android-portal-flow.sh ||
+  ! rg -qF '"$emulator_epoch" =~ ^[0-9]+$' scripts/test-android-portal-flow.sh; then
+  echo "Android scalar normalization or epoch validation regressed." >&2
+  exit 1
+fi
+for busy_marker in \
+  'accessible disabled offer-check busy state' \
+  'application.buttons["Checking offer…"]' \
+  'The in-progress offer check must be disabled'; do
+  rg -qF "$busy_marker" tests/mobile/android-portal-flow.mjs tests/mobile/ios/OxidUITests/PortalFlowTests.swift || {
+    echo "Portal timeout busy-state assertion is missing: $busy_marker" >&2
+    exit 1
+  }
+done
+
+for workflow in .github/workflows/ci.yml .github/workflows/quality.yml .github/workflows/scan.yml; do
+  rg -q '^    branches: \[develop, integration, main\]$' "$workflow" || {
+    echo "Hosted PR checks do not include integration in $workflow." >&2
+    exit 1
+  }
+done
+for lock_marker in 'mkdir "$PORTAL_MOBILE_LOCK_DIR"' 'mv "$PORTAL_MOBILE_LOCK_DIR" "$stale_lock"' 'owner-pid'; do
+  rg -qF "$lock_marker" scripts/e2e/portal-mobile-harness-lib.sh || {
+    echo "Atomic stale-safe Portal mobile lock marker is missing: $lock_marker" >&2
+    exit 1
+  }
+done
+
+echo "Portal mobile harness syntax, sequence, lifecycle bounds, exact CDP ownership, evidence pinning, secret-free delivery, and hosted PR filters passed."

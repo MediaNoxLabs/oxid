@@ -20,6 +20,12 @@ done
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
+xcode_developer_dir="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p)"
+[ -d "$xcode_developer_dir" ] || {
+  echo "The selected Xcode developer directory is unavailable." >&2
+  exit 1
+}
+export OXID_XCODE_DEVELOPER_DIR="$xcode_developer_dir"
 # shellcheck source=scripts/e2e/portal-mobile-harness-lib.sh
 source "$repository_root/scripts/e2e/portal-mobile-harness-lib.sh"
 portal_mobile_start ios
@@ -56,7 +62,6 @@ OXID_REPOSITORY_ROOT="$repository_root" \
     --spec "$repository_root/tests/mobile/ios/project.yml" \
     --project "$generated_project_root"
 
-xcode_developer_dir="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p)"
 host_user="$(id -un)"
 env -i \
   "DEVELOPER_DIR=$xcode_developer_dir" \
@@ -75,8 +80,9 @@ env -i \
     -only-testing:"OxidUITests/PortalFlowTests/testRealPortalOfferUsesStrictWarmColdConsentAndRestoresEncryptedCredential" \
     CODE_SIGNING_ALLOWED=NO
 
-kill "$PORTAL_MOBILE_HOLDER_SYNC_PID" >/dev/null 2>&1 || true
-wait "$PORTAL_MOBILE_HOLDER_SYNC_PID" >/dev/null 2>&1 || true
+kill -TERM "$PORTAL_MOBILE_HOLDER_SYNC_PID" >/dev/null 2>&1 || true
+portal_mobile_wait_bounded "$PORTAL_MOBILE_HOLDER_SYNC_PID" \
+  "$PORTAL_MOBILE_TERM_GRACE_SECONDS" >/dev/null 2>&1 || true
 PORTAL_MOBILE_HOLDER_SYNC_PID=""
 
 credential_store="$app_container/Library/Application Support/io.medianox.oxid/private/credentials.enc"
@@ -97,10 +103,11 @@ portal_mobile_finish || { portal_mobile_fail support-finish; exit 1; }
 
 device_name="$(/usr/bin/xcrun simctl list devices -j | jq -r --arg device "$device" 'first(.devices[][] | select(.udid == $device) | .name) // "unknown"')"
 runtime="$(/usr/bin/xcrun simctl list devices -j | jq -r --arg device "$device" 'first(.devices | to_entries[] as $runtime | $runtime.value[] | select(.udid == $device) | $runtime.key) // "unknown"')"
+portal_mobile_assert_evidence_source || exit 1
 evidence="$repository_root/target/portal-mobile-e2e/ios/evidence.json"
 mkdir -p "$(dirname -- "$evidence")"
 jq -cn \
-  --arg head "$(git rev-parse HEAD)" \
+  --arg head "$PORTAL_MOBILE_OXID_HEAD" \
   --arg model "$device_name" \
   --arg os "$runtime" \
   --arg app "$bundle_identifier" \
@@ -121,4 +128,4 @@ if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|d
   exit 1
 fi
 printf 'iOS Portal simulator smoke passed at %s on %s (%s), app %s; evidence=%s\n' \
-  "$(git rev-parse HEAD)" "$device_name" "$runtime" "$bundle_identifier" "${evidence#"$repository_root/"}"
+  "$PORTAL_MOBILE_OXID_HEAD" "$device_name" "$runtime" "$bundle_identifier" "${evidence#"$repository_root/"}"

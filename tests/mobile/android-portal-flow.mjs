@@ -8,6 +8,7 @@ const modes = new Set([
   "route-refuse",
   "malformed",
   "protocol-error",
+  "protocol-timeout",
   "issue",
   "cold-route",
   "restored",
@@ -16,27 +17,80 @@ if (!endpoint || !modes.has(mode) || controlOrigin !== "http://127.0.0.1:18091")
   throw new Error("invalid Android Portal test arguments");
 }
 
+const CDP_OPEN_TIMEOUT_MS = 10_000;
+const CDP_COMMAND_TIMEOUT_MS = 10_000;
+const CONTROL_REQUEST_TIMEOUT_MS = 10_000;
 const socket = new WebSocket(endpoint);
 let nextId = 1;
+let terminalError = null;
 const pending = new Map();
+
+function rejectPending(error) {
+  terminalError ??= error;
+  for (const { reject, timer } of pending.values()) {
+    clearTimeout(timer);
+    reject(terminalError);
+  }
+  pending.clear();
+}
+
 socket.addEventListener("message", (event) => {
-  const message = JSON.parse(event.data);
+  let message;
+  try {
+    message = JSON.parse(event.data);
+  } catch {
+    rejectPending(new Error("CDP returned an invalid message"));
+    socket.close();
+    return;
+  }
   if (!message.id || !pending.has(message.id)) return;
-  const { resolve, reject } = pending.get(message.id);
+  const { resolve, reject, timer } = pending.get(message.id);
+  clearTimeout(timer);
   pending.delete(message.id);
   if (message.error) reject(new Error(message.error.message));
   else resolve(message.result);
 });
+socket.addEventListener("close", () => rejectPending(new Error("CDP connection closed")));
+socket.addEventListener("error", () => rejectPending(new Error("CDP connection failed")));
+
 await new Promise((resolve, reject) => {
-  socket.addEventListener("open", resolve, { once: true });
-  socket.addEventListener("error", () => reject(new Error("CDP connection failed")), { once: true });
+  const timer = setTimeout(() => {
+    socket.close();
+    reject(new Error("timed out opening CDP connection"));
+  }, CDP_OPEN_TIMEOUT_MS);
+  socket.addEventListener("open", () => {
+    clearTimeout(timer);
+    resolve();
+  }, { once: true });
+  socket.addEventListener("error", () => {
+    clearTimeout(timer);
+    reject(terminalError ?? new Error("CDP connection failed"));
+  }, { once: true });
+  socket.addEventListener("close", () => {
+    clearTimeout(timer);
+    reject(terminalError ?? new Error("CDP connection closed before opening"));
+  }, { once: true });
 });
 
 function command(method, params = {}) {
   const id = nextId++;
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    socket.send(JSON.stringify({ id, method, params }));
+    if (terminalError || socket.readyState !== WebSocket.OPEN) {
+      reject(terminalError ?? new Error("CDP connection is not open"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`timed out waiting for CDP command ${method}`));
+    }, CDP_COMMAND_TIMEOUT_MS);
+    pending.set(id, { resolve, reject, timer });
+    try {
+      socket.send(JSON.stringify({ id, method, params }));
+    } catch (error) {
+      clearTimeout(timer);
+      pending.delete(id);
+      reject(error);
+    }
   });
 }
 
@@ -115,7 +169,10 @@ async function preview() {
 }
 
 async function counters() {
-  const response = await fetch(`${controlOrigin}/counters`, { cache: "no-store" });
+  const response = await fetch(`${controlOrigin}/counters`, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
+  });
   if (!response.ok) throw new Error("Portal counters unavailable");
   return response.json();
 }
@@ -171,9 +228,16 @@ try {
     await preview();
     await waitFor('document.body.innerText.includes("The issuer metadata is not valid")', "strict malformed rejection");
     await click("Dismiss identity request");
-  } else if (mode === "protocol-error") {
+  } else if (mode === "protocol-error" || mode === "protocol-timeout") {
     await assertRouted();
     await preview();
+    if (mode === "protocol-timeout") {
+      await waitFor(
+        `(() => { const element = ${button("Checking offer…")}; return Boolean(element && element.disabled); })()`,
+        "accessible disabled offer-check busy state",
+        5_000,
+      );
+    }
     await waitFor(
       'document.body.innerText.includes("This protocol is unavailable in the current build")',
       "payload-free protocol failure",
@@ -215,7 +279,7 @@ try {
     await waitFor(`Boolean(${button("Activate development wallet")})`, "truthful development-custody reset");
     await click("Activate development wallet");
     await waitFor(
-      `!Boolean(${button("Activate development wallet")}) && Boolean(${button("Use my receive address")})`,
+      `!document.querySelector('button[aria-label="Activate protected Midnight account"]') && Boolean(${button("Use my receive address")})`,
       "reactivated local account",
       45_000,
     );

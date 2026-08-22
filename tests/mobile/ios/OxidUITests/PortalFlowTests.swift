@@ -257,6 +257,12 @@ final class PortalFlowTests: XCTestCase {
         try deliver("real", in: application)
         assertRoutedOffer(in: application)
         previewImportedOffer(in: application)
+        let checkingOffer = application.buttons["Checking offer…"]
+        XCTAssertTrue(
+            checkingOffer.waitForExistence(timeout: 5),
+            "Timeout mode must expose the in-progress offer check"
+        )
+        XCTAssertFalse(checkingOffer.isEnabled, "The in-progress offer check must be disabled")
         XCTAssertTrue(application.staticTexts[
             "This protocol is unavailable in the current build"
         ].waitForExistence(timeout: 30))
