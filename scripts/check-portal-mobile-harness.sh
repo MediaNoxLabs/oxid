@@ -51,4 +51,49 @@ for port in 6300 8088 18093 9944 18090; do
   }
 done
 
-echo "Portal mobile harness syntax, sequence, compile-time markers, and route exclusions passed."
+# A startup failure (fetch, worktree add, support spawn, ready wait, manifest
+# check) must still remove whatever was already created. That only holds if
+# portal_mobile_cleanup is trapped before any of those side effects run, so
+# require the trap to be the very first statement in portal_mobile_start and
+# to be installed exactly once.
+start_body="$(awk '
+  /^portal_mobile_start\(\) \{/ { capture=1; next }
+  capture && /^}/ { exit }
+  capture { print }
+' scripts/e2e/portal-mobile-harness-lib.sh)"
+first_statement="$(awk 'NF && $0 !~ /^[[:space:]]*#/ { print; exit }' <<<"$start_body")"
+if [[ "$first_statement" != *"trap 'portal_mobile_cleanup' EXIT INT TERM"* ]]; then
+  echo "portal_mobile_start must install its cleanup trap before its first side effect." >&2
+  exit 1
+fi
+trap_installations="$(grep -c "trap 'portal_mobile_cleanup' EXIT INT TERM" scripts/e2e/portal-mobile-harness-lib.sh)"
+if [ "$trap_installations" -ne 1 ]; then
+  echo "portal_mobile_cleanup must be trapped exactly once, at the top of portal_mobile_start." >&2
+  exit 1
+fi
+
+# The real single-use offer must never be a host `simctl openurl` argument
+# (visible via `ps`/Activity Monitor for the host process's lifetime). Only a
+# fixed, non-secret trigger constant may reach that call; the app fetches the
+# real offer itself over a loopback GET, entirely inside the simulator.
+if rg -n 'simctl.*openurl.*iosDevice, offer\]' scripts/e2e/portal-mobile-support.mjs; then
+  echo "iOS delivery must not pass the real offer to simctl openurl argv." >&2
+  exit 1
+fi
+ios_trigger="openid-credential-offer://standalone-portal-test-fetch"
+for source_file in \
+  scripts/e2e/portal-mobile-support.mjs \
+  crates/adapters/identity-ingress/src/lib.rs; do
+  rg -qF "$ios_trigger" "$source_file" || {
+    echo "iOS non-secret loopback test trigger is missing or drifted in $source_file." >&2
+    exit 1
+  }
+done
+rg -q 'loopback-test-offer-trigger' \
+  crates/adapters/identity-ingress/Cargo.toml \
+  crates/composition/Cargo.toml || {
+  echo "The loopback test-offer trigger feature must be wired from composition's mobile-portal feature." >&2
+  exit 1
+}
+
+echo "Portal mobile harness syntax, sequence, compile-time markers, route exclusions, and cleanup-trap ordering passed."

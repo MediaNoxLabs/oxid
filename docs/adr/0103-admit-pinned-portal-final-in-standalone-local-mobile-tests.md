@@ -79,11 +79,21 @@ tears down before Android starts. Each platform command:
 8. deletes private runtime state and tears down only its named Portal compose
    project and temporary checkout.
 
-XCUITest retrieves the offer inside the test process and calls
-`XCUIApplication.open`, so no secret-bearing `simctl` command exists. Android
-stages the offer through owner-only ephemeral files and executes one static
-ActivityManager command; neither the host command nor output contains the URL,
-and both files are deleted immediately. The QEMU gate cold-reboots an already-running disposable emulator so its
+`simctl openurl` never receives the offer. It delivers only a fixed,
+non-secret trigger URL under the existing `openid-credential-offer` scheme
+(`openid-credential-offer://standalone-portal-test-fetch`); the app itself,
+built with the compile-time `loopback-test-offer-trigger` feature that
+`standalone-portal` selects, recognizes that exact literal and fetches the
+real offer over a loopback-only HTTP GET entirely inside the simulator's
+shared network namespace before handing it to the existing one-item router.
+No secret-bearing `simctl` command, Safari step, or XCUITest-visible URL
+exists; a failed fetch leaves the inert trigger string in place, which the
+strict `openid-credential-offer` route rejects as malformed rather than ever
+treating it as a real grant. Android stages the offer only as a remote,
+owner-only ephemeral file on the device (never a host file: the harness holds
+it in shell-process memory) and executes one static ActivityManager command;
+neither the host command nor output contains the URL, and the remote file is
+deleted immediately. The QEMU gate cold-reboots an already-running disposable emulator so its
 system clock stays within two seconds of the host; strict credential temporal
 verification is not weakened with future-time slack. It then verifies exact
 reverse entries for 8088, 9944, 6300, Portal 18090, and resolver 18093. It never installs

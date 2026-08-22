@@ -164,6 +164,119 @@ fn registered_openid4vp_request(
     })
 }
 
+/// Issue #124 / ADR-0103: the standalone-portal mobile suite must never let
+/// the real, single-use Portal offer touch a host process argument list or a
+/// retained test artifact. `simctl openurl`/`am start -d` deliver only the
+/// fixed, non-secret [`loopback_test_offer_trigger::TRIGGER`] string; this
+/// module recognizes it inside the already-sandboxed app process and
+/// substitutes the real offer, fetched over a loopback-only HTTP GET that
+/// never leaves the simulator/emulator's shared loopback network, before the
+/// value reaches the normal one-item router. A failed fetch (no listener, or
+/// a non-2xx response) leaves the literal trigger string in place, which the
+/// existing strict `openid-credential-offer` route validation then rejects
+/// as malformed rather than ever treating it as a real grant.
+#[cfg(feature = "loopback-test-offer-trigger")]
+mod loopback_test_offer_trigger {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    pub const TRIGGER: &str = "openid-credential-offer://standalone-portal-test-fetch";
+
+    const CONTROL_ORIGIN: &str = "127.0.0.1:18091";
+    const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
+    const MAX_RESPONSE_BYTES: usize = 32 * 1_024;
+
+    pub fn resolve(url: &str) -> String {
+        if url != TRIGGER {
+            return url.to_owned();
+        }
+        fetch_offer().unwrap_or_else(|()| url.to_owned())
+    }
+
+    fn fetch_offer() -> Result<String, ()> {
+        let mut stream = TcpStream::connect(CONTROL_ORIGIN).map_err(|_| ())?;
+        stream
+            .set_read_timeout(Some(CONTROL_TIMEOUT))
+            .map_err(|_| ())?;
+        stream
+            .set_write_timeout(Some(CONTROL_TIMEOUT))
+            .map_err(|_| ())?;
+        stream
+            .write_all(b"GET /offer HTTP/1.1\r\nHost: 127.0.0.1:18091\r\nConnection: close\r\n\r\n")
+            .map_err(|_| ())?;
+        let mut buffer = Vec::new();
+        let mut chunk = [0_u8; 4_096];
+        loop {
+            let read = stream.read(&mut chunk).map_err(|_| ())?;
+            if read == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+            if buffer.len() > MAX_RESPONSE_BYTES {
+                return Err(());
+            }
+        }
+        let response = String::from_utf8(buffer).map_err(|_| ())?;
+        parse_offer_response(&response).ok_or(())
+    }
+
+    fn parse_offer_response(response: &str) -> Option<String> {
+        let (head, body) = response.split_once("\r\n\r\n")?;
+        let status_line = head.split("\r\n").next()?;
+        if !status_line.starts_with("HTTP/1.1 200") {
+            return None;
+        }
+        let trimmed = body.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn parses_only_a_successful_bounded_body() {
+            assert_eq!(
+                parse_offer_response(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nopenid-credential-offer://?credential_offer=abc"
+                ),
+                Some("openid-credential-offer://?credential_offer=abc".to_owned())
+            );
+            assert_eq!(
+                parse_offer_response(
+                    "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"error\":\"not_ready\"}"
+                ),
+                None
+            );
+            assert_eq!(parse_offer_response("HTTP/1.1 200 OK\r\n\r\n"), None);
+            assert_eq!(parse_offer_response("not an http response"), None);
+        }
+
+        #[test]
+        fn resolve_passes_through_every_non_trigger_value_unchanged() {
+            let real_link = "openid-credential-offer://?credential_offer=%7B%7D";
+            assert_eq!(resolve(real_link), real_link);
+            assert_eq!(
+                resolve("openid4vp://authorize?client_id=x"),
+                "openid4vp://authorize?client_id=x"
+            );
+        }
+
+        #[test]
+        fn resolve_fails_closed_on_the_trigger_when_no_control_server_is_listening() {
+            // No listener is bound to CONTROL_ORIGIN in this unit test, so the
+            // fetch must fail closed and hand back the literal trigger string
+            // rather than fabricating or guessing an offer.
+            assert_eq!(resolve(TRIGGER), TRIGGER);
+        }
+    }
+}
+
 /// Native scanner backed by AVFoundation on iOS and Google Code Scanner on
 /// Android. Other targets return `Unavailable` without attempting a bridge.
 #[derive(Clone, Copy, Debug, Default)]
@@ -184,6 +297,8 @@ pub struct NativeIdentityLinkIngress {
 
 impl IdentityLinkIngressPort for NativeIdentityLinkIngress {
     fn capture(&self, value: String) -> Result<(), IdentityLinkIngressError> {
+        #[cfg(feature = "loopback-test-offer-trigger")]
+        let value = loopback_test_offer_trigger::resolve(&value);
         let link = InboundIdentityLink::new(value)?;
         let mut captured = self
             .captured

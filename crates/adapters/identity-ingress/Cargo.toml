@@ -8,6 +8,19 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+# Test-only, non-secret OS trigger for the standalone-portal mobile suite
+# (issue #124 / ADR-0103). `simctl openurl`/`am start -d` deliver a fixed
+# literal string, never the real Portal offer, so the pre-authorized grant
+# never appears in host process argv or in any retained test log/evidence.
+# The real offer is retrieved over a loopback-only HTTP GET entirely inside
+# this process and fed into the same one-item router a normal
+# externally-delivered credential offer would use. Selected only by
+# `oxid-composition`'s `mobile-portal` feature, which the app profile already
+# restricts to iOS/Android `standalone-portal` builds.
+loopback-test-offer-trigger = []
+
 [dependencies]
 oxid-adapter-mobile-native.workspace = true
 oxid-platform-ports.workspace = true

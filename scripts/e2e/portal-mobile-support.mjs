@@ -14,6 +14,13 @@ const PORTAL_PROFILE_SOURCE = "76e8edf394a4cb37ca822037272d543c68f25f71";
 const PORTAL_PROVENANCE_SHA256 = "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87";
 const PORTAL_PROXY_PORT = 18090;
 const CONTROL_PORT = 18091;
+// Fixed, non-secret OS trigger for the standalone-portal `loopback-test-offer-trigger`
+// build (issue #124 / ADR-0103). `simctl openurl` delivers only this literal
+// string, never the real offer, so the pre-authorized grant never appears in
+// host process argv or in any retained test log. The app itself fetches the
+// real offer over a loopback GET to /offer once it recognizes this exact
+// string; see crates/adapters/identity-ingress/src/lib.rs (loopback_test_offer_trigger).
+const IOS_TEST_OFFER_TRIGGER = "openid-credential-offer://standalone-portal-test-fetch";
 const HOLDER_RESOLVER_PORT = 18092;
 const ISSUER_RESOLVER_PROXY_PORT = 18093;
 const ISSUER_RESOLVER_ORIGIN = `http://127.0.0.1:${ISSUER_RESOLVER_PROXY_PORT}`;
@@ -313,7 +320,11 @@ const controlServer = http.createServer(async (request, response) => {
           runSilent("/usr/bin/xcrun", ["simctl", "terminate", iosDevice, "io.medianox.oxid"]);
         } catch {}
       }
-      runSilent("/usr/bin/xcrun", ["simctl", "openurl", iosDevice, offer]);
+      // Never pass `offer` here: it is the real single-use pre-authorized
+      // grant and must not appear in this host process's argv. The fixed,
+      // non-secret trigger is the only value the OS/host ever sees; the app
+      // fetches the real offer itself over a loopback GET to /offer below.
+      runSilent("/usr/bin/xcrun", ["simctl", "openurl", iosDevice, IOS_TEST_OFFER_TRIGGER]);
       return sendJson(response, 200, { kind: delivery === "real-cold" ? "cold" : "warm" });
     }
     if (request.method === "POST" && request.url === "/proxy-mode") {
