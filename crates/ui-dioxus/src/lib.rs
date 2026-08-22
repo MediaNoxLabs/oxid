@@ -116,7 +116,7 @@ use oxid_wallet_application::{
     WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
     WalletTransferSubmissionView,
 };
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use labels as ui;
 
@@ -1913,9 +1913,41 @@ impl CredentialOfferDraft {
     }
 
     fn clear_imported_after_prepare(&mut self) {
-        self.value.clear();
+        self.value.zeroize();
+        self.value = Zeroizing::new(String::new());
         self.imported = false;
     }
+}
+
+/// Discards the raw imported request URI (a single-use grant) so it does not
+/// outlive the adapter's own prepared/consumed session. `kind = Some(_)`
+/// wipes only when the pending request still matches (used right after a
+/// successful prepare, so an unrelated concurrently pending request of a
+/// different kind is left untouched); `kind = None` wipes unconditionally
+/// (used for outright dismissal).
+fn wipe_pending_identity_request_value(
+    pending: &mut Option<PendingIdentityRequest>,
+    kind: Option<IdentityRequestKind>,
+) -> bool {
+    let matches_kind = match kind {
+        Some(expected) => pending
+            .as_ref()
+            .is_some_and(|request| request.kind == expected),
+        None => pending.is_some(),
+    };
+    if matches_kind && let Some(mut request) = pending.take() {
+        request.request_uri.zeroize();
+        return true;
+    }
+    false
+}
+
+fn wipe_pending_identity_request(
+    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
+    kind: Option<IdentityRequestKind>,
+) {
+    let mut guard = pending_identity_request.write();
+    wipe_pending_identity_request_value(&mut guard, kind);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3470,7 +3502,7 @@ pub fn App() -> Element {
                             class: "identity-ingress-dismiss",
                             r#type: "button",
                             onclick: move |_| {
-                                pending_identity_request.set(None);
+                                wipe_pending_identity_request(&mut pending_identity_request, None);
                                 navigation.write().dismiss_identity_request();
                                 identity_ingress_notice.set(Some(
                                     "Identity request dismissed without consent.".to_owned(),
@@ -11124,6 +11156,10 @@ fn CredentialsPage(
                                     {
                                         Ok(Ok(preview)) => {
                                             offer_draft.write().clear_imported_after_prepare();
+                                            wipe_pending_identity_request(
+                                                &mut pending_identity_request,
+                                                Some(IdentityRequestKind::CredentialIssuance),
+                                            );
                                             prepared_issuance.set(Some(preview));
                                             issuance_consent.set(false);
                                             issuance_notice.set(Some("Offer preview ready. Review the issuer and requested credential before consenting.".to_owned()));
