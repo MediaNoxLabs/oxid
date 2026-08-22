@@ -86,14 +86,19 @@ if [[ -z "$device" || "$device" != emulator-* ]] || \
   portal_mobile_fail qemu
   exit 1
 fi
+sync_epoch="$(date -u +%s)"
+if ! "$adb_command" -s "$device" shell cmd alarm set-time "$((sync_epoch * 1000))"; then
+  portal_mobile_fail emulator-clock-sync
+  exit 1
+fi
 host_epoch="$(date -u +%s)"
 emulator_epoch="$($adb_command -s "$device" shell date -u +%s | tr -d '
 ')"
 clock_skew=$((host_epoch - emulator_epoch))
-# A QEMU cold boot can trail the host by a few seconds, and production-style
-# emulator images correctly refuse `adb shell date` mutation. Keep this bound
-# far below the protocol freshness window while avoiding a false ±2s failure.
-if [ "$clock_skew" -lt -10 ] || [ "$clock_skew" -gt 10 ]; then
+# Exact Final credential verification has no future-time slack. Synchronize
+# this disposable QEMU through Android's clock service, then keep the strict
+# bound instead of admitting an issuer timestamp that is still in the future.
+if [ "$clock_skew" -lt -2 ] || [ "$clock_skew" -gt 2 ]; then
   portal_mobile_fail emulator-clock-skew
   exit 1
 fi

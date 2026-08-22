@@ -51,6 +51,16 @@ for port in 6300 8088 18093 9944 18090; do
   }
 done
 
+# Portal verification has no future-time slack. The disposable QEMU clock must
+# be set from the host through Android's privileged alarm service, then retain
+# the original strict ±2-second assertion; merely widening the assertion can
+# admit a credential whose issuance time is still in the wallet's future.
+if ! rg -qF 'shell cmd alarm set-time' scripts/test-android-portal-flow.sh ||
+  ! rg -q 'clock_skew.*-lt -2.*clock_skew.*-gt 2' scripts/test-android-portal-flow.sh; then
+  echo "Android Portal flow must synchronize QEMU time and enforce the strict skew bound." >&2
+  exit 1
+fi
+
 # The activation button changes its visible label to `Activating…` before the
 # development custody task is complete. Waiting only for the old label to
 # disappear races route navigation against that task and can cancel it when the
