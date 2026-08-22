@@ -3258,16 +3258,19 @@ pub fn App() -> Element {
         });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         let services_for_native_links = services.clone();
         use_future(move || {
             let services = services_for_native_links.clone();
             async move {
                 // Wry does not surface Android onNewIntent as a Tao Opened
-                // event. Poll only the bounded one-item native handoff; the
-                // task is paused automatically while this component is not
-                // being rendered.
+                // event, while an iOS Portal trigger can finish its worker
+                // after the corresponding Opened wake has been handled. Poll
+                // only the bounded one-item native handoff; no link payload or
+                // routing authority moves into this task. Sleeping first
+                // avoids a busy loop, and the task is paused automatically
+                // while this component is not being rendered.
                 loop {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     if matches!(*profile_session.read(), ProfileSessionState::Active(_)) {
