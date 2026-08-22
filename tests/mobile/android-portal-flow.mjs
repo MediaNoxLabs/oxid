@@ -197,7 +197,14 @@ try {
     await click("Documents");
     await click("Manage identities");
     await click("Create standalone DID");
-    await waitFor('document.body.innerText.includes("Manage this DID")', "managed DID", 30_000);
+    await waitFor(
+      'document.body.innerText.includes("Manage this DID") || Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")',
+      "managed DID terminal state",
+      30_000,
+    );
+    if (await evaluate('Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")')) {
+      throw new Error("managed DID creation ran without activated development custody");
+    }
   } else if (mode === "route-refuse") {
     await assertRouted();
     await preview();

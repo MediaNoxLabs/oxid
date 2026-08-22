@@ -9,6 +9,12 @@ compile_error!(
 );
 
 #[cfg(all(
+    feature = "mobile-portal",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+compile_error!("mobile-portal is available only on iOS and Android");
+
+#[cfg(all(
     not(target_arch = "wasm32"),
     any(
         all(not(target_os = "ios"), not(target_os = "android")),
@@ -492,6 +498,7 @@ struct IdentityAdapters {
     credential_issuance: CredentialIssuanceComposition,
     self_issued_authentication: SelfIssuedAuthenticationComposition,
     credential_presentation: CredentialPresentationComposition,
+    portal_test_ingress: bool,
 }
 
 struct PassportVaultRepositoryComposition {
@@ -1252,6 +1259,7 @@ pub fn compose_authenticated_production(
             credential_issuance: CredentialIssuanceComposition::Unavailable,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
             credential_presentation: CredentialPresentationComposition::Unavailable,
+            portal_test_ingress: false,
         },
         PassportVaultRepositoryComposition::unavailable(),
     ))
@@ -1284,6 +1292,7 @@ pub fn compose() -> ApplicationServices {
             credential_issuance: CredentialIssuanceComposition::Unavailable,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
             credential_presentation: CredentialPresentationComposition::Unavailable,
+            portal_test_ingress: false,
         },
         PassportVaultRepositoryComposition::unavailable(),
     )
@@ -2371,6 +2380,7 @@ fn compose_in_memory_with_presentation(
             credential_issuance: CredentialIssuanceComposition::Standalone,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
             credential_presentation,
+            portal_test_ingress: false,
         },
         PassportVaultRepositoryComposition::process_local(),
     );
@@ -2904,6 +2914,7 @@ where
     let did_lifecycle_port: Arc<dyn DidLifecyclePort> = did_lifecycle.clone();
     let did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort> = did_lifecycle;
     let did_resolver = headless_did_resolver();
+    let portal_test_ingress = matches!(&credential_profile, HeadlessCredentialProfile::Portal);
     let (compact_issuer_resolver, trust_anchor, credential_issuance) = match credential_profile {
         HeadlessCredentialProfile::Standalone => (
             Arc::new(StandaloneDidResolver) as Arc<dyn DidResolutionPort>,
@@ -2952,6 +2963,7 @@ where
             credential_issuance,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
             credential_presentation,
+            portal_test_ingress,
         },
         headless_passport_vault_repository(),
     )
@@ -3005,7 +3017,10 @@ where
         credential_issuance,
         self_issued_authentication,
         credential_presentation,
+        portal_test_ingress,
     } = identity_adapters;
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let _ = portal_test_ingress;
     let identity_request_router: Arc<dyn IdentityRequestRouterPort> = if matches!(
         self_issued_authentication,
         SelfIssuedAuthenticationComposition::Standalone
@@ -3034,8 +3049,16 @@ where
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let qr_scanner: Arc<dyn QrScannerPort> = Arc::new(UnavailableQrScanner);
     #[cfg(any(target_os = "ios", target_os = "android"))]
-    let identity_link_ingress: Arc<dyn IdentityLinkIngressPort> =
-        Arc::new(NativeIdentityLinkIngress::default());
+    let identity_link_ingress: Arc<dyn IdentityLinkIngressPort> = if portal_test_ingress {
+        #[cfg(feature = "mobile-portal")]
+        {
+            Arc::new(NativeIdentityLinkIngress::standalone_portal_test())
+        }
+        #[cfg(not(feature = "mobile-portal"))]
+        unreachable!("Portal ingress requires mobile-portal")
+    } else {
+        Arc::new(NativeIdentityLinkIngress::default())
+    };
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let identity_link_ingress: Arc<dyn IdentityLinkIngressPort> =
         Arc::new(UnavailableIdentityLinkIngress);
@@ -4488,6 +4511,7 @@ mod tests {
                 credential_issuance: CredentialIssuanceComposition::Unavailable,
                 self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
                 credential_presentation: CredentialPresentationComposition::Unavailable,
+                portal_test_ingress: false,
             },
             PassportVaultRepositoryComposition::unavailable(),
         );

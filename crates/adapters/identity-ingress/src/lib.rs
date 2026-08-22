@@ -363,6 +363,8 @@ impl QrScannerPort for NativeQrScanner {
 #[derive(Default)]
 pub struct NativeIdentityLinkIngress {
     captured: Arc<Mutex<CapturedIdentityLinks>>,
+    #[cfg(feature = "loopback-test-offer-trigger")]
+    resolve_loopback_test_offer_trigger: bool,
 }
 
 #[derive(Default)]
@@ -373,6 +375,15 @@ struct CapturedIdentityLinks {
 }
 
 impl NativeIdentityLinkIngress {
+    #[cfg(feature = "loopback-test-offer-trigger")]
+    #[must_use]
+    pub fn standalone_portal_test() -> Self {
+        Self {
+            captured: Arc::new(Mutex::new(CapturedIdentityLinks::default())),
+            resolve_loopback_test_offer_trigger: true,
+        }
+    }
+
     fn enqueue(&self, link: InboundIdentityLink) -> Result<(), IdentityLinkIngressError> {
         let mut captured = self
             .captured
@@ -399,6 +410,9 @@ impl NativeIdentityLinkIngress {
         F: FnOnce() -> String + Send + 'static,
     {
         if !loopback_test_offer_trigger::is_trigger(&value) {
+            return self.enqueue(InboundIdentityLink::new(value)?);
+        }
+        if !self.resolve_loopback_test_offer_trigger {
             return self.enqueue(InboundIdentityLink::new(value)?);
         }
 
@@ -460,10 +474,13 @@ fn validated_trigger_result(value: String) -> Option<InboundIdentityLink> {
 impl IdentityLinkIngressPort for NativeIdentityLinkIngress {
     fn capture(&self, value: String) -> Result<(), IdentityLinkIngressError> {
         #[cfg(feature = "loopback-test-offer-trigger")]
-        return self
-            .capture_with_trigger_resolver(value, loopback_test_offer_trigger::resolve_trigger);
+        if self.resolve_loopback_test_offer_trigger {
+            return self.capture_with_trigger_resolver(
+                value,
+                loopback_test_offer_trigger::resolve_trigger,
+            );
+        }
 
-        #[cfg(not(feature = "loopback-test-offer-trigger"))]
         self.enqueue(InboundIdentityLink::new(value)?)
     }
 
@@ -509,7 +526,9 @@ impl IdentityLinkIngressPort for NativeIdentityLinkIngress {
         return match native {
             Some(link) => {
                 let value = link.into_inner();
-                if loopback_test_offer_trigger::is_trigger(&value) {
+                if self.resolve_loopback_test_offer_trigger
+                    && loopback_test_offer_trigger::is_trigger(&value)
+                {
                     self.capture(value)?;
                     Ok(None)
                 } else {
@@ -753,6 +772,25 @@ mod tests {
     }
 
     #[cfg(feature = "loopback-test-offer-trigger")]
+    #[test]
+    fn trigger_resolution_requires_the_explicit_portal_constructor() {
+        let ingress = NativeIdentityLinkIngress::default();
+        ingress
+            .capture(loopback_test_offer_trigger::TRIGGER.to_owned())
+            .expect("capture literal");
+        let literal = ingress
+            .take_pending()
+            .expect("take literal")
+            .expect("literal pending")
+            .into_inner();
+        assert_eq!(literal, loopback_test_offer_trigger::TRIGGER);
+        assert_eq!(
+            router().route(&literal),
+            Err(IdentityRequestRoutingError::InvalidRequest)
+        );
+    }
+
+    #[cfg(feature = "loopback-test-offer-trigger")]
     fn wait_for_pending(ingress: &NativeIdentityLinkIngress) -> InboundIdentityLink {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
@@ -772,7 +810,7 @@ mod tests {
     fn portal_trigger_worker_never_blocks_capture_and_reserves_the_only_queue_slot() {
         use std::sync::mpsc;
 
-        let ingress = NativeIdentityLinkIngress::default();
+        let ingress = NativeIdentityLinkIngress::standalone_portal_test();
         let (started_tx, started_rx) = mpsc::sync_channel(1);
         let (release_tx, release_rx) = mpsc::sync_channel(1);
         let started_at = std::time::Instant::now();
@@ -819,7 +857,7 @@ mod tests {
             "x".repeat(32 * 1_024 + 1),
             LOGIN.to_owned(),
         ] {
-            let ingress = NativeIdentityLinkIngress::default();
+            let ingress = NativeIdentityLinkIngress::standalone_portal_test();
             ingress
                 .capture_with_trigger_resolver(
                     loopback_test_offer_trigger::TRIGGER.to_owned(),

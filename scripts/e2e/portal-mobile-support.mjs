@@ -396,7 +396,9 @@ async function waitForIssuer() {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${ISSUER_ORIGIN}/.well-known/openid-credential-issuer`, {
+      // This native test harness is statically pinned to a syntactic loopback origin;
+      // off-loopback plaintext is rejected by the product adapter.
+      const response = await fetch(`${ISSUER_ORIGIN}/.well-known/openid-credential-issuer`, { // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
         signal: AbortSignal.timeout(2_000),
       });
       if (response.ok) return;

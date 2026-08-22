@@ -1923,7 +1923,7 @@ impl CredentialOfferDraft {
         self.value.as_str()
     }
 
-    fn clear_imported_after_prepare(&mut self) {
+    fn clear_imported(&mut self) {
         self.value.zeroize();
         self.value = Zeroizing::new(String::new());
         self.imported = false;
@@ -11108,6 +11108,11 @@ fn CredentialsPage(
             issuance_notice.set(Some(
                 "Imported credential offer loaded. Preview it before accepting.".to_owned(),
             ));
+        } else if offer_draft.read().has_imported_offer() {
+            offer_draft.write().clear_imported();
+            prepared_issuance.set(None);
+            issuance_consent.set(false);
+            issuance_notice.set(None);
         }
     });
     let profile_id = active_profile.id.clone();
@@ -11234,7 +11239,7 @@ fn CredentialsPage(
                                     .await
                                     {
                                         Ok(Ok(preview)) => {
-                                            offer_draft.write().clear_imported_after_prepare();
+                                            offer_draft.write().clear_imported();
                                             scrub_pending_identity_request(
                                                 &mut pending_identity_request,
                                                 IdentityRequestKind::CredentialIssuance,
@@ -12704,7 +12709,7 @@ mod tests {
     }
 
     #[test]
-    fn imported_credential_offer_is_never_rendered_and_is_cleared_after_prepare() {
+    fn imported_credential_offer_is_never_rendered_and_is_cleared_after_prepare_or_dismissal() {
         let raw_offer = "openid-credential-offer://?credential_offer=do_not_render";
         let mut draft = CredentialOfferDraft::default();
 
@@ -12714,7 +12719,13 @@ mod tests {
         assert_eq!(draft.rendered_editable_value(), "");
         assert_eq!(draft.offer_for_prepare(), raw_offer);
 
-        draft.clear_imported_after_prepare();
+        draft.clear_imported();
+
+        assert!(!draft.has_imported_offer());
+        assert!(draft.offer_for_prepare().is_empty());
+
+        draft.import(raw_offer.to_owned());
+        draft.clear_imported();
 
         assert!(!draft.has_imported_offer());
         assert!(draft.offer_for_prepare().is_empty());

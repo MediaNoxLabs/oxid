@@ -11,7 +11,8 @@ publish = false
 [features]
 default = []
 # Authority marker forwarded only by oxid-app's guarded standalone-portal
-# profile. It closes Cargo dependency-feature paths around mobile-portal.
+# profile. The composition crate separately rejects non-mobile targets, and
+# runtime ingress remains inert unless the Portal constructor selects it.
 app-profile-authority = []
 mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
 # Native-mobile Portal identity/HTTP composition. The app profile owns the

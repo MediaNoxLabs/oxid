@@ -194,12 +194,32 @@ cargo test -p oxid-adapter-identity-ingress --features loopback-test-offer-trigg
 
 # Portal is a separate mobile-only test profile. Host/desktop, tailnet, and
 # native-custody combinations must fail before they can select composition.
+if cargo check -p oxid-composition --features mobile-portal,app-profile-authority >"$failure_log" 2>&1; then
+  echo "mobile-portal compiled directly for a non-mobile host" >&2
+  exit 1
+fi
+if ! rg -q 'mobile-portal is available only on iOS and Android' "$failure_log"; then
+  echo "direct mobile-portal rejection failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
+if cargo check -p oxid-app --no-default-features \
+  --features desktop,oxid-composition/mobile-portal,oxid-composition/app-profile-authority \
+  >"$failure_log" 2>&1; then
+  echo "mobile-portal compiled through the app dependency feature path" >&2
+  exit 1
+fi
+if ! rg -q 'mobile-portal is available only on iOS and Android' "$failure_log"; then
+  echo "app dependency mobile-portal rejection failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
 if cargo check -p oxid-app --no-default-features \
   --features standalone-portal >"$failure_log" 2>&1; then
   echo "standalone-portal compiled for a non-mobile host" >&2
   exit 1
 fi
-if ! rg -q 'standalone-portal is available only on iOS and Android' "$failure_log"; then
+if ! rg -q 'standalone-portal is available only on iOS and Android|mobile-portal is available only on iOS and Android' "$failure_log"; then
   echo "standalone-portal host rejection failed for an unexpected reason" >&2
   sed -n '1,120p' "$failure_log" >&2
   exit 1
@@ -211,7 +231,7 @@ for conflicting_profile in standalone-tailnet standalone-native-custody; do
     echo "standalone-portal compiled with $conflicting_profile" >&2
     exit 1
   fi
-  if ! rg -q 'standalone-portal is incompatible with tailnet and native custody' "$failure_log"; then
+  if ! rg -q 'standalone-portal is incompatible with tailnet and native custody|mobile-portal is available only on iOS and Android' "$failure_log"; then
     echo "standalone-portal/$conflicting_profile failed for an unexpected reason" >&2
     sed -n '1,120p' "$failure_log" >&2
     exit 1

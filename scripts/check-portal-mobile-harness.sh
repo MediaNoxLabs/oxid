@@ -72,7 +72,9 @@ fi
 # reuse the stable aria control predicate before navigating away.
 activation_complete_wait='!document.querySelector('\''button[aria-label="Activate protected Midnight account"]'\'') && Boolean(${button("Use my receive address")})'
 initial_activation_ready='Boolean(${button("Activate development wallet")} || ${button("Use my receive address")})'
+managed_did_activation_failure='managed DID creation ran without activated development custody'
 if ! rg -qF "$initial_activation_ready" tests/mobile/android-portal-flow.mjs ||
+  ! rg -qF "$managed_did_activation_failure" tests/mobile/android-portal-flow.mjs ||
   [ "$(rg -cF "$activation_complete_wait" tests/mobile/android-portal-flow.mjs)" -ne 2 ]; then
   echo "Both Android custody waits must use the stable activation-control predicate." >&2
   exit 1
@@ -195,6 +197,19 @@ for worker_bound in \
     exit 1
   }
 done
+
+# Hosted scanners must keep the intentional loopback readiness probe and the
+# public negative JWT fixture without weakening repository-wide rules. The
+# suppressions are narrow, exact, and explained at their source.
+opengrep_rule="typescript.react.security.react-insecure-request.react-insecure-request"
+negative_fixture="fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/unsupported-proof-alg.json"
+if ! rg -qF "nosemgrep: $opengrep_rule" scripts/e2e/portal-mobile-support.mjs ||
+  [ ! -f .checkov.yml ] ||
+  ! rg -qF "$negative_fixture" .checkov.yml ||
+  rg -q '^[[:space:]]*skip-check:' .checkov.yml; then
+  echo "Portal scanner suppressions must remain exact-path/exact-rule only." >&2
+  exit 1
+fi
 
 # Evidence is bound to the startup-clean Oxid revision, never a later HEAD.
 for platform_script in scripts/test-ios-portal-flow.sh scripts/test-android-portal-flow.sh; do
