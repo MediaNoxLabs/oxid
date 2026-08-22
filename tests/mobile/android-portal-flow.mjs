@@ -158,7 +158,10 @@ try {
     if (after.token !== 0 || after.nonce !== 0 || after.credential !== 0) {
       throw new Error("Portal refusal contacted a secret endpoint");
     }
-    await click("Dismiss identity request");
+    await waitFor(
+      `!Boolean(${button("Dismiss identity request")})`,
+      "refusal clears the consumed router request and raw offer",
+    );
   } else if (mode === "malformed") {
     await assertRouted();
     await preview();

@@ -193,7 +193,10 @@ final class PortalFlowTests: XCTestCase {
             "Credential offer refused; ephemeral protocol secrets were discarded."
         ].waitForExistence(timeout: 10))
         XCTAssertEqual(try counters()["token"], 0)
-        application.buttons["Dismiss identity request"].tap()
+        XCTAssertFalse(
+            application.buttons["Dismiss identity request"].exists,
+            "Refusal must clear the consumed router request and its raw offer"
+        )
 
         // Adapter transport failures remain payload-free and fail closed in the mobile framework.
         try setProxyMode("unavailable")
