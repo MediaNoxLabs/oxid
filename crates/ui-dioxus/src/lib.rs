@@ -11498,10 +11498,37 @@ enum LocalDiagnosticsPageState {
     Failed,
 }
 
+/// The Diagnostics page has only the composed booleans to work with:
+/// `ready` is true for both the in-process standalone issuer and the
+/// `standalone-portal` HTTP backend, and only the portal build omits the
+/// in-process demo offer (see `apps/oxid/src/main.rs`). Route on that
+/// distinction so a Portal-composed build is never mislabeled as the
+/// generic in-process standalone issuer.
+const fn credential_protocol_labels(
+    ready: bool,
+    standalone_demo_offer_available: bool,
+) -> (&'static str, &'static str) {
+    if !ready {
+        return ("Not connected", "Not connected");
+    }
+    if standalone_demo_offer_available {
+        ("Standalone Midnight DID", "OpenID4VCI 1.0 · standalone")
+    } else {
+        (
+            "Standalone Midnight DID · Portal HTTP",
+            "OpenID4VCI 1.0 · standalone-portal",
+        )
+    }
+}
+
 #[component]
 fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
     let credential_protocol_ready = services.credential_issuance_ready();
+    let (did_adapter_state, credential_protocol_state) = credential_protocol_labels(
+        credential_protocol_ready,
+        services.standalone_credential_offer().is_some(),
+    );
     let mut account_state = use_signal(|| AccountPageState::Loading);
     let mut diagnostic_state = use_signal(|| LocalDiagnosticsPageState::Loading);
     let profile_id = active_profile.id.clone();
@@ -11617,10 +11644,10 @@ fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
             CapabilityStatus { name: "Midnight account", state: midnight_state, ready: midnight_ready }
             CapabilityStatus { name: "Transaction completion", state: completion_state, ready: midnight_ready }
             CapabilityStatus { name: "Local proof provider", state: "Device-gated".to_owned(), ready: false }
-            CapabilityStatus { name: "DID adapter", state: if credential_protocol_ready { "Standalone Midnight DID".to_owned() } else { "Not connected".to_owned() }, ready: credential_protocol_ready }
+            CapabilityStatus { name: "DID adapter", state: did_adapter_state.to_owned(), ready: credential_protocol_ready }
             CapabilityStatus {
                 name: "Credential protocols",
-                state: if credential_protocol_ready { "OpenID4VCI 1.0 · standalone".to_owned() } else { "Not connected".to_owned() },
+                state: credential_protocol_state.to_owned(),
                 ready: credential_protocol_ready,
             }
         }
@@ -12603,6 +12630,64 @@ mod tests {
 
         assert!(!draft.has_imported_offer());
         assert!(draft.offer_for_prepare().is_empty());
+    }
+
+    #[test]
+    fn wipe_pending_identity_request_after_prepare_discards_only_the_matching_kind() {
+        let mut other_kind_pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::SelfIssuedAuthentication,
+            request_uri: "openid://login".to_owned(),
+        });
+        assert!(!wipe_pending_identity_request_value(
+            &mut other_kind_pending,
+            Some(IdentityRequestKind::CredentialIssuance),
+        ));
+        assert!(other_kind_pending.is_some());
+
+        let mut matching_pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialIssuance,
+            request_uri: "openid-credential-offer://?credential_offer=grant".to_owned(),
+        });
+        assert!(wipe_pending_identity_request_value(
+            &mut matching_pending,
+            Some(IdentityRequestKind::CredentialIssuance),
+        ));
+        assert!(matching_pending.is_none());
+    }
+
+    #[test]
+    fn wipe_pending_identity_request_on_dismissal_discards_any_kind() {
+        let mut pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialPresentation,
+            request_uri: "openid4vp://request".to_owned(),
+        });
+        assert!(wipe_pending_identity_request_value(&mut pending, None));
+        assert!(pending.is_none());
+
+        let mut already_empty = None::<PendingIdentityRequest>;
+        assert!(!wipe_pending_identity_request_value(
+            &mut already_empty,
+            None
+        ));
+    }
+
+    #[test]
+    fn credential_protocol_labels_never_mislabel_the_portal_http_backend_as_generic_standalone() {
+        assert_eq!(
+            credential_protocol_labels(false, false),
+            ("Not connected", "Not connected")
+        );
+        assert_eq!(
+            credential_protocol_labels(true, true),
+            ("Standalone Midnight DID", "OpenID4VCI 1.0 · standalone")
+        );
+        assert_eq!(
+            credential_protocol_labels(true, false),
+            (
+                "Standalone Midnight DID · Portal HTTP",
+                "OpenID4VCI 1.0 · standalone-portal",
+            )
+        );
     }
 
     #[test]
