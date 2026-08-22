@@ -10124,6 +10124,12 @@ fn credential_issuance_message(error: CredentialIssuanceError) -> String {
     }
 }
 
+fn credential_issuance_cleanup_allows_release(
+    result: &Result<CredentialIssuanceView, CredentialIssuanceError>,
+) -> bool {
+    matches!(result, Ok(_) | Err(CredentialIssuanceError::InvalidState))
+}
+
 fn identity_request_routing_message(error: IdentityRequestRoutingError) -> String {
     match error {
         IdentityRequestRoutingError::InvalidRequest => {
@@ -11420,19 +11426,28 @@ fn CredentialsPage(
                                                                 Err(error) => error.to_string(),
                                                                 Ok(Ok(_)) => unreachable!(),
                                                             };
-                                                            let _ = run_ui_blocking(move || {
+                                                            let cleanup = run_ui_blocking(move || {
                                                                 cleanup_service.execute(RefuseCredentialIssuanceCommand {
                                                                     profile_id: cleanup_profile,
                                                                     issuance_id: cleanup_issuance_id,
                                                                 })
                                                             }).await;
-                                                            wipe_pending_identity_request(
-                                                                &mut pending_identity_request,
-                                                                Some(IdentityRequestKind::CredentialIssuance),
-                                                            );
-                                                            prepared_issuance.set(None);
+                                                            let cleanup_confirmed = cleanup
+                                                                .as_ref()
+                                                                .is_ok_and(credential_issuance_cleanup_allows_release);
                                                             issuance_consent.set(false);
-                                                            issuance_notice.set(Some(message));
+                                                            if cleanup_confirmed {
+                                                                wipe_pending_identity_request(
+                                                                    &mut pending_identity_request,
+                                                                    Some(IdentityRequestKind::CredentialIssuance),
+                                                                );
+                                                                prepared_issuance.set(None);
+                                                                issuance_notice.set(Some(message));
+                                                            } else {
+                                                                issuance_notice.set(Some(format!(
+                                                                    "{message}. Session cleanup is unavailable; this review remains locked until refusal succeeds or the app restarts."
+                                                                )));
+                                                            }
                                                         }
                                                     }
                                                     issuance_busy.set(false);
@@ -12753,6 +12768,16 @@ mod tests {
         assert!(!identity_request_dismiss_is_visible(true, false));
         assert!(!identity_request_dismiss_is_visible(false, true));
         assert!(!identity_request_dismiss_is_visible(false, false));
+    }
+
+    #[test]
+    fn issuance_failure_releases_the_route_only_after_confirmed_cleanup() {
+        assert!(credential_issuance_cleanup_allows_release(&Err(
+            CredentialIssuanceError::InvalidState
+        )));
+        assert!(!credential_issuance_cleanup_allows_release(&Err(
+            CredentialIssuanceError::Unavailable
+        )));
     }
 
     #[test]
