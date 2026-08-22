@@ -13233,7 +13233,7 @@ mod tests {
                 operation_error: None,
                 ref credentials,
                 ..
-            } if credentials == &[credential.clone()]
+            } if credentials == std::slice::from_ref(&credential)
         ));
 
         let failed = credential_page_after_change(
