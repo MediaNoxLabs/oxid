@@ -187,7 +187,7 @@ async function counters() {
 }
 
 async function setProxyMode(mode) {
-  const response = await fetch(`/proxy-mode`, {
+  const response = await fetch(`${controlOrigin}/proxy-mode`, {
     method: "POST",
     body: mode,
     signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
