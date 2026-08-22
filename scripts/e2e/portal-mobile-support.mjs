@@ -29,7 +29,10 @@ const MAX_CONTROL_BODY = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const CHILD_COMMAND_TIMEOUT_MS = 10 * 60_000;
 const HOST_COMMAND_TIMEOUT_MS = 30_000;
-const CLEANUP_COMMAND_TIMEOUT_MS = 15_000;
+// Compose dependency teardown can legitimately exceed the default 10-second
+// service grace period. Keep it bounded below the shell-owned 75-second
+// support grace while leaving time for the exact-project resource check.
+const CLEANUP_COMMAND_TIMEOUT_MS = 60_000;
 const CLEANUP_RESOURCE_DEADLINE_MS = 5_000;
 const CLEANUP_RESOURCE_POLL_MS = 250;
 

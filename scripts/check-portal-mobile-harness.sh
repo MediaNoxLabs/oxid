@@ -124,6 +124,7 @@ fi
 # Successful compose-down waits only on the exact named project's three
 # resource types for a short deadline, then still fails closed.
 for cleanup_wait_marker in \
+  'const CLEANUP_COMMAND_TIMEOUT_MS = 60_000;' \
   'const CLEANUP_RESOURCE_DEADLINE_MS = 5_000;' \
   'const CLEANUP_RESOURCE_POLL_MS = 250;' \
   '["container", "network", "volume"]' \
