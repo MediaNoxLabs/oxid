@@ -85,26 +85,27 @@ if [[ -z "$device" || "$device" != emulator-* ]] || \
   portal_mobile_fail qemu
   exit 1
 fi
-sync_epoch="$(date -u +%s)"
-[[ "$sync_epoch" =~ ^[0-9]+$ ]] || { portal_mobile_fail host-epoch; exit 1; }
-if ! "$adb_command" -s "$device" shell cmd alarm set-time "$((sync_epoch * 1000))"; then
-  portal_mobile_fail emulator-clock-sync
-  exit 1
-fi
-host_epoch="$(date -u +%s)"
-emulator_epoch="$($adb_command -s "$device" shell date -u +%s | tr -d '\r\n')"
-if ! [[ "$host_epoch" =~ ^[0-9]+$ && "$emulator_epoch" =~ ^[0-9]+$ ]]; then
-  portal_mobile_fail emulator-epoch
-  exit 1
-fi
-clock_skew=$((host_epoch - emulator_epoch))
-# Exact Final credential verification has no future-time slack. Synchronize
-# this disposable QEMU through Android's clock service, then keep the strict
-# bound instead of admitting an issuer timestamp that is still in the future.
-if [ "$clock_skew" -lt -2 ] || [ "$clock_skew" -gt 2 ]; then
-  portal_mobile_fail emulator-clock-skew
-  exit 1
-fi
+synchronize_android_clock() {
+  local sync_epoch host_epoch emulator_epoch
+  sync_epoch="$(date -u +%s)"
+  [[ "$sync_epoch" =~ ^[0-9]+$ ]] || { portal_mobile_fail host-epoch; return 1; }
+  if ! "$adb_command" -s "$device" shell cmd alarm set-time "$((sync_epoch * 1000))"; then
+    portal_mobile_fail emulator-clock-sync
+    return 1
+  fi
+  host_epoch="$(date -u +%s)"
+  emulator_epoch="$("$adb_command" -s "$device" shell date -u +%s | tr -d '\r\n')"
+  if ! [[ "$host_epoch" =~ ^[0-9]+$ && "$emulator_epoch" =~ ^[0-9]+$ ]]; then
+    portal_mobile_fail emulator-epoch
+    return 1
+  fi
+  clock_skew=$((host_epoch - emulator_epoch))
+  if [ "$clock_skew" -lt -2 ] || [ "$clock_skew" -gt 2 ]; then
+    portal_mobile_fail emulator-clock-skew
+    return 1
+  fi
+}
+synchronize_android_clock
 reverse_list="$($adb_command -s "$device" reverse --list)"
 for local_port in 8088 9944 6300 18090 18091 18093; do
   if ! awk -v route="tcp:$local_port" '$2 == route && $3 == route { found = 1 } END { exit !found }' <<<"$reverse_list"; then
@@ -218,6 +219,9 @@ run_webview_scenario protocol-timeout
 curl --noproxy '*' --fail --silent -X POST --data-binary normal \
   "$PORTAL_MOBILE_CONTROL_ORIGIN/proxy-mode" >/dev/null
 
+# Negative-path UI work can make QEMU fall behind the host issuer. Reapply the
+# exact disposable-emulator clock sync immediately before strict issuance.
+synchronize_android_clock
 deliver_portal_trigger
 run_webview_scenario issue
 

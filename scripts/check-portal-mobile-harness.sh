@@ -52,10 +52,12 @@ for port in 6300 8088 18091 18093 9944 18090; do
 done
 
 # Portal verification has no future-time slack. The disposable QEMU clock must
-# be set from the host through Android's privileged alarm service, then retain
-# the original strict ±2-second assertion; merely widening the assertion can
-# admit a credential whose issuance time is still in the wallet's future.
+# be set from the host through Android's privileged alarm service at startup and
+# again immediately before the positive issuance path. The second sync prevents
+# a busy QEMU from drifting behind the host issuer during negative scenarios.
+clock_sync_calls="$(rg -c '^synchronize_android_clock$' scripts/test-android-portal-flow.sh || true)"
 if ! rg -qF 'shell cmd alarm set-time' scripts/test-android-portal-flow.sh ||
+  [ "$clock_sync_calls" != 2 ] ||
   ! rg -q 'clock_skew.*-lt -2.*clock_skew.*-gt 2' scripts/test-android-portal-flow.sh; then
   echo "Android Portal flow must synchronize QEMU time and enforce the strict skew bound." >&2
   exit 1
