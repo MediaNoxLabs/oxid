@@ -398,9 +398,9 @@ async function waitForIssuer() {
     try {
       // This native test harness is statically pinned to a syntactic loopback origin;
       // off-loopback plaintext is rejected by the product adapter.
-      const response = await fetch(`${ISSUER_ORIGIN}/.well-known/openid-credential-issuer`, { // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
+      const response = await fetch(`${ISSUER_ORIGIN}/.well-known/openid-credential-issuer`, {
         signal: AbortSignal.timeout(2_000),
-      });
+      }); // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
       if (response.ok) return;
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 250));
