@@ -73,8 +73,10 @@ fi
 activation_complete_wait='!document.querySelector('\''button[aria-label="Activate protected Midnight account"]'\'') && Boolean(${button("Use my receive address")})'
 initial_activation_ready='Boolean(${button("Activate development wallet")} || ${button("Use my receive address")})'
 managed_did_activation_failure='managed DID creation ran without activated development custody'
+strict_offer_boundary_wait='strict credential-offer boundary'
 if ! rg -qF "$initial_activation_ready" tests/mobile/android-portal-flow.mjs ||
   ! rg -qF "$managed_did_activation_failure" tests/mobile/android-portal-flow.mjs ||
+  ! rg -qF "$strict_offer_boundary_wait" tests/mobile/android-portal-flow.mjs ||
   [ "$(rg -cF "$activation_complete_wait" tests/mobile/android-portal-flow.mjs)" -ne 2 ]; then
   echo "Both Android custody waits must use the stable activation-control predicate." >&2
   exit 1

@@ -117,6 +117,16 @@ function button(label) {
   return `Array.from(document.querySelectorAll("button")).find((element) => element.textContent.trim() === ${JSON.stringify(label)})`;
 }
 
+function strictReviewBoundaryExpression() {
+  return `(() => ({
+    credentials: document.body.innerText.includes("Credentials"),
+    dismiss: Boolean(${button("Dismiss identity request")}),
+    hidden: document.body.innerText.includes("Its one-time grant is hidden while you review it."),
+    noEditableOffer: !document.querySelector("#credential-offer"),
+    noConsent: !document.querySelector("#credential-issuance-consent")
+  }))()`;
+}
+
 async function click(label, timeoutMs = 20_000) {
   await waitFor(
     `(() => { const element = ${button(label)}; return Boolean(element && !element.disabled && !element.closest("[inert]")); })()`,
@@ -152,13 +162,11 @@ async function assertRouted() {
     'document.body.innerText.includes("App link recognized as a credential offer. Review the request before consent.")',
     "credential-offer route",
   );
-  const boundary = await evaluate(`(() => ({
-    credentials: document.body.innerText.includes("Credentials"),
-    dismiss: Boolean(${button("Dismiss identity request")}),
-    hidden: document.body.innerText.includes("Its one-time grant is hidden while you review it."),
-    noEditableOffer: !document.querySelector("#credential-offer"),
-    noConsent: !document.querySelector("#credential-issuance-consent")
-  }))()`);
+  await waitFor(
+    `Object.values(${strictReviewBoundaryExpression()}).every(Boolean)`,
+    "strict credential-offer boundary",
+  );
+  const boundary = await evaluate(strictReviewBoundaryExpression());
   if (!Object.values(boundary).every(Boolean)) {
     throw new Error(`offer crossed the strict review boundary: ${JSON.stringify(boundary)}`);
   }
