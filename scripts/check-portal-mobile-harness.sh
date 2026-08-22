@@ -252,6 +252,8 @@ if rg -n "tr -d '\\\\r'|tr -d '\\\\n'" scripts/test-android-portal-flow.sh ||
   exit 1
 fi
 for busy_marker in \
+  'failed issuance route release' \
+  'A failed issuance must clear the retained router request' \
   'accessible disabled offer-check busy state' \
   'application.buttons["Checking offer…"]' \
   'The in-progress offer check must be disabled'; do

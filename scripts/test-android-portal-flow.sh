@@ -222,6 +222,12 @@ run_webview_scenario protocol-timeout
 curl --noproxy '*' --fail --silent -X POST --data-binary normal \
   "$PORTAL_MOBILE_CONTROL_ORIGIN/proxy-mode" >/dev/null
 
+deliver_portal_trigger
+run_webview_scenario issue-error
+
+curl --noproxy '*' --fail --silent -X POST --data-binary normal \
+  "$PORTAL_MOBILE_CONTROL_ORIGIN/proxy-mode" >/dev/null
+
 # Negative-path UI work can make QEMU fall behind the host issuer. Reapply the
 # exact disposable-emulator clock sync immediately before strict issuance.
 synchronize_android_clock
@@ -243,7 +249,7 @@ run_webview_scenario cold-route
 run_webview_scenario restored
 
 counters="$(curl --noproxy '*' --fail --silent "$PORTAL_MOBILE_CONTROL_ORIGIN/counters")"
-jq -e '.token == 1 and .nonce == 1 and .credential == 1' >/dev/null <<<"$counters" || {
+jq -e '.token == 2 and .nonce == 1 and .credential == 1' >/dev/null <<<"$counters" || {
   portal_mobile_fail protocol-counts
   exit 1
 }

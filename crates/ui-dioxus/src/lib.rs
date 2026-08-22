@@ -11234,7 +11234,7 @@ fn CredentialsPage(
                     button {
                         class: "primary-action",
                         r#type: "button",
-                        disabled: issuance_busy() || offer_draft.read().offer_for_prepare().trim().is_empty(),
+                        disabled: issuance_busy() || prepared_issuance.read().is_some() || offer_draft.read().offer_for_prepare().trim().is_empty(),
                         onclick: {
                             let service = services.prepare_credential_issuance();
                             let profile_id = profile_id.clone();
@@ -11383,6 +11383,9 @@ fn CredentialsPage(
                                                         return;
                                                     };
                                                     let service = services.accept_credential_issuance();
+                                                    let cleanup_service = services.refuse_credential_issuance();
+                                                    let cleanup_profile = execute_profile.clone();
+                                                    let cleanup_issuance_id = execute_issuance_id.clone();
                                                     match run_ui_future(async move {
                                                         service.execute(AcceptCredentialIssuanceCommand {
                                                             profile_id: execute_profile,
@@ -11411,8 +11414,26 @@ fn CredentialsPage(
                                                                 .unwrap_or_else(|error| CredentialPageState::Failed(error.to_string())),
                                                             );
                                                         }
-                                                        Ok(Err(error)) => issuance_notice.set(Some(credential_issuance_message(error))),
-                                                        Err(error) => issuance_notice.set(Some(error.to_string())),
+                                                        failure => {
+                                                            let message = match failure {
+                                                                Ok(Err(error)) => credential_issuance_message(error),
+                                                                Err(error) => error.to_string(),
+                                                                Ok(Ok(_)) => unreachable!(),
+                                                            };
+                                                            let _ = run_ui_blocking(move || {
+                                                                cleanup_service.execute(RefuseCredentialIssuanceCommand {
+                                                                    profile_id: cleanup_profile,
+                                                                    issuance_id: cleanup_issuance_id,
+                                                                })
+                                                            }).await;
+                                                            wipe_pending_identity_request(
+                                                                &mut pending_identity_request,
+                                                                Some(IdentityRequestKind::CredentialIssuance),
+                                                            );
+                                                            prepared_issuance.set(None);
+                                                            issuance_consent.set(false);
+                                                            issuance_notice.set(Some(message));
+                                                        }
                                                     }
                                                     issuance_busy.set(false);
                                                 });

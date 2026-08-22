@@ -9,6 +9,7 @@ const modes = new Set([
   "malformed",
   "protocol-error",
   "protocol-timeout",
+  "issue-error",
   "issue",
   "cold-route",
   "restored",
@@ -185,6 +186,15 @@ async function counters() {
   return response.json();
 }
 
+async function setProxyMode(mode) {
+  const response = await fetch(`/proxy-mode`, {
+    method: "POST",
+    body: mode,
+    signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error("Portal proxy mode unavailable");
+}
+
 try {
   await ensureProfile();
   if (mode === "prepare-holder") {
@@ -264,6 +274,20 @@ try {
       35_000,
     );
     await waitFor(`!Boolean(${button("Dismiss identity request")})`, "failed request cleanup");
+  } else if (mode === "issue-error") {
+    await assertRouted();
+    await preview();
+    await waitFor('document.body.innerText.includes("Credential offer preview")', "Portal preview", 30_000);
+    await waitFor('Boolean(document.querySelector("#credential-issuance-consent"))', "issuance consent");
+    await evaluate('document.querySelector("#credential-issuance-consent").click()');
+    await setProxyMode("unavailable");
+    await click("Accept and issue credential");
+    await waitFor('document.body.innerText.includes("This protocol is unavailable in the current build")', "failed issuance cleanup", 30_000);
+    await setProxyMode("normal");
+    await waitFor(
+      `!Boolean(${button("Dismiss identity request")}) && !Boolean(document.querySelector("#credential-issuance-consent"))`,
+      "failed issuance route release",
+    );
   } else if (mode === "issue") {
     await assertRouted();
     await preview();
@@ -288,7 +312,7 @@ try {
       claimsHidden: !document.body.innerText.includes("John") && !document.body.innerText.includes("Doe")
     })`);
     const counts = await counters();
-    if (!Object.values(result).every(Boolean) || counts.token !== 1 || counts.nonce !== 1 || counts.credential !== 1) {
+    if (!Object.values(result).every(Boolean) || counts.token !== 2 || counts.nonce !== 1 || counts.credential !== 1) {
       throw new Error(`Portal issuance evidence failed: ${JSON.stringify({ result, counts })}`);
     }
   } else if (mode === "cold-route") {
