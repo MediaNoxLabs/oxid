@@ -2729,6 +2729,7 @@ select:focus-visible {
 
 .form-hint,
 .field-hint,
+.credential-reverification-success,
 .result {
   margin: var(--space-4) 0 0;
   color: var(--text-muted);
@@ -2757,7 +2758,8 @@ select:focus-visible {
 }
 
 .result.error,
-.field-error {
+.field-error,
+.credential-operation-error {
   display: block;
   border-color: color-mix(in srgb, var(--critical) 35%, transparent);
   color: color-mix(in srgb, var(--critical) 60%, var(--text-strong));
