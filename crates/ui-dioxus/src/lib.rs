@@ -1861,6 +1861,7 @@ enum CredentialPageState {
         credentials: Vec<CredentialView>,
         receiving: bool,
         operation_error: Option<String>,
+        reverification_applied: bool,
     },
     Failed(String),
 }
@@ -1869,6 +1870,16 @@ enum CredentialPageState {
 struct PendingIdentityRequest {
     kind: IdentityRequestKind,
     request_uri: String,
+}
+
+impl PendingIdentityRequest {
+    fn importable_uri(&self, expected: IdentityRequestKind) -> Option<&str> {
+        (self.kind == expected && !self.request_uri.is_empty()).then_some(self.request_uri.as_str())
+    }
+
+    fn has_raw_uri(&self) -> bool {
+        !self.request_uri.is_empty()
+    }
 }
 
 #[derive(Default)]
@@ -1919,12 +1930,36 @@ impl CredentialOfferDraft {
     }
 }
 
-/// Discards the raw imported request URI (a single-use grant) so it does not
-/// outlive the adapter's own prepared/consumed session. `kind = Some(_)`
-/// wipes only when the pending request still matches (used right after a
-/// successful prepare, so an unrelated concurrently pending request of a
-/// different kind is left untouched); `kind = None` wipes unconditionally
-/// (used for outright dismissal).
+/// Scrubs the raw imported request URI after the protocol adapter has prepared
+/// its private session while retaining the payload-free pending marker. The
+/// marker keeps the one-active-review guard closed until terminal consent or
+/// refusal clears it.
+fn scrub_pending_identity_request_value(
+    pending: &mut Option<PendingIdentityRequest>,
+    kind: IdentityRequestKind,
+) -> bool {
+    let Some(request) = pending
+        .as_mut()
+        .filter(|request| request.kind == kind && request.has_raw_uri())
+    else {
+        return false;
+    };
+    request.request_uri.zeroize();
+    request.request_uri.clear();
+    true
+}
+
+fn scrub_pending_identity_request(
+    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
+    kind: IdentityRequestKind,
+) {
+    let mut guard = pending_identity_request.write();
+    scrub_pending_identity_request_value(&mut guard, kind);
+}
+
+/// Clears a pending identity review and zeroizes any raw URI still present.
+/// This is used only for explicit pre-prepare dismissal or after a prepared
+/// issuance reaches successful acceptance/refusal.
 fn wipe_pending_identity_request_value(
     pending: &mut Option<PendingIdentityRequest>,
     kind: Option<IdentityRequestKind>,
@@ -3130,8 +3165,12 @@ const fn html_boolean_attribute(enabled: bool) -> Option<&'static str> {
     if enabled { Some("true") } else { None }
 }
 
-const fn identity_request_dismiss_is_visible(has_notice: bool, request_waiting: bool) -> bool {
-    has_notice && request_waiting
+const fn identity_request_dismiss_is_visible(has_notice: bool, has_raw_request: bool) -> bool {
+    has_notice && has_raw_request
+}
+
+const fn identity_request_admits_new_link(request_waiting: bool) -> bool {
+    !request_waiting
 }
 
 #[cfg(feature = "ui-profile-dev")]
@@ -3331,11 +3370,14 @@ pub fn App() -> Element {
     let active_primary = navigation.read().active_primary();
     let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name, brand.wordmark());
-    let identity_request_waiting = pending_identity_request.read().is_some();
+    let pending_identity_request_has_raw_uri = pending_identity_request
+        .read()
+        .as_ref()
+        .is_some_and(PendingIdentityRequest::has_raw_uri);
     let identity_ingress_notice_snapshot = identity_ingress_notice.read().clone();
     let identity_request_dismiss_visible = identity_request_dismiss_is_visible(
         identity_ingress_notice_snapshot.is_some(),
-        identity_request_waiting,
+        pending_identity_request_has_raw_uri,
     );
     let home_scanner = services.qr_scanner();
     let home_router = services.route_identity_request();
@@ -10051,6 +10093,7 @@ fn load_credential_page(services: &WalletUiServices, profile_id: &str) -> Creden
                 credentials,
                 receiving: false,
                 operation_error: None,
+                reverification_applied: false,
             },
         )
 }
@@ -10090,7 +10133,7 @@ fn route_pending_identity_link(
     mut profile_menu_open: Signal<bool>,
     mut notice: Signal<Option<String>>,
 ) {
-    if pending_identity_request.read().is_some() {
+    if !identity_request_admits_new_link(pending_identity_request.read().is_some()) {
         return;
     }
     let ingress = services.identity_link_ingress();
@@ -10579,10 +10622,39 @@ fn CredentialPresentationPanel(
 }
 
 enum CredentialChange {
+    ReverificationStarted,
     Updated(CredentialView),
     Deleted(String),
     Failed(String),
 }
+
+fn credential_page_after_change(
+    mut credentials: Vec<CredentialView>,
+    change: CredentialChange,
+) -> CredentialPageState {
+    let (operation_error, reverification_applied) = match change {
+        CredentialChange::ReverificationStarted => (None, false),
+        CredentialChange::Updated(updated) => {
+            credentials.retain(|entry| entry.id != updated.id);
+            credentials.push(updated);
+            credentials.sort_by(|left, right| left.id.cmp(&right.id));
+            (None, true)
+        }
+        CredentialChange::Deleted(identifier) => {
+            credentials.retain(|entry| entry.id != identifier);
+            (None, false)
+        }
+        CredentialChange::Failed(message) => (Some(message), false),
+    };
+    CredentialPageState::Ready {
+        credentials,
+        receiving: false,
+        operation_error,
+        reverification_applied,
+    }
+}
+
+const CREDENTIAL_REVERIFICATION_APPLIED_MARKER: &str = "Credential reverification applied";
 
 const PASSPORT_FIRST_NAME: &str = "/credentialSubject/firstName";
 const PASSPORT_LAST_NAME: &str = "/credentialSubject/lastName";
@@ -10924,6 +10996,7 @@ fn CredentialRecordCard(
                 button {
                     class: "secondary-action", r#type: "button", disabled: working(),
                     onclick: move |_| {
+                        on_change.call(CredentialChange::ReverificationStarted);
                         working.set(true);
                         let service = verify_services.reverify_credential();
                         let profile_id = verify_profile.clone();
@@ -11020,11 +11093,13 @@ fn CredentialsPage(
     let mut issuance_busy = use_signal(|| false);
     let mut issuance_notice = use_signal(|| None::<String>);
     use_effect(move || {
-        let pending = pending_identity_request.read().clone();
-        if let Some(request) = pending
-            && request.kind == IdentityRequestKind::CredentialIssuance
-        {
-            offer_draft.write().import(request.request_uri);
+        let request_uri = pending_identity_request
+            .read()
+            .as_ref()
+            .and_then(|request| request.importable_uri(IdentityRequestKind::CredentialIssuance))
+            .map(str::to_owned);
+        if let Some(request_uri) = request_uri {
+            offer_draft.write().import(request_uri);
             prepared_issuance.set(None);
             issuance_consent.set(false);
             issuance_notice.set(Some(
@@ -11087,6 +11162,7 @@ fn CredentialsPage(
             credentials,
             receiving,
             operation_error,
+            reverification_applied,
         } => {
             let receive_service = services.receive_credential();
             let receive_profile = profile_id.clone();
@@ -11156,9 +11232,9 @@ fn CredentialsPage(
                                     {
                                         Ok(Ok(preview)) => {
                                             offer_draft.write().clear_imported_after_prepare();
-                                            wipe_pending_identity_request(
+                                            scrub_pending_identity_request(
                                                 &mut pending_identity_request,
-                                                Some(IdentityRequestKind::CredentialIssuance),
+                                                IdentityRequestKind::CredentialIssuance,
                                             );
                                             prepared_issuance.set(Some(preview));
                                             issuance_consent.set(false);
@@ -11287,6 +11363,10 @@ fn CredentialsPage(
                                                     .await
                                                     {
                                                         Ok(Ok(result)) => {
+                                                            wipe_pending_identity_request(
+                                                                &mut pending_identity_request,
+                                                                Some(IdentityRequestKind::CredentialIssuance),
+                                                            );
                                                             prepared_issuance.set(Some(result));
                                                             issuance_notice.set(Some("Credential issued, verified, and stored in the protected inventory.".to_owned()));
                                                             state.set(
@@ -11330,6 +11410,10 @@ fn CredentialsPage(
                                                     .await;
                                                     match result {
                                                         Ok(Ok(result)) => {
+                                                            wipe_pending_identity_request(
+                                                                &mut pending_identity_request,
+                                                                Some(IdentityRequestKind::CredentialIssuance),
+                                                            );
                                                             prepared_issuance.set(Some(result));
                                                             issuance_consent.set(false);
                                                             issuance_notice.set(Some("Credential offer refused; ephemeral protocol secrets were discarded.".to_owned()));
@@ -11355,6 +11439,14 @@ fn CredentialsPage(
                     profile_id: profile_id.clone(),
                     pending_identity_request,
                 }
+                if reverification_applied {
+                    p {
+                        class: "form-hint credential-reverification-success",
+                        role: "status",
+                        aria_label: CREDENTIAL_REVERIFICATION_APPLIED_MARKER,
+                        "{CREDENTIAL_REVERIFICATION_APPLIED_MARKER}"
+                    }
+                }
                 article { class: "surface-card credential-receive-card",
                     p { class: "card-eyebrow", "Standalone credential inbox" }
                     h2 { "Receive the public identity fixture" }
@@ -11362,7 +11454,7 @@ fn CredentialsPage(
                     button {
                         class: "primary-action", r#type: "button", disabled: receiving,
                         onclick: move |_| {
-                            state.set(CredentialPageState::Ready { credentials: retained.clone(), receiving: true, operation_error: None });
+                            state.set(CredentialPageState::Ready { credentials: retained.clone(), receiving: true, operation_error: None, reverification_applied: false });
                             let service = receive_service.clone();
                             let profile_id = receive_profile.clone();
                             let mut next = retained.clone();
@@ -11376,17 +11468,23 @@ fn CredentialsPage(
                                         next.retain(|existing| existing.id != credential.id);
                                         next.push(credential);
                                         next.sort_by(|left, right| left.id.cmp(&right.id));
-                                        state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
+                                        state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None, reverification_applied: false });
                                     }
-                                    Ok(Err(error)) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)) }),
-                                    Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(error.to_string()) }),
+                                    Ok(Err(error)) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)), reverification_applied: false }),
+                                    Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(error.to_string()), reverification_applied: false }),
                                 }
                             });
                         },
                         if receiving { "Receiving and verifying…" } else { "Receive standalone credential" }
                     }
                     if let Some(error) = operation_error.as_deref() {
-                        p { class: "field-error", role: "alert", "{error}" }
+                        p {
+                            class: "field-error credential-operation-error",
+                            role: "alert",
+                            strong { "Credential operation error" }
+                            br {}
+                            "{error}"
+                        }
                     }
                 }
                 if credentials.is_empty() {
@@ -11408,20 +11506,7 @@ fn CredentialsPage(
                                         profile_id: profile_id.clone(),
                                         credential,
                                         on_change: move |change| {
-                                            let mut next = retained.clone();
-                                            match change {
-                                                CredentialChange::Updated(updated) => {
-                                                    next.retain(|entry| entry.id != updated.id);
-                                                    next.push(updated);
-                                                    next.sort_by(|left, right| left.id.cmp(&right.id));
-                                                    state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
-                                                }
-                                                CredentialChange::Deleted(identifier) => {
-                                                    next.retain(|entry| entry.id != identifier);
-                                                    state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
-                                                }
-                                                CredentialChange::Failed(message) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(message) }),
-                                            }
+                                            state.set(credential_page_after_change(retained.clone(), change));
                                         }
                                     }
                                 }
@@ -12633,26 +12718,50 @@ mod tests {
     }
 
     #[test]
-    fn wipe_pending_identity_request_after_prepare_discards_only_the_matching_kind() {
+    fn prepared_issuance_scrubs_raw_uri_but_guards_the_active_review_until_terminal_clear() {
         let mut other_kind_pending = Some(PendingIdentityRequest {
             kind: IdentityRequestKind::SelfIssuedAuthentication,
             request_uri: "openid://login".to_owned(),
         });
-        assert!(!wipe_pending_identity_request_value(
+        assert!(!scrub_pending_identity_request_value(
             &mut other_kind_pending,
-            Some(IdentityRequestKind::CredentialIssuance),
+            IdentityRequestKind::CredentialIssuance,
         ));
-        assert!(other_kind_pending.is_some());
+        assert_eq!(
+            other_kind_pending.as_ref().and_then(
+                |request| request.importable_uri(IdentityRequestKind::SelfIssuedAuthentication)
+            ),
+            Some("openid://login")
+        );
 
         let mut matching_pending = Some(PendingIdentityRequest {
             kind: IdentityRequestKind::CredentialIssuance,
             request_uri: "openid-credential-offer://?credential_offer=grant".to_owned(),
         });
+        assert!(scrub_pending_identity_request_value(
+            &mut matching_pending,
+            IdentityRequestKind::CredentialIssuance,
+        ));
+        let scrubbed_guard = matching_pending.as_ref().expect("review guard retained");
+        assert!(!scrubbed_guard.has_raw_uri());
+        assert_eq!(
+            scrubbed_guard.importable_uri(IdentityRequestKind::CredentialIssuance),
+            None
+        );
+        assert!(!identity_request_dismiss_is_visible(
+            true,
+            scrubbed_guard.has_raw_uri()
+        ));
+        assert!(!identity_request_admits_new_link(
+            matching_pending.is_some()
+        ));
+
         assert!(wipe_pending_identity_request_value(
             &mut matching_pending,
             Some(IdentityRequestKind::CredentialIssuance),
         ));
         assert!(matching_pending.is_none());
+        assert!(identity_request_admits_new_link(matching_pending.is_some()));
     }
 
     #[test]
@@ -13085,6 +13194,64 @@ mod tests {
         let mut cbor = credential;
         cbor.format = "midnight_cbor_v1".to_owned();
         assert_eq!(compact_credential_policy_summary(&cbor), None);
+    }
+
+    #[test]
+    fn fresh_reverification_marker_requires_an_applied_updated_change() {
+        let credential = CredentialView {
+            id: "credential_test".to_owned(),
+            display_name: "Digital Passport".to_owned(),
+            issuer_did: "did:midnight:undeployed:issuer".to_owned(),
+            subject_did: None,
+            format: "midnight_compact_vc".to_owned(),
+            issued_at_ms: Some(42),
+            verification_outcome: "valid".to_owned(),
+            verification_stages: Vec::new(),
+        };
+
+        let started = credential_page_after_change(
+            vec![credential.clone()],
+            CredentialChange::ReverificationStarted,
+        );
+        assert!(matches!(
+            started,
+            CredentialPageState::Ready {
+                reverification_applied: false,
+                operation_error: None,
+                ..
+            }
+        ));
+
+        let applied = credential_page_after_change(
+            vec![credential.clone()],
+            CredentialChange::Updated(credential.clone()),
+        );
+        assert!(matches!(
+            applied,
+            CredentialPageState::Ready {
+                reverification_applied: true,
+                operation_error: None,
+                ref credentials,
+                ..
+            } if credentials == &[credential.clone()]
+        ));
+
+        let failed = credential_page_after_change(
+            vec![credential],
+            CredentialChange::Failed("payload-free failure".to_owned()),
+        );
+        assert!(matches!(
+            failed,
+            CredentialPageState::Ready {
+                reverification_applied: false,
+                operation_error: Some(_),
+                ..
+            }
+        ));
+        assert_eq!(
+            CREDENTIAL_REVERIFICATION_APPLIED_MARKER,
+            "Credential reverification applied"
+        );
     }
 
     fn presentation_candidate(

@@ -211,6 +211,16 @@ final class PortalFlowTests: XCTestCase {
         assertRoutedOffer(in: application)
         previewImportedOffer(in: application)
         XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 20))
+        XCTAssertTrue(
+            application.descendants(matching: .any)[
+                "Imported credential offer retained privately"
+            ].waitForNonExistence(timeout: 10),
+            "Successful preview must clear the imported raw offer immediately"
+        )
+        XCTAssertTrue(
+            application.buttons["Dismiss identity request"].waitForNonExistence(timeout: 10),
+            "A prepared session must not retain the outer router dismissal"
+        )
         for heading in [
             "Who is issuing it?", "What will you receive?",
             "Which identity receives it?", "Why add it?", "Unverified endpoint",
@@ -298,19 +308,36 @@ final class PortalFlowTests: XCTestCase {
         )
         // The restored credential already shows this exact policy summary
         // before the tap, so that text alone cannot prove reverification ran.
-        // Require the issuer-resolver success count to strictly increase. The
-        // operation can finish between XCTest frames, so the transient busy
-        // label is not reliable evidence; the resolver counter is.
+        // Require both the unchanged resolver delta and a fresh payload-free UI
+        // marker that can be emitted only after the updated record is applied.
+        let freshMarker = application.staticTexts["Credential reverification applied"]
+        XCTAssertFalse(freshMarker.exists, "Fresh reverification marker must not survive restore")
         let issuerResolutionSuccessBeforeReverify = try counters()["issuerResolutionSuccess"] ?? 0
         let reverify = application.buttons["Reverify"]
         XCTAssertTrue(reverify.waitForExistence(timeout: 15))
         scrollTo(reverify, in: application)
         reverify.tap()
         try waitForIssuerResolution(after: issuerResolutionSuccessBeforeReverify)
-        XCTAssertTrue(application.buttons["Reverify"].waitForExistence(timeout: 30))
+        let reverifyCompleted = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND enabled == true"),
+            object: reverify
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [reverifyCompleted], timeout: 30), .completed)
+        XCTAssertTrue(freshMarker.waitForExistence(timeout: 30))
+        XCTAssertEqual(
+            application.descendants(matching: .any).matching(
+                NSPredicate(format: "label BEGINSWITH %@", "Credential operation error")
+            ).count,
+            0,
+            "Fresh reverification must not leave a credential operation error"
+        )
+        XCTAssertEqual(
+            application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid")).count,
+            1
+        )
         XCTAssertTrue(application.staticTexts[
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
-        ].waitForExistence(timeout: 30))
+        ].exists)
         let issuerResolutionSuccessAfterReverify = try counters()["issuerResolutionSuccess"] ?? 0
         XCTAssertGreaterThan(issuerResolutionSuccessAfterReverify, issuerResolutionSuccessBeforeReverify)
 

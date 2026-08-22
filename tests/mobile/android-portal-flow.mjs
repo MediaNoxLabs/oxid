@@ -140,6 +140,10 @@ try {
     await assertRouted();
     await preview();
     await waitFor('document.body.innerText.includes("Credential offer preview")', "Portal preview", 30_000);
+    await waitFor(
+      `!document.body.innerText.includes("Its one-time grant is hidden while you review it.") && !Boolean(${button("Dismiss identity request")})`,
+      "successful preview to clear the imported raw offer and hide router dismissal",
+    );
     const questions = await evaluate(`[
       "Who is issuing it?", "What will you receive?", "Which identity receives it?",
       "Why add it?", "Unverified endpoint"
@@ -223,9 +227,11 @@ try {
     );
     // The restored credential already shows this exact policy summary
     // before the tap, so that text alone cannot prove reverification ran.
-    // Require the issuer-resolver success count to strictly increase. The
-    // operation can finish between CDP observations, so its transient busy
-    // label is not reliable evidence; the resolver counter is.
+    // Require both the unchanged resolver delta and a fresh payload-free UI
+    // marker that can be emitted only after the updated record is applied.
+    if (await evaluate('Boolean(document.querySelector(".credential-reverification-success"))')) {
+      throw new Error("fresh reverification marker was stale before reverify");
+    }
     const beforeReverify = await counters();
     await click("Reverify");
     const reverifyDeadline = Date.now() + 30_000;
@@ -242,12 +248,32 @@ try {
         `Reverify did not produce a fresh issuer-resolution success: before=${beforeReverify.issuerResolutionSuccess} after=${afterReverify.issuerResolutionSuccess}`,
       );
     }
-    await waitFor(`Boolean(${button("Reverify")})`, "reverify completed", 30_000);
     await waitFor(
-      'document.body.innerText.includes("Credential policy · issuer passed · time passed · trust passed · revocation not checked")',
-      "restored credential reverification",
+      `(() => { const element = ${button("Reverify")}; return Boolean(element && !element.disabled); })()`,
+      "reverify busy completion",
       30_000,
     );
+    await waitFor(
+      'document.querySelector(".credential-reverification-success")?.textContent.trim() === "Credential reverification applied"',
+      "fresh applied reverification marker",
+      30_000,
+    );
+    const reverified = await evaluate(`(() => {
+      const records = Array.from(document.querySelectorAll(".credential-record"));
+      return {
+        noOperationError: !document.querySelector(".credential-operation-error"),
+        oneValidRecord: records.length === 1 && Array.from(records[0].querySelectorAll(".status-pill.success"))
+          .some((element) => element.textContent.trim() === "Valid"),
+        policy: records.length === 1 && records[0].innerText.includes(
+          "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
+        ),
+        freshMarker: document.querySelector(".credential-reverification-success")?.textContent.trim()
+          === "Credential reverification applied"
+      };
+    })()`);
+    if (!Object.values(reverified).every(Boolean)) {
+      throw new Error(`restored credential reverification UI evidence failed: ${JSON.stringify(reverified)}`);
+    }
   }
   process.stdout.write(`${JSON.stringify({ mode, passed: true })}\n`);
 } finally {
