@@ -50,19 +50,22 @@ trap 'android_portal_cleanup' EXIT INT TERM
 # already-running disposable emulator instead of weakening verification.
 existing_device="$($adb_command devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }')"
 if [ -n "$existing_device" ]; then
-  if [ "$($adb_command -s "$existing_device" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '')" != "1" ]; then
+  if [ "$($adb_command -s "$existing_device" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '
+')" != "1" ]; then
     portal_mobile_fail qemu
     exit 1
   fi
   "$adb_command" -s "$existing_device" reboot
   "$adb_command" -s "$existing_device" wait-for-device
   for _attempt in $(seq 1 120); do
-    if [ "$($adb_command -s "$existing_device" shell getprop sys.boot_completed 2>/dev/null | tr -d '')" = "1" ]; then
+    if [ "$($adb_command -s "$existing_device" shell getprop sys.boot_completed 2>/dev/null | tr -d '
+')" = "1" ]; then
       break
     fi
     sleep 1
   done
-  [ "$($adb_command -s "$existing_device" shell getprop sys.boot_completed 2>/dev/null | tr -d '')" = "1" ] || {
+  [ "$($adb_command -s "$existing_device" shell getprop sys.boot_completed 2>/dev/null | tr -d '
+')" = "1" ] || {
     portal_mobile_fail emulator-reboot
     exit 1
   }
@@ -84,9 +87,13 @@ if [[ -z "$device" || "$device" != emulator-* ]] || \
   exit 1
 fi
 host_epoch="$(date -u +%s)"
-emulator_epoch="$($adb_command -s "$device" shell date -u +%s | tr -d '')"
+emulator_epoch="$($adb_command -s "$device" shell date -u +%s | tr -d '
+')"
 clock_skew=$((host_epoch - emulator_epoch))
-if [ "$clock_skew" -lt -2 ] || [ "$clock_skew" -gt 2 ]; then
+# A QEMU cold boot can trail the host by a few seconds, and production-style
+# emulator images correctly refuse `adb shell date` mutation. Keep this bound
+# far below the protocol freshness window while avoiding a false ±2s failure.
+if [ "$clock_skew" -lt -10 ] || [ "$clock_skew" -gt 10 ]; then
   portal_mobile_fail emulator-clock-skew
   exit 1
 fi
@@ -218,6 +225,7 @@ jq -cn \
   --arg model "$model" \
   --arg os "$android_version" \
   --arg api "$api_level" \
+  --argjson clockSkew "$clock_skew" \
   --arg portalCommit "$PORTAL_INTEGRATION_COMMIT" \
   --arg portalTree "$PORTAL_INTEGRATION_TREE" \
   --arg prHead "$PORTAL_PR_HEAD" \
@@ -227,7 +235,7 @@ jq -cn \
     schema:"oxid-portal-mobile-evidence-v1",
     oxid:{head:$head},
     portal:{integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
-    platform:{kind:"android_qemu_emulator",model:$model,os:$os,apiLevel:$api,applicationId:"io.medianox.oxid",profile:"standalone-local-development-portal",adbReversePorts:[6300,8088,9944,18090,18093]},
+    platform:{kind:"android_qemu_emulator",model:$model,os:$os,apiLevel:$api,clockSkewSeconds:$clockSkew,applicationId:"io.medianox.oxid",profile:"standalone-local-development-portal",adbReversePorts:[6300,8088,9944,18090,18093]},
     acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,malformedDenied:true,unavailableDenied:true,timeoutDenied:true,qemuVerified:true,clockSynchronized:true,noEmulatorAlias:true,secretFreeEvidence:true}
   }' >"$evidence"
 if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|John|Doe|AB1234567|private.?parts|signed.?bytes|detached.?proof|emulator-[0-9]+' "$evidence"; then
