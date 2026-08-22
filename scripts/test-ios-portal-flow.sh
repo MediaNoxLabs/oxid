@@ -94,7 +94,7 @@ credential_key_size="$(wc -c <"$credential_key" | tr -d ' ')"
   exit 1
 }
 counters="$(curl --noproxy '*' --fail --silent "$PORTAL_MOBILE_CONTROL_ORIGIN/counters")"
-jq -e '.token == 1 and .nonce == 1 and .credential == 1' >/dev/null <<<"$counters" || {
+jq -e '.token == 2 and .nonce == 1 and .credential == 1' >/dev/null <<<"$counters" || {
   portal_mobile_fail protocol-counts
   exit 1
 }

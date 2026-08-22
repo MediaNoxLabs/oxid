@@ -213,6 +213,11 @@ if ! rg -qF 'function issuerMetadataReady()' scripts/e2e/portal-mobile-support.m
   exit 1
 fi
 
+if [ "$(rg -lF '.token == 2 and .nonce == 1 and .credential == 1' scripts/test-ios-portal-flow.sh scripts/test-android-portal-flow.sh | wc -l | tr -d ' ')" -ne 2 ]; then
+  echo "Both Portal platform suites must account for one failed and one successful token attempt." >&2
+  exit 1
+fi
+
 # Evidence is bound to the startup-clean Oxid revision, never a later HEAD.
 for platform_script in scripts/test-ios-portal-flow.sh scripts/test-android-portal-flow.sh; do
   rg -qF 'portal_mobile_assert_evidence_source || exit 1' "$platform_script" &&
