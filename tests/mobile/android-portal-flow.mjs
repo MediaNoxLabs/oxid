@@ -223,23 +223,31 @@ try {
     );
     // The restored credential already shows this exact policy summary
     // before the tap, so that text alone cannot prove reverification ran.
-    // Require the issuer-resolver success count to strictly increase and
-    // the button to pass through its busy state and back.
+    // Require the issuer-resolver success count to strictly increase. The
+    // operation can finish between CDP observations, so its transient busy
+    // label is not reliable evidence; the resolver counter is.
     const beforeReverify = await counters();
     await click("Reverify");
-    await waitFor(`Boolean(${button("Verifying…")})`, "reverify in progress", 10_000);
+    const reverifyDeadline = Date.now() + 30_000;
+    let afterReverify = await counters();
+    while (
+      afterReverify.issuerResolutionSuccess <= beforeReverify.issuerResolutionSuccess
+      && Date.now() < reverifyDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      afterReverify = await counters();
+    }
+    if (!(afterReverify.issuerResolutionSuccess > beforeReverify.issuerResolutionSuccess)) {
+      throw new Error(
+        `Reverify did not produce a fresh issuer-resolution success: before=${beforeReverify.issuerResolutionSuccess} after=${afterReverify.issuerResolutionSuccess}`,
+      );
+    }
     await waitFor(`Boolean(${button("Reverify")})`, "reverify completed", 30_000);
     await waitFor(
       'document.body.innerText.includes("Credential policy · issuer passed · time passed · trust passed · revocation not checked")',
       "restored credential reverification",
       30_000,
     );
-    const afterReverify = await counters();
-    if (!(afterReverify.issuerResolutionSuccess > beforeReverify.issuerResolutionSuccess)) {
-      throw new Error(
-        `Reverify did not produce a fresh issuer-resolution success: before=${beforeReverify.issuerResolutionSuccess} after=${afterReverify.issuerResolutionSuccess}`,
-      );
-    }
   }
   process.stdout.write(`${JSON.stringify({ mode, passed: true })}\n`);
 } finally {

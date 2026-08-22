@@ -104,6 +104,15 @@ final class PortalFlowTests: XCTestCase {
         return try XCTUnwrap((value as? [String: Int])?["generation"])
     }
 
+    private func waitForIssuerResolution(after prior: Int) throws {
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            if (try counters()["issuerResolutionSuccess"] ?? 0) > prior { return }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        XCTFail("Reverification did not produce a fresh issuer-resolution success")
+    }
+
     private func waitForHolderGeneration(after prior: Int = 0) throws {
         let deadline = Date().addingTimeInterval(20)
         while Date() < deadline {
@@ -275,14 +284,15 @@ final class PortalFlowTests: XCTestCase {
         )
         // The restored credential already shows this exact policy summary
         // before the tap, so that text alone cannot prove reverification ran.
-        // Require the issuer-resolver success count to strictly increase and
-        // the button to pass through its busy state and back.
+        // Require the issuer-resolver success count to strictly increase. The
+        // operation can finish between XCTest frames, so the transient busy
+        // label is not reliable evidence; the resolver counter is.
         let issuerResolutionSuccessBeforeReverify = try counters()["issuerResolutionSuccess"] ?? 0
         let reverify = application.buttons["Reverify"]
         XCTAssertTrue(reverify.waitForExistence(timeout: 15))
         scrollTo(reverify, in: application)
         reverify.tap()
-        XCTAssertTrue(application.buttons["Verifying…"].waitForExistence(timeout: 10))
+        try waitForIssuerResolution(after: issuerResolutionSuccessBeforeReverify)
         XCTAssertTrue(application.buttons["Reverify"].waitForExistence(timeout: 30))
         XCTAssertTrue(application.staticTexts[
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
