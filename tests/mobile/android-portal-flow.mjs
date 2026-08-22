@@ -181,6 +181,11 @@ try {
   await ensureProfile();
   if (mode === "prepare-holder") {
     await click("Wallet");
+    await waitFor(
+      `Boolean(${button("Activate development wallet")} || ${button("Use my receive address")})`,
+      "wallet activation state",
+      30_000,
+    );
     if (await evaluate(`Boolean(${button("Activate development wallet")})`)) {
       await click("Activate development wallet");
       await waitFor(

@@ -69,7 +69,9 @@ fi
 # Wallet page unmounts. Both initial activation and restored reactivation must
 # reuse the stable aria control predicate before navigating away.
 activation_complete_wait='!document.querySelector('\''button[aria-label="Activate protected Midnight account"]'\'') && Boolean(${button("Use my receive address")})'
-if [ "$(rg -cF "$activation_complete_wait" tests/mobile/android-portal-flow.mjs)" -ne 2 ]; then
+initial_activation_ready='Boolean(${button("Activate development wallet")} || ${button("Use my receive address")})'
+if ! rg -qF "$initial_activation_ready" tests/mobile/android-portal-flow.mjs ||
+  [ "$(rg -cF "$activation_complete_wait" tests/mobile/android-portal-flow.mjs)" -ne 2 ]; then
   echo "Both Android custody waits must use the stable activation-control predicate." >&2
   exit 1
 fi
