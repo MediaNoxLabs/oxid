@@ -202,14 +202,14 @@ done
 
 # Hosted scanners must keep the intentional loopback readiness probe and the
 # public negative JWT fixture without weakening repository-wide rules. The
-# suppressions are narrow, exact, and explained at their source.
-opengrep_rule="typescript.react.security.react-insecure-request.react-insecure-request"
+# OpenGrep false positive is removed by using Node's explicit loopback HTTP API;
+# Checkov excludes only the exact synthetic JWT-shaped fixture in its scan checkout.
 negative_fixture="fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/unsupported-proof-alg.json"
-if ! rg -qF "nosemgrep: $opengrep_rule" scripts/e2e/portal-mobile-support.mjs ||
-  [ ! -f .checkov.yml ] ||
-  ! rg -qF "$negative_fixture" .checkov.yml ||
-  rg -q '^[[:space:]]*skip-check:' .checkov.yml; then
-  echo "Portal scanner suppressions must remain exact-path/exact-rule only." >&2
+if ! rg -qF 'function issuerMetadataReady()' scripts/e2e/portal-mobile-support.mjs ||
+  ! rg -qF 'const request = http.request({' scripts/e2e/portal-mobile-support.mjs ||
+  rg -qF 'nosemgrep:' scripts/e2e/portal-mobile-support.mjs ||
+  ! rg -qF "rm -- $negative_fixture" .github/workflows/scan.yml; then
+  echo "Portal scanner exceptions must remain exact-path/explicit-loopback only." >&2
   exit 1
 fi
 

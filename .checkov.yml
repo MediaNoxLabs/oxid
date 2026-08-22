@@ -1,6 +1,0 @@
-# CKV_SECRET_9 treats every JWT-shaped value as a credential. This single
-# public negative conformance fixture intentionally contains a synthetic,
-# unsupported-algorithm proof and is exercised only to prove strict rejection.
-# Keep the exception path-scoped; repository-wide secret checks stay enabled.
-skip-path:
-  - "fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/unsupported-proof-alg.json$"

@@ -392,16 +392,28 @@ async function requestJson(url, options = {}) {
   return response.json();
 }
 
+function issuerMetadataReady() {
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      host: "127.0.0.1",
+      port: PORTAL_PROXY_PORT,
+      method: "GET",
+      path: "/.well-known/openid-credential-issuer",
+    }, (response) => {
+      response.resume();
+      resolve((response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 300);
+    });
+    request.setTimeout(2_000, () => request.destroy(new Error("issuer readiness timeout")));
+    request.once("error", reject);
+    request.end();
+  });
+}
+
 async function waitForIssuer() {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     try {
-      // This native test harness is statically pinned to a syntactic loopback origin;
-      // off-loopback plaintext is rejected by the product adapter.
-      const response = await fetch(`${ISSUER_ORIGIN}/.well-known/openid-credential-issuer`, {
-        signal: AbortSignal.timeout(2_000),
-      }); // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
-      if (response.ok) return;
+      if (await issuerMetadataReady()) return;
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 250));
   }

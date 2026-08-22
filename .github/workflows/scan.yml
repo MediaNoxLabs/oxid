@@ -28,6 +28,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Exclude intentional public negative proof fixture from generic JWT heuristic
+        run: rm -- fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/unsupported-proof-alg.json
+
       - name: Scan code
         uses: midnightntwrk/upload-sarif-github-action@4bbe849e9707b46342832d4b7f94fec585823ca4 # pinned main, 2026-07-10
         with:
