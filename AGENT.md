@@ -593,7 +593,7 @@ Native desktop/headless development selects that strict HTTP adapter through an
 absolute manifest path plus exact digest. ADR-0103 additionally permits
 `oxid-app/standalone-portal` only on iOS/Android with
 `standalone-development + standalone-local`; the build authenticates and embeds
-the exact public manifest. Normal mobile, native custody, tailnet, production,
+the exact public manifest. Ordinary mobile, native custody, tailnet, production,
 and WASM remain closed. Keep ADR-0039's Final-only wire contract, HTTPS-only
 nonloopback/loopback-only plaintext, explicit consent, distinct managed
 authentication and Jubjub methods, exact three-part verified import, encrypted
@@ -1073,7 +1073,7 @@ Current package ownership:
 | `crates/adapters/did-midnight` | Standalone fixture and exact public Compact-issuer documents, explicit bounded native Midnight DID resolution, plus development Ed25519/P-256/Jubjub lifecycle and managed-method challenge-signing adapters. |
 | `crates/adapters/vc-midnight` | Strict Midnight phase-1 CBOR verification, exact native Compact body/detached-issuance-proof verification, explicit standalone issuer/current-time/trust policy, holder-bound reissuance, commitment-bound Digital Passport private-part interpretation, generated-Compact presentation public-input conformance/proving/verification, current managed Jubjub holder reauthorization, a single-proof foreground mobile worker, and public standalone fixtures. |
 | `crates/adapters/passport-vault` | Product-specific bounded in-memory plus owner-private atomic standalone repositories, exact standalone Digital Passport policy bridge, native pinned-layout decoder, node-anchored unproven indexer read, pure canonical replay verifier, history-complete finalized-node collector, opt-in authenticated replay source, exact four-circuit generated-client/proof artifact resolver, generated-composer/Rust-codec conformance, and zeroizing authorization-bound settlement for create/deposit/claim/withdraw; managed-custody claim conformance is exercised through composition. |
-| `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, native-headless pinned Portal HTTP client, DID proof bridge, and verified credential sink. |
+| `crates/adapters/openid4vci` | Strict OpenID4VCI 1.0 Final pre-authorized flow, separate authentication/holder-binding validation, in-process standalone issuer, and one pinned Portal HTTP client shared by native headless development and ADR-0103's compile-gated standalone-local iOS Simulator/Android QEMU test profile; production, ordinary-mobile, native-custody, tailnet, and WASM graphs exclude that client. |
 | `crates/adapters/siopv2` | Strict SIOPv2 draft-13 standalone request-by-reference login, opaque DID proof bridge, and independent single-use verifier. |
 | `crates/adapters/openid4vp` | Strict OpenID4VP 1.0 Final-shaped standalone DCQL request, candidate/consent session, fail-closed Compact proof gate, independent verification, and proof-worker completion control. |
 | `crates/adapters/identity-ingress` | Strict credential-offer/registered-OpenID4VP classifier plus payload-redacted native iOS/Android QR scanner adapters. |
@@ -1087,8 +1087,8 @@ Current package ownership:
 | `brands` | Reviewed immutable presentation inputs only. Each real directory is one validated pack; no secrets, endpoints, trust, protocol, custody, confirmation, or application state. |
 | `crates/adapters/platform-system` | System clock, OS randomness, and typed public receive-address export implementations. |
 | `crates/ui-dioxus` | Brand-agnostic Dioxus incoming adapter, immutable `BrandProfile` presentation context, bounded mobile route stack, safe read-only Home projection, exact amount/consent presentation state, public receive-QR rendering, distinct protected-DUST registration review/authorization/submission/cancellation/reconciliation, standalone Passport Vault UI, and truthfully labelled typed native vault-call lifecycle. |
-| `crates/composition` | Concrete dependency wiring with no product rules, including the authenticated native-headless-only Portal bridge that remains absent from production/mobile composition. |
-| `apps/oxid` | Default-brand thin executable shell, literal `brands/oxid` build selection, and platform launch point. |
+| `crates/composition` | Concrete dependency wiring with no product rules, including authenticated Portal wiring for native headless development and the separately authority-gated `standalone-portal` + `standalone-local` virtual-mobile test exception; production, ordinary-mobile, native-custody, tailnet, and WASM composition remain unavailable. |
+| `apps/oxid` | Default-brand thin executable shell, literal `brands/oxid` build selection, platform launch point, and compile-time authority for the iOS/Android-only `standalone-portal` test profile. |
 | `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |
 
 Every static `class: "..."` token in the Dioxus adapter must have a selector
@@ -1293,10 +1293,13 @@ Cancellation is allowed only in `running`; `cancellation_requested` becomes
 `cancelled` after worker acknowledgement. `broadcasting`, `included`, and
 `outcome_unknown` are non-retryable and cancellation must fail closed.
 
-`oxid-app/standalone-development` is the only mobile-development exception: it
+`oxid-app/standalone-development` is the base mobile-development exception: it
 selects the same zero-configuration `compose_headless()` stack explicitly at
 compile time. Repository simulator/emulator scripts enable it; default
-desktop/mobile/web builds do not. It is for flow testing only, never real funds.
+desktop/mobile/web builds do not. ADR-0103's `standalone-portal` is the only
+narrower HTTP specialization: it adds `standalone-local` and the authenticated
+Portal client only for compile-gated iOS Simulator/Android QEMU tests. Neither
+profile is for production or real funds.
 
 Passport Vault standalone composition follows the same exception. Its headless
 methods are `vault.total_locked`, `vault.locks.list`,
@@ -2225,12 +2228,20 @@ to silence the shell probe.
   It cold-reboots an already-running disposable QEMU and requires host/emulator
   clocks within two seconds rather than weakening strict future-time policy.
   `just portal-mobile-smoke` runs iOS then Android and tears each exact Portal
-  compose project down before the next platform. Its body-blind proxy proves
-  refusal makes zero token/nonce/credential calls; the offer is never a shell
-  argument, rendered editable value, log, or evidence field. Development
-  custody truthfully resets on process restart before encrypted credential
-  list/reverification. This remains mock-KYC, undeployed-holder,
-  virtual-device-only evidence. Android WebView automation must wait for the
+  compose project down before the next platform. The cleanup trap must remain
+  installed before the first side effect: success, failure, and signal exits
+  always remove the platform-private runtime, while named Compose cleanup is
+  bounded and cleanup failures remain failures. Retain only the closed
+  secret-free evidence plus normal build/device app data; retain the six exact
+  Android app reverse mappings and remove only the dynamically owned CDP
+  forward, never unrelated mappings. A rerun resets only Oxid app data and
+  needs no broad Docker, worktree, target, virtual-device, or reverse cleanup.
+  The body-blind proxy proves refusal makes zero token/nonce/credential calls;
+  the offer is never a shell argument, rendered editable value, log, or
+  evidence field. Development custody truthfully resets on process restart
+  before encrypted credential list/reverification. This remains mock-KYC,
+  undeployed-holder, virtual-device-only evidence, with credential status
+  `not_checked`. Android WebView automation must wait for the
   computed masked-value CSS invariant after `data-secret-mode=masked`; that
   attribute can settle one render before the transparent text and four-dot
   overlay. Emulator 34.2.16 can print a crash-report setup

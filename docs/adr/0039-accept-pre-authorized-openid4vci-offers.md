@@ -6,9 +6,9 @@
 - Normative source: [OpenID for Verifiable Credential Issuance 1.0 Final](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html), published 2025-09-16
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/oid4vci_client/` and `mobile-bench/wallet-core/tests/oid4vci_issuance_e2e.rs`
 - Supersedes: ADR-0038 statements that all protocol ingress is queued
-- Amended by: ADR-0047 and ADR-0102; also amended by ADR-0040, ADR-0041, ADR-0042, ADR-0045
+- Amended by: ADR-0040, ADR-0041, ADR-0042, ADR-0045, ADR-0047, ADR-0102, and ADR-0103
 - Amends: ADR-0004, ADR-0007, ADR-0010, ADR-0011, ADR-0013, ADR-0017, ADR-0018, ADR-0020, ADR-0021, ADR-0023, ADR-0024, ADR-0029, and ADR-0038
-- Implementation state: final-shape embedded-offer issuance remains the standalone mobile/test path; ADR-0102 also admits one immutable Portal Final real-HTTP route in native desktop/headless development with the same consent, managed proof, distinct Jubjub binding, verification, and encrypted persistence boundaries; production HTTP/discovery, native custody, and other grant/transport variants remain unavailable
+- Implementation state: final-shape embedded-offer issuance remains the standalone mobile/test path; ADR-0102 admits one immutable Portal Final real-HTTP route in native desktop/headless development, and ADR-0103 reuses that exact strict client only in a compile-gated standalone-local iOS Simulator/Android QEMU test profile, with the same consent, managed proof, distinct Jubjub binding, verification, encrypted persistence, and `not_checked` status boundaries; production HTTP/discovery, native custody, tailnet/physical paths, and other grant/transport variants remain unavailable
 
 ## Context
 
@@ -120,8 +120,10 @@ protected inventory after success.
 - Oxid now exercises the complete standalone issuance journey through the same
   headless and mobile use cases while retaining the direct public fixture inbox
   as a lower-level verifier/storage diagnostic.
-- A future live HTTP adapter can replace the deterministic issuer without
-  changing consent, DID proof, storage, or incoming adapter contracts.
+- ADR-0102 and ADR-0103 prove that one pinned live HTTP adapter can replace the
+  deterministic issuer in explicit native-headless and standalone-local
+  virtual-mobile development profiles without changing consent, DID proof,
+  storage, or incoming adapter contracts. Production discovery remains closed.
 - Issuance session metadata is process-local. Successfully issued credentials
   survive restart; incomplete offer/token sessions deliberately do not.
 - Authorization Code, `credential_offer_uri`, Transaction Code, batch,
@@ -143,6 +145,8 @@ protected inventory after success.
 - real binary issuance followed by encrypted credential restoration and
   re-verification in a new process;
 - Dioxus standalone offer preview/consent/issue inventory flow;
-- iOS simulator and Android emulator issuance plus restart smoke flows;
+- iOS simulator and Android emulator embedded-issuer issuance plus restart
+  smoke flows; ADR-0103 separately covers pinned real Portal HTTP issuance in
+  the compile-gated standalone-local virtual-device profile;
 - architecture, formatting, clippy, workspace, coverage, advisory, license,
   source, and rustdoc gates.

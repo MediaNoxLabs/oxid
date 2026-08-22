@@ -6,8 +6,9 @@
 - Portal integration source: squash commit `925ec8d04882eabd4ac7b784c70fc2f0c152faae`, tree `58b4597524f88a0ae2253439a44dab0dc60cbb6f`
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14`
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
-- Extends: ADR-0039, ADR-0097, ADR-0101, and ADR-0102
-- Implementation state: explicit iOS Simulator and Android QEMU `standalone-local` Portal test profile, sequential repository harnesses, and secret-free evidence are implemented; production, native custody, tailnet Portal, physical-device, real-camera, live-holder-DID, and production-trust paths remain unavailable
+- Amends: ADR-0039
+- Extends: ADR-0097, ADR-0101, and ADR-0102
+- Implementation state: explicit iOS Simulator and Android QEMU `standalone-local` Portal test profile, sequential repository harnesses, and secret-free evidence are implemented; production and ordinary-mobile transport, native custody, tailnet Portal, physical-device, real-camera, live-holder-DID, production-trust, WebAssembly, and unsupported-grant paths remain unavailable
 
 ## Context
 
@@ -76,8 +77,19 @@ tears down before Android starts. Each platform command:
 7. drives the existing native one-item ingress/router, Dioxus preview/consent,
    managed proof, strict exchange, verifier/sink, encrypted store, and
    restart/list/reverify path;
-8. deletes private runtime state and tears down only its named Portal compose
-   project and temporary checkout.
+8. on successful completion, empties only its named Portal Compose project and
+   removes the detached checkout, platform-private runtime, and owned lock.
+
+The cleanup hardening delivered at Oxid `afaeee5` installs the EXIT cleanup
+owner before the lock, state directory, fetch, worktree, support process, FIFO,
+Compose stack, or manifest can be created. Success, startup/test failure,
+interrupt, and termination therefore share one scoped cleanup path. It always
+removes `target/portal-mobile-e2e/<platform>/runtime`; it also bounds support
+shutdown, attempts exact named-project teardown, removes the detached worktree
+and owned lock, and reports cleanup failure instead of silently succeeding.
+Android removes only the dynamically allocated CDP forward. It neither removes
+unrelated Docker/worktree/`target` state nor uses broad virtual-device or ADB
+cleanup.
 
 Neither `simctl openurl` nor `am start -d` receives the offer. Both deliver
 only a fixed, non-secret trigger URL under the existing
@@ -112,10 +124,20 @@ ignored, closed boolean/source-pin/platform schema. It may record virtual model,
 OS/API, application id, and fixed reverse ports. It excludes simulator/emulator
 identifiers, routes, DIDs, grants, tokens, nonces, JWTs, credential bytes,
 proofs, private parts, claims, logs, PIDs, and timestamps; a sentinel scan
-rejects common representations.
+rejects common representations. The selected virtual device's installed Oxid
+app/data and normal build outputs remain available for local inspection but are
+not evidence fields. Android deliberately retains the exact app reverse entries
+for 8088, 9944, 6300, 18090, 18091, and 18093; only the owned dynamic CDP
+forward is removed. A rerun resets only Oxid app data and recreates its scoped
+runtime. Evidence is written or replaced only after a successful clean-head
+run; failed reruns do not delete earlier retained evidence, whose `oxid.head`
+binds it to its source commit. Reproduction therefore requires no global Docker
+pruning, broad worktree/`target` deletion, virtual-device erase, or
+`reverse --remove-all`.
 
-This proves real mock-KYC Portal issuance on virtual mobile hosts only. It does
-not prove a camera, physical device, tailnet, real KYC, verified domain,
-production discovery/trust, live holder DID, native-custody Portal restore, or
-resource budget. Typed zeroization (#134), iOS/Android screen-privacy timing
-(#135), and physical/tailnet work remain independent follow-ups.
+This proves real mock-KYC Portal issuance on virtual mobile hosts only, against
+an undeployed holder. Credential status remains `not_checked`. It does not
+prove a camera, physical device, tailnet, real KYC, verified domain, production
+discovery/trust, live holder DID, native-custody Portal restore, or resource
+budget. Typed zeroization (#134), iOS/Android screen-privacy timing (#135), and
+physical/tailnet work remain independent follow-ups.

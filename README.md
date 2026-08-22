@@ -23,8 +23,10 @@ than layers bolted onto one chain-specific frontend.
 > preview, explicit consent, DID-bound proof, strict verification, and protected
 > credential storage end to end. Native headless development can additionally
 > select the exact authenticated Portal `integration` profile for real HTTP
-> issuance without exposing that route to production or mobile builds. A
-> separate deterministic SIOPv2 draft-13
+> issuance without exposing that route to production or ordinary mobile builds.
+> ADR-0103 admits the same pinned client only to an explicit, compile-gated
+> `standalone-local` iOS Simulator/Android QEMU test profile. A separate
+> deterministic SIOPv2 draft-13
 > adapter previews a standalone verifier request, requires explicit consent,
 > and independently verifies a single-use self-issued DID login without
 > exposing the ID Token. The standalone issuer now delivers the prototype's
@@ -434,45 +436,76 @@ loopback-only, converts private parts through the exact Digital Passport
 commitment boundary, and reuses the existing valid-only encrypted import.
 Normal `compose()`, native-custody, tailnet, and WASM composition remain
 unavailable. Ordinary iOS/Android graphs do not compile the Portal client; only
-`standalone-portal` enables its mobile HTTP dependencies. To reproduce the real
-landed-service headless flow, including mock KYC, encrypted persistence,
-process restart, and reverification:
+`standalone-portal` enables its mobile HTTP dependencies. Export one clean
+Portal source tree for every reproduction choice below:
 
 ```bash
-PORTAL_SOURCE_TREE=/absolute/clean/lace-id-portal-checkout just portal-headless-e2e
-```
+export PORTAL_SOURCE_TREE=/absolute/clean/lace-id-portal-checkout
 
-The command requires Nix, Docker Compose v2, and the exact fetchable Portal
-commits. It tears down only its uniquely named project and retains one
-allow-listed secret-free evidence JSON, bound to the clean tested Oxid commit,
-under `target/portal-headless-e2e/`.
+# Real landed-service headless flow:
+just portal-headless-e2e
 
-For the real Portal flow in the existing native mobile test frameworks, run the
-fixed sequential wrapper or either platform command independently:
-
-```bash
-PORTAL_SOURCE_TREE=/absolute/clean/lace-id-portal-checkout just portal-mobile-smoke
-# Equivalent individual commands; never run them concurrently:
+# Real Portal mobile flow: choose the fixed iOS-then-Android wrapper ...
+just portal-mobile-smoke
+# ... or run either platform command independently; never run them concurrently:
 just ios-portal-smoke
 just android-portal-smoke
 ```
 
-The harness authenticates the same Portal pins, starts its exact composition,
-creates approved mock KYC, embeds a canonical public manifest at build time,
-and keeps the real offer out of shell arguments, rendered editable fields,
-logs, and evidence. XCUITest proves warm/cold custom-scheme delivery directly.
-Android cold-reboots and proves QEMU with host-aligned time, then exact reverse
-entries for 8088, 9944, 6300, Portal 18090, fixed-trigger control 18091, and
-resolver 18093; it never uses `10.0.2.2`. Both deliver only the same non-secret
-OS trigger and let the app's bounded loopback worker retrieve the real offer;
-no real offer enters host/device argv, OS URL/intent state, or a staging file.
-Both drive the existing
-one-item router, preview/refusal, explicit consent, managed authentication plus
-distinct Jubjub binding, strict Final exchange, exact verified import,
-encrypted persistence, and restart/reactivation/list/reverify path. Evidence is
-ignored under `target/portal-mobile-e2e/` and is virtual-device/mock-KYC evidence
-only—not camera, physical-device, tailnet, real-KYC, production-trust, or live
-holder-DID evidence.
+The commands require Nix, Docker Compose v2, and the exact fetchable Portal
+commits. The headless command covers mock KYC, encrypted persistence, process
+restart, and reverification. It tears down only its uniquely named project and
+retains one allow-listed secret-free evidence JSON, bound to the clean tested
+Oxid commit, under `target/portal-headless-e2e/`.
+
+The mobile harness authenticates the same Portal pins, starts its exact
+composition, creates approved mock KYC, embeds a canonical public manifest at
+build time, and keeps the real offer out of shell arguments, rendered editable
+fields, logs, and evidence. XCUITest proves warm/cold custom-scheme delivery
+directly. Android cold-reboots and proves QEMU with host-aligned time, then
+exact reverse entries for 8088, 9944, 6300, Portal 18090, fixed-trigger control
+18091, and resolver 18093; it never uses `10.0.2.2`. Both deliver only the same
+non-secret OS trigger and let the app's bounded loopback worker retrieve the
+real offer; no real offer enters host/device argv, OS URL/intent state, or a
+staging file. Both drive the existing one-item router, preview/refusal,
+explicit consent, managed authentication plus distinct Jubjub binding, strict
+Final exchange, exact verified import, encrypted persistence, and
+restart/reactivation/list/reverify path.
+
+On success, each mobile platform run removes its dynamically allocated Android
+CDP forward, bounded support processes, detached Portal worktree, private
+`target/portal-mobile-e2e/<platform>/runtime` directory, owned lock, and exact
+named Compose resources. Since `afaeee5`, the EXIT cleanup owner is installed
+before the first side effect: startup failures, test failures, interrupts, and
+termination run the same scoped cleanup, always remove that private runtime,
+and fail the command if the named Compose project cannot be emptied. Cleanup
+deliberately retains the closed secret-free platform `evidence.json`, normal
+build outputs, and the selected virtual device's installed Oxid app/data for
+inspection. Android also retains exactly the six app routes above; only the
+owned dynamic CDP forward is removed.
+
+A rerun needs no destructive pre-clean: it resets only Oxid app data on the
+selected virtual device and recreates that platform's scoped runtime. Evidence
+is written or replaced only after a successful clean-head run; a failed rerun
+does not delete earlier retained evidence, whose `oxid.head` identifies its
+source commit. After inspection, remove evidence, app data, or the retained
+Android routes only by their exact scope, for example:
+
+```bash
+rm -rf target/portal-mobile-e2e/ios target/portal-mobile-e2e/android
+xcrun simctl uninstall '<simulator-udid>' io.medianox.oxid
+adb -s '<emulator-serial>' shell pm clear io.medianox.oxid
+for port in 8088 9944 6300 18090 18091 18093; do
+  adb -s '<emulator-serial>' reverse --remove "tcp:$port"
+done
+```
+
+Do not use global Docker pruning, broad worktree/`target` removal, whole-device
+erasure, or `adb reverse --remove-all` to reproduce or clean this suite.
+Retained evidence under `target/portal-mobile-e2e/` is virtual-device/mock-KYC
+evidence only—not camera, physical-device, tailnet, real-KYC,
+production-trust, live-holder-DID, or credential-status evidence; status remains
+`not_checked`.
 
 The Dioxus card permits explicit device-local first/last reveal and age
 threshold planning. A separate OpenID4VP 1.0 Final-shaped DCQL panel previews a

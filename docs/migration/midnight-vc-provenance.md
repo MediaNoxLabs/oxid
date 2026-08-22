@@ -2,7 +2,8 @@
 
 ## Immutable sources
 
-This slice was reconciled on 2026-08-13 against:
+The initial credential slice was reconciled on 2026-08-13; the pinned Portal
+HTTP amendment was reconciled on 2026-08-21 against:
 
 | Source | Commit | Surface used |
 | --- | --- | --- |
@@ -11,6 +12,7 @@ This slice was reconciled on 2026-08-13 against:
 | `midnightntwrk/midnight-did-resolver`, `main` | `70bec499287e31736f0775ad8e210bc59799749b` | resolved public DID document contract |
 | `midnightntwrk/midnight-verifiable-credentials`, `develop` | `39b1354212620b396e914b29603e6a38f2656546` | separation of schema, claims, disclosure, capabilities, artifacts/codecs, and untrusted display metadata |
 | OpenID Foundation | OpenID4VCI 1.0 Final, 2025-09-16 | normative offer, metadata, nonce, proof, request, response, security, and privacy behavior |
+| `input-output-hk/lace-id-portal`, `integration` / PR #17 | landed squash `925ec8d04882eabd4ac7b784c70fc2f0c152faae`, tree `58b4597524f88a0ae2253439a44dab0dc60cbb6f`; tree-identical PR head `9c82db23eabe8b6d758b2731f2225910ea627c14`; profile source `76e8edf394a4cb37ca822037272d543c68f25f71`; provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87` | pinned OpenID4VCI Final HTTP issuer/profile used only by native headless development and the compile-gated standalone-local virtual-mobile test profile |
 | OpenID Foundation | SIOPv2 draft 13 and OpenID4VP 1.0 Final | self-issued DID authentication boundary and explicit separation from credential presentation |
 
 No source file is copied. Oxid reimplements the observed behavior with owned
@@ -30,7 +32,11 @@ dependency on the three identity repositories.
 - list, inspect, reverify, delete, and restore credentials through headless and
   Dioxus incoming adapters.
 - preview and explicitly accept a pre-authorized credential offer, construct a
-  DID-bound proof, and import the verified issued credential.
+  DID-bound proof, and import the verified issued credential;
+- exercise the same strict Final client against the pinned real Portal HTTP
+  service in native headless development and the compile-gated standalone-local
+  iOS Simulator/Android QEMU mock-KYC profile, including encrypted restart and
+  reverification without projecting protocol secrets;
 - preview and explicitly accept a standalone self-issued login request, prove
   control of a managed DID, and let the verifier independently validate it
   without disclosing a credential.
@@ -60,6 +66,7 @@ dependency on the three identity repositories.
 | Prototype OID4VCI module follows pre-final request/response shapes | Reconcile against 1.0 Final: split issuer/OAuth metadata, use a separate nonce endpoint, `proofs` request object, and `credentials` response array. |
 | Protocol flow can expose grant codes, tokens, nonce, proof, or issuer bodies to UI state | Keep all ephemeral protocol material in the outgoing adapter and expose only bounded preview/state/credential identifiers. |
 | Issuance can proceed as soon as an offer is parsed | Require an untrusted-offer preview plus exact explicit consent and an active profile-scoped DID authentication method. |
+| A successful pinned Portal development test can be mistaken for production/mobile transport | Compile-gate the same authenticated client to native headless development and ADR-0103's standalone-local iOS Simulator/Android QEMU profile only; ordinary mobile, native custody, tailnet, physical-device, WASM, runtime route selection, and production discovery/trust remain closed. |
 | Successful HTTP-style response can be stored directly | Require ADR-0038 verification outcome `valid` before protected persistence. |
 | Prototype names self-issued `id_token` login as OID4VP | Implement it as a pinned SIOPv2 draft-13 authentication capability; reserve OpenID4VP Final for `vp_token`/DCQL credential presentation. |
 | Login proof can leak through UI state or be replayed | Keep nonce, state, signing input, and ID Token adapter-private; consume the verifier session before independent signature/claim verification. |
@@ -134,6 +141,27 @@ authorizes its current protected public key. Rotation preserves authority only
 when the exact method identifier remains managed and assertion-authorized;
 removal, deactivation, locked custody, or public-only restoration fail closed.
 
+## Pinned Portal HTTP delivery
+
+ADR-0102 admits the strict client to native desktop/headless development.
+ADR-0103 reuses the same client only in `oxid-app/standalone-portal`, which
+requires the `standalone-local` iOS/Android route profile and development
+custody at compile time. The virtual-device harness starts the exact pinned
+Portal composition, creates approved mock KYC, and drives the existing router,
+WHO/WHAT/FROM/WHY preview, literal consent, managed authentication proof,
+distinct managed Jubjub holder binding, exact body/detached-proof/private-part
+verification, valid-only encrypted import, process restart, and reverification.
+The holder is undeployed, and credential status remains `not_checked`.
+
+This is real Portal HTTP issuance, but only controlled development evidence.
+The iOS result is Simulator-only and the Android result is QEMU-only over exact
+loopback reverse mappings. It is not evidence for production discovery/trust,
+unsupported grants, native custody, tailnet or physical transport, a real
+camera or KYC provider, a live holder deployment, or a resource budget. The
+single-use offer, grant, token, nonce, proof JWT, credential bytes, and private
+parts remain outside host/device argv, editable UI, logs, and retained closed
+evidence.
+
 ## Digital Passport protected-material contract
 
 The adapter accepts Digital Passport interpretation only for a verified
@@ -174,9 +202,12 @@ surfaces without widening the current UI. Headless never reveals a value.
   authenticated proof construction, and independent verification are available
   in native headless mode and ADR-0083's explicit mobile conformance build;
   normal mobile proving and live transport remain fail-closed.
-- Live OID4VCI HTTP/discovery, Authorization Code, by-reference offers,
-  Transaction Code, batch/deferred issuance, notification, encrypted responses,
-  wallet attestation, deep links, and QR scanning remain later protocol slices.
+- Production OID4VCI discovery/transport and every HTTP route outside
+  ADR-0102/0103's exact pinned development profiles remain unavailable.
+  Authorization Code, by-reference offers, Transaction Code, batch/deferred
+  issuance, notification, encrypted responses, wallet attestation, and other
+  unsupported grants remain later protocol slices. The ADR-0103 fixed
+  non-secret virtual-device trigger is not general production discovery.
 - Live OpenID4VP response delivery, production mobile proving, ecosystem interoperability,
   live SIOP verifier transport, and browser/native bridge ingress remain later
   adapters.
