@@ -23,6 +23,28 @@ fi
 adb_command="$android_sdk/platform-tools/adb"
 devtools_port=9231
 
+# The staged offer never touches a host file (it is only ever held in this
+# shell's memory and streamed to the device over stdin). The one on-device
+# staging file it does cross is named deterministically per run ($$), so a
+# single best-effort remote rm on every exit/signal/failure is enough to
+# guarantee it never survives into retained diagnostics.
+remote_offer_file="/data/local/tmp/oxid-portal-offer-$$"
+android_portal_cleanup() {
+  local status=$?
+  if [ -n "${device:-}" ]; then
+    "$adb_command" -s "$device" shell rm -f "$remote_offer_file" >/dev/null 2>&1 || true
+  fi
+  # Pass the original trap-triggering status explicitly: the `rm -f`/`if`
+  # above would otherwise overwrite $? before portal_mobile_cleanup reads it,
+  # silently turning a real failure into a false "success" for the purposes
+  # of its retain-diagnostics-on-failure decision.
+  portal_mobile_cleanup "$status"
+  local cleanup_status=$?
+  if [ "$status" != 0 ]; then return "$status"; fi
+  return "$cleanup_status"
+}
+trap 'android_portal_cleanup' EXIT INT TERM
+
 # A long-running QEMU can lag the host by several seconds. The strict
 # credential policy intentionally has no future-time slack, so cold-reboot an
 # already-running disposable emulator instead of weakening verification.
@@ -122,16 +144,14 @@ sync_public_holder() {
     "$PORTAL_MOBILE_CONTROL_ORIGIN/holder" >/dev/null
 }
 
-offer_file="$PORTAL_MOBILE_STATE_DIR/android-offer-uri"
-curl --noproxy '*' --fail --silent --show-error \
-  "$PORTAL_MOBILE_CONTROL_ORIGIN/offer" >"$offer_file"
-chmod 600 "$offer_file"
+# Held only in this shell process's memory; never written to a host file and
+# never passed as an adb argv element, only streamed over stdin below.
+offer="$(curl --noproxy '*' --fail --silent --show-error "$PORTAL_MOBILE_CONTROL_ORIGIN/offer")"
 
 deliver_real_offer() {
-  local remote_file="/data/local/tmp/oxid-portal-offer-$$"
-  "$adb_command" -s "$device" shell "umask 077; cat > '$remote_file'" <"$offer_file"
+  printf '%s' "$offer" | "$adb_command" -s "$device" shell "umask 077; cat > '$remote_offer_file'"
   "$adb_command" -s "$device" shell \
-    "value=\$(cat '$remote_file'); rm -f '$remote_file'; am start -W -a android.intent.action.VIEW -d \"\$value\" io.medianox.oxid >/dev/null"
+    "value=\$(cat '$remote_offer_file'); rm -f '$remote_offer_file'; am start -W -a android.intent.action.VIEW -d \"\$value\" io.medianox.oxid >/dev/null"
 }
 
 deliver_malformed_offer() {
@@ -186,7 +206,6 @@ jq -e '.token == 1 and .nonce == 1 and .credential == 1' >/dev/null <<<"$counter
   portal_mobile_fail protocol-counts
   exit 1
 }
-rm -f "$offer_file"
 portal_mobile_finish || { portal_mobile_fail support-finish; exit 1; }
 
 model="$($adb_command -s "$device" shell getprop ro.product.model | tr -d '\r')"
