@@ -29,11 +29,22 @@ final class PortalFlowTests: XCTestCase {
 
     @MainActor
     private func scrollTo(_ element: XCUIElement, in application: XCUIApplication) {
+        let safeTop = application.frame.minY + 90
         let safeBottom = application.frame.maxY - 90
-        for _ in 0..<20 where !element.isHittable || element.frame.maxY > safeBottom {
-            application.swipeUp()
+        for _ in 0..<20 {
+            if element.isHittable,
+               element.frame.minY >= safeTop,
+               element.frame.maxY <= safeBottom {
+                return
+            }
+            if element.exists, element.frame.minY < safeTop {
+                application.swipeDown()
+            } else {
+                application.swipeUp()
+            }
         }
         XCTAssertTrue(element.isHittable)
+        XCTAssertGreaterThanOrEqual(element.frame.minY, safeTop)
         XCTAssertLessThanOrEqual(element.frame.maxY, safeBottom)
     }
 
