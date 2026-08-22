@@ -2,6 +2,12 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(all(feature = "mobile-portal", not(feature = "app-profile-authority")))]
+compile_error!(
+    "mobile-portal must be selected through oxid-app/standalone-portal, which enables \
+     oxid-composition/app-profile-authority and enforces the application composition guards"
+);
+
 #[cfg(all(
     not(target_arch = "wasm32"),
     any(

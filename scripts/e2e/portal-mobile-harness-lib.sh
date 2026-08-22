@@ -170,12 +170,9 @@ portal_mobile_finish() {
 }
 
 portal_mobile_cleanup() {
-  # Accepts an optional explicit status as $1 (used by wrapper traps that run
-  # their own commands, e.g. an extra remote `rm`, between the original
-  # failure and calling this function, which would otherwise overwrite $?
-  # before it gets here). A bare `trap 'portal_mobile_cleanup' ...` still
-  # works unchanged: $1 is unset, so this falls back to the live $?.
-  local incoming_status="${1:-$?}" cleanup_status=0 source_tree
+  # Capture the trap-triggering status before any cleanup command can replace
+  # it. Android no longer needs a wrapper or an on-device offer-file removal.
+  local incoming_status="$?" cleanup_status=0 source_tree
   if [ "$PORTAL_MOBILE_CLEANUP_RUNNING" = 1 ]; then
     return "$incoming_status"
   fi

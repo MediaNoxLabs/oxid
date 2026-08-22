@@ -23,27 +23,11 @@ fi
 adb_command="$android_sdk/platform-tools/adb"
 devtools_port=9231
 
-# The staged offer never touches a host file (it is only ever held in this
-# shell's memory and streamed to the device over stdin). The one on-device
-# staging file it does cross is named deterministically per run ($$), so a
-# single best-effort remote rm on every exit/signal/failure is enough to
-# guarantee it never survives into retained diagnostics.
-remote_offer_file="/data/local/tmp/oxid-portal-offer-$$"
-android_portal_cleanup() {
-  local status=$?
-  if [ -n "${device:-}" ]; then
-    "$adb_command" -s "$device" shell rm -f "$remote_offer_file" >/dev/null 2>&1 || true
-  fi
-  # Pass the original trap-triggering status explicitly: the `rm -f`/`if`
-  # above would otherwise overwrite $? before portal_mobile_cleanup reads it,
-  # silently turning a real failure into a false "success" for the purposes
-  # of its retain-diagnostics-on-failure decision.
-  portal_mobile_cleanup "$status"
-  local cleanup_status=$?
-  if [ "$status" != 0 ]; then return "$status"; fi
-  return "$cleanup_status"
-}
-trap 'android_portal_cleanup' EXIT INT TERM
+# Fixed, non-secret OS trigger shared with iOS. The app recognizes only this
+# literal and retrieves the real offer over its bounded loopback worker. The
+# real offer therefore never enters adb/device argv, Android intent state, a
+# host/device staging file, logs, or retained evidence.
+portal_test_offer_trigger="openid-credential-offer://standalone-portal-test-fetch"
 
 # A long-running QEMU can lag the host by several seconds. The strict
 # credential policy intentionally has no future-time slack, so cold-reboot an
@@ -103,7 +87,7 @@ if [ "$clock_skew" -lt -2 ] || [ "$clock_skew" -gt 2 ]; then
   exit 1
 fi
 reverse_list="$($adb_command -s "$device" reverse --list)"
-for local_port in 8088 9944 6300 18090 18093; do
+for local_port in 8088 9944 6300 18090 18091 18093; do
   if ! awk -v route="tcp:$local_port" '$2 == route && $3 == route { found = 1 } END { exit !found }' <<<"$reverse_list"; then
     portal_mobile_fail "adb-reverse-$local_port"
     exit 1
@@ -156,14 +140,11 @@ sync_public_holder() {
     "$PORTAL_MOBILE_CONTROL_ORIGIN/holder" >/dev/null
 }
 
-# Held only in this shell process's memory; never written to a host file and
-# never passed as an adb argv element, only streamed over stdin below.
-offer="$(curl --noproxy '*' --fail --silent --show-error "$PORTAL_MOBILE_CONTROL_ORIGIN/offer")"
-
-deliver_real_offer() {
-  printf '%s' "$offer" | "$adb_command" -s "$device" shell "umask 077; cat > '$remote_offer_file'"
-  "$adb_command" -s "$device" shell \
-    "value=\$(cat '$remote_offer_file'); rm -f '$remote_offer_file'; am start -W -a android.intent.action.VIEW -d \"\$value\" io.medianox.oxid >/dev/null"
+deliver_portal_trigger() {
+  "$adb_command" -s "$device" shell am start -W \
+    -a android.intent.action.VIEW \
+    -d "$portal_test_offer_trigger" \
+    io.medianox.oxid >/dev/null
 }
 
 deliver_malformed_offer() {
@@ -176,7 +157,7 @@ deliver_malformed_offer() {
 run_webview_scenario prepare-holder
 sync_public_holder
 
-deliver_real_offer
+deliver_portal_trigger
 run_webview_scenario route-refuse
 
 deliver_malformed_offer
@@ -184,19 +165,19 @@ run_webview_scenario malformed
 
 curl --noproxy '*' --fail --silent -X POST --data-binary unavailable \
   "$PORTAL_MOBILE_CONTROL_ORIGIN/proxy-mode" >/dev/null
-deliver_real_offer
+deliver_portal_trigger
 run_webview_scenario protocol-error
 curl --noproxy '*' --fail --silent -X POST --data-binary normal \
   "$PORTAL_MOBILE_CONTROL_ORIGIN/proxy-mode" >/dev/null
 
 curl --noproxy '*' --fail --silent -X POST --data-binary timeout \
   "$PORTAL_MOBILE_CONTROL_ORIGIN/proxy-mode" >/dev/null
-deliver_real_offer
+deliver_portal_trigger
 run_webview_scenario protocol-error
 curl --noproxy '*' --fail --silent -X POST --data-binary normal \
   "$PORTAL_MOBILE_CONTROL_ORIGIN/proxy-mode" >/dev/null
 
-deliver_real_offer
+deliver_portal_trigger
 run_webview_scenario issue
 
 credential_header="$($adb_command -s "$device" shell run-as io.medianox.oxid \
@@ -209,7 +190,7 @@ credential_key_size="$($adb_command -s "$device" shell run-as io.medianox.oxid \
 }
 
 "$adb_command" -s "$device" shell am force-stop io.medianox.oxid
-deliver_real_offer
+deliver_portal_trigger
 run_webview_scenario cold-route
 run_webview_scenario restored
 
@@ -240,7 +221,7 @@ jq -cn \
     schema:"oxid-portal-mobile-evidence-v1",
     oxid:{head:$head},
     portal:{integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
-    platform:{kind:"android_qemu_emulator",model:$model,os:$os,apiLevel:$api,clockSkewSeconds:$clockSkew,applicationId:"io.medianox.oxid",profile:"standalone-local-development-portal",adbReversePorts:[6300,8088,9944,18090,18093]},
+    platform:{kind:"android_qemu_emulator",model:$model,os:$os,apiLevel:$api,clockSkewSeconds:$clockSkew,applicationId:"io.medianox.oxid",profile:"standalone-local-development-portal",adbReversePorts:[6300,8088,9944,18090,18091,18093]},
     acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,malformedDenied:true,unavailableDenied:true,timeoutDenied:true,qemuVerified:true,clockSynchronized:true,noEmulatorAlias:true,secretFreeEvidence:true}
   }' >"$evidence"
 if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|John|Doe|AB1234567|private.?parts|signed.?bytes|detached.?proof|emulator-[0-9]+' "$evidence"; then

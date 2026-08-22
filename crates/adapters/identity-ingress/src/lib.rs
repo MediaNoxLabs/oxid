@@ -4,7 +4,10 @@
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use std::time::Duration;
-use std::{collections::VecDeque, sync::Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 
 #[cfg(target_os = "android")]
 use oxid_adapter_mobile_native::take_identity_link_json;
@@ -165,49 +168,47 @@ fn registered_openid4vp_request(
 }
 
 /// Issue #124 / ADR-0103: the standalone-portal mobile suite must never let
-/// the real, single-use Portal offer touch a host process argument list or a
-/// retained test artifact. `simctl openurl`/`am start -d` deliver only the
-/// fixed, non-secret [`loopback_test_offer_trigger::TRIGGER`] string; this
-/// module recognizes it inside the already-sandboxed app process and
-/// substitutes the real offer, fetched over a loopback-only HTTP GET that
-/// never leaves the simulator/emulator's shared loopback network, before the
-/// value reaches the normal one-item router. A failed fetch (no listener, or
-/// a non-2xx response) leaves the literal trigger string in place, which the
-/// existing strict `openid-credential-offer` route validation then rejects
-/// as malformed rather than ever treating it as a real grant.
+/// the real, single-use Portal offer touch a host/device process argument, OS
+/// intent/URL state, log, evidence file, or retained staging artifact.
+/// `simctl openurl`/`am start -d` deliver only the fixed, non-secret
+/// [`loopback_test_offer_trigger::TRIGGER`] string. A named worker fetches the
+/// real offer over bounded loopback HTTP and enqueues it into the normal
+/// one-item ingress; Tao/Wry's OS-event callback never performs network I/O.
+/// Fetch/validation failure instead enqueues the literal trigger, which the
+/// strict credential-offer router rejects as malformed. This is a single
+/// literal trigger, not a generic command or URL-fetch channel.
 #[cfg(feature = "loopback-test-offer-trigger")]
 mod loopback_test_offer_trigger {
     use std::io::{Read, Write};
-    use std::net::TcpStream;
-    use std::time::Duration;
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::{Duration, Instant};
 
     pub const TRIGGER: &str = "openid-credential-offer://standalone-portal-test-fetch";
 
-    const CONTROL_ORIGIN: &str = "127.0.0.1:18091";
     const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
     const MAX_RESPONSE_BYTES: usize = 32 * 1_024;
 
-    pub fn resolve(url: &str) -> String {
-        if url != TRIGGER {
-            return url.to_owned();
-        }
-        fetch_offer().unwrap_or_else(|()| url.to_owned())
+    pub fn is_trigger(value: &str) -> bool {
+        value == TRIGGER
     }
 
-    fn fetch_offer() -> Result<String, ()> {
-        let mut stream = TcpStream::connect(CONTROL_ORIGIN).map_err(|_| ())?;
-        stream
-            .set_read_timeout(Some(CONTROL_TIMEOUT))
-            .map_err(|_| ())?;
-        stream
-            .set_write_timeout(Some(CONTROL_TIMEOUT))
-            .map_err(|_| ())?;
+    pub fn resolve_trigger() -> String {
+        let control_address = SocketAddr::from(([127, 0, 0, 1], 18091));
+        fetch_offer(control_address, CONTROL_TIMEOUT).unwrap_or_else(|()| TRIGGER.to_owned())
+    }
+
+    fn fetch_offer(address: SocketAddr, timeout: Duration) -> Result<String, ()> {
+        let started = Instant::now();
+        let mut stream = TcpStream::connect_timeout(&address, timeout).map_err(|_| ())?;
+        set_remaining_timeouts(&stream, started, timeout)?;
         stream
             .write_all(b"GET /offer HTTP/1.1\r\nHost: 127.0.0.1:18091\r\nConnection: close\r\n\r\n")
             .map_err(|_| ())?;
+
         let mut buffer = Vec::new();
         let mut chunk = [0_u8; 4_096];
         loop {
+            set_remaining_timeouts(&stream, started, timeout)?;
             let read = stream.read(&mut chunk).map_err(|_| ())?;
             if read == 0 {
                 break;
@@ -221,18 +222,51 @@ mod loopback_test_offer_trigger {
         parse_offer_response(&response).ok_or(())
     }
 
+    fn set_remaining_timeouts(
+        stream: &TcpStream,
+        started: Instant,
+        timeout: Duration,
+    ) -> Result<(), ()> {
+        let remaining = timeout.checked_sub(started.elapsed()).ok_or(())?;
+        if remaining.is_zero() {
+            return Err(());
+        }
+        stream.set_read_timeout(Some(remaining)).map_err(|_| ())?;
+        stream.set_write_timeout(Some(remaining)).map_err(|_| ())
+    }
+
     fn parse_offer_response(response: &str) -> Option<String> {
         let (head, body) = response.split_once("\r\n\r\n")?;
-        let status_line = head.split("\r\n").next()?;
-        if !status_line.starts_with("HTTP/1.1 200") {
+        let mut lines = head.split("\r\n");
+        let mut status = lines.next()?.splitn(3, ' ');
+        if status.next()? != "HTTP/1.1"
+            || status.next()? != "200"
+            || status.next().is_none_or(str::is_empty)
+        {
             return None;
         }
-        let trimmed = body.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_owned())
+
+        let mut content_length = None;
+        for line in lines {
+            let (name, value) = line.split_once(':')?;
+            if name.eq_ignore_ascii_case("transfer-encoding") {
+                return None;
+            }
+            if name.eq_ignore_ascii_case("content-length") {
+                if content_length.is_some() {
+                    return None;
+                }
+                content_length = Some(value.trim().parse::<usize>().ok()?);
+            }
         }
+        let content_length = content_length?;
+        if content_length == 0
+            || content_length > MAX_RESPONSE_BYTES
+            || body.len() != content_length
+        {
+            return None;
+        }
+        Some(body.to_owned())
     }
 
     #[cfg(test)]
@@ -240,39 +274,73 @@ mod loopback_test_offer_trigger {
         use super::*;
 
         #[test]
-        fn parses_only_a_successful_bounded_body() {
-            assert_eq!(
-                parse_offer_response(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nopenid-credential-offer://?credential_offer=abc"
-                ),
-                Some("openid-credential-offer://?credential_offer=abc".to_owned())
+        fn parses_only_an_exact_successful_bounded_body() {
+            let offer = "openid-credential-offer://?credential_offer=abc";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{offer}",
+                offer.len()
             );
+            assert_eq!(parse_offer_response(&response), Some(offer.to_owned()));
+
+            for rejected in [
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 1\r\n\r\nx",
+                "HTTP/1.1 2000 Not A Status\r\nContent-Length: 1\r\n\r\nx",
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nx",
+                "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+                "not an http response",
+            ] {
+                assert_eq!(parse_offer_response(rejected), None);
+            }
             assert_eq!(
-                parse_offer_response(
-                    "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"error\":\"not_ready\"}"
-                ),
+                parse_offer_response(&format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\nx",
+                    MAX_RESPONSE_BYTES + 1
+                )),
                 None
             );
-            assert_eq!(parse_offer_response("HTTP/1.1 200 OK\r\n\r\n"), None);
-            assert_eq!(parse_offer_response("not an http response"), None);
         }
 
         #[test]
-        fn resolve_passes_through_every_non_trigger_value_unchanged() {
-            let real_link = "openid-credential-offer://?credential_offer=%7B%7D";
-            assert_eq!(resolve(real_link), real_link);
+        fn loopback_fetch_accepts_only_the_fixed_bounded_http_exchange() {
+            use std::net::TcpListener;
+
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("loopback listener");
+            let address = listener.local_addr().expect("listener address");
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept fetch");
+                let mut request = [0_u8; 256];
+                let _ = stream.read(&mut request).expect("read request");
+                let offer = "openid-credential-offer://?credential_offer=abc";
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{offer}",
+                    offer.len()
+                )
+                .expect("write response");
+            });
+
             assert_eq!(
-                resolve("openid4vp://authorize?client_id=x"),
-                "openid4vp://authorize?client_id=x"
+                fetch_offer(address, Duration::from_secs(1)),
+                Ok("openid-credential-offer://?credential_offer=abc".to_owned())
             );
+            server.join().expect("server thread");
         }
 
         #[test]
-        fn resolve_fails_closed_on_the_trigger_when_no_control_server_is_listening() {
-            // No listener is bound to CONTROL_ORIGIN in this unit test, so the
-            // fetch must fail closed and hand back the literal trigger string
-            // rather than fabricating or guessing an offer.
-            assert_eq!(resolve(TRIGGER), TRIGGER);
+        fn loopback_fetch_has_one_closed_wall_clock_deadline() {
+            use std::net::TcpListener;
+
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("loopback listener");
+            let address = listener.local_addr().expect("listener address");
+            let server = std::thread::spawn(move || {
+                let (_stream, _) = listener.accept().expect("accept fetch");
+                std::thread::sleep(Duration::from_millis(100));
+            });
+            let started = Instant::now();
+            assert_eq!(fetch_offer(address, Duration::from_millis(20)), Err(()));
+            assert!(started.elapsed() < Duration::from_secs(1));
+            server.join().expect("server thread");
         }
     }
 }
@@ -290,37 +358,169 @@ impl QrScannerPort for NativeQrScanner {
 
 /// Bounded OS URL ingress. iOS/Tao events enter through `capture`; Android's
 /// repository-owned activity queues VIEW intents in the static Kotlin bridge.
+/// The explicit Portal test trigger reserves the sole queue slot while its
+/// background worker performs bounded loopback retrieval.
 #[derive(Default)]
 pub struct NativeIdentityLinkIngress {
-    captured: Mutex<VecDeque<InboundIdentityLink>>,
+    captured: Arc<Mutex<CapturedIdentityLinks>>,
+}
+
+#[derive(Default)]
+struct CapturedIdentityLinks {
+    links: VecDeque<InboundIdentityLink>,
+    #[cfg(feature = "loopback-test-offer-trigger")]
+    trigger_fetch_in_flight: bool,
+}
+
+impl NativeIdentityLinkIngress {
+    fn enqueue(&self, link: InboundIdentityLink) -> Result<(), IdentityLinkIngressError> {
+        let mut captured = self
+            .captured
+            .lock()
+            .map_err(|_| IdentityLinkIngressError::Failed)?;
+        #[cfg(feature = "loopback-test-offer-trigger")]
+        if captured.trigger_fetch_in_flight {
+            return Err(IdentityLinkIngressError::QueueFull);
+        }
+        if captured.links.len() >= IDENTITY_LINK_QUEUE_LIMIT {
+            return Err(IdentityLinkIngressError::QueueFull);
+        }
+        captured.links.push_back(link);
+        Ok(())
+    }
+
+    #[cfg(feature = "loopback-test-offer-trigger")]
+    fn capture_with_trigger_resolver<F>(
+        &self,
+        value: String,
+        resolver: F,
+    ) -> Result<(), IdentityLinkIngressError>
+    where
+        F: FnOnce() -> String + Send + 'static,
+    {
+        if !loopback_test_offer_trigger::is_trigger(&value) {
+            return self.enqueue(InboundIdentityLink::new(value)?);
+        }
+
+        // Validate the fixed literal before reserving the one-item queue. The
+        // worker validates its fetched result again before it can enqueue.
+        let literal = InboundIdentityLink::new(value)?;
+        {
+            let mut captured = self
+                .captured
+                .lock()
+                .map_err(|_| IdentityLinkIngressError::Failed)?;
+            if captured.trigger_fetch_in_flight || captured.links.len() >= IDENTITY_LINK_QUEUE_LIMIT
+            {
+                return Err(IdentityLinkIngressError::QueueFull);
+            }
+            captured.trigger_fetch_in_flight = true;
+        }
+
+        let captured = Arc::clone(&self.captured);
+        let fallback = literal.clone();
+        let worker = std::thread::Builder::new()
+            .name("oxid-portal-offer-fetch".to_owned())
+            .spawn(move || {
+                let resolved = validated_trigger_result(resolver()).unwrap_or(fallback);
+                if let Ok(mut captured) = captured.lock() {
+                    captured.trigger_fetch_in_flight = false;
+                    if captured.links.is_empty() {
+                        captured.links.push_back(resolved);
+                    }
+                }
+            });
+        if worker.is_err() {
+            let mut captured = self
+                .captured
+                .lock()
+                .map_err(|_| IdentityLinkIngressError::Failed)?;
+            captured.trigger_fetch_in_flight = false;
+            if captured.links.is_empty() {
+                captured.links.push_back(literal);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "loopback-test-offer-trigger")]
+fn validated_trigger_result(value: String) -> Option<InboundIdentityLink> {
+    let link = InboundIdentityLink::new(value).ok()?;
+    let route = StrictIdentityRequestRouter::credential_offers_only()
+        .route(&link.clone().into_inner())
+        .ok()?;
+    if route == IdentityRequestKind::CredentialIssuance {
+        Some(link)
+    } else {
+        None
+    }
 }
 
 impl IdentityLinkIngressPort for NativeIdentityLinkIngress {
     fn capture(&self, value: String) -> Result<(), IdentityLinkIngressError> {
         #[cfg(feature = "loopback-test-offer-trigger")]
-        let value = loopback_test_offer_trigger::resolve(&value);
-        let link = InboundIdentityLink::new(value)?;
-        let mut captured = self
-            .captured
-            .lock()
-            .map_err(|_| IdentityLinkIngressError::Failed)?;
-        if captured.len() >= IDENTITY_LINK_QUEUE_LIMIT {
-            return Err(IdentityLinkIngressError::QueueFull);
-        }
-        captured.push_back(link);
-        Ok(())
+        return self
+            .capture_with_trigger_resolver(value, loopback_test_offer_trigger::resolve_trigger);
+
+        #[cfg(not(feature = "loopback-test-offer-trigger"))]
+        self.enqueue(InboundIdentityLink::new(value)?)
     }
 
     fn take_pending(&self) -> Result<Option<InboundIdentityLink>, IdentityLinkIngressError> {
-        if let Some(link) = self
-            .captured
-            .lock()
-            .map_err(|_| IdentityLinkIngressError::Failed)?
-            .pop_front()
+        #[cfg(feature = "loopback-test-offer-trigger")]
+        let trigger_fetch_in_flight;
         {
-            return Ok(Some(link));
+            let mut captured = self
+                .captured
+                .lock()
+                .map_err(|_| IdentityLinkIngressError::Failed)?;
+            if !captured.links.is_empty() {
+                // A direct Tao event and Android's native Activity bridge may
+                // observe the same or concurrent VIEW intents. Keep the first
+                // Rust item queued while draining/rejecting any native second
+                // item so there is never a two-consent handoff.
+                #[cfg(all(feature = "loopback-test-offer-trigger", target_os = "android"))]
+                if take_native_identity_link()?.is_some() {
+                    return Err(IdentityLinkIngressError::QueueFull);
+                }
+                return Ok(captured.links.pop_front());
+            }
+            #[cfg(feature = "loopback-test-offer-trigger")]
+            {
+                trigger_fetch_in_flight = captured.trigger_fetch_in_flight;
+            }
         }
-        take_native_identity_link()
+
+        #[cfg(feature = "loopback-test-offer-trigger")]
+        if trigger_fetch_in_flight {
+            // Android's native bridge has its own one-item handoff. Drain and
+            // reject any second VIEW intent while the Rust queue slot is
+            // reserved so the two layers cannot retain two consent requests.
+            #[cfg(target_os = "android")]
+            if take_native_identity_link()?.is_some() {
+                return Err(IdentityLinkIngressError::QueueFull);
+            }
+            return Ok(None);
+        }
+
+        let native = take_native_identity_link()?;
+        #[cfg(feature = "loopback-test-offer-trigger")]
+        return match native {
+            Some(link) => {
+                let value = link.into_inner();
+                if loopback_test_offer_trigger::is_trigger(&value) {
+                    self.capture(value)?;
+                    Ok(None)
+                } else {
+                    Ok(Some(InboundIdentityLink::new(value)?))
+                }
+            }
+            None => Ok(None),
+        };
+
+        #[cfg(not(feature = "loopback-test-offer-trigger"))]
+        Ok(native)
     }
 }
 
@@ -550,6 +750,89 @@ mod tests {
             ingress.capture(" openid4vp://authorize".to_owned()),
             Err(IdentityLinkIngressError::InvalidLink)
         );
+    }
+
+    #[cfg(feature = "loopback-test-offer-trigger")]
+    fn wait_for_pending(ingress: &NativeIdentityLinkIngress) -> InboundIdentityLink {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if let Some(link) = ingress.take_pending().expect("take pending") {
+                return link;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "trigger worker did not enqueue a result"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(feature = "loopback-test-offer-trigger")]
+    #[test]
+    fn portal_trigger_worker_never_blocks_capture_and_reserves_the_only_queue_slot() {
+        use std::sync::mpsc;
+
+        let ingress = NativeIdentityLinkIngress::default();
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let started_at = std::time::Instant::now();
+        ingress
+            .capture_with_trigger_resolver(
+                loopback_test_offer_trigger::TRIGGER.to_owned(),
+                move || {
+                    started_tx
+                        .send(std::thread::current().name().map(str::to_owned))
+                        .expect("signal worker start");
+                    release_rx.recv().expect("release worker");
+                    "openid-credential-offer://?credential_offer=%7B%7D".to_owned()
+                },
+            )
+            .expect("schedule trigger");
+        assert!(started_at.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(
+            started_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("named worker started")
+                .as_deref(),
+            Some("oxid-portal-offer-fetch")
+        );
+        assert_eq!(
+            ingress.capture(LOGIN.to_owned()),
+            Err(IdentityLinkIngressError::QueueFull)
+        );
+        assert_eq!(ingress.take_pending(), Ok(None));
+
+        release_tx.send(()).expect("release worker");
+        assert_eq!(
+            wait_for_pending(&ingress).into_inner(),
+            "openid-credential-offer://?credential_offer=%7B%7D"
+        );
+        assert_eq!(ingress.take_pending(), Ok(None));
+    }
+
+    #[cfg(feature = "loopback-test-offer-trigger")]
+    #[test]
+    fn portal_trigger_failure_and_invalid_fetch_fail_closed_to_the_literal() {
+        for resolved in [
+            loopback_test_offer_trigger::TRIGGER.to_owned(),
+            String::new(),
+            "x".repeat(32 * 1_024 + 1),
+            LOGIN.to_owned(),
+        ] {
+            let ingress = NativeIdentityLinkIngress::default();
+            ingress
+                .capture_with_trigger_resolver(
+                    loopback_test_offer_trigger::TRIGGER.to_owned(),
+                    move || resolved,
+                )
+                .expect("schedule trigger");
+            let literal = wait_for_pending(&ingress).into_inner();
+            assert_eq!(literal, loopback_test_offer_trigger::TRIGGER);
+            assert_eq!(
+                router().route(&literal),
+                Err(IdentityRequestRoutingError::InvalidRequest)
+            );
+        }
     }
 
     #[test]

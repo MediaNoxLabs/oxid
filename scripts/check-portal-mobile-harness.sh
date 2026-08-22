@@ -44,7 +44,7 @@ for marker in \
   }
 done
 
-for port in 6300 8088 18093 9944 18090; do
+for port in 6300 8088 18091 18093 9944 18090; do
   rg -q "${port}" scripts/test-android-portal-flow.sh || {
     echo "Android Portal harness is missing exact reverse port $port." >&2
     exit 1
@@ -93,28 +93,46 @@ if [ "$trap_installations" -ne 1 ]; then
   exit 1
 fi
 
-# The real single-use offer must never be a host `simctl openurl` argument
-# (visible via `ps`/Activity Monitor for the host process's lifetime). Only a
-# fixed, non-secret trigger constant may reach that call; the app fetches the
-# real offer itself over a loopback GET, entirely inside the simulator.
+# The real single-use offer must never enter host/device argv, OS URL/intent
+# state, logs, evidence, or a retained staging file. Both mobile OS paths may
+# deliver only the same fixed, non-secret trigger; the app's named worker
+# retrieves the offer over bounded loopback HTTP.
 if rg -n 'simctl.*openurl.*iosDevice, offer\]' scripts/e2e/portal-mobile-support.mjs; then
   echo "iOS delivery must not pass the real offer to simctl openurl argv." >&2
   exit 1
 fi
-ios_trigger="openid-credential-offer://standalone-portal-test-fetch"
+if rg -n 'remote_offer_file|oxid-portal-offer|/data/local/tmp/.*offer|cat >.*offer|value=.*cat|PORTAL_MOBILE_CONTROL_ORIGIN/offer' \
+  scripts/test-android-portal-flow.sh; then
+  echo "Android delivery must not fetch, stage, or expand the real offer." >&2
+  exit 1
+fi
+mobile_trigger="openid-credential-offer://standalone-portal-test-fetch"
 for source_file in \
   scripts/e2e/portal-mobile-support.mjs \
+  scripts/test-android-portal-flow.sh \
   crates/adapters/identity-ingress/src/lib.rs; do
-  rg -qF "$ios_trigger" "$source_file" || {
-    echo "iOS non-secret loopback test trigger is missing or drifted in $source_file." >&2
+  rg -qF "$mobile_trigger" "$source_file" || {
+    echo "The non-secret mobile loopback trigger is missing or drifted in $source_file." >&2
     exit 1
   }
 done
-rg -q 'loopback-test-offer-trigger' \
-  crates/adapters/identity-ingress/Cargo.toml \
-  crates/composition/Cargo.toml || {
-  echo "The loopback test-offer trigger feature must be wired from composition's mobile-portal feature." >&2
+rg -qF -- '-d "$portal_test_offer_trigger"' scripts/test-android-portal-flow.sh || {
+  echo "Android must deliver only its fixed Portal trigger to am start -d." >&2
   exit 1
 }
+if [ "$(rg -c 'loopback-test-offer-trigger' crates/composition/Cargo.toml)" -ne 1 ]; then
+  echo "Composition must wire the loopback trigger exactly once." >&2
+  exit 1
+fi
+for worker_bound in \
+  oxid-portal-offer-fetch \
+  connect_timeout \
+  CONTROL_TIMEOUT \
+  MAX_RESPONSE_BYTES; do
+  rg -qF "$worker_bound" crates/adapters/identity-ingress/src/lib.rs || {
+    echo "Portal trigger worker bound is missing: $worker_bound" >&2
+    exit 1
+  }
+done
 
-echo "Portal mobile harness syntax, sequence, compile-time markers, route exclusions, and cleanup-trap ordering passed."
+echo "Portal mobile harness syntax, sequence, compile-time markers, route exclusions, secret-free OS delivery, and cleanup-trap ordering passed."

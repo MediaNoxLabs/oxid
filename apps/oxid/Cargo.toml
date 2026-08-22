@@ -35,6 +35,7 @@ standalone-portal = [
   "standalone-development",
   "standalone-local",
   "oxid-composition/mobile-portal",
+  "oxid-composition/app-profile-authority",
 ]
 # Opt-in physical-device route profile for a TLS-terminated standalone stack.
 # Every route is supplied at compile time by the repository launcher; normal

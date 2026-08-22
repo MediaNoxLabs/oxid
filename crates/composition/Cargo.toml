@@ -10,9 +10,13 @@ publish = false
 
 [features]
 default = []
+# Authority marker forwarded only by oxid-app's guarded standalone-portal
+# profile. It closes Cargo dependency-feature paths around mobile-portal.
+app-profile-authority = []
 mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
 # Native-mobile Portal identity/HTTP composition. The app profile owns the
-# stronger mobile + standalone-development + standalone-local guards.
+# authority plus stronger mobile + standalone-development + standalone-local
+# guards; selecting this dependency feature without that authority is rejected.
 mobile-portal = [
   "oxid-adapter-openid4vci/portal-http-mobile",
   "oxid-adapter-identity-ingress/loopback-test-offer-trigger",
@@ -62,6 +66,7 @@ midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-zswap.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 zeroize.workspace = true
 

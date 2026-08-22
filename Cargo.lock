@@ -5986,6 +5986,7 @@ dependencies = [
  "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",
+ "sha2 0.10.9",
  "tokio",
  "zeroize",
 ]
