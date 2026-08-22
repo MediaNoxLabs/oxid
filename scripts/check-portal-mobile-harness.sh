@@ -207,6 +207,7 @@ fi
 # socket and every command are bounded, and terminal WebSocket events reject
 # all pending commands so top-level await cannot remain unsettled.
 for cdp_marker in \
+  '.url == "https://dioxus.index.html/"' \
   '"tcp:0" "localabstract:webview_devtools_remote_$process_id"' \
   'forward --remove "tcp:$devtools_port"' \
   'CDP_OPEN_TIMEOUT_MS' \

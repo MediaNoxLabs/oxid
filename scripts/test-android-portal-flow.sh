@@ -153,7 +153,7 @@ run_webview_scenario() {
   for _attempt in $(seq 1 60); do
     page_list="$(curl --noproxy '*' --fail --silent \
       --connect-timeout 2 --max-time 2 "http://127.0.0.1:$devtools_port/json" || true)"
-    websocket_url="$(jq -r 'first(.[] | select(.type == "page")) | .webSocketDebuggerUrl // empty' <<<"$page_list")"
+    websocket_url="$(jq -r 'first(.[] | select(.type == "page" and .url == "https://dioxus.index.html/")) | .webSocketDebuggerUrl // empty' <<<"$page_list")"
     [ -n "$websocket_url" ] && break
     sleep 0.5
   done
