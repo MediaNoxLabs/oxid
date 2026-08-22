@@ -138,26 +138,10 @@ fi
 cargo check -p oxid-app --no-default-features \
   --features desktop,standalone-development,standalone-local
 
-# The Portal dependency feature owns trigger and mobile HTTP behavior, so it
-# must not compile without the application-profile authority forwarded only by
-# oxid-app/standalone-portal. Prove both direct and app dependency-feature
-# paths fail closed before checking the app's guarded profile combinations.
-for bypass in composition application; do
-  if [ "$bypass" = composition ]; then
-    bypass_command=(cargo check -p oxid-composition --features mobile-portal)
-  else
-    bypass_command=(cargo check -p oxid-app --no-default-features --features desktop,oxid-composition/mobile-portal)
-  fi
-  if "${bypass_command[@]}" >"$failure_log" 2>&1; then
-    echo "mobile-portal compiled through the $bypass dependency-feature path" >&2
-    exit 1
-  fi
-  if ! rg -q 'mobile-portal must be selected through oxid-app/standalone-portal' "$failure_log"; then
-    echo "the $bypass mobile-portal bypass failed for an unexpected reason" >&2
-    sed -n '1,120p' "$failure_log" >&2
-    exit 1
-  fi
-done
+# The Portal dependency feature is a low-level mobile capability, not proof of
+# caller provenance. Direct selection remains runtime-inert because only the
+# app-owned standalone-portal branch calls the explicit Portal constructor; the
+# identity-ingress unit suite below proves the default constructor rejects the trigger.
 
 composition_portal_members="$(awk '
   /^mobile-portal = \[/ { capture=1; next }
@@ -178,12 +162,11 @@ app_portal_members="$(awk '
 ' apps/oxid/Cargo.toml | sort)"
 expected_app_portal_members="$(printf '%s\n' \
   mobile \
-  oxid-composition/app-profile-authority \
   oxid-composition/mobile-portal \
   standalone-development \
   standalone-local | sort)"
 if [ "$app_portal_members" != "$expected_app_portal_members" ] ||
-  [ "$(rg -cF '"oxid-composition/app-profile-authority"' apps/oxid/Cargo.toml)" -ne 1 ]; then
+  rg -qF '"oxid-composition/app-profile-authority"' apps/oxid/Cargo.toml; then
   echo "oxid-app/standalone-portal authority wiring is not exact" >&2
   exit 1
 fi
@@ -194,7 +177,7 @@ cargo test -p oxid-adapter-identity-ingress --features loopback-test-offer-trigg
 
 # Portal is a separate mobile-only test profile. Host/desktop, tailnet, and
 # native-custody combinations must fail before they can select composition.
-if cargo check -p oxid-composition --features mobile-portal,app-profile-authority >"$failure_log" 2>&1; then
+if cargo check -p oxid-composition --features mobile-portal >"$failure_log" 2>&1; then
   echo "mobile-portal compiled directly for a non-mobile host" >&2
   exit 1
 fi
@@ -204,7 +187,7 @@ if ! rg -q 'mobile-portal is available only on iOS and Android' "$failure_log"; 
   exit 1
 fi
 if cargo check -p oxid-app --no-default-features \
-  --features desktop,oxid-composition/mobile-portal,oxid-composition/app-profile-authority \
+  --features desktop,oxid-composition/mobile-portal \
   >"$failure_log" 2>&1; then
   echo "mobile-portal compiled through the app dependency feature path" >&2
   exit 1

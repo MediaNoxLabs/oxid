@@ -2,12 +2,6 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(all(feature = "mobile-portal", not(feature = "app-profile-authority")))]
-compile_error!(
-    "mobile-portal must be selected through oxid-app/standalone-portal, which enables \
-     oxid-composition/app-profile-authority and enforces the application composition guards"
-);
-
 #[cfg(all(
     feature = "mobile-portal",
     not(any(target_os = "ios", target_os = "android"))

@@ -10,14 +10,10 @@ publish = false
 
 [features]
 default = []
-# Authority marker forwarded only by oxid-app's guarded standalone-portal
-# profile. The composition crate separately rejects non-mobile targets, and
-# runtime ingress remains inert unless the Portal constructor selects it.
-app-profile-authority = []
 mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
-# Native-mobile Portal identity/HTTP composition. The app profile owns the
-# authority plus stronger mobile + standalone-development + standalone-local
-# guards; selecting this dependency feature without that authority is rejected.
+# Native-mobile Portal identity/HTTP capability. It is target-gated, and its
+# fixed trigger remains runtime-inert until the app-owned standalone-portal path
+# calls the explicit Portal composition constructor.
 mobile-portal = [
   "oxid-adapter-openid4vci/portal-http-mobile",
   "oxid-adapter-identity-ingress/loopback-test-offer-trigger",
