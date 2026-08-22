@@ -121,9 +121,25 @@ fi
 # Every synchronous support command is bounded, cleanup failures become the
 # child status observed by the shell, and iOS delivery uses xcode-select's
 # selected developer directory rather than a machine-specific Xcode path.
+# Successful compose-down waits only on the exact named project's three
+# resource types for a short deadline, then still fails closed.
+for cleanup_wait_marker in \
+  'const CLEANUP_RESOURCE_DEADLINE_MS = 5_000;' \
+  'const CLEANUP_RESOURCE_POLL_MS = 250;' \
+  '["container", "network", "volume"]' \
+  '`label=com.docker.compose.project=${composeProjectName}`' \
+  'const deadline = Date.now() + CLEANUP_RESOURCE_DEADLINE_MS;' \
+  'const delayMs = Math.min(CLEANUP_RESOURCE_POLL_MS, deadline - Date.now());' \
+  'await new Promise((resolve) => setTimeout(resolve, delayMs));' \
+  'throw new Error("named compose project was not empty at cleanup deadline");' \
+  'await waitForComposeProjectCleanup();'; do
+  rg -qF "$cleanup_wait_marker" scripts/e2e/portal-mobile-support.mjs || {
+    echo "Portal support named-resource cleanup wait regressed: $cleanup_wait_marker" >&2
+    exit 1
+  }
+done
 if [ "$(rg -c 'timeout: (timeoutMs|HOST_COMMAND_TIMEOUT_MS)' scripts/e2e/portal-mobile-support.mjs)" -ne 3 ] ||
   [ "$(rg -c 'killSignal: "SIGKILL"' scripts/e2e/portal-mobile-support.mjs)" -ne 3 ] ||
-  ! rg -qF 'named compose project was not empty after compose-down' scripts/e2e/portal-mobile-support.mjs ||
   ! rg -qF 'process.exitCode = 1' scripts/e2e/portal-mobile-support.mjs ||
   ! rg -qF 'DEVELOPER_DIR: xcodeDeveloperDirectory' scripts/e2e/portal-mobile-support.mjs ||
   rg -qF '/Applications/Xcode.app/Contents/Developer' scripts/e2e/portal-mobile-support.mjs; then
@@ -233,4 +249,4 @@ for lock_marker in 'mkdir "$PORTAL_MOBILE_LOCK_DIR"' 'mv "$PORTAL_MOBILE_LOCK_DI
   }
 done
 
-echo "Portal mobile harness syntax, sequence, lifecycle bounds, exact CDP ownership, evidence pinning, secret-free delivery, and hosted PR filters passed."
+echo "Portal mobile harness syntax, sequence, lifecycle bounds, named-resource cleanup polling, exact CDP ownership, evidence pinning, secret-free delivery, and hosted PR filters passed."

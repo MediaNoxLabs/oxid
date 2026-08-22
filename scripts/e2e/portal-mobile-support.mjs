@@ -30,6 +30,8 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const CHILD_COMMAND_TIMEOUT_MS = 10 * 60_000;
 const HOST_COMMAND_TIMEOUT_MS = 30_000;
 const CLEANUP_COMMAND_TIMEOUT_MS = 15_000;
+const CLEANUP_RESOURCE_DEADLINE_MS = 5_000;
+const CLEANUP_RESOURCE_POLL_MS = 250;
 
 const portalTree = process.env.PORTAL_INTEGRATION_CHECKOUT;
 const stateDirectory = process.env.OXID_PORTAL_MOBILE_STATE_DIR;
@@ -426,6 +428,28 @@ function canonicalManifest(issuerDid, issuerMethod, sourceJwk) {
   };
 }
 
+function composeProjectResources() {
+  return ["container", "network", "volume"].flatMap((resource) => {
+    const args = [resource, "ls"];
+    if (resource === "container") args.push("--all");
+    args.push("--quiet", "--filter", `label=com.docker.compose.project=${composeProjectName}`);
+    const output = runCaptured("docker", args, portalTree, CLEANUP_COMMAND_TIMEOUT_MS);
+    return output === "" ? [] : output.split(/\s+/);
+  });
+}
+
+async function waitForComposeProjectCleanup() {
+  const deadline = Date.now() + CLEANUP_RESOURCE_DEADLINE_MS;
+  while (true) {
+    if (composeProjectResources().length === 0) return;
+    const delayMs = Math.min(CLEANUP_RESOURCE_POLL_MS, deadline - Date.now());
+    if (delayMs <= 0) {
+      throw new Error("named compose project was not empty at cleanup deadline");
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+}
+
 async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
@@ -438,14 +462,7 @@ async function cleanup() {
     phase = "compose-down";
     try {
       runLogged("just", ["compose-down"], portalTree, CLEANUP_COMMAND_TIMEOUT_MS);
-      const remaining = ["container", "network", "volume"].flatMap((resource) => {
-        const args = [resource, "ls"];
-        if (resource === "container") args.push("--all");
-        args.push("--quiet", "--filter", `label=com.docker.compose.project=${composeProjectName}`);
-        const output = runCaptured("docker", args, portalTree, CLEANUP_COMMAND_TIMEOUT_MS);
-        return output === "" ? [] : output.split(/\s+/);
-      });
-      if (remaining.length !== 0) throw new Error("named compose project was not empty after compose-down");
+      await waitForComposeProjectCleanup();
     } catch (error) {
       appendPrivate(error.stack ?? String(error));
       cleanupFailure = error;
