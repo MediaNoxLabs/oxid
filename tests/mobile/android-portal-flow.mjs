@@ -127,9 +127,9 @@ try {
     if (await evaluate(`Boolean(${button("Activate development wallet")})`)) {
       await click("Activate development wallet");
       await waitFor(
-        `!Boolean(${button("Activate development wallet")}) && Boolean(${button("Use my receive address")})`,
+        `!document.querySelector('button[aria-label="Activate protected Midnight account"]') && Boolean(${button("Use my receive address")})`,
         "activated local account",
-        45_000,
+        60_000,
       );
     }
     await click("Documents");

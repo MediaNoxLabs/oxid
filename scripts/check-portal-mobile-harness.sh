@@ -51,6 +51,17 @@ for port in 6300 8088 18093 9944 18090; do
   }
 done
 
+# The activation button changes its visible label to `Activating…` before the
+# development custody task is complete. Waiting only for the old label to
+# disappear races route navigation against that task and can cancel it when the
+# Wallet page unmounts. Require the Android flow to wait for the stable aria
+# control itself to leave the DOM before it creates a managed DID.
+activation_complete_wait='!document.querySelector('\''button[aria-label="Activate protected Midnight account"]'\'') && Boolean(${button("Use my receive address")})'
+if ! rg -qF "$activation_complete_wait" tests/mobile/android-portal-flow.mjs; then
+  echo "Android Portal flow must wait for development custody activation to complete." >&2
+  exit 1
+fi
+
 # A startup failure (fetch, worktree add, support spawn, ready wait, manifest
 # check) must still remove whatever was already created. That only holds if
 # portal_mobile_cleanup is trapped before any of those side effects run, so
