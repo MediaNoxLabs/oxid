@@ -42,6 +42,13 @@ portal_mobile_source_tree() {
 }
 
 portal_mobile_start() {
+  # Install cleanup before any side effect (state dir, fetch, worktree,
+  # support process, FIFO, compose stack, manifest) so a startup failure at
+  # any later line still tears down whatever was already created. Every
+  # variable portal_mobile_cleanup inspects is guarded with `[ -n "$VAR" ]`
+  # and starts empty, so registering the trap this early is a safe no-op
+  # until state actually exists.
+  trap 'portal_mobile_cleanup' EXIT INT TERM
   PORTAL_MOBILE_PLATFORM="$1"
   case "$PORTAL_MOBILE_PLATFORM" in ios|android) ;; *) portal_mobile_fail platform; return 1 ;; esac
 
@@ -149,7 +156,6 @@ portal_mobile_start() {
   export OXID_MOBILE_PORTAL_PROFILE=local
   export OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$PORTAL_MOBILE_MANIFEST_PATH"
   export OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$PORTAL_MOBILE_MANIFEST_SHA256"
-  trap 'portal_mobile_cleanup' EXIT INT TERM
 }
 
 portal_mobile_finish() {
