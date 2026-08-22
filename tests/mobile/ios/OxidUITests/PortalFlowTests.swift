@@ -259,13 +259,22 @@ final class PortalFlowTests: XCTestCase {
             application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid")).count,
             1
         )
+        // The restored credential already shows this exact policy summary
+        // before the tap, so that text alone cannot prove reverification ran.
+        // Require the issuer-resolver success count to strictly increase and
+        // the button to pass through its busy state and back.
+        let issuerResolutionSuccessBeforeReverify = try counters()["issuerResolutionSuccess"] ?? 0
         let reverify = application.buttons["Reverify"]
         XCTAssertTrue(reverify.waitForExistence(timeout: 15))
         scrollTo(reverify, in: application)
         reverify.tap()
+        XCTAssertTrue(application.buttons["Verifying…"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.buttons["Reverify"].waitForExistence(timeout: 30))
         XCTAssertTrue(application.staticTexts[
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
         ].waitForExistence(timeout: 30))
+        let issuerResolutionSuccessAfterReverify = try counters()["issuerResolutionSuccess"] ?? 0
+        XCTAssertGreaterThan(issuerResolutionSuccessAfterReverify, issuerResolutionSuccessBeforeReverify)
 
         application.buttons["Scan identity QR code"].tap()
         XCTAssertTrue(application.staticTexts[
