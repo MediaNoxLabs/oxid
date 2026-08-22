@@ -89,7 +89,10 @@ synchronize_android_clock() {
   local sync_epoch host_epoch emulator_epoch
   sync_epoch="$(date -u +%s)"
   [[ "$sync_epoch" =~ ^[0-9]+$ ]] || { portal_mobile_fail host-epoch; return 1; }
-  if ! "$adb_command" -s "$device" shell cmd alarm set-time "$((sync_epoch * 1000))"; then
+  # QEMU can lose a second under UI/crypto load. Start at the already reviewed
+  # strict bound; Portal permits a 60-second holder-proof future skew while
+  # Oxid continues to reject issuer artifacts from its own future.
+  if ! "$adb_command" -s "$device" shell cmd alarm set-time "$(((sync_epoch + 2) * 1000))"; then
     portal_mobile_fail emulator-clock-sync
     return 1
   fi

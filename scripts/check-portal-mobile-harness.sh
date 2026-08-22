@@ -56,8 +56,10 @@ done
 # again immediately before the positive issuance path. The second sync prevents
 # a busy QEMU from drifting behind the host issuer during negative scenarios.
 clock_sync_calls="$(rg -c '^synchronize_android_clock$' scripts/test-android-portal-flow.sh || true)"
+clock_lead_calls="$(rg -cF 'sync_epoch + 2' scripts/test-android-portal-flow.sh || true)"
 if ! rg -qF 'shell cmd alarm set-time' scripts/test-android-portal-flow.sh ||
   [ "$clock_sync_calls" != 2 ] ||
+  [ "$clock_lead_calls" != 1 ] ||
   ! rg -q 'clock_skew.*-lt -2.*clock_skew.*-gt 2' scripts/test-android-portal-flow.sh; then
   echo "Android Portal flow must synchronize QEMU time and enforce the strict skew bound." >&2
   exit 1
