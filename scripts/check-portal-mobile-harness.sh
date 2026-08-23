@@ -27,10 +27,17 @@ portal_recipe="$({ awk '
   capture && /^[^[:space:]#]/ { exit }
   capture { print }
 ' Justfile; } || true)"
-ios_line="$(grep -n 'test-ios-portal-flow.sh' <<<"$portal_recipe" | cut -d: -f1)"
-android_line="$(grep -n 'test-android-portal-flow.sh' <<<"$portal_recipe" | cut -d: -f1)"
-if [ -z "$ios_line" ] || [ -z "$android_line" ] || [ "$ios_line" -ge "$android_line" ]; then
-  echo "portal-mobile-smoke must run iOS before Android and never in parallel." >&2
+ios_recipe_line="$(grep -n 'test-ios-portal-flow.sh' <<<"$portal_recipe" || true)"
+android_recipe_line="$(grep -n 'test-android-portal-flow.sh' <<<"$portal_recipe" || true)"
+ios_line="$(cut -d: -f1 <<<"$ios_recipe_line")"
+android_line="$(cut -d: -f1 <<<"$android_recipe_line")"
+ios_command="$(cut -d: -f2- <<<"$ios_recipe_line" | awk '{$1=$1; print}')"
+android_command="$(cut -d: -f2- <<<"$android_recipe_line" | awk '{$1=$1; print}')"
+if [[ ! "$ios_line" =~ ^[0-9]+$ || ! "$android_line" =~ ^[0-9]+$ ]] ||
+  [ "$ios_line" -ge "$android_line" ] ||
+  [ "$ios_command" != './scripts/test-ios-portal-flow.sh' ] ||
+  [ "$android_command" != './scripts/test-android-portal-flow.sh' ]; then
+  echo "portal-mobile-smoke must run exact iOS then Android commands without shell operators or backgrounding." >&2
   exit 1
 fi
 
@@ -57,9 +64,13 @@ done
 # any drift accumulated during the preparation-only negative scenarios.
 clock_sync_calls="$(rg -c '^synchronize_android_clock$' scripts/test-android-portal-flow.sh || true)"
 clock_lead_calls="$(rg -cF 'sync_epoch + 2' scripts/test-android-portal-flow.sh || true)"
+clock_set_gate_calls="$(rg -cF 'run_adb_gate_operation clock-set-time' scripts/test-android-portal-flow.sh || true)"
+clock_read_gate_calls="$(rg -cF 'run_adb_gate_operation clock-read-time' scripts/test-android-portal-flow.sh || true)"
 if ! rg -qF 'shell cmd alarm set-time' scripts/test-android-portal-flow.sh ||
   [ "$clock_sync_calls" != 2 ] ||
   [ "$clock_lead_calls" != 1 ] ||
+  [ "$clock_set_gate_calls" != 1 ] ||
+  [ "$clock_read_gate_calls" != 1 ] ||
   ! rg -q 'clock_skew.*-lt -2.*clock_skew.*-gt 2' scripts/test-android-portal-flow.sh; then
   echo "Android Portal flow must synchronize QEMU time and enforce the strict skew bound." >&2
   exit 1
@@ -108,9 +119,20 @@ if [ "$(grep -cF "$cleanup_trap_marker" scripts/e2e/portal-mobile-harness-lib.sh
   exit 1
 fi
 
-# The EXIT owner must turn a final cleanup failure into command failure without
-# replacing an earlier nonzero status. Exercise the real cleanup function with
-# a failing platform hook rather than relying on trap text alone.
+# The EXIT owner must preserve a clean zero status, turn a final cleanup
+# failure into command failure, and never replace an earlier nonzero status.
+# Exercise the real cleanup function and hook rather than relying on trap text.
+clean_exit_status=0
+bash -c '
+  source "$1"
+  portal_mobile_platform_cleanup() { return 0; }
+  trap '\''portal_mobile_exit "$?"'\'' EXIT
+  exit 0
+' _ scripts/e2e/portal-mobile-harness-lib.sh || clean_exit_status=$?
+if [ "$clean_exit_status" -ne 0 ]; then
+  echo "Portal EXIT cleanup must preserve a clean zero status." >&2
+  exit 1
+fi
 cleanup_exit_status=0
 bash -c '
   source "$1"
@@ -234,6 +256,8 @@ for adb_gate_marker in \
   'run_adb_gate_operation boot-completed ' \
   'run_adb_gate_operation devices-after-launch ' \
   'run_adb_gate_operation qemu-after-launch ' \
+  'run_adb_gate_operation clock-set-time ' \
+  'run_adb_gate_operation clock-read-time ' \
   'adb_boot_deadline=$((SECONDS + PORTAL_MOBILE_ADB_BOOT_DEADLINE_SECONDS))' \
   'while [ "$SECONDS" -lt "$adb_boot_deadline" ]' \
   'portal_mobile_fail emulator-reconnect'; do
@@ -252,7 +276,7 @@ for adb_bound_marker in \
     exit 1
   }
 done
-if rg -n 'for _attempt in \$\(seq 1 120\)|\$adb_command devices|\$adb_command.*getprop (ro\.kernel\.qemu|sys\.boot_completed)' \
+if rg -n 'for _attempt in \$\(seq 1 120\)|\$adb_command devices|\$adb_command.*getprop (ro\.kernel\.qemu|sys\.boot_completed)|\$adb_command.*shell (cmd alarm set-time|date -u \+%s)' \
   scripts/test-android-portal-flow.sh; then
   echo "Android reboot/readiness still contains an attempt-multiplied or direct unbounded adb query." >&2
   exit 1
@@ -568,8 +592,11 @@ for locked_review_marker in \
     exit 1
   }
 done
-if ! rg -qF '.is_some_and(|review| review.state == "awaiting_consent"),' crates/ui-dioxus/src/lib.rs; then
-  echo "A prepared credential review must disable replacement by the standalone demo offer." >&2
+if [ "$(rg -cF 'credential_issuance_review_blocks_replacement(' crates/ui-dioxus/src/lib.rs)" -lt 4 ] ||
+  ! rg -qF 'prepared.is_some_and(|review| review.state == "awaiting_consent")' crates/ui-dioxus/src/lib.rs ||
+  ! rg -qF 'let Some(manual_review_reserved) =' crates/ui-dioxus/src/lib.rs ||
+  ! rg -qF 'begin_credential_preview_single_flight_value(&mut busy)' crates/ui-dioxus/src/lib.rs; then
+  echo "Credential Preview must be single-flight and replace only terminal prepared reviews." >&2
   exit 1
 fi
 if rg -n 'failed issuance route release|A failed issuance must clear the retained router request|post-consent transport failure must release' \

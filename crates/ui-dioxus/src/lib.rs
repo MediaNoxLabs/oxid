@@ -1964,19 +1964,45 @@ fn reserve_manual_credential_review_admission_lock_value(
     manual_review_lock: &mut bool,
     has_imported_pending_marker: bool,
 ) -> bool {
-    if has_imported_pending_marker {
+    if has_imported_pending_marker || *manual_review_lock {
         return false;
     }
     *manual_review_lock = true;
     true
 }
 
-fn reserve_manual_credential_review_admission_lock(
+/// Starts one synchronous Preview admission attempt. Dioxus event handlers run
+/// serially, and holding the signal write guard makes the busy check-and-set a
+/// single operation before any review reservation or async task can start.
+fn begin_credential_preview_single_flight_value(issuance_busy: &mut bool) -> bool {
+    if *issuance_busy {
+        return false;
+    }
+    *issuance_busy = true;
+    true
+}
+
+/// Returns whether this attempt owns a manual reservation. An imported
+/// credential-issuance marker remains the owner for native ingress; every
+/// other pending request kind is cross-kind exclusive with manual issuance.
+fn reserve_credential_preview_review_admission_value(
+    pending: &Option<PendingIdentityRequest>,
+    manual_review_lock: &mut bool,
+) -> Option<bool> {
+    if let Some(request) = pending.as_ref() {
+        return (request.kind == IdentityRequestKind::CredentialIssuance && !*manual_review_lock)
+            .then_some(false);
+    }
+    reserve_manual_credential_review_admission_lock_value(manual_review_lock, false).then_some(true)
+}
+
+fn reserve_credential_preview_review_admission(
+    pending_identity_request: &Signal<Option<PendingIdentityRequest>>,
     manual_review_lock: &mut Signal<bool>,
-    has_imported_pending_marker: bool,
-) -> bool {
-    let mut guard = manual_review_lock.write();
-    reserve_manual_credential_review_admission_lock_value(&mut guard, has_imported_pending_marker)
+) -> Option<bool> {
+    let pending = pending_identity_request.read();
+    let mut manual_review_lock = manual_review_lock.write();
+    reserve_credential_preview_review_admission_value(&pending, &mut manual_review_lock)
 }
 
 /// A protocol-level preparation error confirms that no prepared manual
@@ -2047,6 +2073,12 @@ fn clear_credential_issuance_review_admission(
     let mut pending = pending_identity_request.write();
     let mut manual_review_lock = manual_review_lock.write();
     clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
+}
+
+fn credential_issuance_review_blocks_replacement(
+    prepared: Option<&CredentialIssuanceView>,
+) -> bool {
+    prepared.is_some_and(|review| review.state == "awaiting_consent")
 }
 
 fn retained_identity_review_route(
@@ -11331,10 +11363,9 @@ fn CredentialsPage(
                             class: "secondary-action",
                             r#type: "button",
                             disabled: issuance_busy()
-                                || prepared_issuance
-                                    .read()
-                                    .as_ref()
-                                    .is_some_and(|review| review.state == "awaiting_consent"),
+                                || credential_issuance_review_blocks_replacement(
+                                    prepared_issuance.read().as_ref(),
+                                ),
                             onclick: move |_| {
                                 offer_draft.set(CredentialOfferDraft::editable(offer.clone()));
                                 prepared_issuance.set(None);
@@ -11347,34 +11378,53 @@ fn CredentialsPage(
                     button {
                         class: "primary-action",
                         r#type: "button",
-                        disabled: issuance_busy() || prepared_issuance.read().is_some() || offer_draft.read().offer_for_prepare().trim().is_empty(),
+                        disabled: issuance_busy()
+                            || credential_issuance_review_blocks_replacement(
+                                prepared_issuance.read().as_ref(),
+                            )
+                            || offer_draft.read().offer_for_prepare().trim().is_empty(),
                         onclick: {
                             let service = services.prepare_credential_issuance();
                             let profile_id = profile_id.clone();
                             move |_| {
+                                // Preview admission is a synchronous single-flight
+                                // transaction. The busy write guard closes duplicate
+                                // clicks before any reservation or task can start.
+                                {
+                                    let mut busy = issuance_busy.write();
+                                    if !begin_credential_preview_single_flight_value(&mut busy) {
+                                        return;
+                                    }
+                                }
+                                if credential_issuance_review_blocks_replacement(
+                                    prepared_issuance.read().as_ref(),
+                                ) {
+                                    issuance_busy.set(false);
+                                    return;
+                                }
+                                let offer = offer_draft.read().offer_for_prepare().trim().to_owned();
+                                if offer.is_empty() {
+                                    issuance_busy.set(false);
+                                    return;
+                                }
+                                let Some(manual_review_reserved) =
+                                    reserve_credential_preview_review_admission(
+                                        &pending_identity_request,
+                                        &mut manual_credential_review_lock,
+                                    )
+                                else {
+                                    issuance_busy.set(false);
+                                    return;
+                                };
                                 let service = service.clone();
                                 let profile_id = profile_id.clone();
-                                let offer = offer_draft.read().offer_for_prepare().trim().to_owned();
-                                let has_imported_pending_marker = pending_identity_request
-                                    .read()
-                                    .as_ref()
-                                    .is_some_and(|request| {
-                                        request.kind == IdentityRequestKind::CredentialIssuance
-                                    });
-                                // Manual admission must close synchronously,
-                                // before spawning or awaiting protocol work, so
-                                // native ingress cannot race a one-use offer.
-                                let manual_review_reserved =
-                                    reserve_manual_credential_review_admission_lock(
-                                        &mut manual_credential_review_lock,
-                                        has_imported_pending_marker,
-                                    );
+                                prepared_issuance.set(None);
+                                issuance_consent.set(false);
+                                issuance_notice.set(None);
                                 scrub_pending_identity_request(
                                     &mut pending_identity_request,
                                     IdentityRequestKind::CredentialIssuance,
                                 );
-                                issuance_busy.set(true);
-                                issuance_notice.set(None);
                                 spawn(async move {
                                     match run_ui_future(async move {
                                         service.execute(PrepareCredentialIssuanceCommand { profile_id, offer }).await
@@ -12997,6 +13047,109 @@ mod tests {
             pending.is_some(),
             manual_review_lock,
         ));
+    }
+
+    #[test]
+    fn credential_preview_duplicate_click_is_single_flight_and_cannot_release_the_winner() {
+        let mut issuance_busy = false;
+        let pending = None;
+        let mut manual_review_lock = false;
+
+        assert!(begin_credential_preview_single_flight_value(
+            &mut issuance_busy
+        ));
+        let winning_reservation =
+            reserve_credential_preview_review_admission_value(&pending, &mut manual_review_lock);
+        assert_eq!(winning_reservation, Some(true));
+        assert!(manual_review_lock);
+
+        assert!(!begin_credential_preview_single_flight_value(
+            &mut issuance_busy
+        ));
+        assert!(
+            !reserve_manual_credential_review_admission_lock_value(&mut manual_review_lock, false,),
+            "an already-held manual reservation must reject a duplicate",
+        );
+        assert!(
+            !release_manual_credential_review_after_confirmed_prepare_failure_value(
+                &mut manual_review_lock,
+                false,
+            ),
+            "an unadmitted duplicate completion must not release the winning lock",
+        );
+        assert!(manual_review_lock);
+    }
+
+    #[test]
+    fn credential_preview_admission_rejects_other_request_kinds_but_preserves_imported_issuance() {
+        for kind in [
+            IdentityRequestKind::SelfIssuedAuthentication,
+            IdentityRequestKind::CredentialPresentation,
+        ] {
+            let mut issuance_busy = false;
+            let pending = Some(PendingIdentityRequest {
+                kind,
+                request_uri: "openid://pending-review".to_owned(),
+            });
+            let mut manual_review_lock = false;
+
+            assert!(begin_credential_preview_single_flight_value(
+                &mut issuance_busy
+            ));
+            assert_eq!(
+                reserve_credential_preview_review_admission_value(
+                    &pending,
+                    &mut manual_review_lock,
+                ),
+                None,
+            );
+            issuance_busy = false;
+            assert!(!issuance_busy);
+            assert!(!manual_review_lock);
+            assert_eq!(
+                pending.as_ref().map(|request| request.request_uri.as_str()),
+                Some("openid://pending-review"),
+            );
+        }
+
+        let imported = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialIssuance,
+            request_uri: "openid-credential-offer://private".to_owned(),
+        });
+        let mut manual_review_lock = false;
+        assert_eq!(
+            reserve_credential_preview_review_admission_value(&imported, &mut manual_review_lock,),
+            Some(false),
+            "the imported issuance marker remains the review owner",
+        );
+        assert!(!manual_review_lock);
+    }
+
+    #[test]
+    fn only_awaiting_credential_review_blocks_offer_replacement() {
+        let review = |state: &str| CredentialIssuanceView {
+            id: format!("issuance-{state}"),
+            issuer: "https://issuer.example".to_owned(),
+            configuration_ids: vec!["DigitalPassport".to_owned()],
+            display_names: vec!["Digital Passport".to_owned()],
+            state: state.to_owned(),
+            credential_id: None,
+            failure_code: None,
+        };
+        let awaiting = review("awaiting_consent");
+        let succeeded = review("succeeded");
+        let refused = review("refused");
+
+        assert!(credential_issuance_review_blocks_replacement(Some(
+            &awaiting
+        )));
+        assert!(!credential_issuance_review_blocks_replacement(Some(
+            &succeeded
+        )));
+        assert!(!credential_issuance_review_blocks_replacement(Some(
+            &refused
+        )));
+        assert!(!credential_issuance_review_blocks_replacement(None));
     }
 
     #[test]
