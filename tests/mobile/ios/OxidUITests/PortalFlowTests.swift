@@ -314,9 +314,13 @@ final class PortalFlowTests: XCTestCase {
         let failingIssue = application.buttons["Accept and issue credential"]
         scrollTo(failingIssue, in: application)
         failingIssue.tap()
-        XCTAssertTrue(application.staticTexts[
-            "This protocol is unavailable in the current build. Session cleanup is unavailable; this review remains locked until refusal succeeds or the app restarts."
-        ].waitForExistence(timeout: 30))
+        let lockedReviewNotice = application.staticTexts.matching(
+            NSPredicate(
+                format: "label == %@",
+                "This protocol is unavailable in the current build. Session cleanup is unavailable; this review remains locked until refusal succeeds or the app restarts."
+            )
+        ).firstMatch
+        XCTAssertTrue(lockedReviewNotice.waitForExistence(timeout: 30))
         try setProxyMode("normal")
         let clearedConsent = application.switches["Consent to credential issuance"]
         XCTAssertTrue(clearedConsent.waitForExistence(timeout: 10))
