@@ -1957,34 +1957,26 @@ fn scrub_pending_identity_request(
     scrub_pending_identity_request_value(&mut guard, kind);
 }
 
-/// Retains the one-active-review guard after either imported or manual offer
-/// preparation. A manual review has no raw URI, but still owns a protocol
-/// session and must block a newly delivered OS link until terminal completion.
-fn retain_credential_issuance_review_lock_value(
-    pending: &mut Option<PendingIdentityRequest>,
+/// Retains a process-local admission guard for a successfully prepared manual
+/// credential review. Imported reviews keep using their payload-free pending
+/// request marker instead.
+fn retain_manual_credential_review_admission_lock_value(
+    manual_review_lock: &mut bool,
+    has_imported_pending_marker: bool,
 ) -> bool {
-    match pending {
-        Some(request) if request.kind == IdentityRequestKind::CredentialIssuance => {
-            request.request_uri.zeroize();
-            request.request_uri.clear();
-            true
-        }
-        Some(_) => false,
-        None => {
-            *pending = Some(PendingIdentityRequest {
-                kind: IdentityRequestKind::CredentialIssuance,
-                request_uri: String::new(),
-            });
-            true
-        }
+    if has_imported_pending_marker {
+        return false;
     }
+    *manual_review_lock = true;
+    true
 }
 
-fn retain_credential_issuance_review_lock(
-    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
-) -> bool {
-    let mut guard = pending_identity_request.write();
-    retain_credential_issuance_review_lock_value(&mut guard)
+fn retain_manual_credential_review_admission_lock(
+    manual_review_lock: &mut Signal<bool>,
+    has_imported_pending_marker: bool,
+) {
+    let mut guard = manual_review_lock.write();
+    retain_manual_credential_review_admission_lock_value(&mut guard, has_imported_pending_marker);
 }
 
 /// Clears a pending identity review and zeroizes any raw URI still present.
@@ -2013,6 +2005,23 @@ fn wipe_pending_identity_request(
 ) {
     let mut guard = pending_identity_request.write();
     wipe_pending_identity_request_value(&mut guard, kind);
+}
+
+fn clear_credential_issuance_review_admission_value(
+    pending: &mut Option<PendingIdentityRequest>,
+    manual_review_lock: &mut bool,
+) {
+    wipe_pending_identity_request_value(pending, Some(IdentityRequestKind::CredentialIssuance));
+    *manual_review_lock = false;
+}
+
+fn clear_credential_issuance_review_admission(
+    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
+    manual_review_lock: &mut Signal<bool>,
+) {
+    let mut pending = pending_identity_request.write();
+    let mut manual_review_lock = manual_review_lock.write();
+    clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
 }
 
 fn retained_identity_review_route(pending: &Option<PendingIdentityRequest>) -> Option<Route> {
@@ -3208,8 +3217,11 @@ const fn identity_request_dismiss_is_visible(has_notice: bool, has_raw_request: 
     has_notice && has_raw_request
 }
 
-const fn identity_request_admits_new_link(request_waiting: bool) -> bool {
-    !request_waiting
+const fn identity_request_admits_new_link(
+    request_waiting: bool,
+    manual_credential_review_locked: bool,
+) -> bool {
+    !request_waiting && !manual_credential_review_locked
 }
 
 #[cfg(feature = "ui-profile-dev")]
@@ -3247,6 +3259,7 @@ pub fn App() -> Element {
         state: secret_mode_state,
     };
     let mut pending_identity_request = use_signal(|| None::<PendingIdentityRequest>);
+    let manual_credential_review_lock = use_signal(|| false);
     let mut identity_ingress_notice = use_signal(|| None::<String>);
     let identity_scan_busy = use_signal(|| false);
     #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -3316,6 +3329,7 @@ pub fn App() -> Element {
                         route_pending_identity_link(
                             &services,
                             pending_identity_request,
+                            manual_credential_review_lock,
                             navigation,
                             profile_menu_open,
                             identity_ingress_notice,
@@ -3333,6 +3347,7 @@ pub fn App() -> Element {
             route_pending_identity_link(
                 &services_for_links,
                 pending_identity_request,
+                manual_credential_review_lock,
                 navigation,
                 profile_menu_open,
                 identity_ingress_notice,
@@ -3636,6 +3651,7 @@ pub fn App() -> Element {
                         DocumentsPage {
                             active_profile: active_profile.clone(),
                             pending_identity_request,
+                            manual_credential_review_lock,
                             on_manage_identities: move |_| navigation.write().push(Route::ManageIdentities),
                         }
                     },
@@ -3651,6 +3667,7 @@ pub fn App() -> Element {
                         CredentialsPage {
                             active_profile: active_profile.clone(),
                             pending_identity_request,
+                            manual_credential_review_lock,
                         }
                     },
                     Route::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
@@ -5049,6 +5066,7 @@ fn HomeActivityPreview(
 fn DocumentsPage(
     active_profile: WalletProfileView,
     pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    manual_credential_review_lock: Signal<bool>,
     on_manage_identities: EventHandler<MouseEvent>,
 ) -> Element {
     rsx! {
@@ -5069,6 +5087,7 @@ fn DocumentsPage(
         CredentialsPage {
             active_profile,
             pending_identity_request,
+            manual_credential_review_lock,
         }
     }
 }
@@ -10163,6 +10182,7 @@ fn credential_issuance_cleanup_allows_release(
 fn apply_failed_credential_acceptance_state<Prepared>(
     cleanup: &Result<Result<CredentialIssuanceView, CredentialIssuanceError>, UiBlockingTaskError>,
     pending: &mut Option<PendingIdentityRequest>,
+    manual_review_lock: &mut bool,
     prepared: &mut Option<Prepared>,
     consent: &mut bool,
 ) -> bool {
@@ -10171,7 +10191,7 @@ fn apply_failed_credential_acceptance_state<Prepared>(
         .is_ok_and(credential_issuance_cleanup_allows_release);
     *consent = false;
     if cleanup_confirmed {
-        wipe_pending_identity_request_value(pending, Some(IdentityRequestKind::CredentialIssuance));
+        clear_credential_issuance_review_admission_value(pending, manual_review_lock);
         *prepared = None;
     }
     cleanup_confirmed
@@ -10197,11 +10217,15 @@ fn identity_request_routing_message(error: IdentityRequestRoutingError) -> Strin
 fn route_pending_identity_link(
     services: &WalletUiServices,
     mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    manual_credential_review_lock: Signal<bool>,
     mut navigation: Signal<RouteStack>,
     mut profile_menu_open: Signal<bool>,
     mut notice: Signal<Option<String>>,
 ) {
-    if !identity_request_admits_new_link(pending_identity_request.read().is_some()) {
+    if !identity_request_admits_new_link(
+        pending_identity_request.read().is_some(),
+        manual_credential_review_lock(),
+    ) {
         return;
     }
     let ingress = services.identity_link_ingress();
@@ -11152,6 +11176,7 @@ fn compact_credential_policy_summary(credential: &CredentialView) -> Option<Stri
 fn CredentialsPage(
     active_profile: WalletProfileView,
     pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    manual_credential_review_lock: Signal<bool>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| CredentialPageState::Loading);
@@ -11274,7 +11299,7 @@ fn CredentialsPage(
                         button {
                             class: "secondary-action",
                             r#type: "button",
-                            disabled: issuance_busy(),
+                            disabled: issuance_busy() || prepared_issuance.read().is_some(),
                             onclick: move |_| {
                                 offer_draft.set(CredentialOfferDraft::editable(offer.clone()));
                                 prepared_issuance.set(None);
@@ -11295,6 +11320,12 @@ fn CredentialsPage(
                                 let service = service.clone();
                                 let profile_id = profile_id.clone();
                                 let offer = offer_draft.read().offer_for_prepare().trim().to_owned();
+                                let has_imported_pending_marker = pending_identity_request
+                                    .read()
+                                    .as_ref()
+                                    .is_some_and(|request| {
+                                        request.kind == IdentityRequestKind::CredentialIssuance
+                                    });
                                 scrub_pending_identity_request(
                                     &mut pending_identity_request,
                                     IdentityRequestKind::CredentialIssuance,
@@ -11309,8 +11340,13 @@ fn CredentialsPage(
                                     {
                                         Ok(Ok(preview)) => {
                                             offer_draft.write().clear_imported();
-                                            retain_credential_issuance_review_lock(
+                                            scrub_pending_identity_request(
                                                 &mut pending_identity_request,
+                                                IdentityRequestKind::CredentialIssuance,
+                                            );
+                                            retain_manual_credential_review_admission_lock(
+                                                &mut manual_credential_review_lock,
+                                                has_imported_pending_marker,
                                             );
                                             prepared_issuance.set(Some(preview));
                                             issuance_consent.set(false);
@@ -11452,9 +11488,9 @@ fn CredentialsPage(
                                                     .await
                                                     {
                                                         Ok(Ok(result)) => {
-                                                            wipe_pending_identity_request(
+                                                            clear_credential_issuance_review_admission(
                                                                 &mut pending_identity_request,
-                                                                Some(IdentityRequestKind::CredentialIssuance),
+                                                                &mut manual_credential_review_lock,
                                                             );
                                                             prepared_issuance.set(Some(result));
                                                             issuance_notice.set(Some("Credential issued, verified, and stored in the protected inventory.".to_owned()));
@@ -11480,11 +11516,13 @@ fn CredentialsPage(
                                                             }).await;
                                                             let cleanup_confirmed = {
                                                                 let mut pending = pending_identity_request.write();
+                                                                let mut manual_review_lock = manual_credential_review_lock.write();
                                                                 let mut prepared = prepared_issuance.write();
                                                                 let mut consent = issuance_consent.write();
                                                                 apply_failed_credential_acceptance_state(
                                                                     &cleanup,
                                                                     &mut pending,
+                                                                    &mut manual_review_lock,
                                                                     &mut prepared,
                                                                     &mut consent,
                                                                 )
@@ -11528,9 +11566,9 @@ fn CredentialsPage(
                                                     .await;
                                                     match result {
                                                         Ok(Ok(result)) => {
-                                                            wipe_pending_identity_request(
+                                                            clear_credential_issuance_review_admission(
                                                                 &mut pending_identity_request,
-                                                                Some(IdentityRequestKind::CredentialIssuance),
+                                                                &mut manual_credential_review_lock,
                                                             );
                                                             prepared_issuance.set(Some(result));
                                                             issuance_consent.set(false);
@@ -12829,62 +12867,97 @@ mod tests {
     }
 
     #[test]
-    fn failed_acceptance_with_uncertain_cleanup_retains_review_and_route_lock() {
+    fn uncertain_cleanup_retains_imported_or_manual_review_admission_lock() {
         fn assert_retained(
             cleanup: Result<
                 Result<CredentialIssuanceView, CredentialIssuanceError>,
                 UiBlockingTaskError,
             >,
+            mut pending: Option<PendingIdentityRequest>,
+            mut manual_review_lock: bool,
+            expected_route: Option<Route>,
         ) {
-            let mut pending = Some(PendingIdentityRequest {
-                kind: IdentityRequestKind::CredentialIssuance,
-                request_uri: String::new(),
-            });
             let mut prepared = Some("prepared credential review".to_owned());
             let mut consent = true;
 
             assert!(!apply_failed_credential_acceptance_state(
                 &cleanup,
                 &mut pending,
+                &mut manual_review_lock,
                 &mut prepared,
                 &mut consent,
             ));
 
             assert!(!consent, "failed acceptance must clear prior consent");
             assert_eq!(prepared.as_deref(), Some("prepared credential review"));
-            assert_eq!(
-                retained_identity_review_route(&pending),
-                Some(Route::CredentialRequest)
-            );
-            assert!(!identity_request_admits_new_link(pending.is_some()));
+            assert_eq!(retained_identity_review_route(&pending), expected_route);
+            assert!(!identity_request_admits_new_link(
+                pending.is_some(),
+                manual_review_lock,
+            ));
         }
 
-        assert_retained(Ok(Err(CredentialIssuanceError::InvalidState)));
-        assert_retained(Ok(Err(CredentialIssuanceError::Unavailable)));
-        assert_retained(Err(UiBlockingTaskError::WorkerFailed));
+        let imported_marker = || {
+            Some(PendingIdentityRequest {
+                kind: IdentityRequestKind::CredentialIssuance,
+                request_uri: String::new(),
+            })
+        };
+        for cleanup in [
+            Ok(Err(CredentialIssuanceError::InvalidState)),
+            Ok(Err(CredentialIssuanceError::Unavailable)),
+            Err(UiBlockingTaskError::WorkerFailed),
+        ] {
+            assert_retained(
+                cleanup,
+                imported_marker(),
+                false,
+                Some(Route::CredentialRequest),
+            );
+        }
+        for cleanup in [
+            Ok(Err(CredentialIssuanceError::InvalidState)),
+            Ok(Err(CredentialIssuanceError::Unavailable)),
+            Err(UiBlockingTaskError::WorkerFailed),
+        ] {
+            assert_retained(cleanup, None, true, None);
+        }
     }
 
     #[test]
-    fn manual_prepared_issuance_blocks_a_new_os_link_until_terminal_completion() {
-        let mut pending = None;
-        let prepared = Some("manual prepared credential review".to_owned());
+    fn manual_prepared_review_lock_blocks_new_link_without_rerouting_documents() {
+        let pending = None;
+        let mut manual_review_lock = false;
 
-        assert!(retain_credential_issuance_review_lock_value(&mut pending));
-        assert_eq!(
-            retained_identity_review_route(&pending),
-            Some(Route::CredentialRequest)
-        );
-        assert!(!identity_request_admits_new_link(pending.is_some()));
-        assert_eq!(
-            prepared.as_deref(),
-            Some("manual prepared credential review")
-        );
-
-        assert!(wipe_pending_identity_request_value(
-            &mut pending,
-            Some(IdentityRequestKind::CredentialIssuance),
+        assert!(retain_manual_credential_review_admission_lock_value(
+            &mut manual_review_lock,
+            false,
         ));
-        assert!(identity_request_admits_new_link(pending.is_some()));
+        assert!(pending.is_none(), "manual review must not create a marker");
+        assert_eq!(retained_identity_review_route(&pending), None);
+        assert_eq!(
+            retained_identity_review_route(&pending).unwrap_or(Route::Documents),
+            Route::Documents,
+        );
+        assert!(!identity_request_admits_new_link(
+            pending.is_some(),
+            manual_review_lock,
+        ));
+    }
+
+    #[test]
+    fn terminal_clear_releases_manual_credential_review_admission_lock() {
+        let mut pending = None;
+        let mut manual_review_lock = true;
+
+        clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
+
+        assert!(pending.is_none());
+        assert!(!manual_review_lock);
+        assert!(identity_request_admits_new_link(
+            pending.is_some(),
+            manual_review_lock,
+        ));
     }
 
     #[test]
@@ -12935,6 +13008,12 @@ mod tests {
             &mut matching_pending,
             IdentityRequestKind::CredentialIssuance,
         ));
+        let mut manual_review_lock = false;
+        assert!(!retain_manual_credential_review_admission_lock_value(
+            &mut manual_review_lock,
+            true,
+        ));
+        assert!(!manual_review_lock);
         let scrubbed_guard = matching_pending.as_ref().expect("review guard retained");
         assert!(!scrubbed_guard.has_raw_uri());
         assert_eq!(
@@ -12950,7 +13029,8 @@ mod tests {
             Some(Route::CredentialRequest)
         );
         assert!(!identity_request_admits_new_link(
-            matching_pending.is_some()
+            matching_pending.is_some(),
+            manual_review_lock,
         ));
 
         assert!(wipe_pending_identity_request_value(
@@ -12959,7 +13039,10 @@ mod tests {
         ));
         assert!(matching_pending.is_none());
         assert_eq!(retained_identity_review_route(&matching_pending), None);
-        assert!(identity_request_admits_new_link(matching_pending.is_some()));
+        assert!(identity_request_admits_new_link(
+            matching_pending.is_some(),
+            manual_review_lock,
+        ));
     }
 
     #[test]

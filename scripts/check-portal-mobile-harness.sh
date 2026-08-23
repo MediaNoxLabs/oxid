@@ -493,6 +493,10 @@ for locked_review_marker in \
     exit 1
   }
 done
+if ! rg -qF 'disabled: issuance_busy() || prepared_issuance.read().is_some(),' crates/ui-dioxus/src/lib.rs; then
+  echo "A prepared credential review must disable replacement by the standalone demo offer." >&2
+  exit 1
+fi
 if rg -n 'failed issuance route release|A failed issuance must clear the retained router request|post-consent transport failure must release' \
   tests/mobile/android-portal-flow.mjs tests/mobile/ios/OxidUITests/PortalFlowTests.swift; then
   echo "Portal mobile suites still demand obsolete post-consent route release." >&2
