@@ -11299,7 +11299,11 @@ fn CredentialsPage(
                         button {
                             class: "secondary-action",
                             r#type: "button",
-                            disabled: issuance_busy() || prepared_issuance.read().is_some(),
+                            disabled: issuance_busy()
+                                || prepared_issuance
+                                    .read()
+                                    .as_ref()
+                                    .is_some_and(|review| review.state == "awaiting_consent"),
                             onclick: move |_| {
                                 offer_draft.set(CredentialOfferDraft::editable(offer.clone()));
                                 prepared_issuance.set(None);
