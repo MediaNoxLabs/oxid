@@ -20,6 +20,11 @@ site_dir="$repo_root/docs/site"
 adr_index="$repo_root/docs/adr/README.md"
 catalog="$site_dir/src/adr-catalog.md"
 blob_base="https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr"
+# ADR-0101..0103 are introduced by the still-unmerged integration PR. Link
+# those rows to an immutable signed PR head containing their current files, so
+# the generated catalog works before merge and after branch cleanup. Moving
+# develop links remain the default for records that have already landed.
+portal_adr_permalink_base="https://github.com/MediaNoxLabs/oxid/blob/fd09a25bd6ffecc0c5ec4f0aa4e9979e6e402751/docs/adr"
 
 {
   echo "# Decision records"
@@ -31,6 +36,7 @@ blob_base="https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr"
   sed -E \
     -e 's/^# /## /' \
     -e "s|\\]\\((([0-9]{4})[A-Za-z0-9./_-]*\\.md)\\)|](${blob_base}/\\1)|g" \
+    -e "s|${blob_base}/(010[1-3]-[A-Za-z0-9._/-]*\\.md)|${portal_adr_permalink_base}/\\1|g" \
     "$adr_index"
 } > "$catalog"
 
