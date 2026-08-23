@@ -2,6 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+mod portal_profile_authority;
+
 mod generated_brand {
     include!(concat!(env!("OUT_DIR"), "/brand.rs"));
 }
@@ -18,6 +21,14 @@ fn main() {
         not(any(target_os = "ios", target_os = "android"))
     ))]
     compile_error!("standalone-portal is available only on iOS and Android");
+
+    #[cfg(all(
+        feature = "standalone-portal",
+        not(oxid_portal_virtual_device_profile_authorized)
+    ))]
+    compile_error!(
+        "standalone-portal requires the repository-authorized iOS Simulator/Android QEMU build profile"
+    );
 
     #[cfg(all(feature = "standalone-portal", target_arch = "wasm32"))]
     compile_error!("standalone-portal is unavailable on WASM");
@@ -85,6 +96,10 @@ fn main() {
         not(any(target_os = "ios", target_os = "android"))
     ))]
     compile_error!("standalone-native-proving-artifacts is available only on iOS and Android");
+
+    #[cfg(all(feature = "standalone-portal", target_os = "android"))]
+    oxid_composition::verify_android_portal_virtual_device_profile()
+        .unwrap_or_else(|error| panic!("{error}"));
 
     #[cfg(all(
         feature = "standalone-portal",

@@ -10,7 +10,7 @@ use std::{
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
     thread,
@@ -118,6 +118,7 @@ impl ProcessHarness {
 struct PortalProxy {
     origin: String,
     captured_credential_response: Arc<Mutex<Option<Value>>>,
+    secret_request_count: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
     completion: Option<mpsc::Receiver<()>>,
     thread: Option<thread::JoinHandle<()>>,
@@ -134,6 +135,8 @@ impl PortalProxy {
         let port = listener.local_addr().expect("proxy address").port();
         let captured_credential_response: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
         let thread_capture = Arc::clone(&captured_credential_response);
+        let secret_request_count = Arc::new(AtomicUsize::new(0));
+        let thread_secret_request_count = Arc::clone(&secret_request_count);
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let (completion_sender, completion_receiver) = mpsc::sync_channel(1);
@@ -155,6 +158,12 @@ impl PortalProxy {
                     .expect("blocking proxy stream");
                 set_stream_timeouts(&incoming);
                 let (path, _, raw_request) = read_raw_request(&mut incoming);
+                if matches!(
+                    path.as_str(),
+                    "/api/issuer/token" | "/api/issuer/nonce" | "/api/issuer/credentials"
+                ) {
+                    thread_secret_request_count.fetch_add(1, Ordering::Relaxed);
+                }
                 let mut upstream = TcpStream::connect(upstream_address).expect("Portal upstream");
                 set_stream_timeouts(&upstream);
                 upstream
@@ -180,11 +189,18 @@ impl PortalProxy {
         });
         Self {
             origin: format!("http://localhost:{port}"),
+            secret_request_count,
             captured_credential_response,
             stop,
             completion: Some(completion_receiver),
             thread: Some(handle),
         }
+    }
+}
+
+impl PortalProxy {
+    fn secret_request_count(&self) -> usize {
+        self.secret_request_count.load(Ordering::Relaxed)
     }
 }
 
@@ -723,6 +739,25 @@ fn wait_for_portal() {
     panic!("Portal issuer did not become ready");
 }
 
+fn approved_portal_offer(origin: &str) -> String {
+    let kyc = portal_request(origin, "POST", "/api/issuer/kyc-sessions", Some("{}"));
+    let session_id = kyc["sessionId"].as_str().expect("KYC session id");
+    let status = portal_request(
+        origin,
+        "GET",
+        &format!("/api/issuer/kyc-sessions/{session_id}/status"),
+        None,
+    );
+    assert_eq!(
+        status["status"].as_str().map(str::to_ascii_lowercase),
+        Some("approved".to_owned())
+    );
+    kyc["credentialOfferUri"]
+        .as_str()
+        .expect("real Portal offer")
+        .to_owned()
+}
+
 #[test]
 #[ignore = "requires authenticated Portal integration checkout plus Docker/Nix compose stack"]
 fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
@@ -833,27 +868,28 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         .to_owned();
     assert_ne!(authentication, binding);
 
-    let kyc = portal_request(
-        &portal_proxy.origin,
-        "POST",
-        "/api/issuer/kyc-sessions",
-        Some("{}"),
-    );
-    let session_id = kyc["sessionId"].as_str().expect("KYC session id");
-    let status = portal_request(
-        &portal_proxy.origin,
-        "GET",
-        &format!("/api/issuer/kyc-sessions/{session_id}/status"),
-        None,
+    let refusal_offer = approved_portal_offer(&portal_proxy.origin);
+    let refusal_prepared = first.request(
+        "refusal-prepare",
+        "credential.issuance.prepare",
+        json!({"offer":refusal_offer}),
     );
     assert_eq!(
-        status["status"].as_str().map(str::to_ascii_lowercase),
-        Some("approved".to_owned())
+        refusal_prepared["result"]["issuance"]["state"],
+        "awaiting_consent"
     );
-    let offer = kyc["credentialOfferUri"]
+    let refusal_issuance = refusal_prepared["result"]["issuance"]["id"]
         .as_str()
-        .expect("real Portal offer")
-        .to_owned();
+        .expect("refusal issuance");
+    let refused = first.request(
+        "refuse",
+        "credential.issuance.refuse",
+        json!({"issuanceId":refusal_issuance}),
+    );
+    assert_eq!(refused["result"]["issuance"]["state"], "refused");
+    assert_eq!(portal_proxy.secret_request_count(), 0);
+
+    let offer = approved_portal_offer(&portal_proxy.origin);
     let routed = first.request(
         "route",
         "identity.request.route",
@@ -870,6 +906,21 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         .as_str()
         .expect("issuance")
         .to_owned();
+    let unconfirmed = first.request(
+        "unconfirmed",
+        "credential.issuance.accept",
+        json!({
+            "issuanceId":issuance,
+            "holderDid":holder_did,
+            "methodId":authentication,
+            "holderBindingMethodId":binding,
+            "confirmed":false,
+            "intent":"ACCEPT_CREDENTIAL_ISSUANCE"
+        }),
+    );
+    assert_eq!(unconfirmed["error"]["code"], "confirmation_required");
+    assert_eq!(portal_proxy.secret_request_count(), 0);
+
     let accepted = first.request(
         "accept",
         "credential.issuance.accept",
@@ -896,6 +947,25 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         );
         panic!("payload-free acceptance result: {accepted}; diagnosis={diagnosis}");
     }
+    let secret_requests_before_replay = portal_proxy.secret_request_count();
+    let replay = first.request(
+        "replay",
+        "credential.issuance.accept",
+        json!({
+            "issuanceId":issuance,
+            "holderDid":holder_did,
+            "methodId":authentication,
+            "holderBindingMethodId":binding,
+            "confirmed":true,
+            "intent":"ACCEPT_CREDENTIAL_ISSUANCE"
+        }),
+    );
+    assert_eq!(replay["ok"], false);
+    assert_eq!(
+        portal_proxy.secret_request_count(),
+        secret_requests_before_replay,
+        "terminal issuance replay must not contact secret endpoints"
+    );
     let credential_id = accepted["result"]["issuance"]["credentialId"]
         .as_str()
         .expect("credential")
@@ -946,11 +1016,14 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
     let evidence = json!({
         "acceptance":{
             "encryptedPersistence":true,
+            "confirmationRequired":true,
             "exactBundleImported":true,
             "managedAuthenticationProof":true,
             "mockKycApproved":true,
+            "refusalWithoutSecretCalls":true,
             "newProcessRestore":true,
             "reverified":true,
+            "replayRejected":true,
             "separateJubjubAssertionBinding":true
         },
         "oxid":{"head":oxid_head},

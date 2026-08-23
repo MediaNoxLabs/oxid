@@ -171,22 +171,31 @@ fn registered_openid4vp_request(
 /// the real, single-use Portal offer touch a host/device process argument, OS
 /// intent/URL state, log, evidence file, or retained staging artifact.
 /// `simctl openurl`/`am start -d` deliver only the fixed, non-secret
-/// [`loopback_test_offer_trigger::TRIGGER`] string. A named worker fetches the
-/// real offer over bounded loopback HTTP and enqueues it into the normal
-/// one-item ingress; Tao/Wry's OS-event callback never performs network I/O.
-/// Fetch/validation failure instead enqueues the literal trigger, which the
-/// strict credential-offer router rejects as malformed. This is a single
-/// literal trigger, not a generic command or URL-fetch channel.
+/// [`loopback_test_offer_trigger::TRIGGER`] string. The harness places a fresh
+/// capability in app-private storage without argv; a named worker unlinks it,
+/// authenticates one bounded loopback response, zeroizes it, and enqueues the
+/// validated offer into the normal one-item ingress. Tao/Wry's OS-event
+/// callback never performs network I/O. Failure instead enqueues the literal
+/// trigger, which the strict credential-offer router rejects as malformed.
 #[cfg(feature = "loopback-test-offer-trigger")]
 mod loopback_test_offer_trigger {
+    use std::fs;
     use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpStream};
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+    use zeroize::Zeroizing;
 
     pub const TRIGGER: &str = "openid-credential-offer://standalone-portal-test-fetch";
 
     const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
     const MAX_RESPONSE_BYTES: usize = 32 * 1_024;
+    const CAPABILITY_BYTES: usize = 64;
+    #[cfg(any(target_os = "ios", target_os = "android", test))]
+    const CAPABILITY_FILE: &str = "portal-offer.capability";
 
     pub fn is_trigger(value: &str) -> bool {
         value == TRIGGER
@@ -194,15 +203,81 @@ mod loopback_test_offer_trigger {
 
     pub fn resolve_trigger() -> String {
         let control_address = SocketAddr::from(([127, 0, 0, 1], 18091));
-        fetch_offer(control_address, CONTROL_TIMEOUT).unwrap_or_else(|()| TRIGGER.to_owned())
+        read_capability()
+            .and_then(|capability| fetch_offer(control_address, CONTROL_TIMEOUT, &capability))
+            .unwrap_or_else(|()| TRIGGER.to_owned())
     }
 
-    fn fetch_offer(address: SocketAddr, timeout: Duration) -> Result<String, ()> {
+    fn capability_path() -> Result<PathBuf, ()> {
+        #[cfg(target_os = "ios")]
+        {
+            let home = std::env::var_os("HOME").ok_or(())?;
+            return Ok(PathBuf::from(home)
+                .join("Library/Application Support/io.medianox.oxid")
+                .join(CAPABILITY_FILE));
+        }
+        #[cfg(target_os = "android")]
+        {
+            return Ok(PathBuf::from("/data/data/io.medianox.oxid/files").join(CAPABILITY_FILE));
+        }
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        Err(())
+    }
+
+    fn read_capability() -> Result<Zeroizing<Vec<u8>>, ()> {
+        read_capability_file(&capability_path()?)
+    }
+
+    fn read_capability_file(path: &Path) -> Result<Zeroizing<Vec<u8>>, ()> {
+        let metadata = fs::symlink_metadata(path).map_err(|_| ())?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(());
+        }
+        #[cfg(unix)]
+        let owner_private = metadata.permissions().mode() & 0o077 == 0;
+        #[cfg(not(unix))]
+        let owner_private = true;
+        if metadata.len() != CAPABILITY_BYTES as u64 || !owner_private {
+            fs::remove_file(path).map_err(|_| ())?;
+            return Err(());
+        }
+        let capability = match fs::read(path) {
+            Ok(bytes) => Zeroizing::new(bytes),
+            Err(_) => {
+                let _ = fs::remove_file(path);
+                return Err(());
+            }
+        };
+        // A capability is burned before the network request. Failure to
+        // unlink fails closed rather than leaving replayable app-private state.
+        fs::remove_file(path).map_err(|_| ())?;
+        if capability.len() != CAPABILITY_BYTES
+            || !capability
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+        {
+            return Err(());
+        }
+        Ok(capability)
+    }
+
+    fn fetch_offer(
+        address: SocketAddr,
+        timeout: Duration,
+        capability: &[u8],
+    ) -> Result<String, ()> {
+        if capability.len() != CAPABILITY_BYTES {
+            return Err(());
+        }
         let started = Instant::now();
         let mut stream = TcpStream::connect_timeout(&address, timeout).map_err(|_| ())?;
         set_remaining_timeouts(&stream, started, timeout)?;
         stream
-            .write_all(b"GET /offer HTTP/1.1\r\nHost: 127.0.0.1:18091\r\nConnection: close\r\n\r\n")
+            .write_all(b"GET /offer HTTP/1.1\r\nHost: 127.0.0.1:18091\r\nAuthorization: Bearer ")
+            .map_err(|_| ())?;
+        stream.write_all(capability).map_err(|_| ())?;
+        stream
+            .write_all(b"\r\nConnection: close\r\n\r\n")
             .map_err(|_| ())?;
 
         let mut buffer = Vec::new();
@@ -302,15 +377,27 @@ mod loopback_test_offer_trigger {
         }
 
         #[test]
-        fn loopback_fetch_accepts_only_the_fixed_bounded_http_exchange() {
+        fn loopback_fetch_sends_the_capability_only_in_the_authorization_header() {
             use std::net::TcpListener;
 
+            let capability = b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
             let listener = TcpListener::bind(("127.0.0.1", 0)).expect("loopback listener");
             let address = listener.local_addr().expect("listener address");
             let server = std::thread::spawn(move || {
                 let (mut stream, _) = listener.accept().expect("accept fetch");
-                let mut request = [0_u8; 256];
-                let _ = stream.read(&mut request).expect("read request");
+                let mut request = Vec::new();
+                let mut chunk = [0_u8; 128];
+                while !request.ends_with(b"\r\n\r\n") {
+                    let read = stream.read(&mut chunk).expect("read request");
+                    assert!(read > 0, "request ended before its headers");
+                    request.extend_from_slice(&chunk[..read]);
+                    assert!(request.len() <= 1_024, "request headers exceeded bound");
+                }
+                let expected = format!(
+                    "GET /offer HTTP/1.1\r\nHost: 127.0.0.1:18091\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
+                    String::from_utf8_lossy(capability)
+                );
+                assert_eq!(request, expected.as_bytes());
                 let offer = "openid-credential-offer://?credential_offer=abc";
                 write!(
                     stream,
@@ -321,16 +408,50 @@ mod loopback_test_offer_trigger {
             });
 
             assert_eq!(
-                fetch_offer(address, Duration::from_secs(1)),
+                fetch_offer(address, Duration::from_secs(1), capability),
                 Ok("openid-credential-offer://?credential_offer=abc".to_owned())
             );
             server.join().expect("server thread");
         }
 
         #[test]
+        fn app_private_capability_is_exact_owner_only_and_unlinked_before_use() {
+            #[cfg(unix)]
+            {
+                let root = std::env::temp_dir().join(format!(
+                    "oxid-portal-capability-{}-{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("clock")
+                        .as_nanos()
+                ));
+                fs::create_dir(&root).expect("private root");
+                fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("root mode");
+                let path = root.join(CAPABILITY_FILE);
+                fs::write(
+                    &path,
+                    b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                )
+                .expect("capability");
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("mode");
+                let capability = read_capability_file(&path).expect("private capability");
+                assert_eq!(capability.len(), CAPABILITY_BYTES);
+                assert!(!path.exists());
+
+                fs::write(&path, b"short").expect("short capability");
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("mode");
+                assert!(read_capability_file(&path).is_err());
+                assert!(!path.exists(), "rejected capability must also be deleted");
+                fs::remove_dir(&root).expect("remove root");
+            }
+        }
+
+        #[test]
         fn loopback_fetch_has_one_closed_wall_clock_deadline() {
             use std::net::TcpListener;
 
+            let capability = b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
             let listener = TcpListener::bind(("127.0.0.1", 0)).expect("loopback listener");
             let address = listener.local_addr().expect("listener address");
             let server = std::thread::spawn(move || {
@@ -338,13 +459,15 @@ mod loopback_test_offer_trigger {
                 std::thread::sleep(Duration::from_millis(100));
             });
             let started = Instant::now();
-            assert_eq!(fetch_offer(address, Duration::from_millis(20)), Err(()));
+            assert_eq!(
+                fetch_offer(address, Duration::from_millis(20), capability),
+                Err(())
+            );
             assert!(started.elapsed() < Duration::from_secs(1));
             server.join().expect("server thread");
         }
     }
 }
-
 /// Native scanner backed by AVFoundation on iOS and Google Code Scanner on
 /// Android. Other targets return `Unavailable` without attempting a bridge.
 #[derive(Clone, Copy, Debug, Default)]

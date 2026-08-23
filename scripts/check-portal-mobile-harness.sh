@@ -10,6 +10,9 @@ bash -n \
   scripts/test-ios-portal-flow.sh \
   scripts/test-android-portal-flow.sh
 node --check scripts/e2e/portal-mobile-support.mjs
+node --check scripts/e2e/portal-mobile-offer-handoff.mjs
+node --check scripts/e2e/portal-mobile-offer-handoff.test.mjs
+node --test scripts/e2e/portal-mobile-offer-handoff.test.mjs
 node --check scripts/e2e/portal-mobile-holder-sync.mjs
 node --check tests/mobile/android-portal-flow.mjs
 
@@ -44,12 +47,48 @@ fi
 for marker in \
   OXID_STANDALONE_PORTAL_PROFILE \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH \
-  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256; do
+  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256 \
+  OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH \
+  OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256; do
   rg -q "$marker" apps/oxid scripts || {
     echo "Portal compile-time profile marker is missing: $marker" >&2
     exit 1
   }
 done
+
+for capability_boundary in \
+  'randomFillSync(Buffer.alloc(32))' \
+  'timingSafeEqual(candidate, this.#capability)' \
+  'this.#state = "consuming"' \
+  'this.#capability.fill(0)' \
+  'offer.fill(0)' \
+  'Authorization: Bearer ' \
+  'portal-offer.capability' \
+  'preparePrivateCapabilityPaths' \
+  'iosCapabilityCandidatePath' \
+  'files/.portal-offer.capability.tmp' \
+  'fs::remove_file(path)' \
+  'zeroize::Zeroizing' \
+  'arm-android-offer' \
+  'head -c "$PORTAL_MOBILE_OFFER_CAPABILITY_BYTES" <&8' \
+  'run-as io.medianox.oxid sh -c'; do
+  rg -qF "$capability_boundary" \
+    scripts/e2e/portal-mobile-offer-handoff.mjs \
+    scripts/e2e/portal-mobile-support.mjs \
+    scripts/e2e/portal-mobile-harness-lib.sh \
+    scripts/test-android-portal-flow.sh \
+    crates/adapters/identity-ingress/src/lib.rs || {
+    echo "Portal one-shot capability boundary is missing: $capability_boundary" >&2
+    exit 1
+  }
+done
+if rg -n 'process\.argv.*(capability|offer)|ready(Path|\[[^]]+\]|\.[A-Za-z]).*capability|credentialOfferUri.*(console|process\.(stdout|stderr))|Authorization.*MOBILE_TEST_OFFER_TRIGGER|OXID_BUILD_.*CAPABILITY|env!\([^)]*CAPABILITY|capability=.*(simctl|adb|spawn)' \
+  scripts/e2e/portal-mobile-* scripts/run-ios-simulator.sh scripts/run-android-emulator.sh \
+  scripts/test-ios-portal-flow.sh scripts/test-android-portal-flow.sh \
+  crates/adapters/identity-ingress/src/lib.rs; then
+  echo "Portal capability must not enter argv, logs, ready/evidence data, or build inputs." >&2
+  exit 1
+fi
 
 for port in 6300 8088 18091 18093 9944 18090; do
   rg -q "${port}" scripts/test-android-portal-flow.sh || {
@@ -336,8 +375,8 @@ for cleanup_wait_marker in \
     exit 1
   }
 done
-if [ "$(rg -c 'timeout: (timeoutMs|HOST_COMMAND_TIMEOUT_MS)' scripts/e2e/portal-mobile-support.mjs)" -ne 3 ] ||
-  [ "$(rg -c 'killSignal: "SIGKILL"' scripts/e2e/portal-mobile-support.mjs)" -ne 3 ] ||
+if [ "$(rg -c 'timeout: (timeoutMs|HOST_COMMAND_TIMEOUT_MS)' scripts/e2e/portal-mobile-support.mjs)" -ne 4 ] ||
+  [ "$(rg -c 'killSignal: "SIGKILL"' scripts/e2e/portal-mobile-support.mjs)" -ne 4 ] ||
   ! rg -qF 'process.exitCode = 1' scripts/e2e/portal-mobile-support.mjs ||
   ! rg -qF 'DEVELOPER_DIR: xcodeDeveloperDirectory' scripts/e2e/portal-mobile-support.mjs ||
   rg -qF '/Applications/Xcode.app/Contents/Developer' scripts/e2e/portal-mobile-support.mjs; then

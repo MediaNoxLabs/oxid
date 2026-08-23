@@ -8,7 +8,7 @@ readonly PR_HEAD="9c82db23eabe8b6d758b2731f2225910ea627c14"
 readonly PROFILE_SOURCE="76e8edf394a4cb37ca822037272d543c68f25f71"
 readonly PROVENANCE_SHA="cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87"
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-readonly SOURCE_TREE="${PORTAL_SOURCE_TREE:-/Users/ysh/iohk/lace-id-portal/tmp/worktrees/dev-loops/issue-16}"
+readonly SOURCE_TREE="${PORTAL_SOURCE_TREE:-}"
 readonly EVIDENCE="${OXID_PORTAL_EVIDENCE_PATH:-$REPO_ROOT/target/portal-headless-e2e/evidence.json}"
 readonly RUN_TREE="${TMPDIR:-/tmp}/oxid-portal-integration-${INTEGRATION_COMMIT:0:8}-$$"
 readonly RAW_LOG="${TMPDIR:-/tmp}/oxid-portal-headless-e2e-$$.log"
@@ -45,15 +45,17 @@ fail() {
 command -v nix >/dev/null 2>&1 || fail missing-nix
 command -v docker >/dev/null 2>&1 || fail missing-docker
 command -v just >/dev/null 2>&1 || fail missing-just
+command -v jq >/dev/null 2>&1 || fail missing-jq
+command -v rg >/dev/null 2>&1 || fail missing-rg
 docker info >/dev/null 2>&1 || fail docker-daemon
 
 if ! git -C "$SOURCE_TREE" fetch origin \
-  "integration:refs/remotes/origin/integration" \
+  "+$INTEGRATION_COMMIT:refs/oxid-evidence/portal-integration" \
   "refs/pull/17/head:refs/oxid-evidence/portal-pr-17" >>"$RAW_LOG" 2>&1; then
   fail source-fetch
 fi
-[[ "$(git -C "$SOURCE_TREE" rev-parse origin/integration^{commit})" == "$INTEGRATION_COMMIT" ]] || fail integration-commit
-[[ "$(git -C "$SOURCE_TREE" rev-parse origin/integration^{tree})" == "$INTEGRATION_TREE" ]] || fail integration-tree
+[[ "$(git -C "$SOURCE_TREE" rev-parse refs/oxid-evidence/portal-integration^{commit})" == "$INTEGRATION_COMMIT" ]] || fail integration-commit
+[[ "$(git -C "$SOURCE_TREE" rev-parse refs/oxid-evidence/portal-integration^{tree})" == "$INTEGRATION_TREE" ]] || fail integration-tree
 [[ "$(git -C "$SOURCE_TREE" rev-parse refs/oxid-evidence/portal-pr-17^{commit})" == "$PR_HEAD" ]] || fail pr-head
 [[ "$(git -C "$SOURCE_TREE" rev-parse refs/oxid-evidence/portal-pr-17^{tree})" == "$INTEGRATION_TREE" ]] || fail pr-tree
 [[ "$(git -C "$SOURCE_TREE" rev-parse "$PROFILE_SOURCE"^{commit})" == "$PROFILE_SOURCE" ]] || fail profile-source
@@ -85,9 +87,6 @@ fi
 
 [[ -f "$EVIDENCE" ]] || fail missing-evidence
 [[ -z "$(git -C "$RUN_TREE" status --porcelain)" ]] || fail portal-tree-mutated
-# Evidence is produced from a closed boolean/source-pin schema. Reject common
-# raw secret/value representations as a defense-in-depth sentinel scan.
-if grep -Eqi 'openid-credential-offer|access[_-]?token|pre-authorized|c_nonce|eyJ|did:|https?://|AB1234567|John|Doe|private.?parts|signed.?bytes|detached.?proof' "$EVIDENCE"; then
-  fail evidence-schema
-fi
+"$REPO_ROOT/scripts/e2e/validate-portal-headless-evidence.sh" "$EVIDENCE" "$OXID_HEAD" \
+  >>"$RAW_LOG" 2>&1 || fail evidence-schema
 printf 'portal-headless-e2e: PASS evidence=%s\n' "${EVIDENCE#"$REPO_ROOT/"}"

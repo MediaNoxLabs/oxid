@@ -19,6 +19,7 @@ readonly PORTAL_MOBILE_ADB_OPERATION_TIMEOUT_SECONDS=10
 readonly PORTAL_MOBILE_ADB_KILL_GRACE_SECONDS=2
 readonly PORTAL_MOBILE_ADB_BOOT_DEADLINE_SECONDS=120
 readonly PORTAL_MOBILE_TERM_GRACE_SECONDS=5
+readonly PORTAL_MOBILE_OFFER_CAPABILITY_BYTES=64
 
 PORTAL_MOBILE_SUPPORT_PID=""
 PORTAL_MOBILE_HOLDER_SYNC_PID=""
@@ -27,6 +28,8 @@ PORTAL_MOBILE_STATE_DIR=""
 PORTAL_MOBILE_CONTROL_ORIGIN=""
 PORTAL_MOBILE_MANIFEST_PATH=""
 PORTAL_MOBILE_MANIFEST_SHA256=""
+PORTAL_MOBILE_CAPABILITY_FIFO=""
+PORTAL_MOBILE_CAPABILITY_FD_OPEN=0
 PORTAL_MOBILE_PRIVATE_LOG=""
 PORTAL_MOBILE_EVIDENCE_TEMP=""
 PORTAL_MOBILE_PLATFORM=""
@@ -288,7 +291,7 @@ portal_mobile_start() {
   case "$PORTAL_MOBILE_PLATFORM" in ios|android) ;; *) portal_mobile_fail platform; return 1 ;; esac
   portal_mobile_acquire_lock || return 1
 
-  local source_tree ready_fifo ready_status=""
+  local source_tree ready_fifo capability_fifo="" ready_status=""
   PORTAL_MOBILE_REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
   source_tree="$(portal_mobile_source_tree)" || { portal_mobile_fail source-path; return 1; }
   [ -z "$(git -C "$source_tree" status --porcelain --untracked-files=no)" ] || {
@@ -309,6 +312,14 @@ portal_mobile_start() {
   PORTAL_MOBILE_PRIVATE_LOG="$PORTAL_MOBILE_STATE_DIR/orchestrator-private.log"
   : >"$PORTAL_MOBILE_PRIVATE_LOG"
   chmod 600 "$PORTAL_MOBILE_PRIVATE_LOG"
+  if [ "$PORTAL_MOBILE_PLATFORM" = "android" ]; then
+    capability_fifo="$PORTAL_MOBILE_STATE_DIR/offer-capability.fifo"
+    mkfifo "$capability_fifo"
+    chmod 600 "$capability_fifo"
+    exec 8<>"$capability_fifo"
+    PORTAL_MOBILE_CAPABILITY_FIFO="$capability_fifo"
+    PORTAL_MOBILE_CAPABILITY_FD_OPEN=1
+  fi
 
   if ! git -C "$source_tree" fetch origin \
     "+$PORTAL_INTEGRATION_COMMIT:refs/oxid-evidence/portal-integration" \
@@ -363,6 +374,8 @@ portal_mobile_start() {
   PORTAL_INTEGRATION_CHECKOUT="$PORTAL_MOBILE_RUN_TREE" \
   OXID_PORTAL_MOBILE_STATE_DIR="$PORTAL_MOBILE_STATE_DIR" \
   OXID_PORTAL_MOBILE_READY_FIFO="$ready_fifo" \
+  OXID_PORTAL_MOBILE_PLATFORM="$PORTAL_MOBILE_PLATFORM" \
+  OXID_PORTAL_MOBILE_CAPABILITY_FIFO="$PORTAL_MOBILE_CAPABILITY_FIFO" \
     node "$PORTAL_MOBILE_REPOSITORY_ROOT/scripts/e2e/portal-mobile-support.mjs" \
       >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1 &
   PORTAL_MOBILE_SUPPORT_PID=$!
@@ -465,6 +478,14 @@ portal_mobile_cleanup() {
       cleanup_status=1
     fi
     PORTAL_MOBILE_RUN_TREE=""
+  fi
+  if [ "$PORTAL_MOBILE_CAPABILITY_FD_OPEN" = 1 ]; then
+    exec 8>&-
+    PORTAL_MOBILE_CAPABILITY_FD_OPEN=0
+  fi
+  if [ -n "$PORTAL_MOBILE_CAPABILITY_FIFO" ]; then
+    rm -f -- "$PORTAL_MOBILE_CAPABILITY_FIFO" || cleanup_status=1
+    PORTAL_MOBILE_CAPABILITY_FIFO=""
   fi
   if [ -n "$PORTAL_MOBILE_STATE_DIR" ]; then
     rm -rf "$PORTAL_MOBILE_STATE_DIR" || cleanup_status=1

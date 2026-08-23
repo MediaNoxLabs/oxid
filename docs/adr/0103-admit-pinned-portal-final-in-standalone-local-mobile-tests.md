@@ -28,9 +28,13 @@ repository-owned reverse mappings.
 
 Add the application feature `standalone-portal`. It implies `mobile`,
 `standalone-development`, `standalone-local`, and the composition-owned mobile
-Portal HTTP feature. `oxid-app` rejects it outside iOS/Android and rejects every
-native-custody or tailnet combination. The feature is not a public runtime
-setting.
+Portal HTTP feature. Feature selection alone is insufficient: `build.rs`
+requires an authenticated, exact transient profile-authority manifest emitted
+by the repository launcher. iOS permits only simulator target triples; Android
+emits authority only after a live `ro.kernel.qemu=1` check and the app repeats a
+payload-free `Build`-fact QEMU check before constructing Portal composition.
+`oxid-app` also rejects every native-custody or tailnet combination. The feature
+is not a public runtime setting.
 
 The launcher accepts `OXID_MOBILE_PORTAL_PROFILE=local` only with development
 custody and the local route profile. It authenticates one absolute regular
@@ -68,10 +72,10 @@ tears down before Android starts. Each platform command:
 3. recreates only the issuer with fixed loopback public origin and an
    Oxid-owned holder test resolver populated only from the app's persisted
    public DID record;
-4. derives the canonical secret-free deployment manifest and creates an
-   approved mock-KYC session;
-5. keeps the real offer in memory behind a loopback, no-store test control
-   endpoint;
+4. derives the canonical secret-free deployment manifest and creates a fresh
+   approved mock-KYC offer for each fixed-trigger handoff;
+5. arms that offer behind a fresh 256-bit capability and atomically permits
+   exactly one authenticated response before zeroizing the in-memory handoff;
 6. counts only HTTP path classes through a body-blind proxy, proving refusal
    makes zero token, nonce, or credential calls;
 7. drives the existing native one-item ingress/router, Dioxus preview/consent,
@@ -87,23 +91,29 @@ interrupt, and termination therefore share one scoped cleanup path. It always
 removes `target/portal-mobile-e2e/<platform>/runtime`; it also bounds support
 shutdown, attempts exact named-project teardown, removes the detached worktree
 and owned lock, and reports cleanup failure instead of silently succeeding.
-Android removes only the dynamically allocated CDP forward. It neither removes
-unrelated Docker/worktree/`target` state nor uses broad virtual-device or ADB
-cleanup.
+Android removes only the dynamically allocated CDP forward and its fixed
+app-private capability file. It neither removes unrelated
+Docker/worktree/`target` state nor uses broad virtual-device or ADB cleanup.
 
 Neither `simctl openurl` nor `am start -d` receives the offer. Both deliver
 only a fixed, non-secret trigger URL under the existing
 `openid-credential-offer` scheme
 (`openid-credential-offer://standalone-portal-test-fetch`). The app, built with
 the compile-time `loopback-test-offer-trigger` feature that
-`standalone-portal` selects, recognizes only that exact literal. A named
-background worker fetches the real offer over a time- and size-bounded
-loopback-only HTTP GET before handing a validated result to the existing
-one-item router; Tao/Wry's OS callback never blocks on retrieval. No real
-offer or grant enters host/device argv, OS URL/intent state, a staging file,
-logs, or retained evidence. A failed fetch enqueues the inert trigger string,
-which the strict `openid-credential-offer` route rejects as malformed rather
-than ever treating it as a real grant. The QEMU gate cold-reboots an
+`standalone-portal` selects, recognizes only that exact literal. Before each
+trigger, the harness provisions a fresh 256-bit capability without placing it
+in argv or retained output: iOS writes directly to the simulator app data
+container, while Android streams it on stdin through `run-as`. The named worker
+requires an owner-private fixed file, unlinks it before use, sends the
+capability only in an Authorization header, and zeroizes its buffer. The
+loopback endpoint changes state before writing any offer byte, so exactly one
+concurrent caller succeeds and replay fails. The offer response is time- and
+size-bounded before entering the existing one-item router; Tao/Wry's OS callback
+never blocks on retrieval. No real offer, grant, or capability enters
+host/device argv, OS URL/intent state, logs, or retained evidence. A failed
+fetch enqueues the inert trigger string, which the strict
+`openid-credential-offer` route rejects as malformed rather than ever treating
+it as a real grant. The QEMU gate cold-reboots an
 already-running disposable emulator so its system clock stays within two
 seconds of the host; strict credential temporal verification is not weakened
 with future-time slack. It then verifies exact reverse entries for 8088, 9944,

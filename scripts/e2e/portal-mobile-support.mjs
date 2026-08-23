@@ -6,6 +6,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { SingleUseOfferHandoff, preparePrivateCapabilityPaths } from "./portal-mobile-offer-handoff.mjs";
 
 const PORTAL_INTEGRATION_COMMIT = "925ec8d04882eabd4ac7b784c70fc2f0c152faae";
 const PORTAL_INTEGRATION_TREE = "58b4597524f88a0ae2253439a44dab0dc60cbb6f";
@@ -44,8 +45,15 @@ const stateDirectory = process.env.OXID_PORTAL_MOBILE_STATE_DIR;
 const readyFifo = process.env.OXID_PORTAL_MOBILE_READY_FIFO;
 const composeProjectName = process.env.COMPOSE_PROJECT_NAME;
 const xcodeDeveloperDirectory = process.env.OXID_XCODE_DEVELOPER_DIR;
+const mobilePlatform = process.env.OXID_PORTAL_MOBILE_PLATFORM;
+const capabilityFifo = process.env.OXID_PORTAL_MOBILE_CAPABILITY_FIFO;
+const androidCapabilityFifoValid = mobilePlatform !== "android"
+  || (capabilityFifo && path.isAbsolute(capabilityFifo)
+    && fs.existsSync(capabilityFifo) && fs.lstatSync(capabilityFifo).isFIFO()
+    && !fs.lstatSync(capabilityFifo).isSymbolicLink());
 if (!portalTree || !path.isAbsolute(portalTree) || !stateDirectory || !path.isAbsolute(stateDirectory)
     || !readyFifo || !path.isAbsolute(readyFifo)
+    || !new Set(["ios", "android"]).has(mobilePlatform) || !androidCapabilityFifoValid
     || !/^[a-z0-9][a-z0-9_-]+$/.test(composeProjectName ?? "")) {
   process.stderr.write("portal-mobile-support: FAIL phase=configuration\n");
   process.exit(2);
@@ -63,7 +71,10 @@ let phase = "startup";
 let holderDocument = null;
 let holderGeneration = 0;
 let iosDevice = null;
-let offer = null;
+const offerHandoff = new SingleUseOfferHandoff();
+let offerArming = false;
+let iosCapabilityPath = null;
+let iosCapabilityCandidatePath = null;
 let proxyMode = "normal";
 let complete = false;
 let stackStarted = false;
@@ -123,6 +134,29 @@ function runSilent(command, args, cwd = portalTree) {
   if (result.error || result.status !== 0) {
     throw new Error(`${path.basename(command)} failed in ${phase}`);
   }
+}
+
+function runHostCaptured(command, args, cwd = portalTree) {
+  if (!xcodeDeveloperDirectory || !path.isAbsolute(xcodeDeveloperDirectory)) {
+    throw new Error(`selected Xcode developer directory unavailable in ${phase}`);
+  }
+  const hostEnvironment = { ...process.env, DEVELOPER_DIR: xcodeDeveloperDirectory };
+  for (const name of ["SDKROOT", "CC", "CXX", "LD", "AR", "NIX_CFLAGS_COMPILE", "NIX_LDFLAGS"]) {
+    delete hostEnvironment[name];
+  }
+  hostEnvironment.PATH = `/usr/bin:/bin:/usr/sbin:/sbin:${process.env.PATH ?? ""}`;
+  const result = spawnSync(command, args, {
+    cwd,
+    env: hostEnvironment,
+    encoding: "utf8",
+    killSignal: "SIGKILL",
+    maxBuffer: 64 * 1024,
+    timeout: HOST_COMMAND_TIMEOUT_MS,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(`${path.basename(command)} failed in ${phase}`);
+  }
+  return result.stdout.trim();
 }
 
 function runCaptured(command, args, cwd = portalTree, timeoutMs = CHILD_COMMAND_TIMEOUT_MS) {
@@ -302,19 +336,9 @@ let completeResolve;
 const completion = new Promise((resolve) => { completeResolve = resolve; });
 const controlServer = http.createServer(async (request, response) => {
   try {
+    if (offerHandoff.handle(request, response)) return;
     if (request.method === "GET" && request.url === "/health") {
-      return sendJson(response, 200, { ok: offer !== null });
-    }
-    if (request.method === "GET" && request.url === "/offer") {
-      if (!offer) return sendJson(response, 503, { error: "not_ready" });
-      const bytes = Buffer.from(offer);
-      response.writeHead(200, {
-        "Cache-Control": "no-store",
-        "Content-Length": bytes.length,
-        "Content-Type": "text/plain; charset=utf-8",
-        Pragma: "no-cache",
-      });
-      return response.end(bytes);
+      return sendJson(response, 200, { ok: true });
     }
     if (request.method === "GET" && request.url === "/counters") {
       return sendJson(response, 200, counters);
@@ -335,9 +359,16 @@ const controlServer = http.createServer(async (request, response) => {
       iosDevice = candidate;
       return sendJson(response, 200, { ok: true });
     }
+    if (request.method === "POST" && request.url === "/arm-android-offer") {
+      if (mobilePlatform !== "android") {
+        return sendJson(response, 404, { error: "not_found" });
+      }
+      await armPortalOffer(provisionAndroidCapability);
+      return sendJson(response, 200, { armed: true });
+    }
     if (request.method === "POST" && request.url === "/deliver-ios") {
       const delivery = (await readBounded(request, 32)).toString("utf8");
-      if (!iosDevice || !offer || !new Set(["real", "real-cold"]).has(delivery)) {
+      if (!iosDevice || !new Set(["real", "real-cold"]).has(delivery)) {
         return sendJson(response, 400, { error: "invalid_delivery" });
       }
       if (delivery === "real-cold") {
@@ -349,6 +380,7 @@ const controlServer = http.createServer(async (request, response) => {
         // the dying process and lose the cold-start handoff.
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
+      await armPortalOffer(provisionIosCapability);
       // Never pass `offer` here: it is the real single-use pre-authorized
       // grant and must not appear in this host process's argv. The fixed,
       // non-secret trigger is the only value the OS/host ever sees; the app
@@ -393,6 +425,72 @@ async function requestJson(url, options = {}) {
   });
   if (!response.ok) throw new Error(`HTTP ${response.status} in ${phase}`);
   return response.json();
+}
+
+function provisionIosCapability(capability) {
+  if (mobilePlatform !== "ios" || !iosDevice) {
+    throw new Error("iOS capability delivery is unavailable");
+  }
+  const container = runHostCaptured("/usr/bin/xcrun", [
+    "simctl", "get_app_container", iosDevice, "io.medianox.oxid", "data",
+  ]);
+  if (!path.isAbsolute(container)) throw new Error("iOS app data container is invalid");
+  const directory = path.join(container, "Library", "Application Support", "io.medianox.oxid");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const { target, candidate } = preparePrivateCapabilityPaths(
+    directory,
+    "portal-offer.capability",
+    `.portal-offer.capability.tmp-${process.pid}`,
+  );
+  iosCapabilityPath = target;
+  iosCapabilityCandidatePath = candidate;
+  fs.writeFileSync(candidate, capability, { mode: 0o600, flag: "wx" });
+  fs.renameSync(candidate, target);
+  iosCapabilityCandidatePath = null;
+}
+
+function provisionAndroidCapability(capability) {
+  if (mobilePlatform !== "android" || !androidCapabilityFifoValid) {
+    throw new Error("Android capability FIFO is unavailable");
+  }
+  fs.writeFileSync(capabilityFifo, capability);
+}
+
+async function armPortalOffer(provisionCapability) {
+  if (offerArming || offerHandoff.state === "ready" || offerHandoff.state === "consuming") {
+    throw new Error("an offer handoff is already armed");
+  }
+  offerArming = true;
+  const previousPhase = phase;
+  let offerBytes = null;
+  try {
+    phase = "mock-kyc-handoff";
+    const kyc = await requestJson(`${ISSUER_ORIGIN}/api/issuer/kyc-sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const sessionId = kyc?.sessionId;
+    const offerValue = kyc?.credentialOfferUri;
+    if (typeof sessionId !== "string" || typeof offerValue !== "string"
+        || !offerValue.startsWith("openid-credential-offer://")) {
+      throw new Error("mock KYC offer unavailable");
+    }
+    offerBytes = Buffer.from(offerValue);
+    kyc.credentialOfferUri = null;
+    const status = await requestJson(
+      `${ISSUER_ORIGIN}/api/issuer/kyc-sessions/${encodeURIComponent(sessionId)}/status`,
+    );
+    if (String(status?.status).toLowerCase() !== "approved") {
+      throw new Error("mock KYC not approved");
+    }
+    offerHandoff.arm(offerBytes, provisionCapability);
+    offerBytes = null;
+  } finally {
+    offerBytes?.fill(0);
+    offerArming = false;
+    phase = previousPhase;
+  }
 }
 
 function issuerMetadataReady() {
@@ -484,6 +582,21 @@ async function cleanup() {
   cleanupStarted = true;
   let cleanupFailure = null;
   proxyMode = "unavailable";
+  offerHandoff.dispose();
+  for (const candidate of [iosCapabilityCandidatePath, iosCapabilityPath]) {
+    if (!candidate) continue;
+    try {
+      const metadata = fs.lstatSync(candidate);
+      if (!metadata.isFile() || metadata.isSymbolicLink()) {
+        throw new Error("iOS capability cleanup target is not a regular file");
+      }
+      fs.rmSync(candidate);
+    } catch (error) {
+      if (error?.code !== "ENOENT") cleanupFailure = error;
+    }
+  }
+  iosCapabilityCandidatePath = null;
+  iosCapabilityPath = null;
   for (const socket of heldSockets) socket.destroy();
   for (const request of proxiedSockets) request.destroy();
   for (const server of [controlServer, holderServer, issuerResolverProxy, proxyServer]) server.close();
@@ -500,7 +613,6 @@ async function cleanup() {
   fs.closeSync(privateLog);
   if (cleanupFailure) throw cleanupFailure;
 }
-
 for (const [signal, status] of [["SIGINT", 130], ["SIGTERM", 143]]) {
   process.on(signal, () => {
     signalExitCode = status;
@@ -553,19 +665,6 @@ try {
   const manifestSha256 = sha256(manifestBytes);
   fs.writeFileSync(manifestPath, manifestBytes, { mode: 0o600 });
 
-  phase = "mock-kyc";
-  const kyc = await requestJson(`${ISSUER_ORIGIN}/api/issuer/kyc-sessions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
-  });
-  const sessionId = kyc?.sessionId;
-  offer = kyc?.credentialOfferUri;
-  if (typeof sessionId !== "string" || typeof offer !== "string" || !offer.startsWith("openid-credential-offer://")) {
-    throw new Error("mock KYC offer unavailable");
-  }
-  const status = await requestJson(`${ISSUER_ORIGIN}/api/issuer/kyc-sessions/${encodeURIComponent(sessionId)}/status`);
-  if (String(status?.status).toLowerCase() !== "approved") throw new Error("mock KYC not approved");
 
   const ready = {
     controlOrigin: `http://127.0.0.1:${CONTROL_PORT}`,

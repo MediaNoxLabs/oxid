@@ -111,6 +111,16 @@ use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
 ))]
 use portal::{PortalIdentityConfiguration, PortalPrivateMaterialDecoder};
 
+/// Verifies that the Android Portal conformance composition is executing under
+/// the repository's QEMU-only runtime boundary. iOS simulator authority is
+/// already encoded by its distinct Rust target; non-mobile builds never reach
+/// this feature because of the compile-time guard above.
+#[cfg(all(feature = "mobile-portal", target_os = "android"))]
+pub fn verify_android_portal_virtual_device_profile() -> Result<(), &'static str> {
+    oxid_adapter_mobile_native::verify_android_qemu_profile()
+        .map_err(|_| "standalone-portal requires Android QEMU at runtime")
+}
+
 /// Returns the public embedded offer for the deterministic standalone issuer.
 /// Production composition keeps the issuer port unavailable.
 #[must_use]

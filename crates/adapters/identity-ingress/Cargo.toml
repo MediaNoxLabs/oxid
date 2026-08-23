@@ -14,9 +14,10 @@ default = []
 # (issue #124 / ADR-0103). `simctl openurl`/`am start -d` deliver a fixed
 # literal string, never the real Portal offer, so the pre-authorized grant
 # never appears in host process argv or in any retained test log/evidence.
-# The real offer is retrieved on a named, bounded loopback-only worker inside
-# this process and fed into the same one-item router a normal externally
-# delivered credential offer would use. Selected only by `oxid-composition`'s
+# A fresh app-private capability authenticates one named, bounded loopback
+# worker; the file is unlinked before use and the server permits one response.
+# The fetched offer then enters the same one-item router as normal ingress.
+# Selected only by `oxid-composition`'s
 # authority-guarded `mobile-portal` feature, forwarded from the iOS/Android
 # `oxid-app/standalone-portal` profile.
 loopback-test-offer-trigger = []
@@ -29,6 +30,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 url.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

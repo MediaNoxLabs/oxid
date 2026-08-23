@@ -48,13 +48,21 @@ portal_mobile_platform_cleanup() {
     portal_mobile_android_forward_active=0
     devtools_port=""
   fi
+  if [ -n "${device:-}" ]; then
+    "$adb_command" -s "$device" shell run-as io.medianox.oxid \
+      rm -f files/portal-offer.capability files/.portal-offer.capability.tmp >/dev/null 2>&1 &
+    remove_pid=$!
+    portal_mobile_wait_bounded "$remove_pid" "$PORTAL_MOBILE_TERM_GRACE_SECONDS" \
+      >/dev/null 2>&1 || remove_status=1
+  fi
   return "$remove_status"
 }
 
 # Fixed, non-secret OS trigger shared with iOS. The app recognizes only this
 # literal and retrieves the real offer over its bounded loopback worker. The
-# real offer therefore never enters adb/device argv, Android intent state, a
-# host/device staging file, logs, or retained evidence.
+# real offer therefore never enters adb/device argv, Android intent state,
+# logs, or retained evidence; the capability crosses stdin into one app-private
+# file that the app unlinks before its authenticated request.
 portal_test_offer_trigger="openid-credential-offer://standalone-portal-test-fetch"
 
 # A long-running QEMU can lag the host by several seconds. The strict
@@ -255,6 +263,17 @@ sync_public_holder() {
 }
 
 deliver_portal_trigger() {
+  curl --noproxy '*' --fail --silent --show-error \
+    --connect-timeout "$PORTAL_MOBILE_CURL_TIMEOUT_SECONDS" \
+    --max-time "$PORTAL_MOBILE_CURL_TIMEOUT_SECONDS" \
+    -X POST "$PORTAL_MOBILE_CONTROL_ORIGIN/arm-android-offer" >/dev/null
+  if ! head -c "$PORTAL_MOBILE_OFFER_CAPABILITY_BYTES" <&8 | \
+    "$adb_command" -s "$device" shell run-as io.medianox.oxid sh -c \
+      'umask 077; mkdir -p files; target=files/portal-offer.capability; candidate=files/.portal-offer.capability.tmp; rm -f "$candidate" "$target"; cat >"$candidate"; [ "$(wc -c <"$candidate")" -eq 64 ] && mv "$candidate" "$target"' \
+      >/dev/null 2>>"$PORTAL_MOBILE_PRIVATE_LOG"; then
+    portal_mobile_fail offer-capability-provision
+    return 1
+  fi
   "$adb_command" -s "$device" shell am start -W \
     -a android.intent.action.VIEW \
     -d "$portal_test_offer_trigger" \

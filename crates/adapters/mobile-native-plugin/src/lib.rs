@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(any(target_os = "android", test))]
+use serde::Deserialize;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use serde::Serialize;
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -18,6 +20,31 @@ pub enum NativeBridgeError {
 pub fn start_scan_json() -> Result<String, NativeBridgeError> {
     let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
     startScanJson(&plugin).map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(any(target_os = "android", test))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AndroidVirtualDeviceProfile {
+    #[serde(rename = "androidQemu")]
+    android_qemu: bool,
+}
+
+#[cfg(any(target_os = "android", test))]
+fn decode_android_qemu_profile(value: &str) -> Result<(), NativeBridgeError> {
+    let profile: AndroidVirtualDeviceProfile =
+        serde_json::from_str(value).map_err(|_| NativeBridgeError::Failed)?;
+    if profile.android_qemu {
+        Ok(())
+    } else {
+        Err(NativeBridgeError::Unavailable)
+    }
+}
+
+#[cfg(target_os = "android")]
+pub fn verify_android_qemu_profile() -> Result<(), NativeBridgeError> {
+    let response = call_android_activity("oxidVirtualDeviceProfileJson")?;
+    decode_android_qemu_profile(&response)
 }
 
 #[cfg(target_os = "android")]
@@ -393,5 +420,27 @@ mod android_bridge {
     #[manganis::ffi("android")]
     extern "Kotlin" {
         pub type OxidMobilePlugin;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn android_portal_profile_accepts_only_the_exact_positive_qemu_attestation() {
+        assert_eq!(
+            decode_android_qemu_profile(r#"{"androidQemu":true}"#),
+            Ok(())
+        );
+        for rejected in [
+            r#"{"androidQemu":false}"#,
+            r#"{"androidQemu":true,"physical":false}"#,
+            r#"{"androidQemu":"true"}"#,
+            r#"{}"#,
+            "not-json",
+        ] {
+            assert!(decode_android_qemu_profile(rejected).is_err());
+        }
     }
 }

@@ -23,6 +23,14 @@ fi
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
+portal_profile_authority_directory=""
+cleanup_portal_profile_authority() {
+  if [ -n "$portal_profile_authority_directory" ]; then
+    rm -rf -- "$portal_profile_authority_directory"
+  fi
+}
+trap cleanup_portal_profile_authority EXIT
+
 mobile_custody="${OXID_MOBILE_CUSTODY:-development}"
 case "$mobile_custody" in
   development)
@@ -57,6 +65,8 @@ esac
 portal_profile="${OXID_MOBILE_PORTAL_PROFILE:-unavailable}"
 portal_manifest_path=""
 portal_manifest_sha256=""
+portal_profile_authority_path=""
+portal_profile_authority_sha256=""
 case "$portal_profile" in
   unavailable)
     ;;
@@ -146,6 +156,14 @@ case "$(uname -m)" in
 esac
 
 rustup target add "$rust_target"
+if [ "$portal_profile" = "local" ]; then
+  portal_profile_authority_directory="$(mktemp -d "${TMPDIR:-/tmp}/oxid-portal-profile-ios.XXXXXX")"
+  chmod 700 "$portal_profile_authority_directory"
+  portal_profile_authority_path="$portal_profile_authority_directory/authority.json"
+  "$repository_root/scripts/e2e/write-portal-profile-authority.sh" \
+    ios_simulator "$rust_target" "$portal_profile_authority_path"
+  portal_profile_authority_sha256="$(shasum -a 256 "$portal_profile_authority_path" | awk '{print $1}')"
+fi
 rust_toolchain_bin="$(dirname -- "$(rustup which cargo)")"
 dioxus_output="$(nix build .#dioxus-cli --no-link --print-out-paths)"
 dioxus_cli="$dioxus_output/bin/dx"
@@ -155,6 +173,8 @@ PATH="$rust_toolchain_bin:/usr/bin:$PATH" \
   DEVELOPER_DIR="$xcode_developer_dir" \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$portal_manifest_path" \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$portal_manifest_sha256" \
+  OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH="$portal_profile_authority_path" \
+  OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256="$portal_profile_authority_sha256" \
   OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
   env -u SDKROOT \
   "$dioxus_cli" build \
