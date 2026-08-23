@@ -260,8 +260,23 @@ android_version="$($adb_command -s "$device" shell getprop ro.build.version.rele
 api_level="$($adb_command -s "$device" shell getprop ro.build.version.sdk | tr -d '\r\n')"
 portal_mobile_assert_evidence_source || exit 1
 evidence="$repository_root/target/portal-mobile-e2e/android/evidence.json"
-mkdir -p "$(dirname -- "$evidence")"
-jq -cn \
+evidence_directory="$(dirname -- "$evidence")"
+mkdir -p "$evidence_directory"
+if ! evidence_temp="$(umask 077 && mktemp "$evidence_directory/.evidence.json.tmp.XXXXXX")"; then
+  portal_mobile_fail evidence-temp
+  exit 1
+fi
+PORTAL_MOBILE_EVIDENCE_TEMP="$evidence_temp"
+chmod 600 "$evidence_temp" || { portal_mobile_fail evidence-temp; exit 1; }
+evidence_document='{
+  schema:"oxid-portal-mobile-evidence-v1",
+  oxid:{head:$head},
+  portal:{integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
+  platform:{kind:"android_qemu_emulator",model:$model,os:$os,apiLevel:$api,clockSkewSeconds:$clockSkew,applicationId:"io.medianox.oxid",profile:"standalone-local-development-portal",adbReversePorts:[6300,8088,9944,18090,18091,18093]},
+  acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,malformedDenied:true,unavailableDenied:true,timeoutDenied:true,qemuVerified:true,clockSynchronized:true,noEmulatorAlias:true,secretFreeEvidence:true}
+}'
+evidence_sentinel='openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|John|Doe|AB1234567|private.?parts|signed.?bytes|detached.?proof|emulator-[0-9]+'
+if ! jq -cn \
   --arg head "$PORTAL_MOBILE_OXID_HEAD" \
   --arg model "$model" \
   --arg os "$android_version" \
@@ -272,16 +287,22 @@ jq -cn \
   --arg prHead "$PORTAL_PR_HEAD" \
   --arg profileSource "$PORTAL_PROFILE_SOURCE" \
   --arg provenance "$PORTAL_PROVENANCE_SHA256" \
-  '{
-    schema:"oxid-portal-mobile-evidence-v1",
-    oxid:{head:$head},
-    portal:{integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
-    platform:{kind:"android_qemu_emulator",model:$model,os:$os,apiLevel:$api,clockSkewSeconds:$clockSkew,applicationId:"io.medianox.oxid",profile:"standalone-local-development-portal",adbReversePorts:[6300,8088,9944,18090,18091,18093]},
-    acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,malformedDenied:true,unavailableDenied:true,timeoutDenied:true,qemuVerified:true,clockSynchronized:true,noEmulatorAlias:true,secretFreeEvidence:true}
-  }' >"$evidence"
-if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|John|Doe|AB1234567|private.?parts|signed.?bytes|detached.?proof|emulator-[0-9]+' "$evidence"; then
-  portal_mobile_fail evidence-schema
+  "$evidence_document" >"$evidence_temp"; then
+  portal_mobile_discard_evidence_temp "$evidence_temp" || true
+  portal_mobile_fail evidence-generate
   exit 1
 fi
+portal_mobile_finalize_evidence \
+  "$evidence" "$evidence_temp" "$evidence_document" "$evidence_sentinel" \
+  --arg head "$PORTAL_MOBILE_OXID_HEAD" \
+  --arg model "$model" \
+  --arg os "$android_version" \
+  --arg api "$api_level" \
+  --argjson clockSkew "$clock_skew" \
+  --arg portalCommit "$PORTAL_INTEGRATION_COMMIT" \
+  --arg portalTree "$PORTAL_INTEGRATION_TREE" \
+  --arg prHead "$PORTAL_PR_HEAD" \
+  --arg profileSource "$PORTAL_PROFILE_SOURCE" \
+  --arg provenance "$PORTAL_PROVENANCE_SHA256" || exit 1
 printf 'Android Portal emulator smoke passed at %s on %s, Android %s (API %s), app io.medianox.oxid; evidence=%s\n' \
   "$PORTAL_MOBILE_OXID_HEAD" "$model" "$android_version" "$api_level" "${evidence#"$repository_root/"}"

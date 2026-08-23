@@ -10130,6 +10130,23 @@ fn credential_issuance_cleanup_allows_release(
     matches!(result, Ok(_) | Err(CredentialIssuanceError::InvalidState))
 }
 
+fn apply_failed_credential_acceptance_state<Prepared>(
+    cleanup: &Result<Result<CredentialIssuanceView, CredentialIssuanceError>, UiBlockingTaskError>,
+    pending: &mut Option<PendingIdentityRequest>,
+    prepared: &mut Option<Prepared>,
+    consent: &mut bool,
+) -> bool {
+    let cleanup_confirmed = cleanup
+        .as_ref()
+        .is_ok_and(credential_issuance_cleanup_allows_release);
+    *consent = false;
+    if cleanup_confirmed {
+        wipe_pending_identity_request_value(pending, Some(IdentityRequestKind::CredentialIssuance));
+        *prepared = None;
+    }
+    cleanup_confirmed
+}
+
 fn identity_request_routing_message(error: IdentityRequestRoutingError) -> String {
     match error {
         IdentityRequestRoutingError::InvalidRequest => {
@@ -11432,16 +11449,18 @@ fn CredentialsPage(
                                                                     issuance_id: cleanup_issuance_id,
                                                                 })
                                                             }).await;
-                                                            let cleanup_confirmed = cleanup
-                                                                .as_ref()
-                                                                .is_ok_and(credential_issuance_cleanup_allows_release);
-                                                            issuance_consent.set(false);
+                                                            let cleanup_confirmed = {
+                                                                let mut pending = pending_identity_request.write();
+                                                                let mut prepared = prepared_issuance.write();
+                                                                let mut consent = issuance_consent.write();
+                                                                apply_failed_credential_acceptance_state(
+                                                                    &cleanup,
+                                                                    &mut pending,
+                                                                    &mut prepared,
+                                                                    &mut consent,
+                                                                )
+                                                            };
                                                             if cleanup_confirmed {
-                                                                wipe_pending_identity_request(
-                                                                    &mut pending_identity_request,
-                                                                    Some(IdentityRequestKind::CredentialIssuance),
-                                                                );
-                                                                prepared_issuance.set(None);
                                                                 issuance_notice.set(Some(message));
                                                             } else {
                                                                 issuance_notice.set(Some(format!(
@@ -12778,6 +12797,41 @@ mod tests {
         assert!(!credential_issuance_cleanup_allows_release(&Err(
             CredentialIssuanceError::Unavailable
         )));
+    }
+
+    #[test]
+    fn failed_acceptance_with_uncertain_cleanup_retains_review_and_route_lock() {
+        fn assert_retained(
+            cleanup: Result<
+                Result<CredentialIssuanceView, CredentialIssuanceError>,
+                UiBlockingTaskError,
+            >,
+        ) {
+            let mut pending = Some(PendingIdentityRequest {
+                kind: IdentityRequestKind::CredentialIssuance,
+                request_uri: String::new(),
+            });
+            let mut prepared = Some("prepared credential review".to_owned());
+            let mut consent = true;
+
+            assert!(!apply_failed_credential_acceptance_state(
+                &cleanup,
+                &mut pending,
+                &mut prepared,
+                &mut consent,
+            ));
+
+            assert!(!consent, "failed acceptance must clear prior consent");
+            assert_eq!(prepared.as_deref(), Some("prepared credential review"));
+            assert_eq!(
+                retained_identity_review_route(&pending),
+                Some(Route::CredentialRequest)
+            );
+            assert!(!identity_request_admits_new_link(pending.is_some()));
+        }
+
+        assert_retained(Ok(Err(CredentialIssuanceError::Unavailable)));
+        assert_retained(Err(UiBlockingTaskError::WorkerFailed));
     }
 
     #[test]

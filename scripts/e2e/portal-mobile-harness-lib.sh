@@ -12,6 +12,9 @@ readonly PORTAL_MOBILE_READY_TIMEOUT_SECONDS=720
 readonly PORTAL_MOBILE_CURL_TIMEOUT_SECONDS=10
 readonly PORTAL_MOBILE_SUPPORT_GRACE_SECONDS=75
 readonly PORTAL_MOBILE_STARTUP_GRACE_SECONDS=675
+# Once TERM reaches pre-READY support, allow its 60-second Compose teardown,
+# five-second named-resource poll, and a small scheduling margin before KILL.
+readonly PORTAL_MOBILE_STARTUP_TERM_GRACE_SECONDS=70
 readonly PORTAL_MOBILE_TERM_GRACE_SECONDS=5
 
 PORTAL_MOBILE_SUPPORT_PID=""
@@ -22,6 +25,7 @@ PORTAL_MOBILE_CONTROL_ORIGIN=""
 PORTAL_MOBILE_MANIFEST_PATH=""
 PORTAL_MOBILE_MANIFEST_SHA256=""
 PORTAL_MOBILE_PRIVATE_LOG=""
+PORTAL_MOBILE_EVIDENCE_TEMP=""
 PORTAL_MOBILE_PLATFORM=""
 PORTAL_MOBILE_REPOSITORY_ROOT=""
 PORTAL_MOBILE_OXID_HEAD=""
@@ -52,11 +56,13 @@ portal_mobile_source_tree() {
 }
 
 portal_mobile_wait_bounded() {
-  local child_pid="$1" grace_seconds="$2" watchdog_pid wait_status
+  local child_pid="$1" grace_seconds="$2"
+  local term_grace_seconds="${3:-$PORTAL_MOBILE_TERM_GRACE_SECONDS}"
+  local watchdog_pid wait_status
   (
     sleep "$grace_seconds"
     kill -TERM "$child_pid" >/dev/null 2>&1 || exit 0
-    sleep "$PORTAL_MOBILE_TERM_GRACE_SECONDS"
+    sleep "$term_grace_seconds"
     kill -KILL "$child_pid" >/dev/null 2>&1 || true
   ) &
   watchdog_pid=$!
@@ -116,13 +122,57 @@ portal_mobile_assert_evidence_source() {
   }
 }
 
+portal_mobile_discard_evidence_temp() {
+  local candidate="$1" discard_status=0
+  rm -f -- "$candidate" || discard_status=1
+  if [ "$discard_status" = 0 ] && [ "$PORTAL_MOBILE_EVIDENCE_TEMP" = "$candidate" ]; then
+    PORTAL_MOBILE_EVIDENCE_TEMP=""
+  fi
+  return "$discard_status"
+}
+
+portal_mobile_finalize_evidence() {
+  local evidence="$1" candidate="$2" expected_document="$3" sentinel="$4"
+  shift 4
+  local -a jq_arguments=("$@")
+  [ "$(dirname -- "$candidate")" = "$(dirname -- "$evidence")" ] && \
+    [ "$PORTAL_MOBILE_EVIDENCE_TEMP" = "$candidate" ] && \
+    [ -f "$candidate" ] && [ ! -L "$candidate" ] || {
+    portal_mobile_discard_evidence_temp "$candidate" || true
+    portal_mobile_fail evidence-temp
+    return 1
+  }
+  if ! jq -e "${jq_arguments[@]}" ". == ($expected_document)" "$candidate" >/dev/null; then
+    portal_mobile_discard_evidence_temp "$candidate" || true
+    portal_mobile_fail evidence-schema
+    return 1
+  fi
+  if rg -qi "$sentinel" "$candidate"; then
+    portal_mobile_discard_evidence_temp "$candidate" || true
+    portal_mobile_fail evidence-schema
+    return 1
+  fi
+  if ! mv -f -- "$candidate" "$evidence"; then
+    portal_mobile_discard_evidence_temp "$candidate" || true
+    portal_mobile_fail evidence-publish
+    return 1
+  fi
+  PORTAL_MOBILE_EVIDENCE_TEMP=""
+}
+
+portal_mobile_exit() {
+  local final_status="$1"
+  portal_mobile_cleanup "$final_status" || final_status=$?
+  exit "$final_status"
+}
+
 portal_mobile_start() {
   # Install cleanup before any side effect (lock, state dir, fetch, worktree,
   # support process, FIFO, compose stack, manifest) so a startup failure at
   # any later line still tears down whatever was already created. Signals use
   # their conventional statuses and cannot resume interrupted orchestration;
   # EXIT remains the single cleanup owner.
-  trap 'portal_mobile_cleanup' EXIT
+  trap 'portal_mobile_exit "$?"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   PORTAL_MOBILE_PLATFORM="$1"
@@ -259,11 +309,12 @@ portal_mobile_finish() {
 }
 
 portal_mobile_cleanup() {
-  # Capture the trap-triggering status before any cleanup command can replace
-  # it. Runtime manifests and logs can contain private protocol diagnostics,
-  # so they are removed on success, failure, and signal exits alike.
-  local incoming_status="$?" cleanup_status=0 source_tree lock_owner=""
+  # The EXIT owner passes its captured status explicitly before any cleanup
+  # command can replace it. Runtime manifests and logs can contain private
+  # protocol diagnostics, so they are removed on every exit.
+  local incoming_status="$1" cleanup_status=0 source_tree lock_owner=""
   local support_grace="$PORTAL_MOBILE_SUPPORT_GRACE_SECONDS"
+  local support_term_grace="$PORTAL_MOBILE_TERM_GRACE_SECONDS"
   if [ "$PORTAL_MOBILE_CLEANUP_RUNNING" = 1 ]; then
     return "$incoming_status"
   fi
@@ -285,13 +336,14 @@ portal_mobile_cleanup() {
     # killing the cleanup owner early and orphaning its child process.
     if [ -z "$PORTAL_MOBILE_CONTROL_ORIGIN" ]; then
       support_grace="$PORTAL_MOBILE_STARTUP_GRACE_SECONDS"
+      support_term_grace="$PORTAL_MOBILE_STARTUP_TERM_GRACE_SECONDS"
     fi
     curl --noproxy '*' --silent \
       --connect-timeout "$PORTAL_MOBILE_CURL_TIMEOUT_SECONDS" \
       --max-time "$PORTAL_MOBILE_CURL_TIMEOUT_SECONDS" \
       -X POST "$PORTAL_MOBILE_CONTROL_ORIGIN/complete" >/dev/null 2>&1 || true
     portal_mobile_wait_bounded \
-      "$PORTAL_MOBILE_SUPPORT_PID" "$support_grace" \
+      "$PORTAL_MOBILE_SUPPORT_PID" "$support_grace" "$support_term_grace" \
       >/dev/null 2>&1 || cleanup_status=1
     PORTAL_MOBILE_SUPPORT_PID=""
   fi
@@ -307,6 +359,9 @@ portal_mobile_cleanup() {
   fi
   if [ -n "$PORTAL_MOBILE_STATE_DIR" ]; then
     rm -rf "$PORTAL_MOBILE_STATE_DIR" || cleanup_status=1
+  fi
+  if [ -n "$PORTAL_MOBILE_EVIDENCE_TEMP" ]; then
+    portal_mobile_discard_evidence_temp "$PORTAL_MOBILE_EVIDENCE_TEMP" || cleanup_status=1
   fi
   if [ "$PORTAL_MOBILE_LOCK_OWNED" = 1 ] && [ -n "$PORTAL_MOBILE_LOCK_DIR" ]; then
     IFS= read -r lock_owner <"$PORTAL_MOBILE_LOCK_DIR/owner-pid" 2>/dev/null || true

@@ -92,8 +92,9 @@ start_body="$(awk '
   capture { print }
 ' scripts/e2e/portal-mobile-harness-lib.sh)"
 first_statement="$(awk 'NF && $0 !~ /^[[:space:]]*#/ { print; exit }' <<<"$start_body")"
-if [[ "$first_statement" != *"trap 'portal_mobile_cleanup' EXIT"* ]]; then
-  echo "portal_mobile_start must install its EXIT cleanup trap before its first side effect." >&2
+cleanup_trap_marker='trap '\''portal_mobile_exit "$?"'\'' EXIT'
+if [[ "$first_statement" != *"$cleanup_trap_marker"* ]]; then
+  echo "portal_mobile_start must install its fail-closed EXIT cleanup owner before its first side effect." >&2
   exit 1
 fi
 for signal_trap in "trap 'exit 130' INT" "trap 'exit 143' TERM"; do
@@ -102,8 +103,34 @@ for signal_trap in "trap 'exit 130' INT" "trap 'exit 143' TERM"; do
     exit 1
   fi
 done
-if [ "$(grep -cF "trap 'portal_mobile_cleanup' EXIT" scripts/e2e/portal-mobile-harness-lib.sh)" -ne 1 ]; then
-  echo "portal_mobile_cleanup must have exactly one early EXIT trap." >&2
+if [ "$(grep -cF "$cleanup_trap_marker" scripts/e2e/portal-mobile-harness-lib.sh)" -ne 1 ]; then
+  echo "portal_mobile_exit must have exactly one early EXIT trap." >&2
+  exit 1
+fi
+
+# The EXIT owner must turn a final cleanup failure into command failure without
+# replacing an earlier nonzero status. Exercise the real cleanup function with
+# a failing platform hook rather than relying on trap text alone.
+cleanup_exit_status=0
+bash -c '
+  source "$1"
+  portal_mobile_platform_cleanup() { return 1; }
+  trap '\''portal_mobile_exit "$?"'\'' EXIT
+  exit 0
+' _ scripts/e2e/portal-mobile-harness-lib.sh || cleanup_exit_status=$?
+if [ "$cleanup_exit_status" -ne 1 ]; then
+  echo "Portal EXIT cleanup must fail an otherwise successful command." >&2
+  exit 1
+fi
+original_exit_status=0
+bash -c '
+  source "$1"
+  portal_mobile_platform_cleanup() { return 1; }
+  trap '\''portal_mobile_exit "$?"'\'' EXIT
+  exit 42
+' _ scripts/e2e/portal-mobile-harness-lib.sh || original_exit_status=$?
+if [ "$original_exit_status" -ne 42 ]; then
+  echo "Portal EXIT cleanup must preserve the original nonzero status." >&2
   exit 1
 fi
 
@@ -120,6 +147,33 @@ done
 if rg -n '^[[:space:]]*wait "\$PORTAL_MOBILE_(SUPPORT|HOLDER_SYNC)_PID"' \
   scripts/e2e/portal-mobile-harness-lib.sh scripts/test-ios-portal-flow.sh; then
   echo "Portal support processes must never use an unbounded direct wait." >&2
+  exit 1
+fi
+if ! bash -c '
+  source "$1"
+  [ "$PORTAL_MOBILE_STARTUP_TERM_GRACE_SECONDS" -ge 65 ] &&
+    [ "$PORTAL_MOBILE_STARTUP_TERM_GRACE_SECONDS" -le 75 ]
+' _ scripts/e2e/portal-mobile-harness-lib.sh; then
+  echo "Pre-READY TERM grace must tightly cover the 60-second Compose teardown and 5-second resource poll." >&2
+  exit 1
+fi
+# Scale the selectable post-TERM grace down to one second and prove a TERM-
+# ignoring child is KILLed only after that bounded window.
+bash -c '
+  source "$1"
+  trap "" TERM
+  sleep 30 &
+  child_pid=$!
+  trap - TERM
+  started=$SECONDS
+  wait_status=0
+  portal_mobile_wait_bounded "$child_pid" 0 1 || wait_status=$?
+  elapsed=$((SECONDS - started))
+  [ "$wait_status" -eq 137 ] && [ "$elapsed" -ge 1 ] && [ "$elapsed" -le 5 ]
+' _ scripts/e2e/portal-mobile-harness-lib.sh 2>/dev/null
+if ! rg -qF '"$PORTAL_MOBILE_SUPPORT_PID" "$support_grace" "$support_term_grace"' \
+  scripts/e2e/portal-mobile-harness-lib.sh; then
+  echo "Pre-READY support shutdown must pass its extended post-TERM grace." >&2
   exit 1
 fi
 if ! rg -qF 'rm -rf "$PORTAL_MOBILE_STATE_DIR"' scripts/e2e/portal-mobile-harness-lib.sh ||
@@ -231,6 +285,77 @@ if [ "$(rg -cF 'portal_mobile_assert_evidence_source' scripts/e2e/portal-mobile-
   exit 1
 fi
 
+# Both platform scripts must write only to a private sibling candidate and use
+# the shared exact-jq/sentinel/rename finalizer. Direct evidence redirection
+# would truncate an earlier valid attestation before validation completes.
+for platform_script in scripts/test-ios-portal-flow.sh scripts/test-android-portal-flow.sh; do
+  for evidence_marker in \
+    'mktemp "$evidence_directory/.evidence.json.tmp.XXXXXX"' \
+    'PORTAL_MOBILE_EVIDENCE_TEMP="$evidence_temp"' \
+    'chmod 600 "$evidence_temp"' \
+    '"$evidence_document" >"$evidence_temp"' \
+    'portal_mobile_finalize_evidence' \
+    '"$evidence" "$evidence_temp" "$evidence_document" "$evidence_sentinel"'; do
+    rg -qF "$evidence_marker" "$platform_script" || {
+      echo "Portal evidence atomic-publication marker is missing from $platform_script: $evidence_marker" >&2
+      exit 1
+    }
+  done
+  if rg -qF '>"$evidence"' "$platform_script"; then
+    echo "Portal evidence must never be generated directly into evidence.json: $platform_script" >&2
+    exit 1
+  fi
+  candidate_line="$(grep -nF 'mktemp "$evidence_directory/.evidence.json.tmp.XXXXXX"' "$platform_script" | cut -d: -f1)"
+  generation_line="$(grep -nF '"$evidence_document" >"$evidence_temp"' "$platform_script" | cut -d: -f1)"
+  finalization_line="$(grep -nF 'portal_mobile_finalize_evidence \' "$platform_script" | cut -d: -f1)"
+  if [ "$candidate_line" -ge "$generation_line" ] || [ "$generation_line" -ge "$finalization_line" ]; then
+    echo "Portal evidence candidate creation, generation, and finalization order regressed: $platform_script" >&2
+    exit 1
+  fi
+done
+for finalizer_marker in \
+  '. == ($expected_document)' \
+  'rg -qi "$sentinel" "$candidate"' \
+  'mv -f -- "$candidate" "$evidence"'; do
+  rg -qF "$finalizer_marker" scripts/e2e/portal-mobile-harness-lib.sh || {
+    echo "Portal evidence finalizer is missing exact validation/publication marker: $finalizer_marker" >&2
+    exit 1
+  }
+done
+
+# Behavioral proof: jq mismatch and sentinel rejection delete only the private
+# candidate and preserve old evidence; a fully valid candidate replaces it.
+bash -c '
+  source "$1"
+  scratch="$(mktemp -d)"
+  trap '\''rm -rf "$scratch"'\'' EXIT
+  evidence="$scratch/evidence.json"
+  printf '\''%s\n'\'' '\''{"schema":"old"}'\'' >"$evidence"
+
+  candidate="$scratch/.evidence.json.tmp.invalid"
+  printf '\''%s\n'\'' '\''{"schema":"wrong"}'\'' >"$candidate"
+  PORTAL_MOBILE_EVIDENCE_TEMP="$candidate"
+  if portal_mobile_finalize_evidence "$evidence" "$candidate" '\''{"schema":"new"}'\'' forbidden >/dev/null 2>&1; then
+    exit 1
+  fi
+  grep -qF '\''{"schema":"old"}'\'' "$evidence" && [ ! -e "$candidate" ]
+
+  candidate="$scratch/.evidence.json.tmp.sentinel"
+  printf '\''%s\n'\'' '\''{"schema":"new","note":"forbidden"}'\'' >"$candidate"
+  PORTAL_MOBILE_EVIDENCE_TEMP="$candidate"
+  if portal_mobile_finalize_evidence "$evidence" "$candidate" '\''{"schema":"new","note":"forbidden"}'\'' forbidden >/dev/null 2>&1; then
+    exit 1
+  fi
+  grep -qF '\''{"schema":"old"}'\'' "$evidence" && [ ! -e "$candidate" ]
+
+  candidate="$scratch/.evidence.json.tmp.valid"
+  printf '\''%s\n'\'' '\''{"schema":"new"}'\'' >"$candidate"
+  PORTAL_MOBILE_EVIDENCE_TEMP="$candidate"
+  portal_mobile_finalize_evidence "$evidence" "$candidate" '\''{"schema":"new"}'\'' forbidden
+  jq -e '\''. == {"schema":"new"}'\'' "$evidence" >/dev/null
+  [ ! -e "$candidate" ] && [ -z "$PORTAL_MOBILE_EVIDENCE_TEMP" ]
+' _ scripts/e2e/portal-mobile-harness-lib.sh
+
 # CDP uses a dynamically allocated, exactly owned forward. Both opening the
 # socket and every command are bounded, and terminal WebSocket events reject
 # all pending commands so top-level await cannot remain unsettled.
@@ -281,4 +406,4 @@ for lock_marker in 'mkdir "$PORTAL_MOBILE_LOCK_DIR"' 'mv "$PORTAL_MOBILE_LOCK_DI
   }
 done
 
-echo "Portal mobile harness syntax, sequence, lifecycle bounds, named-resource cleanup polling, exact CDP ownership, evidence pinning, secret-free delivery, and hosted PR filters passed."
+echo "Portal mobile harness syntax, cleanup status/signal bounds, atomic evidence publication, named-resource cleanup polling, exact CDP ownership, evidence pinning, secret-free delivery, and hosted PR filters passed."

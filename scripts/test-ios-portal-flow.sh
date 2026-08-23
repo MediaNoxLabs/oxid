@@ -105,8 +105,23 @@ device_name="$(/usr/bin/xcrun simctl list devices -j | jq -r --arg device "$devi
 runtime="$(/usr/bin/xcrun simctl list devices -j | jq -r --arg device "$device" 'first(.devices | to_entries[] as $runtime | $runtime.value[] | select(.udid == $device) | $runtime.key) // "unknown"')"
 portal_mobile_assert_evidence_source || exit 1
 evidence="$repository_root/target/portal-mobile-e2e/ios/evidence.json"
-mkdir -p "$(dirname -- "$evidence")"
-jq -cn \
+evidence_directory="$(dirname -- "$evidence")"
+mkdir -p "$evidence_directory"
+if ! evidence_temp="$(umask 077 && mktemp "$evidence_directory/.evidence.json.tmp.XXXXXX")"; then
+  portal_mobile_fail evidence-temp
+  exit 1
+fi
+PORTAL_MOBILE_EVIDENCE_TEMP="$evidence_temp"
+chmod 600 "$evidence_temp" || { portal_mobile_fail evidence-temp; exit 1; }
+evidence_document='{
+  schema:"oxid-portal-mobile-evidence-v1",
+  oxid:{head:$head},
+  portal:{integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
+  platform:{kind:"ios_simulator",model:$model,os:$os,applicationId:$app,profile:"standalone-local-development-portal"},
+  acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,unavailableDenied:true,timeoutDenied:true,cameraUnavailable:true,secretFreeEvidence:true}
+}'
+evidence_sentinel='openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|John|Doe|AB1234567|private.?parts|signed.?bytes|detached.?proof|[0-9A-F]{8}-[0-9A-F-]{27}'
+if ! jq -cn \
   --arg head "$PORTAL_MOBILE_OXID_HEAD" \
   --arg model "$device_name" \
   --arg os "$runtime" \
@@ -116,16 +131,21 @@ jq -cn \
   --arg prHead "$PORTAL_PR_HEAD" \
   --arg profileSource "$PORTAL_PROFILE_SOURCE" \
   --arg provenance "$PORTAL_PROVENANCE_SHA256" \
-  '{
-    schema:"oxid-portal-mobile-evidence-v1",
-    oxid:{head:$head},
-    portal:{integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
-    platform:{kind:"ios_simulator",model:$model,os:$os,applicationId:$app,profile:"standalone-local-development-portal"},
-    acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,unavailableDenied:true,timeoutDenied:true,cameraUnavailable:true,secretFreeEvidence:true}
-  }' >"$evidence"
-if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|John|Doe|AB1234567|private.?parts|signed.?bytes|detached.?proof|[0-9A-F]{8}-[0-9A-F-]{27}' "$evidence"; then
-  portal_mobile_fail evidence-schema
+  "$evidence_document" >"$evidence_temp"; then
+  portal_mobile_discard_evidence_temp "$evidence_temp" || true
+  portal_mobile_fail evidence-generate
   exit 1
 fi
+portal_mobile_finalize_evidence \
+  "$evidence" "$evidence_temp" "$evidence_document" "$evidence_sentinel" \
+  --arg head "$PORTAL_MOBILE_OXID_HEAD" \
+  --arg model "$device_name" \
+  --arg os "$runtime" \
+  --arg app "$bundle_identifier" \
+  --arg portalCommit "$PORTAL_INTEGRATION_COMMIT" \
+  --arg portalTree "$PORTAL_INTEGRATION_TREE" \
+  --arg prHead "$PORTAL_PR_HEAD" \
+  --arg profileSource "$PORTAL_PROFILE_SOURCE" \
+  --arg provenance "$PORTAL_PROVENANCE_SHA256" || exit 1
 printf 'iOS Portal simulator smoke passed at %s on %s (%s), app %s; evidence=%s\n' \
   "$PORTAL_MOBILE_OXID_HEAD" "$device_name" "$runtime" "$bundle_identifier" "${evidence#"$repository_root/"}"
