@@ -57,7 +57,14 @@ if [ -n "$existing_device" ]; then
     exit 1
   fi
   "$adb_command" -s "$existing_device" reboot
-  "$adb_command" -s "$existing_device" wait-for-device
+  "$adb_command" -s "$existing_device" wait-for-device \
+    >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1 &
+  adb_wait_pid=$!
+  if ! portal_mobile_wait_bounded \
+    "$adb_wait_pid" "$PORTAL_MOBILE_ADB_WAIT_TIMEOUT_SECONDS"; then
+    portal_mobile_fail emulator-reconnect
+    exit 1
+  fi
   for _attempt in $(seq 1 120); do
     if [ "$($adb_command -s "$existing_device" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n')" = "1" ]; then
       break
@@ -74,7 +81,8 @@ fi
 OXID_MOBILE_CUSTODY=development \
 OXID_STANDALONE_NETWORK_PROFILE=local \
 OXID_MOBILE_PORTAL_PROFILE=local \
-  "$repository_root/scripts/run-android-emulator.sh"
+  "$repository_root/scripts/run-android-emulator.sh" \
+  >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1
 
 device="${OXID_ANDROID_DEVICE:-}"
 if [ -z "$device" ]; then

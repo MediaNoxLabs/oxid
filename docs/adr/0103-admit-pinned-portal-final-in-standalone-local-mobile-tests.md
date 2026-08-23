@@ -129,11 +129,14 @@ app/data and normal build outputs remain available for local inspection but are
 not evidence fields. Android deliberately retains the exact app reverse entries
 for 8088, 9944, 6300, 18090, 18091, and 18093; only the owned dynamic CDP
 forward is removed. A rerun resets only Oxid app data and recreates its scoped
-runtime. Evidence is written or replaced only after a successful clean-head
-run; failed reruns do not delete earlier retained evidence, whose `oxid.head`
-binds it to its source commit. Reproduction therefore requires no global Docker
-pruning, broad worktree/`target` deletion, virtual-device erase, or
-`reverse --remove-all`.
+runtime. Evidence is generated into a private same-directory candidate, checked
+against the exact schema and sentinel, and published with an atomic rename.
+Generation, schema, sentinel, or publication-finalization failure preserves any
+prior valid evidence. Publication precedes the EXIT cleanup transaction, so a
+later cleanup failure still fails the command but may leave the newly validated,
+clean-head-bound evidence in place. The retained evidence's `oxid.head` binds it
+to its source commit. Reproduction therefore requires no global Docker pruning,
+broad worktree/`target` deletion, virtual-device erase, or `reverse --remove-all`.
 
 This proves real mock-KYC Portal issuance on virtual mobile hosts only, against
 an undeployed holder. Credential status remains `not_checked`. It does not

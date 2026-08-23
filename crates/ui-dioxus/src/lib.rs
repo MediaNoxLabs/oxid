@@ -1957,6 +1957,36 @@ fn scrub_pending_identity_request(
     scrub_pending_identity_request_value(&mut guard, kind);
 }
 
+/// Retains the one-active-review guard after either imported or manual offer
+/// preparation. A manual review has no raw URI, but still owns a protocol
+/// session and must block a newly delivered OS link until terminal completion.
+fn retain_credential_issuance_review_lock_value(
+    pending: &mut Option<PendingIdentityRequest>,
+) -> bool {
+    match pending {
+        Some(request) if request.kind == IdentityRequestKind::CredentialIssuance => {
+            request.request_uri.zeroize();
+            request.request_uri.clear();
+            true
+        }
+        Some(_) => false,
+        None => {
+            *pending = Some(PendingIdentityRequest {
+                kind: IdentityRequestKind::CredentialIssuance,
+                request_uri: String::new(),
+            });
+            true
+        }
+    }
+}
+
+fn retain_credential_issuance_review_lock(
+    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
+) -> bool {
+    let mut guard = pending_identity_request.write();
+    retain_credential_issuance_review_lock_value(&mut guard)
+}
+
 /// Clears a pending identity review and zeroizes any raw URI still present.
 /// This is used only for explicit pre-prepare dismissal or after a prepared
 /// issuance reaches successful acceptance/refusal.
@@ -10127,7 +10157,7 @@ fn credential_issuance_message(error: CredentialIssuanceError) -> String {
 fn credential_issuance_cleanup_allows_release(
     result: &Result<CredentialIssuanceView, CredentialIssuanceError>,
 ) -> bool {
-    matches!(result, Ok(_) | Err(CredentialIssuanceError::InvalidState))
+    result.is_ok()
 }
 
 fn apply_failed_credential_acceptance_state<Prepared>(
@@ -11279,9 +11309,8 @@ fn CredentialsPage(
                                     {
                                         Ok(Ok(preview)) => {
                                             offer_draft.write().clear_imported();
-                                            scrub_pending_identity_request(
+                                            retain_credential_issuance_review_lock(
                                                 &mut pending_identity_request,
-                                                IdentityRequestKind::CredentialIssuance,
                                             );
                                             prepared_issuance.set(Some(preview));
                                             issuance_consent.set(false);
@@ -12791,7 +12820,7 @@ mod tests {
 
     #[test]
     fn issuance_failure_releases_the_route_only_after_confirmed_cleanup() {
-        assert!(credential_issuance_cleanup_allows_release(&Err(
+        assert!(!credential_issuance_cleanup_allows_release(&Err(
             CredentialIssuanceError::InvalidState
         )));
         assert!(!credential_issuance_cleanup_allows_release(&Err(
@@ -12830,8 +12859,32 @@ mod tests {
             assert!(!identity_request_admits_new_link(pending.is_some()));
         }
 
+        assert_retained(Ok(Err(CredentialIssuanceError::InvalidState)));
         assert_retained(Ok(Err(CredentialIssuanceError::Unavailable)));
         assert_retained(Err(UiBlockingTaskError::WorkerFailed));
+    }
+
+    #[test]
+    fn manual_prepared_issuance_blocks_a_new_os_link_until_terminal_completion() {
+        let mut pending = None;
+        let prepared = Some("manual prepared credential review".to_owned());
+
+        assert!(retain_credential_issuance_review_lock_value(&mut pending));
+        assert_eq!(
+            retained_identity_review_route(&pending),
+            Some(Route::CredentialRequest)
+        );
+        assert!(!identity_request_admits_new_link(pending.is_some()));
+        assert_eq!(
+            prepared.as_deref(),
+            Some("manual prepared credential review")
+        );
+
+        assert!(wipe_pending_identity_request_value(
+            &mut pending,
+            Some(IdentityRequestKind::CredentialIssuance),
+        ));
+        assert!(identity_request_admits_new_link(pending.is_some()));
     }
 
     #[test]

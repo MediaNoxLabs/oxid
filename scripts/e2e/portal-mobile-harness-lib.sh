@@ -11,10 +11,11 @@ readonly PORTAL_PROVENANCE_SHA256="cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53
 readonly PORTAL_MOBILE_READY_TIMEOUT_SECONDS=720
 readonly PORTAL_MOBILE_CURL_TIMEOUT_SECONDS=10
 readonly PORTAL_MOBILE_SUPPORT_GRACE_SECONDS=75
+# TERM reaches pre-READY support immediately. KILL then waits for the longest
+# ten-minute synchronous startup command, 60-second Compose teardown,
+# five-second named-resource poll, and a ten-second scheduling margin.
 readonly PORTAL_MOBILE_STARTUP_GRACE_SECONDS=675
-# Once TERM reaches pre-READY support, allow its 60-second Compose teardown,
-# five-second named-resource poll, and a small scheduling margin before KILL.
-readonly PORTAL_MOBILE_STARTUP_TERM_GRACE_SECONDS=70
+readonly PORTAL_MOBILE_ADB_WAIT_TIMEOUT_SECONDS=120
 readonly PORTAL_MOBILE_TERM_GRACE_SECONDS=5
 
 PORTAL_MOBILE_SUPPORT_PID=""
@@ -72,6 +73,23 @@ portal_mobile_wait_bounded() {
   return "$wait_status"
 }
 
+portal_mobile_terminate_bounded() {
+  local child_pid="$1" kill_grace_seconds="$2"
+  local watchdog_pid wait_status
+  # Signal before starting the grace timer so support cannot begin another
+  # synchronous child during an unsignaled pre-READY cleanup window.
+  kill -TERM "$child_pid" >/dev/null 2>&1 || true
+  (
+    sleep "$kill_grace_seconds"
+    kill -KILL "$child_pid" >/dev/null 2>&1 || true
+  ) &
+  watchdog_pid=$!
+  if wait "$child_pid"; then wait_status=0; else wait_status=$?; fi
+  kill "$watchdog_pid" >/dev/null 2>&1 || true
+  wait "$watchdog_pid" >/dev/null 2>&1 || true
+  return "$wait_status"
+}
+
 portal_mobile_acquire_lock() {
   local attempt owner="" stale_lock
   PORTAL_MOBILE_LOCK_DIR="/tmp/oxid-portal-mobile-$(id -u).lock"
@@ -94,7 +112,10 @@ portal_mobile_acquire_lock() {
       if IFS= read -r owner <"$PORTAL_MOBILE_LOCK_DIR/owner-pid" 2>/dev/null; then break; fi
       sleep 0.1
     done
-    if [[ "$owner" =~ ^[0-9]+$ ]] && kill -0 "$owner" 2>/dev/null; then
+    # A creator can be descheduled between mkdir and its owner-pid write.
+    # Missing, unreadable, or partial ownership is therefore busy rather than
+    # stale; only a complete numeric owner that no longer exists is reclaimable.
+    if ! [[ "$owner" =~ ^[0-9]+$ ]] || kill -0 "$owner" 2>/dev/null; then
       portal_mobile_fail lock-busy
       return 1
     fi
@@ -202,17 +223,17 @@ portal_mobile_start() {
   chmod 600 "$PORTAL_MOBILE_PRIVATE_LOG"
 
   if ! git -C "$source_tree" fetch origin \
-    "integration:refs/remotes/origin/integration" \
-    "refs/pull/17/head:refs/oxid-evidence/portal-pr-17" \
+    "+$PORTAL_INTEGRATION_COMMIT:refs/oxid-evidence/portal-integration" \
+    "+refs/pull/17/head:refs/oxid-evidence/portal-pr-17" \
     >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1; then
     portal_mobile_fail source-fetch
     return 1
   fi
-  [ "$(git -C "$source_tree" rev-parse origin/integration^{commit})" = "$PORTAL_INTEGRATION_COMMIT" ] || {
+  [ "$(git -C "$source_tree" rev-parse refs/oxid-evidence/portal-integration^{commit})" = "$PORTAL_INTEGRATION_COMMIT" ] || {
     portal_mobile_fail integration-commit
     return 1
   }
-  [ "$(git -C "$source_tree" rev-parse origin/integration^{tree})" = "$PORTAL_INTEGRATION_TREE" ] || {
+  [ "$(git -C "$source_tree" rev-parse refs/oxid-evidence/portal-integration^{tree})" = "$PORTAL_INTEGRATION_TREE" ] || {
     portal_mobile_fail integration-tree
     return 1
   }
@@ -313,8 +334,6 @@ portal_mobile_cleanup() {
   # command can replace it. Runtime manifests and logs can contain private
   # protocol diagnostics, so they are removed on every exit.
   local incoming_status="$1" cleanup_status=0 source_tree lock_owner=""
-  local support_grace="$PORTAL_MOBILE_SUPPORT_GRACE_SECONDS"
-  local support_term_grace="$PORTAL_MOBILE_TERM_GRACE_SECONDS"
   if [ "$PORTAL_MOBILE_CLEANUP_RUNNING" = 1 ]; then
     return "$incoming_status"
   fi
@@ -331,20 +350,22 @@ portal_mobile_cleanup() {
     PORTAL_MOBILE_HOLDER_SYNC_PID=""
   fi
   if [ -n "$PORTAL_MOBILE_SUPPORT_PID" ]; then
-    # Before READY, support can be inside a bounded synchronous compose command;
-    # let that command hit its own timeout and run compose-down rather than
-    # killing the cleanup owner early and orphaning its child process.
     if [ -z "$PORTAL_MOBILE_CONTROL_ORIGIN" ]; then
-      support_grace="$PORTAL_MOBILE_STARTUP_GRACE_SECONDS"
-      support_term_grace="$PORTAL_MOBILE_STARTUP_TERM_GRACE_SECONDS"
+      # Before READY, deliver TERM immediately. Node handles it as soon as any
+      # current bounded spawnSync returns, then owns exact Compose teardown.
+      # The KILL bound covers that command plus teardown and resource polling.
+      portal_mobile_terminate_bounded \
+        "$PORTAL_MOBILE_SUPPORT_PID" "$PORTAL_MOBILE_STARTUP_GRACE_SECONDS" \
+        >/dev/null 2>&1 || cleanup_status=1
+    else
+      curl --noproxy '*' --silent \
+        --connect-timeout "$PORTAL_MOBILE_CURL_TIMEOUT_SECONDS" \
+        --max-time "$PORTAL_MOBILE_CURL_TIMEOUT_SECONDS" \
+        -X POST "$PORTAL_MOBILE_CONTROL_ORIGIN/complete" >/dev/null 2>&1 || true
+      portal_mobile_wait_bounded \
+        "$PORTAL_MOBILE_SUPPORT_PID" "$PORTAL_MOBILE_SUPPORT_GRACE_SECONDS" \
+        >/dev/null 2>&1 || cleanup_status=1
     fi
-    curl --noproxy '*' --silent \
-      --connect-timeout "$PORTAL_MOBILE_CURL_TIMEOUT_SECONDS" \
-      --max-time "$PORTAL_MOBILE_CURL_TIMEOUT_SECONDS" \
-      -X POST "$PORTAL_MOBILE_CONTROL_ORIGIN/complete" >/dev/null 2>&1 || true
-    portal_mobile_wait_bounded \
-      "$PORTAL_MOBILE_SUPPORT_PID" "$support_grace" "$support_term_grace" \
-      >/dev/null 2>&1 || cleanup_status=1
     PORTAL_MOBILE_SUPPORT_PID=""
   fi
   if [ -n "$PORTAL_MOBILE_RUN_TREE" ]; then

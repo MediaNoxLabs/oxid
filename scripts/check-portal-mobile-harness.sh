@@ -150,35 +150,84 @@ if rg -n '^[[:space:]]*wait "\$PORTAL_MOBILE_(SUPPORT|HOLDER_SYNC)_PID"' \
   exit 1
 fi
 if ! bash -c '
+  set -euo pipefail
   source "$1"
-  [ "$PORTAL_MOBILE_STARTUP_TERM_GRACE_SECONDS" -ge 65 ] &&
-    [ "$PORTAL_MOBILE_STARTUP_TERM_GRACE_SECONDS" -le 75 ]
+  [ "$PORTAL_MOBILE_STARTUP_GRACE_SECONDS" -eq $((10 * 60 + 60 + 5 + 10)) ]
 ' _ scripts/e2e/portal-mobile-harness-lib.sh; then
-  echo "Pre-READY TERM grace must tightly cover the 60-second Compose teardown and 5-second resource poll." >&2
+  echo "Pre-READY KILL grace must cover the ten-minute command, 60-second teardown, five-second poll, and scheduling margin." >&2
   exit 1
 fi
-# Scale the selectable post-TERM grace down to one second and prove a TERM-
-# ignoring child is KILLed only after that bounded window.
+# Scale the pre-READY KILL grace down to two seconds. An observer must see TERM
+# during the first second while the TERM-handling child remains alive until the
+# full bound; this fails if TERM is delayed until the KILL deadline.
 bash -c '
+  set -euo pipefail
   source "$1"
-  trap "" TERM
-  sleep 30 &
+  scratch="$(mktemp -d)"
+  child_pid=""
+  trap '\''[ -z "$child_pid" ] || kill -KILL "$child_pid" >/dev/null 2>&1 || true; rm -rf "$scratch"'\'' EXIT
+  term_marker="$scratch/term"
+  ready_marker="$scratch/ready"
+  observed_marker="$scratch/observed"
+  (
+    trap '\''printf TERM >"$term_marker"'\'' TERM
+    : >"$ready_marker"
+    while :; do sleep 0.1; done
+  ) &
   child_pid=$!
-  trap - TERM
+  for _attempt in $(seq 1 100); do
+    [ ! -e "$ready_marker" ] || break
+    sleep 0.01
+  done
+  [ -e "$ready_marker" ]
+  (
+    sleep 1
+    [ -s "$term_marker" ]
+    kill -0 "$child_pid"
+    : >"$observed_marker"
+  ) &
+  observer_pid=$!
   started=$SECONDS
   wait_status=0
-  portal_mobile_wait_bounded "$child_pid" 0 1 || wait_status=$?
+  portal_mobile_terminate_bounded "$child_pid" 2 || wait_status=$?
+  child_pid=""
+  wait "$observer_pid"
   elapsed=$((SECONDS - started))
-  [ "$wait_status" -eq 137 ] && [ "$elapsed" -ge 1 ] && [ "$elapsed" -le 5 ]
+  [ -e "$observed_marker" ]
+  [ "$wait_status" -eq 137 ]
+  [ "$elapsed" -ge 2 ]
+  [ "$elapsed" -le 6 ]
 ' _ scripts/e2e/portal-mobile-harness-lib.sh 2>/dev/null
-if ! rg -qF '"$PORTAL_MOBILE_SUPPORT_PID" "$support_grace" "$support_term_grace"' \
-  scripts/e2e/portal-mobile-harness-lib.sh; then
-  echo "Pre-READY support shutdown must pass its extended post-TERM grace." >&2
-  exit 1
-fi
+for immediate_term_marker in \
+  'kill -TERM "$child_pid"' \
+  'portal_mobile_terminate_bounded \' \
+  '"$PORTAL_MOBILE_SUPPORT_PID" "$PORTAL_MOBILE_STARTUP_GRACE_SECONDS"'; do
+  rg -qF "$immediate_term_marker" scripts/e2e/portal-mobile-harness-lib.sh || {
+    echo "Pre-READY support shutdown is missing immediate-TERM/full-bound marker: $immediate_term_marker" >&2
+    exit 1
+  }
+done
 if ! rg -qF 'rm -rf "$PORTAL_MOBILE_STATE_DIR"' scripts/e2e/portal-mobile-harness-lib.sh ||
   rg -qF 'private failure artifacts=' scripts/e2e/portal-mobile-harness-lib.sh; then
   echo "Portal private runtime must be removed on every exit." >&2
+  exit 1
+fi
+# Generic launcher and xcodebuild output can contain selected device ids. Keep
+# those streams and every Xcode result artifact in the cleanup-owned runtime.
+if ! rg -Uq 'run-ios-simulator\.sh" \\\n[[:space:]]+>>"\$PORTAL_MOBILE_PRIVATE_LOG" 2>&1' scripts/test-ios-portal-flow.sh ||
+  ! rg -Uq 'run-android-emulator\.sh" \\\n[[:space:]]+>>"\$PORTAL_MOBILE_PRIVATE_LOG" 2>&1' scripts/test-android-portal-flow.sh ||
+  ! rg -Uq 'CODE_SIGNING_ALLOWED=NO \\\n[[:space:]]+>>"\$PORTAL_MOBILE_PRIVATE_LOG" 2>&1' scripts/test-ios-portal-flow.sh ||
+  ! rg -qF -- '-derivedDataPath "$PORTAL_MOBILE_STATE_DIR/ios-derived-data"' scripts/test-ios-portal-flow.sh ||
+  ! rg -qF -- '-resultBundlePath "$PORTAL_MOBILE_STATE_DIR/ios-results.xcresult"' scripts/test-ios-portal-flow.sh ||
+  rg -qF 'target/mobile-tests/ios-portal-derived-data' scripts/test-ios-portal-flow.sh; then
+  echo "Portal launcher/Xcode logs must remain private and cleanup-owned." >&2
+  exit 1
+fi
+# adb reconnect must use the shared TERM/KILL bound and propagate timeout or
+# process failure instead of blocking before EXIT cleanup.
+if ! rg -qF '"$adb_wait_pid" "$PORTAL_MOBILE_ADB_WAIT_TIMEOUT_SECONDS"' scripts/test-android-portal-flow.sh ||
+  ! rg -qF 'portal_mobile_fail emulator-reconnect' scripts/test-android-portal-flow.sh; then
+  echo "Android cold-reboot reconnect must be bounded and fail closed." >&2
   exit 1
 fi
 
@@ -188,6 +237,7 @@ fi
 # Successful compose-down waits only on the exact named project's three
 # resource types for a short deadline, then still fails closed.
 for cleanup_wait_marker in \
+  'const CHILD_COMMAND_TIMEOUT_MS = 10 * 60_000;' \
   'const CLEANUP_COMMAND_TIMEOUT_MS = 60_000;' \
   'const CLEANUP_RESOURCE_DEADLINE_MS = 5_000;' \
   'const CLEANUP_RESOURCE_POLL_MS = 250;' \
@@ -257,18 +307,43 @@ done
 # Hosted scanners must keep the intentional loopback readiness probe and the
 # public negative JWT fixture without weakening repository-wide rules. The
 # OpenGrep false positive is removed by using Node's explicit loopback HTTP API;
-# Checkov excludes only the exact synthetic JWT-shaped fixture in its scan checkout.
+# Checkov removes only the digest-authenticated synthetic fixture from its scan checkout.
 negative_fixture="fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/unsupported-proof-alg.json"
+negative_fixture_sha256="82c8944a6fa7bad89632c324bba46411bc35556bf7172a8971ec6d6cda2fbe3f"
 if ! rg -qF 'function issuerMetadataReady()' scripts/e2e/portal-mobile-support.mjs ||
   ! rg -qF 'const request = http.request({' scripts/e2e/portal-mobile-support.mjs ||
   rg -qF 'nosemgrep:' scripts/e2e/portal-mobile-support.mjs ||
-  ! rg -qF "rm -- $negative_fixture" .github/workflows/scan.yml; then
-  echo "Portal scanner exceptions must remain exact-path/explicit-loopback only." >&2
+  [ "$(shasum -a 256 "$negative_fixture" | awk '{print $1}')" != "$negative_fixture_sha256" ] ||
+  ! rg -qF "fixture=$negative_fixture" .github/workflows/scan.yml ||
+  ! rg -qF "$negative_fixture_sha256" .github/workflows/scan.yml ||
+  ! rg -qF 'sha256sum --check --strict' .github/workflows/scan.yml ||
+  ! rg -qF 'rm -- "$fixture"' .github/workflows/scan.yml; then
+  echo "Portal scanner exceptions must remain digest-authenticated exact-path/explicit-loopback only." >&2
   exit 1
 fi
 
 if [ "$(rg -lF '.token == 2 and .nonce == 1 and .credential == 1' scripts/test-ios-portal-flow.sh scripts/test-android-portal-flow.sh | wc -l | tr -d ' ')" -ne 2 ]; then
   echo "Both Portal platform suites must account for one failed and one successful token attempt." >&2
+  exit 1
+fi
+
+# Fetch the immutable integration object into a private evidence ref. The
+# mutable origin/integration tip may advance without invalidating this pin.
+for source_pin_marker in \
+  '+$PORTAL_INTEGRATION_COMMIT:refs/oxid-evidence/portal-integration' \
+  'refs/oxid-evidence/portal-integration^{commit}' \
+  'refs/oxid-evidence/portal-integration^{tree}' \
+  'refs/oxid-evidence/portal-pr-17^{commit}' \
+  'refs/oxid-evidence/portal-pr-17^{tree}' \
+  'rev-parse "$PORTAL_PROFILE_SOURCE"^{commit}' \
+  'PORTAL_PROVENANCE_SHA256'; do
+  rg -qF "$source_pin_marker" scripts/e2e/portal-mobile-harness-lib.sh || {
+    echo "Immutable Portal source provenance marker is missing: $source_pin_marker" >&2
+    exit 1
+  }
+done
+if rg -qF 'origin/integration^{' scripts/e2e/portal-mobile-harness-lib.sh; then
+  echo "Portal reproduction must not require the mutable integration tip to equal the pin." >&2
   exit 1
 fi
 
@@ -326,6 +401,7 @@ done
 # Behavioral proof: jq mismatch and sentinel rejection delete only the private
 # candidate and preserve old evidence; a fully valid candidate replaces it.
 bash -c '
+  set -euo pipefail
   source "$1"
   scratch="$(mktemp -d)"
   trap '\''rm -rf "$scratch"'\'' EXIT
@@ -338,7 +414,8 @@ bash -c '
   if portal_mobile_finalize_evidence "$evidence" "$candidate" '\''{"schema":"new"}'\'' forbidden >/dev/null 2>&1; then
     exit 1
   fi
-  grep -qF '\''{"schema":"old"}'\'' "$evidence" && [ ! -e "$candidate" ]
+  grep -qF '\''{"schema":"old"}'\'' "$evidence"
+  [ ! -e "$candidate" ]
 
   candidate="$scratch/.evidence.json.tmp.sentinel"
   printf '\''%s\n'\'' '\''{"schema":"new","note":"forbidden"}'\'' >"$candidate"
@@ -346,14 +423,16 @@ bash -c '
   if portal_mobile_finalize_evidence "$evidence" "$candidate" '\''{"schema":"new","note":"forbidden"}'\'' forbidden >/dev/null 2>&1; then
     exit 1
   fi
-  grep -qF '\''{"schema":"old"}'\'' "$evidence" && [ ! -e "$candidate" ]
+  grep -qF '\''{"schema":"old"}'\'' "$evidence"
+  [ ! -e "$candidate" ]
 
   candidate="$scratch/.evidence.json.tmp.valid"
   printf '\''%s\n'\'' '\''{"schema":"new"}'\'' >"$candidate"
   PORTAL_MOBILE_EVIDENCE_TEMP="$candidate"
   portal_mobile_finalize_evidence "$evidence" "$candidate" '\''{"schema":"new"}'\'' forbidden
   jq -e '\''. == {"schema":"new"}'\'' "$evidence" >/dev/null
-  [ ! -e "$candidate" ] && [ -z "$PORTAL_MOBILE_EVIDENCE_TEMP" ]
+  [ ! -e "$candidate" ]
+  [ -z "$PORTAL_MOBILE_EVIDENCE_TEMP" ]
 ' _ scripts/e2e/portal-mobile-harness-lib.sh
 
 # CDP uses a dynamically allocated, exactly owned forward. Both opening the
@@ -394,16 +473,45 @@ for busy_marker in \
 done
 
 for workflow in .github/workflows/ci.yml .github/workflows/quality.yml .github/workflows/scan.yml; do
-  rg -q '^    branches: \[develop, integration, main\]$' "$workflow" || {
-    echo "Hosted PR checks do not include integration in $workflow." >&2
+  if [ "$(rg -c '^    branches: \[develop, integration, main\]$' "$workflow")" -ne 2 ]; then
+    echo "Hosted push and pull-request checks must both include integration in $workflow." >&2
     exit 1
-  }
+  fi
 done
-for lock_marker in 'mkdir "$PORTAL_MOBILE_LOCK_DIR"' 'mv "$PORTAL_MOBILE_LOCK_DIR" "$stale_lock"' 'owner-pid'; do
+for lock_marker in \
+  'mkdir "$PORTAL_MOBILE_LOCK_DIR"' \
+  '! [[ "$owner" =~ ^[0-9]+$ ]]' \
+  'mv "$PORTAL_MOBILE_LOCK_DIR" "$stale_lock"' \
+  'owner-pid'; do
   rg -qF "$lock_marker" scripts/e2e/portal-mobile-harness-lib.sh || {
     echo "Atomic stale-safe Portal mobile lock marker is missing: $lock_marker" >&2
     exit 1
   }
 done
+# A live creator paused between mkdir and owner-pid publication must remain the
+# owner of its directory. The contender fails busy and never renames the lock.
+bash -c '
+  set -euo pipefail
+  source "$1"
+  fake_uid="99$$"
+  id() { printf '\''%s\n'\'' "$fake_uid"; }
+  lock_dir="/tmp/oxid-portal-mobile-${fake_uid}.lock"
+  trap '\''rm -rf "$lock_dir" "$lock_dir".stale.*'\'' EXIT
+  mkdir "$lock_dir"
+  : >"$lock_dir/live-creator"
+  (
+    sleep 2
+    printf '\''%s\n'\'' "$$" >"$lock_dir/owner-pid"
+  ) &
+  creator_pid=$!
+  if portal_mobile_acquire_lock >/dev/null 2>&1; then
+    exit 1
+  fi
+  [ -d "$lock_dir" ]
+  [ -e "$lock_dir/live-creator" ]
+  [ -z "$(compgen -G "$lock_dir.stale.*" || true)" ]
+  wait "$creator_pid"
+  [ -s "$lock_dir/owner-pid" ]
+' _ scripts/e2e/portal-mobile-harness-lib.sh
 
 echo "Portal mobile harness syntax, cleanup status/signal bounds, atomic evidence publication, named-resource cleanup polling, exact CDP ownership, evidence pinning, secret-free delivery, and hosted PR filters passed."

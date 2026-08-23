@@ -2,7 +2,7 @@ name: Scan
 
 on:
   push:
-    branches: [develop, main]
+    branches: [develop, integration, main]
   pull_request:
     branches: [develop, integration, main]
   workflow_dispatch: {}
@@ -29,7 +29,11 @@ jobs:
           persist-credentials: false
 
       - name: Exclude intentional public negative proof fixture from generic JWT heuristic
-        run: rm -- fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/unsupported-proof-alg.json
+        run: |
+          set -euo pipefail
+          fixture=fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/unsupported-proof-alg.json
+          printf '%s  %s\n' '82c8944a6fa7bad89632c324bba46411bc35556bf7172a8971ec6d6cda2fbe3f' "$fixture" | sha256sum --check --strict
+          rm -- "$fixture"
 
       - name: Scan code
         uses: midnightntwrk/upload-sarif-github-action@4bbe849e9707b46342832d4b7f94fec585823ca4 # pinned main, 2026-07-10

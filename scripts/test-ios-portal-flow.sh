@@ -35,7 +35,8 @@ OXID_IOS_RESET_DATA=1 \
 OXID_MOBILE_CUSTODY=development \
 OXID_STANDALONE_NETWORK_PROFILE=local \
 OXID_MOBILE_PORTAL_PROFILE=local \
-  "$repository_root/scripts/run-ios-simulator.sh"
+  "$repository_root/scripts/run-ios-simulator.sh" \
+  >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1
 
 device="${OXID_IOS_DEVICE:-}"
 if [ -z "$device" ]; then
@@ -76,9 +77,11 @@ env -i \
     -project "$generated_project_root/OxidMobileSmoke.xcodeproj" \
     -scheme OxidUITests \
     -destination "platform=iOS Simulator,id=$device" \
-    -derivedDataPath "$repository_root/target/mobile-tests/ios-portal-derived-data" \
+    -derivedDataPath "$PORTAL_MOBILE_STATE_DIR/ios-derived-data" \
+    -resultBundlePath "$PORTAL_MOBILE_STATE_DIR/ios-results.xcresult" \
     -only-testing:"OxidUITests/PortalFlowTests/testRealPortalOfferUsesStrictWarmColdConsentAndRestoresEncryptedCredential" \
-    CODE_SIGNING_ALLOWED=NO
+    CODE_SIGNING_ALLOWED=NO \
+    >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1
 
 kill -TERM "$PORTAL_MOBILE_HOLDER_SYNC_PID" >/dev/null 2>&1 || true
 portal_mobile_wait_bounded "$PORTAL_MOBILE_HOLDER_SYNC_PID" \

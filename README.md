@@ -486,10 +486,14 @@ owned dynamic CDP forward is removed.
 
 A rerun needs no destructive pre-clean: it resets only Oxid app data on the
 selected virtual device and recreates that platform's scoped runtime. Evidence
-is written or replaced only after a successful clean-head run; a failed rerun
-does not delete earlier retained evidence, whose `oxid.head` identifies its
-source commit. After inspection, remove evidence, app data, or the retained
-Android routes only by their exact scope, for example:
+uses a private same-directory candidate, exact schema and sentinel validation,
+and an atomic rename. Candidate generation, validation, or publication failure
+preserves any earlier valid evidence. Publication happens before the EXIT
+cleanup transaction: a later cleanup failure still fails the command but may
+leave the newly validated, clean-head-bound evidence in place. In either case,
+`oxid.head` identifies the retained evidence's source commit. After inspection,
+remove evidence, app data, or the retained Android routes only by their exact
+scope, for example:
 
 ```bash
 rm -rf target/portal-mobile-e2e/ios target/portal-mobile-e2e/android
