@@ -15,7 +15,9 @@ readonly PORTAL_MOBILE_SUPPORT_GRACE_SECONDS=75
 # ten-minute synchronous startup command, 60-second Compose teardown,
 # five-second named-resource poll, and a ten-second scheduling margin.
 readonly PORTAL_MOBILE_STARTUP_GRACE_SECONDS=675
-readonly PORTAL_MOBILE_ADB_WAIT_TIMEOUT_SECONDS=120
+readonly PORTAL_MOBILE_ADB_OPERATION_TIMEOUT_SECONDS=10
+readonly PORTAL_MOBILE_ADB_KILL_GRACE_SECONDS=2
+readonly PORTAL_MOBILE_ADB_BOOT_DEADLINE_SECONDS=120
 readonly PORTAL_MOBILE_TERM_GRACE_SECONDS=5
 
 PORTAL_MOBILE_SUPPORT_PID=""
@@ -32,6 +34,8 @@ PORTAL_MOBILE_REPOSITORY_ROOT=""
 PORTAL_MOBILE_OXID_HEAD=""
 PORTAL_MOBILE_LOCK_DIR=""
 PORTAL_MOBILE_LOCK_OWNED=0
+PORTAL_MOBILE_RECLAIM_DIR=""
+PORTAL_MOBILE_RECLAIM_OWNED=0
 PORTAL_MOBILE_CLEANUP_RUNNING=0
 
 portal_mobile_fail() {
@@ -73,6 +77,30 @@ portal_mobile_wait_bounded() {
   return "$wait_status"
 }
 
+portal_mobile_run_captured_bounded() {
+  local output_path="$1" total_timeout_seconds="$2" term_grace_seconds="$3"
+  shift 3
+  local child_pid wait_status=0 term_after_seconds
+  if [ "$term_grace_seconds" -gt "$total_timeout_seconds" ]; then
+    term_grace_seconds=$total_timeout_seconds
+  fi
+  term_after_seconds=$((total_timeout_seconds - term_grace_seconds))
+  [ -n "$PORTAL_MOBILE_STATE_DIR" ] && \
+    [ "$(dirname -- "$output_path")" = "$PORTAL_MOBILE_STATE_DIR" ] && \
+    [ -d "$PORTAL_MOBILE_STATE_DIR" ] && [ ! -L "$PORTAL_MOBILE_STATE_DIR" ] || {
+    portal_mobile_fail bounded-output
+    return 1
+  }
+  rm -f -- "$output_path" || return 1
+  (umask 077 && : >"$output_path") || return 1
+  chmod 600 "$output_path" || return 1
+  "$@" >"$output_path" 2>>"$PORTAL_MOBILE_PRIVATE_LOG" &
+  child_pid=$!
+  portal_mobile_wait_bounded \
+    "$child_pid" "$term_after_seconds" "$term_grace_seconds" || wait_status=$?
+  return "$wait_status"
+}
+
 portal_mobile_terminate_bounded() {
   local child_pid="$1" kill_grace_seconds="$2"
   local watchdog_pid wait_status
@@ -90,14 +118,43 @@ portal_mobile_terminate_bounded() {
   return "$wait_status"
 }
 
+portal_mobile_release_reclaim_claim() {
+  local claim_owner=""
+  if [ "$PORTAL_MOBILE_RECLAIM_OWNED" != 1 ] || [ -z "$PORTAL_MOBILE_RECLAIM_DIR" ]; then
+    return 0
+  fi
+  IFS= read -r claim_owner <"$PORTAL_MOBILE_RECLAIM_DIR/owner-pid" 2>/dev/null || true
+  if [ "$claim_owner" != "$$" ]; then
+    return 1
+  fi
+  rm -rf -- "$PORTAL_MOBILE_RECLAIM_DIR" || return 1
+  PORTAL_MOBILE_RECLAIM_OWNED=0
+  return 0
+}
+
 portal_mobile_acquire_lock() {
-  local attempt owner="" stale_lock
+  local attempt owner="" revalidated_owner="" stale_lock
   PORTAL_MOBILE_LOCK_DIR="/tmp/oxid-portal-mobile-$(id -u).lock"
+  PORTAL_MOBILE_RECLAIM_DIR="${PORTAL_MOBILE_LOCK_DIR}.reclaim"
   for attempt in 1 2 3; do
+    # A reclaim claim closes both sides of the rename race. Normal acquisition
+    # checks before mkdir and again after publishing ownership; an ambiguous or
+    # abandoned claim is deliberately never reclaimed automatically.
+    if [ -e "$PORTAL_MOBILE_RECLAIM_DIR" ] || [ -L "$PORTAL_MOBILE_RECLAIM_DIR" ]; then
+      portal_mobile_fail lock-busy
+      return 1
+    fi
     if (umask 077 && mkdir "$PORTAL_MOBILE_LOCK_DIR") 2>/dev/null; then
       if ! (umask 077 && printf '%s\n' "$$" >"$PORTAL_MOBILE_LOCK_DIR/owner-pid"); then
         rm -rf "$PORTAL_MOBILE_LOCK_DIR"
         portal_mobile_fail lock-owner
+        return 1
+      fi
+      if [ -e "$PORTAL_MOBILE_RECLAIM_DIR" ] || [ -L "$PORTAL_MOBILE_RECLAIM_DIR" ]; then
+        owner=""
+        IFS= read -r owner <"$PORTAL_MOBILE_LOCK_DIR/owner-pid" 2>/dev/null || true
+        [ "$owner" != "$$" ] || rm -rf -- "$PORTAL_MOBILE_LOCK_DIR"
+        portal_mobile_fail lock-busy
         return 1
       fi
       PORTAL_MOBILE_LOCK_OWNED=1
@@ -119,12 +176,43 @@ portal_mobile_acquire_lock() {
       portal_mobile_fail lock-busy
       return 1
     fi
-    # Rename the exact stale lock before removal. Concurrent contenders can
-    # race to rename it, but can never remove a replacement lock acquired by
-    # another invocation.
-    stale_lock="${PORTAL_MOBILE_LOCK_DIR}.stale.$$.$attempt"
-    if mv "$PORTAL_MOBILE_LOCK_DIR" "$stale_lock" 2>/dev/null; then
-      rm -rf "$stale_lock"
+    if ! (umask 077 && mkdir "$PORTAL_MOBILE_RECLAIM_DIR") 2>/dev/null; then
+      portal_mobile_fail lock-busy
+      return 1
+    fi
+    PORTAL_MOBILE_RECLAIM_OWNED=1
+    if ! (umask 077 && printf '%s\n' "$$" >"$PORTAL_MOBILE_RECLAIM_DIR/owner-pid"); then
+      rm -rf -- "$PORTAL_MOBILE_RECLAIM_DIR"
+      PORTAL_MOBILE_RECLAIM_OWNED=0
+      portal_mobile_fail lock-reclaim
+      return 1
+    fi
+
+    # Re-read and validate the same dead owner while holding the atomic claim.
+    # Any replacement, partial write, liveness change, or path ambiguity fails
+    # closed without renaming the lock pathname.
+    revalidated_owner=""
+    if [ ! -d "$PORTAL_MOBILE_LOCK_DIR" ] || [ -L "$PORTAL_MOBILE_LOCK_DIR" ] || \
+      ! IFS= read -r revalidated_owner <"$PORTAL_MOBILE_LOCK_DIR/owner-pid" 2>/dev/null || \
+      [ "$revalidated_owner" != "$owner" ] || \
+      ! [[ "$revalidated_owner" =~ ^[0-9]+$ ]] || \
+      kill -0 "$revalidated_owner" 2>/dev/null; then
+      portal_mobile_release_reclaim_claim || true
+      portal_mobile_fail lock-reclaim
+      return 1
+    fi
+
+    stale_lock="$PORTAL_MOBILE_RECLAIM_DIR/stale-lock"
+    if [ -e "$stale_lock" ] || [ -L "$stale_lock" ] || \
+      ! mv "$PORTAL_MOBILE_LOCK_DIR" "$stale_lock" 2>/dev/null || \
+      ! rm -rf -- "$stale_lock"; then
+      portal_mobile_release_reclaim_claim || true
+      portal_mobile_fail lock-reclaim
+      return 1
+    fi
+    if ! portal_mobile_release_reclaim_claim; then
+      portal_mobile_fail lock-reclaim
+      return 1
     fi
   done
   portal_mobile_fail lock-busy
@@ -383,6 +471,9 @@ portal_mobile_cleanup() {
   fi
   if [ -n "$PORTAL_MOBILE_EVIDENCE_TEMP" ]; then
     portal_mobile_discard_evidence_temp "$PORTAL_MOBILE_EVIDENCE_TEMP" || cleanup_status=1
+  fi
+  if [ "$PORTAL_MOBILE_RECLAIM_OWNED" = 1 ]; then
+    portal_mobile_release_reclaim_claim || cleanup_status=1
   fi
   if [ "$PORTAL_MOBILE_LOCK_OWNED" = 1 ] && [ -n "$PORTAL_MOBILE_LOCK_DIR" ]; then
     IFS= read -r lock_owner <"$PORTAL_MOBILE_LOCK_DIR/owner-pid" 2>/dev/null || true

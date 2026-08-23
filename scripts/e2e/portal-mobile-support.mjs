@@ -34,6 +34,9 @@ const HOST_COMMAND_TIMEOUT_MS = 30_000;
 // support grace while leaving time for the exact-project resource check.
 const CLEANUP_COMMAND_TIMEOUT_MS = 60_000;
 const CLEANUP_RESOURCE_DEADLINE_MS = 5_000;
+// A wedged named-resource query must fail well inside the real aggregate
+// cleanup deadline rather than inheriting the 60-second Compose-down bound.
+const CLEANUP_RESOURCE_QUERY_TIMEOUT_MS = 1_000;
 const CLEANUP_RESOURCE_POLL_MS = 250;
 
 const portalTree = process.env.PORTAL_INTEGRATION_CHECKOUT;
@@ -445,12 +448,17 @@ function canonicalManifest(issuerDid, issuerMethod, sourceJwk) {
   };
 }
 
-function composeProjectResources() {
+function composeProjectResources(deadline) {
   return ["container", "network", "volume"].flatMap((resource) => {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error("named compose project cleanup deadline expired during resource query");
+    }
+    const queryTimeoutMs = Math.min(CLEANUP_RESOURCE_QUERY_TIMEOUT_MS, remainingMs);
     const args = [resource, "ls"];
     if (resource === "container") args.push("--all");
     args.push("--quiet", "--filter", `label=com.docker.compose.project=${composeProjectName}`);
-    const output = runCaptured("docker", args, portalTree, CLEANUP_COMMAND_TIMEOUT_MS);
+    const output = runCaptured("docker", args, portalTree, queryTimeoutMs);
     return output === "" ? [] : output.split(/\s+/);
   });
 }
@@ -458,7 +466,11 @@ function composeProjectResources() {
 async function waitForComposeProjectCleanup() {
   const deadline = Date.now() + CLEANUP_RESOURCE_DEADLINE_MS;
   while (true) {
-    if (composeProjectResources().length === 0) return;
+    const resources = composeProjectResources(deadline);
+    if (Date.now() >= deadline) {
+      throw new Error("named compose project cleanup deadline expired after resource query");
+    }
+    if (resources.length === 0) return;
     const delayMs = Math.min(CLEANUP_RESOURCE_POLL_MS, deadline - Date.now());
     if (delayMs <= 0) {
       throw new Error("named compose project was not empty at cleanup deadline");

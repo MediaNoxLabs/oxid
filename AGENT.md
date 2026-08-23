@@ -206,11 +206,16 @@ reports 5.44 seconds wall, 440,074,240 bytes maximum RSS, 211,911,424 bytes peak
 footprint, and no swaps. This is authentication-only host evidence, not mobile
 or proof-execution evidence.
 
-The hosted CI job has a 75-minute bound. A cold strict gate plus locked Nix
-package/check/artifact build has previously needed roughly 59 minutes; a
-60-minute limit canceled an otherwise-progressing check phase when GitHub also
-throttled pinned action downloads. Do not reduce the bound without first
-shortening or caching the cold build while retaining every gate.
+Hosted per-push CI has two parallel bounds: 45 minutes for the repository gate
+and 60 minutes for the locked Nix package and Compact-artifact build. The
+nightly full `nix flake check`, including all sandboxed test variants, has a
+separate 120-minute bound. A cold strict gate plus locked Nix
+package/check/artifact build has previously needed roughly 59 minutes; an
+earlier 60-minute full-check limit canceled an otherwise-progressing check
+phase when GitHub also throttled pinned action downloads. Treat that as a cold
+full-build warning, not a nonexistent 75-minute per-push limit, and do not
+reduce the nightly bound without first shortening or caching the cold build
+while retaining every gate.
 
 ADR-0017 is accepted. The first M1 security slice separates protection/session
 state from key operations, secret blobs, and native user authorization. The

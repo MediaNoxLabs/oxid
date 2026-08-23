@@ -1957,10 +1957,10 @@ fn scrub_pending_identity_request(
     scrub_pending_identity_request_value(&mut guard, kind);
 }
 
-/// Retains a process-local admission guard for a successfully prepared manual
-/// credential review. Imported reviews keep using their payload-free pending
-/// request marker instead.
-fn retain_manual_credential_review_admission_lock_value(
+/// Synchronously reserves the process-local admission guard before a manual
+/// credential offer is prepared. Imported reviews keep using their pending
+/// request marker instead, including its existing pre-prepare behavior.
+fn reserve_manual_credential_review_admission_lock_value(
     manual_review_lock: &mut bool,
     has_imported_pending_marker: bool,
 ) -> bool {
@@ -1971,12 +1971,37 @@ fn retain_manual_credential_review_admission_lock_value(
     true
 }
 
-fn retain_manual_credential_review_admission_lock(
+fn reserve_manual_credential_review_admission_lock(
     manual_review_lock: &mut Signal<bool>,
     has_imported_pending_marker: bool,
+) -> bool {
+    let mut guard = manual_review_lock.write();
+    reserve_manual_credential_review_admission_lock_value(&mut guard, has_imported_pending_marker)
+}
+
+/// A protocol-level preparation error confirms that no prepared manual
+/// session survived. Worker failure is not confirmation and must leave the
+/// reservation closed because the adapter may still hold a session.
+fn release_manual_credential_review_after_confirmed_prepare_failure_value(
+    manual_review_lock: &mut bool,
+    manual_review_reserved: bool,
+) -> bool {
+    if !manual_review_reserved {
+        return false;
+    }
+    *manual_review_lock = false;
+    true
+}
+
+fn release_manual_credential_review_after_confirmed_prepare_failure(
+    manual_review_lock: &mut Signal<bool>,
+    manual_review_reserved: bool,
 ) {
     let mut guard = manual_review_lock.write();
-    retain_manual_credential_review_admission_lock_value(&mut guard, has_imported_pending_marker);
+    release_manual_credential_review_after_confirmed_prepare_failure_value(
+        &mut guard,
+        manual_review_reserved,
+    );
 }
 
 /// Clears a pending identity review and zeroizes any raw URI still present.
@@ -2024,13 +2049,16 @@ fn clear_credential_issuance_review_admission(
     clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
 }
 
-fn retained_identity_review_route(pending: &Option<PendingIdentityRequest>) -> Option<Route> {
-    pending
-        .as_ref()
-        .filter(|request| {
-            request.kind == IdentityRequestKind::CredentialIssuance && !request.has_raw_uri()
-        })
-        .map(|_| Route::CredentialRequest)
+fn retained_identity_review_route(
+    pending: &Option<PendingIdentityRequest>,
+    manual_credential_review_locked: bool,
+) -> Option<Route> {
+    if pending.as_ref().is_some_and(|request| {
+        request.kind == IdentityRequestKind::CredentialIssuance && !request.has_raw_uri()
+    }) {
+        return Some(Route::CredentialRequest);
+    }
+    manual_credential_review_locked.then_some(Route::Documents)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3419,14 +3447,17 @@ pub fn App() -> Element {
 
     let active_route = navigation.read().current();
     let receive_sheet_open = active_route == Route::Receive;
-    let content_route = retained_identity_review_route(&pending_identity_request.read())
-        .unwrap_or_else(|| {
-            if receive_sheet_open {
-                navigation.read().root()
-            } else {
-                active_route
-            }
-        });
+    let content_route = retained_identity_review_route(
+        &pending_identity_request.read(),
+        manual_credential_review_lock(),
+    )
+    .unwrap_or_else(|| {
+        if receive_sheet_open {
+            navigation.read().root()
+        } else {
+            active_route
+        }
+    });
     let active_primary = navigation.read().active_primary();
     let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name, brand.wordmark());
@@ -11330,6 +11361,14 @@ fn CredentialsPage(
                                     .is_some_and(|request| {
                                         request.kind == IdentityRequestKind::CredentialIssuance
                                     });
+                                // Manual admission must close synchronously,
+                                // before spawning or awaiting protocol work, so
+                                // native ingress cannot race a one-use offer.
+                                let manual_review_reserved =
+                                    reserve_manual_credential_review_admission_lock(
+                                        &mut manual_credential_review_lock,
+                                        has_imported_pending_marker,
+                                    );
                                 scrub_pending_identity_request(
                                     &mut pending_identity_request,
                                     IdentityRequestKind::CredentialIssuance,
@@ -11348,10 +11387,6 @@ fn CredentialsPage(
                                                 &mut pending_identity_request,
                                                 IdentityRequestKind::CredentialIssuance,
                                             );
-                                            retain_manual_credential_review_admission_lock(
-                                                &mut manual_credential_review_lock,
-                                                has_imported_pending_marker,
-                                            );
                                             prepared_issuance.set(Some(preview));
                                             issuance_consent.set(false);
                                             issuance_notice.set(Some("Offer preview ready. Review the issuer and requested credential before consenting.".to_owned()));
@@ -11361,18 +11396,22 @@ fn CredentialsPage(
                                                 &mut pending_identity_request,
                                                 Some(IdentityRequestKind::CredentialIssuance),
                                             );
-                                            offer_draft.write().clear_imported();
-                                            prepared_issuance.set(None);
-                                            issuance_notice.set(Some(credential_issuance_message(error)));
-                                        }
-                                        Err(error) => {
-                                            wipe_pending_identity_request(
-                                                &mut pending_identity_request,
-                                                Some(IdentityRequestKind::CredentialIssuance),
+                                            release_manual_credential_review_after_confirmed_prepare_failure(
+                                                &mut manual_credential_review_lock,
+                                                manual_review_reserved,
                                             );
                                             offer_draft.write().clear_imported();
                                             prepared_issuance.set(None);
-                                            issuance_notice.set(Some(error.to_string()));
+                                            issuance_consent.set(false);
+                                            issuance_notice.set(Some(credential_issuance_message(error)));
+                                        }
+                                        Err(error) => {
+                                            offer_draft.write().clear_imported();
+                                            prepared_issuance.set(None);
+                                            issuance_consent.set(false);
+                                            issuance_notice.set(Some(format!(
+                                                "{error}. Offer preparation could not be confirmed; identity ingress remains locked until the app restarts."
+                                            )));
                                         }
                                     }
                                     issuance_busy.set(false);
@@ -12894,7 +12933,10 @@ mod tests {
 
             assert!(!consent, "failed acceptance must clear prior consent");
             assert_eq!(prepared.as_deref(), Some("prepared credential review"));
-            assert_eq!(retained_identity_review_route(&pending), expected_route);
+            assert_eq!(
+                retained_identity_review_route(&pending, manual_review_lock),
+                expected_route
+            );
             assert!(!identity_request_admits_new_link(
                 pending.is_some(),
                 manual_review_lock,
@@ -12924,29 +12966,123 @@ mod tests {
             Ok(Err(CredentialIssuanceError::Unavailable)),
             Err(UiBlockingTaskError::WorkerFailed),
         ] {
-            assert_retained(cleanup, None, true, None);
+            assert_retained(cleanup, None, true, Some(Route::Documents));
         }
     }
 
     #[test]
-    fn manual_prepared_review_lock_blocks_new_link_without_rerouting_documents() {
+    fn manual_preparation_reserves_before_await_and_pins_existing_documents_content() {
         let pending = None;
         let mut manual_review_lock = false;
+        let active_route = Route::Documents;
+        let content_before_reservation =
+            retained_identity_review_route(&pending, manual_review_lock).unwrap_or(active_route);
 
-        assert!(retain_manual_credential_review_admission_lock_value(
-            &mut manual_review_lock,
-            false,
-        ));
+        let reserved =
+            reserve_manual_credential_review_admission_lock_value(&mut manual_review_lock, false);
+
+        assert!(reserved, "manual preparation must reserve synchronously");
         assert!(pending.is_none(), "manual review must not create a marker");
-        assert_eq!(retained_identity_review_route(&pending), None);
+        assert_eq!(content_before_reservation, Route::Documents);
         assert_eq!(
-            retained_identity_review_route(&pending).unwrap_or(Route::Documents),
-            Route::Documents,
+            retained_identity_review_route(&pending, manual_review_lock),
+            Some(Route::Documents),
+        );
+        assert_eq!(
+            retained_identity_review_route(&pending, manual_review_lock).unwrap_or(active_route),
+            content_before_reservation,
+            "lock acquisition must not remount the Credentials page",
         );
         assert!(!identity_request_admits_new_link(
             pending.is_some(),
             manual_review_lock,
         ));
+    }
+
+    #[test]
+    fn confirmed_manual_prepare_failure_releases_reservation_but_uncertainty_retains_it() {
+        let mut manual_review_lock = false;
+        let reserved =
+            reserve_manual_credential_review_admission_lock_value(&mut manual_review_lock, false);
+        assert!(reserved);
+        assert!(manual_review_lock);
+
+        // A worker failure is uncertain: do not invoke the confirmed-failure
+        // release and keep ingress closed.
+        assert_eq!(
+            retained_identity_review_route(&None, manual_review_lock),
+            Some(Route::Documents)
+        );
+        assert!(!identity_request_admits_new_link(false, manual_review_lock));
+
+        assert!(
+            release_manual_credential_review_after_confirmed_prepare_failure_value(
+                &mut manual_review_lock,
+                reserved,
+            )
+        );
+        assert!(!manual_review_lock);
+        assert_eq!(
+            retained_identity_review_route(&None, manual_review_lock),
+            None
+        );
+        assert!(identity_request_admits_new_link(false, manual_review_lock));
+
+        let mut imported_review_lock = false;
+        assert!(!reserve_manual_credential_review_admission_lock_value(
+            &mut imported_review_lock,
+            true,
+        ));
+        assert!(
+            !release_manual_credential_review_after_confirmed_prepare_failure_value(
+                &mut imported_review_lock,
+                false,
+            ),
+            "imported marker behavior must remain separate",
+        );
+    }
+
+    #[test]
+    fn confirmed_acceptance_cleanup_releases_imported_and_manual_review_state() {
+        let cleanup = Ok(Ok(CredentialIssuanceView {
+            id: "issuance-cleaned".to_owned(),
+            issuer: "https://issuer.example".to_owned(),
+            configuration_ids: vec!["DigitalPassport".to_owned()],
+            display_names: vec!["Digital Passport".to_owned()],
+            state: "refused".to_owned(),
+            credential_id: None,
+            failure_code: None,
+        }));
+
+        for imported in [true, false] {
+            let mut pending = imported.then(|| PendingIdentityRequest {
+                kind: IdentityRequestKind::CredentialIssuance,
+                request_uri: String::new(),
+            });
+            let mut manual_review_lock = !imported;
+            let mut prepared = Some("prepared credential review".to_owned());
+            let mut consent = true;
+
+            assert!(apply_failed_credential_acceptance_state(
+                &cleanup,
+                &mut pending,
+                &mut manual_review_lock,
+                &mut prepared,
+                &mut consent,
+            ));
+            assert!(pending.is_none());
+            assert!(!manual_review_lock);
+            assert!(prepared.is_none());
+            assert!(!consent);
+            assert!(identity_request_admits_new_link(
+                pending.is_some(),
+                manual_review_lock,
+            ));
+            assert_eq!(
+                retained_identity_review_route(&pending, manual_review_lock),
+                None
+            );
+        }
     }
 
     #[test]
@@ -13013,7 +13149,7 @@ mod tests {
             IdentityRequestKind::CredentialIssuance,
         ));
         let mut manual_review_lock = false;
-        assert!(!retain_manual_credential_review_admission_lock_value(
+        assert!(!reserve_manual_credential_review_admission_lock_value(
             &mut manual_review_lock,
             true,
         ));
@@ -13029,7 +13165,7 @@ mod tests {
             scrubbed_guard.has_raw_uri()
         ));
         assert_eq!(
-            retained_identity_review_route(&matching_pending),
+            retained_identity_review_route(&matching_pending, manual_review_lock),
             Some(Route::CredentialRequest)
         );
         assert!(!identity_request_admits_new_link(
@@ -13042,7 +13178,10 @@ mod tests {
             Some(IdentityRequestKind::CredentialIssuance),
         ));
         assert!(matching_pending.is_none());
-        assert_eq!(retained_identity_review_route(&matching_pending), None);
+        assert_eq!(
+            retained_identity_review_route(&matching_pending, manual_review_lock),
+            None
+        );
         assert!(identity_request_admits_new_link(
             matching_pending.is_some(),
             manual_review_lock,

@@ -223,13 +223,65 @@ if ! rg -Uq 'run-ios-simulator\.sh" \\\n[[:space:]]+>>"\$PORTAL_MOBILE_PRIVATE_L
   echo "Portal launcher/Xcode logs must remain private and cleanup-owned." >&2
   exit 1
 fi
-# adb reconnect must use the shared TERM/KILL bound and propagate timeout or
-# process failure instead of blocking before EXIT cleanup.
-if ! rg -qF '"$adb_wait_pid" "$PORTAL_MOBILE_ADB_WAIT_TIMEOUT_SECONDS"' scripts/test-android-portal-flow.sh ||
-  ! rg -qF 'portal_mobile_fail emulator-reconnect' scripts/test-android-portal-flow.sh; then
-  echo "Android cold-reboot reconnect must be bounded and fail closed." >&2
+# Every adb operation in cold reboot/readiness uses the shared TERM/KILL
+# helper, writes only to cleanup-owned private files, and consumes one real
+# elapsed-time boot deadline. No attempt count may multiply transport hangs.
+for adb_gate_marker in \
+  'run_adb_gate_operation devices ' \
+  'run_adb_gate_operation qemu-before-reboot ' \
+  'run_adb_gate_operation reboot ' \
+  'run_adb_gate_operation wait-for-device ' \
+  'run_adb_gate_operation boot-completed ' \
+  'run_adb_gate_operation devices-after-launch ' \
+  'run_adb_gate_operation qemu-after-launch ' \
+  'adb_boot_deadline=$((SECONDS + PORTAL_MOBILE_ADB_BOOT_DEADLINE_SECONDS))' \
+  'while [ "$SECONDS" -lt "$adb_boot_deadline" ]' \
+  'portal_mobile_fail emulator-reconnect'; do
+  rg -qF "$adb_gate_marker" scripts/test-android-portal-flow.sh || {
+    echo "Android bounded reboot/readiness marker is missing: $adb_gate_marker" >&2
+    exit 1
+  }
+done
+for adb_bound_marker in \
+  'portal_mobile_run_captured_bounded' \
+  '"$(dirname -- "$output_path")" = "$PORTAL_MOBILE_STATE_DIR"' \
+  'term_after_seconds=$((total_timeout_seconds - term_grace_seconds))' \
+  '"$child_pid" "$term_after_seconds" "$term_grace_seconds"'; do
+  rg -qF "$adb_bound_marker" scripts/e2e/portal-mobile-harness-lib.sh || {
+    echo "Android adb private-output TERM/KILL bound is missing: $adb_bound_marker" >&2
+    exit 1
+  }
+done
+if rg -n 'for _attempt in \$\(seq 1 120\)|\$adb_command devices|\$adb_command.*getprop (ro\.kernel\.qemu|sys\.boot_completed)' \
+  scripts/test-android-portal-flow.sh; then
+  echo "Android reboot/readiness still contains an attempt-multiplied or direct unbounded adb query." >&2
   exit 1
 fi
+# Exercise the shared captured-command helper with a TERM-responsive hung
+# process. Its partial output remains owner-private and its nonzero status is
+# propagated rather than stranding EXIT cleanup.
+bash -c '
+  set -euo pipefail
+  source "$1"
+  scratch="$(mktemp -d)"
+  trap '\''rm -rf "$scratch"'\'' EXIT
+  PORTAL_MOBILE_PLATFORM=android
+  PORTAL_MOBILE_STATE_DIR="$scratch"
+  PORTAL_MOBILE_PRIVATE_LOG="$scratch/private.log"
+  : >"$PORTAL_MOBILE_PRIVATE_LOG"
+  chmod 600 "$PORTAL_MOBILE_PRIVATE_LOG"
+  output="$scratch/adb-hung.out"
+  status=0
+  started=$SECONDS
+  portal_mobile_run_captured_bounded "$output" 2 1 \
+    sh -c '\''printf ready; trap "exit 42" TERM; while :; do :; done'\'' || status=$?
+  elapsed=$((SECONDS - started))
+  [ "$status" -eq 42 ]
+  [ "$elapsed" -ge 1 ]
+  [ "$elapsed" -le 2 ]
+  [ "$(tr -d '\''\r\n'\'' <"$output")" = ready ]
+  [ "$(LC_ALL=C ls -ld "$output" | cut -c2-10)" = rw------- ]
+' _ scripts/e2e/portal-mobile-harness-lib.sh
 
 # Every synchronous support command is bounded, cleanup failures become the
 # child status observed by the shell, and iOS delivery uses xcode-select's
@@ -240,10 +292,17 @@ for cleanup_wait_marker in \
   'const CHILD_COMMAND_TIMEOUT_MS = 10 * 60_000;' \
   'const CLEANUP_COMMAND_TIMEOUT_MS = 60_000;' \
   'const CLEANUP_RESOURCE_DEADLINE_MS = 5_000;' \
+  'const CLEANUP_RESOURCE_QUERY_TIMEOUT_MS = 1_000;' \
   'const CLEANUP_RESOURCE_POLL_MS = 250;' \
   '["container", "network", "volume"]' \
   '`label=com.docker.compose.project=${composeProjectName}`' \
+  'function composeProjectResources(deadline)' \
+  'const remainingMs = deadline - Date.now();' \
+  'const queryTimeoutMs = Math.min(CLEANUP_RESOURCE_QUERY_TIMEOUT_MS, remainingMs);' \
+  'runCaptured("docker", args, portalTree, queryTimeoutMs)' \
   'const deadline = Date.now() + CLEANUP_RESOURCE_DEADLINE_MS;' \
+  'const resources = composeProjectResources(deadline);' \
+  'if (Date.now() >= deadline)' \
   'const delayMs = Math.min(CLEANUP_RESOURCE_POLL_MS, deadline - Date.now());' \
   'await new Promise((resolve) => setTimeout(resolve, delayMs));' \
   'throw new Error("named compose project was not empty at cleanup deadline");' \
@@ -398,8 +457,9 @@ for finalizer_marker in \
   }
 done
 
-# Behavioral proof: jq mismatch and sentinel rejection delete only the private
-# candidate and preserve old evidence; a fully valid candidate replaces it.
+# Behavioral proof: jq mismatch, sentinel rejection, and publication failure
+# delete only the private candidate and preserve byte-identical old evidence;
+# a fully valid candidate replaces it.
 bash -c '
   set -euo pipefail
   source "$1"
@@ -425,6 +485,21 @@ bash -c '
   fi
   grep -qF '\''{"schema":"old"}'\'' "$evidence"
   [ ! -e "$candidate" ]
+
+  old_evidence="$scratch/old-evidence.json"
+  cp "$evidence" "$old_evidence"
+  candidate="$scratch/.evidence.json.tmp.publish-failure"
+  printf '\''%s\n'\'' '\''{"schema":"new"}'\'' >"$candidate"
+  PORTAL_MOBILE_EVIDENCE_TEMP="$candidate"
+  mv() { return 1; }
+  publish_status=0
+  portal_mobile_finalize_evidence "$evidence" "$candidate" '\''{"schema":"new"}'\'' forbidden \
+    >/dev/null 2>&1 || publish_status=$?
+  unset -f mv
+  [ "$publish_status" -ne 0 ]
+  cmp -s "$old_evidence" "$evidence"
+  [ ! -e "$candidate" ]
+  [ -z "$PORTAL_MOBILE_EVIDENCE_TEMP" ]
 
   candidate="$scratch/.evidence.json.tmp.valid"
   printf '\''%s\n'\'' '\''{"schema":"new"}'\'' >"$candidate"
@@ -547,8 +622,11 @@ for workflow in .github/workflows/ci.yml .github/workflows/quality.yml .github/w
 done
 for lock_marker in \
   'mkdir "$PORTAL_MOBILE_LOCK_DIR"' \
-  '! [[ "$owner" =~ ^[0-9]+$ ]]' \
+  'PORTAL_MOBILE_RECLAIM_DIR="${PORTAL_MOBILE_LOCK_DIR}.reclaim"' \
+  'mkdir "$PORTAL_MOBILE_RECLAIM_DIR"' \
+  '[ "$revalidated_owner" != "$owner" ]' \
   'mv "$PORTAL_MOBILE_LOCK_DIR" "$stale_lock"' \
+  'portal_mobile_release_reclaim_claim' \
   'owner-pid'; do
   rg -qF "$lock_marker" scripts/e2e/portal-mobile-harness-lib.sh || {
     echo "Atomic stale-safe Portal mobile lock marker is missing: $lock_marker" >&2
@@ -563,7 +641,7 @@ bash -c '
   fake_uid="99$$"
   id() { printf '\''%s\n'\'' "$fake_uid"; }
   lock_dir="/tmp/oxid-portal-mobile-${fake_uid}.lock"
-  trap '\''rm -rf "$lock_dir" "$lock_dir".stale.*'\'' EXIT
+  trap '\''rm -rf "$lock_dir" "$lock_dir.reclaim"'\'' EXIT
   mkdir "$lock_dir"
   : >"$lock_dir/live-creator"
   (
@@ -581,4 +659,93 @@ bash -c '
   [ -s "$lock_dir/owner-pid" ]
 ' _ scripts/e2e/portal-mobile-harness-lib.sh
 
-echo "Portal mobile harness syntax, cleanup status/signal bounds, atomic evidence publication, named-resource cleanup polling, exact CDP ownership, evidence pinning, secret-free delivery, and hosted PR filters passed."
+# A contender that passed its first claim check before reclamation is paused at
+# mkdir. The reclaimer then moves the validated stale lock while holding its
+# claim. The contender may create a would-be replacement, but its post-mkdir
+# claim check must remove only that replacement and fail busy; the reclaimer
+# never renames/deletes it. Use a fake uid so this never touches the real lock.
+bash -c '
+  set -euo pipefail
+  source "$1"
+  fake_uid="98$$"
+  id() { printf '\''%s\n'\'' "$fake_uid"; }
+  lock_dir="/tmp/oxid-portal-mobile-${fake_uid}.lock"
+  reclaim_dir="$lock_dir.reclaim"
+  contender_ready="$lock_dir.contender-ready"
+  release_contender="$lock_dir.release-contender"
+  contender_failed="$lock_dir.contender-failed"
+  moved_marker="$lock_dir.moved"
+  release_reclaimer="$lock_dir.release-reclaimer"
+  acquired_marker="$lock_dir.acquired"
+  contender_pid=""
+  reclaimer_pid=""
+  trap '\''[ -z "$contender_pid" ] || kill -KILL "$contender_pid" >/dev/null 2>&1 || true; [ -z "$reclaimer_pid" ] || kill -KILL "$reclaimer_pid" >/dev/null 2>&1 || true; rm -rf "$lock_dir" "$reclaim_dir" "$lock_dir".*'\'' EXIT
+  mkdir "$lock_dir"
+  printf '\''%s\n'\'' 999999999 >"$lock_dir/owner-pid"
+  ! kill -0 999999999 2>/dev/null
+
+  (
+    mkdir() {
+      local target="${*: -1}"
+      if [ "$target" = "$lock_dir" ] && [ ! -e "$contender_ready" ]; then
+        : >"$contender_ready"
+        while [ ! -e "$release_contender" ]; do sleep 0.01; done
+      fi
+      command mkdir "$@"
+    }
+    if portal_mobile_acquire_lock >/dev/null 2>&1; then
+      exit 1
+    fi
+    : >"$contender_failed"
+  ) &
+  contender_pid=$!
+  for _attempt in $(seq 1 500); do
+    [ ! -e "$contender_ready" ] || break
+    sleep 0.01
+  done
+  [ -e "$contender_ready" ]
+
+  (
+    mv() {
+      command mv "$@"
+      : >"$moved_marker"
+      while [ ! -e "$release_reclaimer" ]; do sleep 0.01; done
+    }
+    portal_mobile_acquire_lock
+    : >"$acquired_marker"
+  ) &
+  reclaimer_pid=$!
+  for _attempt in $(seq 1 500); do
+    [ ! -e "$moved_marker" ] || break
+    sleep 0.01
+  done
+  [ -e "$moved_marker" ]
+  [ -d "$reclaim_dir" ]
+  [ ! -e "$lock_dir" ]
+
+  : >"$release_contender"
+  wait "$contender_pid"
+  contender_pid=""
+  [ -e "$contender_failed" ]
+  [ ! -e "$lock_dir" ]
+  [ -d "$reclaim_dir" ]
+
+  : >"$release_reclaimer"
+  wait "$reclaimer_pid"
+  reclaimer_pid=""
+  [ -e "$acquired_marker" ]
+  [ -d "$lock_dir" ]
+  rm -rf "$lock_dir"
+
+  # Even a dead/ambiguous reclaim owner is fail-closed; only explicit operator
+  # cleanup may recover the abandoned claim.
+  mkdir "$reclaim_dir"
+  printf '\''%s\n'\'' 999999999 >"$reclaim_dir/owner-pid"
+  if portal_mobile_acquire_lock >/dev/null 2>&1; then
+    exit 1
+  fi
+  [ -d "$reclaim_dir" ]
+  [ ! -e "$lock_dir" ]
+' _ scripts/e2e/portal-mobile-harness-lib.sh
+
+echo "Portal mobile harness syntax, cleanup status/signal bounds, atomic evidence publication, bounded named-resource queries, bounded Android reboot readiness, stale-lock reclaim serialization, exact CDP ownership, evidence pinning, secret-free delivery, and hosted PR filters passed."

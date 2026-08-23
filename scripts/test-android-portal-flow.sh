@@ -23,6 +23,16 @@ fi
 adb_command="$android_sdk/platform-tools/adb"
 devtools_port=""
 portal_mobile_android_forward_active=0
+adb_gate_output=""
+
+run_adb_gate_operation() {
+  local operation="$1" timeout_seconds="$2"
+  shift 2
+  adb_gate_output="$PORTAL_MOBILE_STATE_DIR/adb-$operation.out"
+  portal_mobile_run_captured_bounded \
+    "$adb_gate_output" "$timeout_seconds" "$PORTAL_MOBILE_ADB_KILL_GRACE_SECONDS" \
+    "$adb_command" "$@"
+}
 
 # Own only the dynamically allocated CDP forward. The shared EXIT cleanup calls
 # this hook on every Android exit, including failures and signals.
@@ -50,28 +60,60 @@ portal_test_offer_trigger="openid-credential-offer://standalone-portal-test-fetc
 # A long-running QEMU can lag the host by several seconds. The strict
 # credential policy intentionally has no future-time slack, so cold-reboot an
 # already-running disposable emulator instead of weakening verification.
-existing_device="$($adb_command devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }' | tr -d '\r\n')"
+if ! run_adb_gate_operation devices "$PORTAL_MOBILE_ADB_OPERATION_TIMEOUT_SECONDS" devices; then
+  portal_mobile_fail adb-devices
+  exit 1
+fi
+existing_device="$(awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }' "$adb_gate_output" | tr -d '\r\n')"
 if [ -n "$existing_device" ]; then
-  if [ "$($adb_command -s "$existing_device" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r\n')" != "1" ]; then
+  if ! run_adb_gate_operation qemu-before-reboot \
+    "$PORTAL_MOBILE_ADB_OPERATION_TIMEOUT_SECONDS" \
+    -s "$existing_device" shell getprop ro.kernel.qemu; then
     portal_mobile_fail qemu
     exit 1
   fi
-  "$adb_command" -s "$existing_device" reboot
-  "$adb_command" -s "$existing_device" wait-for-device \
-    >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1 &
-  adb_wait_pid=$!
-  if ! portal_mobile_wait_bounded \
-    "$adb_wait_pid" "$PORTAL_MOBILE_ADB_WAIT_TIMEOUT_SECONDS"; then
+  [ "$(tr -d '\r\n' <"$adb_gate_output")" = "1" ] || {
+    portal_mobile_fail qemu
+    exit 1
+  }
+
+  # One real elapsed-time budget covers reboot, reconnect, and every readiness
+  # query. Individual adb transports get a shorter bound capped by the shared
+  # deadline, so one hang cannot multiply an attempt counter.
+  adb_boot_deadline=$((SECONDS + PORTAL_MOBILE_ADB_BOOT_DEADLINE_SECONDS))
+  if ! run_adb_gate_operation reboot "$PORTAL_MOBILE_ADB_OPERATION_TIMEOUT_SECONDS" \
+    -s "$existing_device" reboot; then
+    portal_mobile_fail emulator-reboot
+    exit 1
+  fi
+  adb_boot_remaining=$((adb_boot_deadline - SECONDS))
+  if [ "$adb_boot_remaining" -le 0 ] || \
+    ! run_adb_gate_operation wait-for-device "$adb_boot_remaining" \
+      -s "$existing_device" wait-for-device; then
     portal_mobile_fail emulator-reconnect
     exit 1
   fi
-  for _attempt in $(seq 1 120); do
-    if [ "$($adb_command -s "$existing_device" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n')" = "1" ]; then
-      break
+
+  boot_completed=""
+  while [ "$SECONDS" -lt "$adb_boot_deadline" ]; do
+    adb_boot_remaining=$((adb_boot_deadline - SECONDS))
+    adb_operation_timeout=$PORTAL_MOBILE_ADB_OPERATION_TIMEOUT_SECONDS
+    if [ "$adb_operation_timeout" -gt "$adb_boot_remaining" ]; then
+      adb_operation_timeout=$adb_boot_remaining
     fi
+    if [ "$adb_operation_timeout" -le 0 ] || \
+      ! run_adb_gate_operation boot-completed "$adb_operation_timeout" \
+        -s "$existing_device" shell getprop sys.boot_completed; then
+      portal_mobile_fail emulator-reboot
+      exit 1
+    fi
+    boot_completed="$(tr -d '\r\n' <"$adb_gate_output")"
+    [ "$boot_completed" != "1" ] || break
+    adb_boot_remaining=$((adb_boot_deadline - SECONDS))
+    [ "$adb_boot_remaining" -gt 0 ] || break
     sleep 1
   done
-  [ "$($adb_command -s "$existing_device" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n')" = "1" ] || {
+  [ "$boot_completed" = "1" ] || {
     portal_mobile_fail emulator-reboot
     exit 1
   }
@@ -86,10 +128,21 @@ OXID_MOBILE_PORTAL_PROFILE=local \
 
 device="${OXID_ANDROID_DEVICE:-}"
 if [ -z "$device" ]; then
-  device="$($adb_command devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }' | tr -d '\r\n')"
+  if ! run_adb_gate_operation devices-after-launch \
+    "$PORTAL_MOBILE_ADB_OPERATION_TIMEOUT_SECONDS" devices; then
+    portal_mobile_fail adb-devices
+    exit 1
+  fi
+  device="$(awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }' "$adb_gate_output" | tr -d '\r\n')"
 fi
-if [[ -z "$device" || "$device" != emulator-* ]] || \
-  [ "$($adb_command -s "$device" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r\n')" != "1" ]; then
+if [[ -z "$device" || "$device" != emulator-* ]]; then
+  portal_mobile_fail qemu
+  exit 1
+fi
+if ! run_adb_gate_operation qemu-after-launch \
+  "$PORTAL_MOBILE_ADB_OPERATION_TIMEOUT_SECONDS" \
+  -s "$device" shell getprop ro.kernel.qemu || \
+  [ "$(tr -d '\r\n' <"$adb_gate_output")" != "1" ]; then
   portal_mobile_fail qemu
   exit 1
 fi
