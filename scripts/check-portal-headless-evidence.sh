@@ -69,7 +69,8 @@ for marker in \
   '"$OXID_EVIDENCE_HEAD"' \
   'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803' \
   'ref: 925ec8d04882eabd4ac7b784c70fc2f0c152faae' \
-  "if: \${{ secrets.PORTAL_SOURCE_TOKEN == '' }}" \
+  'PORTAL_SOURCE_TOKEN: ${{ secrets.PORTAL_SOURCE_TOKEN }}' \
+  'if [ -z "${PORTAL_SOURCE_TOKEN:-}" ]; then' \
   'Required repository secret PORTAL_SOURCE_TOKEN is not configured' \
   'token: ${{ secrets.PORTAL_SOURCE_TOKEN }}' \
   'persist-credentials: false' \
