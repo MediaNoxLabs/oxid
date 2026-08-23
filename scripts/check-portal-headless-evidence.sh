@@ -69,6 +69,9 @@ for marker in \
   '"$OXID_EVIDENCE_HEAD"' \
   'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803' \
   'ref: 925ec8d04882eabd4ac7b784c70fc2f0c152faae' \
+  "if: \${{ secrets.PORTAL_SOURCE_TOKEN == '' }}" \
+  'Required repository secret PORTAL_SOURCE_TOKEN is not configured' \
+  'token: ${{ secrets.PORTAL_SOURCE_TOKEN }}' \
   'persist-credentials: false' \
   'PORTAL_SOURCE_TREE: ${{ github.workspace }}/portal-source' \
   'nix develop --command just portal-headless-e2e' \
@@ -83,6 +86,10 @@ for marker in \
     exit 1
   }
 done
+[ "$(grep -cF 'token: ${{ secrets.PORTAL_SOURCE_TOKEN }}' <<<"$job")" -eq 1 ] || {
+  echo "Hosted Portal headless job must use the private source token exactly once." >&2
+  exit 1
+}
 [ "$(grep -cF 'path: target/portal-headless-e2e/evidence.json' <<<"$job")" -eq 1 ] || {
   echo "Hosted Portal headless job must upload exactly one sanitized evidence path." >&2
   exit 1
