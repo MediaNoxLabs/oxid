@@ -230,17 +230,20 @@ run_webview_scenario protocol-timeout
 curl --noproxy '*' --fail --silent -X POST --data-binary normal \
   "$PORTAL_MOBILE_CONTROL_ORIGIN/proxy-mode" >/dev/null
 
+# Earlier negative-path UI work can make QEMU fall behind the host issuer.
+# Reapply the exact disposable-emulator clock sync immediately before the
+# positive strict issuance, while its issuer artifacts are current.
+synchronize_android_clock
+deliver_portal_trigger
+run_webview_scenario issue
+
+# Cleanup uncertainty deliberately locks this prepared review until the
+# following force-stop/cold-route process boundary.
 deliver_portal_trigger
 run_webview_scenario issue-error
 
 curl --noproxy '*' --fail --silent -X POST --data-binary normal \
   "$PORTAL_MOBILE_CONTROL_ORIGIN/proxy-mode" >/dev/null
-
-# Negative-path UI work can make QEMU fall behind the host issuer. Reapply the
-# exact disposable-emulator clock sync immediately before strict issuance.
-synchronize_android_clock
-deliver_portal_trigger
-run_webview_scenario issue
 
 credential_header="$($adb_command -s "$device" shell run-as io.medianox.oxid \
   od -An -tx1 -N8 files/oxid/private/credentials.enc 2>/dev/null | tr -d ' \r\n')"

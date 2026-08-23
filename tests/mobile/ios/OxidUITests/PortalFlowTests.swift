@@ -275,28 +275,6 @@ final class PortalFlowTests: XCTestCase {
             "A failed preparation must clear the retained router request"
         )
 
-        // A post-consent transport failure must release the retained review and discard its session.
-        try deliver("real", in: application)
-        assertRoutedOffer(in: application)
-        previewImportedOffer(in: application)
-        XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 20))
-        let failingConsent = application.descendants(matching: .any)["Consent to credential issuance"]
-        scrollTo(failingConsent, in: application)
-        failingConsent.tap()
-        try setProxyMode("unavailable")
-        let failingIssue = application.buttons["Accept and issue credential"]
-        scrollTo(failingIssue, in: application)
-        failingIssue.tap()
-        XCTAssertTrue(application.staticTexts[
-            "This protocol is unavailable in the current build"
-        ].waitForExistence(timeout: 30))
-        try setProxyMode("normal")
-        XCTAssertTrue(
-            application.buttons["Dismiss identity request"].waitForNonExistence(timeout: 10),
-            "A failed issuance must clear the retained router request"
-        )
-        XCTAssertFalse(application.descendants(matching: .any)["Consent to credential issuance"].exists)
-
         // The unchanged explicit consent path selects managed authentication and a distinct Jubjub assertion method.
         try deliver("real", in: application)
         assertRoutedOffer(in: application)
@@ -320,11 +298,49 @@ final class PortalFlowTests: XCTestCase {
         )
         XCTAssertFalse(application.staticTexts["John"].exists)
         XCTAssertFalse(application.staticTexts["Doe"].exists)
+        XCTAssertEqual(try counters()["token"], 1)
+        XCTAssertEqual(try counters()["nonce"], 1)
+        XCTAssertEqual(try counters()["credential"], 1)
+
+        // Post-consent cleanup uncertainty keeps the payload-free prepared review locked.
+        try deliver("real", in: application)
+        assertRoutedOffer(in: application)
+        previewImportedOffer(in: application)
+        XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 20))
+        let failingConsent = application.descendants(matching: .any)["Consent to credential issuance"]
+        scrollTo(failingConsent, in: application)
+        failingConsent.tap()
+        try setProxyMode("unavailable")
+        let failingIssue = application.buttons["Accept and issue credential"]
+        scrollTo(failingIssue, in: application)
+        failingIssue.tap()
+        XCTAssertTrue(application.staticTexts[
+            "This protocol is unavailable in the current build. Session cleanup is unavailable; this review remains locked until refusal succeeds or the app restarts."
+        ].waitForExistence(timeout: 30))
+        try setProxyMode("normal")
+        let clearedConsent = application.switches["Consent to credential issuance"]
+        XCTAssertTrue(clearedConsent.waitForExistence(timeout: 10))
+        XCTAssertEqual(clearedConsent.value as? String, "0")
+        let retainedIssue = application.buttons["Accept and issue credential"]
+        XCTAssertTrue(retainedIssue.exists)
+        XCTAssertFalse(retainedIssue.isEnabled)
+        XCTAssertTrue(application.staticTexts["Credential offer preview"].exists)
+        XCTAssertFalse(
+            application.buttons["Dismiss identity request"].exists,
+            "The retained route lock must not restore a raw-offer dismissal"
+        )
+        application.buttons["Wallet"].tap()
+        XCTAssertTrue(
+            application.staticTexts["Credential offer preview"].waitForExistence(timeout: 10),
+            "A failed issuance must retain the prepared review and route lock"
+        )
+        XCTAssertTrue(application.staticTexts["Credentials"].exists)
         XCTAssertEqual(try counters()["token"], 2)
         XCTAssertEqual(try counters()["nonce"], 1)
         XCTAssertEqual(try counters()["credential"], 1)
 
-        // Cold OS delivery is still routed without consent. The consumed offer is not executed.
+        // Real cold delivery is the process boundary that clears the uncertain locked session.
+        // The new offer is still routed without consent and is not executed.
         try deliver("real-cold", in: application)
         assertRoutedOffer(in: application)
         application.buttons["Dismiss identity request"].tap()

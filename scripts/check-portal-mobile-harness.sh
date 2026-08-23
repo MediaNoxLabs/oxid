@@ -53,8 +53,8 @@ done
 
 # Portal verification has no future-time slack. The disposable QEMU clock must
 # be set from the host through Android's privileged alarm service at startup and
-# again immediately before the positive issuance path. The second sync prevents
-# a busy QEMU from drifting behind the host issuer during negative scenarios.
+# again immediately before the positive issuance path. The second sync repairs
+# any drift accumulated during the preparation-only negative scenarios.
 clock_sync_calls="$(rg -c '^synchronize_android_clock$' scripts/test-android-portal-flow.sh || true)"
 clock_lead_calls="$(rg -cF 'sync_epoch + 2' scripts/test-android-portal-flow.sh || true)"
 if ! rg -qF 'shell cmd alarm set-time' scripts/test-android-portal-flow.sh ||
@@ -460,17 +460,80 @@ if rg -n "tr -d '\\\\r'|tr -d '\\\\n'" scripts/test-android-portal-flow.sh ||
   echo "Android scalar normalization or epoch validation regressed." >&2
   exit 1
 fi
-for busy_marker in \
-  'failed issuance route release' \
-  'A failed issuance must clear the retained router request' \
+for timeout_busy_marker in \
   'accessible disabled offer-check busy state' \
   'application.buttons["Checking offer…"]' \
   'The in-progress offer check must be disabled'; do
-  rg -qF "$busy_marker" tests/mobile/android-portal-flow.mjs tests/mobile/ios/OxidUITests/PortalFlowTests.swift || {
-    echo "Portal timeout busy-state assertion is missing: $busy_marker" >&2
+  rg -qF "$timeout_busy_marker" tests/mobile/android-portal-flow.mjs tests/mobile/ios/OxidUITests/PortalFlowTests.swift || {
+    echo "Portal timeout busy-state assertion is missing: $timeout_busy_marker" >&2
     exit 1
   }
 done
+
+# Post-consent cleanup uncertainty is fail closed: consent is cleared, while
+# the payload-free prepared review and its route lock survive until a real
+# process boundary. The positive issuance must run first so that boundary is
+# explicit rather than accidentally relying on a second issuance in one process.
+locked_review_notice='This protocol is unavailable in the current build. Session cleanup is unavailable; this review remains locked until refusal succeeds or the app restarts.'
+for locked_review_source in \
+  tests/mobile/android-portal-flow.mjs \
+  tests/mobile/ios/OxidUITests/PortalFlowTests.swift; do
+  rg -qF "$locked_review_notice" "$locked_review_source" || {
+    echo "Portal cleanup-uncertainty notice is missing from $locked_review_source." >&2
+    exit 1
+  }
+done
+for locked_review_marker in \
+  'consentCleared: Boolean(consent) && !consent.checked' \
+  'failed issuance retained prepared review and route lock' \
+  'XCTAssertEqual(clearedConsent.value as? String, "0")' \
+  'A failed issuance must retain the prepared review and route lock'; do
+  rg -qF "$locked_review_marker" tests/mobile/android-portal-flow.mjs tests/mobile/ios/OxidUITests/PortalFlowTests.swift || {
+    echo "Portal retained-review assertion is missing: $locked_review_marker" >&2
+    exit 1
+  }
+done
+if rg -n 'failed issuance route release|A failed issuance must clear the retained router request|post-consent transport failure must release' \
+  tests/mobile/android-portal-flow.mjs tests/mobile/ios/OxidUITests/PortalFlowTests.swift; then
+  echo "Portal mobile suites still demand obsolete post-consent route release." >&2
+  exit 1
+fi
+
+for exact_counter_marker in \
+  'XCTAssertEqual(try counters()["token"], 1)' \
+  'XCTAssertEqual(try counters()["token"], 2)' \
+  'counts.token !== 1 || counts.nonce !== 1 || counts.credential !== 1' \
+  'counts.token !== 2 || counts.nonce !== 1 || counts.credential !== 1'; do
+  rg -qF "$exact_counter_marker" tests/mobile/android-portal-flow.mjs tests/mobile/ios/OxidUITests/PortalFlowTests.swift || {
+    echo "Portal reordered issuance counter assertion is missing: $exact_counter_marker" >&2
+    exit 1
+  }
+done
+
+ios_positive_line="$(grep -nF '"Credential issued, verified, and stored in the protected inventory."' tests/mobile/ios/OxidUITests/PortalFlowTests.swift | cut -d: -f1)"
+ios_locked_line="$(grep -nF "$locked_review_notice" tests/mobile/ios/OxidUITests/PortalFlowTests.swift | cut -d: -f1)"
+ios_cold_line="$(grep -nF 'try deliver("real-cold", in: application)' tests/mobile/ios/OxidUITests/PortalFlowTests.swift | cut -d: -f1)"
+if [[ ! "$ios_positive_line" =~ ^[0-9]+$ || ! "$ios_locked_line" =~ ^[0-9]+$ || ! "$ios_cold_line" =~ ^[0-9]+$ ]] ||
+  (( ios_positive_line >= ios_locked_line || ios_locked_line >= ios_cold_line )); then
+  echo "iOS Portal flow must run positive issuance, locked failure, then real-cold delivery." >&2
+  exit 1
+fi
+
+android_second_sync_line="$(grep -n '^synchronize_android_clock$' scripts/test-android-portal-flow.sh | tail -n 1 | cut -d: -f1)"
+android_positive_line="$(grep -n '^run_webview_scenario issue$' scripts/test-android-portal-flow.sh | cut -d: -f1)"
+android_locked_line="$(grep -n '^run_webview_scenario issue-error$' scripts/test-android-portal-flow.sh | cut -d: -f1)"
+android_force_stop_line="$(grep -nF 'shell am force-stop io.medianox.oxid' scripts/test-android-portal-flow.sh | cut -d: -f1)"
+android_cold_line="$(grep -n '^run_webview_scenario cold-route$' scripts/test-android-portal-flow.sh | cut -d: -f1)"
+if [[ ! "$android_second_sync_line" =~ ^[0-9]+$ || ! "$android_positive_line" =~ ^[0-9]+$ ||
+      ! "$android_locked_line" =~ ^[0-9]+$ || ! "$android_force_stop_line" =~ ^[0-9]+$ ||
+      ! "$android_cold_line" =~ ^[0-9]+$ ]] ||
+  (( android_second_sync_line >= android_positive_line ||
+     android_positive_line >= android_locked_line ||
+     android_locked_line >= android_force_stop_line ||
+     android_force_stop_line >= android_cold_line )); then
+  echo "Android Portal flow must sync, issue successfully, retain the failed review, then cross force-stop/cold-route." >&2
+  exit 1
+fi
 
 for workflow in .github/workflows/ci.yml .github/workflows/quality.yml .github/workflows/scan.yml; do
   if [ "$(rg -c '^    branches: \[develop, integration, main\]$' "$workflow")" -ne 2 ]; then

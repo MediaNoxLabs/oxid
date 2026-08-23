@@ -282,12 +282,35 @@ try {
     await evaluate('document.querySelector("#credential-issuance-consent").click()');
     await setProxyMode("unavailable");
     await click("Accept and issue credential");
-    await waitFor('document.body.innerText.includes("This protocol is unavailable in the current build")', "failed issuance cleanup", 30_000);
-    await setProxyMode("normal");
+    const lockedReviewNotice = "This protocol is unavailable in the current build. Session cleanup is unavailable; this review remains locked until refusal succeeds or the app restarts.";
     await waitFor(
-      `!Boolean(${button("Dismiss identity request")}) && !Boolean(document.querySelector("#credential-issuance-consent"))`,
-      "failed issuance route release",
+      `Array.from(document.querySelectorAll('[role="status"]')).some((element) => element.textContent.trim() === ${JSON.stringify(lockedReviewNotice)})`,
+      "payload-free cleanup-unavailable locked-review notice",
+      30_000,
     );
+    await setProxyMode("normal");
+    const lockedReview = await evaluate(`(() => {
+      const consent = document.querySelector("#credential-issuance-consent");
+      const issue = ${button("Accept and issue credential")};
+      return {
+        consentCleared: Boolean(consent) && !consent.checked,
+        preparedReviewRetained: document.body.innerText.includes("Credential offer preview"),
+        issueDisabled: Boolean(issue && issue.disabled),
+        noRawOfferDismissal: !Boolean(${button("Dismiss identity request")})
+      };
+    })()`);
+    if (!Object.values(lockedReview).every(Boolean)) {
+      throw new Error(`failed issuance did not retain its locked review: ${JSON.stringify(lockedReview)}`);
+    }
+    await click("Wallet");
+    await waitFor(
+      'Array.from(document.querySelectorAll("h1")).some((element) => element.textContent.trim() === "Credentials") && document.body.innerText.includes("Credential offer preview") && !document.querySelector("#credential-issuance-consent").checked',
+      "failed issuance retained prepared review and route lock",
+    );
+    const counts = await counters();
+    if (counts.token !== 2 || counts.nonce !== 1 || counts.credential !== 1) {
+      throw new Error(`failed issuance counters were not exact: ${JSON.stringify(counts)}`);
+    }
   } else if (mode === "issue") {
     await assertRouted();
     await preview();
@@ -312,7 +335,7 @@ try {
       claimsHidden: !document.body.innerText.includes("John") && !document.body.innerText.includes("Doe")
     })`);
     const counts = await counters();
-    if (!Object.values(result).every(Boolean) || counts.token !== 2 || counts.nonce !== 1 || counts.credential !== 1) {
+    if (!Object.values(result).every(Boolean) || counts.token !== 1 || counts.nonce !== 1 || counts.credential !== 1) {
       throw new Error(`Portal issuance evidence failed: ${JSON.stringify({ result, counts })}`);
     }
   } else if (mode === "cold-route") {
