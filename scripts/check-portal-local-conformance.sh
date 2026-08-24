@@ -206,7 +206,8 @@ fi
 
 lock_file="$scratch/kernel.lock"
 lock_ready="$scratch/kernel-lock-ready"
-"$lock_runner" "$lock_file" -- bash -c 'touch "$1"; sleep 30' _ "$lock_ready" &
+lock_command_pid_file="$scratch/kernel-lock-command-pid"
+"$lock_runner" "$lock_file" -- bash -c 'printf "%s\n" "$$" >"$2"; touch "$1"; sleep 30' _ "$lock_ready" "$lock_command_pid_file" &
 lock_holder=$!
 for _attempt in $(seq 1 100); do
   [ -e "$lock_ready" ] && break
@@ -222,7 +223,8 @@ if "$lock_runner" "$lock_file" -- true >/dev/null 2>&1; then
   echo "Kernel-backed Portal lock admitted a concurrent owner." >&2
   exit 1
 fi
-kill -TERM "$lock_holder" >/dev/null 2>&1 || true
+lock_command_pid="$(cat "$lock_command_pid_file")"
+kill -TERM "$lock_command_pid" >/dev/null 2>&1 || true
 wait "$lock_holder" >/dev/null 2>&1 || true
 "$lock_runner" "$lock_file" -- true
 
