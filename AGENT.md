@@ -2263,8 +2263,8 @@ to silence the shell probe.
 - The issue #124 shared headless profile uses one absolute canonical owner-`0600`
   `STACK_ENV_FILE` generated only by Portal. Oxid validates only its closed
   public v1 contract and delegates full secret validation/lifecycle through the
-  signed Portal helper `f7732be01171cf6a376ec0dd043f517e3f6fcf6b`
-  (tree `96accf0da80992c3b247458c3b21f22ee9db1d68`); Portal PR #19 remains draft
+  signed Portal helper `8915760a4523d282fa07d45a48b7f58e4287bb54`
+  (tree `1317e109cf0792c0e1d7c8f9e2b8857251f6e92d`); Portal PR #19 remains draft
   and human-merge-only. Oxid never sources the file or assigns/exports Portal
   secret values. Protocol/image bytes remain the detached
   `925ec8d` / `58b4597` source and existing PR-head/profile/provenance locks.

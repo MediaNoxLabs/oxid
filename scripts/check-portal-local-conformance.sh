@@ -101,7 +101,7 @@ head="0123456789abcdef0123456789abcdef01234567"
 headless="$scratch/headless.json"
 ios="$scratch/ios.json"
 android="$scratch/android.json"
-portal_document='{"helperCommit":"f7732be01171cf6a376ec0dd043f517e3f6fcf6b","helperTree":"96accf0da80992c3b247458c3b21f22ee9db1d68","integrationCommit":"925ec8d04882eabd4ac7b784c70fc2f0c152faae","integrationTree":"58b4597524f88a0ae2253439a44dab0dc60cbb6f","prHead":"9c82db23eabe8b6d758b2731f2225910ea627c14","profileSourceCommit":"76e8edf394a4cb37ca822037272d543c68f25f71","provenanceSha256":"cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87"}'
+portal_document='{"helperCommit":"8915760a4523d282fa07d45a48b7f58e4287bb54","helperTree":"1317e109cf0792c0e1d7c8f9e2b8857251f6e92d","integrationCommit":"925ec8d04882eabd4ac7b784c70fc2f0c152faae","integrationTree":"58b4597524f88a0ae2253439a44dab0dc60cbb6f","prHead":"9c82db23eabe8b6d758b2731f2225910ea627c14","profileSourceCommit":"76e8edf394a4cb37ca822037272d543c68f25f71","provenanceSha256":"cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87"}'
 
 jq -cn --arg head "$head" --argjson portal "$portal_document" '{
   acceptance:{

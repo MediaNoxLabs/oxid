@@ -30,8 +30,8 @@ use oxid_identity_domain::MidnightDid;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
-const PORTAL_HELPER_COMMIT: &str = "f7732be01171cf6a376ec0dd043f517e3f6fcf6b";
-const PORTAL_HELPER_TREE: &str = "96accf0da80992c3b247458c3b21f22ee9db1d68";
+const PORTAL_HELPER_COMMIT: &str = "8915760a4523d282fa07d45a48b7f58e4287bb54";
+const PORTAL_HELPER_TREE: &str = "1317e109cf0792c0e1d7c8f9e2b8857251f6e92d";
 const PORTAL_INTEGRATION_COMMIT: &str = "925ec8d04882eabd4ac7b784c70fc2f0c152faae";
 const PORTAL_INTEGRATION_TREE: &str = "58b4597524f88a0ae2253439a44dab0dc60cbb6f";
 const PORTAL_PR_HEAD: &str = "9c82db23eabe8b6d758b2731f2225910ea627c14";

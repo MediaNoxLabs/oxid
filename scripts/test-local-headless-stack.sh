@@ -119,7 +119,7 @@ add_project() {
   generation="$(<"$generation_file")"; generation=$((generation + 1)); printf '%s\n' "$generation" >"$generation_file"
   remove_project "$project"
   if [ "$project" = oxid-standalone ]; then
-    for service in indexer node proof; do
+    for service in indexer node proof-server; do
       printf '%s\tcontainer\t%s-g%s-container-%s\t%s\trunning\t0\t\n' \
         "$project" "$project" "$generation" "$service" "$service" >>"$resources"
     done
@@ -197,7 +197,14 @@ inspect_resources() {
     row="$(awk -F '\t' -v project="$project" -v kind="$kind" -v id="$id" '$1 == project && $2 == kind && $3 == id {print}' "$resources")"
     [ -n "$row" ] && [[ "$row" != *$'\n'* ]] || return 1
     case "$kind" in
-      container) awk -F '\t' '{printf "%s\t%s\t%s\n", $4, $5, $6}' <<<"$row" ;;
+      container)
+        if [ "${args[3]}" = '{{index .Config.Labels "com.docker.compose.service"}}' ]; then
+          awk -F '\t' '{printf "%s\n", $4}' <<<"$row"
+        else
+          [ "${args[3]}" = '{{index .Config.Labels "com.docker.compose.service"}}{{printf "\t"}}{{.State.Status}}{{printf "\t"}}{{.State.ExitCode}}' ] || return 1
+          awk -F '\t' '{printf "%s\t%s\t%s\n", $4, $5, $6}' <<<"$row"
+        fi
+        ;;
       network|volume) awk -F '\t' '{printf "%s\t%s\n", $7, $4}' <<<"$row" ;;
       *) return 1 ;;
     esac
@@ -503,7 +510,7 @@ case_secret_sentinel_not_exposed() {
 seed_project_resources() {
   local project="$1" service state
   if [ "$project" = oxid-standalone ]; then
-    for service in indexer node proof; do
+    for service in indexer node proof-server; do
       printf '%s\tcontainer\t%s-fixture-container-%s\t%s\trunning\t0\t\n' \
         "$project" "$project" "$service" "$service" >>"$docker_resources"
     done

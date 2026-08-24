@@ -4,7 +4,7 @@
 - Date: 2026-08-21
 - Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124) and Portal PR #17
 - Portal integration source: squash commit `925ec8d04882eabd4ac7b784c70fc2f0c152faae`, tree `58b4597524f88a0ae2253439a44dab0dc60cbb6f`
-- Portal lifecycle helper: signed commit `f7732be01171cf6a376ec0dd043f517e3f6fcf6b`, tree `96accf0da80992c3b247458c3b21f22ee9db1d68`, reviewed in Portal PR #19 (still draft and human-merge-only; Oxid does not merge it)
+- Portal lifecycle helper: signed commit `8915760a4523d282fa07d45a48b7f58e4287bb54`, tree `1317e109cf0792c0e1d7c8f9e2b8857251f6e92d`, reviewed in Portal PR #19 (still draft and human-merge-only; Oxid does not merge it)
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14` (the same tree as the landed squash commit)
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; exact provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039 and ADR-0101
@@ -67,7 +67,7 @@ to Oxid's canonical JWK context and never relaxes the issuer/method/key checks.
 
 The shared headless environment uses one absolute canonical owner-`0600`
 `STACK_ENV_FILE`, created only by Portal's generator. The signed lifecycle helper
-at `f7732be...` and the immutable protocol source at `925ec8d...` are distinct
+at `8915760...` and the immutable protocol source at `925ec8d...` are distinct
 authorities in that profile. Oxid validates the closed v1 keys, exact roots,
 commits, trees, projects, routes, mode, ownership and helper signature without
 sourcing dotenv or assigning Portal secret values; it passes only the profile

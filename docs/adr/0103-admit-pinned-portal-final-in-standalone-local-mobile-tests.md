@@ -4,7 +4,7 @@
 - Date: 2026-08-21
 - Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124)
 - Portal integration source: squash commit `925ec8d04882eabd4ac7b784c70fc2f0c152faae`, tree `58b4597524f88a0ae2253439a44dab0dc60cbb6f`
-- Portal lifecycle helper: signed commit `f7732be01171cf6a376ec0dd043f517e3f6fcf6b`, tree `96accf0da80992c3b247458c3b21f22ee9db1d68` (Portal PR #19 remains draft and human-merge-only)
+- Portal lifecycle helper: signed commit `8915760a4523d282fa07d45a48b7f58e4287bb54`, tree `1317e109cf0792c0e1d7c8f9e2b8857251f6e92d` (Portal PR #19 remains draft and human-merge-only)
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14`
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039
@@ -71,7 +71,7 @@ same explicit owner-private v1 profile and remain diagnostic entry points only.
 
 The complete recipe starts or non-mutatingly attaches the Oxid-owned
 `oxid-standalone` project, delegates the separate Portal-only lifecycle to the
-signed `f7732be...` helper, and then runs every consumer against those same
+signed `8915760...` helper, and then runs every consumer against those same
 projects. Portal owns smocker, resolver, did-manager/bootstrap and issuer only;
 its reviewed integrated Compose declares no node, indexer, or proof service.
 Each platform command:

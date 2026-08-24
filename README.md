@@ -446,8 +446,8 @@ validation. The reviewed shared profile keeps three authorities separate:
 - Oxid owns `oxid-standalone` (node `9944`, indexer v3+v4 on `8088`, proof
   `/ready` on `6300`);
 - the signed Portal lifecycle helper is fixed at
-  `f7732be01171cf6a376ec0dd043f517e3f6fcf6b`, tree
-  `96accf0da80992c3b247458c3b21f22ee9db1d68`; Portal PR #19 remains draft and
+  `8915760a4523d282fa07d45a48b7f58e4287bb54`, tree
+  `1317e109cf0792c0e1d7c8f9e2b8857251f6e92d`; Portal PR #19 remains draft and
   human-merge-only;
 - Portal protocol/image bytes remain fixed at integration `925ec8d...`, tree
   `58b4597...`, in a clean persistent detached worktree.
@@ -457,7 +457,7 @@ profile and its sibling `.state` directory must stay outside both repositories;
 Oxid never sources it and never imports or exports Portal secret fields:
 
 ```bash
-PORTAL_HELPER=/absolute/lace-id-portal-helper-f7732be
+PORTAL_HELPER=/absolute/lace-id-portal-helper-8915760
 PORTAL_PROTOCOL=/absolute/lace-id-portal/tmp/worktrees/oxid-conformance-925ec8d
 OXID_ROOT=/absolute/oxid-pr-worktree
 PROFILE=/absolute/outside/git/.oxid-laceid-headless.env
