@@ -197,7 +197,7 @@ impl PortalProxy {
             let _ = completion_sender.send(());
         });
         Self {
-            origin: format!("http://localhost:{port}"),
+            origin: format!("http://127.0.0.1:{port}"),
             secret_request_count,
             captured_credential_response,
             stop,
