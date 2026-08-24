@@ -85,6 +85,7 @@ run_ui() {
 
 run_headless() {
   ./scripts/check-portal-headless-evidence.sh
+  ./scripts/check-portal-local-conformance.sh
   cargo check -p oxid-headless
 }
 

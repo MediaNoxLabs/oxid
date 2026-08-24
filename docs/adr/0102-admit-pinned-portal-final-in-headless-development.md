@@ -7,7 +7,7 @@
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14` (the same tree as the landed squash commit)
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; exact provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039 and ADR-0101
-- Implementation state: strict native desktop/headless Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; ADR-0103 separately admits the same client to an explicit standalone-local iOS/Android test profile, while production/native-custody/tailnet Portal composition remains unavailable
+- Implementation state: strict native desktop/headless Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; real Portal evidence now runs only through the fail-closed local same-head recipe, while hosted CI validates public/static contracts without a private repository credential or real-execution claim; ADR-0103 separately admits the same client to an explicit standalone-local iOS/Android test profile, while production/native-custody/tailnet Portal composition remains unavailable
 
 ## Context
 
@@ -87,6 +87,36 @@ encrypted-persistence, and restart flows through the embedded standalone
 issuer. ADR-0103 adds separately labelled evidence using this exact Portal HTTP
 client in the compile-time standalone-local mobile test profile; neither result
 is physical-device or production evidence.
+
+### Evidence placement
+
+Real Portal execution is an operator-local evidence boundary. This reviewed
+operator decision supersedes issue #124's older hosted-real-execution wording
+for PR #137 without weakening the issue's protocol, security, or platform
+acceptance requirements. The complete `just portal-local-conformance` recipe
+authenticates a local private checkout,
+runs headless first, then the ADR-0103 iOS/Android platform-plus-standard-smoke
+pairs, and validates all retained documents against one immutable Oxid head.
+Hosted Oxid CI keeps a required repository-only contract job for the immutable
+source lock, orchestration order/cleanup, evidence schema/head/provenance and
+acceptance checks, secret sentinel, and sanitized-only publication policy. It
+receives no private cross-repository credential, does not fetch or execute
+Portal, does not upload local evidence, and must not claim that real conformance
+ran.
+
+Portal's own CI remains the correct home for issuer-owned protocol and fixture
+tests. It must not fetch and execute an unmerged public Oxid PR while private
+Portal source or credentials are present: that would place untrusted proposed
+code inside the private trust boundary and create an avoidable disclosure path.
+It also cannot directly satisfy Oxid's iOS Simulator and Android QEMU wallet
+journey evidence, so it is not a substitute for the Oxid-owned local recipe.
+
+The three retained records are local, head-bound review inputs rather than
+hosted artifacts. Reviewers must treat all earlier records as stale after any
+Oxid head change and regenerate the complete set before accepting the evidence
+gate. A signed/DCO Oxid commit and the exact source-lock provenance make that
+review reproducible; they do not turn local development evidence into release
+attestation.
 
 ## Consequences
 

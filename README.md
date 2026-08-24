@@ -436,79 +436,69 @@ loopback-only, converts private parts through the exact Digital Passport
 commitment boundary, and reuses the existing valid-only encrypted import.
 Normal `compose()`, native-custody, tailnet, and WASM composition remain
 unavailable. Ordinary iOS/Android graphs do not compile the Portal client; only
-`standalone-portal` enables its mobile HTTP dependencies. Export one clean
-Portal source tree for every reproduction choice below:
+`standalone-portal` enables its mobile HTTP dependencies.
+
+Real Portal evidence is local-only because the source repository is private.
+Hosted Oxid CI receives no cross-repository credential, does not execute or
+upload real Portal evidence, and claims only repository-owned static/contract
+validation. Export one absolute clean Portal checkout and run the complete
+recipe from a clean Oxid feature worktree:
 
 ```bash
 export PORTAL_SOURCE_TREE=/absolute/clean/lace-id-portal-checkout
-
-# Real landed-service headless flow:
-just portal-headless-e2e
-
-# Real Portal mobile flow: choose the fixed iOS-then-Android wrapper ...
-just portal-mobile-smoke
-# ... or run either platform command independently; never run them concurrently:
-just ios-portal-smoke
-just android-portal-smoke
+nix develop --command just portal-local-conformance
 ```
 
-The commands require Nix, Docker Compose v2, and the exact fetchable Portal
-commits. The headless command covers mock KYC, encrypted persistence, process
-restart, and reverification. It tears down only its uniquely named project and
-retains one allow-listed secret-free evidence JSON, bound to the clean tested
-Oxid commit, under `target/portal-headless-e2e/`.
+`portal-local-conformance` is the only complete retained-evidence recipe. At one
+immutable Oxid branch/head it runs, in order:
 
-The mobile harness authenticates the same Portal pins, starts its exact
-composition, creates approved mock KYC, embeds a canonical public manifest at
-build time, and keeps the real offer out of shell arguments, rendered editable
-fields, logs, and evidence. XCUITest proves warm/cold custom-scheme delivery
-directly. Android cold-reboots and proves QEMU with host-aligned time, then
-exact reverse entries for 8088, 9944, 6300, Portal 18090, fixed-trigger control
-18091, and resolver 18093; it never uses `10.0.2.2`. Both deliver only the same
-non-secret OS trigger and let the app's bounded loopback worker retrieve the
-real offer; no real offer enters host/device argv, OS URL/intent state, or a
-staging file. Both drive the existing one-item router, preview/refusal,
-explicit consent, managed authentication plus distinct Jubjub binding, strict
-Final exchange, exact verified import, encrypted persistence, and
-restart/reactivation/list/reverify path.
+1. `scripts/e2e/portal-headless-e2e.sh`;
+2. `scripts/test-ios-portal-flow.sh`, then the standard iOS smoke;
+3. `scripts/test-android-portal-flow.sh`, then the standard Android smoke.
 
-On success, each mobile platform run removes its dynamically allocated Android
-CDP forward, bounded support processes, detached Portal worktree, private
-`target/portal-mobile-e2e/<platform>/runtime` directory, owned lock, and exact
-named Compose resources. Since `afaeee5`, the EXIT cleanup owner is installed
-before the first side effect: startup failures, test failures, interrupts, and
-termination run the same scoped cleanup, always remove that private runtime,
-and fail the command if the named Compose project cannot be emptied. Cleanup
-deliberately retains the closed secret-free platform `evidence.json`, normal
-build outputs, and the selected virtual device's installed Oxid app/data for
-inspection. Android also retains exactly the six app routes above; only the
-owned dynamic CDP forward is removed.
+The individual `just portal-headless-e2e`, `just ios-portal-smoke`, and
+`just android-portal-smoke` recipes remain focused diagnostic entry points, but
+they do not by themselves satisfy the complete same-head evidence contract.
+Never parallelize the platform suites.
 
-A rerun needs no destructive pre-clean: it resets only Oxid app data on the
-selected virtual device and recreates that platform's scoped runtime. Evidence
-uses a private same-directory candidate, exact schema and sentinel validation,
-and an atomic rename. Candidate generation, validation, or publication failure
-preserves any earlier valid evidence. Publication happens before the EXIT
-cleanup transaction: a later cleanup failure still fails the command but may
-leave the newly validated, clean-head-bound evidence in place. In either case,
-`oxid.head` identifies the retained evidence's source commit. After inspection,
-remove evidence, app data, or the retained Android routes only by their exact
-scope, for example:
+The complete recipe requires Nix, Docker Compose v2, Xcode/iOS Simulator, an
+Android SDK plus disposable QEMU, and locally authenticated read access to the
+exact Portal commits. It rejects a dirty tracked/staged Oxid tree, a branch or
+head change, a dirty/missing/wrong-origin Portal checkout, any source pin/tree/
+profile/provenance mismatch, stale or mixed evidence, a partial platform result,
+and a Portal-owned runtime/worktree/Compose leak. It stages every candidate away
+from the retained paths and adds each platform's standard-smoke boolean only
+after that smoke succeeds.
 
-```bash
-rm -rf target/portal-mobile-e2e/ios target/portal-mobile-e2e/android
-xcrun simctl uninstall '<simulator-udid>' io.medianox.oxid
-adb -s '<emulator-serial>' shell pm clear io.medianox.oxid
-for port in 8088 9944 6300 18090 18091 18093; do
-  adb -s '<emulator-serial>' reverse --remove "tcp:$port"
-done
-```
+After all five commands pass, one validator requires the headless, iOS, and
+Android documents to share the exact Oxid head and canonical Portal source
+identity. It also checks exact schemas, platform identities, all acceptance
+booleans, and the closed secret sentinel. Only then does the orchestrator
+publish the three retained files, with rollback on an interrupted or failed
+publication:
 
-Do not use global Docker pruning, broad worktree/`target` removal, whole-device
-erasure, or `adb reverse --remove-all` to reproduce or clean this suite.
-Retained evidence under `target/portal-mobile-e2e/` is virtual-device/mock-KYC
-evidence only—not camera, physical-device, tailnet, real-KYC,
-production-trust, live-holder-DID, or credential-status evidence; status remains
+- `target/portal-headless-e2e/evidence.json`;
+- `target/portal-mobile-e2e/ios/evidence.json`;
+- `target/portal-mobile-e2e/android/evidence.json`.
+
+The authoritative platform harnesses keep the real offer out of shell/device
+arguments, rendered editable fields, logs, and evidence. They deliver only the
+fixed non-secret OS trigger, use bounded private runtime directories, and tear
+down their exact detached Portal worktrees, support processes, locks, dynamic
+CDP forward, and named Compose resources. Retained evidence contains only the
+reviewed source identity, the tested Oxid head, closed platform identity, and
+boolean acceptance results; it never contains offers, grants, credentials,
+proof material, private openings, or bearer material.
+
+A rerun needs no destructive pre-clean. If a platform step or cleanup fails, the
+complete recipe fails and preserves the previously retained evidence set rather
+than publishing a partial replacement. Do not use global Docker pruning, broad
+worktree/`target` deletion, whole-device erasure, or
+`adb reverse --remove-all` to reproduce or clean this suite.
+
+Retained evidence is virtual-device/mock-KYC evidence only—not camera,
+physical-device, tailnet, real-KYC, production-trust, live-holder-DID, native-
+custody, WASM, production-route, or credential-status evidence; status remains
 `not_checked`.
 
 The Dioxus card permits explicit device-local first/last reveal and age
@@ -807,8 +797,8 @@ just ios-backup-smoke
 just android-smoke
 just android-standalone-local-smoke
 just android-backup-smoke
-# Real Portal suites, fixed iOS-then-Android sequence:
-just portal-mobile-smoke
+# Complete local Portal evidence, fixed headless-then-iOS-then-Android sequence:
+just portal-local-conformance
 ```
 
 The two `standalone-local-smoke` commands start or reuse the repository-owned

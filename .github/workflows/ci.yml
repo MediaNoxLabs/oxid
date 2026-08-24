@@ -58,101 +58,33 @@ jobs:
       - name: Run repository gate
         run: nix develop --command ./run.sh --light --strict
 
-  portal-headless-e2e:
-    env:
-      OXID_EVIDENCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-    name: Pinned Portal headless conformance evidence
+  portal-contracts:
+    name: Portal public/static contracts (no private source)
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
-      - name: Checkout Oxid
+      - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          fetch-depth: 0
-          ref: ${{ env.OXID_EVIDENCE_HEAD }}
           persist-credentials: false
 
-      - name: Require the private Portal source credential
-        env:
-          PORTAL_SOURCE_TOKEN: ${{ secrets.PORTAL_SOURCE_TOKEN }}
+      - name: Validate Portal harness and evidence-placement contracts
         run: |
-          if [ -z "${PORTAL_SOURCE_TOKEN:-}" ]; then
-            echo "::error::Required repository secret PORTAL_SOURCE_TOKEN is not configured for read-only input-output-hk/lace-id-portal checkout."
-            exit 1
-          fi
-
-      - name: Checkout the immutable Portal source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          repository: input-output-hk/lace-id-portal
-          token: ${{ secrets.PORTAL_SOURCE_TOKEN }}
-          ref: 925ec8d04882eabd4ac7b784c70fc2f0c152faae
-          path: portal-source
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Normalize and authenticate the Portal checkout origin
-        run: |
-          git -C portal-source remote set-url origin https://github.com/input-output-hk/lace-id-portal.git
-          test "$(git -C portal-source rev-parse HEAD)" = 925ec8d04882eabd4ac7b784c70fc2f0c152faae
-          test -z "$(git -C portal-source status --porcelain)"
-          test "$(git rev-parse HEAD)" = "$OXID_EVIDENCE_HEAD"
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache the Portal headless Nix store
-        uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6.1.3
-        with:
-          primary-key: nix-portal-headless-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix', 'Cargo.lock') }}
-          restore-prefixes-first-match: nix-portal-headless-${{ runner.os }}-
-          gc-max-store-size-linux: 6G
-          purge: true
-          purge-prefixes: nix-portal-headless-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Cache Portal headless Cargo artifacts
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-portal-headless-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
-          restore-keys: |
-            cargo-portal-headless-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
-            cargo-portal-headless-${{ runner.os }}-
-
-      - name: Verify deterministic hosted prerequisites
-        run: nix develop --command bash -c 'command -v cargo >/dev/null && command -v docker >/dev/null && command -v git >/dev/null && command -v jq >/dev/null && command -v just >/dev/null && command -v rg >/dev/null && docker info >/dev/null'
-
-      - name: Run the authoritative pinned Portal headless boundary
-        env:
-          OXID_PORTAL_KEEP_FAILURE_LOG: "0"
-          PORTAL_SOURCE_TREE: ${{ github.workspace }}/portal-source
-        run: nix develop --command just portal-headless-e2e
-
-      - name: Remove private transient diagnostics
-        if: always()
-        run: |
-          rm -f /tmp/oxid-portal-headless-e2e-*.log
-          git -C portal-source worktree prune
-
-      - name: Revalidate the only publishable evidence
-        run: nix develop --command ./scripts/e2e/validate-portal-headless-evidence.sh "$GITHUB_WORKSPACE/target/portal-headless-e2e/evidence.json" "$OXID_EVIDENCE_HEAD"
-
-      - name: Upload sanitized head-bound evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: portal-headless-evidence-${{ env.OXID_EVIDENCE_HEAD }}
-          path: target/portal-headless-e2e/evidence.json
-          if-no-files-found: error
-          retention-days: 7
-          include-hidden-files: false
+          bash -n scripts/e2e/portal-headless-e2e.sh
+          bash -n scripts/e2e/portal-local-conformance.sh
+          bash -n scripts/e2e/check-portal-resource-leaks.sh
+          bash -n scripts/e2e/with-portal-local-lock.sh
+          bash -n scripts/e2e/validate-portal-workflow-placement.sh
+          bash -n scripts/e2e/validate-portal-headless-evidence.sh
+          bash -n scripts/e2e/validate-portal-source-checkout.sh
+          bash -n scripts/test-ios-portal-flow.sh
+          bash -n scripts/test-android-portal-flow.sh
+          node --check scripts/e2e/portal-local-evidence.mjs
+          ./scripts/check-portal-headless-evidence.sh
+          ./scripts/check-portal-local-conformance.sh
+          ./scripts/check-portal-mobile-harness.sh
 
   nix-build:
     name: Locked Nix package and Compact artifacts

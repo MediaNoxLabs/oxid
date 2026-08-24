@@ -107,7 +107,7 @@ portal_mobile_finish || { portal_mobile_fail support-finish; exit 1; }
 device_name="$(/usr/bin/xcrun simctl list devices -j | jq -r --arg device "$device" 'first(.devices[][] | select(.udid == $device) | .name) // "unknown"')"
 runtime="$(/usr/bin/xcrun simctl list devices -j | jq -r --arg device "$device" 'first(.devices | to_entries[] as $runtime | $runtime.value[] | select(.udid == $device) | $runtime.key) // "unknown"')"
 portal_mobile_assert_evidence_source || exit 1
-evidence="$repository_root/target/portal-mobile-e2e/ios/evidence.json"
+evidence="${OXID_PORTAL_IOS_EVIDENCE_PATH:-$repository_root/target/portal-mobile-e2e/ios/evidence.json}"
 evidence_directory="$(dirname -- "$evidence")"
 mkdir -p "$evidence_directory"
 if ! evidence_temp="$(umask 077 && mktemp "$evidence_directory/.evidence.json.tmp.XXXXXX")"; then

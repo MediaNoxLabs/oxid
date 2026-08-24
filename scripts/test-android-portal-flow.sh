@@ -350,7 +350,7 @@ model="$($adb_command -s "$device" shell getprop ro.product.model | tr -d '\r\n'
 android_version="$($adb_command -s "$device" shell getprop ro.build.version.release | tr -d '\r\n')"
 api_level="$($adb_command -s "$device" shell getprop ro.build.version.sdk | tr -d '\r\n')"
 portal_mobile_assert_evidence_source || exit 1
-evidence="$repository_root/target/portal-mobile-e2e/android/evidence.json"
+evidence="${OXID_PORTAL_ANDROID_EVIDENCE_PATH:-$repository_root/target/portal-mobile-e2e/android/evidence.json}"
 evidence_directory="$(dirname -- "$evidence")"
 mkdir -p "$evidence_directory"
 if ! evidence_temp="$(umask 077 && mktemp "$evidence_directory/.evidence.json.tmp.XXXXXX")"; then

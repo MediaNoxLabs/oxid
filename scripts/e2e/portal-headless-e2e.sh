@@ -17,7 +17,9 @@ export COMPOSE_PROJECT_NAME="oxidportal124$$"
 stack_started=0
 worktree_created=0
 cleanup() {
-  status=$?
+  local status=$?
+  trap - EXIT
+  trap '' INT TERM
   if [[ "$stack_started" == 1 && -d "$RUN_TREE" ]]; then
     (cd "$RUN_TREE" && just compose-down) >>"$RAW_LOG" 2>&1 || status=1
   fi
@@ -32,7 +34,9 @@ cleanup() {
   fi
   exit "$status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fail() {
   printf 'portal-headless-e2e: FAIL phase=%s\n' "$1" >&2
@@ -69,7 +73,6 @@ worktree_created=1
 
 readonly OXID_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 [[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ]] || fail oxid-tree-dirty
-rm -f "$EVIDENCE"
 stack_started=1
 if ! (cd "$RUN_TREE" && just compose-up) >>"$RAW_LOG" 2>&1; then
   fail portal-compose-up

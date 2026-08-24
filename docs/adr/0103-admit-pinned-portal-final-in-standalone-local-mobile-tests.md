@@ -8,7 +8,7 @@
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039
 - Extends: ADR-0097, ADR-0101, and ADR-0102
-- Implementation state: explicit iOS Simulator and Android QEMU `standalone-local` Portal test profile, sequential repository harnesses, and secret-free evidence are implemented; production and ordinary-mobile transport, native custody, tailnet Portal, physical-device, real-camera, live-holder-DID, production-trust, WebAssembly, and unsupported-grant paths remain unavailable
+- Implementation state: explicit iOS Simulator and Android QEMU `standalone-local` Portal test profiles, sequential local repository harnesses, same-head platform-plus-standard-smoke evidence, and secret-free retained records are implemented; hosted CI validates only repository-owned static/contract boundaries and receives no private Portal credential; production and ordinary-mobile transport, native custody, tailnet Portal, physical-device, real-camera, live-holder-DID, production-trust, WebAssembly, and unsupported-grant paths remain unavailable
 
 ## Context
 
@@ -62,8 +62,12 @@ remains editable outside this imported-link case.
 
 ## Test harness
 
-`just portal-mobile-smoke` is a fixed sequential recipe: iOS completes and
-tears down before Android starts. Each platform command:
+`just portal-local-conformance` is the fixed complete local recipe: the real
+headless boundary completes first, iOS Portal conformance and the standard iOS
+smoke complete next, and Android Portal conformance plus the standard Android
+smoke complete last. The focused platform commands remain reusable by that
+orchestrator and for diagnosis, but do not independently satisfy the retained
+same-head evidence contract. Each platform command:
 
 1. authenticates a clean Portal checkout, exact integration commit/tree,
    historical PR head, profile source, and provenance digest;
@@ -129,24 +133,45 @@ and vendor unavailability.
 
 ## Evidence and consequences
 
-Evidence under `target/portal-mobile-e2e/{ios,android}/evidence.json` is an
-ignored, closed boolean/source-pin/platform schema. It may record virtual model,
-OS/API, application id, and fixed reverse ports. It excludes simulator/emulator
-identifiers, routes, DIDs, grants, tokens, nonces, JWTs, credential bytes,
-proofs, private parts, claims, logs, PIDs, and timestamps; a sentinel scan
-rejects common representations. The selected virtual device's installed Oxid
-app/data and normal build outputs remain available for local inspection but are
-not evidence fields. Android deliberately retains the exact app reverse entries
-for 8088, 9944, 6300, 18090, 18091, and 18093; only the owned dynamic CDP
-forward is removed. A rerun resets only Oxid app data and recreates its scoped
-runtime. Evidence is generated into a private same-directory candidate, checked
-against the exact schema and sentinel, and published with an atomic rename.
-Generation, schema, sentinel, or publication-finalization failure preserves any
-prior valid evidence. Publication precedes the EXIT cleanup transaction, so a
-later cleanup failure still fails the command but may leave the newly validated,
-clean-head-bound evidence in place. The retained evidence's `oxid.head` binds it
-to its source commit. Reproduction therefore requires no global Docker pruning,
-broad worktree/`target` deletion, virtual-device erase, or `reverse --remove-all`.
+The complete recipe stages headless, iOS, and Android evidence away from the
+retained paths while every real and standard smoke runs. It adds the closed
+`standardSmoke` acceptance boolean to each platform candidate only after the
+matching standard smoke succeeds. One final validator then requires all three
+documents to bind the exact same Oxid head and canonical Portal commit, tree,
+historical PR head, profile source, and provenance digest. It also requires the
+exact headless/iOS/Android schemas, platform identities, every acceptance
+boolean, and the secret sentinel before publication.
+
+The retained files are:
+
+- `target/portal-headless-e2e/evidence.json`;
+- `target/portal-mobile-e2e/ios/evidence.json`;
+- `target/portal-mobile-e2e/android/evidence.json`.
+
+They are ignored, closed local review inputs. Platform evidence may record a
+virtual model, OS/API, application id, and fixed reverse ports. It excludes
+simulator/emulator identifiers, routes, DIDs, grants, tokens, nonces, JWTs,
+credential bytes, proofs, private parts, claims, logs, PIDs, and timestamps; a
+sentinel scan rejects common representations. The selected virtual device's
+installed Oxid app/data and normal build outputs remain available for local
+inspection but are not evidence fields.
+
+Each authoritative platform script still creates a private same-directory
+candidate and atomically replaces only the orchestrator's staging path. The
+complete recipe does not touch a previously retained evidence set until all
+five heavy commands and same-head validation pass. Its bounded publication
+transaction keeps backups and restores them on failure or handled interruption,
+so a partial platform result or mixed-head set is never accepted. Cleanup
+failures, stale evidence, source changes, and Portal-owned worktree/runtime/
+Compose leaks all fail the recipe. Reproduction requires no global Docker
+pruning, broad worktree/`target` deletion, virtual-device erase, or
+`reverse --remove-all`.
+
+Hosted CI does not execute this private-source boundary and does not upload
+these files. Its required public/static job checks the harness order and cleanup
+bounds, immutable pins, evidence validation and negative fixtures, no-secret
+command construction, sanitized-only publication, and absence of a private
+source credential or false hosted-execution claim.
 
 This proves real mock-KYC Portal issuance on virtual mobile hosts only, against
 an undeployed holder. Credential status remains `not_checked`. It does not

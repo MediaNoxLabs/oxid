@@ -2232,13 +2232,19 @@ to silence the shell probe.
   Android intent state; the app's bounded worker performs loopback retrieval.
   It cold-reboots an already-running disposable QEMU and requires host/emulator
   clocks within two seconds rather than weakening strict future-time policy.
-  `just portal-mobile-smoke` runs iOS then Android and tears each exact Portal
-  compose project down before the next platform. The cleanup trap must remain
-  installed before the first side effect: success, failure, and signal exits
-  always remove the platform-private runtime, while named Compose cleanup is
-  bounded and cleanup failures remain failures. Retain only the closed
-  secret-free evidence plus normal build/device app data; retain the six exact
-  Android app reverse mappings and remove only the dynamically owned CDP
+  `just portal-local-conformance` is the complete local-only evidence boundary:
+  it runs real headless first, then iOS Portal plus standard iOS smoke, then
+  Android Portal plus standard Android smoke at one immutable Oxid head. It
+  stages all three records until exact same-head/source/schema/acceptance/
+  sentinel validation succeeds and rolls an interrupted publication back to the
+  prior retained set. Hosted CI receives no private Portal credential, executes
+  no real Portal service, and uploads no local evidence; its required Portal job
+  validates only repository-owned static harness and evidence contracts.
+  The cleanup trap remains installed before the first side effect: success,
+  failure, and signal exits always remove the platform-private runtime, while
+  named Compose cleanup is bounded and cleanup failures remain failures.
+  Retain only the closed secret-free evidence plus normal build/device app
+  data; retain the six exact Android app reverse mappings and remove only the dynamically owned CDP
   forward, never unrelated mappings. A rerun resets only Oxid app data and
   needs no broad Docker, worktree, target, virtual-device, or reverse cleanup.
   The body-blind proxy proves refusal makes zero token/nonce/credential calls;

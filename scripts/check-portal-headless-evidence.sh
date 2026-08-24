@@ -3,8 +3,9 @@
 
 set -euo pipefail
 
-repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 validator="$repository_root/scripts/e2e/validate-portal-headless-evidence.sh"
+workflow_validator="$repository_root/scripts/e2e/validate-portal-workflow-placement.sh"
 scratch="$(mktemp -d)"
 trap 'rm -rf -- "$scratch"' EXIT
 head="0123456789abcdef0123456789abcdef01234567"
@@ -53,52 +54,57 @@ jq '.oxid.head = "ffffffffffffffffffffffffffffffffffffffff"' "$valid" >"$scratch
 assert_rejected "$scratch/wrong-head.json"
 jq '.portal.integrationCommit = "ffffffffffffffffffffffffffffffffffffffff"' "$valid" >"$scratch/wrong-pin.json"
 assert_rejected "$scratch/wrong-pin.json"
-jq '.secret = "Authorization: Bearer not-public"' "$valid" >"$scratch/secret.json"
-assert_rejected "$scratch/secret.json"
+jq '.note = "Authorization: Bearer not-public"' "$valid" >"$scratch/private.json"
+assert_rejected "$scratch/private.json"
 
-workflow="$repository_root/.github/workflows/ci.yml"
-job="$(awk '
-  /^  portal-headless-e2e:/ { capture=1 }
-  capture && /^  [A-Za-z0-9_-]+:/ && $0 !~ /^  portal-headless-e2e:/ { exit }
-  capture { print }
-' "$workflow")"
+"$workflow_validator" "$repository_root/.github/workflows" >/dev/null
 for marker in \
-  'timeout-minutes: 45' \
-  'OXID_EVIDENCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}' \
-  'ref: ${{ env.OXID_EVIDENCE_HEAD }}' \
-  '"$OXID_EVIDENCE_HEAD"' \
-  'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803' \
-  'ref: 925ec8d04882eabd4ac7b784c70fc2f0c152faae' \
-  'PORTAL_SOURCE_TOKEN: ${{ secrets.PORTAL_SOURCE_TOKEN }}' \
-  'if [ -z "${PORTAL_SOURCE_TOKEN:-}" ]; then' \
-  'Required repository secret PORTAL_SOURCE_TOKEN is not configured' \
-  'token: ${{ secrets.PORTAL_SOURCE_TOKEN }}' \
-  'persist-credentials: false' \
-  'PORTAL_SOURCE_TREE: ${{ github.workspace }}/portal-source' \
-  'nix develop --command just portal-headless-e2e' \
-  'validate-portal-headless-evidence.sh' \
-  'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' \
-  'path: target/portal-headless-e2e/evidence.json' \
-  'if-no-files-found: error' \
-  'retention-days: 7' \
-  'OXID_PORTAL_KEEP_FAILURE_LOG: "0"'; do
-  grep -qF "$marker" <<<"$job" || {
-    echo "Hosted Portal headless job is missing contract marker: $marker" >&2
+  'OXID_PORTAL_EVIDENCE_PATH' \
+  'OXID_PORTAL_EVIDENCE_HEAD' \
+  'validate-portal-headless-evidence.sh'; do
+  rg -qF "$marker" scripts/e2e/portal-headless-e2e.sh || {
+    echo "Local headless Portal harness is missing marker: $marker" >&2
     exit 1
   }
 done
-[ "$(grep -cF 'token: ${{ secrets.PORTAL_SOURCE_TOKEN }}' <<<"$job")" -eq 1 ] || {
-  echo "Hosted Portal headless job must use the private source token exactly once." >&2
-  exit 1
-}
-[ "$(grep -cF 'path: target/portal-headless-e2e/evidence.json' <<<"$job")" -eq 1 ] || {
-  echo "Hosted Portal headless job must upload exactly one sanitized evidence path." >&2
-  exit 1
-}
-if grep -qF '/Users/' scripts/e2e/portal-headless-e2e.sh || \
-  ! grep -qF '+$INTEGRATION_COMMIT:refs/oxid-evidence/portal-integration' \
-    scripts/e2e/portal-headless-e2e.sh; then
-  echo "Portal headless reproduction must use an explicit source path and immutable integration ref." >&2
+for marker in \
+  'trap cleanup EXIT' \
+  "trap 'exit 130' INT" \
+  "trap 'exit 143' TERM" \
+  'trap - EXIT' \
+  "trap '' INT TERM"; do
+  rg -qF "$marker" scripts/e2e/portal-headless-e2e.sh || {
+    echo "Headless Portal signal cleanup marker is missing: $marker" >&2
+    exit 1
+  }
+done
+if rg -qF 'rm -f "$EVIDENCE"' scripts/e2e/portal-headless-e2e.sh; then
+  echo "Headless Portal harness must preserve prior evidence until atomic replacement." >&2
   exit 1
 fi
-printf 'Portal headless evidence publication schema and secret sentinel passed.\n'
+signal_probe="$scratch/headless-signal-probe.sh"
+awk '
+  /^cleanup\(\) \{/ { capture=1 }
+  capture { print }
+  capture && /^}$/ { capture=0 }
+  /^trap cleanup EXIT$/ || /^trap '\''exit 130'\'' INT$/ || /^trap '\''exit 143'\'' TERM$/ { print }
+' scripts/e2e/portal-headless-e2e.sh >"$signal_probe"
+set +e
+RAW_LOG="$scratch/headless-signal.log" bash -c '
+  set -euo pipefail
+  stack_started=0
+  worktree_created=0
+  RUN_TREE="$1/run-tree"
+  SOURCE_TREE="$1/source"
+  RAW_LOG="$RAW_LOG"
+  source "$2"
+  kill -TERM "$$"
+  exit 99
+' _ "$scratch" "$signal_probe" >/dev/null 2>&1
+signal_status=$?
+set -e
+[ "$signal_status" = 143 ] || {
+  echo "Headless Portal TERM cleanup did not preserve conventional status 143." >&2
+  exit 1
+}
+printf 'Portal headless evidence schema, immutable pins, secret sentinel, local-only execution, and no-hosted-upload boundary passed.\n'

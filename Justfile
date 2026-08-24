@@ -157,3 +157,8 @@ clean:
 
 docs-site:
     ./scripts/build-docs-site.sh
+
+# Complete local-only retained Portal evidence: headless, iOS Portal + standard
+# smoke, then Android Portal + standard smoke, all at one immutable Oxid head.
+portal-local-conformance:
+    ./scripts/e2e/portal-local-conformance.sh
