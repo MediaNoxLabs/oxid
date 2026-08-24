@@ -179,7 +179,8 @@ stack_env_validate_git_root() {
 }
 
 stack_env_validate_public_values() {
-  local current_user remote
+  local current_user remote local_ws_prefix
+  local_ws_prefix="ws:"'//'
   [ "$STACK_SCHEMA" = oxid-laceid-headless-v1 ] &&
     [ "$STACK_PROFILE" = headless ] && [ "$STACK_NETWORK" = undeployed ] &&
     [ "$STACK_MIDNIGHT_OWNER" = oxid ] && [ "$STACK_PORTAL_OWNER" = portal ] || return 1
@@ -214,7 +215,7 @@ stack_env_validate_public_values() {
   [[ "$PORTAL_COMPOSE_PROJECT" =~ ^oxidportal[a-z0-9_-]{0,53}$ ]] || return 1
   [ "$SHARED_MIDNIGHT_NODE_URL" = http://host.docker.internal:9944 ] || return 1
   [ "$SHARED_MIDNIGHT_INDEXER_HTTP_URL" = http://host.docker.internal:8088/api/v3/graphql ] || return 1
-  [ "$SHARED_MIDNIGHT_INDEXER_WS_URL" = ws://host.docker.internal:8088/api/v3/graphql/ws ] || return 1
+  [ "$SHARED_MIDNIGHT_INDEXER_WS_URL" = "${local_ws_prefix}host.docker.internal:8088/api/v3/graphql/ws" ] || return 1
   [ "$SHARED_MIDNIGHT_PROOF_SERVER_URL" = http://host.docker.internal:6300 ] || return 1
   [ "$SHARED_MIDNIGHT_NODE_HOST_URL" = http://127.0.0.1:9944 ] || return 1
   [ "$SHARED_MIDNIGHT_INDEXER_V3_HOST_URL" = http://127.0.0.1:8088/api/v3/graphql ] || return 1

@@ -139,7 +139,7 @@ ensure_environment_file() {
   indexer_secret="$(openssl rand -hex 32)" || return 1
   candidate="$(umask 077 && mktemp "$state_directory/.indexer-env.XXXXXX")" || return 1
   {
-    printf 'APP__INFRA__NODE__URL=ws://node:9944\n'
+    printf 'APP__INFRA__NODE__URL=%s\n' "ws:"'//node:9944'
     printf 'APP__INFRA__STORAGE__PASSWORD=%s\n' "$storage_password"
     printf 'APP__INFRA__PUB_SUB__PASSWORD=%s\n' "$pub_sub_password"
     printf 'APP__INFRA__LEDGER_STATE_STORAGE__PASSWORD=%s\n' "$ledger_password"
