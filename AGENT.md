@@ -2263,9 +2263,10 @@ to silence the shell probe.
 - The issue #124 shared headless profile uses one absolute canonical owner-`0600`
   `STACK_ENV_FILE` generated only by Portal. Oxid validates only its closed
   public v1 contract and delegates full secret validation/lifecycle through the
-  signed Portal helper `00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24`
-  (tree `3cecc6e17d56b2c0d646150df3861005df831ed8`); it never sources the file or
-  assigns/exports Portal secret values. Protocol/image bytes remain the detached
+  signed Portal helper `f7732be01171cf6a376ec0dd043f517e3f6fcf6b`
+  (tree `96accf0da80992c3b247458c3b21f22ee9db1d68`); Portal PR #19 remains draft
+  and human-merge-only. Oxid never sources the file or assigns/exports Portal
+  secret values. Protocol/image bytes remain the detached
   `925ec8d` / `58b4597` source and existing PR-head/profile/provenance locks.
   `just local-headless-up|status|test|down <profile>` is the Oxid surface. Portal
   owns only smocker, resolver, did-manager/bootstrap and issuer. Oxid owns only
@@ -2274,6 +2275,8 @@ to silence the shell probe.
   without the exact receipt is attach-only. Portal stops first, and Midnight down
   or Tailscale reset is forbidden unless profile path, Compose digest and exact
   container IDs match the receipt. Public CI remains static-only and secret-free.
+  Headless and mobile evidence authenticating the prior helper is stale until the
+  complete local evidence suite is rerun; do not edit retained evidence in place.
   Physical/tailnet Portal and all mobile evidence remain unavailable in this
   shared-headless pass.
 - ADR-0098 production composition requires an

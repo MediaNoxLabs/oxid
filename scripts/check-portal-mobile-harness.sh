@@ -445,8 +445,8 @@ fi
 # and the separate signed lifecycle helper. Mobile support never fetches or
 # creates another checkout during a conformance run.
 for source_pin_marker in \
-  'PORTAL_HELPER_COMMIT="00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24"' \
-  'PORTAL_HELPER_TREE="3cecc6e17d56b2c0d646150df3861005df831ed8"' \
+  'PORTAL_HELPER_COMMIT="f7732be01171cf6a376ec0dd043f517e3f6fcf6b"' \
+  'PORTAL_HELPER_TREE="96accf0da80992c3b247458c3b21f22ee9db1d68"' \
   'stack_env_load "$STACK_ENV_FILE"' \
   'source_tree="$(portal_mobile_source_tree)"' \
   '[ "$source_tree" = "$PORTAL_PROTOCOL_SOURCE_DIR" ]'; do

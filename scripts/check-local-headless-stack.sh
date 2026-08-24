@@ -15,8 +15,8 @@ for recipe in local-headless-up local-headless-status local-headless-test local-
   rg -q "^${recipe} stack_env_file:" Justfile || { echo "Missing explicit-profile recipe: $recipe" >&2; exit 1; }
 done
 for marker in \
-  'STACK_ENV_EXPECTED_HELPER_COMMIT="00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24"' \
-  'STACK_ENV_EXPECTED_HELPER_TREE="3cecc6e17d56b2c0d646150df3861005df831ed8"' \
+  'STACK_ENV_EXPECTED_HELPER_COMMIT="f7732be01171cf6a376ec0dd043f517e3f6fcf6b"' \
+  'STACK_ENV_EXPECTED_HELPER_TREE="96accf0da80992c3b247458c3b21f22ee9db1d68"' \
   'STACK_ENV_EXPECTED_PROTOCOL_COMMIT="925ec8d04882eabd4ac7b784c70fc2f0c152faae"' \
   'STACK_ENV_EXPECTED_PROTOCOL_TREE="58b4597524f88a0ae2253439a44dab0dc60cbb6f"' \
   'git -C "$PORTAL_HELPER_ROOT" verify-commit' \

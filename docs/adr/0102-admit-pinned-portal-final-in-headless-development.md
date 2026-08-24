@@ -4,7 +4,7 @@
 - Date: 2026-08-21
 - Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124) and Portal PR #17
 - Portal integration source: squash commit `925ec8d04882eabd4ac7b784c70fc2f0c152faae`, tree `58b4597524f88a0ae2253439a44dab0dc60cbb6f`
-- Portal lifecycle helper: signed commit `00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24`, tree `3cecc6e17d56b2c0d646150df3861005df831ed8`, reviewed in Portal PR #19 (draft dependency; Oxid does not merge it)
+- Portal lifecycle helper: signed commit `f7732be01171cf6a376ec0dd043f517e3f6fcf6b`, tree `96accf0da80992c3b247458c3b21f22ee9db1d68`, reviewed in Portal PR #19 (still draft and human-merge-only; Oxid does not merge it)
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14` (the same tree as the landed squash commit)
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; exact provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039 and ADR-0101
@@ -67,7 +67,7 @@ to Oxid's canonical JWK context and never relaxes the issuer/method/key checks.
 
 The shared headless environment uses one absolute canonical owner-`0600`
 `STACK_ENV_FILE`, created only by Portal's generator. The signed lifecycle helper
-at `00d3d6c...` and the immutable protocol source at `925ec8d...` are distinct
+at `f7732be...` and the immutable protocol source at `925ec8d...` are distinct
 authorities in that profile. Oxid validates the closed v1 keys, exact roots,
 commits, trees, projects, routes, mode, ownership and helper signature without
 sourcing dotenv or assigning Portal secret values; it passes only the profile
@@ -129,8 +129,10 @@ journey evidence, so it is not a substitute for the Oxid-owned local recipe.
 
 The three retained records are local, head-bound review inputs rather than
 hosted artifacts. Reviewers must treat all earlier records as stale after any
-Oxid head change and regenerate the complete set before accepting the evidence
-gate. A signed/DCO Oxid commit and the exact source-lock provenance make that
+Oxid head or lifecycle-helper change and regenerate the complete set before
+accepting the evidence gate. In particular, headless and mobile records made
+with the prior helper remain stale until that rerun; retained evidence must not
+be edited in place. A signed/DCO Oxid commit and the exact source-lock provenance make that
 review reproducible; they do not turn local development evidence into release
 attestation.
 

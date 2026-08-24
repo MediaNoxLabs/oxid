@@ -14,8 +14,8 @@ const SOURCE_LOCK = JSON.parse(fs.readFileSync(SOURCE_LOCK_PATH, "utf8"));
 const MAX_EVIDENCE_BYTES = 16_384;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
-const PORTAL_HELPER_COMMIT = "00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24";
-const PORTAL_HELPER_TREE = "3cecc6e17d56b2c0d646150df3861005df831ed8";
+const PORTAL_HELPER_COMMIT = "f7732be01171cf6a376ec0dd043f517e3f6fcf6b";
+const PORTAL_HELPER_TREE = "96accf0da80992c3b247458c3b21f22ee9db1d68";
 const SECRET_SENTINEL = /openid-credential-offer|credential_offer|pre-authorized|access[_-]?token|c_nonce|authorization\s*[:=]\s*bearer|eyJ|did:|https?:\/\/|AB1234567|\bJohn\b|\bDoe\b|private.?parts|signed.?bytes|detached.?proof|portal-offer-capability|emulator-[0-9]+|[0-9A-F]{8}-[0-9A-F-]{27}/iu;
 
 const HEADLESS_ACCEPTANCE_KEYS = [

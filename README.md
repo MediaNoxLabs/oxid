@@ -446,8 +446,9 @@ validation. The reviewed shared profile keeps three authorities separate:
 - Oxid owns `oxid-standalone` (node `9944`, indexer v3+v4 on `8088`, proof
   `/ready` on `6300`);
 - the signed Portal lifecycle helper is fixed at
-  `00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24`, tree
-  `3cecc6e17d56b2c0d646150df3861005df831ed8`;
+  `f7732be01171cf6a376ec0dd043f517e3f6fcf6b`, tree
+  `96accf0da80992c3b247458c3b21f22ee9db1d68`; Portal PR #19 remains draft and
+  human-merge-only;
 - Portal protocol/image bytes remain fixed at integration `925ec8d...`, tree
   `58b4597...`, in a clean persistent detached worktree.
 
@@ -456,7 +457,7 @@ profile and its sibling `.state` directory must stay outside both repositories;
 Oxid never sources it and never imports or exports Portal secret fields:
 
 ```bash
-PORTAL_HELPER=/absolute/lace-id-portal-helper-00d3d6c
+PORTAL_HELPER=/absolute/lace-id-portal-helper-f7732be
 PORTAL_PROTOCOL=/absolute/lace-id-portal/tmp/worktrees/oxid-conformance-925ec8d
 OXID_ROOT=/absolute/oxid-pr-worktree
 PROFILE=/absolute/outside/git/.oxid-laceid-headless.env
@@ -510,7 +511,9 @@ exact schema, platform, acceptance, standard-smoke, and secret-sentinel checks:
 - `target/portal-mobile-e2e/ios/evidence.json`;
 - `target/portal-mobile-e2e/android/evidence.json`.
 
-No destructive pre-clean is needed. Never use global Docker pruning, broad
+Any retained headless or mobile record that authenticates the prior helper is
+stale until the complete local suite is rerun; do not edit retained evidence in
+place. No destructive pre-clean is needed. Never use global Docker pruning, broad
 worktree/`target` deletion, whole-device erasure, or
 `adb reverse --remove-all`. Physical/tailnet Portal, real camera, real KYC,
 production trust, native custody, WASM, live holder DID deployment, and mobile

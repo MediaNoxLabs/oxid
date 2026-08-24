@@ -4,7 +4,7 @@
 - Date: 2026-08-21
 - Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124)
 - Portal integration source: squash commit `925ec8d04882eabd4ac7b784c70fc2f0c152faae`, tree `58b4597524f88a0ae2253439a44dab0dc60cbb6f`
-- Portal lifecycle helper: signed commit `00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24`, tree `3cecc6e17d56b2c0d646150df3861005df831ed8` (Portal PR #19 draft dependency)
+- Portal lifecycle helper: signed commit `f7732be01171cf6a376ec0dd043f517e3f6fcf6b`, tree `96accf0da80992c3b247458c3b21f22ee9db1d68` (Portal PR #19 remains draft and human-merge-only)
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14`
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039
@@ -71,7 +71,7 @@ same explicit owner-private v1 profile and remain diagnostic entry points only.
 
 The complete recipe starts or non-mutatingly attaches the Oxid-owned
 `oxid-standalone` project, delegates the separate Portal-only lifecycle to the
-signed `00d3d6c...` helper, and then runs every consumer against those same
+signed `f7732be...` helper, and then runs every consumer against those same
 projects. Portal owns smocker, resolver, did-manager/bootstrap and issuer only;
 its reviewed integrated Compose declares no node, indexer, or proof service.
 Each platform command:
@@ -165,7 +165,9 @@ five heavy commands and same-head validation pass. Its bounded publication
 transaction keeps backups and restores them on failure or handled interruption,
 so a partial platform result or mixed-head set is never accepted. Cleanup
 failures, stale evidence, source changes, and Portal-owned worktree/runtime/
-Compose leaks all fail the recipe. Reproduction requires no global Docker
+Compose leaks all fail the recipe. Headless and mobile records authenticating
+the prior helper remain stale until the complete recipe is rerun and must not
+be edited in place. Reproduction requires no global Docker
 pruning, broad worktree/`target` deletion, virtual-device erase, or
 `reverse --remove-all`.
 
