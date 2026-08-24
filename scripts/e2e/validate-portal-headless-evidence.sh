@@ -52,7 +52,7 @@ jq -e \
       and .profileSourceCommit == $profileSource
       and .provenanceSha256 == $provenance)
     and (.acceptance | type == "object"
-      and keys == ["confirmationRequired", "encryptedPersistence", "exactBundleImported", "managedAuthenticationProof", "mockKycApproved", "newProcessRestore", "refusalWithoutSecretCalls", "replayRejected", "reverified", "separateJubjubAssertionBinding"]
+      and keys == ["confirmationRequired", "encryptedPersistence", "exactBundleImported", "managedAuthenticationProof", "mockKycApproved", "newProcessRestore", "refusalWithoutSecretCalls", "replayRejected", "reverified", "separateJubjubAssertionBinding", "sharedMidnightIdentityUnchanged"]
       and all(.[]; . == true))
   ' "$evidence" >/dev/null || fail evidence-schema
 

@@ -108,7 +108,7 @@ jq -cn --arg head "$head" --argjson portal "$portal_document" '{
     confirmationRequired:true,encryptedPersistence:true,exactBundleImported:true,
     managedAuthenticationProof:true,mockKycApproved:true,newProcessRestore:true,
     refusalWithoutSecretCalls:true,replayRejected:true,reverified:true,
-    separateJubjubAssertionBinding:true
+    separateJubjubAssertionBinding:true,sharedMidnightIdentityUnchanged:true
   },
   oxid:{head:$head},portal:$portal,schema:"oxid-portal-headless-evidence-v1"
 }' >"$headless"

@@ -29,6 +29,7 @@ const HEADLESS_ACCEPTANCE_KEYS = [
   "replayRejected",
   "reverified",
   "separateJubjubAssertionBinding",
+  "sharedMidnightIdentityUnchanged",
 ];
 const MOBILE_COMMON_ACCEPTANCE_KEYS = [
   "developmentCustodyReactivated",

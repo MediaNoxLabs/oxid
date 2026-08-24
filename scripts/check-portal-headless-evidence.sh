@@ -35,7 +35,8 @@ jq -cn \
       refusalWithoutSecretCalls:true,
       replayRejected:true,
       reverified:true,
-      separateJubjubAssertionBinding:true
+      separateJubjubAssertionBinding:true,
+      sharedMidnightIdentityUnchanged:true
     }
   }' >"$valid"
 "$validator" "$valid" "$head" >/dev/null
@@ -63,7 +64,10 @@ assert_rejected "$scratch/private.json"
 for marker in \
   'OXID_PORTAL_EVIDENCE_PATH' \
   'OXID_PORTAL_EVIDENCE_HEAD' \
-  'validate-portal-headless-evidence.sh'; do
+  'validate-portal-headless-evidence.sh' \
+  'capture_shared_snapshot' \
+  'verify_shared_snapshot' \
+  'sharedMidnightIdentityUnchanged'; do
   rg -qF "$marker" scripts/e2e/portal-headless-e2e.sh || {
     echo "Local headless Portal harness is missing marker: $marker" >&2
     exit 1

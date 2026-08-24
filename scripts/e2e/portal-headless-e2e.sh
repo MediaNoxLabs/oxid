@@ -16,7 +16,7 @@ cleanup() {
   local status=$?
   trap - EXIT INT TERM
   trap '' INT TERM
-  rm -f -- "${status_file:-}"
+  rm -f -- "${status_file:-}" "${evidence_candidate:-}"
   if [ "$status" != 0 ] && [ "${OXID_PORTAL_KEEP_FAILURE_LOG:-0}" = 1 ]; then
     chmod 600 "$RAW_LOG" 2>/dev/null || true
     printf 'portal-headless-e2e: private failure log retained\n' >&2
@@ -29,10 +29,42 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 fail() { printf 'portal-headless-e2e: FAIL phase=%s\n' "$1" >&2; exit 1; }
+shared_receipt=""
+shared_before_height=""
+shared_before_ids=""
+evidence_candidate=""
+read_shared_height() {
+  local response hex
+  response="$(curl --fail --silent --connect-timeout 2 --max-time 5 -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"chain_getHeader","params":[]}' "$SHARED_MIDNIGHT_NODE_HOST_URL")" || return 1
+  hex="$(printf '%s' "$response" | jq -r '.result.number // empty')"
+  [[ "$hex" =~ ^0x[0-9a-fA-F]+$ ]] || return 1
+  printf '%d\n' "$((16#${hex#0x}))"
+}
+capture_shared_snapshot() {
+  local schema mode ids
+  [ -f "$shared_receipt" ] && [ ! -L "$shared_receipt" ] || return 1
+  mode="$(stat -f '%Lp' "$shared_receipt" 2>/dev/null || stat -c '%a' "$shared_receipt")"
+  [ "$mode" = 600 ] || return 1
+  schema="$(sed -n '1p' "$shared_receipt")"; shared_before_height="$(sed -n '2p' "$shared_receipt")"; shared_before_ids="$(sed -n '3,$p' "$shared_receipt")"
+  [ "$schema" = oxid-laceid-shared-receipt-v1 ] && [[ "$shared_before_height" =~ ^[0-9]+$ ]] || return 1
+  [ "$(printf '%s\n' "$shared_before_ids" | grep -c .)" = 3 ] || return 1
+  ids="$(docker ps -a --filter "label=com.docker.compose.project=$SHARED_MIDNIGHT_PROJECT" --quiet | sort)"
+  [ "$ids" = "$shared_before_ids" ] || return 1
+  [ "$(docker ps --filter "label=com.docker.compose.project=$SHARED_MIDNIGHT_PROJECT" --quiet | sort)" = "$shared_before_ids" ] || return 1
+  [ "$(read_shared_height)" -ge "$shared_before_height" ]
+}
+verify_shared_snapshot() {
+  local ids height
+  ids="$(docker ps -a --filter "label=com.docker.compose.project=$SHARED_MIDNIGHT_PROJECT" --quiet | sort)" || return 1
+  [ "$ids" = "$shared_before_ids" ] && [ "$(docker ps --filter "label=com.docker.compose.project=$SHARED_MIDNIGHT_PROJECT" --quiet | sort)" = "$shared_before_ids" ] || return 1
+  height="$(read_shared_height)" || return 1
+  [ "$height" -ge "$shared_before_height" ]
+}
 
 [ -n "$PROFILE" ] || fail profile
 stack_env_load "$PROFILE" || fail "$STACK_ENV_ERROR"
-for command_name in cargo docker git jq mktemp; do
+shared_receipt="$LOCAL_STACK_STATE_DIR/$PORTAL_COMPOSE_PROJECT.shared-midnight.receipt"
+for command_name in cargo curl docker git grep jq mktemp sed sort stat; do
   command -v "$command_name" >/dev/null 2>&1 || fail "missing-$command_name"
 done
 readonly OXID_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
@@ -43,6 +75,7 @@ status_file="$(umask 077 && mktemp "$LOCAL_STACK_STATE_DIR/.portal-status.XXXXXX
 stack_env_delegate_portal status >"$status_file" 2>>"$RAW_LOG" || fail portal-status
 jq -e '.schema == "laceid-oxid-conformance-lifecycle-v2" and .state == "running" and .midnight_state == "ready"' \
   "$status_file" >/dev/null || fail shared-stack-not-ready
+capture_shared_snapshot || fail shared-snapshot-before
 
 if ! PORTAL_INTEGRATION_TREE="$PORTAL_PROTOCOL_SOURCE_DIR" \
   OXID_PORTAL_COMPOSE_PROJECT="$PORTAL_COMPOSE_PROJECT" \
@@ -58,6 +91,10 @@ if ! PORTAL_INTEGRATION_TREE="$PORTAL_PROTOCOL_SOURCE_DIR" \
 fi
 
 [ -f "$EVIDENCE" ] || fail missing-evidence
+verify_shared_snapshot || fail shared-snapshot-after
+evidence_candidate="$(umask 077 && mktemp "$(dirname -- "$EVIDENCE")/.shared-evidence.XXXXXX")" || fail evidence-candidate
+jq '.acceptance.sharedMidnightIdentityUnchanged = true' "$EVIDENCE" >"$evidence_candidate" || fail evidence-attestation
+chmod 600 "$evidence_candidate" && mv -f -- "$evidence_candidate" "$EVIDENCE" || fail evidence-attestation
 [ -z "$(git -C "$PORTAL_PROTOCOL_SOURCE_DIR" status --porcelain)" ] || fail portal-tree-mutated
 stack_env_delegate_portal status >"$status_file" 2>>"$RAW_LOG" || fail portal-status-after
 jq -e '.state == "running" and .midnight_state == "ready"' "$status_file" >/dev/null || fail shared-stack-changed
