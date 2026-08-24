@@ -43,7 +43,7 @@ read_shared_height() {
 capture_shared_snapshot() {
   local schema mode ids
   [ -f "$shared_receipt" ] && [ ! -L "$shared_receipt" ] || return 1
-  mode="$(stat -f '%Lp' "$shared_receipt" 2>/dev/null || stat -c '%a' "$shared_receipt")"
+  if mode="$(stat -c '%a' -- "$shared_receipt" 2>/dev/null)"; then :; else mode="$(stat -f '%Lp' -- "$shared_receipt")"; fi
   [ "$mode" = 600 ] || return 1
   schema="$(sed -n '1p' "$shared_receipt")"; shared_before_height="$(sed -n '2p' "$shared_receipt")"; shared_before_ids="$(sed -n '3,$p' "$shared_receipt")"
   [ "$schema" = oxid-laceid-shared-receipt-v1 ] && [[ "$shared_before_height" =~ ^[0-9]+$ ]] || return 1

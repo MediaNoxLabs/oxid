@@ -14,6 +14,8 @@ if [ ! -e "$owner_receipt" ] && [ ! -L "$owner_receipt" ]; then
   exit 0
 fi
 [ -f "$owner_receipt" ] && [ ! -L "$owner_receipt" ] || { echo "Unsafe standalone owner receipt." >&2; exit 1; }
+if receipt_mode="$(stat -c '%a' -- "$owner_receipt" 2>/dev/null)"; then :; else receipt_mode="$(stat -f '%Lp' -- "$owner_receipt")"; fi
+[ "$receipt_mode" = 600 ] || { echo "Unsafe standalone owner receipt." >&2; exit 1; }
 ids="$(project_ids)"
 schema="$(sed -n '1p' "$owner_receipt")"; owner="$(sed -n '2p' "$owner_receipt")"
 project="$(sed -n '3p' "$owner_receipt")"; digest="$(sed -n '4p' "$owner_receipt")"; receipt_ids="$(sed -n '5,$p' "$owner_receipt")"

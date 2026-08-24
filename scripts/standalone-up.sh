@@ -25,9 +25,10 @@ count_lines() { local count=0 line; while IFS= read -r line; do [ -z "$line" ] |
 project_ids() { docker ps -a --filter 'label=com.docker.compose.project=oxid-standalone' --quiet 2>/dev/null | sort; }
 running_ids() { docker ps --filter 'label=com.docker.compose.project=oxid-standalone' --quiet 2>/dev/null | sort; }
 receipt_matches() {
-  local ids="$1" schema owner project digest receipt_ids expected
+  local ids="$1" schema owner project digest receipt_ids expected receipt_mode
   [ -f "$owner_receipt" ] && [ ! -L "$owner_receipt" ] || return 1
-  [ "$(stat -f '%Lp' "$owner_receipt" 2>/dev/null || stat -c '%a' "$owner_receipt")" = 600 ] || return 1
+  if receipt_mode="$(stat -c '%a' -- "$owner_receipt" 2>/dev/null)"; then :; else receipt_mode="$(stat -f '%Lp' -- "$owner_receipt")"; fi
+  [ "$receipt_mode" = 600 ] || return 1
   schema="$(sed -n '1p' "$owner_receipt")"; owner="$(sed -n '2p' "$owner_receipt")"
   project="$(sed -n '3p' "$owner_receipt")"; digest="$(sed -n '4p' "$owner_receipt")"
   receipt_ids="$(sed -n '5,$p' "$owner_receipt")"; expected="$(shasum -a 256 "$compose_file" | awk '{print $1}')"
