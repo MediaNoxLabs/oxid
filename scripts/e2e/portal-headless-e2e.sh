@@ -1,84 +1,53 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+
 set -euo pipefail
+export LC_ALL=C
+CDPATH=
 
-readonly EXPECTED_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
-readonly INTEGRATION_COMMIT="925ec8d04882eabd4ac7b784c70fc2f0c152faae"
-readonly INTEGRATION_TREE="58b4597524f88a0ae2253439a44dab0dc60cbb6f"
-readonly PR_HEAD="9c82db23eabe8b6d758b2731f2225910ea627c14"
-readonly PROFILE_SOURCE="76e8edf394a4cb37ca822037272d543c68f25f71"
-readonly PROVENANCE_SHA="cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87"
-readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-readonly SOURCE_TREE="${PORTAL_SOURCE_TREE:-}"
+readonly REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+# shellcheck source=scripts/e2e/stack-env-v1.sh
+source "$REPO_ROOT/scripts/e2e/stack-env-v1.sh"
+readonly PROFILE="${1:-${STACK_ENV_FILE:-}}"
 readonly EVIDENCE="${OXID_PORTAL_EVIDENCE_PATH:-$REPO_ROOT/target/portal-headless-e2e/evidence.json}"
-readonly RUN_TREE="${TMPDIR:-/tmp}/oxid-portal-integration-${INTEGRATION_COMMIT:0:8}-$$"
 readonly RAW_LOG="${TMPDIR:-/tmp}/oxid-portal-headless-e2e-$$.log"
-export COMPOSE_PROJECT_NAME="oxidportal124$$"
-
-stack_started=0
-worktree_created=0
+status_file=""
 cleanup() {
   local status=$?
-  trap - EXIT
+  trap - EXIT INT TERM
   trap '' INT TERM
-  if [[ "$stack_started" == 1 && -d "$RUN_TREE" ]]; then
-    (cd "$RUN_TREE" && just compose-down) >>"$RAW_LOG" 2>&1 || status=1
-  fi
-  if [[ "$worktree_created" == 1 ]]; then
-    git -C "$SOURCE_TREE" worktree remove --force "$RUN_TREE" >>"$RAW_LOG" 2>&1 || status=1
-  fi
-  if [[ "$status" != 0 && "${OXID_PORTAL_KEEP_FAILURE_LOG:-0}" == 1 ]]; then
+  rm -f -- "${status_file:-}"
+  if [ "$status" != 0 ] && [ "${OXID_PORTAL_KEEP_FAILURE_LOG:-0}" = 1 ]; then
     chmod 600 "$RAW_LOG" 2>/dev/null || true
-    printf 'portal-headless-e2e: private failure log=%s\n' "$RAW_LOG" >&2
+    printf 'portal-headless-e2e: private failure log retained\n' >&2
   else
-    rm -f "$RAW_LOG"
+    rm -f -- "$RAW_LOG"
   fi
   exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+fail() { printf 'portal-headless-e2e: FAIL phase=%s\n' "$1" >&2; exit 1; }
 
-fail() {
-  printf 'portal-headless-e2e: FAIL phase=%s\n' "$1" >&2
-  exit 1
-}
-
-[[ "$SOURCE_TREE" = /* && -d "$SOURCE_TREE" ]] || fail source-path
-[[ "$(git -C "$SOURCE_TREE" remote get-url origin 2>/dev/null)" == "$EXPECTED_REMOTE" ]] || fail source-remote
-[[ -z "$(git -C "$SOURCE_TREE" status --porcelain 2>/dev/null)" ]] || fail source-dirty
-command -v nix >/dev/null 2>&1 || fail missing-nix
-command -v docker >/dev/null 2>&1 || fail missing-docker
-command -v just >/dev/null 2>&1 || fail missing-just
-command -v jq >/dev/null 2>&1 || fail missing-jq
-command -v rg >/dev/null 2>&1 || fail missing-rg
-docker info >/dev/null 2>&1 || fail docker-daemon
-
-if ! git -C "$SOURCE_TREE" fetch origin \
-  "+$INTEGRATION_COMMIT:refs/oxid-evidence/portal-integration" \
-  "refs/pull/17/head:refs/oxid-evidence/portal-pr-17" >>"$RAW_LOG" 2>&1; then
-  fail source-fetch
-fi
-[[ "$(git -C "$SOURCE_TREE" rev-parse refs/oxid-evidence/portal-integration^{commit})" == "$INTEGRATION_COMMIT" ]] || fail integration-commit
-[[ "$(git -C "$SOURCE_TREE" rev-parse refs/oxid-evidence/portal-integration^{tree})" == "$INTEGRATION_TREE" ]] || fail integration-tree
-[[ "$(git -C "$SOURCE_TREE" rev-parse refs/oxid-evidence/portal-pr-17^{commit})" == "$PR_HEAD" ]] || fail pr-head
-[[ "$(git -C "$SOURCE_TREE" rev-parse refs/oxid-evidence/portal-pr-17^{tree})" == "$INTEGRATION_TREE" ]] || fail pr-tree
-[[ "$(git -C "$SOURCE_TREE" rev-parse "$PROFILE_SOURCE"^{commit})" == "$PROFILE_SOURCE" ]] || fail profile-source
-[[ "$(git -C "$SOURCE_TREE" show "$INTEGRATION_COMMIT:crates/issuer-integration/fixtures/openid4vci-final/provenance.json" | shasum -a 256 | awk '{print $1}')" == "$PROVENANCE_SHA" ]] || fail provenance
-
-if ! git -C "$SOURCE_TREE" worktree add --detach "$RUN_TREE" "$INTEGRATION_COMMIT" >>"$RAW_LOG" 2>&1; then
-  fail integration-checkout
-fi
-worktree_created=1
-[[ -z "$(git -C "$RUN_TREE" status --porcelain)" ]] || fail integration-checkout-dirty
-
+[ -n "$PROFILE" ] || fail profile
+stack_env_load "$PROFILE" || fail "$STACK_ENV_ERROR"
+for command_name in cargo docker git jq mktemp; do
+  command -v "$command_name" >/dev/null 2>&1 || fail "missing-$command_name"
+done
 readonly OXID_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
-[[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ]] || fail oxid-tree-dirty
-stack_started=1
-if ! (cd "$RUN_TREE" && just compose-up) >>"$RAW_LOG" 2>&1; then
-  fail portal-compose-up
-fi
+[ "$OXID_ROOT" = "$REPO_ROOT" ] && [ "$OXID_COMMIT" = "$OXID_HEAD" ] || fail oxid-pin
+[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ] || fail oxid-tree-dirty
 
-if ! PORTAL_INTEGRATION_TREE="$RUN_TREE" \
+status_file="$(umask 077 && mktemp "$LOCAL_STACK_STATE_DIR/.portal-status.XXXXXX")" || fail private-state
+stack_env_delegate_portal status >"$status_file" 2>>"$RAW_LOG" || fail portal-status
+jq -e '.schema == "laceid-oxid-conformance-lifecycle-v2" and .state == "running" and .midnight_state == "ready"' \
+  "$status_file" >/dev/null || fail shared-stack-not-ready
+
+if ! PORTAL_INTEGRATION_TREE="$PORTAL_PROTOCOL_SOURCE_DIR" \
+  OXID_PORTAL_COMPOSE_PROJECT="$PORTAL_COMPOSE_PROJECT" \
+  OXID_PORTAL_HELPER_COMMIT="$PORTAL_HELPER_COMMIT" \
+  OXID_PORTAL_HELPER_TREE="$PORTAL_HELPER_TREE" \
   OXID_PORTAL_EVIDENCE_PATH="$EVIDENCE" \
   OXID_PORTAL_EVIDENCE_HEAD="$OXID_HEAD" \
   cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p oxid-headless \
@@ -88,8 +57,10 @@ if ! PORTAL_INTEGRATION_TREE="$RUN_TREE" \
   fail live-flow
 fi
 
-[[ -f "$EVIDENCE" ]] || fail missing-evidence
-[[ -z "$(git -C "$RUN_TREE" status --porcelain)" ]] || fail portal-tree-mutated
+[ -f "$EVIDENCE" ] || fail missing-evidence
+[ -z "$(git -C "$PORTAL_PROTOCOL_SOURCE_DIR" status --porcelain)" ] || fail portal-tree-mutated
+stack_env_delegate_portal status >"$status_file" 2>>"$RAW_LOG" || fail portal-status-after
+jq -e '.state == "running" and .midnight_state == "ready"' "$status_file" >/dev/null || fail shared-stack-changed
 "$REPO_ROOT/scripts/e2e/validate-portal-headless-evidence.sh" "$EVIDENCE" "$OXID_HEAD" \
   >>"$RAW_LOG" 2>&1 || fail evidence-schema
 printf 'portal-headless-e2e: PASS evidence=%s\n' "${EVIDENCE#"$REPO_ROOT/"}"

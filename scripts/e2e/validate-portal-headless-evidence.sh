@@ -3,6 +3,8 @@
 
 set -euo pipefail
 
+readonly HELPER_COMMIT="00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24"
+readonly HELPER_TREE="3cecc6e17d56b2c0d646150df3861005df831ed8"
 readonly INTEGRATION_COMMIT="925ec8d04882eabd4ac7b784c70fc2f0c152faae"
 readonly INTEGRATION_TREE="58b4597524f88a0ae2253439a44dab0dc60cbb6f"
 readonly PR_HEAD="9c82db23eabe8b6d758b2731f2225910ea627c14"
@@ -29,6 +31,8 @@ command -v rg >/dev/null 2>&1 || fail missing-rg
 
 jq -e \
   --arg head "$expected_head" \
+  --arg helperCommit "$HELPER_COMMIT" \
+  --arg helperTree "$HELPER_TREE" \
   --arg integrationCommit "$INTEGRATION_COMMIT" \
   --arg integrationTree "$INTEGRATION_TREE" \
   --arg prHead "$PR_HEAD" \
@@ -39,7 +43,9 @@ jq -e \
     and .schema == "oxid-portal-headless-evidence-v1"
     and (.oxid | type == "object" and keys == ["head"] and .head == $head)
     and (.portal | type == "object"
-      and keys == ["integrationCommit", "integrationTree", "prHead", "profileSourceCommit", "provenanceSha256"]
+      and keys == ["helperCommit", "helperTree", "integrationCommit", "integrationTree", "prHead", "profileSourceCommit", "provenanceSha256"]
+      and .helperCommit == $helperCommit
+      and .helperTree == $helperTree
       and .integrationCommit == $integrationCommit
       and .integrationTree == $integrationTree
       and .prHead == $prHead

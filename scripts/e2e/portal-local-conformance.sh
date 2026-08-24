@@ -4,7 +4,13 @@
 set -euo pipefail
 
 readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-readonly SOURCE_TREE="${PORTAL_SOURCE_TREE:-}"
+readonly PROFILE="${1:-${STACK_ENV_FILE:-}}"
+# shellcheck source=scripts/e2e/stack-env-v1.sh
+source "$REPOSITORY_ROOT/scripts/e2e/stack-env-v1.sh"
+[ -n "$PROFILE" ] || { printf 'portal-local-conformance: FAIL phase=profile\n' >&2; exit 2; }
+stack_env_load "$PROFILE" || { printf 'portal-local-conformance: FAIL phase=%s\n' "$STACK_ENV_ERROR" >&2; exit 2; }
+readonly SOURCE_TREE="$PORTAL_PROTOCOL_SOURCE_DIR"
+readonly LOCAL_HEADLESS="$REPOSITORY_ROOT/scripts/local-headless.sh"
 readonly SOURCE_VALIDATOR="$REPOSITORY_ROOT/scripts/e2e/validate-portal-source-checkout.sh"
 readonly EVIDENCE_TOOL="$REPOSITORY_ROOT/scripts/e2e/portal-local-evidence.mjs"
 readonly RESOURCE_CHECKER="$REPOSITORY_ROOT/scripts/e2e/check-portal-resource-leaks.sh"
@@ -40,6 +46,7 @@ PUBLICATION_COMPLETE=0
 PUBLISH_HEADLESS_TEMP=""
 PUBLISH_IOS_TEMP=""
 PUBLISH_ANDROID_TEMP=""
+STACK_STARTED=0
 
 fail() {
   printf 'portal-local-conformance: FAIL phase=%s\n' "$1" >&2
@@ -58,7 +65,7 @@ assert_repository_state() {
 }
 
 assert_no_harness_leaks() {
-  "$RESOURCE_CHECKER" "$REPOSITORY_ROOT" "$SOURCE_TREE" >/dev/null
+  "$RESOURCE_CHECKER" "$REPOSITORY_ROOT" "$SOURCE_TREE" "${1:-$PORTAL_COMPOSE_PROJECT}" >/dev/null
 }
 
 backup_retained() {
@@ -96,6 +103,10 @@ cleanup() {
   local incoming_status=$? cleanup_status=0
   trap - EXIT
   trap '' INT TERM
+  if [ "$STACK_STARTED" = 1 ]; then
+    "$LOCAL_HEADLESS" down "$STACK_ENV_PATH" >/dev/null 2>&1 || cleanup_status=1
+    STACK_STARTED=0
+  fi
   if [[ "$SOURCE_TREE" = /* ]] && [ -d "$SOURCE_TREE" ]; then
     assert_no_harness_leaks || cleanup_status=1
   fi
@@ -164,17 +175,19 @@ PRIOR_HEADLESS_PRESENT="$(backup_retained "$RETAINED_HEADLESS" "$PRIOR_HEADLESS"
 PRIOR_IOS_PRESENT="$(backup_retained "$RETAINED_IOS" "$PRIOR_IOS")"
 PRIOR_ANDROID_PRESENT="$(backup_retained "$RETAINED_ANDROID" "$PRIOR_ANDROID")"
 
-"$SOURCE_VALIDATOR" "$SOURCE_TREE" --fetch >/dev/null
+"$SOURCE_VALIDATOR" "$SOURCE_TREE" --offline >/dev/null
+"$LOCAL_HEADLESS" up "$STACK_ENV_PATH" >/dev/null
+STACK_STARTED=1
 assert_repository_state
 assert_no_harness_leaks
 
 run_step "headless" env \
-  PORTAL_SOURCE_TREE="$SOURCE_TREE" \
+  STACK_ENV_FILE="$STACK_ENV_PATH" \
   OXID_PORTAL_KEEP_FAILURE_LOG=0 \
   OXID_PORTAL_EVIDENCE_PATH="$STAGED_HEADLESS" \
-  "$REPOSITORY_ROOT/scripts/e2e/portal-headless-e2e.sh"
+  "$REPOSITORY_ROOT/scripts/e2e/portal-headless-e2e.sh" "$STACK_ENV_PATH"
 run_step "ios-portal" env \
-  PORTAL_SOURCE_TREE="$SOURCE_TREE" \
+  STACK_ENV_FILE="$STACK_ENV_PATH" \
   OXID_PORTAL_KEEP_FAILURE_LOG=0 \
   OXID_PORTAL_IOS_EVIDENCE_PATH="$STAGED_IOS" \
   "$REPOSITORY_ROOT/scripts/test-ios-portal-flow.sh"
@@ -183,7 +196,7 @@ node "$EVIDENCE_TOOL" attest-standard-smoke \
   --platform ios --evidence "$STAGED_IOS" --head "$EXPECTED_HEAD" >/dev/null
 assert_repository_state
 run_step "android-portal" env \
-  PORTAL_SOURCE_TREE="$SOURCE_TREE" \
+  STACK_ENV_FILE="$STACK_ENV_PATH" \
   OXID_PORTAL_KEEP_FAILURE_LOG=0 \
   OXID_PORTAL_ANDROID_EVIDENCE_PATH="$STAGED_ANDROID" \
   "$REPOSITORY_ROOT/scripts/test-android-portal-flow.sh"
@@ -197,6 +210,8 @@ node "$EVIDENCE_TOOL" validate \
   --headless "$STAGED_HEADLESS" \
   --ios "$STAGED_IOS" \
   --android "$STAGED_ANDROID" >/dev/null
+"$LOCAL_HEADLESS" down "$STACK_ENV_PATH" >/dev/null
+STACK_STARTED=0
 assert_no_harness_leaks
 publish_evidence_set
 assert_repository_state

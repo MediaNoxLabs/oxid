@@ -119,7 +119,7 @@ chmod 600 "$evidence_temp" || { portal_mobile_fail evidence-temp; exit 1; }
 evidence_document='{
   schema:"oxid-portal-mobile-evidence-v1",
   oxid:{head:$head},
-  portal:{integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
+  portal:{helperCommit:$helperCommit,helperTree:$helperTree,integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
   platform:{kind:"ios_simulator",model:$model,os:$os,applicationId:$app,profile:"standalone-local-development-portal"},
   acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,unavailableDenied:true,timeoutDenied:true,cameraUnavailable:true,secretFreeEvidence:true}
 }'
@@ -129,6 +129,8 @@ if ! jq -cn \
   --arg model "$device_name" \
   --arg os "$runtime" \
   --arg app "$bundle_identifier" \
+  --arg helperCommit "$PORTAL_HELPER_COMMIT" \
+  --arg helperTree "$PORTAL_HELPER_TREE" \
   --arg portalCommit "$PORTAL_INTEGRATION_COMMIT" \
   --arg portalTree "$PORTAL_INTEGRATION_TREE" \
   --arg prHead "$PORTAL_PR_HEAD" \
@@ -145,6 +147,8 @@ portal_mobile_finalize_evidence \
   --arg model "$device_name" \
   --arg os "$runtime" \
   --arg app "$bundle_identifier" \
+  --arg helperCommit "$PORTAL_HELPER_COMMIT" \
+  --arg helperTree "$PORTAL_HELPER_TREE" \
   --arg portalCommit "$PORTAL_INTEGRATION_COMMIT" \
   --arg portalTree "$PORTAL_INTEGRATION_TREE" \
   --arg prHead "$PORTAL_PR_HEAD" \

@@ -2,6 +2,8 @@
 # Shared, source-only orchestration for the sequential iOS/Android Portal suites.
 
 readonly PORTAL_EXPECTED_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
+readonly PORTAL_HELPER_COMMIT="00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24"
+readonly PORTAL_HELPER_TREE="3cecc6e17d56b2c0d646150df3861005df831ed8"
 readonly PORTAL_INTEGRATION_COMMIT="925ec8d04882eabd4ac7b784c70fc2f0c152faae"
 readonly PORTAL_INTEGRATION_TREE="58b4597524f88a0ae2253439a44dab0dc60cbb6f"
 readonly PORTAL_PR_HEAD="9c82db23eabe8b6d758b2731f2225910ea627c14"
@@ -47,20 +49,8 @@ portal_mobile_fail() {
 }
 
 portal_mobile_source_tree() {
-  local git_common repo_parent candidate
-  git_common="$(git rev-parse --path-format=absolute --git-common-dir)"
-  repo_parent="$(dirname -- "$(dirname -- "$git_common")")"
-  for candidate in \
-    "${PORTAL_SOURCE_TREE:-}" \
-    "$repo_parent/lace-id-portal/tmp/worktrees/dev-loops/issue-16" \
-    "$repo_parent/lace-id-portal"; do
-    if [ -n "$candidate" ] && [ -d "$candidate" ] && \
-      [ "$(git -C "$candidate" remote get-url origin 2>/dev/null || true)" = "$PORTAL_EXPECTED_REMOTE" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
+  [ -n "${PORTAL_PROTOCOL_SOURCE_DIR:-}" ] && [ -d "$PORTAL_PROTOCOL_SOURCE_DIR" ] || return 1
+  printf '%s\n' "$PORTAL_PROTOCOL_SOURCE_DIR"
 }
 
 portal_mobile_wait_bounded() {
@@ -293,6 +283,10 @@ portal_mobile_start() {
 
   local source_tree ready_fifo capability_fifo="" ready_status=""
   PORTAL_MOBILE_REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+  # shellcheck source=scripts/e2e/stack-env-v1.sh
+  source "$PORTAL_MOBILE_REPOSITORY_ROOT/scripts/e2e/stack-env-v1.sh"
+  [ -n "${STACK_ENV_FILE:-}" ] || { portal_mobile_fail profile; return 1; }
+  stack_env_load "$STACK_ENV_FILE" || { portal_mobile_fail "$STACK_ENV_ERROR"; return 1; }
   source_tree="$(portal_mobile_source_tree)" || { portal_mobile_fail source-path; return 1; }
   [ -z "$(git -C "$source_tree" status --porcelain --untracked-files=no)" ] || {
     portal_mobile_fail source-dirty
@@ -321,48 +315,20 @@ portal_mobile_start() {
     PORTAL_MOBILE_CAPABILITY_FD_OPEN=1
   fi
 
-  if ! git -C "$source_tree" fetch origin \
-    "+$PORTAL_INTEGRATION_COMMIT:refs/oxid-evidence/portal-integration" \
-    "+refs/pull/17/head:refs/oxid-evidence/portal-pr-17" \
-    >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1; then
-    portal_mobile_fail source-fetch
-    return 1
-  fi
-  [ "$(git -C "$source_tree" rev-parse refs/oxid-evidence/portal-integration^{commit})" = "$PORTAL_INTEGRATION_COMMIT" ] || {
-    portal_mobile_fail integration-commit
+  [ "$source_tree" = "$PORTAL_PROTOCOL_SOURCE_DIR" ] || {
+    portal_mobile_fail source-path
     return 1
   }
-  [ "$(git -C "$source_tree" rev-parse refs/oxid-evidence/portal-integration^{tree})" = "$PORTAL_INTEGRATION_TREE" ] || {
-    portal_mobile_fail integration-tree
+  status_file="$PORTAL_MOBILE_STATE_DIR/shared-status.json"
+  stack_env_delegate_portal status >"$status_file" 2>>"$PORTAL_MOBILE_PRIVATE_LOG" || {
+    portal_mobile_fail shared-status
     return 1
   }
-  [ "$(git -C "$source_tree" rev-parse refs/oxid-evidence/portal-pr-17^{commit})" = "$PORTAL_PR_HEAD" ] || {
-    portal_mobile_fail pr-head
+  jq -e '.state == "running" and .midnight_state == "ready"' "$status_file" >/dev/null || {
+    portal_mobile_fail shared-stack-not-ready
     return 1
   }
-  [ "$(git -C "$source_tree" rev-parse refs/oxid-evidence/portal-pr-17^{tree})" = "$PORTAL_INTEGRATION_TREE" ] || {
-    portal_mobile_fail pr-tree
-    return 1
-  }
-  [ "$(git -C "$source_tree" rev-parse "$PORTAL_PROFILE_SOURCE"^{commit})" = "$PORTAL_PROFILE_SOURCE" ] || {
-    portal_mobile_fail profile-source
-    return 1
-  }
-  [ "$(git -C "$source_tree" show "$PORTAL_INTEGRATION_COMMIT:crates/issuer-integration/fixtures/openid4vci-final/provenance.json" | shasum -a 256 | awk '{print $1}')" = "$PORTAL_PROVENANCE_SHA256" ] || {
-    portal_mobile_fail provenance
-    return 1
-  }
-
-  PORTAL_MOBILE_RUN_TREE="${TMPDIR:-/tmp}/oxid-portal-mobile-${PORTAL_MOBILE_PLATFORM}-${PORTAL_INTEGRATION_COMMIT:0:8}-$$"
-  if ! git -C "$source_tree" worktree add --detach "$PORTAL_MOBILE_RUN_TREE" "$PORTAL_INTEGRATION_COMMIT" \
-    >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1; then
-    portal_mobile_fail source-checkout
-    return 1
-  fi
-  [ -z "$(git -C "$PORTAL_MOBILE_RUN_TREE" status --porcelain)" ] || {
-    portal_mobile_fail source-checkout-dirty
-    return 1
-  }
+  rm -f -- "$status_file"
 
   ready_fifo="$PORTAL_MOBILE_STATE_DIR/ready.fifo"
   mkfifo "$ready_fifo"
@@ -370,8 +336,10 @@ portal_mobile_start() {
   # Open both ends before spawning support so neither side can block in open(2).
   # The read itself is bounded for the full compose/issuer readiness window.
   exec 9<>"$ready_fifo"
-  COMPOSE_PROJECT_NAME="oxidportal124${PORTAL_MOBILE_PLATFORM}$$" \
-  PORTAL_INTEGRATION_CHECKOUT="$PORTAL_MOBILE_RUN_TREE" \
+  COMPOSE_PROJECT_NAME="$PORTAL_COMPOSE_PROJECT" \
+  STACK_ENV_FILE="$STACK_ENV_PATH" \
+  OXID_LOCAL_HEADLESS_SCRIPT="$PORTAL_MOBILE_REPOSITORY_ROOT/scripts/local-headless.sh" \
+  PORTAL_INTEGRATION_CHECKOUT="$source_tree" \
   OXID_PORTAL_MOBILE_STATE_DIR="$PORTAL_MOBILE_STATE_DIR" \
   OXID_PORTAL_MOBILE_READY_FIFO="$ready_fifo" \
   OXID_PORTAL_MOBILE_PLATFORM="$PORTAL_MOBILE_PLATFORM" \

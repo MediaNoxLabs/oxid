@@ -4,6 +4,7 @@
 - Date: 2026-08-21
 - Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124)
 - Portal integration source: squash commit `925ec8d04882eabd4ac7b784c70fc2f0c152faae`, tree `58b4597524f88a0ae2253439a44dab0dc60cbb6f`
+- Portal lifecycle helper: signed commit `00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24`, tree `3cecc6e17d56b2c0d646150df3861005df831ed8` (Portal PR #19 draft dependency)
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14`
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039
@@ -62,42 +63,43 @@ remains editable outside this imported-link case.
 
 ## Test harness
 
-`just portal-local-conformance` is the fixed complete local recipe: the real
-headless boundary completes first, iOS Portal conformance and the standard iOS
-smoke complete next, and Android Portal conformance plus the standard Android
-smoke complete last. The focused platform commands remain reusable by that
-orchestrator and for diagnosis, but do not independently satisfy the retained
-same-head evidence contract. Each platform command:
+`just portal-local-conformance <profile>` is the fixed complete local recipe:
+the real headless boundary completes first, iOS Portal conformance and the
+standard iOS smoke complete next, and Android Portal conformance plus the
+standard Android smoke complete last. The focused platform commands require the
+same explicit owner-private v1 profile and remain diagnostic entry points only.
 
-1. authenticates a clean Portal checkout, exact integration commit/tree,
-   historical PR head, profile source, and provenance digest;
-2. creates a detached temporary checkout of the exact landed commit and starts
-   its real Nix/Docker composition;
-3. recreates only the issuer with fixed loopback public origin and an
-   Oxid-owned holder test resolver populated only from the app's persisted
-   public DID record;
-4. derives the canonical secret-free deployment manifest and creates a fresh
+The complete recipe starts or non-mutatingly attaches the Oxid-owned
+`oxid-standalone` project, delegates the separate Portal-only lifecycle to the
+signed `00d3d6c...` helper, and then runs every consumer against those same
+projects. Portal owns smocker, resolver, did-manager/bootstrap and issuer only;
+its reviewed integrated Compose declares no node, indexer, or proof service.
+Each platform command:
+
+1. authenticates the helper commit/tree separately from the detached protocol
+   commit/tree, historical PR head, profile source and provenance digest;
+2. uses the profile's persistent clean detached `925ec8d...` protocol source
+   without fetching or creating a temporary worktree;
+3. attaches to the already-ready Portal project and never invokes its Compose
+   up/down/recreate operations;
+4. runs fixed loopback proxy/resolver endpoints while the issuer retains the
+   profile-selected public origins;
+5. derives the canonical secret-free deployment manifest and creates a fresh
    approved mock-KYC offer for each fixed-trigger handoff;
-5. arms that offer behind a fresh 256-bit capability and atomically permits
-   exactly one authenticated response before zeroizing the in-memory handoff;
-6. counts only HTTP path classes through a body-blind proxy, proving refusal
-   makes zero token, nonce, or credential calls;
-7. drives the existing native one-item ingress/router, Dioxus preview/consent,
-   managed proof, strict exchange, verifier/sink, encrypted store, and
-   restart/list/reverify path;
-8. on successful completion, empties only its named Portal Compose project and
-   removes the detached checkout, platform-private runtime, and owned lock.
+6. permits exactly one capability-authenticated response and zeroizes the
+   in-memory handoff;
+7. drives the existing strict ingress, consent, exchange, verification,
+   encrypted-store and restart/reverification path; and
+8. removes only platform-private runtime, support processes, locks and dynamic
+   device forwarding. Owner lifecycle cleanup remains with
+   `local-headless-down` after every consumer has finished.
 
-The cleanup hardening delivered at Oxid `afaeee5` installs the EXIT cleanup
-owner before the lock, state directory, fetch, worktree, support process, FIFO,
-Compose stack, or manifest can be created. Success, startup/test failure,
-interrupt, and termination therefore share one scoped cleanup path. It always
-removes `target/portal-mobile-e2e/<platform>/runtime`; it also bounds support
-shutdown, attempts exact named-project teardown, removes the detached worktree
-and owned lock, and reports cleanup failure instead of silently succeeding.
-Android removes only the dynamically allocated CDP forward and its fixed
-app-private capability file. It neither removes unrelated
-Docker/worktree/`target` state nor uses broad virtual-device or ADB cleanup.
+A profile-scoped Midnight owner receipt is stored only in the external private
+state directory and only when that invocation created the exact three-container
+project. An attach or consumer shutdown cannot call Midnight Compose down or
+Tailscale reset. Portal shutdown verifies shared container identity and
+non-decreasing height while removing only its exact project. Cleanup uncertainty
+is a failure, not authority to prune by prefix or delete unrelated resources.
 
 Neither `simctl openurl` nor `am start -d` receives the offer. Both deliver
 only a fixed, non-secret trigger URL under the existing
@@ -137,7 +139,7 @@ The complete recipe stages headless, iOS, and Android evidence away from the
 retained paths while every real and standard smoke runs. It adds the closed
 `standardSmoke` acceptance boolean to each platform candidate only after the
 matching standard smoke succeeds. One final validator then requires all three
-documents to bind the exact same Oxid head and canonical Portal commit, tree,
+documents to bind the exact same Oxid head and canonical Portal helper commit/tree plus protocol commit/tree,
 historical PR head, profile source, and provenance digest. It also requires the
 exact headless/iOS/Android schemas, platform identities, every acceptance
 boolean, and the secret sentinel before publication.

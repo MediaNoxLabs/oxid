@@ -26,7 +26,7 @@ if rg -n '10\.0\.2\.2|set -x|(?:reverse|forward) --remove-all' \
 fi
 
 portal_recipe="$({ awk '
-  /^portal-mobile-smoke:/ { capture=1; next }
+  /^portal-mobile-smoke([[:space:]].*)?:/ { capture=1; next }
   capture && /^[^[:space:]#]/ { exit }
   capture { print }
 ' Justfile; } || true)"
@@ -38,8 +38,8 @@ ios_command="$(cut -d: -f2- <<<"$ios_recipe_line" | awk '{$1=$1; print}')"
 android_command="$(cut -d: -f2- <<<"$android_recipe_line" | awk '{$1=$1; print}')"
 if [[ ! "$ios_line" =~ ^[0-9]+$ || ! "$android_line" =~ ^[0-9]+$ ]] ||
   [ "$ios_line" -ge "$android_line" ] ||
-  [ "$ios_command" != './scripts/test-ios-portal-flow.sh' ] ||
-  [ "$android_command" != './scripts/test-android-portal-flow.sh' ]; then
+  [ "$ios_command" != 'STACK_ENV_FILE={{quote(stack_env_file)}} ./scripts/test-ios-portal-flow.sh' ] ||
+  [ "$android_command" != 'STACK_ENV_FILE={{quote(stack_env_file)}} ./scripts/test-android-portal-flow.sh' ]; then
   echo "portal-mobile-smoke must run exact iOS then Android commands without shell operators or backgrounding." >&2
   exit 1
 fi
@@ -346,35 +346,27 @@ bash -c '
   [ "$(LC_ALL=C ls -ld "$output" | cut -c2-10)" = rw------- ]
 ' _ scripts/e2e/portal-mobile-harness-lib.sh
 
-# Every synchronous support command is bounded, cleanup failures become the
-# child status observed by the shell, and iOS delivery uses xcode-select's
-# selected developer directory rather than a machine-specific Xcode path.
-# Successful compose-down waits only on the exact named project's three
-# resource types for a short deadline, then still fails closed.
-for cleanup_wait_marker in \
-  'const CHILD_COMMAND_TIMEOUT_MS = 10 * 60_000;' \
-  'const CLEANUP_COMMAND_TIMEOUT_MS = 60_000;' \
-  'const CLEANUP_RESOURCE_DEADLINE_MS = 5_000;' \
-  'const CLEANUP_RESOURCE_QUERY_TIMEOUT_MS = 1_000;' \
-  'const CLEANUP_RESOURCE_POLL_MS = 250;' \
-  '["container", "network", "volume"]' \
-  '`label=com.docker.compose.project=${composeProjectName}`' \
-  'function composeProjectResources(deadline)' \
-  'const remainingMs = deadline - Date.now();' \
-  'const queryTimeoutMs = Math.min(CLEANUP_RESOURCE_QUERY_TIMEOUT_MS, remainingMs);' \
-  'runCaptured("docker", args, portalTree, queryTimeoutMs)' \
-  'const deadline = Date.now() + CLEANUP_RESOURCE_DEADLINE_MS;' \
-  'const resources = composeProjectResources(deadline);' \
-  'if (Date.now() >= deadline)' \
-  'const delayMs = Math.min(CLEANUP_RESOURCE_POLL_MS, deadline - Date.now());' \
-  'await new Promise((resolve) => setTimeout(resolve, delayMs));' \
-  'throw new Error("named compose project was not empty at cleanup deadline");' \
-  'await waitForComposeProjectCleanup();'; do
-  rg -qF "$cleanup_wait_marker" scripts/e2e/portal-mobile-support.mjs || {
-    echo "Portal support named-resource cleanup wait regressed: $cleanup_wait_marker" >&2
+# Mobile support attaches to the same authenticated shared profile. It must not
+# own Portal service start/stop or create another detached protocol worktree.
+for shared_stack_marker in \
+  'STACK_ENV_FILE="$STACK_ENV_PATH"' \
+  'stack_env_load "$STACK_ENV_FILE"' \
+  'stack_env_delegate_portal status' \
+  'COMPOSE_PROJECT_NAME="$PORTAL_COMPOSE_PROJECT"' \
+  'PORTAL_INTEGRATION_CHECKOUT="$source_tree"' \
+  'runLogged(localHeadlessScript, ["status", stackEnvFile], repositoryRoot)' \
+  '`label=com.docker.compose.project=${composeProjectName}`'; do
+  rg -qF "$shared_stack_marker" \
+    scripts/e2e/portal-mobile-harness-lib.sh scripts/e2e/portal-mobile-support.mjs || {
+    echo "Portal support shared-stack attachment marker regressed: $shared_stack_marker" >&2
     exit 1
   }
 done
+if rg -n 'compose-(up|down)|\["compose",|docker[[:space:]]+compose|worktree add' \
+  scripts/e2e/portal-mobile-harness-lib.sh scripts/e2e/portal-mobile-support.mjs; then
+  echo "Portal mobile support must delegate lifecycle and must not own Portal Compose or protocol worktrees." >&2
+  exit 1
+fi
 if [ "$(rg -c 'timeout: (timeoutMs|HOST_COMMAND_TIMEOUT_MS)' scripts/e2e/portal-mobile-support.mjs)" -ne 4 ] ||
   [ "$(rg -c 'killSignal: "SIGKILL"' scripts/e2e/portal-mobile-support.mjs)" -ne 4 ] ||
   ! rg -qF 'process.exitCode = 1' scripts/e2e/portal-mobile-support.mjs ||
@@ -449,23 +441,22 @@ if [ "$(rg -lF '.token == 2 and .nonce == 1 and .credential == 1' scripts/test-i
   exit 1
 fi
 
-# Fetch the immutable integration object into a private evidence ref. The
-# mutable origin/integration tip may advance without invalidating this pin.
+# The owner-private profile authenticates a persistent detached protocol source
+# and the separate signed lifecycle helper. Mobile support never fetches or
+# creates another checkout during a conformance run.
 for source_pin_marker in \
-  '+$PORTAL_INTEGRATION_COMMIT:refs/oxid-evidence/portal-integration' \
-  'refs/oxid-evidence/portal-integration^{commit}' \
-  'refs/oxid-evidence/portal-integration^{tree}' \
-  'refs/oxid-evidence/portal-pr-17^{commit}' \
-  'refs/oxid-evidence/portal-pr-17^{tree}' \
-  'rev-parse "$PORTAL_PROFILE_SOURCE"^{commit}' \
-  'PORTAL_PROVENANCE_SHA256'; do
+  'PORTAL_HELPER_COMMIT="00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24"' \
+  'PORTAL_HELPER_TREE="3cecc6e17d56b2c0d646150df3861005df831ed8"' \
+  'stack_env_load "$STACK_ENV_FILE"' \
+  'source_tree="$(portal_mobile_source_tree)"' \
+  '[ "$source_tree" = "$PORTAL_PROTOCOL_SOURCE_DIR" ]'; do
   rg -qF "$source_pin_marker" scripts/e2e/portal-mobile-harness-lib.sh || {
-    echo "Immutable Portal source provenance marker is missing: $source_pin_marker" >&2
+    echo "Immutable Portal profile provenance marker is missing: $source_pin_marker" >&2
     exit 1
   }
 done
-if rg -qF 'origin/integration^{' scripts/e2e/portal-mobile-harness-lib.sh; then
-  echo "Portal reproduction must not require the mutable integration tip to equal the pin." >&2
+if rg -n 'fetch origin|worktree add|origin/integration\^\{' scripts/e2e/portal-mobile-harness-lib.sh; then
+  echo "Portal reproduction must use only the authenticated persistent detached source." >&2
   exit 1
 fi
 

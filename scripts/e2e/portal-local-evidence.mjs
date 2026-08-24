@@ -14,6 +14,8 @@ const SOURCE_LOCK = JSON.parse(fs.readFileSync(SOURCE_LOCK_PATH, "utf8"));
 const MAX_EVIDENCE_BYTES = 16_384;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
+const PORTAL_HELPER_COMMIT = "00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24";
+const PORTAL_HELPER_TREE = "3cecc6e17d56b2c0d646150df3861005df831ed8";
 const SECRET_SENTINEL = /openid-credential-offer|credential_offer|pre-authorized|access[_-]?token|c_nonce|authorization\s*[:=]\s*bearer|eyJ|did:|https?:\/\/|AB1234567|\bJohn\b|\bDoe\b|private.?parts|signed.?bytes|detached.?proof|portal-offer-capability|emulator-[0-9]+|[0-9A-F]{8}-[0-9A-F-]{27}/iu;
 
 const HEADLESS_ACCEPTANCE_KEYS = [
@@ -119,10 +121,12 @@ function validateCommon(document, expectedHead, phase) {
   if (document.oxid.head !== expectedHead) fail(`${phase}-head`);
   exactKeys(
     document.portal,
-    ["integrationCommit", "integrationTree", "prHead", "profileSourceCommit", "provenanceSha256"],
+    ["helperCommit", "helperTree", "integrationCommit", "integrationTree", "prHead", "profileSourceCommit", "provenanceSha256"],
     `${phase}-portal`,
   );
   const expectedPortal = {
+    helperCommit: PORTAL_HELPER_COMMIT,
+    helperTree: PORTAL_HELPER_TREE,
     integrationCommit: SOURCE_LOCK.integrationCommit,
     integrationTree: SOURCE_LOCK.integrationTree,
     prHead: SOURCE_LOCK.portalPrHead,

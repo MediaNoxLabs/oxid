@@ -362,7 +362,7 @@ chmod 600 "$evidence_temp" || { portal_mobile_fail evidence-temp; exit 1; }
 evidence_document='{
   schema:"oxid-portal-mobile-evidence-v1",
   oxid:{head:$head},
-  portal:{integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
+  portal:{helperCommit:$helperCommit,helperTree:$helperTree,integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
   platform:{kind:"android_qemu_emulator",model:$model,os:$os,apiLevel:$api,clockSkewSeconds:$clockSkew,applicationId:"io.medianox.oxid",profile:"standalone-local-development-portal",adbReversePorts:[6300,8088,9944,18090,18091,18093]},
   acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,malformedDenied:true,unavailableDenied:true,timeoutDenied:true,qemuVerified:true,clockSynchronized:true,noEmulatorAlias:true,secretFreeEvidence:true}
 }'
@@ -373,6 +373,8 @@ if ! jq -cn \
   --arg os "$android_version" \
   --arg api "$api_level" \
   --argjson clockSkew "$clock_skew" \
+  --arg helperCommit "$PORTAL_HELPER_COMMIT" \
+  --arg helperTree "$PORTAL_HELPER_TREE" \
   --arg portalCommit "$PORTAL_INTEGRATION_COMMIT" \
   --arg portalTree "$PORTAL_INTEGRATION_TREE" \
   --arg prHead "$PORTAL_PR_HEAD" \
@@ -390,6 +392,8 @@ portal_mobile_finalize_evidence \
   --arg os "$android_version" \
   --arg api "$api_level" \
   --argjson clockSkew "$clock_skew" \
+  --arg helperCommit "$PORTAL_HELPER_COMMIT" \
+  --arg helperTree "$PORTAL_HELPER_TREE" \
   --arg portalCommit "$PORTAL_INTEGRATION_COMMIT" \
   --arg portalTree "$PORTAL_INTEGRATION_TREE" \
   --arg prHead "$PORTAL_PR_HEAD" \

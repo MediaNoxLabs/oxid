@@ -30,6 +30,8 @@ use oxid_identity_domain::MidnightDid;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
+const PORTAL_HELPER_COMMIT: &str = "00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24";
+const PORTAL_HELPER_TREE: &str = "3cecc6e17d56b2c0d646150df3861005df831ed8";
 const PORTAL_INTEGRATION_COMMIT: &str = "925ec8d04882eabd4ac7b784c70fc2f0c152faae";
 const PORTAL_INTEGRATION_TREE: &str = "58b4597524f88a0ae2253439a44dab0dc60cbb6f";
 const PORTAL_PR_HEAD: &str = "9c82db23eabe8b6d758b2731f2225910ea627c14";
@@ -126,11 +128,18 @@ struct PortalProxy {
 
 impl PortalProxy {
     fn spawn() -> Self {
-        Self::spawn_with_upstream(SocketAddr::from(([127, 0, 0, 1], 8090)))
+        Self::spawn_bound(
+            SocketAddr::from(([127, 0, 0, 1], 8090)),
+            SocketAddr::from(([127, 0, 0, 1], 18090)),
+        )
     }
 
     fn spawn_with_upstream(upstream_address: SocketAddr) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("Portal observation proxy");
+        Self::spawn_bound(upstream_address, SocketAddr::from(([127, 0, 0, 1], 0)))
+    }
+
+    fn spawn_bound(upstream_address: SocketAddr, listen_address: SocketAddr) -> Self {
+        let listener = TcpListener::bind(listen_address).expect("Portal observation proxy");
         listener.set_nonblocking(true).expect("nonblocking proxy");
         let port = listener.local_addr().expect("proxy address").port();
         let captured_credential_response: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
@@ -239,7 +248,7 @@ struct HolderResolver {
 
 impl HolderResolver {
     fn spawn() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("holder resolver");
+        let listener = TcpListener::bind("127.0.0.1:18092").expect("holder resolver");
         listener.set_nonblocking(true).expect("nonblocking");
         let port = listener.local_addr().expect("address").port();
         let document: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
@@ -496,28 +505,28 @@ fn portal_request(origin: &str, method: &str, path: &str, body: Option<&str>) ->
     serde_json::from_slice(&response[split..]).expect("Portal JSON")
 }
 
-fn docker_compose(portal_tree: &Path, override_path: &Path, args: &[&str]) {
-    let status = Command::new("docker")
-        .current_dir(portal_tree)
-        .args(["compose", "-f", "docker/docker-compose.yml", "-f"])
-        .arg(override_path)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("docker compose");
-    assert!(status.success(), "docker compose live harness phase failed");
-}
-
-fn issuer_public_facts(portal_tree: &Path, override_path: &Path) -> (String, String, Value) {
+fn issuer_public_facts(compose_project: &str) -> (String, String, Value) {
+    let containers = Command::new("docker")
+        .args([
+            "container",
+            "ls",
+            "--quiet",
+            "--filter",
+            &format!("label=com.docker.compose.project={compose_project}"),
+            "--filter",
+            "label=com.docker.compose.service=issuer",
+        ])
+        .output()
+        .expect("issuer container query");
+    assert!(containers.status.success());
+    let ids = String::from_utf8(containers.stdout).expect("container ids UTF-8");
+    let mut ids = ids.lines().filter(|value| !value.is_empty());
+    let issuer_container = ids.next().expect("one issuer container");
+    assert!(ids.next().is_none(), "exactly one issuer container");
     let output = Command::new("docker")
-        .current_dir(portal_tree)
-        .args(["compose", "-f", "docker/docker-compose.yml", "-f"])
-        .arg(override_path)
         .args([
             "exec",
-            "-T",
-            "issuer",
+            issuer_container,
             "sh",
             "-c",
             r#"IFS= read -r value < /bootstrap/issuer-key-id; printf %s "$value""#,
@@ -768,6 +777,17 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
             .expect("Portal path UTF-8"),
     );
     let oxid_head = std::env::var("OXID_PORTAL_EVIDENCE_HEAD").expect("OXID_PORTAL_EVIDENCE_HEAD");
+    let compose_project =
+        std::env::var("OXID_PORTAL_COMPOSE_PROJECT").expect("OXID_PORTAL_COMPOSE_PROJECT");
+    assert!(compose_project.starts_with("oxidportal"), "Portal project");
+    assert_eq!(
+        std::env::var("OXID_PORTAL_HELPER_COMMIT").expect("OXID_PORTAL_HELPER_COMMIT"),
+        PORTAL_HELPER_COMMIT
+    );
+    assert_eq!(
+        std::env::var("OXID_PORTAL_HELPER_TREE").expect("OXID_PORTAL_HELPER_TREE"),
+        PORTAL_HELPER_TREE
+    );
     assert!(
         oxid_head.len() == 40 && oxid_head.bytes().all(|byte| byte.is_ascii_hexdigit()),
         "Oxid evidence head must be a commit SHA"
@@ -789,31 +809,9 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
 
     let portal_proxy = PortalProxy::spawn();
     let holder_resolver = HolderResolver::spawn();
-    let override_path = run_root.join("portal-override.yml");
-    fs::write(
-        &override_path,
-        format!(
-            "services:\n  issuer:\n    environment:\n      DID_RESOLVER_URL: {}\n      ISSUER_URL: {}\n    extra_hosts:\n      - host.docker.internal:host-gateway\n",
-            holder_resolver.origin_for_container,
-            portal_proxy.origin
-        ),
-    )
-    .expect("compose override");
-    docker_compose(
-        &portal_tree,
-        &override_path,
-        &[
-            "up",
-            "-d",
-            "--wait",
-            "--no-deps",
-            "--force-recreate",
-            "issuer",
-        ],
-    );
     wait_for_portal();
 
-    let (issuer_did, issuer_method, issuer_jwk) = issuer_public_facts(&portal_tree, &override_path);
+    let (issuer_did, issuer_method, issuer_jwk) = issuer_public_facts(&compose_project);
     let manifest_path = run_root.join("deployment.json");
     let manifest_digest = write_manifest(
         &manifest_path,
@@ -1028,6 +1026,8 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         },
         "oxid":{"head":oxid_head},
         "portal":{
+            "helperCommit":PORTAL_HELPER_COMMIT,
+            "helperTree":PORTAL_HELPER_TREE,
             "integrationCommit":PORTAL_INTEGRATION_COMMIT,
             "integrationTree":PORTAL_INTEGRATION_TREE,
             "prHead":PORTAL_PR_HEAD,

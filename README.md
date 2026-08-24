@@ -441,65 +441,80 @@ unavailable. Ordinary iOS/Android graphs do not compile the Portal client; only
 Real Portal evidence is local-only because the source repository is private.
 Hosted Oxid CI receives no cross-repository credential, does not execute or
 upload real Portal evidence, and claims only repository-owned static/contract
-validation. Export one absolute clean Portal checkout and run the complete
-recipe from a clean Oxid feature worktree:
+validation. The reviewed shared profile keeps three authorities separate:
+
+- Oxid owns `oxid-standalone` (node `9944`, indexer v3+v4 on `8088`, proof
+  `/ready` on `6300`);
+- the signed Portal lifecycle helper is fixed at
+  `00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24`, tree
+  `3cecc6e17d56b2c0d646150df3861005df831ed8`;
+- Portal protocol/image bytes remain fixed at integration `925ec8d...`, tree
+  `58b4597...`, in a clean persistent detached worktree.
+
+Create the single owner-private profile only with the Portal generator. The
+profile and its sibling `.state` directory must stay outside both repositories;
+Oxid never sources it and never imports or exports Portal secret fields:
 
 ```bash
-export PORTAL_SOURCE_TREE=/absolute/clean/lace-id-portal-checkout
-nix develop --command just portal-local-conformance
+PORTAL_HELPER=/absolute/lace-id-portal-helper-00d3d6c
+PORTAL_PROTOCOL=/absolute/lace-id-portal/tmp/worktrees/oxid-conformance-925ec8d
+OXID_ROOT=/absolute/oxid-pr-worktree
+PROFILE=/absolute/outside/git/.oxid-laceid-headless.env
+
+cd "$PORTAL_HELPER"
+just oxid-conformance-init-env \
+  "$PROFILE" "$OXID_ROOT" "$PORTAL_PROTOCOL" oxidportal124headless
 ```
 
-`portal-local-conformance` is the only complete retained-evidence recipe. At one
-immutable Oxid branch/head it runs, in order:
+The generator emits only a closed creation receipt. Do not print or source the
+file. It is an exact commit/tree profile: regenerate it after an Oxid head
+change. A pre-merge profile may name the exact PR worktree; after merge,
+regenerate it with `OXID_ROOT` set to the clean root `integration` checkout.
 
-1. `scripts/e2e/portal-headless-e2e.sh`;
-2. `scripts/test-ios-portal-flow.sh`, then the standard iOS smoke;
-3. `scripts/test-android-portal-flow.sh`, then the standard Android smoke.
+From the Oxid root, the simple shared-headless lifecycle is:
 
-The individual `just portal-headless-e2e`, `just ios-portal-smoke`, and
-`just android-portal-smoke` recipes remain focused diagnostic entry points, but
-they do not by themselves satisfy the complete same-head evidence contract.
-Never parallelize the platform suites.
+```bash
+just local-headless-up "$PROFILE"
+just local-headless-status "$PROFILE"
+just local-headless-test "$PROFILE"
+just local-headless-down "$PROFILE"
+```
 
-The complete recipe requires Nix, Docker Compose v2, Xcode/iOS Simulator, an
-Android SDK plus disposable QEMU, and locally authenticated read access to the
-exact Portal commits. It rejects a dirty tracked/staged Oxid tree, a branch or
-head change, a dirty/missing/wrong-origin Portal checkout, any source pin/tree/
-profile/provenance mismatch, stale or mixed evidence, a partial platform result,
-and a Portal-owned runtime/worktree/Compose leak. It stages every candidate away
-from the retained paths and adds each platform's standard-smoke boolean only
-after that smoke succeeds.
+`up` attaches non-mutatingly when the exact healthy three-container Midnight
+project already exists; only a call that starts it writes an exact owner receipt
+under the profile's private state. `down` always delegates Portal-only cleanup
+first and stops Midnight only when that receipt, profile path, Compose digest,
+and exact container IDs still match. Attach/consumer shutdown never runs
+Midnight Compose down or resets Tailscale. Root/worktree invocations therefore
+share one ownership fact instead of disagreeing through `target/`.
 
-After all five commands pass, one validator requires the headless, iOS, and
-Android documents to share the exact Oxid head and canonical Portal source
-identity. It also checks exact schemas, platform identities, all acceptance
-booleans, and the closed secret sentinel. Only then does the orchestrator
-publish the three retained files, with rollback on an interrupted or failed
-publication:
+The same profile works directly from the Portal helper root through
+`oxid-conformance-up|status|down`. Portal owns only smocker, resolver,
+did-manager/bootstrap, and issuer; Oxid does not duplicate Portal Compose. Both
+owners emit closed status documents without paths, container IDs, heights,
+DIDs, offers, grants, JWTs, credentials, proofs, private parts, or capabilities.
+
+`portal-local-conformance "$PROFILE"` remains the later complete retained-
+evidence recipe. At one immutable signed/DCO Oxid head it runs headless, iOS
+Portal plus standard iOS smoke, then Android Portal plus standard Android smoke.
+The individual explicit-profile recipes remain diagnostic entry points. Do not
+run the mobile phase yet merely because a phone or simulator is available, and
+never parallelize the platform suites.
+
+The complete recipe stages every candidate away from the retained paths, then
+requires one Oxid head plus the separate helper commit/tree and unchanged
+protocol commit/tree/PR-head/profile/provenance locks. It publishes only after
+exact schema, platform, acceptance, standard-smoke, and secret-sentinel checks:
 
 - `target/portal-headless-e2e/evidence.json`;
 - `target/portal-mobile-e2e/ios/evidence.json`;
 - `target/portal-mobile-e2e/android/evidence.json`.
 
-The authoritative platform harnesses keep the real offer out of shell/device
-arguments, rendered editable fields, logs, and evidence. They deliver only the
-fixed non-secret OS trigger, use bounded private runtime directories, and tear
-down their exact detached Portal worktrees, support processes, locks, dynamic
-CDP forward, and named Compose resources. Retained evidence contains only the
-reviewed source identity, the tested Oxid head, closed platform identity, and
-boolean acceptance results; it never contains offers, grants, credentials,
-proof material, private openings, or bearer material.
-
-A rerun needs no destructive pre-clean. If a platform step or cleanup fails, the
-complete recipe fails and preserves the previously retained evidence set rather
-than publishing a partial replacement. Do not use global Docker pruning, broad
+No destructive pre-clean is needed. Never use global Docker pruning, broad
 worktree/`target` deletion, whole-device erasure, or
-`adb reverse --remove-all` to reproduce or clean this suite.
-
-Retained evidence is virtual-device/mock-KYC evidence only—not camera,
-physical-device, tailnet, real-KYC, production-trust, live-holder-DID, native-
-custody, WASM, production-route, or credential-status evidence; status remains
-`not_checked`.
+`adb reverse --remove-all`. Physical/tailnet Portal, real camera, real KYC,
+production trust, native custody, WASM, live holder DID deployment, and mobile
+resource evidence remain unavailable.
 
 The Dioxus card permits explicit device-local first/last reveal and age
 threshold planning. A separate OpenID4VP 1.0 Final-shaped DCQL panel previews a
@@ -745,6 +760,12 @@ just ios-standalone-local
 # after stopping the iOS simulator:
 just android-standalone-local
 ```
+
+Standalone owner receipts and generated indexer configuration now live under the
+owner-private external state directory (by default `$XDG_STATE_HOME/oxid/standalone`
+or `~/.local/state/oxid/standalone`), never worktree-local `target/`. If an exact
+healthy project exists without the matching receipt, `standalone-up` attaches and
+`standalone-down` deliberately leaves it running.
 
 Both builds use the immutable `undeployed` loopback routes from ADR-0097. iOS
 Simulator reaches host loopback directly. Android emulator receives only exact

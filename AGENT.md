@@ -2240,13 +2240,11 @@ to silence the shell probe.
   prior retained set. Hosted CI receives no private Portal credential, executes
   no real Portal service, and uploads no local evidence; its required Portal job
   validates only repository-owned static harness and evidence contracts.
-  The cleanup trap remains installed before the first side effect: success,
-  failure, and signal exits always remove the platform-private runtime, while
-  named Compose cleanup is bounded and cleanup failures remain failures.
+  The cleanup trap remains installed before the first side effect: success, failure, and signal exits remove platform-private runtime; service cleanup stays with the exact owner helpers and failures remain failures.
   Retain only the closed secret-free evidence plus normal build/device app
   data; retain the six exact Android app reverse mappings and remove only the dynamically owned CDP
   forward, never unrelated mappings. A rerun resets only Oxid app data and
-  needs no broad Docker, worktree, target, virtual-device, or reverse cleanup.
+  needs no broad Docker, target, virtual-device, or reverse cleanup.
   The body-blind proxy proves refusal makes zero token/nonce/credential calls;
   the offer is never a shell argument, rendered editable value, log, or
   evidence field. Starting imported-offer preparation synchronously scrubs the
@@ -2262,6 +2260,22 @@ to silence the shell probe.
   overlay. Emulator 34.2.16 can print a crash-report setup
   notice to standard output before its `-list-avds` result, so AVD discovery
   must accept only a returned name backed by an actual `.ini` file.
+- The issue #124 shared headless profile uses one absolute canonical owner-`0600`
+  `STACK_ENV_FILE` generated only by Portal. Oxid validates only its closed
+  public v1 contract and delegates full secret validation/lifecycle through the
+  signed Portal helper `00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24`
+  (tree `3cecc6e17d56b2c0d646150df3861005df831ed8`); it never sources the file or
+  assigns/exports Portal secret values. Protocol/image bytes remain the detached
+  `925ec8d` / `58b4597` source and existing PR-head/profile/provenance locks.
+  `just local-headless-up|status|test|down <profile>` is the Oxid surface. Portal
+  owns only smocker, resolver, did-manager/bootstrap and issuer. Oxid owns only
+  the exact `oxid-standalone` node/indexer/proof project. Owner receipts live in
+  the profile-private external state, never `target/`; an existing healthy stack
+  without the exact receipt is attach-only. Portal stops first, and Midnight down
+  or Tailscale reset is forbidden unless profile path, Compose digest and exact
+  container IDs match the receipt. Public CI remains static-only and secret-free.
+  Physical/tailnet Portal and all mobile evidence remain unavailable in this
+  shared-headless pass.
 - ADR-0098 production composition requires an
   `oxid.deployment-profile.v1` canonical Ed25519 envelope that atomically binds
   application audience, validity/sequence, Midnight network/genesis and all

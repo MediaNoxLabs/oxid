@@ -35,20 +35,20 @@ run:
 headless:
     cargo run -p oxid-headless
 
-portal-headless-e2e:
-    ./scripts/e2e/portal-headless-e2e.sh
+portal-headless-e2e stack_env_file:
+    ./scripts/e2e/portal-headless-e2e.sh {{quote(stack_env_file)}}
 
 # Runs the real landed Portal through the two native mobile test frameworks in
 # a fixed sequence. Never parallelize these platform suites.
-portal-mobile-smoke:
-    ./scripts/test-ios-portal-flow.sh
-    ./scripts/test-android-portal-flow.sh
+portal-mobile-smoke stack_env_file:
+    STACK_ENV_FILE={{quote(stack_env_file)}} ./scripts/test-ios-portal-flow.sh
+    STACK_ENV_FILE={{quote(stack_env_file)}} ./scripts/test-android-portal-flow.sh
 
-ios-portal-smoke:
-    ./scripts/test-ios-portal-flow.sh
+ios-portal-smoke stack_env_file:
+    STACK_ENV_FILE={{quote(stack_env_file)}} ./scripts/test-ios-portal-flow.sh
 
-android-portal-smoke:
-    ./scripts/test-android-portal-flow.sh
+android-portal-smoke stack_env_file:
+    STACK_ENV_FILE={{quote(stack_env_file)}} ./scripts/test-android-portal-flow.sh
 
 standalone-recovery-smoke:
     cargo test -p oxid-composition standalone_composition_recovers_a_complete_wallet_into_a_fresh_instance
@@ -160,5 +160,21 @@ docs-site:
 
 # Complete local-only retained Portal evidence: headless, iOS Portal + standard
 # smoke, then Android Portal + standard smoke, all at one immutable Oxid head.
-portal-local-conformance:
-    ./scripts/e2e/portal-local-conformance.sh
+portal-local-conformance stack_env_file:
+    STACK_ENV_FILE={{quote(stack_env_file)}} ./scripts/e2e/portal-local-conformance.sh {{quote(stack_env_file)}}
+
+# Start/attach the reviewed shared Midnight owner, then start Portal-only services.
+local-headless-up stack_env_file:
+    ./scripts/local-headless.sh up {{quote(stack_env_file)}}
+
+# Report one closed status document for the two exact owner projects.
+local-headless-status stack_env_file:
+    ./scripts/local-headless.sh status {{quote(stack_env_file)}}
+
+# Run strict live headless issuance against an already-ready shared environment.
+local-headless-test stack_env_file:
+    ./scripts/local-headless.sh test {{quote(stack_env_file)}}
+
+# Stop Portal first; stop Midnight only with the exact private owner receipt.
+local-headless-down stack_env_file:
+    ./scripts/local-headless.sh down {{quote(stack_env_file)}}

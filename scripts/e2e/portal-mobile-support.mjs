@@ -29,21 +29,14 @@ const ISSUER_ORIGIN = `http://127.0.0.1:${PORTAL_PROXY_PORT}`;
 const MAX_CONTROL_BODY = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const CHILD_COMMAND_TIMEOUT_MS = 10 * 60_000;
-const HOST_COMMAND_TIMEOUT_MS = 30_000;
-// Compose dependency teardown can legitimately exceed the default 10-second
-// service grace period. Keep it bounded below the shell-owned 75-second
-// support grace while leaving time for the exact-project resource check.
-const CLEANUP_COMMAND_TIMEOUT_MS = 60_000;
-const CLEANUP_RESOURCE_DEADLINE_MS = 5_000;
-// A wedged named-resource query must fail well inside the real aggregate
-// cleanup deadline rather than inheriting the 60-second Compose-down bound.
-const CLEANUP_RESOURCE_QUERY_TIMEOUT_MS = 1_000;
-const CLEANUP_RESOURCE_POLL_MS = 250;
 
 const portalTree = process.env.PORTAL_INTEGRATION_CHECKOUT;
 const stateDirectory = process.env.OXID_PORTAL_MOBILE_STATE_DIR;
 const readyFifo = process.env.OXID_PORTAL_MOBILE_READY_FIFO;
 const composeProjectName = process.env.COMPOSE_PROJECT_NAME;
+const stackEnvFile = process.env.STACK_ENV_FILE;
+const localHeadlessScript = process.env.OXID_LOCAL_HEADLESS_SCRIPT;
+const repositoryRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
 const xcodeDeveloperDirectory = process.env.OXID_XCODE_DEVELOPER_DIR;
 const mobilePlatform = process.env.OXID_PORTAL_MOBILE_PLATFORM;
 const capabilityFifo = process.env.OXID_PORTAL_MOBILE_CAPABILITY_FIFO;
@@ -54,7 +47,9 @@ const androidCapabilityFifoValid = mobilePlatform !== "android"
 if (!portalTree || !path.isAbsolute(portalTree) || !stateDirectory || !path.isAbsolute(stateDirectory)
     || !readyFifo || !path.isAbsolute(readyFifo)
     || !new Set(["ios", "android"]).has(mobilePlatform) || !androidCapabilityFifoValid
-    || !/^[a-z0-9][a-z0-9_-]+$/.test(composeProjectName ?? "")) {
+    || !/^[a-z0-9][a-z0-9_-]+$/.test(composeProjectName ?? "")
+    || !stackEnvFile || !path.isAbsolute(stackEnvFile)
+    || !localHeadlessScript || !path.isAbsolute(localHeadlessScript)) {
   process.stderr.write("portal-mobile-support: FAIL phase=configuration\n");
   process.exit(2);
 }
@@ -62,10 +57,8 @@ if (!portalTree || !path.isAbsolute(portalTree) || !stateDirectory || !path.isAb
 fs.mkdirSync(stateDirectory, { recursive: true, mode: 0o700 });
 const privateLogPath = path.join(stateDirectory, "support-private.log");
 const privateLog = fs.openSync(privateLogPath, "a", 0o600);
-const overridePath = path.join(stateDirectory, "portal-mobile-override.yml");
 const manifestPath = path.join(stateDirectory, "deployment.json");
 const readyPath = path.join(stateDirectory, "ready.json");
-const composeFiles = ["compose", "-f", "docker/docker-compose.yml", "-f", overridePath];
 
 let phase = "startup";
 let holderDocument = null;
@@ -77,7 +70,6 @@ let iosCapabilityPath = null;
 let iosCapabilityCandidatePath = null;
 let proxyMode = "normal";
 let complete = false;
-let stackStarted = false;
 let cleanupStarted = false;
 let signalExitCode = 0;
 const heldSockets = new Set();
@@ -546,37 +538,6 @@ function canonicalManifest(issuerDid, issuerMethod, sourceJwk) {
   };
 }
 
-function composeProjectResources(deadline) {
-  return ["container", "network", "volume"].flatMap((resource) => {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      throw new Error("named compose project cleanup deadline expired during resource query");
-    }
-    const queryTimeoutMs = Math.min(CLEANUP_RESOURCE_QUERY_TIMEOUT_MS, remainingMs);
-    const args = [resource, "ls"];
-    if (resource === "container") args.push("--all");
-    args.push("--quiet", "--filter", `label=com.docker.compose.project=${composeProjectName}`);
-    const output = runCaptured("docker", args, portalTree, queryTimeoutMs);
-    return output === "" ? [] : output.split(/\s+/);
-  });
-}
-
-async function waitForComposeProjectCleanup() {
-  const deadline = Date.now() + CLEANUP_RESOURCE_DEADLINE_MS;
-  while (true) {
-    const resources = composeProjectResources(deadline);
-    if (Date.now() >= deadline) {
-      throw new Error("named compose project cleanup deadline expired after resource query");
-    }
-    if (resources.length === 0) return;
-    const delayMs = Math.min(CLEANUP_RESOURCE_POLL_MS, deadline - Date.now());
-    if (delayMs <= 0) {
-      throw new Error("named compose project was not empty at cleanup deadline");
-    }
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-}
-
 async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
@@ -600,16 +561,6 @@ async function cleanup() {
   for (const socket of heldSockets) socket.destroy();
   for (const request of proxiedSockets) request.destroy();
   for (const server of [controlServer, holderServer, issuerResolverProxy, proxyServer]) server.close();
-  if (stackStarted) {
-    phase = "compose-down";
-    try {
-      runLogged("just", ["compose-down"], portalTree, CLEANUP_COMMAND_TIMEOUT_MS);
-      await waitForComposeProjectCleanup();
-    } catch (error) {
-      appendPrivate(error.stack ?? String(error));
-      cleanupFailure = error;
-    }
-  }
   fs.closeSync(privateLog);
   if (cleanupFailure) throw cleanupFailure;
 }
@@ -628,28 +579,19 @@ try {
     listen(holderServer, HOLDER_RESOLVER_PORT),
     listen(issuerResolverProxy, ISSUER_RESOLVER_PROXY_PORT),
   ]);
-  fs.writeFileSync(overridePath, [
-    "services:",
-    "  issuer:",
-    "    environment:",
-    `      DID_RESOLVER_URL: http://host.docker.internal:${HOLDER_RESOLVER_PORT}`,
-    `      ISSUER_URL: ${ISSUER_ORIGIN}`,
-    "    extra_hosts:",
-    "      - host.docker.internal:host-gateway",
-    "",
-  ].join("\n"), { mode: 0o600 });
-
-  phase = "compose-up";
-  stackStarted = true;
-  runLogged("just", ["compose-up"]);
-  phase = "issuer-reconfigure";
-  runLogged("docker", [...composeFiles, "up", "-d", "--wait", "--no-deps", "--force-recreate", "issuer"]);
+  phase = "shared-status";
+  runLogged(localHeadlessScript, ["status", stackEnvFile], repositoryRoot);
   await waitForIssuer();
 
   phase = "issuer-public-facts";
+  const issuerContainers = runCaptured("docker", [
+    "container", "ls", "--quiet",
+    "--filter", `label=com.docker.compose.project=${composeProjectName}`,
+    "--filter", "label=com.docker.compose.service=issuer",
+  ]).split(/\s+/u).filter(Boolean);
+  if (issuerContainers.length !== 1) throw new Error("exact issuer container unavailable");
   const issuerMethod = runCaptured("docker", [
-    ...composeFiles,
-    "exec", "-T", "issuer", "sh", "-c",
+    "exec", issuerContainers[0], "sh", "-c",
     'IFS= read -r value < /bootstrap/issuer-key-id; printf %s "$value"',
   ]);
   const issuerDid = issuerMethod.split("#", 1)[0];

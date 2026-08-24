@@ -4,6 +4,7 @@
 - Date: 2026-08-21
 - Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124) and Portal PR #17
 - Portal integration source: squash commit `925ec8d04882eabd4ac7b784c70fc2f0c152faae`, tree `58b4597524f88a0ae2253439a44dab0dc60cbb6f`
+- Portal lifecycle helper: signed commit `00d3d6c6b9ebe37e1a4bffc4dd7a3f27cf6e4b24`, tree `3cecc6e17d56b2c0d646150df3861005df831ed8`, reviewed in Portal PR #19 (draft dependency; Oxid does not merge it)
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14` (the same tree as the landed squash commit)
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; exact provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039 and ADR-0101
@@ -64,16 +65,32 @@ to Oxid's canonical JWK context and never relaxes the issuer/method/key checks.
 
 ## Evidence
 
-`just portal-headless-e2e` fails closed unless it can authenticate a clean
-Portal checkout, fetch the exact landed integration commit and historical PR
-head, prove their tree identity, verify the profile provenance, and start the
-landed repository composition. The harness then:
+The shared headless environment uses one absolute canonical owner-`0600`
+`STACK_ENV_FILE`, created only by Portal's generator. The signed lifecycle helper
+at `00d3d6c...` and the immutable protocol source at `925ec8d...` are distinct
+authorities in that profile. Oxid validates the closed v1 keys, exact roots,
+commits, trees, projects, routes, mode, ownership and helper signature without
+sourcing dotenv or assigning Portal secret values; it passes only the profile
+path to the authenticated Portal helper.
+
+`just local-headless-up <profile>` owns or attaches to the exact
+`oxid-standalone` node/indexer/proof project, verifies node, indexer v3+v4 and
+proof readiness, then delegates Portal-only startup. An owner receipt is written
+outside Git under the profile's private state only when that call actually
+starts Midnight. `local-headless-down` delegates Portal cleanup first and may
+stop Midnight only when the same profile path, Compose digest and exact three
+container IDs match. Attach shutdown never stops Midnight or resets Tailscale.
+
+`just local-headless-test <profile>` requires both owner status documents to be
+ready, then runs the strict live flow against the persistent detached
+`925ec8d...` protocol worktree. It does not create another Portal checkout or
+invoke Portal Compose directly. The harness then:
 
 1. creates and observes an approved mock-KYC session through the real Portal service;
 2. routes the real by-value offer through `oxid-headless`;
 3. uses an Oxid-managed authentication method and a distinct managed Jubjub assertion method;
 4. imports the real credential body, detached proof, and converted private material only after all strict verification stages pass;
-5. proves ciphertext-at-rest and starts a second Oxid process to list and reverify the record.
+5. rejects replay, proves ciphertext-at-rest, and starts a second Oxid process to list and reverify the record.
 
 Only a closed, deterministic boolean/source-pin JSON record is retained under
 `target/portal-headless-e2e/evidence.json`. Raw offer codes, tokens, nonces,
@@ -93,8 +110,7 @@ is physical-device or production evidence.
 Real Portal execution is an operator-local evidence boundary. This reviewed
 operator decision supersedes issue #124's older hosted-real-execution wording
 for PR #137 without weakening the issue's protocol, security, or platform
-acceptance requirements. The complete `just portal-local-conformance` recipe
-authenticates a local private checkout,
+acceptance requirements. The complete `just portal-local-conformance <profile>` recipe authenticates the signed helper and persistent detached protocol source from the owner-private profile,
 runs headless first, then the ADR-0103 iOS/Android platform-plus-standard-smoke
 pairs, and validates all retained documents against one immutable Oxid head.
 Hosted Oxid CI keeps a required repository-only contract job for the immutable
@@ -127,7 +143,7 @@ attestation.
   physical-device camera/tailnet evidence, and promotion beyond integration
   remain separate. ADR-0103 admits only standalone-local virtual-device test
   transport.
-- A new Portal head, integration tree, profile source, or provenance digest is
+- A new lifecycle helper commit/tree, Portal protocol commit/tree, profile source, or provenance digest is
   rejected until this source lock and decision are deliberately reviewed.
 - Operator-selected local source/manifest authentication must not be described
   as signed release provenance or production deployment attestation.
