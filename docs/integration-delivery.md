@@ -32,8 +32,8 @@ node .pi/npm/node_modules/dev-loops/cli/index.mjs pr create \
   --assignee @me --title "<type>: <subject>" --body-file <body-file>
 ```
 
-The body must contain `Closes #<number>`. The protected default-branch `pull_request_target` metadata workflow is checkout-free. Its
-`Require integration for issue-backed PRs` job rejects any other base except the
+The body must contain `Closes #<number>`. The protected base-branch `pull_request_target` metadata workflow is checkout-free. Install the same workflow on every retained
+PR base (`integration`, `develop`, and `main`). Its `Require integration for issue-backed PRs` job rejects any other base except the
 release promotion above.
 
 Local review commands must use the fetched integration ref rather than a
@@ -48,12 +48,13 @@ git diff "$base_sha"..HEAD
 The pull request's `baseRefName` and base SHA are authoritative for hosted diff,
 freshness, and conflict checks. If either is not `integration` (outside the
 release exception), or if local and GitHub facts disagree, stop. Immediately
-before merge, refresh and check freshness plus conflict-freedom explicitly:
+before merge, refresh and check freshness plus conflict-freedom explicitly. The
+`git merge-tree --write-tree` form requires Git 2.38 or newer:
 
 ```bash
 git fetch origin integration
 git merge-base --is-ancestor origin/integration HEAD
-Git 2.38 or newer: git merge-tree --write-tree origin/integration HEAD >/dev/null
+git merge-tree --write-tree origin/integration HEAD >/dev/null
 ```
 
 Rerun every current-head gate after any integration update.

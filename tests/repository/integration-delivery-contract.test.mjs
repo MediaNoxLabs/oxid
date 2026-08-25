@@ -80,6 +80,8 @@ for (const workflowPath of [".github/workflows/ci.yml", ".github/workflows/quali
 test("documentation workflows cover integration", async () => {
   const links = await read(".github/workflows/docs-link-check.yml");
   assert.equal(eventBranches(links, "pull_request"), null);
+  const pullRequestBlock = links.slice(links.indexOf("  pull_request:"), links.indexOf("  push:"));
+  assert.doesNotMatch(pullRequestBlock, /^    paths(?:-ignore)?:/m);
   assert.deepEqual(new Set(eventBranches(links, "push")), new Set(["integration", "develop", "main"]));
   const pages = await read(".github/workflows/pages.yml");
   assert.deepEqual(new Set(eventBranches(pages, "push")), new Set(["integration", "develop"]));
