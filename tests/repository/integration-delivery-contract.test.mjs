@@ -47,11 +47,21 @@ async function metadataContract() {
   return new vm.Script(`(async (context, core, github) => {\n${source}\n})`).runInNewContext();
 }
 
-async function evaluateMetadata({ body, baseRef, headRef, linkedIssues = 0 }) {
+async function evaluateMetadata({ body, baseRef, headRef, linkedIssues = 0, sameRepository = true }) {
   const failures = [];
   const execute = await metadataContract();
   await execute(
-    { repo: { owner: "MediaNoxLabs", repo: "oxid" }, payload: { number: 152, pull_request: { body, base: { ref: baseRef }, head: { ref: headRef } } } },
+    {
+      repo: { owner: "MediaNoxLabs", repo: "oxid" },
+      payload: {
+        number: 152,
+        pull_request: {
+          body,
+          head: { ref: headRef, repo: { full_name: sameRepository ? "MediaNoxLabs/oxid" : "fork/oxid" } },
+          base: { ref: baseRef, repo: { full_name: "MediaNoxLabs/oxid" } },
+        },
+      },
+    },
     { setFailed: (message) => failures.push(message), info: () => {} },
     { graphql: async () => ({ repository: { pullRequest: { closingIssuesReferences: { nodes: Array.from({ length: linkedIssues }, (_, id) => ({ id })) } } } }) },
   );
@@ -87,7 +97,7 @@ test("issue-backed integration PR passes the exact metadata contract", async () 
 
 test("non-issue automation and quoted examples remain outside the base contract", async () => {
   assert.deepEqual(await evaluateMetadata({ body: "Dependency refresh", baseRef: "develop", headRef: "renovate/rust" }), []);
-  assert.deepEqual(await evaluateMetadata({ body: "<!-- Closes #144 -->\n```text\nFixes #145\n```", baseRef: "develop", headRef: "docs" }), []);
+  assert.deepEqual(await evaluateMetadata({ body: "<!-- Closes #144 -->\n```text\nFixes #145\n```\n~~~text\nResolves #146\n~~~\n`Closes #147`\n> Fixes #148\n    Closes #149", baseRef: "develop", headRef: "docs" }), []);
 });
 
 test("wrong bases fail for closing keywords and sidebar-linked issues", async () => {
@@ -102,6 +112,7 @@ test("wrong bases fail for closing keywords and sidebar-linked issues", async ()
 test("only integration-to-main is an issue-backed release-promotion exception", async () => {
   assert.deepEqual(await evaluateMetadata({ body: "Closes #144", baseRef: "main", headRef: "integration" }), []);
   assert.equal((await evaluateMetadata({ body: "Closes #144", baseRef: "main", headRef: "feature" })).length, 1);
+  assert.equal((await evaluateMetadata({ body: "Closes #144", baseRef: "main", headRef: "integration", sameRepository: false })).length, 1);
 });
 
 test("repository gate runs architecture and the delivery contract with its declared Node", async () => {
@@ -115,10 +126,20 @@ test("guidance, required contexts, and review configuration agree", async () => 
   for (const file of ["AGENT.md", "CONTRIBUTING.md", ".github/pull_request_template.md", "docs/site/src/contributing.md"]) assert.match(await read(file), /integration/, file);
   const contract = await read("docs/integration-delivery.md");
   for (const pattern of [/--base origin\/integration/, /--base integration/, /git merge-base HEAD origin\/integration/, /git merge-base --is-ancestor origin\/integration HEAD/, /git merge-tree --write-tree origin\/integration HEAD/, /integration -> main/]) assert.match(contract, pattern);
-  const workflowNames = ["pr-check.yml", "dco.yml", "ci.yml", "quality.yml", "scan.yml", "docs-link-check.yml"];
-  const workflows = await Promise.all(workflowNames.map((name) => read(`.github/workflows/${name}`)));
-  for (const name of ["Require integration for issue-backed PRs", "Verify commit sign-offs", "Validate PR title", "Validate PR body", "Repository gate (fmt, architecture, lint, tests, coverage)", "Locked Nix package and Compact artifacts", "Audit, Licenses, Sources, and Documentation", "Check documentation links"]) assert.ok(workflows.some((workflow) => workflow.includes(`name: ${name}`)), name);
-  assert.match(workflows[4], /jobs:\n  scan:/);
+  const expectedNames = {
+    "pr-check.yml": ["Require integration for issue-backed PRs", "Validate PR title", "Validate PR body"],
+    "dco.yml": ["Verify commit sign-offs"],
+    "ci.yml": ["Repository gate (fmt, architecture, lint, tests, coverage)", "Locked Nix package and Compact artifacts"],
+    "quality.yml": ["Audit, Licenses, Sources, and Documentation"],
+    "docs-link-check.yml": ["Check documentation links"],
+  };
+  for (const [file, names] of Object.entries(expectedNames)) {
+    const workflow = await read(`.github/workflows/${file}`);
+    for (const name of names) assert.ok(workflow.split("\n").some((line) => line === `    name: ${name}`), `${file}: ${name}`);
+  }
+  const prCheck = await read(".github/workflows/pr-check.yml");
+  assert.doesNotMatch(prCheck, /actions\/checkout/);
+  assert.match(await read(".github/workflows/scan.yml"), /jobs:\n  scan:/);
   const config = await read(".devloops");
   assert.match(config, /maxCopilotRounds: 0/);
   assert.match(config, /Claude CLI/);
