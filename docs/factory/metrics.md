@@ -14,7 +14,7 @@ each entry is dated and states its measurement environment.
 - **Per-crate build time** reveals decomposition problems (a crate growing
   into a bottleneck) before they dominate the critical path.
 
-## Baselines — 2026-08-18, develop @ ade6416
+## Historical baselines — 2026-08-18, `develop` @ `ade6416`
 
 Local, Apple M2 Max (12 cores), warm cargo registry, fresh worktree target:
 
@@ -44,7 +44,7 @@ GitHub Actions, before the caching and decomposition work (single job
 | `Quality` workflow | 8–26 min |
 | `Scan` / `Documentation links` | 1–4 min |
 
-## Measured after the pipeline work — 2026-08-20, develop @ 319ca5d
+## Historical post-pipeline measurement — 2026-08-20, `develop` @ `319ca5d`
 
 The CI decomposition landed in three steps: parallel gate/build jobs with
 Nix-store and cargo caches, a single authoritative test execution per push,
@@ -75,9 +75,13 @@ the flake checks previously ran nowhere.
 Amber requires a backlog item; red blocks new `factory:ready` labels until a
 mitigation item is claimed.
 
-## Trend log
+## Historical trend log
 
-| Date | develop SHA | Cold check | Test (cold) | CI job | Notes |
+These immutable measurements predate `integration` becoming the sole delivery
+branch; `develop` identifies the branch on which the evidence was collected,
+not a current delivery instruction.
+
+| Date | Historical `develop` SHA | Cold check | Test (cold) | CI job | Notes |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-18 | ade6416 | 74 s | 119 s | 44–67 min | First baseline; CI long pole is the locked Nix package build (~26 min) + uncached repository gate (~16 min). |
 | 2026-08-20 | 319ca5d | 74 s | 119 s | 21–39 min | Caching, job parallelism, single test execution, and the nightly hermetic split all landed. Local targets unchanged — the win was entirely in pipeline shape, not compile time. |

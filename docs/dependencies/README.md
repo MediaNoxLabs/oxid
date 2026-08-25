@@ -48,6 +48,14 @@ Overlapping proposals for the same crate are therefore expected, not
 duplication: prefer the Renovate pull request unless the Dependabot one is
 addressing an advisory, in which case take the security bump first.
 
+Automation configuration changes affect newly created pull requests, not open
+ones. Dependabot PRs [#138](https://github.com/MediaNoxLabs/oxid/pull/138) and
+[#139](https://github.com/MediaNoxLabs/oxid/pull/139) still target the retired
+`develop` branch and cannot land under ruleset `21481544`. Close those stale
+PRs after the integration-targeting configuration lands and allow Dependabot to
+recreate any update that remains applicable; do not use the old PRs as delivery
+or validation evidence.
+
 Neither bot can satisfy this repository's contribution gates — they cannot add
 a DCO `Signed-off-by` trailer to generated commits, nor author a title and body
 matching the conventional-commit scopes and pull-request template. The DCO and

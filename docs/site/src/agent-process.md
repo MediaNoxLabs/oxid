@@ -24,7 +24,7 @@ and releases. This page documents the process as it actually operates.
    defines fan-out review angles: scope, correctness, coverage,
    architecture, security.
 4. **An independent steward audits the stream.** A second agent reviews
-   `develop` deltas on a schedule, measures build/CI budgets, verifies
+   `integration` deltas on a schedule, measures build/CI budgets, verifies
    security claims against the code, and files findings as issues the build
    agent can pick up. The baseline audit — 11 dimensions, adversarially
    verified findings — is public:

@@ -26,7 +26,7 @@ Claims a `factory:ready` item and delivers a draft PR. Duties:
 - Respect AGENT.md architecture rules and every accepted ADR.
 - Deliver through the `.devloops` `draft` gate with fan-out evidence, then the
   `preApproval` gate with CI green.
-- Never merge; never push to `develop` directly.
+- Never merge; never push to `integration` directly.
 
 ### Reviewer (fan-out)
 The `.devloops` refinement fan-out (scope, correctness, coverage,
@@ -36,8 +36,8 @@ produce findings with file/line references; they never edit the branch.
 ### Quality Steward
 A standing role, independent of any single work item. Duties:
 
-- Review `develop` deltas on a schedule; verify architecture/security/testing
-  claims against the actual code.
+- Review `integration` deltas on a schedule; verify
+  architecture/security/testing claims against the actual code.
 - Measure local target and CI durations against the budgets in metrics.md;
   flag regressions before they hit the CI time bound.
 - File confirmed findings as factory work items; never fix-and-push directly.

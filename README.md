@@ -1,6 +1,6 @@
 # Oxid Identity Wallet
 
-[![CI](https://github.com/MediaNoxLabs/oxid/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/MediaNoxLabs/oxid/actions/workflows/ci.yml)
+[![CI](https://github.com/MediaNoxLabs/oxid/actions/workflows/ci.yml/badge.svg?branch=integration)](https://github.com/MediaNoxLabs/oxid/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Oxid is a free and open-source, Rust-first, identity-native wallet foundation.

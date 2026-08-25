@@ -17,11 +17,10 @@ failed=false
 # requests *opened* by these accounts, on the stated grounds that "the
 # certification the DCO records does not apply". The same reasoning applies to
 # their commits wherever they appear, and it has to hold per commit as well as
-# per pull request: once a bot commit lands on an integration branch, every
-# later human-authored pull request whose range includes it -- a develop-to-main
-# release sync, most obviously -- would otherwise fail a gate nobody can
-# satisfy, because rewriting merged history to add a trailer is a worse remedy
-# than the finding.
+# per pull request: once a bot commit lands on the integration branch, every
+# later human-authored pull request whose range includes it would otherwise fail
+# a gate nobody can satisfy, because rewriting merged history to add a trailer
+# is a worse remedy than the finding.
 exempt_authors=(
   "dependabot[bot]"
   "renovate[bot]"
