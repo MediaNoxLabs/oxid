@@ -1,8 +1,9 @@
 name: Check PR
 
 on:
-  # Keep the already-required title/body contexts available while the separate
-  # base-owned metadata workflow is installed on integration.
+  # Keep title/body validation on the unprivileged PR-head event so required
+  # contexts attach to the reviewed commit. Cross-base enforcement is owned by
+  # the repository ruleset, not by this workflow.
   pull_request:
     types: [opened, edited, synchronize, reopened]
 
