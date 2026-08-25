@@ -47,6 +47,11 @@ portal-mobile-smoke stack_env_file:
 ios-portal-smoke stack_env_file:
     STACK_ENV_FILE={{quote(stack_env_file)}} ./scripts/test-ios-portal-flow.sh
 
+# Temporary issue #140 mocked iOS Simulator slice. The profile remains
+# separate from both ordinary standalone-portal and standalone-tailnet.
+ios-portal-tailnet-simulator-smoke stack_env_file public_origin:
+    STACK_ENV_FILE={{quote(stack_env_file)}} OXID_MOBILE_PORTAL_PROFILE=tailnet-ios-simulator OXID_BUILD_PORTAL_PUBLIC_ORIGIN={{quote(public_origin)}} ./scripts/test-ios-portal-flow.sh
+
 android-portal-smoke stack_env_file:
     STACK_ENV_FILE={{quote(stack_env_file)}} ./scripts/test-android-portal-flow.sh
 

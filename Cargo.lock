@@ -5622,10 +5622,13 @@ dependencies = [
  "oxid-adapter-mobile-native",
  "oxid-platform-ports",
  "oxid-protocol-application",
+ "reqwest 0.13.4",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",
  "url",
+ "webpki-root-certs 1.0.9",
  "zeroize",
 ]
 
@@ -5932,6 +5935,7 @@ dependencies = [
  "oxid-composition",
  "oxid-ui-dioxus",
  "sha2 0.10.9",
+ "url",
 ]
 
 [[package]]

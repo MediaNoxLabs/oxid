@@ -21,15 +21,27 @@ default = []
 # authority-guarded `mobile-portal` feature, forwarded from the iOS/Android
 # `oxid-app/standalone-portal` profile.
 loopback-test-offer-trigger = []
+# Temporary issue #140 iOS-Simulator-only handoff. The public endpoint remains
+# a compile-time authenticated profile value passed by composition; this feature
+# adds only the bounded HTTPS transport used by that exact constructor.
+tailnet-test-offer-trigger = [
+  "loopback-test-offer-trigger",
+  "dep:reqwest",
+  "dep:rustls",
+  "dep:webpki-root-certs",
+]
 
 [dependencies]
 oxid-adapter-mobile-native.workspace = true
 oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
+reqwest = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 url.workspace = true
+webpki-root-certs = { workspace = true, optional = true }
 zeroize.workspace = true
 
 [lints]

@@ -39,6 +39,32 @@ fn main() {
     ))]
     compile_error!("standalone-portal is incompatible with tailnet and native custody");
 
+    #[cfg(all(
+        feature = "standalone-portal-tailnet-ios-simulator",
+        not(target_os = "ios")
+    ))]
+    compile_error!("standalone-portal-tailnet-ios-simulator is available only on iOS Simulator");
+
+    #[cfg(all(
+        feature = "standalone-portal-tailnet-ios-simulator",
+        not(oxid_portal_virtual_device_profile_authorized)
+    ))]
+    compile_error!(
+        "standalone-portal-tailnet-ios-simulator requires repository iOS Simulator profile authority"
+    );
+
+    #[cfg(all(
+        feature = "standalone-portal-tailnet-ios-simulator",
+        any(
+            feature = "standalone-portal",
+            feature = "standalone-local",
+            feature = "standalone-native-custody"
+        )
+    ))]
+    compile_error!(
+        "standalone-portal-tailnet-ios-simulator is incompatible with ordinary Portal, local routes, and native custody"
+    );
+
     #[cfg(all(feature = "android-jni-exception-recovery-test", target_os = "android"))]
     oxid_composition::verify_android_jni_exception_recovery()
         .unwrap_or_else(|_| panic!("Android JNI exception recovery smoke probe failed"));
@@ -124,6 +150,29 @@ fn main() {
         .unwrap_or_else(|error| panic!("standalone Portal configuration is invalid: {error}"))
     };
 
+    #[cfg(all(
+        feature = "standalone-portal-tailnet-ios-simulator",
+        feature = "standalone-development",
+        feature = "standalone-tailnet",
+        not(feature = "standalone-local"),
+        not(feature = "standalone-native-custody"),
+        target_os = "ios",
+        not(target_arch = "wasm32")
+    ))]
+    let application =
+        oxid_composition::compose_mobile_development_portal_tailnet_ios_simulator_from_routes(
+            env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
+            env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
+            env!("OXID_BUILD_MIDNIGHT_NODE_WS_URL"),
+            env!("OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL"),
+            include_bytes!(concat!(env!("OUT_DIR"), "/portal-deployment.json")),
+            env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
+            env!("OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN"),
+        )
+        .unwrap_or_else(|error| {
+            panic!("standalone Portal tailnet configuration is invalid: {error}")
+        });
+
     #[cfg(feature = "standalone-native-proving-artifacts")]
     let application =
         oxid_composition::compose_mobile_native_standalone_with_compact_presentation()
@@ -146,6 +195,7 @@ fn main() {
         not(feature = "standalone-native-custody"),
         feature = "standalone-tailnet",
         not(feature = "standalone-local"),
+        not(feature = "standalone-portal-tailnet-ios-simulator"),
         not(target_arch = "wasm32")
     ))]
     let application = {
@@ -203,11 +253,13 @@ fn main() {
             feature = "standalone-development",
             feature = "standalone-native-custody"
         ),
-        not(feature = "standalone-portal")
+        not(feature = "standalone-portal"),
+        not(feature = "standalone-portal-tailnet-ios-simulator")
     ))]
     let standalone_credential_offer = Some(oxid_composition::standalone_oid4vci_offer());
     #[cfg(any(
         feature = "standalone-portal",
+        feature = "standalone-portal-tailnet-ios-simulator",
         not(any(
             feature = "standalone-development",
             feature = "standalone-native-custody"

@@ -9,6 +9,12 @@
 compile_error!("mobile-portal is available only on iOS and Android");
 
 #[cfg(all(
+    feature = "mobile-portal-tailnet-ios-simulator",
+    not(target_os = "ios")
+))]
+compile_error!("mobile-portal-tailnet-ios-simulator is available only on iOS Simulator");
+
+#[cfg(all(
     not(target_arch = "wasm32"),
     any(
         all(not(target_os = "ios"), not(target_os = "android")),
@@ -490,6 +496,14 @@ enum CredentialPresentationComposition {
     StandaloneMobileZk(Arc<NativeCompactPresentationRuntime>),
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PortalTestIngress {
+    None,
+    Loopback,
+    Tailnet { public_origin: String },
+}
+
 struct IdentityAdapters {
     did_repository: Arc<dyn DidRecordRepository>,
     did_resolver: Arc<dyn DidResolutionPort>,
@@ -502,7 +516,7 @@ struct IdentityAdapters {
     credential_issuance: CredentialIssuanceComposition,
     self_issued_authentication: SelfIssuedAuthenticationComposition,
     credential_presentation: CredentialPresentationComposition,
-    portal_test_ingress: bool,
+    portal_test_ingress: PortalTestIngress,
 }
 
 struct PassportVaultRepositoryComposition {
@@ -1263,7 +1277,7 @@ pub fn compose_authenticated_production(
             credential_issuance: CredentialIssuanceComposition::Unavailable,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
             credential_presentation: CredentialPresentationComposition::Unavailable,
-            portal_test_ingress: false,
+            portal_test_ingress: PortalTestIngress::None,
         },
         PassportVaultRepositoryComposition::unavailable(),
     ))
@@ -1296,7 +1310,7 @@ pub fn compose() -> ApplicationServices {
             credential_issuance: CredentialIssuanceComposition::Unavailable,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
             credential_presentation: CredentialPresentationComposition::Unavailable,
-            portal_test_ingress: false,
+            portal_test_ingress: PortalTestIngress::None,
         },
         PassportVaultRepositoryComposition::unavailable(),
     )
@@ -2066,6 +2080,49 @@ pub fn compose_mobile_development_portal_standalone_from_routes(
     let portal =
         PortalIdentityConfiguration::from_bytes(deployment_manifest, deployment_manifest_sha256)
             .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
+    compose_mobile_development_portal_from_config(config, portal)
+}
+
+/// Temporary issue #140 composition for the one authenticated MagicDNS origin.
+/// The app passes only its build.rs-validated, compile-time embedded origin.
+#[cfg(all(
+    feature = "mobile-portal-tailnet-ios-simulator",
+    target_os = "ios",
+    not(target_arch = "wasm32")
+))]
+pub fn compose_mobile_development_portal_tailnet_ios_simulator_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+    deployment_manifest: &[u8],
+    deployment_manifest_sha256: &str,
+    public_origin: &str,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
+    let config = mobile_standalone_config_from_routes(
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+    )?;
+    let portal = PortalIdentityConfiguration::from_tailnet_bytes(
+        deployment_manifest,
+        deployment_manifest_sha256,
+        public_origin,
+    )
+    .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
+    compose_mobile_development_portal_from_config(config, portal)
+}
+
+#[cfg(all(
+    feature = "mobile-portal",
+    any(target_os = "ios", target_os = "android"),
+    not(target_arch = "wasm32")
+))]
+fn compose_mobile_development_portal_from_config(
+    config: MidnightStandaloneConfig,
+    portal: PortalIdentityConfiguration,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
@@ -2384,7 +2441,7 @@ fn compose_in_memory_with_presentation(
             credential_issuance: CredentialIssuanceComposition::Standalone,
             self_issued_authentication: SelfIssuedAuthenticationComposition::Standalone,
             credential_presentation,
-            portal_test_ingress: false,
+            portal_test_ingress: PortalTestIngress::None,
         },
         PassportVaultRepositoryComposition::process_local(),
     );
@@ -2919,7 +2976,7 @@ where
     let did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort> = did_lifecycle;
     let did_resolver = headless_did_resolver();
     let portal_test_ingress = match &credential_profile {
-        HeadlessCredentialProfile::Standalone => false,
+        HeadlessCredentialProfile::Standalone => PortalTestIngress::None,
         #[cfg(all(
             not(target_arch = "wasm32"),
             any(
@@ -2930,7 +2987,11 @@ where
                 )
             )
         ))]
-        HeadlessCredentialProfile::Portal => true,
+        HeadlessCredentialProfile::Portal => portal
+            .as_ref()
+            .expect("Portal headless profile requires authenticated config")
+            .test_ingress
+            .clone(),
     };
     let (compact_issuer_resolver, trust_anchor, credential_issuance) = match credential_profile {
         HeadlessCredentialProfile::Standalone => (
@@ -3066,15 +3127,19 @@ where
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let qr_scanner: Arc<dyn QrScannerPort> = Arc::new(UnavailableQrScanner);
     #[cfg(any(target_os = "ios", target_os = "android"))]
-    let identity_link_ingress: Arc<dyn IdentityLinkIngressPort> = if portal_test_ingress {
+    let identity_link_ingress: Arc<dyn IdentityLinkIngressPort> = match portal_test_ingress {
+        PortalTestIngress::None => Arc::new(NativeIdentityLinkIngress::default()),
         #[cfg(feature = "mobile-portal")]
-        {
+        PortalTestIngress::Loopback => {
             Arc::new(NativeIdentityLinkIngress::standalone_portal_test())
         }
-        #[cfg(not(feature = "mobile-portal"))]
-        unreachable!("Portal ingress requires mobile-portal")
-    } else {
-        Arc::new(NativeIdentityLinkIngress::default())
+        #[cfg(feature = "mobile-portal-tailnet-ios-simulator")]
+        PortalTestIngress::Tailnet { public_origin } => Arc::new(
+            NativeIdentityLinkIngress::standalone_portal_tailnet_ios_simulator(&public_origin)
+                .unwrap_or_else(|_| panic!("authenticated Portal offer origin is invalid")),
+        ),
+        #[allow(unreachable_patterns)]
+        _ => unreachable!("Portal ingress requires its exact mobile Portal feature"),
     };
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let identity_link_ingress: Arc<dyn IdentityLinkIngressPort> =
@@ -4528,7 +4593,7 @@ mod tests {
                 credential_issuance: CredentialIssuanceComposition::Unavailable,
                 self_issued_authentication: SelfIssuedAuthenticationComposition::Unavailable,
                 credential_presentation: CredentialPresentationComposition::Unavailable,
-                portal_test_ingress: false,
+                portal_test_ingress: PortalTestIngress::None,
             },
             PassportVaultRepositoryComposition::unavailable(),
         );

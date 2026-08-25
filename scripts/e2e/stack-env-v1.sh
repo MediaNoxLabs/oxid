@@ -3,8 +3,8 @@
 # The dotenv file is data: this file never sources/evaluates it and deliberately
 # never assigns or exports Portal secret values.
 
-readonly STACK_ENV_EXPECTED_HELPER_COMMIT="8915760a4523d282fa07d45a48b7f58e4287bb54"
-readonly STACK_ENV_EXPECTED_HELPER_TREE="1317e109cf0792c0e1d7c8f9e2b8857251f6e92d"
+readonly STACK_ENV_EXPECTED_HELPER_COMMIT="da9adad711a83c25505f96d88809c7320d049b2e"
+readonly STACK_ENV_EXPECTED_HELPER_TREE="01a78541d24b7402a0eb1f7d1ca2c0f91de95fd3"
 readonly STACK_ENV_EXPECTED_PROTOCOL_COMMIT="925ec8d04882eabd4ac7b784c70fc2f0c152faae"
 readonly STACK_ENV_EXPECTED_PROTOCOL_TREE="58b4597524f88a0ae2253439a44dab0dc60cbb6f"
 readonly STACK_ENV_EXPECTED_PROTOCOL_PR_HEAD="9c82db23eabe8b6d758b2731f2225910ea627c14"
@@ -47,6 +47,7 @@ PORTAL_ISSUER_URL=""
 PORTAL_HOLDER_RESOLVER_URL=""
 PORTAL_HOST_ISSUER_ORIGIN=""
 PORTAL_HOST_RESOLVER_ORIGIN=""
+PORTAL_DIDIT_API_BASE_URL=""
 STACK_ENV_ERROR="invalid_stack_env"
 
 stack_env_metadata() {
@@ -120,6 +121,7 @@ stack_env_assign_public() {
     PORTAL_HOLDER_RESOLVER_URL) PORTAL_HOLDER_RESOLVER_URL="$value" ;;
     PORTAL_HOST_ISSUER_ORIGIN) PORTAL_HOST_ISSUER_ORIGIN="$value" ;;
     PORTAL_HOST_RESOLVER_ORIGIN) PORTAL_HOST_RESOLVER_ORIGIN="$value" ;;
+    PORTAL_DIDIT_API_BASE_URL) PORTAL_DIDIT_API_BASE_URL="$value" ;;
     *) return 1 ;;
   esac
 }
@@ -129,8 +131,9 @@ stack_env_parse_public() {
   sanitized="$(umask 077 && mktemp "${TMPDIR:-/tmp}/oxid-stack-env-public.XXXXXX")" || return 1
   if ! awk '
     BEGIN {
-      split("STACK_SCHEMA STACK_PROFILE STACK_NETWORK STACK_MIDNIGHT_OWNER STACK_PORTAL_OWNER OXID_ROOT OXID_COMMIT OXID_TREE PORTAL_HELPER_ROOT PORTAL_HELPER_COMMIT PORTAL_HELPER_TREE PORTAL_PROTOCOL_SOURCE_DIR PORTAL_PROTOCOL_COMMIT PORTAL_PROTOCOL_TREE PORTAL_PROTOCOL_PR_HEAD PORTAL_PROFILE_SOURCE_COMMIT PORTAL_PROVENANCE_SHA256 LOCAL_STACK_STATE_DIR SHARED_MIDNIGHT_PROJECT PORTAL_COMPOSE_PROJECT SHARED_MIDNIGHT_NODE_URL SHARED_MIDNIGHT_INDEXER_HTTP_URL SHARED_MIDNIGHT_INDEXER_WS_URL SHARED_MIDNIGHT_PROOF_SERVER_URL SHARED_MIDNIGHT_NODE_HOST_URL SHARED_MIDNIGHT_INDEXER_V3_HOST_URL SHARED_MIDNIGHT_INDEXER_V4_HOST_URL SHARED_MIDNIGHT_PROOF_SERVER_HOST_URL PORTAL_ISSUER_URL PORTAL_HOLDER_RESOLVER_URL PORTAL_HOST_ISSUER_ORIGIN PORTAL_HOST_RESOLVER_ORIGIN PORTAL_WALLET_SEED PORTAL_DID_MANAGER_API_KEY PORTAL_DID_MANAGER_CONTROLLER_API_KEY PORTAL_ISSUER_SESSION_TOKEN_SECRET PORTAL_DIDIT_API_KEY", names, " ")
+      split("STACK_SCHEMA STACK_PROFILE STACK_NETWORK STACK_MIDNIGHT_OWNER STACK_PORTAL_OWNER OXID_ROOT OXID_COMMIT OXID_TREE PORTAL_HELPER_ROOT PORTAL_HELPER_COMMIT PORTAL_HELPER_TREE PORTAL_PROTOCOL_SOURCE_DIR PORTAL_PROTOCOL_COMMIT PORTAL_PROTOCOL_TREE PORTAL_PROTOCOL_PR_HEAD PORTAL_PROFILE_SOURCE_COMMIT PORTAL_PROVENANCE_SHA256 LOCAL_STACK_STATE_DIR SHARED_MIDNIGHT_PROJECT PORTAL_COMPOSE_PROJECT SHARED_MIDNIGHT_NODE_URL SHARED_MIDNIGHT_INDEXER_HTTP_URL SHARED_MIDNIGHT_INDEXER_WS_URL SHARED_MIDNIGHT_PROOF_SERVER_URL SHARED_MIDNIGHT_NODE_HOST_URL SHARED_MIDNIGHT_INDEXER_V3_HOST_URL SHARED_MIDNIGHT_INDEXER_V4_HOST_URL SHARED_MIDNIGHT_PROOF_SERVER_HOST_URL PORTAL_ISSUER_URL PORTAL_HOLDER_RESOLVER_URL PORTAL_HOST_ISSUER_ORIGIN PORTAL_HOST_RESOLVER_ORIGIN PORTAL_DIDIT_API_BASE_URL PORTAL_WALLET_SEED PORTAL_DID_MANAGER_API_KEY PORTAL_DID_MANAGER_CONTROLLER_API_KEY PORTAL_ISSUER_SESSION_TOKEN_SECRET PORTAL_DIDIT_API_KEY", names, " ")
       for (i in names) allowed[names[i]] = 1
+      optional["PORTAL_DIDIT_API_BASE_URL"] = 1
       secret["PORTAL_WALLET_SEED"] = 1
       secret["PORTAL_DID_MANAGER_API_KEY"] = 1
       secret["PORTAL_DID_MANAGER_CONTROLLER_API_KEY"] = 1
@@ -148,8 +151,8 @@ stack_env_parse_public() {
       if (!(key in secret)) print $0
     }
     END {
-      if (count != 37) exit 2
-      for (key in allowed) if (!(key in seen)) exit 2
+      if (count != 37 && count != 38) exit 2
+      for (key in allowed) if (!(key in seen) && !(key in optional)) exit 2
     }
   ' "$STACK_ENV_PATH" >"$sanitized"; then
     rm -f -- "$sanitized"
@@ -181,8 +184,18 @@ stack_env_validate_git_root() {
 stack_env_validate_public_values() {
   local current_user remote local_ws_prefix
   local_ws_prefix="ws:"'//'
-  [ "$STACK_SCHEMA" = oxid-laceid-headless-v1 ] &&
-    [ "$STACK_PROFILE" = headless ] && [ "$STACK_NETWORK" = undeployed ] &&
+  case "${OXID_MOBILE_PORTAL_PROFILE:-local}:$STACK_PROFILE" in
+    local:headless)
+      [ "$STACK_SCHEMA" = oxid-laceid-headless-v1 ] &&
+        [ -z "$PORTAL_DIDIT_API_BASE_URL" ] || return 1
+      ;;
+    tailnet-ios-simulator:tailnet-simulator-mock)
+      [ "$STACK_SCHEMA" = oxid-laceid-tailnet-simulator-mock-v1 ] &&
+        [ "$PORTAL_DIDIT_API_BASE_URL" = http://smocker:8080 ] || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  [ "$STACK_NETWORK" = undeployed ] &&
     [ "$STACK_MIDNIGHT_OWNER" = oxid ] && [ "$STACK_PORTAL_OWNER" = portal ] || return 1
   [ "$OXID_ROOT" = "$STACK_ENV_REPOSITORY_ROOT" ] || return 1
   stack_env_validate_git_root "$OXID_ROOT" "$OXID_COMMIT" "$OXID_TREE" no || return 1
@@ -221,7 +234,12 @@ stack_env_validate_public_values() {
   [ "$SHARED_MIDNIGHT_INDEXER_V3_HOST_URL" = http://127.0.0.1:8088/api/v3/graphql ] || return 1
   [ "$SHARED_MIDNIGHT_INDEXER_V4_HOST_URL" = http://127.0.0.1:8088/api/v4/graphql ] || return 1
   [ "$SHARED_MIDNIGHT_PROOF_SERVER_HOST_URL" = http://127.0.0.1:6300 ] || return 1
-  [ "$PORTAL_ISSUER_URL" = http://127.0.0.1:18090 ] || return 1
+  if [ "${OXID_MOBILE_PORTAL_PROFILE:-local}" = tailnet-ios-simulator ]; then
+    [[ "${OXID_BUILD_PORTAL_PUBLIC_ORIGIN:-}" =~ ^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.ts\.net:9443$ ]] || return 1
+    [ "$PORTAL_ISSUER_URL" = "$OXID_BUILD_PORTAL_PUBLIC_ORIGIN" ] || return 1
+  else
+    [ "$PORTAL_ISSUER_URL" = http://127.0.0.1:18090 ] || return 1
+  fi
   [ "$PORTAL_HOLDER_RESOLVER_URL" = http://host.docker.internal:18092 ] || return 1
   [ "$PORTAL_HOST_ISSUER_ORIGIN" = http://127.0.0.1:8090 ] || return 1
   [ "$PORTAL_HOST_RESOLVER_ORIGIN" = http://127.0.0.1:9092 ] || return 1
@@ -247,5 +265,10 @@ stack_env_load() {
 stack_env_delegate_portal() {
   local operation="$1"
   case "$operation" in up|status|down) ;; *) return 2 ;; esac
-  STACK_ENV_FILE="$STACK_ENV_PATH" "$PORTAL_HELPER_ROOT/scripts/oxid-conformance-lifecycle.sh" "$operation"
+  if [ "$STACK_PROFILE" = tailnet-simulator-mock ]; then
+    STACK_ENV_FILE="$STACK_ENV_PATH" "$PORTAL_HELPER_ROOT/scripts/oxid-conformance-lifecycle.sh" \
+      --profile tailnet-simulator-mock "$operation"
+  else
+    STACK_ENV_FILE="$STACK_ENV_PATH" "$PORTAL_HELPER_ROOT/scripts/oxid-conformance-lifecycle.sh" "$operation"
+  fi
 }

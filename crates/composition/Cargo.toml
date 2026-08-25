@@ -19,6 +19,13 @@ mobile-portal = [
   "oxid-adapter-openid4vci/portal-http-mobile",
   "oxid-adapter-identity-ingress/loopback-test-offer-trigger",
 ]
+# Narrow issue #140 iOS Simulator profile. `mobile-portal` supplies the same
+# strict Final client; this additive feature changes only manifest/offer ingress
+# authority and is rejected by the composition root off iOS.
+mobile-portal-tailnet-ios-simulator = [
+  "mobile-portal",
+  "oxid-adapter-identity-ingress/tailnet-test-offer-trigger",
+]
 android-jni-exception-recovery-test = [
   "dep:oxid-adapter-mobile-native",
   "oxid-adapter-mobile-native/android-jni-exception-recovery-test",

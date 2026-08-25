@@ -24,8 +24,8 @@ const CONTROL_PORT = 18091;
 const MOBILE_TEST_OFFER_TRIGGER = "openid-credential-offer://standalone-portal-test-fetch";
 const HOLDER_RESOLVER_PORT = 18092;
 const ISSUER_RESOLVER_PROXY_PORT = 18093;
-const ISSUER_RESOLVER_ORIGIN = `http://127.0.0.1:${ISSUER_RESOLVER_PROXY_PORT}`;
-const ISSUER_ORIGIN = `http://127.0.0.1:${PORTAL_PROXY_PORT}`;
+const LOCAL_ISSUER_RESOLVER_ORIGIN = `http://127.0.0.1:${ISSUER_RESOLVER_PROXY_PORT}`;
+const LOCAL_ISSUER_ORIGIN = `http://127.0.0.1:${PORTAL_PROXY_PORT}`;
 const MAX_CONTROL_BODY = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const CHILD_COMMAND_TIMEOUT_MS = 10 * 60_000;
@@ -41,13 +41,37 @@ const repositoryRoot = path.resolve(path.dirname(new URL(import.meta.url).pathna
 const xcodeDeveloperDirectory = process.env.OXID_XCODE_DEVELOPER_DIR;
 const mobilePlatform = process.env.OXID_PORTAL_MOBILE_PLATFORM;
 const capabilityFifo = process.env.OXID_PORTAL_MOBILE_CAPABILITY_FIFO;
+const portalProfile = process.env.OXID_MOBILE_PORTAL_PROFILE ?? "local";
+const suppliedPublicOrigin = process.env.OXID_BUILD_PORTAL_PUBLIC_ORIGIN ?? "";
+function exactMagicDnsOrigin(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:"
+      && parsed.username === "" && parsed.password === ""
+      && parsed.port === "9443" && parsed.pathname === "/"
+      && parsed.search === "" && parsed.hash === ""
+      && parsed.hostname.endsWith(".ts.net")
+      && parsed.hostname !== "ts.net"
+      && parsed.hostname.split(".").every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label))
+      && parsed.origin === value;
+  } catch {
+    return false;
+  }
+}
+const tailnetProfile = portalProfile === "tailnet-ios-simulator";
+const portalProfileValid = portalProfile === "local"
+  || (tailnetProfile && mobilePlatform === "ios" && exactMagicDnsOrigin(suppliedPublicOrigin));
+const ISSUER_ORIGIN = tailnetProfile ? suppliedPublicOrigin : LOCAL_ISSUER_ORIGIN;
+const ISSUER_RESOLVER_ORIGIN = tailnetProfile
+  ? `${suppliedPublicOrigin}/issuer-resolver`
+  : LOCAL_ISSUER_RESOLVER_ORIGIN;
 const androidCapabilityFifoValid = mobilePlatform !== "android"
   || (capabilityFifo && path.isAbsolute(capabilityFifo)
     && fs.existsSync(capabilityFifo) && fs.lstatSync(capabilityFifo).isFIFO()
     && !fs.lstatSync(capabilityFifo).isSymbolicLink());
 if (!portalTree || !path.isAbsolute(portalTree) || !stateDirectory || !path.isAbsolute(stateDirectory)
     || !readyFifo || !path.isAbsolute(readyFifo)
-    || !new Set(["ios", "android"]).has(mobilePlatform) || !androidCapabilityFifoValid
+    || !new Set(["ios", "android"]).has(mobilePlatform) || !portalProfileValid || !androidCapabilityFifoValid
     || !/^[a-z0-9][a-z0-9_-]+$/.test(composeProjectName ?? "")
     || !stackEnvFile || !path.isAbsolute(stackEnvFile)
     || !localHeadlessScript || !path.isAbsolute(localHeadlessScript)) {
@@ -276,7 +300,8 @@ const proxyServer = http.createServer((request, response) => {
 });
 
 const issuerResolverProxy = http.createServer((request, response) => {
-  if (request.method !== "POST" || request.url !== "/resolve") {
+  if (request.method !== "POST"
+      || !new Set(["/resolve", "/issuer-resolver/resolve"]).has(request.url)) {
     return sendJson(response, 404, { error: "not_found" });
   }
   counters.issuerResolution += 1;
@@ -597,7 +622,7 @@ try {
   ]);
   const issuerDid = issuerMethod.split("#", 1)[0];
   if (!issuerDid || !issuerMethod.startsWith(`${issuerDid}#`)) throw new Error("issuer method invalid");
-  const resolution = await requestJson(`${ISSUER_RESOLVER_ORIGIN}/resolve`, {
+  const resolution = await requestJson(`${LOCAL_ISSUER_RESOLVER_ORIGIN}/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ did: issuerDid }),
@@ -613,6 +638,9 @@ try {
     controlOrigin: `http://127.0.0.1:${CONTROL_PORT}`,
     manifestPath,
     manifestSha256,
+    issuerOrigin: ISSUER_ORIGIN,
+    issuerResolverOrigin: ISSUER_RESOLVER_ORIGIN,
+    offerUrl: `${ISSUER_ORIGIN}/offer`,
     portalProxyPort: PORTAL_PROXY_PORT,
     portalResolverPort: ISSUER_RESOLVER_PROXY_PORT,
     schema: "oxid-portal-mobile-ready-v1",

@@ -185,6 +185,12 @@ mod loopback_test_offer_trigger {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
+    #[cfg(feature = "tailnet-test-offer-trigger")]
+    use reqwest::{
+        Certificate, Client,
+        header::{AUTHORIZATION, CONTENT_LENGTH, HeaderValue},
+        redirect::Policy,
+    };
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
     use zeroize::Zeroizing;
@@ -206,6 +212,105 @@ mod loopback_test_offer_trigger {
         read_capability()
             .and_then(|capability| fetch_offer(control_address, CONTROL_TIMEOUT, &capability))
             .unwrap_or_else(|()| TRIGGER.to_owned())
+    }
+
+    #[cfg(feature = "tailnet-test-offer-trigger")]
+    pub fn validate_tailnet_public_origin(public_origin: &str) -> Result<(), ()> {
+        let url = url::Url::parse(public_origin).map_err(|_| ())?;
+        let host = url.host_str().ok_or(())?;
+        let canonical_labels = host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+        });
+        if url.scheme() != "https"
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.port() != Some(9443)
+            || url.path() != "/"
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !host.ends_with(".ts.net")
+            || host == "ts.net"
+            || !canonical_labels
+            || url.origin().ascii_serialization() != public_origin
+        {
+            return Err(());
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "tailnet-test-offer-trigger")]
+    pub fn resolve_tailnet_trigger(public_origin: &str) -> String {
+        read_capability()
+            .and_then(|capability| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|_| ())?;
+                runtime.block_on(fetch_tailnet_offer(public_origin, &capability))
+            })
+            .unwrap_or_else(|()| TRIGGER.to_owned())
+    }
+
+    #[cfg(feature = "tailnet-test-offer-trigger")]
+    async fn fetch_tailnet_offer(public_origin: &str, capability: &[u8]) -> Result<String, ()> {
+        validate_tailnet_public_origin(public_origin)?;
+        if capability.len() != CAPABILITY_BYTES {
+            return Err(());
+        }
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .map(|certificate| Certificate::from_der(certificate.as_ref()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ())?;
+        let client = Client::builder()
+            .no_proxy()
+            .redirect(Policy::none())
+            .retry(reqwest::retry::never())
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(CONTROL_TIMEOUT)
+            .user_agent("oxid-portal-offer-handoff/0.1")
+            .tls_certs_only(roots)
+            .build()
+            .map_err(|_| ())?;
+        let mut header_bytes = Zeroizing::new(Vec::with_capacity(7 + capability.len()));
+        header_bytes.extend_from_slice(b"Bearer ");
+        header_bytes.extend_from_slice(capability);
+        let mut authorization = HeaderValue::from_bytes(&header_bytes).map_err(|_| ())?;
+        authorization.set_sensitive(true);
+        let mut response = client
+            .get(format!("{public_origin}/offer"))
+            .header(AUTHORIZATION, authorization)
+            .send()
+            .await
+            .map_err(|_| ())?;
+        if response.status() != reqwest::StatusCode::OK {
+            return Err(());
+        }
+        let expected_length = response
+            .headers()
+            .get(CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|length| *length > 0 && *length <= MAX_RESPONSE_BYTES)
+            .ok_or(())?;
+        let mut body = Vec::with_capacity(expected_length);
+        while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
+            if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+                return Err(());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        if body.len() != expected_length {
+            return Err(());
+        }
+        String::from_utf8(body).map_err(|_| ())
     }
 
     fn capability_path() -> Result<PathBuf, ()> {
@@ -488,6 +593,8 @@ pub struct NativeIdentityLinkIngress {
     captured: Arc<Mutex<CapturedIdentityLinks>>,
     #[cfg(feature = "loopback-test-offer-trigger")]
     resolve_loopback_test_offer_trigger: bool,
+    #[cfg(feature = "tailnet-test-offer-trigger")]
+    tailnet_public_origin: Option<String>,
 }
 
 #[derive(Default)]
@@ -504,7 +611,22 @@ impl NativeIdentityLinkIngress {
         Self {
             captured: Arc::new(Mutex::new(CapturedIdentityLinks::default())),
             resolve_loopback_test_offer_trigger: true,
+            #[cfg(feature = "tailnet-test-offer-trigger")]
+            tailnet_public_origin: None,
         }
+    }
+
+    #[cfg(feature = "tailnet-test-offer-trigger")]
+    pub fn standalone_portal_tailnet_ios_simulator(
+        public_origin: &str,
+    ) -> Result<Self, &'static str> {
+        loopback_test_offer_trigger::validate_tailnet_public_origin(public_origin)
+            .map_err(|()| "Portal tailnet offer origin is invalid")?;
+        Ok(Self {
+            captured: Arc::new(Mutex::new(CapturedIdentityLinks::default())),
+            resolve_loopback_test_offer_trigger: true,
+            tailnet_public_origin: Some(public_origin.to_owned()),
+        })
     }
 
     fn enqueue(&self, link: InboundIdentityLink) -> Result<(), IdentityLinkIngressError> {
@@ -598,6 +720,12 @@ impl IdentityLinkIngressPort for NativeIdentityLinkIngress {
     fn capture(&self, value: String) -> Result<(), IdentityLinkIngressError> {
         #[cfg(feature = "loopback-test-offer-trigger")]
         if self.resolve_loopback_test_offer_trigger {
+            #[cfg(feature = "tailnet-test-offer-trigger")]
+            if let Some(public_origin) = self.tailnet_public_origin.clone() {
+                return self.capture_with_trigger_resolver(value, move || {
+                    loopback_test_offer_trigger::resolve_tailnet_trigger(&public_origin)
+                });
+            }
             return self.capture_with_trigger_resolver(
                 value,
                 loopback_test_offer_trigger::resolve_trigger,
@@ -892,6 +1020,30 @@ mod tests {
             ingress.capture(" openid4vp://authorize".to_owned()),
             Err(IdentityLinkIngressError::InvalidLink)
         );
+    }
+
+    #[cfg(feature = "tailnet-test-offer-trigger")]
+    #[test]
+    fn tailnet_offer_profile_accepts_only_exact_magic_dns_https_origin() {
+        assert!(
+            NativeIdentityLinkIngress::standalone_portal_tailnet_ios_simulator(
+                "https://oxid-demo.tail1234.ts.net:9443"
+            )
+            .is_ok()
+        );
+        for invalid in [
+            "http://oxid-demo.tail1234.ts.net:9443",
+            "https://oxid-demo.tail1234.ts.net",
+            "https://oxid-demo.tail1234.ts.net:9443/offer",
+            "https://127.0.0.1:9443",
+            "https://oxid.example:9443",
+        ] {
+            assert!(
+                NativeIdentityLinkIngress::standalone_portal_tailnet_ios_simulator(invalid)
+                    .is_err(),
+                "{invalid}"
+            );
+        }
     }
 
     #[cfg(feature = "loopback-test-offer-trigger")]

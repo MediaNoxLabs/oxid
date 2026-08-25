@@ -209,7 +209,7 @@ impl PortalDeploymentManifest {
             return Err(PortalDeploymentManifestError::SourceLockMismatch);
         }
         validate_origin(&self.issuer_origin)?;
-        validate_origin(&self.issuer_resolver_origin)?;
+        validate_resolver_base(&self.issuer_resolver_origin)?;
         validate_issuer_did(&self.issuer_did)?;
         if !self
             .issuer_method
@@ -330,20 +330,47 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn validate_origin(value: &str) -> Result<(), PortalDeploymentManifestError> {
+    let url = validate_transport_base(value)?;
+    if url.path() != "/" || url.origin().ascii_serialization() != value {
+        return Err(PortalDeploymentManifestError::InvalidOrigin);
+    }
+    Ok(())
+}
+
+fn validate_resolver_base(value: &str) -> Result<(), PortalDeploymentManifestError> {
+    let url = validate_transport_base(value)?;
+    let canonical = if url.path() == "/" {
+        url.origin().ascii_serialization() == value
+    } else {
+        url.as_str() == value
+    };
+    if !canonical
+        || (url.path() != "/"
+            && (url.path().ends_with('/')
+                || url.path().contains("//")
+                || url
+                    .path()
+                    .split('/')
+                    .any(|segment| matches!(segment, "." | ".."))))
+    {
+        return Err(PortalDeploymentManifestError::InvalidOrigin);
+    }
+    Ok(())
+}
+
+fn validate_transport_base(value: &str) -> Result<Url, PortalDeploymentManifestError> {
     let url = Url::parse(value).map_err(|_| PortalDeploymentManifestError::InvalidOrigin)?;
     if url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
-        || url.path() != "/"
         || !matches!(url.scheme(), "https" | "http")
         || (url.scheme() == "http" && !host_is_loopback(&url))
-        || url.origin().ascii_serialization() != value
     {
         return Err(PortalDeploymentManifestError::InvalidOrigin);
     }
-    Ok(())
+    Ok(url)
 }
 
 fn validate_issuer_did(value: &str) -> Result<(), PortalDeploymentManifestError> {

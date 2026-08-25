@@ -8,13 +8,40 @@ bash -n \
   scripts/run-ios-simulator.sh \
   scripts/run-android-emulator.sh \
   scripts/test-ios-portal-flow.sh \
-  scripts/test-android-portal-flow.sh
+  scripts/test-android-portal-flow.sh \
+  scripts/portal-tailnet-serve.sh \
+  scripts/test-portal-tailnet-serve.sh
 node --check scripts/e2e/portal-mobile-support.mjs
 node --check scripts/e2e/portal-mobile-offer-handoff.mjs
 node --check scripts/e2e/portal-mobile-offer-handoff.test.mjs
 node --test scripts/e2e/portal-mobile-offer-handoff.test.mjs
 node --check scripts/e2e/portal-mobile-holder-sync.mjs
 node --check tests/mobile/android-portal-flow.mjs
+./scripts/test-portal-tailnet-serve.sh
+
+for tailnet_boundary in \
+  standalone-portal-tailnet-ios-simulator \
+  mobile-portal-tailnet-ios-simulator \
+  tailnet-test-offer-trigger \
+  OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN \
+  '/issuer-resolver' \
+  'serve --yes --https=9443 off' \
+  '.no_proxy()' \
+  'Policy::none()' \
+  'reqwest::retry::never()' \
+  'MAX_RESPONSE_BYTES'; do
+  rg -qF "$tailnet_boundary" \
+    apps/oxid crates/composition crates/adapters/identity-ingress \
+    scripts/run-ios-simulator.sh scripts/test-ios-portal-flow.sh \
+    scripts/e2e/portal-mobile-support.mjs scripts/portal-tailnet-serve.sh || {
+    echo "Portal iOS tailnet boundary is missing: $tailnet_boundary" >&2
+    exit 1
+  }
+done
+if rg -n 'standalone-portal-tailnet-ios-simulator' scripts/run-android-emulator.sh scripts/test-android-portal-flow.sh; then
+  echo "The iOS Simulator Portal-tailnet profile leaked into Android." >&2
+  exit 1
+fi
 
 if rg -n '10\.0\.2\.2|set -x|(?:reverse|forward) --remove-all' \
   scripts/e2e/portal-mobile-* \
@@ -445,8 +472,8 @@ fi
 # and the separate signed lifecycle helper. Mobile support never fetches or
 # creates another checkout during a conformance run.
 for source_pin_marker in \
-  'PORTAL_HELPER_COMMIT="8915760a4523d282fa07d45a48b7f58e4287bb54"' \
-  'PORTAL_HELPER_TREE="1317e109cf0792c0e1d7c8f9e2b8857251f6e92d"' \
+  'PORTAL_EXPECTED_HELPER_COMMIT="da9adad711a83c25505f96d88809c7320d049b2e"' \
+  'PORTAL_EXPECTED_HELPER_TREE="01a78541d24b7402a0eb1f7d1ca2c0f91de95fd3"' \
   'stack_env_load "$STACK_ENV_FILE"' \
   'source_tree="$(portal_mobile_source_tree)"' \
   '[ "$source_tree" = "$PORTAL_PROTOCOL_SOURCE_DIR" ]'; do

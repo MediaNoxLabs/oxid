@@ -2,13 +2,15 @@
 # Shared, source-only orchestration for the sequential iOS/Android Portal suites.
 
 readonly PORTAL_EXPECTED_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
-readonly PORTAL_HELPER_COMMIT="8915760a4523d282fa07d45a48b7f58e4287bb54"
-readonly PORTAL_HELPER_TREE="1317e109cf0792c0e1d7c8f9e2b8857251f6e92d"
+# Names stay distinct from the parsed STACK_ENV_FILE fields populated later by
+# stack-env-v1.sh; readonly authority constants must not shadow loader output.
+readonly PORTAL_EXPECTED_HELPER_COMMIT="da9adad711a83c25505f96d88809c7320d049b2e"
+readonly PORTAL_EXPECTED_HELPER_TREE="01a78541d24b7402a0eb1f7d1ca2c0f91de95fd3"
 readonly PORTAL_INTEGRATION_COMMIT="925ec8d04882eabd4ac7b784c70fc2f0c152faae"
 readonly PORTAL_INTEGRATION_TREE="58b4597524f88a0ae2253439a44dab0dc60cbb6f"
 readonly PORTAL_PR_HEAD="9c82db23eabe8b6d758b2731f2225910ea627c14"
 readonly PORTAL_PROFILE_SOURCE="76e8edf394a4cb37ca822037272d543c68f25f71"
-readonly PORTAL_PROVENANCE_SHA256="cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87"
+readonly PORTAL_EXPECTED_PROVENANCE_SHA256="cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87"
 
 readonly PORTAL_MOBILE_READY_TIMEOUT_SECONDS=720
 readonly PORTAL_MOBILE_CURL_TIMEOUT_SECONDS=10
@@ -30,6 +32,9 @@ PORTAL_MOBILE_STATE_DIR=""
 PORTAL_MOBILE_CONTROL_ORIGIN=""
 PORTAL_MOBILE_MANIFEST_PATH=""
 PORTAL_MOBILE_MANIFEST_SHA256=""
+PORTAL_MOBILE_PROFILE=""
+PORTAL_MOBILE_PUBLIC_ORIGIN=""
+PORTAL_MOBILE_TAILNET_SERVE_ACTIVE=0
 PORTAL_MOBILE_CAPABILITY_FIFO=""
 PORTAL_MOBILE_CAPABILITY_FD_OPEN=0
 PORTAL_MOBILE_PRIVATE_LOG=""
@@ -279,6 +284,19 @@ portal_mobile_start() {
   trap 'exit 143' TERM
   PORTAL_MOBILE_PLATFORM="$1"
   case "$PORTAL_MOBILE_PLATFORM" in ios|android) ;; *) portal_mobile_fail platform; return 1 ;; esac
+  PORTAL_MOBILE_PROFILE="${OXID_MOBILE_PORTAL_PROFILE:-local}"
+  PORTAL_MOBILE_PUBLIC_ORIGIN="${OXID_BUILD_PORTAL_PUBLIC_ORIGIN:-}"
+  case "$PORTAL_MOBILE_PROFILE" in
+    local) ;;
+    tailnet-ios-simulator)
+      [ "$PORTAL_MOBILE_PLATFORM" = ios ] && \
+        [[ "$PORTAL_MOBILE_PUBLIC_ORIGIN" =~ ^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.ts\.net:9443$ ]] || {
+        portal_mobile_fail tailnet-origin
+        return 1
+      }
+      ;;
+    *) portal_mobile_fail profile; return 1 ;;
+  esac
   portal_mobile_acquire_lock || return 1
 
   local source_tree ready_fifo capability_fifo="" ready_status=""
@@ -372,6 +390,18 @@ portal_mobile_start() {
     portal_mobile_fail control-origin
     return 1
   }
+  expected_issuer_origin="http://127.0.0.1:18090"
+  expected_resolver_origin="http://127.0.0.1:18093"
+  if [ "$PORTAL_MOBILE_PROFILE" = tailnet-ios-simulator ]; then
+    expected_issuer_origin="$PORTAL_MOBILE_PUBLIC_ORIGIN"
+    expected_resolver_origin="$PORTAL_MOBILE_PUBLIC_ORIGIN/issuer-resolver"
+  fi
+  [ "$(jq -r '.issuerOrigin // empty' "$ready")" = "$expected_issuer_origin" ] && \
+    [ "$(jq -r '.issuerResolverOrigin // empty' "$ready")" = "$expected_resolver_origin" ] && \
+    [ "$(jq -r '.offerUrl // empty' "$ready")" = "$expected_issuer_origin/offer" ] || {
+    portal_mobile_fail public-origins
+    return 1
+  }
   [ -f "$PORTAL_MOBILE_MANIFEST_PATH" ] && \
     [[ "$PORTAL_MOBILE_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] && \
     [ "$(shasum -a 256 "$PORTAL_MOBILE_MANIFEST_PATH" | awk '{print $1}')" = "$PORTAL_MOBILE_MANIFEST_SHA256" ] || {
@@ -379,13 +409,34 @@ portal_mobile_start() {
     return 1
   }
 
-  export OXID_MOBILE_PORTAL_PROFILE=local
+  if [ "$PORTAL_MOBILE_PROFILE" = tailnet-ios-simulator ]; then
+    OXID_PORTAL_TAILNET_STATE_DIR="$PORTAL_MOBILE_STATE_DIR/tailscale-serve" \
+      "$PORTAL_MOBILE_REPOSITORY_ROOT/scripts/portal-tailnet-serve.sh" \
+        up "$PORTAL_MOBILE_PUBLIC_ORIGIN" >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1 || {
+      portal_mobile_fail tailscale-serve
+      return 1
+    }
+    PORTAL_MOBILE_TAILNET_SERVE_ACTIVE=1
+    public_host="${PORTAL_MOBILE_PUBLIC_ORIGIN#https://}"
+    public_host="${public_host%:9443}"
+    export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$public_host:8443/api/v4/graphql/ws"
+    export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$public_host:8443/api/v4/graphql"
+    export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$public_host:10000"
+    export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$public_host"
+  fi
+  export OXID_MOBILE_PORTAL_PROFILE="$PORTAL_MOBILE_PROFILE"
   export OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$PORTAL_MOBILE_MANIFEST_PATH"
   export OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$PORTAL_MOBILE_MANIFEST_SHA256"
 }
 
 portal_mobile_finish() {
   local result=0
+  if [ "$PORTAL_MOBILE_TAILNET_SERVE_ACTIVE" = 1 ]; then
+    OXID_PORTAL_TAILNET_STATE_DIR="$PORTAL_MOBILE_STATE_DIR/tailscale-serve" \
+      "$PORTAL_MOBILE_REPOSITORY_ROOT/scripts/portal-tailnet-serve.sh" \
+        down "$PORTAL_MOBILE_PUBLIC_ORIGIN" >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1 || result=1
+    PORTAL_MOBILE_TAILNET_SERVE_ACTIVE=0
+  fi
   if [ -n "$PORTAL_MOBILE_SUPPORT_PID" ]; then
     curl --noproxy '*' --fail --silent --show-error \
       --connect-timeout "$PORTAL_MOBILE_CURL_TIMEOUT_SECONDS" \
@@ -409,6 +460,12 @@ portal_mobile_cleanup() {
   PORTAL_MOBILE_CLEANUP_RUNNING=1
   trap - EXIT
   trap '' INT TERM
+  if [ "$PORTAL_MOBILE_TAILNET_SERVE_ACTIVE" = 1 ]; then
+    OXID_PORTAL_TAILNET_STATE_DIR="$PORTAL_MOBILE_STATE_DIR/tailscale-serve" \
+      "$PORTAL_MOBILE_REPOSITORY_ROOT/scripts/portal-tailnet-serve.sh" \
+        down "$PORTAL_MOBILE_PUBLIC_ORIGIN" >>"${PORTAL_MOBILE_PRIVATE_LOG:-/dev/null}" 2>&1 || cleanup_status=1
+    PORTAL_MOBILE_TAILNET_SERVE_ACTIVE=0
+  fi
   if declare -F portal_mobile_platform_cleanup >/dev/null 2>&1; then
     portal_mobile_platform_cleanup || cleanup_status=1
   fi

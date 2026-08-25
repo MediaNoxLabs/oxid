@@ -15,6 +15,18 @@ use tokio::{
 
 use super::*;
 
+#[test]
+fn deployment_resolver_base_accepts_the_exact_tailnet_prefix() {
+    assert_eq!(
+        validate_origin("https://oxid-demo.tail1234.ts.net:9443"),
+        Ok(())
+    );
+    assert_eq!(
+        validate_resolver_base("https://oxid-demo.tail1234.ts.net:9443/issuer-resolver"),
+        Ok(())
+    );
+}
+
 const HOLDER_DID: &str = "did:example:synthetic-holder";
 const AUTH_METHOD: &str = "did:example:synthetic-holder#auth";
 const BINDING_METHOD: &str = "did:example:synthetic-holder#assert";

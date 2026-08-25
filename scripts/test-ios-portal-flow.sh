@@ -30,11 +30,15 @@ export OXID_XCODE_DEVELOPER_DIR="$xcode_developer_dir"
 source "$repository_root/scripts/e2e/portal-mobile-harness-lib.sh"
 portal_mobile_start ios
 
+portal_network_profile=local
+if [ "$PORTAL_MOBILE_PROFILE" = tailnet-ios-simulator ]; then
+  portal_network_profile=tailnet
+fi
 OXID_IOS_DEVICE="${OXID_IOS_DEVICE:-}" \
 OXID_IOS_RESET_DATA=1 \
 OXID_MOBILE_CUSTODY=development \
-OXID_STANDALONE_NETWORK_PROFILE=local \
-OXID_MOBILE_PORTAL_PROFILE=local \
+OXID_STANDALONE_NETWORK_PROFILE="$portal_network_profile" \
+OXID_MOBILE_PORTAL_PROFILE="$PORTAL_MOBILE_PROFILE" \
   "$repository_root/scripts/run-ios-simulator.sh" \
   >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1
 
@@ -116,11 +120,15 @@ if ! evidence_temp="$(umask 077 && mktemp "$evidence_directory/.evidence.json.tm
 fi
 PORTAL_MOBILE_EVIDENCE_TEMP="$evidence_temp"
 chmod 600 "$evidence_temp" || { portal_mobile_fail evidence-temp; exit 1; }
+evidence_profile="standalone-local-development-portal"
+if [ "$PORTAL_MOBILE_PROFILE" = tailnet-ios-simulator ]; then
+  evidence_profile="standalone-tailnet-development-portal-ios-simulator"
+fi
 evidence_document='{
   schema:"oxid-portal-mobile-evidence-v1",
   oxid:{head:$head},
   portal:{helperCommit:$helperCommit,helperTree:$helperTree,integrationCommit:$portalCommit,integrationTree:$portalTree,prHead:$prHead,profileSourceCommit:$profileSource,provenanceSha256:$provenance},
-  platform:{kind:"ios_simulator",model:$model,os:$os,applicationId:$app,profile:"standalone-local-development-portal"},
+  platform:{kind:"ios_simulator",model:$model,os:$os,applicationId:$app,profile:$profile},
   acceptance:{mockKycApproved:true,warmColdCustomScheme:true,oneItemStrictRouter:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,strictFinalExchange:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,developmentCustodyReactivated:true,reverified:true,unavailableDenied:true,timeoutDenied:true,cameraUnavailable:true,secretFreeEvidence:true}
 }'
 evidence_sentinel='openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|John|Doe|AB1234567|private.?parts|signed.?bytes|detached.?proof|[0-9A-F]{8}-[0-9A-F-]{27}'
@@ -129,6 +137,7 @@ if ! jq -cn \
   --arg model "$device_name" \
   --arg os "$runtime" \
   --arg app "$bundle_identifier" \
+  --arg profile "$evidence_profile" \
   --arg helperCommit "$PORTAL_HELPER_COMMIT" \
   --arg helperTree "$PORTAL_HELPER_TREE" \
   --arg portalCommit "$PORTAL_INTEGRATION_COMMIT" \
@@ -147,6 +156,7 @@ portal_mobile_finalize_evidence \
   --arg model "$device_name" \
   --arg os "$runtime" \
   --arg app "$bundle_identifier" \
+  --arg profile "$evidence_profile" \
   --arg helperCommit "$PORTAL_HELPER_COMMIT" \
   --arg helperTree "$PORTAL_HELPER_TREE" \
   --arg portalCommit "$PORTAL_INTEGRATION_COMMIT" \

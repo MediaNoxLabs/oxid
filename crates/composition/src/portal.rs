@@ -2,9 +2,9 @@
 
 //! Native development composition bridge for the exact authenticated Portal
 //! PR #17 deployment profile. Desktop/headless uses an absolute manifest file;
-//! the explicit standalone-local mobile profile uses build-embedded bytes.
-//! Production, native-custody, tailnet, and WebAssembly compositions cannot
-//! select this module.
+//! the explicit standalone-local and issue #140 iOS Simulator tailnet profiles
+//! use build-embedded bytes. Production, native-custody, ordinary tailnet,
+//! Android-tailnet, and WebAssembly compositions cannot select this module.
 
 use std::sync::Arc;
 
@@ -23,6 +23,8 @@ use oxid_adapter_vc_midnight::{
     convert_portal_private_parts,
 };
 use oxid_identity_application::DidResolutionPort;
+
+use crate::PortalTestIngress;
 
 #[cfg(any(test, target_os = "ios", target_os = "android"))]
 const MOBILE_PORTAL_ISSUER_ORIGIN: &str = "http://127.0.0.1:18090";
@@ -47,9 +49,8 @@ impl std::fmt::Display for PortalIdentityConfigurationError {
             Self::Resolver(error) => error.fmt(formatter),
             Self::TrustAnchor(error) => error.fmt(formatter),
             #[cfg(any(test, target_os = "ios", target_os = "android"))]
-            Self::MobileHarnessOriginMismatch => {
-                formatter.write_str("Portal mobile harness origins do not match the local profile")
-            }
+            Self::MobileHarnessOriginMismatch => formatter
+                .write_str("Portal mobile harness routes do not match the authenticated profile"),
             #[cfg(not(any(target_os = "ios", target_os = "android")))]
             Self::ManifestPathMustBeAbsolute => {
                 formatter.write_str("Portal deployment manifest path must be absolute")
@@ -64,6 +65,7 @@ pub(crate) struct PortalIdentityConfiguration {
     pub(crate) client_factory: PortalOid4vciClientFactory,
     pub(crate) issuer_resolver: Arc<dyn DidResolutionPort>,
     pub(crate) trust_anchor: DigitalPassportIssuerTrustAnchor,
+    pub(crate) test_ingress: PortalTestIngress,
 }
 
 impl PortalIdentityConfiguration {
@@ -78,7 +80,7 @@ impl PortalIdentityConfiguration {
         }
         let deployment = PortalDeploymentManifest::from_file(path, expected_sha256)
             .map_err(PortalIdentityConfigurationError::Manifest)?;
-        Self::new(deployment)
+        Self::new(deployment, PortalTestIngress::None)
     }
 
     #[cfg(all(
@@ -92,10 +94,30 @@ impl PortalIdentityConfiguration {
         let deployment = PortalDeploymentManifest::from_bytes(bytes, expected_sha256)
             .map_err(PortalIdentityConfigurationError::Manifest)?;
         validate_mobile_harness_origins(&deployment)?;
-        Self::new(deployment)
+        Self::new(deployment, PortalTestIngress::Loopback)
     }
 
-    fn new(deployment: PortalDeploymentManifest) -> Result<Self, PortalIdentityConfigurationError> {
+    #[cfg(all(feature = "mobile-portal-tailnet-ios-simulator", target_os = "ios"))]
+    pub(crate) fn from_tailnet_bytes(
+        bytes: &[u8],
+        expected_sha256: &str,
+        public_origin: &str,
+    ) -> Result<Self, PortalIdentityConfigurationError> {
+        let deployment = PortalDeploymentManifest::from_bytes(bytes, expected_sha256)
+            .map_err(PortalIdentityConfigurationError::Manifest)?;
+        validate_tailnet_harness_origins(&deployment, public_origin)?;
+        Self::new(
+            deployment,
+            PortalTestIngress::Tailnet {
+                public_origin: public_origin.to_owned(),
+            },
+        )
+    }
+
+    fn new(
+        deployment: PortalDeploymentManifest,
+        test_ingress: PortalTestIngress,
+    ) -> Result<Self, PortalIdentityConfigurationError> {
         let resolver = HttpDidResolverConfig::new(deployment.issuer_resolver_origin())
             .map(HttpDidResolver::new)
             .map_err(PortalIdentityConfigurationError::Resolver)?;
@@ -114,6 +136,7 @@ impl PortalIdentityConfiguration {
             client_factory,
             issuer_resolver: Arc::new(resolver),
             trust_anchor,
+            test_ingress,
         })
     }
 }
@@ -124,6 +147,23 @@ fn validate_mobile_harness_origins(
 ) -> Result<(), PortalIdentityConfigurationError> {
     if deployment.issuer_origin() != MOBILE_PORTAL_ISSUER_ORIGIN
         || deployment.issuer_resolver_origin() != MOBILE_PORTAL_ISSUER_RESOLVER_ORIGIN
+    {
+        return Err(PortalIdentityConfigurationError::MobileHarnessOriginMismatch);
+    }
+    Ok(())
+}
+
+#[cfg(any(
+    test,
+    all(feature = "mobile-portal-tailnet-ios-simulator", target_os = "ios")
+))]
+fn validate_tailnet_harness_origins(
+    deployment: &PortalDeploymentManifest,
+    public_origin: &str,
+) -> Result<(), PortalIdentityConfigurationError> {
+    let expected_resolver = format!("{public_origin}/issuer-resolver");
+    if deployment.issuer_origin() != public_origin
+        || deployment.issuer_resolver_origin() != expected_resolver
     {
         return Err(PortalIdentityConfigurationError::MobileHarnessOriginMismatch);
     }
@@ -199,9 +239,33 @@ mod tests {
     }
 
     #[test]
+    fn tailnet_manifest_requires_one_exact_public_origin_and_resolver_prefix() {
+        let origin = "https://oxid-demo.tail1234.ts.net:9443";
+        validate_tailnet_harness_origins(
+            &deployment(origin, &format!("{origin}/issuer-resolver")),
+            origin,
+        )
+        .expect("exact tailnet routes");
+
+        for (issuer, resolver) in [
+            (
+                "https://other.tail1234.ts.net:9443".to_owned(),
+                format!("{origin}/issuer-resolver"),
+            ),
+            (origin.to_owned(), format!("{origin}/resolver")),
+            (origin.to_owned(), format!("{origin}/issuer-resolution")),
+        ] {
+            assert_eq!(
+                validate_tailnet_harness_origins(&deployment(&issuer, &resolver), origin),
+                Err(PortalIdentityConfigurationError::MobileHarnessOriginMismatch)
+            );
+        }
+    }
+
+    #[test]
     fn headless_portal_configuration_preserves_generic_https_origins() {
         let deployment = deployment("https://issuer.example", "https://resolver.example");
-        PortalIdentityConfiguration::new(deployment)
+        PortalIdentityConfiguration::new(deployment, PortalTestIngress::None)
             .expect("headless authenticated HTTPS routes remain supported");
     }
 }
