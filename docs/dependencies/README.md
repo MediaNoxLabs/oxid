@@ -6,7 +6,7 @@ version, license, maintenance, security evidence, target support, cryptography,
 API stability, rationale, alternatives, adapter boundary, and exit strategy.
 
 The Cargo lock file pins the resolved graph. Automated updates target
-`develop`, and changes must pass advisory, license, source, build, and test
+`integration`, and changes must pass advisory, license, source, build, and test
 gates.
 
 Current reviews and source policies:

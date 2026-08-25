@@ -19,7 +19,7 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 site_dir="$repo_root/docs/site"
 adr_index="$repo_root/docs/adr/README.md"
 catalog="$site_dir/src/adr-catalog.md"
-blob_base="https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr"
+blob_base="https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr"
 
 {
   echo "# Decision records"

@@ -20,7 +20,7 @@ and releases. This page documents the process as it actually operates.
    with denied warnings, the full test suite, a coverage floor, dependency
    audits, and secret-hygiene checks run on every push — the same script
    locally and in CI. A multi-persona review policy
-   ([`.devloops`](https://github.com/MediaNoxLabs/oxid/blob/develop/.devloops))
+   ([`.devloops`](https://github.com/MediaNoxLabs/oxid/blob/integration/.devloops))
    defines fan-out review angles: scope, correctness, coverage,
    architecture, security.
 4. **An independent steward audits the stream.** A second agent reviews
@@ -37,7 +37,7 @@ and releases. This page documents the process as it actually operates.
 
 - **Provenance over trust.** Migrated behavior cites the exact upstream
   commit it was reviewed from
-  ([`docs/migration/`](https://github.com/MediaNoxLabs/oxid/tree/develop/docs/migration));
+  ([`docs/migration/`](https://github.com/MediaNoxLabs/oxid/tree/integration/docs/migration));
   pinned digests make "the same bytes" a checkable claim.
 - **Honesty as a gate.** Capability labels (`deterministic_simulation`,
   `indexer_supplied_not_proven`, `proof_unavailable`) are part of the

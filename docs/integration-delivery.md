@@ -9,13 +9,13 @@ compared with that same base through review and merge. Active repository ruleset
 `21481544` makes the historical `main` and migration-era `develop` branches
 read-only with no bypass actors; neither branch builds or deploys Pages.
 
-The metadata workflow retains an `integration -> main` release-promotion
-exception so its accepted PR shapes remain explicit, but the active owner-side
-ruleset blocks updates to `main`, so that exception is not a usable publishing
-or merge route. Dependency automation without a local issue-closing reference
-is outside this metadata contract. Any future promotion or other exception
-needs a separately reviewed ruleset and repository change; labels and caller
-prompts cannot bypass the check.
+There is no `integration -> main` release-promotion exception in repository
+policy or guidance. Dependency automation without a local issue-closing
+reference is outside the metadata workflow contract, but it still cannot update
+a read-only branch. Any future promotion requires a separate tracked issue,
+reviewed repository policy change, and owner ruleset change before a promotion
+pull request is opened; labels and caller prompts cannot bypass the active
+ruleset.
 
 ## One base through the complete loop
 
@@ -37,11 +37,12 @@ node .pi/npm/node_modules/dev-loops/cli/index.mjs pr create \
 ```
 
 The body must contain `Closes #<number>`. The protected base-branch
-`pull_request_target` metadata workflow is checkout-free. Its
-`Require integration for issue-backed PRs` job rejects any other writable base
-except the dormant release-promotion shape above. The owner-side ruleset, rather
-than mutable workflow code on retired bases, prevents updates to `develop` and
-`main`.
+`pull_request_target` metadata workflow is checkout-free and rejects any
+issue-backed PR whose base is not `integration`. Because target-event runs are
+base-owned metadata rather than empirically proven head-SHA statuses, its job is
+not configured as a required integration branch-protection context. Active
+ruleset `21481544`, rather than mutable workflow code on retired bases, is the
+cross-base authority preventing every update to `develop` and `main`.
 
 Local review commands must use the fetched integration ref rather than a
 caller-selected default:
@@ -53,10 +54,10 @@ git diff "$base_sha"..HEAD
 ```
 
 The pull request's `baseRefName` and base SHA are authoritative for hosted diff,
-freshness, and conflict checks. If either is not `integration` (outside the
-release exception), or if local and GitHub facts disagree, stop. Immediately
-before merge, refresh and check freshness plus conflict-freedom explicitly. The
-`git merge-tree --write-tree` form requires Git 2.38 or newer:
+freshness, and conflict checks. If either is not `integration`, or if local and
+GitHub facts disagree, stop. Immediately before merge, refresh and check
+freshness plus conflict-freedom explicitly. The `git merge-tree --write-tree`
+form requires Git 2.38 or newer:
 
 ```bash
 git fetch origin integration
@@ -74,7 +75,6 @@ reviews, require resolved conversations, and require branches to be current.
 Once issue #144 has landed and every workflow has emitted an integration
 context, require these exact status checks:
 
-- `Require integration for issue-backed PRs`
 - `Verify commit sign-offs`
 - `Validate PR title`
 - `Validate PR body`
@@ -94,8 +94,10 @@ bypass actors. The Pages workflow must trigger and deploy only from
 ## Independent current-head review
 
 Copilot review is unavailable and remains disabled with
-`refinement.maxCopilotRounds: 0`. The `external-review` gate instead requires a
-fresh independent Claude CLI review. Evidence is valid only when it records:
+`refinement.maxCopilotRounds: 0`. The `external-review` angle is configured in
+both local `draft` and `preApproval` gates. It requires a manually invoked fresh
+independent Claude CLI review and records that evidence in the local gate; it is
+not a hosted GitHub status check. Evidence is valid only when it records:
 
 - `claude --version`;
 - the exact reviewed head SHA and integration merge-base SHA;

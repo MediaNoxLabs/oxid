@@ -3,7 +3,7 @@
 Oxid ships capabilities in reviewed slices, and every capability carries an
 explicit mode label. This page is the reader's map; the authoritative,
 always-current source is the delivery-state column of the
-[ADR index](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/README.md)
+[ADR index](https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr/README.md)
 and the repository [issue backlog](https://github.com/MediaNoxLabs/oxid/issues).
 The evidence-based stopping-point assessment, including remaining work and
 external blockers, is the

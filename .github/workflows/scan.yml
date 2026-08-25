@@ -30,8 +30,26 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Run Checkov with the authenticated synthetic JWT fixture excluded
+        # Checkov CKV_SECRET_9 mistakes the manifest-authenticated negative JWT
+        # fixture for a credential. Keep all Checkov frameworks enabled and
+        # exclude only that immutable public test vector.
+        uses: bridgecrewio/checkov-action@59b9d7edfcad5b87fbe3f473a9a134a721ad03f8 # v12.3119.0
+        with:
+          directory: .
+          skip_path: >-
+            fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/unsupported-proof-alg[.]json$
+          skip_download: true
+          skip_results_upload: true
+          compact: true
+          quiet: true
+          output_format: cli
+
       - name: Scan code
         uses: midnightntwrk/upload-sarif-github-action@4bbe849e9707b46342832d4b7f94fec585823ca4 # pinned main, 2026-07-10
         with:
           fail_severity: high
+          # Checkov runs in the preceding pinned step with one exact synthetic
+          # fixture exclusion; the aggregate action still runs every other scan.
+          skip_checkov_scan: "true"
           skip_scorecard_scan: "true"

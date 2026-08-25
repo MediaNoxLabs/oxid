@@ -64,5 +64,5 @@ contradictory combinations from compiling at all.
 For the reasoning behind these boundaries, the
 [decision records](adr-catalog.md) are the authoritative log — start with
 the blueprint constitution
-([`OXID_IDENTITY_WALLET_BLUEPRINT.md`](https://github.com/MediaNoxLabs/oxid/blob/develop/OXID_IDENTITY_WALLET_BLUEPRINT.md))
+([`OXID_IDENTITY_WALLET_BLUEPRINT.md`](https://github.com/MediaNoxLabs/oxid/blob/integration/OXID_IDENTITY_WALLET_BLUEPRINT.md))
 and the ADR index.

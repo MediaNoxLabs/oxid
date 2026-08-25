@@ -148,9 +148,12 @@ undetectable later. The check that matters is `gates` parsing.
 - **Draft first.** `workflow.requireDraftFirst: true`, and
   `requireRetrospective: true`.
 - **No Copilot gate.** `refinement.maxCopilotRounds: 0` keeps unavailable
-  Copilot review disabled. The schema-supported `external-review` persona requires
-  an independent Claude CLI review pinned to the exact current head; any push
-  invalidates that evidence. See `docs/integration-delivery.md`.
+  Copilot review disabled. `external-review` is nevertheless configured as an
+  angle in both `gates.draft` and `gates.preApproval`. That angle requires a
+  manually invoked independent Claude CLI review pinned to the exact current
+  head and records its evidence in the local gate; it is not a hosted GitHub
+  check. Any push invalidates that evidence. See
+  `docs/integration-delivery.md`.
 
 ## One decision still needed from the owner
 
