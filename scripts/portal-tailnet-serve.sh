@@ -69,8 +69,11 @@ if [ "$action" = up ]; then
   baseline_candidate="$state_directory/.baseline.$$"
   installed_candidate="$state_directory/.installed.$$"
   receipt_candidate="$state_directory/.receipt.$$"
+  mutation_started=0
   cleanup_partial() {
-    "$tailscale_cli" serve --yes --https=9443 off >/dev/null 2>&1 || true
+    if [ "$mutation_started" -eq 1 ]; then
+      "$tailscale_cli" serve --yes --https=9443 off >/dev/null 2>&1 || true
+    fi
     rm -f -- "$baseline_candidate" "$installed_candidate" "$receipt_candidate"
   }
   trap cleanup_partial ERR INT TERM
@@ -82,6 +85,7 @@ if [ "$action" = up ]; then
     false
   fi
 
+  mutation_started=1
   "$tailscale_cli" serve --yes --bg --https=9443 http://127.0.0.1:18090 >/dev/null
   "$tailscale_cli" serve --yes --bg --https=9443 --set-path=/issuer-resolver \
     http://127.0.0.1:18093 >/dev/null

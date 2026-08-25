@@ -11496,7 +11496,7 @@ fn CredentialsPage(
                             class: "form-hint",
                             role: "status",
                             aria_live: "polite",
-                            "Credential issuance is in progress. Oxid is authenticating the holder, receiving the credential, and verifying it before storage."
+                            "Credential operation in progress. Wait for a completed, refused, or error message before continuing."
                         }
                     }
                     if let Some(message) = issuance_notice.read().as_deref() {
@@ -11631,13 +11631,15 @@ fn CredentialsPage(
                                                             );
                                                             prepared_issuance.set(Some(result));
                                                             issuance_notice.set(Some("Credential issued, verified, and stored in the protected inventory.".to_owned()));
-                                                            state.set(
-                                                                run_ui_blocking(move || {
-                                                                    load_credential_page(&refresh_services, &refresh_profile)
-                                                                })
-                                                                .await
-                                                                .unwrap_or_else(|error| CredentialPageState::Failed(error.to_string())),
-                                                            );
+                                                            let refreshed = run_ui_blocking(move || {
+                                                                load_credential_page(&refresh_services, &refresh_profile)
+                                                            })
+                                                            .await;
+                                                            if let Ok(ready @ CredentialPageState::Ready { .. }) = refreshed {
+                                                                state.set(ready);
+                                                            } else {
+                                                                issuance_notice.set(Some("Credential issued, verified, and stored. Inventory refresh is unavailable; reopen Documents to reload the protected inventory.".to_owned()));
+                                                            }
                                                         }
                                                         failure => {
                                                             let message = match failure {

@@ -52,4 +52,21 @@ OXID_TAILSCALE_CLI="$stub" OXID_PORTAL_TAILNET_STATE_DIR="$scratch/receipt" \
   ./scripts/portal-tailnet-serve.sh down "$origin" >/dev/null
 [ "$(jq -Sce . "$state")" = "$baseline" ]
 [ ! -e "$scratch/receipt/receipt.json" ]
+
+# Refusing an occupied public port must not remove or alter the route owned by
+# another process. Cleanup becomes destructive only after the free-port check.
+jq -c --arg key "$web_key" '
+  .TCP["9443"]={"HTTPS":true} |
+  .Web[$key].Handlers={"/":{"Proxy":"http://127.0.0.1:7777"}}
+' "$state" >"$state.occupied"
+mv "$state.occupied" "$state"
+occupied="$(jq -Sce . "$state")"
+if STUB_STATE="$state" STUB_WEB="$web_key" \
+  OXID_TAILSCALE_CLI="$stub" OXID_PORTAL_TAILNET_STATE_DIR="$scratch/occupied-receipt" \
+  ./scripts/portal-tailnet-serve.sh up "$origin" >/dev/null 2>&1; then
+  echo "occupied HTTPS 9443 was accepted" >&2
+  exit 1
+fi
+[ "$(jq -Sce . "$state")" = "$occupied" ]
+[ ! -e "$scratch/occupied-receipt/receipt.json" ]
 printf 'portal-tailnet-serve: unit PASS (stub only)\n'
