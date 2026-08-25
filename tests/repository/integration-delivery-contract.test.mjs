@@ -59,6 +59,15 @@ for (const workflowPath of [".github/workflows/ci.yml", ".github/workflows/quali
   });
 }
 
+test("Scorecard scans each integration delivery with its exact context", async () => {
+  const scorecard = await read(".github/workflows/scorecard.yml");
+  assert.deepEqual(eventBranches(scorecard, "push"), ["integration", "main"]);
+  assert.doesNotMatch(eventBlock(scorecard, "push"), /^    paths(?:-ignore)?:/m);
+  assert.match(scorecard, /^  workflow_dispatch: \{\}$/m);
+  assert.match(scorecard, /^  schedule:\n    - cron: "30 1 \* \* 6"$/m);
+  assert.equal((scorecard.match(/^    name: Scorecard analysis$/gm) || []).length, 1);
+});
+
 test("documentation links always emit a context and skip outbound work safely", async () => {
   const links = await read(".github/workflows/docs-link-check.yml");
   assert.equal(eventBranches(links, "pull_request"), null);
@@ -97,19 +106,20 @@ test("cross-base authority stays in the owner ruleset, not a dangerous advisory 
   assert.match(contract, /false failures for stacked pull requests/);
 });
 
-test("dependency automation targets integration and records stale PR handling", async () => {
+test("dependency automation inherits integration from default-branch authority", async () => {
   const dependabot = await read(".github/dependabot.yml");
-  assert.equal((dependabot.match(/^    target-branch: integration$/gm) || []).length, 2);
-  assert.doesNotMatch(dependabot, /^    target-branch: (?:develop|main)$/m);
+  assert.doesNotMatch(dependabot, /^\s+target-branch:/m);
 
   const renovate = JSON.parse(await read("renovate.json"));
-  assert.deepEqual(renovate.baseBranchPatterns, ["integration"]);
+  assert.equal(Object.hasOwn(renovate, "baseBranchPatterns"), false);
 
   for (const file of ["docs/dependencies/README.md", "docs/integration-delivery.md"]) {
     const guidance = await read(file);
+    assert.match(guidance, /default branch/i, file);
+    assert.match(guidance, /Dependabot[\s\S]*`target-branch`[\s\S]*disables security updates/i, file);
     for (const pr of ["#138", "#139"]) assert.match(guidance, new RegExp(pr), file);
     assert.match(guidance, /stale/i, file);
-    assert.match(guidance, /close them|Close those stale/i, file);
+    assert.match(guidance, /close\s+(?:them|those stale)/i, file);
     assert.match(guidance, /recreate/i, file);
   }
 });
@@ -213,9 +223,17 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(config, /maxCopilotRounds: 0/);
   assert.match(config, /Claude CLI/);
   assert.match(config, /current head/i);
+  assert.match(config, /^  stopAt: \[\]$/m);
+  assert.match(config, /^  humanMergeOnly: false$/m);
+  assert.doesNotMatch(config, /humanHandoff|candidatesFrom:\s*\n\s*- codeowners/);
+  const contractReviewPolicy = await read("docs/integration-delivery.md");
+  assert.match(contractReviewPolicy, /required_approving_review_count: 0/);
+  assert.match(contractReviewPolicy, /require_code_owner_reviews: false/);
+  assert.match(contractReviewPolicy, /Post the\s+current-head evidence to the pull request before merge/);
   for (const file of ["docs/integration-delivery.md", "docs/factory/runbook.md"]) {
     const guidance = await read(file);
     assert.match(guidance, /manually invoked/i, file);
     assert.match(guidance, /not a hosted GitHub\s+(?:status\s+)?check/i, file);
+    assert.doesNotMatch(guidance, /humanMergeOnly: true|approval\.humanHandoff/);
   }
 });

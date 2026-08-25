@@ -6,8 +6,10 @@ How to actually run the factory on this repository. The charter says *why*
 ([charter.md](charter.md)), the FSM says *what state work is in*
 ([fsm.md](fsm.md)); this says *what to type* and *what will refuse to work*.
 
-Phase 1 is deliberately narrow: **many agents review, one human merges.** No
-agent merges anything, and nothing routes through a coordination server.
+Phase 1 is deliberately narrow: **many agents review, and only clean,
+evidence-complete changes merge.** The owner authorizes clean `integration`
+merges after the mandatory independent current-head review and all other gates;
+nothing routes through a coordination server.
 
 ## What is installed, and from where
 
@@ -135,9 +137,11 @@ undetectable later. The check that matters is `gates` parsing.
 
 ## What will refuse to work, by design
 
-- **No agent merges.** `autonomy.humanMergeOnly: true` and
-  `stopAt: [pre-approval, merge]`. `approval.humanHandoff` offers an assignee
-  drawn from CODEOWNERS at the pre-approval boundary; the operator confirms it.
+- **No unevidenced merge.** `autonomy.humanMergeOnly: false` and `stopAt: []`
+  explicitly override local-first's human-only defaults because the owner has
+  authorized clean `integration` merges. There is no human handoff or
+  CODEOWNERS approval requirement. Authorization remains conditional on every
+  current-head gate passing and its evidence being posted before merge.
 - **Fan-out must show its work.** `gates.requireFanoutEvidence: true` and
   `requireFanoutProvenance: true` — a gate must record not just that five
   angles reported, but which reviewer produced which finding. Provenance is what
@@ -152,7 +156,8 @@ undetectable later. The check that matters is `gates` parsing.
   angle in both `gates.draft` and `gates.preApproval`. That angle requires a
   manually invoked independent Claude CLI review pinned to the exact current
   head and records its evidence in the local gate; it is not a hosted GitHub
-  check. Any push invalidates that evidence. See
+  check. Any push invalidates that evidence, and the fresh evidence must be
+  posted to the pull request before merge. See
   `docs/integration-delivery.md`.
 
 ## One decision still needed from the owner

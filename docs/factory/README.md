@@ -3,8 +3,8 @@
 The factory is Oxid's formalized agent-driven delivery system, proposed in
 [issue #35](https://github.com/MediaNoxLabs/oxid/issues/35). The repository
 itself is the coordination plane: issues are the backlog, pull requests are
-work units, labels carry finite-state-machine state, checks are gates, and a
-human holds merge authority.
+work units, labels carry finite-state-machine state, and checks plus recorded
+current-head review evidence are the delivery gates.
 
 | Document | Contents |
 | --- | --- |
@@ -29,8 +29,10 @@ any LLM provider.
 3. **Provider-agnostic.** Roles reference capabilities, never a specific LLM.
    Model selection is configuration (`.pi/settings.json`, `.devloops`
    persona `defaultModel`), not process.
-4. **Humans merge.** Agents deliver evidence; `.devloops` `humanMergeOnly`
-   remains binding.
+4. **Evidence before merge.** The owner authorizes clean `integration` merges
+   after all gates pass and fresh independent Claude CLI current-head evidence
+   is posted. `.devloops` deliberately requires neither human nor CODEOWNERS
+   approval; release, settings, and ADR authority remain human.
 
 ## Historical field experience, 2026-08-18 to 2026-08-20
 

@@ -11,13 +11,17 @@ migration-era `develop` branches
 read-only with no bypass actors; neither branch builds or deploys Pages.
 
 There is no `integration -> main` release-promotion exception in repository
-policy or guidance. Dependabot and Renovate are configured to open updates only
-against `integration`; they cannot update a read-only branch. Open Dependabot
+policy or guidance. Dependabot and Renovate derive their update base from the
+repository's GitHub default branch rather than repeating `integration` in bot
+configuration. This keeps default-branch authority in one owner-managed setting
+and lets Dependabot security updates operate; an explicit Dependabot
+`target-branch` disables security updates for that ecosystem. Open Dependabot
 PRs [#138](https://github.com/MediaNoxLabs/oxid/pull/138) and
-[#139](https://github.com/MediaNoxLabs/oxid/pull/139) predate that configuration
-and remain based on `develop`. They are stale delivery artifacts: close them
-after this configuration lands and let the bot recreate any still-applicable
-updates against `integration`; do not merge or treat them as current evidence.
+[#139](https://github.com/MediaNoxLabs/oxid/pull/139) predate the default-branch
+change and remain based on `develop`. They are stale delivery artifacts: close
+them after this configuration lands and let the bot recreate any
+still-applicable updates against `integration`; do not merge or treat them as
+current evidence.
 Any future promotion requires a separate tracked issue, reviewed repository
 policy change, and owner ruleset change before a promotion pull request is
 opened; labels and caller prompts cannot bypass the active ruleset.
@@ -73,10 +77,14 @@ Rerun every current-head gate after any integration update.
 ## Required integration protection
 
 The active `integration` protection policy must apply to administrators,
-reject force pushes and deletion, require pull requests and signed commits, dismiss stale
-reviews, require resolved conversations, and require branches to be current.
-Once issue #144 has landed and every workflow has emitted an integration
-context, require these exact status checks:
+reject force pushes and deletion, require pull requests and signed commits,
+require resolved conversations, and require branches to be current. Its review
+settings intentionally use `required_approving_review_count: 0` and
+`require_code_owner_reviews: false`: preserving the historical `main` human or
+code-owner approval policy is not a delivery requirement. The mandatory
+manually invoked Claude review described below is the review control. Once
+issue #144 has landed and every workflow has emitted an integration context,
+require these exact status checks:
 
 - `Verify commit sign-offs`
 - `Validate PR title`
@@ -114,5 +122,8 @@ not a hosted GitHub status check. Evidence is valid only when it records:
 
 Any push makes the evidence stale. Run the CLI from outside the checkout in
 safe mode with no tools, give it the issue contract plus the exact diff
-artifact, fix every accepted finding, and repeat against the new head. This is
-a review gate, never merge authorization.
+artifact, fix every accepted finding, and repeat against the new head. Post the
+current-head evidence to the pull request before merge. Integration branch
+protection intentionally does not require a hosted human or code-owner approval;
+the owner has authorized clean integration merges only after this review
+control and every other current-head gate pass.

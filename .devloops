@@ -91,22 +91,13 @@ personas:
       or No findings.
     defaultModel: null
 
-# The schema documents humanHandoff as pairing with autonomy.humanMergeOnly,
-# which is already true below. Without it the loop stops at pre-approval with
-# nothing routed to a person, so the handoff is the missing half of a decision
-# this repository has already taken. OFFER-only: the resolver proposes an
-# assignee from CODEOWNERS for the touched paths and the operator confirms.
-approval:
-  humanHandoff:
-    enabled: true
-    candidatesFrom:
-      - codeowners
-
+# The owner authorizes clean integration merges after all current-head gates,
+# including the mandatory independent Claude CLI review, have passed and their
+# evidence is posted. Override local-first's human-only defaults explicitly;
+# no human or CODEOWNERS approval is part of this repository's review control.
 autonomy:
-  stopAt:
-    - pre-approval
-    - merge
-  humanMergeOnly: true
+  stopAt: []
+  humanMergeOnly: false
 
 workflow:
   requireDraftFirst: true

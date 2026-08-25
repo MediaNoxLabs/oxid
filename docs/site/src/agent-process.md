@@ -1,9 +1,9 @@
 # How this project is built
 
-Oxid is an experiment in **AI-driven software engineering with human
+Oxid is an experiment in **AI-driven software engineering with owner
 authority**: nearly all code is written by AI agents, yet every line answers
-to machine-enforced gates, recorded decisions, and a human who owns merges
-and releases. This page documents the process as it actually operates.
+to machine-enforced gates, recorded decisions, and explicit owner policy.
+This page documents the process as it actually operates.
 
 ## The delivery loop
 
@@ -29,9 +29,11 @@ and releases. This page documents the process as it actually operates.
    agent can pick up. The baseline audit — 11 dimensions, adversarially
    verified findings — is public:
    [Discussion #37](https://github.com/MediaNoxLabs/oxid/discussions/37).
-5. **Humans keep the irreversible parts.** Merge authority, releases,
-   repository settings, and ADR acceptance stay human
-   (`humanMergeOnly: true`).
+5. **Review evidence precedes delivery.** Integration branch protection uses
+   zero hosted approvals. The owner authorizes clean merges only after a
+   manually invoked independent Claude CLI review is pinned to the exact
+   current head, posted to the pull request, and every other gate passes.
+   Releases, repository settings, and ADR acceptance stay human-owned.
 
 ## Why it holds together
 
