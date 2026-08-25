@@ -36,7 +36,8 @@ outgoing adapters. Run it directly with `./run.sh coverage --strict`.
 
 ## Pull requests
 
-- Target `integration` for issue-backed product, refactor, quality, and tooling work.
+- Target `integration` for issue-backed product, refactor, quality, and tooling
+  work.
   `main` accepts only release promotion from `integration`; `develop` remains a
   migration branch. Follow `docs/integration-delivery.md` for the full base and
   required-check contract.

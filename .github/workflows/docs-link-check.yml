@@ -2,10 +2,6 @@ name: Documentation links
 
 on:
   pull_request:
-    paths:
-      - "**/*.md"
-      - ".lychee.toml"
-      - ".github/workflows/docs-link-check.yml"
   push:
     branches: [integration, develop, main]
     paths:

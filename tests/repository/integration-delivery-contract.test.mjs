@@ -47,7 +47,7 @@ async function metadataContract() {
   return new vm.Script(`(async (context, core, github) => {\n${source}\n})`).runInNewContext();
 }
 
-async function evaluateMetadata({ body, baseRef, headRef, linkedIssues = 0, sameRepository = true }) {
+async function evaluateMetadata({ body, baseRef, headRef, linkedIssues = 0, sameRepository = true, graphqlError = false }) {
   const failures = [];
   const execute = await metadataContract();
   await execute(
@@ -63,7 +63,7 @@ async function evaluateMetadata({ body, baseRef, headRef, linkedIssues = 0, same
       },
     },
     { setFailed: (message) => failures.push(message), info: () => {} },
-    { graphql: async () => ({ repository: { pullRequest: { closingIssuesReferences: { nodes: Array.from({ length: linkedIssues }, (_, id) => ({ id })) } } } }) },
+    { graphql: async () => { if (graphqlError) throw new Error("unavailable"); return ({ repository: { pullRequest: { closingIssuesReferences: { nodes: Array.from({ length: linkedIssues }, (_, id) => ({ id })) } } } }); } },
   );
   return failures;
 }
@@ -88,7 +88,9 @@ test("documentation workflows cover integration", async () => {
 
 test("DCO and base-owned PR metadata cover every PR base", async () => {
   assert.equal(eventBranches(await read(".github/workflows/dco.yml"), "pull_request"), null);
-  assert.equal(eventBranches(await read(".github/workflows/pr-check.yml"), "pull_request_target"), null);
+  const prCheck = await read(".github/workflows/pr-check.yml");
+  assert.equal(eventBranches(prCheck, "pull_request_target"), null);
+  assert.doesNotMatch(prCheck, /^  pull_request:/m);
 });
 
 test("issue-backed integration PR passes the exact metadata contract", async () => {
@@ -107,6 +109,12 @@ test("wrong bases fail for closing keywords and sidebar-linked issues", async ()
     assert.match(failures[0], /integration/);
   }
   assert.equal((await evaluateMetadata({ body: "", baseRef: "develop", headRef: "issue-144", linkedIssues: 1 })).length, 1);
+});
+
+test("metadata lookup failures fail closed", async () => {
+  const failures = await evaluateMetadata({ body: "", baseRef: "develop", headRef: "issue-144", graphqlError: true });
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /Could not resolve/);
 });
 
 test("only integration-to-main is an issue-backed release-promotion exception", async () => {

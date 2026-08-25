@@ -2,6 +2,7 @@ name: Check PR
 
 on:
   pull_request_target:
+    # Runs the protected default-branch workflow definition, never PR-head code.
     types: [opened, edited, synchronize, reopened]
 
 permissions:
@@ -49,7 +50,7 @@ jobs:
             const issueBacked = closesInBody || linkedIssueCount > 0;
             const baseRef = pullRequest.base.ref;
             const headRef = pullRequest.head.ref;
-            const sameRepository = pullRequest.head.repo.full_name === pullRequest.base.repo.full_name;
+            const sameRepository = pullRequest.head.repo?.full_name === pullRequest.base.repo.full_name;
             const releasePromotion = baseRef === "main" && headRef === "integration" && sameRepository;
             if (issueBacked && baseRef !== "integration" && !releasePromotion) {
               core.setFailed(`Issue-backed pull requests must target integration; received ${headRef} -> ${baseRef}. The only exception is integration -> main release promotion.`);

@@ -32,8 +32,7 @@ node .pi/npm/node_modules/dev-loops/cli/index.mjs pr create \
   --assignee @me --title "<type>: <subject>" --body-file <body-file>
 ```
 
-The body must contain `Closes #<number>`. The base-owned
-`pull_request_target` metadata workflow is checkout-free. Its
+The body must contain `Closes #<number>`. The protected default-branch `pull_request_target` metadata workflow is checkout-free. Its
 `Require integration for issue-backed PRs` job rejects any other base except the
 release promotion above.
 
@@ -54,15 +53,15 @@ before merge, refresh and check freshness plus conflict-freedom explicitly:
 ```bash
 git fetch origin integration
 git merge-base --is-ancestor origin/integration HEAD
-git merge-tree --write-tree origin/integration HEAD >/dev/null
+Git 2.38 or newer: git merge-tree --write-tree origin/integration HEAD >/dev/null
 ```
 
 Rerun every current-head gate after any integration update.
 
 ## Required integration protection
 
-The active `integration` protection policy must apply to administrators, reject force
-pushes and deletion, require pull requests and signed commits, dismiss stale
+The active `integration` protection policy must apply to administrators,
+reject force pushes and deletion, require pull requests and signed commits, dismiss stale
 reviews, require resolved conversations, and require branches to be current.
 Once issue #144 has landed and every workflow has emitted an integration
 context, require these exact status checks:
