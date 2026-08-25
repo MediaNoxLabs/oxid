@@ -4,8 +4,8 @@
 readonly PORTAL_EXPECTED_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
 # Names stay distinct from the parsed STACK_ENV_FILE fields populated later by
 # stack-env-v1.sh; readonly authority constants must not shadow loader output.
-readonly PORTAL_EXPECTED_HELPER_COMMIT="da9adad711a83c25505f96d88809c7320d049b2e"
-readonly PORTAL_EXPECTED_HELPER_TREE="01a78541d24b7402a0eb1f7d1ca2c0f91de95fd3"
+readonly PORTAL_EXPECTED_HELPER_COMMIT="e3b0e0375a8b9461c2da322b03428524d7b6640e"
+readonly PORTAL_EXPECTED_HELPER_TREE="1ea53823c6f1f479f6e84003a9b32a652096fc49"
 readonly PORTAL_INTEGRATION_COMMIT="925ec8d04882eabd4ac7b784c70fc2f0c152faae"
 readonly PORTAL_INTEGRATION_TREE="58b4597524f88a0ae2253439a44dab0dc60cbb6f"
 readonly PORTAL_PR_HEAD="9c82db23eabe8b6d758b2731f2225910ea627c14"
