@@ -2,16 +2,20 @@
 
 # Integration delivery authority
 
-`integration` is Oxid's delivery branch. Issue-backed product, refactor,
-quality, and tooling work starts from `origin/integration`, opens a pull request
-to `integration`, and is compared with that same base through review and merge.
-`main` remains the release branch and `develop` remains available during the
-migration; neither is the normal base for new issue-backed work.
+`integration` is Oxid's only writable delivery branch and the sole GitHub Pages
+publishing source. Issue-backed product, refactor, quality, and tooling work
+starts from `origin/integration`, opens a pull request to `integration`, and is
+compared with that same base through review and merge. Active repository ruleset
+`21481544` makes the historical `main` and migration-era `develop` branches
+read-only with no bypass actors; neither branch builds or deploys Pages.
 
-The only issue-backed wrong-base exception is an `integration -> main` release
-promotion. Dependency automation without an issue-closing reference is outside
-this metadata contract. Any future exception needs a separately reviewed
-repository change; labels and caller prompts cannot bypass the check.
+The metadata workflow retains an `integration -> main` release-promotion
+exception so its accepted PR shapes remain explicit, but the active owner-side
+ruleset blocks updates to `main`, so that exception is not a usable publishing
+or merge route. Dependency automation without a local issue-closing reference
+is outside this metadata contract. Any future promotion or other exception
+needs a separately reviewed ruleset and repository change; labels and caller
+prompts cannot bypass the check.
 
 ## One base through the complete loop
 
@@ -32,9 +36,12 @@ node .pi/npm/node_modules/dev-loops/cli/index.mjs pr create \
   --assignee @me --title "<type>: <subject>" --body-file <body-file>
 ```
 
-The body must contain `Closes #<number>`. The protected base-branch `pull_request_target` metadata workflow is checkout-free. Install the same workflow on every retained
-PR base (`integration`, `develop`, and `main`). Its `Require integration for issue-backed PRs` job rejects any other base except the
-release promotion above.
+The body must contain `Closes #<number>`. The protected base-branch
+`pull_request_target` metadata workflow is checkout-free. Its
+`Require integration for issue-backed PRs` job rejects any other writable base
+except the dormant release-promotion shape above. The owner-side ruleset, rather
+than mutable workflow code on retired bases, prevents updates to `develop` and
+`main`.
 
 Local review commands must use the fetched integration ref rather than a
 caller-selected default:
@@ -79,8 +86,10 @@ context, require these exact status checks:
 
 The workflow-contract test protects these names and trigger semantics in the
 repository; branch rules are owner-managed GitHub state and must be verified
-separately after changes. Do not widen workflow permissions to make a check
-required.
+separately after changes. Ruleset `21481544` must continue to prohibit updates,
+deletion, and non-fast-forward changes on both `main` and `develop`, with no
+bypass actors. The Pages workflow must trigger and deploy only from
+`integration`. Do not widen workflow permissions to make a check required.
 
 ## Independent current-head review
 

@@ -1930,9 +1930,10 @@ duplicating versions across manifests.
 ## Development cycle
 
 1. Fetch `origin/integration` and start issue-backed product, refactor, quality,
-   or tooling work from that exact ref. Pull requests target `integration`; only
-   `integration -> main` release promotion targets `main`, while `develop` is
-   retained during migration. Follow `docs/integration-delivery.md`.
+   or tooling work from that exact ref. Pull requests target `integration`, the
+   only writable delivery and Pages publishing branch. Historical `main` and
+   migration-era `develop` are read-only under repository ruleset `21481544`.
+   Follow `docs/integration-delivery.md`.
 2. Use a dedicated worktree. Do not implement in a dirty primary checkout.
 3. Read this file and the blueprint before changing code.
 4. Change tests and public documentation with behavior.

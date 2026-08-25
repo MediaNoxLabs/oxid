@@ -9,6 +9,20 @@ import vm from "node:vm";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relativePath) => readFile(path.join(repoRoot, relativePath), "utf8");
 
+function eventBlock(workflow, eventName) {
+  const lines = workflow.split("\n");
+  const start = lines.findIndex((line) => line === `  ${eventName}:`);
+  assert.notEqual(start, -1, `missing ${eventName} trigger`);
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^  \S/.test(lines[index])) {
+      end = index;
+      break;
+    }
+  }
+  return lines.slice(start, end).join("\n");
+}
+
 function eventBranches(workflow, eventName) {
   const lines = workflow.split("\n");
   const start = lines.findIndex((line) => line === `  ${eventName}:`);
@@ -47,7 +61,7 @@ async function metadataContract() {
   return new vm.Script(`(async (context, core, github) => {\n${source}\n})`).runInNewContext();
 }
 
-async function evaluateMetadata({ body, baseRef, headRef, linkedIssues = 0, sameRepository = true, graphqlError = false }) {
+async function evaluateMetadata({ body, baseRef, headRef, linkedIssueRepositories = [], sameRepository = true, graphqlError = false }) {
   const failures = [];
   const execute = await metadataContract();
   await execute(
@@ -63,7 +77,20 @@ async function evaluateMetadata({ body, baseRef, headRef, linkedIssues = 0, same
       },
     },
     { setFailed: (message) => failures.push(message), info: () => {} },
-    { graphql: async () => { if (graphqlError) throw new Error("unavailable"); return ({ repository: { pullRequest: { closingIssuesReferences: { nodes: Array.from({ length: linkedIssues }, (_, id) => ({ id })) } } } }); } },
+    {
+      graphql: async () => {
+        if (graphqlError) throw new Error("unavailable");
+        return {
+          repository: {
+            pullRequest: {
+              closingIssuesReferences: {
+                nodes: linkedIssueRepositories.map((nameWithOwner) => ({ repository: { nameWithOwner } })),
+              },
+            },
+          },
+        };
+      },
+    },
   );
   return failures;
 }
@@ -77,14 +104,21 @@ for (const workflowPath of [".github/workflows/ci.yml", ".github/workflows/quali
   });
 }
 
-test("documentation workflows cover integration", async () => {
+test("documentation links always emit a context and skip outbound work safely", async () => {
   const links = await read(".github/workflows/docs-link-check.yml");
   assert.equal(eventBranches(links, "pull_request"), null);
-  const pullRequestBlock = links.slice(links.indexOf("  pull_request:"), links.indexOf("  push:"));
-  assert.doesNotMatch(pullRequestBlock, /^    paths(?:-ignore)?:/m);
+  assert.doesNotMatch(eventBlock(links, "pull_request"), /^    paths(?:-ignore)?:/m);
   assert.deepEqual(new Set(eventBranches(links, "push")), new Set(["integration", "develop", "main"]));
+  assert.doesNotMatch(eventBlock(links, "push"), /^    paths(?:-ignore)?:/m);
+  for (const eventCase of ["workflow_dispatch)", "pull_request)", "push)"]) assert.match(links, new RegExp(eventCase.replace(/[()]/g, "\\$&")));
+  for (const safety of [/fetch-depth: 0/, /valid_sha/, /git cat-file -e/, /git merge-base/, /git diff --quiet/, /running the link check conservatively/]) assert.match(links, safety);
+  assert.equal((links.match(/if: steps\.changes\.outputs\.docs_changed == 'true'/g) || []).length, 2);
+});
+
+test("Pages builds and publishes only from integration", async () => {
   const pages = await read(".github/workflows/pages.yml");
-  assert.deepEqual(new Set(eventBranches(pages, "push")), new Set(["integration", "develop"]));
+  assert.deepEqual(eventBranches(pages, "push"), ["integration"]);
+  assert.doesNotMatch(eventBlock(pages, "push"), /develop|main/);
   assert.match(pages, /if: github\.ref == 'refs\/heads\/integration'/);
 });
 
@@ -104,13 +138,39 @@ test("non-issue automation and quoted examples remain outside the base contract"
   assert.deepEqual(await evaluateMetadata({ body: "<!-- Closes #144 -->\n```text\nFixes #145\n```\n~~~text\nResolves #146\n~~~\n`Closes #147`\n> Fixes #148\n    Closes #149", baseRef: "develop", headRef: "docs" }), []);
 });
 
-test("wrong bases fail for closing keywords and sidebar-linked issues", async () => {
-  for (const body of ["Closes: #144", "Closes #144", "fixed MediaNoxLabs/oxid#144", "RESOLVES https://github.com/MediaNoxLabs/oxid/issues/144"]) {
+test("wrong bases fail for bare, local-qualified, and local sidebar references", async () => {
+  for (const body of ["Closes: #144", "Closes #144.", "fixed MediaNoxLabs/oxid#144", "RESOLVES https://github.com/MediaNoxLabs/oxid/issues/144"]) {
     const failures = await evaluateMetadata({ body, baseRef: "develop", headRef: "issue-144" });
     assert.equal(failures.length, 1, body);
     assert.match(failures[0], /integration/);
   }
-  assert.equal((await evaluateMetadata({ body: "", baseRef: "develop", headRef: "issue-144", linkedIssues: 1 })).length, 1);
+  assert.equal((await evaluateMetadata({ body: "", baseRef: "develop", headRef: "issue-144", linkedIssueRepositories: ["MediaNoxLabs/oxid"] })).length, 1);
+});
+
+test("cross-repository and malformed closing references are not local issue metadata", async () => {
+  const foreignOrMalformed = [
+    "Closes other/repository#144",
+    "Fixes https://github.com/other/repository/issues/144",
+    "Resolves MediaNoxLabs/oxidation#144",
+    "Closes other/MediaNoxLabs/oxid#144",
+    "Closes #144suffix",
+    "Closes MediaNoxLabs/oxid#144/extra",
+  ];
+  for (const body of foreignOrMalformed) {
+    assert.deepEqual(await evaluateMetadata({ body, baseRef: "develop", headRef: "automation" }), [], body);
+  }
+  assert.deepEqual(await evaluateMetadata({
+    body: "Closes other/repository#144",
+    baseRef: "develop",
+    headRef: "automation",
+    linkedIssueRepositories: ["other/repository", "MEDIANOXLABS/not-oxid"],
+  }), []);
+  assert.equal((await evaluateMetadata({
+    body: "Closes other/repository#144",
+    baseRef: "develop",
+    headRef: "issue-144",
+    linkedIssueRepositories: ["other/repository", "medianoxlabs/OXID"],
+  })).length, 1);
 });
 
 test("metadata lookup failures fail closed", async () => {
@@ -135,7 +195,7 @@ test("repository gate runs architecture and the delivery contract with its decla
 test("guidance, required contexts, and review configuration agree", async () => {
   for (const file of ["AGENT.md", "CONTRIBUTING.md", ".github/pull_request_template.md", "docs/site/src/contributing.md"]) assert.match(await read(file), /integration/, file);
   const contract = await read("docs/integration-delivery.md");
-  for (const pattern of [/--base origin\/integration/, /--base integration/, /git merge-base HEAD origin\/integration/, /git merge-base --is-ancestor origin\/integration HEAD/, /git merge-tree --write-tree origin\/integration HEAD/, /integration -> main/]) assert.match(contract, pattern);
+  for (const pattern of [/--base origin\/integration/, /--base integration/, /git merge-base HEAD origin\/integration/, /git merge-base --is-ancestor origin\/integration HEAD/, /git merge-tree --write-tree origin\/integration HEAD/, /integration -> main/, /21481544/, /Pages workflow must trigger and deploy only from\s+`integration`/]) assert.match(contract, pattern);
   const expectedNames = {
     "pr-check.yml": ["Require integration for issue-backed PRs", "Validate PR title", "Validate PR body"],
     "dco.yml": ["Verify commit sign-offs"],
@@ -149,7 +209,12 @@ test("guidance, required contexts, and review configuration agree", async () => 
   }
   const prCheck = await read(".github/workflows/pr-check.yml");
   assert.doesNotMatch(prCheck, /actions\/checkout/);
-  assert.match(await read(".github/workflows/scan.yml"), /jobs:\n  scan:/);
+  const scan = await read(".github/workflows/scan.yml");
+  const scanJobStart = scan.indexOf("  scan:");
+  assert.ok(scanJobStart >= 0, "scan.yml: scan job");
+  const scanJob = scan.slice(scanJobStart);
+  assert.match(scanJob, /^    name: scan$/m);
+  assert.doesNotMatch(scanJob, /^    strategy:|\bmatrix\b/m);
   const config = await read(".devloops");
   assert.match(config, /maxCopilotRounds: 0/);
   assert.match(config, /Claude CLI/);

@@ -17,6 +17,8 @@ concurrency:
 
 jobs:
   scan:
+    # Keep the required context stable and singular.
+    name: scan
     runs-on: ubuntu-24.04
     permissions:
       actions: read

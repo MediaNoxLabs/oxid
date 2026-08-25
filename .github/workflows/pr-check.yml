@@ -31,24 +31,32 @@ jobs:
               .replace(/~~~[\s\S]*?~~~/g, "")
               .replace(/`[^`\n]+`/g, "")
               .replace(/^(?:>| {4}|\t).*$/gm, "");
-            const closesInBody = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?:\s*:\s*|\s+)(?:https:\/\/github\.com\/MediaNoxLabs\/oxid\/issues\/\d+|(?:MediaNoxLabs\/oxid)?#\d+)\b/i.test(body);
-            let linkedIssueCount;
+            // Accept GitHub's bare local form plus exact local qualified forms.
+            // A delimiter lookahead prevents local-looking prefixes and issue
+            // numbers with trailing path or name content from matching.
+            const closesInBody = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?:\s*:\s*|\s+)(?:https:\/\/github\.com\/MediaNoxLabs\/oxid\/issues\/\d+|MediaNoxLabs\/oxid#\d+|#\d+)(?=$|[\s,.;:!?)}\]'"])/i.test(body);
+            let linkedLocalIssueCount;
             try {
               const result = await github.graphql(`
                 query($owner: String!, $repo: String!, $number: Int!) {
                   repository(owner: $owner, name: $repo) {
                     pullRequest(number: $number) {
-                      closingIssuesReferences(first: 1) { nodes { id } }
+                      closingIssuesReferences(first: 100) {
+                        nodes { repository { nameWithOwner } }
+                      }
                     }
                   }
                 }
               `, { ...context.repo, number: context.payload.number });
-              linkedIssueCount = result.repository.pullRequest.closingIssuesReferences.nodes.length;
+              const localRepository = `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+              linkedLocalIssueCount = result.repository.pullRequest.closingIssuesReferences.nodes
+                .filter((issue) => issue.repository.nameWithOwner.toLowerCase() === localRepository)
+                .length;
             } catch (error) {
               core.setFailed(`Could not resolve closing-issue metadata: ${error.message}`);
               return;
             }
-            const issueBacked = closesInBody || linkedIssueCount > 0;
+            const issueBacked = closesInBody || linkedLocalIssueCount > 0;
             const baseRef = pullRequest.base.ref;
             const headRef = pullRequest.head.ref;
             const sameRepository = pullRequest.head.repo?.full_name === pullRequest.base.repo.full_name;

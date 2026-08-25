@@ -2,7 +2,7 @@
 
 <!-- What changed, why, and which user/capability boundary owns it? -->
 
-Target branch: `integration`; only `integration -> main` release-promotion PRs target `main`.
+Target branch: `integration`; historical `main` and `develop` are read-only.
 See `docs/integration-delivery.md`.
 
 ## Validation

@@ -2,7 +2,8 @@ name: Documentation site
 
 on:
   push:
-    branches: [integration, develop]
+    # integration is the sole writable delivery and Pages publishing branch.
+    branches: [integration]
     paths:
       - "docs/**"
       - ".github/workflows/pages.yml"
