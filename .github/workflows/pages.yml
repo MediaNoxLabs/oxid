@@ -41,6 +41,7 @@ jobs:
 
   deploy:
     name: Deploy to GitHub Pages
+    if: github.ref == 'refs/heads/integration'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10

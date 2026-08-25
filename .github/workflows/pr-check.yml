@@ -1,7 +1,7 @@
 name: Check PR
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, synchronize, reopened]
 
 permissions:
@@ -19,12 +19,35 @@ jobs:
           script: |
             // PR_BASE_CONTRACT_START
             const pullRequest = context.payload.pull_request;
-            const body = pullRequest.body || "";
-            const closesIssue = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:https:\/\/github\.com\/MediaNoxLabs\/oxid\/issues\/\d+|(?:MediaNoxLabs\/oxid)?#\d+)\b/i.test(body);
+            if (!pullRequest) {
+              core.setFailed("The integration-base contract requires pull request metadata.");
+              return;
+            }
+            const body = (pullRequest.body || "")
+              .replace(/<!--[\s\S]*?-->/g, "")
+              .replace(/```[\s\S]*?```/g, "");
+            const closesInBody = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?:\s*:\s*|\s+)(?:https:\/\/github\.com\/MediaNoxLabs\/oxid\/issues\/\d+|(?:MediaNoxLabs\/oxid)?#\d+)\b/i.test(body);
+            let linkedIssueCount;
+            try {
+              const result = await github.graphql(`
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      closingIssuesReferences(first: 1) { nodes { id } }
+                    }
+                  }
+                }
+              `, { ...context.repo, number: context.payload.number });
+              linkedIssueCount = result.repository.pullRequest.closingIssuesReferences.nodes.length;
+            } catch (error) {
+              core.setFailed(`Could not resolve closing-issue metadata: ${error.message}`);
+              return;
+            }
+            const issueBacked = closesInBody || linkedIssueCount > 0;
             const baseRef = pullRequest.base.ref;
             const headRef = pullRequest.head.ref;
             const releasePromotion = baseRef === "main" && headRef === "integration";
-            if (closesIssue && baseRef !== "integration" && !releasePromotion) {
+            if (issueBacked && baseRef !== "integration" && !releasePromotion) {
               core.setFailed(`Issue-backed pull requests must target integration; received ${headRef} -> ${baseRef}. The only exception is integration -> main release promotion.`);
             } else {
               core.info(`Delivery base accepted: ${headRef} -> ${baseRef}.`);

@@ -32,7 +32,8 @@ node .pi/npm/node_modules/dev-loops/cli/index.mjs pr create \
   --assignee @me --title "<type>: <subject>" --body-file <body-file>
 ```
 
-The body must contain `Closes #<number>`. The checkout-free
+The body must contain `Closes #<number>`. The base-owned `pull_request_target`
+metadata workflow is checkout-free. Its
 `Require integration for issue-backed PRs` job rejects any other base except the
 release promotion above.
 
