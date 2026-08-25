@@ -295,6 +295,13 @@ portal_mobile_start() {
         return 1
       }
       ;;
+    tailnet-android-physical)
+      [ "$PORTAL_MOBILE_PLATFORM" = android ] && \
+        [ "$PORTAL_MOBILE_PUBLIC_ORIGIN" = "https://yuriys-macbook-pro.taila4adff.ts.net:9443" ] || {
+        portal_mobile_fail tailnet-origin
+        return 1
+      }
+      ;;
     *) portal_mobile_fail profile; return 1 ;;
   esac
   portal_mobile_acquire_lock || return 1
@@ -392,7 +399,8 @@ portal_mobile_start() {
   }
   expected_issuer_origin="http://127.0.0.1:18090"
   expected_resolver_origin="http://127.0.0.1:18093"
-  if [ "$PORTAL_MOBILE_PROFILE" = tailnet-ios-simulator ]; then
+  if [[ "$PORTAL_MOBILE_PROFILE" = tailnet-ios-simulator || \
+        "$PORTAL_MOBILE_PROFILE" = tailnet-android-physical ]]; then
     expected_issuer_origin="$PORTAL_MOBILE_PUBLIC_ORIGIN"
     expected_resolver_origin="$PORTAL_MOBILE_PUBLIC_ORIGIN/issuer-resolver"
   fi
@@ -409,7 +417,8 @@ portal_mobile_start() {
     return 1
   }
 
-  if [ "$PORTAL_MOBILE_PROFILE" = tailnet-ios-simulator ]; then
+  if [[ "$PORTAL_MOBILE_PROFILE" = tailnet-ios-simulator || \
+        "$PORTAL_MOBILE_PROFILE" = tailnet-android-physical ]]; then
     OXID_PORTAL_TAILNET_STATE_DIR="$PORTAL_MOBILE_STATE_DIR/tailscale-serve" \
       "$PORTAL_MOBILE_REPOSITORY_ROOT/scripts/portal-tailnet-serve.sh" \
         up "$PORTAL_MOBILE_PUBLIC_ORIGIN" >>"$PORTAL_MOBILE_PRIVATE_LOG" 2>&1 || {

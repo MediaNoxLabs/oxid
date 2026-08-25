@@ -13,12 +13,17 @@ use url::Url;
 
 pub const LOCAL_PROFILE: &str = "standalone-local-development-portal";
 pub const IOS_TAILNET_PROFILE: &str = "standalone-tailnet-development-portal-ios-simulator";
+pub const ANDROID_PHYSICAL_TAILNET_PROFILE: &str =
+    "standalone-tailnet-development-portal-android-physical";
+pub const ANDROID_PHYSICAL_PUBLIC_ORIGIN: &str =
+    "https://yuriys-macbook-pro.taila4adff.ts.net:9443";
 pub const SCHEMA: &str = "oxid-app-profile-authority-v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PortalProfile {
     Local,
     IosTailnetSimulator,
+    AndroidPhysicalTailnet,
 }
 
 impl PortalProfile {
@@ -26,6 +31,7 @@ impl PortalProfile {
         match self {
             Self::Local => LOCAL_PROFILE,
             Self::IosTailnetSimulator => IOS_TAILNET_PROFILE,
+            Self::AndroidPhysicalTailnet => ANDROID_PHYSICAL_TAILNET_PROFILE,
         }
     }
 }
@@ -38,6 +44,9 @@ fn platform_for_target(profile: PortalProfile, target: &str) -> Option<&'static 
         }
         (PortalProfile::Local, "aarch64-linux-android" | "x86_64-linux-android") => {
             Some("android_qemu")
+        }
+        (PortalProfile::AndroidPhysicalTailnet, "aarch64-linux-android") => {
+            Some("android_physical_tailnet")
         }
         _ => None,
     }
@@ -153,6 +162,32 @@ mod tests {
     }
 
     #[test]
+    fn tailnet_profile_authorizes_only_the_exact_physical_android_target() {
+        let target = "aarch64-linux-android";
+        let manifest = canonical_manifest(PortalProfile::AndroidPhysicalTailnet, target)
+            .expect("authorized physical target");
+        assert_eq!(
+            validate_manifest(
+                manifest.as_bytes(),
+                PortalProfile::AndroidPhysicalTailnet,
+                target
+            ),
+            Ok(())
+        );
+        assert!(manifest.contains("android_physical_tailnet"));
+        for rejected in [
+            "x86_64-linux-android",
+            "aarch64-apple-ios",
+            "aarch64-apple-ios-sim",
+            "aarch64-unknown-linux-gnu",
+            "wasm32-unknown-unknown",
+        ] {
+            assert!(canonical_manifest(PortalProfile::AndroidPhysicalTailnet, rejected).is_none());
+        }
+        assert!(validate_manifest(manifest.as_bytes(), PortalProfile::Local, target).is_err());
+    }
+
+    #[test]
     fn manifests_fail_closed_on_profile_platform_target_or_shape_drift() {
         let target = "aarch64-linux-android";
         let valid = canonical_manifest(PortalProfile::Local, target).expect("manifest");
@@ -169,6 +204,10 @@ mod tests {
 
     #[test]
     fn tailnet_public_origin_is_exact_https_magic_dns_on_9443() {
+        assert_eq!(
+            validate_tailnet_public_origin(ANDROID_PHYSICAL_PUBLIC_ORIGIN),
+            Ok(())
+        );
         assert_eq!(
             validate_tailnet_public_origin("https://oxid-demo.tail1234.ts.net:9443"),
             Ok(())

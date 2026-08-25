@@ -47,6 +47,15 @@ standalone-portal-tailnet-ios-simulator = [
   "standalone-tailnet",
   "oxid-composition/mobile-portal-tailnet-ios-simulator",
 ]
+# Issue #140 physical Android demo. This closed profile is distinct from the
+# ordinary Portal, local, generic tailnet, native-custody, and WASM profiles.
+# It initializes both actually linked Android platform verifiers before the UI
+# can start authenticated HTTPS work.
+standalone-portal-tailnet-android-physical = [
+  "mobile",
+  "standalone-development",
+  "oxid-composition/mobile-portal-tailnet-android-physical",
+]
 # Opt-in physical-device route profile for a TLS-terminated standalone stack.
 # Every route is supplied at compile time by the repository launcher; normal
 # and native-custody builds cannot select it.
@@ -88,6 +97,17 @@ getrandom_02 = { package = "getrandom", version = "=0.2.17", features = ["js"] }
 getrandom_04 = { package = "getrandom", version = "=0.4.3", features = [
   "wasm_js",
 ] }
+
+# Both versions are already present in the Android graph: reqwest uses 0.7 and
+# jsonrpsee/subxt uses 0.5. Direct aliases expose their independent Android
+# initialization cells; they do not add another verifier version.
+[target.'cfg(target_os = "android")'.dependencies]
+jni_021 = { package = "jni", version = "=0.21.1" }
+jni_022 = { package = "jni", version = "=0.22.4" }
+ndk-context.workspace = true
+rustls-platform-verifier_05 = { package = "rustls-platform-verifier", version = "=0.5.3" }
+rustls-platform-verifier_07 = { package = "rustls-platform-verifier", version = "=0.7.0" }
+tokio.workspace = true
 
 [build-dependencies]
 oxid-brand-build.workspace = true

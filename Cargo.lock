@@ -5931,10 +5931,16 @@ dependencies = [
  "dioxus",
  "getrandom 0.2.17",
  "getrandom 0.4.3",
+ "jni 0.21.1",
+ "jni 0.22.4",
+ "ndk-context",
  "oxid-brand-build",
  "oxid-composition",
  "oxid-ui-dioxus",
+ "rustls-platform-verifier 0.5.3",
+ "rustls-platform-verifier 0.7.0",
  "sha2 0.10.9",
+ "tokio",
  "url",
 ]
 

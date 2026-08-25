@@ -1,12 +1,52 @@
 // SPDX-License-Identifier: Apache-2.0
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+#[cfg(all(
+    feature = "standalone-portal-tailnet-android-physical",
+    target_os = "android"
+))]
+mod android_tls;
 
 #[cfg(test)]
 mod portal_profile_authority;
 
 mod generated_brand {
     include!(concat!(env!("OUT_DIR"), "/brand.rs"));
+}
+
+#[cfg(all(
+    feature = "standalone-portal-tailnet-android-physical",
+    target_os = "android"
+))]
+fn android_physical_tls_gate() -> dioxus::prelude::Element {
+    use dioxus::prelude::*;
+
+    let mut tls_ready = use_signal(|| None::<bool>);
+    use_future(move || async move {
+        for _ in 0..30 {
+            match android_tls::initialize_after_dioxus_context() {
+                Ok(true) => {
+                    tls_ready.set(Some(true));
+                    return;
+                }
+                Ok(false) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                Err(()) => {
+                    tls_ready.set(Some(false));
+                    return;
+                }
+            }
+        }
+        tls_ready.set(Some(false));
+    });
+
+    match *tls_ready.read() {
+        Some(true) => rsx! { oxid_ui_dioxus::App {} },
+        Some(false) => rsx! { main { "Authenticated Android HTTPS initialization failed." } },
+        None => rsx! { main { "Initializing authenticated Android HTTPS…" } },
+    }
 }
 
 fn main() {
@@ -63,6 +103,34 @@ fn main() {
     ))]
     compile_error!(
         "standalone-portal-tailnet-ios-simulator is incompatible with ordinary Portal, local routes, and native custody"
+    );
+
+    #[cfg(all(
+        feature = "standalone-portal-tailnet-android-physical",
+        not(target_os = "android")
+    ))]
+    compile_error!("standalone-portal-tailnet-android-physical is available only on Android");
+
+    #[cfg(all(
+        feature = "standalone-portal-tailnet-android-physical",
+        not(oxid_portal_android_physical_profile_authorized)
+    ))]
+    compile_error!(
+        "standalone-portal-tailnet-android-physical requires repository physical-device profile authority"
+    );
+
+    #[cfg(all(
+        feature = "standalone-portal-tailnet-android-physical",
+        any(
+            feature = "standalone-portal",
+            feature = "standalone-portal-tailnet-ios-simulator",
+            feature = "standalone-local",
+            feature = "standalone-tailnet",
+            feature = "standalone-native-custody"
+        )
+    ))]
+    compile_error!(
+        "standalone-portal-tailnet-android-physical is incompatible with ordinary Portal, iOS tailnet, local, generic tailnet, and native custody profiles"
     );
 
     #[cfg(all(feature = "android-jni-exception-recovery-test", target_os = "android"))]
@@ -173,6 +241,31 @@ fn main() {
             panic!("standalone Portal tailnet configuration is invalid: {error}")
         });
 
+    #[cfg(all(
+        feature = "standalone-portal-tailnet-android-physical",
+        feature = "standalone-development",
+        not(feature = "standalone-portal"),
+        not(feature = "standalone-portal-tailnet-ios-simulator"),
+        not(feature = "standalone-local"),
+        not(feature = "standalone-tailnet"),
+        not(feature = "standalone-native-custody"),
+        target_os = "android",
+        not(target_arch = "wasm32")
+    ))]
+    let application =
+        oxid_composition::compose_mobile_development_portal_tailnet_android_physical_from_routes(
+            env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
+            env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
+            env!("OXID_BUILD_MIDNIGHT_NODE_WS_URL"),
+            env!("OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL"),
+            include_bytes!(concat!(env!("OUT_DIR"), "/portal-deployment.json")),
+            env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
+            env!("OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN"),
+        )
+        .unwrap_or_else(|error| {
+            panic!("standalone physical Android Portal configuration is invalid: {error}")
+        });
+
     #[cfg(feature = "standalone-native-proving-artifacts")]
     let application =
         oxid_composition::compose_mobile_native_standalone_with_compact_presentation()
@@ -196,6 +289,7 @@ fn main() {
         feature = "standalone-tailnet",
         not(feature = "standalone-local"),
         not(feature = "standalone-portal-tailnet-ios-simulator"),
+        not(feature = "standalone-portal-tailnet-android-physical"),
         not(target_arch = "wasm32")
     ))]
     let application = {
@@ -233,6 +327,7 @@ fn main() {
         not(feature = "standalone-native-custody"),
         not(feature = "standalone-tailnet"),
         not(feature = "standalone-local"),
+        not(feature = "standalone-portal-tailnet-android-physical"),
         not(target_arch = "wasm32")
     ))]
     let application = oxid_composition::compose_headless_from_environment()
@@ -254,12 +349,14 @@ fn main() {
             feature = "standalone-native-custody"
         ),
         not(feature = "standalone-portal"),
-        not(feature = "standalone-portal-tailnet-ios-simulator")
+        not(feature = "standalone-portal-tailnet-ios-simulator"),
+        not(feature = "standalone-portal-tailnet-android-physical")
     ))]
     let standalone_credential_offer = Some(oxid_composition::standalone_oid4vci_offer());
     #[cfg(any(
         feature = "standalone-portal",
         feature = "standalone-portal-tailnet-ios-simulator",
+        feature = "standalone-portal-tailnet-android-physical",
         not(any(
             feature = "standalone-development",
             feature = "standalone-native-custody"
@@ -477,6 +574,15 @@ fn main() {
                     _ => {}
                 }
             });
+        #[cfg(all(
+            feature = "standalone-portal-tailnet-android-physical",
+            target_os = "android"
+        ))]
+        launcher.with_cfg(config).launch(android_physical_tls_gate);
+        #[cfg(not(all(
+            feature = "standalone-portal-tailnet-android-physical",
+            target_os = "android"
+        )))]
         launcher.with_cfg(config).launch(oxid_ui_dioxus::App);
     }
     #[cfg(not(any(target_os = "ios", target_os = "android")))]

@@ -4,7 +4,8 @@
 //! PR #17 deployment profile. Desktop/headless uses an absolute manifest file;
 //! the explicit standalone-local and issue #140 iOS Simulator tailnet profiles
 //! use build-embedded bytes. Production, native-custody, ordinary tailnet,
-//! Android-tailnet, and WebAssembly compositions cannot select this module.
+//! generic Android-tailnet and WebAssembly compositions cannot select this
+//! module; only the separately authorized physical Android Portal profile can.
 
 use std::sync::Arc;
 
@@ -97,7 +98,13 @@ impl PortalIdentityConfiguration {
         Self::new(deployment, PortalTestIngress::Loopback)
     }
 
-    #[cfg(all(feature = "mobile-portal-tailnet-ios-simulator", target_os = "ios"))]
+    #[cfg(any(
+        all(feature = "mobile-portal-tailnet-ios-simulator", target_os = "ios"),
+        all(
+            feature = "mobile-portal-tailnet-android-physical",
+            target_os = "android"
+        )
+    ))]
     pub(crate) fn from_tailnet_bytes(
         bytes: &[u8],
         expected_sha256: &str,
@@ -155,7 +162,11 @@ fn validate_mobile_harness_origins(
 
 #[cfg(any(
     test,
-    all(feature = "mobile-portal-tailnet-ios-simulator", target_os = "ios")
+    all(feature = "mobile-portal-tailnet-ios-simulator", target_os = "ios"),
+    all(
+        feature = "mobile-portal-tailnet-android-physical",
+        target_os = "android"
+    )
 ))]
 fn validate_tailnet_harness_origins(
     deployment: &PortalDeploymentManifest,

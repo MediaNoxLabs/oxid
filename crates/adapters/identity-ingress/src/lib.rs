@@ -617,9 +617,7 @@ impl NativeIdentityLinkIngress {
     }
 
     #[cfg(feature = "tailnet-test-offer-trigger")]
-    pub fn standalone_portal_tailnet_ios_simulator(
-        public_origin: &str,
-    ) -> Result<Self, &'static str> {
+    pub fn standalone_portal_tailnet(public_origin: &str) -> Result<Self, &'static str> {
         loopback_test_offer_trigger::validate_tailnet_public_origin(public_origin)
             .map_err(|()| "Portal tailnet offer origin is invalid")?;
         Ok(Self {
@@ -1026,7 +1024,7 @@ mod tests {
     #[test]
     fn tailnet_offer_profile_accepts_only_exact_magic_dns_https_origin() {
         assert!(
-            NativeIdentityLinkIngress::standalone_portal_tailnet_ios_simulator(
+            NativeIdentityLinkIngress::standalone_portal_tailnet(
                 "https://oxid-demo.tail1234.ts.net:9443"
             )
             .is_ok()
@@ -1039,8 +1037,7 @@ mod tests {
             "https://oxid.example:9443",
         ] {
             assert!(
-                NativeIdentityLinkIngress::standalone_portal_tailnet_ios_simulator(invalid)
-                    .is_err(),
+                NativeIdentityLinkIngress::standalone_portal_tailnet(invalid).is_err(),
                 "{invalid}"
             );
         }

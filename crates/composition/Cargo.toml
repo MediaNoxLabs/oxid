@@ -26,6 +26,12 @@ mobile-portal-tailnet-ios-simulator = [
   "mobile-portal",
   "oxid-adapter-identity-ingress/tailnet-test-offer-trigger",
 ]
+# Closed physical Android counterpart. It reuses the strict Portal client and
+# capability-authenticated tailnet ingress without widening the iOS feature.
+mobile-portal-tailnet-android-physical = [
+  "mobile-portal",
+  "oxid-adapter-identity-ingress/tailnet-test-offer-trigger",
+]
 android-jni-exception-recovery-test = [
   "dep:oxid-adapter-mobile-native",
   "oxid-adapter-mobile-native/android-jni-exception-recovery-test",

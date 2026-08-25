@@ -189,7 +189,7 @@ stack_env_validate_public_values() {
       [ "$STACK_SCHEMA" = oxid-laceid-headless-v1 ] &&
         [ -z "$PORTAL_DIDIT_API_BASE_URL" ] || return 1
       ;;
-    tailnet-ios-simulator:tailnet-simulator-mock)
+    tailnet-ios-simulator:tailnet-simulator-mock|tailnet-android-physical:tailnet-simulator-mock)
       [ "$STACK_SCHEMA" = oxid-laceid-tailnet-simulator-mock-v1 ] &&
         [ "$PORTAL_DIDIT_API_BASE_URL" = http://smocker:8080 ] || return 1
       ;;
@@ -234,7 +234,8 @@ stack_env_validate_public_values() {
   [ "$SHARED_MIDNIGHT_INDEXER_V3_HOST_URL" = http://127.0.0.1:8088/api/v3/graphql ] || return 1
   [ "$SHARED_MIDNIGHT_INDEXER_V4_HOST_URL" = http://127.0.0.1:8088/api/v4/graphql ] || return 1
   [ "$SHARED_MIDNIGHT_PROOF_SERVER_HOST_URL" = http://127.0.0.1:6300 ] || return 1
-  if [ "${OXID_MOBILE_PORTAL_PROFILE:-local}" = tailnet-ios-simulator ]; then
+  if [[ "${OXID_MOBILE_PORTAL_PROFILE:-local}" = tailnet-ios-simulator ||
+        "${OXID_MOBILE_PORTAL_PROFILE:-local}" = tailnet-android-physical ]]; then
     [[ "${OXID_BUILD_PORTAL_PUBLIC_ORIGIN:-}" =~ ^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.ts\.net:9443$ ]] || return 1
     [ "$PORTAL_ISSUER_URL" = "$OXID_BUILD_PORTAL_PUBLIC_ORIGIN" ] || return 1
   else

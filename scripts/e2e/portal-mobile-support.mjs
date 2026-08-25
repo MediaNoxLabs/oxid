@@ -58,9 +58,13 @@ function exactMagicDnsOrigin(value) {
     return false;
   }
 }
-const tailnetProfile = portalProfile === "tailnet-ios-simulator";
+const iosTailnetProfile = portalProfile === "tailnet-ios-simulator";
+const androidPhysicalTailnetProfile = portalProfile === "tailnet-android-physical";
+const tailnetProfile = iosTailnetProfile || androidPhysicalTailnetProfile;
 const portalProfileValid = portalProfile === "local"
-  || (tailnetProfile && mobilePlatform === "ios" && exactMagicDnsOrigin(suppliedPublicOrigin));
+  || (iosTailnetProfile && mobilePlatform === "ios" && exactMagicDnsOrigin(suppliedPublicOrigin))
+  || (androidPhysicalTailnetProfile && mobilePlatform === "android"
+    && suppliedPublicOrigin === "https://yuriys-macbook-pro.taila4adff.ts.net:9443");
 const ISSUER_ORIGIN = tailnetProfile ? suppliedPublicOrigin : LOCAL_ISSUER_ORIGIN;
 const ISSUER_RESOLVER_ORIGIN = tailnetProfile
   ? `${suppliedPublicOrigin}/issuer-resolver`

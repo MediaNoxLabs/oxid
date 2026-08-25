@@ -19,15 +19,20 @@ const MAX_PORTAL_PROFILE_AUTHORITY_BYTES: usize = 512;
 
 fn active_portal_profile() -> Option<portal_profile_authority::PortalProfile> {
     let local = env::var_os("CARGO_FEATURE_STANDALONE_PORTAL").is_some();
-    let tailnet = env::var_os("CARGO_FEATURE_STANDALONE_PORTAL_TAILNET_IOS_SIMULATOR").is_some();
+    let ios_tailnet =
+        env::var_os("CARGO_FEATURE_STANDALONE_PORTAL_TAILNET_IOS_SIMULATOR").is_some();
+    let android_tailnet =
+        env::var_os("CARGO_FEATURE_STANDALONE_PORTAL_TAILNET_ANDROID_PHYSICAL").is_some();
     assert!(
-        !(local && tailnet),
+        usize::from(local) + usize::from(ios_tailnet) + usize::from(android_tailnet) <= 1,
         "select exactly one standalone Portal profile"
     );
     if local {
         Some(portal_profile_authority::PortalProfile::Local)
-    } else if tailnet {
+    } else if ios_tailnet {
         Some(portal_profile_authority::PortalProfile::IosTailnetSimulator)
+    } else if android_tailnet {
+        Some(portal_profile_authority::PortalProfile::AndroidPhysicalTailnet)
     } else {
         None
     }
@@ -62,6 +67,7 @@ fn main() {
 
 fn authorize_portal_profile() {
     println!("cargo:rustc-check-cfg=cfg(oxid_portal_virtual_device_profile_authorized)");
+    println!("cargo:rustc-check-cfg=cfg(oxid_portal_android_physical_profile_authorized)");
     println!("cargo:rerun-if-env-changed={PORTAL_PROFILE_AUTHORITY_PATH_ENV}");
     println!("cargo:rerun-if-env-changed={PORTAL_PROFILE_AUTHORITY_SHA256_ENV}");
     println!("cargo:rerun-if-env-changed={PORTAL_PUBLIC_ORIGIN_ENV}");
@@ -111,16 +117,31 @@ fn authorize_portal_profile() {
     let target = env::var("TARGET").expect("Cargo must provide TARGET");
     portal_profile_authority::validate_manifest(&bytes, profile, &target)
         .unwrap_or_else(|error| panic!("{error}"));
-    if profile == portal_profile_authority::PortalProfile::IosTailnetSimulator {
+    if matches!(
+        profile,
+        portal_profile_authority::PortalProfile::IosTailnetSimulator
+            | portal_profile_authority::PortalProfile::AndroidPhysicalTailnet
+    ) {
         let public_origin = env::var(PORTAL_PUBLIC_ORIGIN_ENV).unwrap_or_else(|_| {
             panic!("Portal tailnet profile requires {PORTAL_PUBLIC_ORIGIN_ENV}")
         });
         portal_profile_authority::validate_tailnet_public_origin(&public_origin)
             .unwrap_or_else(|error| panic!("{error}"));
+        if profile == portal_profile_authority::PortalProfile::AndroidPhysicalTailnet {
+            assert_eq!(
+                public_origin,
+                portal_profile_authority::ANDROID_PHYSICAL_PUBLIC_ORIGIN,
+                "Android physical Portal profile requires its exact authenticated origin"
+            );
+        }
         println!("cargo:rustc-env=OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN={public_origin}");
     }
 
-    println!("cargo:rustc-cfg=oxid_portal_virtual_device_profile_authorized");
+    if profile == portal_profile_authority::PortalProfile::AndroidPhysicalTailnet {
+        println!("cargo:rustc-cfg=oxid_portal_android_physical_profile_authorized");
+    } else {
+        println!("cargo:rustc-cfg=oxid_portal_virtual_device_profile_authorized");
+    }
     println!("cargo:rerun-if-changed={}", path.display());
 }
 

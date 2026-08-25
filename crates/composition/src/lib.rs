@@ -15,6 +15,12 @@ compile_error!("mobile-portal is available only on iOS and Android");
 compile_error!("mobile-portal-tailnet-ios-simulator is available only on iOS Simulator");
 
 #[cfg(all(
+    feature = "mobile-portal-tailnet-android-physical",
+    not(target_os = "android")
+))]
+compile_error!("mobile-portal-tailnet-android-physical is available only on Android");
+
+#[cfg(all(
     not(target_arch = "wasm32"),
     any(
         all(not(target_os = "ios"), not(target_os = "android")),
@@ -2099,6 +2105,60 @@ pub fn compose_mobile_development_portal_tailnet_ios_simulator_from_routes(
     deployment_manifest_sha256: &str,
     public_origin: &str,
 ) -> Result<ApplicationServices, HeadlessCompositionError> {
+    compose_mobile_development_portal_tailnet_from_routes(
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+        deployment_manifest,
+        deployment_manifest_sha256,
+        public_origin,
+    )
+}
+
+/// Physical Android counterpart. The caller can supply only build-embedded
+/// authority; there is no runtime endpoint selection.
+#[cfg(all(
+    feature = "mobile-portal-tailnet-android-physical",
+    target_os = "android",
+    not(target_arch = "wasm32")
+))]
+pub fn compose_mobile_development_portal_tailnet_android_physical_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+    deployment_manifest: &[u8],
+    deployment_manifest_sha256: &str,
+    public_origin: &str,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
+    compose_mobile_development_portal_tailnet_from_routes(
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+        deployment_manifest,
+        deployment_manifest_sha256,
+        public_origin,
+    )
+}
+
+#[cfg(any(
+    all(feature = "mobile-portal-tailnet-ios-simulator", target_os = "ios"),
+    all(
+        feature = "mobile-portal-tailnet-android-physical",
+        target_os = "android"
+    )
+))]
+fn compose_mobile_development_portal_tailnet_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+    deployment_manifest: &[u8],
+    deployment_manifest_sha256: &str,
+    public_origin: &str,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
     let config = mobile_standalone_config_from_routes(
         indexer_websocket_url,
         indexer_http_url,
@@ -3133,9 +3193,12 @@ where
         PortalTestIngress::Loopback => {
             Arc::new(NativeIdentityLinkIngress::standalone_portal_test())
         }
-        #[cfg(feature = "mobile-portal-tailnet-ios-simulator")]
+        #[cfg(any(
+            feature = "mobile-portal-tailnet-ios-simulator",
+            feature = "mobile-portal-tailnet-android-physical"
+        ))]
         PortalTestIngress::Tailnet { public_origin } => Arc::new(
-            NativeIdentityLinkIngress::standalone_portal_tailnet_ios_simulator(&public_origin)
+            NativeIdentityLinkIngress::standalone_portal_tailnet(&public_origin)
                 .unwrap_or_else(|_| panic!("authenticated Portal offer origin is invalid")),
         ),
         #[allow(unreachable_patterns)]

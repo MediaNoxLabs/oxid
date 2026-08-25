@@ -9,6 +9,8 @@ bash -n \
   scripts/run-android-emulator.sh \
   scripts/test-ios-portal-flow.sh \
   scripts/test-android-portal-flow.sh \
+  scripts/test-android-portal-tailnet-physical.sh \
+  scripts/run-android-tailnet.sh \
   scripts/portal-tailnet-serve.sh \
   scripts/test-portal-tailnet-serve.sh
 node --check scripts/e2e/portal-mobile-support.mjs
@@ -38,6 +40,42 @@ for tailnet_boundary in \
     exit 1
   }
 done
+
+for android_physical_boundary in \
+  standalone-portal-tailnet-android-physical \
+  mobile-portal-tailnet-android-physical \
+  tailnet-android-physical \
+  android_physical_tailnet \
+  standalone-tailnet-development-portal-android-physical \
+  rustls-platform-verifier_05 \
+  rustls-platform-verifier_07 \
+  initialize_after_dioxus_context \
+  R5CX82NAS0P \
+  kind:'"android_physical_tailnet"'; do
+  rg -qF "$android_physical_boundary" \
+    apps/oxid crates/composition scripts tests/mobile/android-portal-flow.mjs || {
+    echo "Portal Android physical tailnet boundary is missing: $android_physical_boundary" >&2
+    exit 1
+  }
+done
+if rg -n 'reverse "tcp:|reverse --list|cmd alarm set-time|10\.0\.2\.2|emulator_command' \
+  scripts/test-android-portal-tailnet-physical.sh; then
+  echo "The physical Android success driver must not use emulator, adb reverse, alias, or clock mutation paths." >&2
+  exit 1
+fi
+if ! rg -qF 'scripts/run-android-tailnet.sh' scripts/test-android-portal-tailnet-physical.sh || \
+  ! rg -qF 'head -c "$PORTAL_MOBILE_OFFER_CAPABILITY_BYTES" <&8' scripts/test-android-portal-tailnet-physical.sh || \
+  ! rg -qF '.token == 1 and .nonce == 1 and .credential == 1' scripts/test-android-portal-tailnet-physical.sh; then
+  echo "The physical Android driver is missing its launcher, private capability, or success-only counter proof." >&2
+  exit 1
+fi
+verifier_versions="$(cargo tree -p oxid-app --target aarch64-linux-android | \
+  rg -o 'rustls-platform-verifier v[0-9.]+' | awk '{print $2}' | sort -u | tr '\n' ' ')"
+[ "$verifier_versions" = "v0.5.3 v0.7.0 " ] || {
+  echo "The Android TLS bootstrap does not match the exact linked verifier versions: $verifier_versions" >&2
+  exit 1
+}
+
 if rg -n 'standalone-portal-tailnet-ios-simulator' scripts/run-android-emulator.sh scripts/test-android-portal-flow.sh; then
   echo "The iOS Simulator Portal-tailnet profile leaked into Android." >&2
   exit 1

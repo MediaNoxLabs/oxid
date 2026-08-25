@@ -48,6 +48,11 @@ if [ -z "$tailnet_dns_name" ] || [ "$tailnet_dns_name" = "null" ]; then
   echo "Tailscale did not report a MagicDNS name." >&2
   exit 1
 fi
+if [ "${OXID_MOBILE_PORTAL_PROFILE:-unavailable}" = "tailnet-android-physical" ] && \
+  [ "$tailnet_dns_name" != "yuriys-macbook-pro.taila4adff.ts.net" ]; then
+  echo "The physical Portal build authority does not match this authenticated tailnet host." >&2
+  exit 1
+fi
 if [ "$(tailscale serve status 2>&1 || true)" = "No serve config" ]; then
   echo "Run 'just standalone-phone-up' before building the phone profile." >&2
   exit 1
@@ -55,9 +60,20 @@ fi
 
 export OXID_ANDROID_DEVICE="$device"
 export OXID_STANDALONE_NETWORK_PROFILE=tailnet
-export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:8443/api/v4/graphql/ws"
-export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:8443/api/v4/graphql"
-export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:10000"
-export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name"
+if [ "${OXID_MOBILE_PORTAL_PROFILE:-unavailable}" = "tailnet-android-physical" ]; then
+  # Compile-time authority is fixed for this profile; Tailscale status above is
+  # validation only and never selects an endpoint.
+  readonly portal_tailnet_host="yuriys-macbook-pro.taila4adff.ts.net"
+  export OXID_BUILD_PORTAL_PUBLIC_ORIGIN="https://$portal_tailnet_host:9443"
+  export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$portal_tailnet_host:8443/api/v4/graphql/ws"
+  export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$portal_tailnet_host:8443/api/v4/graphql"
+  export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$portal_tailnet_host:10000"
+  export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$portal_tailnet_host"
+else
+  export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:8443/api/v4/graphql/ws"
+  export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:8443/api/v4/graphql"
+  export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:10000"
+  export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name"
+fi
 
 exec "$repository_root/scripts/run-android-emulator.sh"

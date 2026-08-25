@@ -56,6 +56,7 @@ case "$ui_profile" in
 esac
 
 standalone_network_profile="${OXID_STANDALONE_NETWORK_PROFILE:-simulated}"
+requested_portal_profile="${OXID_MOBILE_PORTAL_PROFILE:-unavailable}"
 case "$standalone_network_profile" in
   simulated)
     ;;
@@ -81,7 +82,9 @@ case "$standalone_network_profile" in
         exit 1
       fi
     done
-    mobile_features="$mobile_features,standalone-tailnet"
+    if [ "$requested_portal_profile" != "tailnet-android-physical" ]; then
+      mobile_features="$mobile_features,standalone-tailnet"
+    fi
     ;;
   *)
     echo "OXID_STANDALONE_NETWORK_PROFILE must be 'simulated', 'local', or 'tailnet'." >&2
@@ -99,6 +102,8 @@ portal_manifest_path=""
 portal_manifest_sha256=""
 portal_profile_authority_path=""
 portal_profile_authority_sha256=""
+portal_public_origin=""
+portal_authority_profile="local"
 case "$portal_profile" in
   unavailable)
     ;;
@@ -126,8 +131,38 @@ case "$portal_profile" in
     fi
     mobile_features="$mobile_features,standalone-portal"
     ;;
+  tailnet-android-physical)
+    if [ "$mobile_custody" != "development" ] || \
+      [ "$standalone_network_profile" != "tailnet" ]; then
+      echo "OXID_MOBILE_PORTAL_PROFILE=tailnet-android-physical requires the standalone tailnet development profile." >&2
+      exit 1
+    fi
+    portal_public_origin="${OXID_BUILD_PORTAL_PUBLIC_ORIGIN:-}"
+    if [ "$portal_public_origin" != "https://yuriys-macbook-pro.taila4adff.ts.net:9443" ]; then
+      echo "The Android physical Portal profile requires its exact authenticated origin." >&2
+      exit 1
+    fi
+    public_host="yuriys-macbook-pro.taila4adff.ts.net"
+    [ "${OXID_BUILD_MIDNIGHT_INDEXER_WS_URL:-}" = "wss://$public_host:8443/api/v4/graphql/ws" ] && \
+      [ "${OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL:-}" = "https://$public_host:8443/api/v4/graphql" ] && \
+      [ "${OXID_BUILD_MIDNIGHT_NODE_WS_URL:-}" = "wss://$public_host:10000" ] && \
+      [ "${OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL:-}" = "https://$public_host" ] || {
+      echo "The Android physical Portal profile requires the exact authenticated Midnight tailnet URLs." >&2
+      exit 1
+    }
+    portal_manifest_path="${OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH:-}"
+    portal_manifest_sha256="${OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256:-}"
+    if [[ "$portal_manifest_path" != /* ]] || [ ! -f "$portal_manifest_path" ] || \
+      [ -L "$portal_manifest_path" ] || ! [[ "$portal_manifest_sha256" =~ ^[0-9a-f]{64}$ ]] || \
+      [ "$(shasum -a 256 "$portal_manifest_path" | awk '{print $1}')" != "$portal_manifest_sha256" ]; then
+      echo "The Portal deployment manifest path or digest is invalid." >&2
+      exit 1
+    fi
+    portal_authority_profile="tailnet-android-physical"
+    mobile_features="$mobile_features,standalone-portal-tailnet-android-physical"
+    ;;
   *)
-    echo "OXID_MOBILE_PORTAL_PROFILE must be 'unavailable' or 'local'." >&2
+    echo "OXID_MOBILE_PORTAL_PROFILE must be 'unavailable', 'local', or 'tailnet-android-physical'." >&2
     exit 1
     ;;
 esac
@@ -277,6 +312,13 @@ if [ "$($adb_command -s "$device" shell getprop sys.boot_completed 2>/dev/null |
   exit 1
 fi
 
+if [ "$portal_profile" = "tailnet-android-physical" ] && \
+  { [[ "$device" = emulator-* ]] || \
+    [ "$($adb_command -s "$device" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" != "0" ]; }; then
+  echo "The Android physical Portal profile requires a non-QEMU device." >&2
+  exit 1
+fi
+
 if [ "$standalone_network_profile" = "local" ]; then
   if [[ "$device" != emulator-* ]] || \
     [ "$($adb_command -s "$device" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" != "1" ]; then
@@ -328,12 +370,16 @@ if [ -z "$android_ndk" ] || [ ! -d "$android_ndk" ]; then
 fi
 
 rustup target add "$rust_target"
-if [ "$portal_profile" = "local" ]; then
+if [ "$portal_profile" != "unavailable" ]; then
   portal_profile_authority_directory="$(mktemp -d "${TMPDIR:-/tmp}/oxid-portal-profile-android.XXXXXX")"
   chmod 700 "$portal_profile_authority_directory"
   portal_profile_authority_path="$portal_profile_authority_directory/authority.json"
+  authority_platform="android_qemu"
+  if [ "$portal_profile" = "tailnet-android-physical" ]; then
+    authority_platform="android_physical_tailnet"
+  fi
   "$repository_root/scripts/e2e/write-portal-profile-authority.sh" \
-    android_qemu "$rust_target" "$portal_profile_authority_path"
+    "$authority_platform" "$rust_target" "$portal_profile_authority_path" "$portal_authority_profile"
   portal_profile_authority_sha256="$(shasum -a 256 "$portal_profile_authority_path" | awk '{print $1}')"
 fi
 rust_toolchain_bin="$(dirname -- "$(rustup which cargo)")"
@@ -347,6 +393,7 @@ OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$portal_manifest_path" \
 OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$portal_manifest_sha256" \
 OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH="$portal_profile_authority_path" \
 OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256="$portal_profile_authority_sha256" \
+OXID_BUILD_PORTAL_PUBLIC_ORIGIN="$portal_public_origin" \
 OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
 PATH="$rust_toolchain_bin:$android_sdk/platform-tools:/usr/bin:$PATH" \
   "$dioxus_cli" build \

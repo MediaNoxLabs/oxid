@@ -55,6 +55,11 @@ ios-portal-tailnet-simulator-smoke stack_env_file public_origin:
 android-portal-smoke stack_env_file:
     STACK_ENV_FILE={{quote(stack_env_file)}} ./scripts/test-android-portal-flow.sh
 
+# Successful mocked LaceID Portal issuance only, over the fixed authenticated
+# Tailnet HTTPS authority, on the explicitly named physical Android device.
+android-portal-tailnet-physical-smoke stack_env_file serial:
+    ./scripts/test-android-portal-tailnet-physical.sh {{quote(stack_env_file)}} {{quote(serial)}}
+
 standalone-recovery-smoke:
     cargo test -p oxid-composition standalone_composition_recovers_a_complete_wallet_into_a_fresh_instance
 
