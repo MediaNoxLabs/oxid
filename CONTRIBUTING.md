@@ -4,7 +4,8 @@ Thank you for helping build a free and reusable identity wallet foundation.
 
 ## Before you begin
 
-Read `AGENT.md` and `OXID_IDENTITY_WALLET_BLUEPRINT.md`. Architectural work
+Read `AGENT.md`, `OXID_IDENTITY_WALLET_BLUEPRINT.md`, and
+`docs/integration-delivery.md`. Architectural work
 must preserve inward dependencies and include an ADR. Open an issue before a
 large feature or dependency migration so its capability boundary and security
 impact can be agreed first.
@@ -35,7 +36,10 @@ outgoing adapters. Run it directly with `./run.sh coverage --strict`.
 
 ## Pull requests
 
-- Target `develop` for normal work. `main` is reserved for release promotion.
+- Target `integration` for issue-backed product, refactor, quality, and tooling work.
+  `main` accepts only release promotion from `integration`; `develop` remains a
+  migration branch. Follow `docs/integration-delivery.md` for the full base and
+  required-check contract.
 - Keep one bounded vertical slice per pull request.
 - Open the pull request as a draft first.
 - Add or update tests and public documentation with behavior.

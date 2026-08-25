@@ -147,10 +147,10 @@ undetectable later. The check that matters is `gates` parsing.
   angle name not in the configured set cannot smuggle itself into evidence.
 - **Draft first.** `workflow.requireDraftFirst: true`, and
   `requireRetrospective: true`.
-- **No Copilot gate.** `refinement.maxCopilotRounds: 0` selects
-  local-harness-only review (`draft_gate → pre_approval_gate`), which is correct
-  while this repository has no Copilot reviewer configured. Raising it above `0`
-  without configuring one will stall the loop.
+- **No Copilot gate.** `refinement.maxCopilotRounds: 0` keeps unavailable
+  Copilot review disabled. The schema-supported `external-review` persona requires
+  an independent Claude CLI review pinned to the exact current head; any push
+  invalidates that evidence. See `docs/integration-delivery.md`.
 
 ## One decision still needed from the owner
 
@@ -185,7 +185,7 @@ in a diff.
 ## Operating notes
 
 - **Space out merges.** CI uses `cancel-in-progress`, so several merges in quick
-  succession cancel intermediate `develop` runs and leave only the tip verified.
+  succession cancel intermediate `integration` runs and leave only the tip verified.
   Either pace them or state explicitly that verification is tip-only.
 - **Verify then merge, in separate commands.** Chaining a check and a merge with
   `||` or `&&` has already merged a red PR once here. Assert zero non-passing

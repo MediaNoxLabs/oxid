@@ -2,9 +2,9 @@ name: Scan
 
 on:
   push:
-    branches: [develop, main]
+    branches: [integration, develop, main]
   pull_request:
-    branches: [develop, main]
+    branches: [integration, develop, main]
   workflow_dispatch: {}
   schedule:
     - cron: "0 0 * * *"

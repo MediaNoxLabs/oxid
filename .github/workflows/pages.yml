@@ -2,7 +2,7 @@ name: Documentation site
 
 on:
   push:
-    branches: [develop]
+    branches: [integration, develop]
     paths:
       - "docs/**"
       - ".github/workflows/pages.yml"

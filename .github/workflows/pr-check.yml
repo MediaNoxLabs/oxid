@@ -9,6 +9,28 @@ permissions:
   pull-requests: read
 
 jobs:
+  require-integration-base:
+    name: Require integration for issue-backed PRs
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate delivery base
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            // PR_BASE_CONTRACT_START
+            const pullRequest = context.payload.pull_request;
+            const body = pullRequest.body || "";
+            const closesIssue = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:https:\/\/github\.com\/MediaNoxLabs\/oxid\/issues\/\d+|(?:MediaNoxLabs\/oxid)?#\d+)\b/i.test(body);
+            const baseRef = pullRequest.base.ref;
+            const headRef = pullRequest.head.ref;
+            const releasePromotion = baseRef === "main" && headRef === "integration";
+            if (closesIssue && baseRef !== "integration" && !releasePromotion) {
+              core.setFailed(`Issue-backed pull requests must target integration; received ${headRef} -> ${baseRef}. The only exception is integration -> main release promotion.`);
+            } else {
+              core.info(`Delivery base accepted: ${headRef} -> ${baseRef}.`);
+            }
+            // PR_BASE_CONTRACT_END
+
   validate-pr-title:
     name: Validate PR title
     runs-on: ubuntu-24.04
