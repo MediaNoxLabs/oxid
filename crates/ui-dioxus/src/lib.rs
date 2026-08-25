@@ -9795,6 +9795,7 @@ fn DidsPage(
             let create_services = services.clone();
             let create_profile = profile_id.clone();
             let create_records = records.clone();
+            let issuance_did_ready = active_managed_issuance_methods(&records).is_some();
             let standalone_authentication_request = services.standalone_self_issued_request();
             rsx! {
                 section { class: "page-heading",
@@ -9805,9 +9806,10 @@ fn DidsPage(
                 article { class: "surface-card did-resolver-card",
                     p { class: "card-eyebrow", "Managed identity" }
                     h2 { "Create a standalone DID" }
-                    p { class: "form-hint", "Creates protected Ed25519 authentication and P-256 assertion keys. Only the public DID document is persisted." }
+                    p { class: "form-hint", "Creates protected Ed25519 authentication, P-256 assertion, and Jubjub holder-binding keys. Only the public DID document is persisted." }
                     button {
-                        class: "primary-action", r#type: "button", disabled: resolving,
+                        class: "primary-action", r#type: "button", disabled: resolving || issuance_did_ready,
+                        aria_busy: resolving,
                         onclick: move |_| {
                             state.set(DidPageState::Ready { records: create_records.clone(), resolving: true, operation_error: None });
                             let service = create_services.create_did();
@@ -9840,7 +9842,15 @@ fn DidsPage(
                                 }
                             });
                         },
-                        if resolving { "Working…" } else { "Create standalone DID" }
+                        if resolving { "Creating DID…" } else if issuance_did_ready { "Managed issuance DID ready" } else { "Create standalone DID" }
+                    }
+                    if issuance_did_ready {
+                        p {
+                            class: "credential-reverification-success",
+                            role: "status",
+                            aria_live: "polite",
+                            "A protected managed DID is ready for credential issuance. Restarting the app clears its development key custody."
+                        }
                     }
                 }
                 article { class: "surface-card did-resolver-card",
@@ -11339,7 +11349,18 @@ fn CredentialsPage(
                     p { class: "card-eyebrow", "OpenID4VCI 1.0 Final" }
                     h2 { "Accept a credential offer" }
                     p { class: "form-hint", "Preview an embedded offer before consent. The pre-authorized code, access token, nonce, and signed proof remain inside the protocol adapter." }
-                    if offer_draft.read().has_imported_offer() {
+                    if let Some(review) = prepared_issuance.read().as_ref() {
+                        p {
+                            class: "form-hint",
+                            role: "status",
+                            aria_label: "Credential offer URI cleared after private admission",
+                            if review.state == "succeeded" {
+                                "The exchange is complete. The transient offer URI, grant, access token, nonce, and proof were cleared."
+                            } else {
+                                "The offer is admitted to private review. Its URI and one-time grant were cleared instead of being shown in this field."
+                            }
+                        }
+                    } else if offer_draft.read().has_imported_offer() {
                         p {
                             class: "form-hint",
                             aria_label: "Imported credential offer retained privately",
@@ -11470,13 +11491,36 @@ fn CredentialsPage(
                         },
                         if issuance_busy() { "Checking offer…" } else { "Preview credential offer" }
                     }
+                    if issuance_busy() {
+                        p {
+                            class: "form-hint",
+                            role: "status",
+                            aria_live: "polite",
+                            "Credential issuance is in progress. Oxid is authenticating the holder, receiving the credential, and verifying it before storage."
+                        }
+                    }
+                    if let Some(message) = issuance_notice.read().as_deref() {
+                        p {
+                            class: if prepared_issuance.read().as_ref().is_some_and(|review| review.state == "succeeded") { "form-hint credential-reverification-success" } else { "form-hint" },
+                            role: "status",
+                            aria_live: "polite",
+                            "{message}"
+                        }
+                    }
                     if let Some(preview) = prepared_issuance.read().clone() {
                         div { class: "credential-offer-preview",
                             div { class: "consent-preview__heading",
                                 h3 { "Credential offer preview" }
                                 span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
                             }
-                            if preview.state == "awaiting_consent" {
+                            if preview.state == "succeeded" {
+                                p {
+                                    class: "credential-reverification-success",
+                                    role: "status",
+                                    aria_live: "polite",
+                                    "Credential stored. It is visible in the protected inventory below and ready for fresh reverification."
+                                }
+                            } else if preview.state == "awaiting_consent" {
                                 p { class: "privacy-consent-exemption", "Details shown for authorization." }
                                 ol { class: "consent-questions", aria_label: "Credential issuance consent questions",
                                     li { class: "consent-question",
@@ -11679,9 +11723,6 @@ fn CredentialsPage(
                                 }
                             }
                         }
-                    }
-                    if let Some(message) = issuance_notice.read().as_deref() {
-                        p { class: "form-hint", role: "status", "{message}" }
                     }
                 }
                 CredentialPresentationPanel {

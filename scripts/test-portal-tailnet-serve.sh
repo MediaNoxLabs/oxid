@@ -40,7 +40,12 @@ OXID_TAILSCALE_CLI="$stub" OXID_PORTAL_TAILNET_STATE_DIR="$scratch/receipt" \
   ./scripts/portal-tailnet-serve.sh up "$origin" >/dev/null
 jq -e --arg key "$web_key" '
   .TCP["9443"].HTTPS == true and
-  (.Web[$key].Handlers | keys) == ["/","/issuer-resolver","/offer"]
+  .Web[$key].Handlers == {
+    "/":{"Proxy":"http://127.0.0.1:18090"},
+    "/issuer-resolver":{"Proxy":"http://127.0.0.1:18093"},
+    "/mock-verification":{"Proxy":"http://127.0.0.1:9090/mock-verification"},
+    "/offer":{"Proxy":"http://127.0.0.1:18091/offer"}
+  }
 ' "$state" >/dev/null
 STUB_STATE="$state" STUB_WEB="$web_key" \
 OXID_TAILSCALE_CLI="$stub" OXID_PORTAL_TAILNET_STATE_DIR="$scratch/receipt" \

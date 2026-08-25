@@ -27,6 +27,7 @@ for tailnet_boundary in \
   tailnet-test-offer-trigger \
   OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN \
   '/issuer-resolver' \
+  '/mock-verification' \
   'serve --yes --https=9443 off' \
   '.no_proxy()' \
   'Policy::none()' \
@@ -510,8 +511,8 @@ fi
 # and the separate signed lifecycle helper. Mobile support never fetches or
 # creates another checkout during a conformance run.
 for source_pin_marker in \
-  'PORTAL_EXPECTED_HELPER_COMMIT="e3b0e0375a8b9461c2da322b03428524d7b6640e"' \
-  'PORTAL_EXPECTED_HELPER_TREE="1ea53823c6f1f479f6e84003a9b32a652096fc49"' \
+  'PORTAL_EXPECTED_HELPER_COMMIT="e4b081fbcbc6cc6630882bd9b154336c4940e73f"' \
+  'PORTAL_EXPECTED_HELPER_TREE="1f1efb49c4fade08425b9f85ba71d15bc0edaf1f"' \
   'stack_env_load "$STACK_ENV_FILE"' \
   'source_tree="$(portal_mobile_source_tree)"' \
   '[ "$source_tree" = "$PORTAL_PROTOCOL_SOURCE_DIR" ]'; do

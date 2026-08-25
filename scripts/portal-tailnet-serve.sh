@@ -85,6 +85,8 @@ if [ "$action" = up ]; then
   "$tailscale_cli" serve --yes --bg --https=9443 http://127.0.0.1:18090 >/dev/null
   "$tailscale_cli" serve --yes --bg --https=9443 --set-path=/issuer-resolver \
     http://127.0.0.1:18093 >/dev/null
+  "$tailscale_cli" serve --yes --bg --https=9443 --set-path=/mock-verification \
+    http://127.0.0.1:9090/mock-verification >/dev/null
   "$tailscale_cli" serve --yes --bg --https=9443 --set-path=/offer \
     http://127.0.0.1:18091/offer >/dev/null
   canonical_status >"$installed_candidate"
@@ -95,6 +97,7 @@ if [ "$action" = up ]; then
     .Web[$key].Handlers == {
       "/":{"Proxy":"http://127.0.0.1:18090"},
       "/issuer-resolver":{"Proxy":"http://127.0.0.1:18093"},
+      "/mock-verification":{"Proxy":"http://127.0.0.1:9090/mock-verification"},
       "/offer":{"Proxy":"http://127.0.0.1:18091/offer"}
     }
   ' "$installed_candidate" >/dev/null

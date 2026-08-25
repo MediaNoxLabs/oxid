@@ -3,8 +3,8 @@
 # The dotenv file is data: this file never sources/evaluates it and deliberately
 # never assigns or exports Portal secret values.
 
-readonly STACK_ENV_EXPECTED_HELPER_COMMIT="e3b0e0375a8b9461c2da322b03428524d7b6640e"
-readonly STACK_ENV_EXPECTED_HELPER_TREE="1ea53823c6f1f479f6e84003a9b32a652096fc49"
+readonly STACK_ENV_EXPECTED_HELPER_COMMIT="e4b081fbcbc6cc6630882bd9b154336c4940e73f"
+readonly STACK_ENV_EXPECTED_HELPER_TREE="1f1efb49c4fade08425b9f85ba71d15bc0edaf1f"
 readonly STACK_ENV_EXPECTED_PROTOCOL_COMMIT="925ec8d04882eabd4ac7b784c70fc2f0c152faae"
 readonly STACK_ENV_EXPECTED_PROTOCOL_TREE="58b4597524f88a0ae2253439a44dab0dc60cbb6f"
 readonly STACK_ENV_EXPECTED_PROTOCOL_PR_HEAD="9c82db23eabe8b6d758b2731f2225910ea627c14"
