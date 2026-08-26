@@ -1201,6 +1201,26 @@ mod tests {
 
     #[cfg(feature = "loopback-test-offer-trigger")]
     #[test]
+    fn portal_trigger_worker_resets_and_reuses_the_sequential_reservation() {
+        let ingress = NativeIdentityLinkIngress::standalone_portal_test();
+        for marker in ["first", "second"] {
+            let offer = format!(
+                "openid-credential-offer://?credential_offer=%7B%22marker%22%3A%22{marker}%22%7D"
+            );
+            let expected = offer.clone();
+            ingress
+                .capture_with_trigger_resolver(
+                    loopback_test_offer_trigger::TRIGGER.to_owned(),
+                    move || Zeroizing::new(offer),
+                )
+                .expect("schedule sequential trigger");
+            assert_eq!(wait_for_pending(&ingress).into_inner(), expected);
+            assert_eq!(ingress.take_pending(), Ok(None));
+        }
+    }
+
+    #[cfg(feature = "loopback-test-offer-trigger")]
+    #[test]
     fn portal_trigger_worker_panic_releases_the_reserved_queue_slot() {
         let ingress = NativeIdentityLinkIngress::standalone_portal_test();
         ingress
