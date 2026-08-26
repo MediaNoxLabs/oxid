@@ -302,8 +302,7 @@ try {
     }
     await waitFor(
       `(() => {
-        const retry = ${button("Preview credential offer")};
-        return Boolean(retry && !retry.disabled)
+        return !Boolean(${button("Checking offer…")})
           && Array.from(document.querySelectorAll('[role="status"]')).some((element) => {
             const text = element.textContent.trim();
             return text.length > 0 && text.length <= 512
