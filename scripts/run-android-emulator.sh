@@ -262,7 +262,24 @@ first_configured_avd() {
 }
 
 device="${OXID_ANDROID_DEVICE:-}"
-adb_device() { ANDROID_SERIAL="$device" "$adb_command" "$@"; }
+adb_timeout_seconds="${OXID_ANDROID_ADB_TIMEOUT_SECONDS:-}"
+if [ -n "$adb_timeout_seconds" ]; then
+  if ! [[ "$adb_timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
+    echo "OXID_ANDROID_ADB_TIMEOUT_SECONDS must be a positive integer." >&2
+    exit 1
+  fi
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "OXID_ANDROID_ADB_TIMEOUT_SECONDS requires coreutils timeout." >&2
+    exit 1
+  fi
+fi
+adb_device() {
+  if [ -n "$adb_timeout_seconds" ]; then
+    timeout -k 5s "${adb_timeout_seconds}s" env ANDROID_SERIAL="$device" "$adb_command" "$@"
+  else
+    ANDROID_SERIAL="$device" "$adb_command" "$@"
+  fi
+}
 if [ -z "$device" ]; then
   device="$(first_online_device)"
 fi
