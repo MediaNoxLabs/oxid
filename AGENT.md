@@ -4,10 +4,12 @@ Engineering guide for agents and contributors working in `oxid`.
 
 This repository is the public, standalone home of the Oxid identity wallet. The
 root `OXID_IDENTITY_WALLET_BLUEPRINT.md` is the product and architecture north
-star. `docs/integration-delivery.md` is the authoritative base, CI, and
-merge contract for issue-backed work. When this guide and the blueprint
-differ, preserve the blueprint's
-dependency and security rules and update this file in the same change.
+star. `RUST_MONOREPO_QUALITY.md` is the owner-authored non-functional north
+star, and `docs/site/src/quality-constitution.md` maps it to immediate rules and
+staged targets. `docs/integration-delivery.md` is the authoritative base, CI,
+and merge contract for issue-backed work. When this guide and the blueprint
+differ, preserve the blueprint's dependency and security rules and update this
+file in the same change.
 
 ## Purpose and current phase
 

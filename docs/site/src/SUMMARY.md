@@ -14,6 +14,9 @@
 - [Architecture](architecture.md)
 - [System diagrams](system-diagrams.md)
 - [Security model](security-model.md)
+- [Quality north star](quality-north-star.md)
+- [Quality constitution](quality-constitution.md)
+- [Quality baseline](quality-baseline-2026-08-26.md)
 - [Testing strategy](testing-strategy.md)
 - [Decision records](adr-catalog.md)
 

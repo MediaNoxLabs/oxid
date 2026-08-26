@@ -65,4 +65,8 @@ For the reasoning behind these boundaries, the
 [decision records](adr-catalog.md) are the authoritative log — start with
 the blueprint constitution
 ([`OXID_IDENTITY_WALLET_BLUEPRINT.md`](https://github.com/MediaNoxLabs/oxid/blob/integration/OXID_IDENTITY_WALLET_BLUEPRINT.md))
-and the ADR index.
+and the ADR index. The owner-authored
+[`RUST_MONOREPO_QUALITY.md`](quality-north-star.md) is the non-functional north
+star; the [versioned quality constitution](quality-constitution.md)
+distinguishes current rules from staged targets and records the exception
+process.
