@@ -289,7 +289,7 @@ function clearHandoff() {
 }
 
 function handleOffer(request, response) {
-  if (request.method !== "GET" || request.url !== "/offer") return false;
+  if (request.method !== "GET" || !new Set(["/", "/offer"]).has(request.url)) return false;
   if (handoffState !== "ready" || !offer || !capability) {
     sendJson(response, 410, { error: "unavailable" });
     return true;
