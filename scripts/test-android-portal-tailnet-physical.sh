@@ -207,11 +207,18 @@ open_webview() {
 }
 
 run_scenario() {
-  local mode="$1"
+  local mode="$1" scenario_log="$STATE/scenario-error.log"
   open_webview || fail webview
-  OXID_PORTAL_CONTROL_ORIGIN="$CONTROL_ORIGIN" \
+  rm -f -- "$scenario_log"
+  if ! OXID_PORTAL_CONTROL_ORIGIN="$CONTROL_ORIGIN" \
     node "$REPOSITORY_ROOT/tests/mobile/android-portal-flow.mjs" "$websocket_url" "$mode" \
-    >>"$PRIVATE_LOG" 2>&1 || fail "$mode"
+    >>"$PRIVATE_LOG" 2>"$scenario_log"; then
+    if ! rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|private.?parts|signed.?bytes|detached.?proof|capability|seed|serial|\.ts\.net' "$scenario_log"; then
+      tail -n 12 "$scenario_log" >&2
+    fi
+    fail "$mode"
+  fi
+  rm -f -- "$scenario_log"
   adb_device forward --remove "tcp:$forward_port" >/dev/null 2>&1 || fail forward-cleanup
   forward_port=""
 }
