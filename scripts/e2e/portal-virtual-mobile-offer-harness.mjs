@@ -112,6 +112,27 @@ async function runHarness() {
   }
 }
 
+function contractRequest(requestPath, capability) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      host: "127.0.0.1",
+      port: VIRTUAL_OFFER_PORT,
+      method: "GET",
+      path: requestPath,
+      headers: capability ? { Authorization: `Bearer ${capability}` } : {},
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => resolve({
+        body: Buffer.concat(chunks).toString("utf8"),
+        status: response.statusCode,
+      }));
+    });
+    request.once("error", reject);
+    request.end();
+  });
+}
+
 async function runContract() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "oxid-portal-virtual-offer-"));
   fs.chmodSync(root, 0o700);
@@ -144,20 +165,15 @@ async function runContract() {
     if (fs.existsSync(capabilityPath) || fs.existsSync(offerPath)) {
       throw new Error("virtual offer handoff files were not unlinked before listen");
     }
-    const origin = `http://127.0.0.1:${VIRTUAL_OFFER_PORT}`;
-    const wrongPath = await fetch(`${origin}/counters`);
+    const wrongPath = await contractRequest("/counters");
     if (wrongPath.status !== 404) throw new Error("control route was exposed on virtual offer port");
-    const unauthorized = await fetch(`${origin}/offer`);
+    const unauthorized = await contractRequest("/offer");
     if (unauthorized.status !== 401) throw new Error("unauthorized offer was not rejected");
-    const accepted = await fetch(`${origin}/offer`, {
-      headers: { Authorization: `Bearer ${capability}` },
-    });
-    if (accepted.status !== 200 || await accepted.text() !== offer) {
+    const accepted = await contractRequest("/offer", capability);
+    if (accepted.status !== 200 || accepted.body !== offer) {
       throw new Error("authorized offer response was not exact");
     }
-    const replay = await fetch(`${origin}/offer`, {
-      headers: { Authorization: `Bearer ${capability}` },
-    });
+    const replay = await contractRequest("/offer", capability);
     if (replay.status !== 410) throw new Error("offer replay was not rejected");
     const status = await new Promise((resolve) => child.once("exit", resolve));
     if (status !== 0 || stderr !== "" || !stdout.includes("PASS consumed=true")) {

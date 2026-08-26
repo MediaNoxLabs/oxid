@@ -29,7 +29,6 @@ android-jni-exception-recovery-test = [
 ]
 
 [dependencies]
-hex.workspace = true
 oxid-adapter-backup-complete.workspace = true
 oxid-adapter-backup-portable.workspace = true
 oxid-adapter-did-midnight.workspace = true
@@ -62,6 +61,7 @@ oxid-wallet-application.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
+hex.workspace = true
 midnight-base-crypto.workspace = true
 midnight-ledger.workspace = true
 midnight-onchain-runtime.workspace = true

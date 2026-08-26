@@ -14,9 +14,12 @@ default = []
 # Native link tools deliver a fixed literal string, never the real Portal offer,
 # so the pre-authorized grant
 # never appears in host process argv or in any retained test log/evidence.
-# A fresh app-private capability authenticates one named, bounded loopback
-# worker; the file is unlinked before use and the server permits one response.
-# The fetched offer then enters the same one-item router as normal ingress.
+# A fresh app-private capability authenticates the client to one bounded
+# loopback worker; it does not authenticate the plaintext listener to the
+# client. Strict routing, explicit consent, and full credential/issuer/trust
+# verification bound that development-only risk. The file is unlinked before
+# use, the server permits one response, and the fetched offer enters the same
+# one-item router as normal ingress.
 # Selected only by `oxid-composition`'s
 # authority-guarded `mobile-portal` feature, forwarded from the iOS/Android
 # `oxid-app/standalone-portal` profile.

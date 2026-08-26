@@ -174,6 +174,7 @@ fi
 
 cargo test -p oxid-app portal_profile_authority::tests
 portal_authority_scratch="$(mktemp -d)"
+trap 'rm -rf -- "$portal_authority_scratch"' EXIT
 for pair in \
   ios_simulator:aarch64-apple-ios-sim \
   ios_simulator:x86_64-apple-ios \
@@ -203,6 +204,7 @@ if ./scripts/e2e/write-portal-profile-authority.sh \
   exit 1
 fi
 rm -rf -- "$portal_authority_scratch"
+trap - EXIT
 android_qemu_guard_line="$(grep -nF 'ro.kernel.qemu' scripts/run-android-emulator.sh | tail -1 | cut -d: -f1)"
 for runtime_authority_marker in \
   verify_android_portal_virtual_device_profile \

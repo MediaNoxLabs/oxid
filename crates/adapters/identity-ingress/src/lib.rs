@@ -64,6 +64,7 @@ pub fn validate_tailnet_public_origin(value: &str) -> Result<(), &'static str> {
         || url.path() != "/"
         || url.query().is_some()
         || url.fragment().is_some()
+        || host.len() > 253
         || !host.ends_with(".ts.net")
         || host == "ts.net"
         || !labels_are_canonical
@@ -212,10 +213,15 @@ fn registered_openid4vp_request(
 /// `simctl openurl`/`am start -d` deliver only the fixed, non-secret
 /// [`loopback_test_offer_trigger::TRIGGER`] string. The harness places a fresh
 /// capability in app-private storage without argv; a named worker unlinks it,
-/// authenticates one bounded loopback response, zeroizes it, and enqueues the
-/// validated offer into the normal one-item ingress. Tao/Wry's OS-event
-/// callback never performs network I/O. Failure instead enqueues the literal
-/// trigger, which the strict credential-offer router rejects as malformed.
+/// authenticates the client to one bounded loopback response, zeroizes it, and
+/// enqueues the validated offer into the normal one-item ingress. Plain HTTP
+/// loopback does not authenticate the listener to the client, so an unrelated
+/// local listener could consume the capability and supply a candidate offer.
+/// The development-only profile bounds that risk with strict offer routing,
+/// explicit holder consent, and full issuer, trust, proof, and holder-binding
+/// verification before storage. Tao/Wry's OS-event callback never performs
+/// network I/O. Failure instead enqueues the literal trigger, which the strict
+/// credential-offer router rejects as malformed.
 #[cfg(feature = "loopback-test-offer-trigger")]
 mod loopback_test_offer_trigger {
     use std::fs;
@@ -236,6 +242,7 @@ mod loopback_test_offer_trigger {
 
     pub const TRIGGER: &str = "openid-credential-offer://standalone-portal-test-fetch";
 
+    const LOOPBACK_OFFER_PORT: u16 = 18091;
     const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
     const MAX_RESPONSE_BYTES: usize = 32 * 1_024;
     const CAPABILITY_BYTES: usize = 64;
@@ -247,9 +254,9 @@ mod loopback_test_offer_trigger {
     }
 
     pub fn resolve_trigger() -> Zeroizing<String> {
-        let control_address = SocketAddr::from(([127, 0, 0, 1], 18091));
+        let address = SocketAddr::from(([127, 0, 0, 1], LOOPBACK_OFFER_PORT));
         read_capability()
-            .and_then(|capability| fetch_offer(control_address, CONTROL_TIMEOUT, &capability))
+            .and_then(|capability| fetch_offer(address, CONTROL_TIMEOUT, &capability))
             .unwrap_or_else(|()| Zeroizing::new(TRIGGER.to_owned()))
     }
 
@@ -391,8 +398,13 @@ mod loopback_test_offer_trigger {
         let started = Instant::now();
         let mut stream = TcpStream::connect_timeout(&address, timeout).map_err(|_| ())?;
         set_remaining_timeouts(&stream, started, timeout)?;
+        let host = address.to_string();
         stream
-            .write_all(b"GET /offer HTTP/1.1\r\nHost: 127.0.0.1:18091\r\nAuthorization: Bearer ")
+            .write_all(b"GET /offer HTTP/1.1\r\nHost: ")
+            .map_err(|_| ())?;
+        stream.write_all(host.as_bytes()).map_err(|_| ())?;
+        stream
+            .write_all(b"\r\nAuthorization: Bearer ")
             .map_err(|_| ())?;
         stream.write_all(capability).map_err(|_| ())?;
         stream
@@ -519,7 +531,7 @@ mod loopback_test_offer_trigger {
                     assert!(request.len() <= 1_024, "request headers exceeded bound");
                 }
                 let expected = format!(
-                    "GET /offer HTTP/1.1\r\nHost: 127.0.0.1:18091\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
+                    "GET /offer HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
                     String::from_utf8_lossy(capability)
                 );
                 assert_eq!(request, expected.as_bytes());
@@ -778,7 +790,9 @@ fn validated_trigger_result(value: &str) -> Option<InboundIdentityLink> {
 impl IdentityLinkIngressPort for NativeIdentityLinkIngress {
     fn capture(&self, value: String) -> Result<(), IdentityLinkIngressError> {
         #[cfg(feature = "loopback-test-offer-trigger")]
-        if self.resolve_loopback_test_offer_trigger {
+        if self.resolve_loopback_test_offer_trigger
+            && loopback_test_offer_trigger::is_trigger(&value)
+        {
             #[cfg(feature = "tailnet-test-offer-trigger")]
             if let Some(public_origin) = self.tailnet_public_origin.clone() {
                 return self.capture_with_trigger_resolver(value, move || {
@@ -1085,26 +1099,25 @@ mod tests {
 
     #[cfg(feature = "tailnet-test-offer-trigger")]
     #[test]
-    fn tailnet_offer_profile_accepts_only_exact_magic_dns_https_origin() {
-        for origin in [
-            "https://oxid-demo.tail1234.ts.net:9443",
-            "https://oxid-demo.tail1234.ts.net:12001",
-        ] {
-            assert!(NativeIdentityLinkIngress::standalone_portal_tailnet(origin).is_ok());
+    fn tailnet_offer_profile_accepts_only_shared_contract_origins() {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct OriginVectors {
+            valid_origins: Vec<String>,
+            invalid_origins: Vec<String>,
         }
-        for invalid in [
-            "http://oxid-demo.tail1234.ts.net:9443",
-            "https://oxid-demo.tail1234.ts.net",
-            "https://oxid-demo.tail1234.ts.net:443",
-            "https://oxid-demo.tail1234.ts.net:8443",
-            "https://oxid-demo.tail1234.ts.net:10000",
-            "https://oxid-demo.tail1234.ts.net:9443/offer",
-            "https://127.0.0.1:9443",
-            "https://oxid.example:9443",
-        ] {
+
+        let vectors: OriginVectors = serde_json::from_str(include_str!(
+            "../../../../scripts/e2e/tailnet-origin-vectors.json"
+        ))
+        .expect("shared origin vectors");
+        for origin in vectors.valid_origins {
+            assert!(NativeIdentityLinkIngress::standalone_portal_tailnet(&origin).is_ok());
+        }
+        for origin in vectors.invalid_origins {
             assert!(
-                NativeIdentityLinkIngress::standalone_portal_tailnet(invalid).is_err(),
-                "{invalid}"
+                NativeIdentityLinkIngress::standalone_portal_tailnet(&origin).is_err(),
+                "{origin}"
             );
         }
     }

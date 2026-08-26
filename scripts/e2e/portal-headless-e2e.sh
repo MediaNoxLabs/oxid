@@ -64,6 +64,12 @@ git -C "$RUN_TREE" checkout --detach "$PORTAL_COMMIT" >>"$RAW_LOG" 2>&1
 provenance_path="crates/issuer-integration/fixtures/openid4vci-final/provenance.json"
 [ "$(git -C "$RUN_TREE" show "$PORTAL_COMMIT:$provenance_path" | shasum -a 256 | awk '{print $1}')" = "$PORTAL_PROVENANCE_SHA256" ] || fail portal-provenance
 [ -x "$RUN_TREE/scripts/tailscale-https-profile.sh" ] || fail tailscale-profile
+if ! PORTAL_INTEGRATION_CHECKOUT="$RUN_TREE" \
+  OXID_PORTAL_CONSUMER_STATE_DIR="$(dirname -- "$EVIDENCE")/runtime/portal-state" \
+    "$REPO_ROOT/scripts/portal-consumer-lifecycle.sh" prerequisite \
+      >>"$RAW_LOG" 2>&1; then
+  fail shared-midnight-prerequisite
+fi
 
 rm -f -- "$EVIDENCE"
 if ! PORTAL_INTEGRATION_TREE="$RUN_TREE" \

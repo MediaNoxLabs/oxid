@@ -15,6 +15,7 @@ const PORTAL_PROVENANCE_SHA256 = "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a534
 const ISSUER_PROXY_PORT = 18090;
 const PHYSICAL_CONTROL_PORT = 18095;
 const HOLDER_RESOLVER_PORT = 18092;
+const VIRTUAL_OFFER_PORT = 18091;
 const PHYSICAL_OFFER_PORT = 18094;
 const ISSUER_RESOLVER_PROXY_PORT = 18093;
 const MAX_CONTROL_BODY = 2 * 1024 * 1024;
@@ -27,7 +28,16 @@ const stateDirectory = process.env.OXID_PORTAL_MOBILE_STATE_DIR;
 const readyFifo = process.env.OXID_PORTAL_MOBILE_READY_FIFO;
 const capabilityFifo = process.env.OXID_PORTAL_MOBILE_CAPABILITY_FIFO;
 const lifecycle = process.env.PORTAL_CONSUMER_LIFECYCLE;
-const publicOrigin = process.env.OXID_BUILD_PORTAL_PUBLIC_ORIGIN;
+const supportProfile = process.env.OXID_PORTAL_MOBILE_SUPPORT_PROFILE ?? "physical-android";
+const virtualProfile = supportProfile === "virtual-mobile";
+const publicOrigin = virtualProfile
+  ? `http://127.0.0.1:${ISSUER_PROXY_PORT}`
+  : process.env.OXID_BUILD_PORTAL_PUBLIC_ORIGIN;
+const offerPort = virtualProfile ? VIRTUAL_OFFER_PORT : PHYSICAL_OFFER_PORT;
+const offerPath = virtualProfile ? "/offer" : "/";
+const issuerResolverOrigin = virtualProfile
+  ? `http://127.0.0.1:${ISSUER_RESOLVER_PROXY_PORT}`
+  : `${publicOrigin}/issuer-resolver`;
 
 function exactPrivatePath(value, kind) {
   if (!value || !path.isAbsolute(value) || !fs.existsSync(value)) return false;
@@ -41,7 +51,8 @@ if (!source || !path.isAbsolute(source)
     || !exactPrivatePath(stateDirectory, "directory")
     || !exactPrivatePath(readyFifo, "fifo")
     || !exactPrivatePath(capabilityFifo, "fifo")
-    || !exactPublicOrigin(publicOrigin)) {
+    || !new Set(["physical-android", "virtual-mobile"]).has(supportProfile)
+    || (!virtualProfile && !exactPublicOrigin(publicOrigin))) {
   process.stderr.write("portal-android-support: FAIL phase=configuration\n");
   process.exit(2);
 }
@@ -305,7 +316,7 @@ function clearHandoff() {
 }
 
 function handleOffer(request, response) {
-  if (request.method !== "GET" || request.url !== "/") return false;
+  if (request.method !== "GET" || request.url !== offerPath) return false;
   if (handoffState !== "ready" || !offer || !capability) {
     sendJson(response, 410, { error: "unavailable" });
     return true;
@@ -487,7 +498,7 @@ try {
     listen(issuerProxy, ISSUER_PROXY_PORT),
     listen(controlServer, PHYSICAL_CONTROL_PORT),
     listen(holderResolver, HOLDER_RESOLVER_PORT),
-    listen(offerServer, PHYSICAL_OFFER_PORT),
+    listen(offerServer, offerPort),
     listen(issuerResolverProxy, ISSUER_RESOLVER_PROXY_PORT),
   ]);
   phase = "portal-stack";
@@ -502,7 +513,7 @@ try {
     issuerJubjubJwkSha256: sha256(Buffer.from(JSON.stringify(jwk))),
     issuerMethod,
     issuerOrigin: publicOrigin,
-    issuerResolverOrigin: `${publicOrigin}/issuer-resolver`,
+    issuerResolverOrigin,
     provenanceSha256: PORTAL_PROVENANCE_SHA256,
     schema: "oxid-portal-deployment-v3",
   };
@@ -512,11 +523,11 @@ try {
     controlCapability: "0".repeat(controlCapability.length),
     controlOrigin: `http://127.0.0.1:${PHYSICAL_CONTROL_PORT}`,
     issuerProxyPort: ISSUER_PROXY_PORT,
-    offerPort: PHYSICAL_OFFER_PORT,
+    offerPort,
     resolverProxyPort: ISSUER_RESOLVER_PROXY_PORT,
     manifestPath,
     manifestSha256: sha256(manifestBytes),
-    schema: "oxid-portal-android-ready-v2",
+    schema: virtualProfile ? "oxid-portal-virtual-ready-v1" : "oxid-portal-android-ready-v2",
   };
   const readyBytes = Buffer.from(JSON.stringify(ready));
   const placeholder = Buffer.from(`"${"0".repeat(controlCapability.length)}"`);

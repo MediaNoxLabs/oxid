@@ -38,13 +38,26 @@ headless:
 portal-headless-e2e:
     ./scripts/e2e/portal-headless-e2e.sh
 
-# Serve one single-use Portal offer to the virtual-mobile loopback profile.
+# Start the virtual-mobile Portal issuer, resolver, offer endpoint, and authenticated manifest.
+portal-virtual-mobile-stack:
+    ./scripts/e2e/portal-virtual-mobile-stack.sh
+
+# Verify the real virtual-mobile endpoints, single-use offer, manifest, and exact cleanup.
+portal-virtual-mobile-stack-contract:
+    ./scripts/e2e/portal-virtual-mobile-stack.sh --contract-test
+
+# Serve one externally prepared offer to the isolated virtual-mobile loopback endpoint.
 portal-virtual-mobile-offer-harness:
     node ./scripts/e2e/portal-virtual-mobile-offer-harness.mjs
 
-# Verify virtual-mobile offer port ownership, authentication, and replay rejection.
+# Verify isolated offer port ownership, authentication, and replay rejection.
 portal-virtual-mobile-offer-harness-contract:
     node ./scripts/e2e/portal-virtual-mobile-offer-harness.mjs --contract-test
+
+# Drive one tailnet-origin vector contract through the Rust and JavaScript gates.
+portal-tailnet-origin-contract:
+    cargo test -p oxid-adapter-identity-ingress --features tailnet-test-offer-trigger tailnet_offer_profile_accepts_only_shared_contract_origins
+    node --test ./scripts/e2e/tailnet-origin-policy.test.mjs
 
 # Verify physical Portal evidence is derived from exact measured results.
 portal-android-evidence-contract:

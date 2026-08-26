@@ -435,35 +435,63 @@ the Portal client. To reproduce the real landed-service flow, including mock
 KYC, encrypted persistence, process restart, and reverification:
 
 ```bash
-PORTAL_SOURCE_TREE=/absolute/clean/lace-id-portal-checkout just portal-headless-e2e
+just standalone-up
+just portal-headless-e2e
 ```
 
-The command requires Nix, Docker Compose v2, and the exact fetchable Portal
-commits. It tears down only its uniquely named project and retains one
+The headless command requires Nix, Docker Compose v2, the exact fetchable Portal
+commits, and the pre-existing repository `oxid-standalone` project created by
+`just standalone-up`. Before building Portal it validates exactly three running
+`node`, `indexer`, and `proof-server` services plus node health, both required
+indexer GraphQL versions, and proof-server readiness. It attaches to that
+shared project but never creates or removes it. A missing or drifted prerequisite
+fails as `shared-midnight-prerequisite`.
+
+The command tears down only its uniquely named Portal project and retains one
 allow-listed secret-free evidence JSON, bound to the clean tested Oxid commit,
 under `target/portal-headless-e2e/`. Portal harnesses intentionally share one
 ownership-validated Compose project and must run sequentially on a host; never
 run the headless and physical Android suites concurrently.
 
-The `standalone-portal` iOS Simulator/Android QEMU profile retrieves its fixed
-non-secret trigger from the repository-owned virtual offer harness on
-`127.0.0.1:18091`. Stage the same 64-byte lowercase hexadecimal capability in
-app-private `portal-offer.capability` and an owner-only host file, and place one
-bounded `openid-credential-offer://` URI in a second owner-only host file. The
-harness unlinks both host files before listening, serves only one authenticated
-`GET /offer`, rejects replay, and retains no offer or capability:
+The `standalone-portal` iOS Simulator/Android QEMU profile has one
+repository-owned stack command. With the validated `oxid-standalone`
+prerequisite still running, this command checks out the pinned Portal source,
+starts the issuer proxy on 18090, issuer resolver on 18093, and single-use offer
+endpoint on 18091, and derives the issuer DID/method/Jubjub facts into a
+canonical digest-authenticated deployment manifest:
 
 ```bash
-export OXID_PORTAL_VIRTUAL_CAPABILITY_FILE='<absolute-owner-only-capability-file>'
-export OXID_PORTAL_VIRTUAL_OFFER_FILE='<absolute-owner-only-offer-file>'
-just portal-virtual-mobile-offer-harness
+just portal-virtual-mobile-stack
 ```
 
-Run `just portal-virtual-mobile-offer-harness-contract` to exercise exact port,
-route, authentication, single-use, and cleanup behavior without a device. Port
-18091 belongs only to this virtual offer endpoint. The physical Android suite
-keeps its unpublished control API on 18095 and its dedicated unpublished offer
-listener on 18094; neither is installed through ADB reverse.
+Keep that command running. It prints owner-private `build.env` and capability
+file paths under ignored `target/portal-virtual-mobile/runtime/`. In another
+shell, source `build.env`, select `OXID_MOBILE_PORTAL_PROFILE=local`, and run the
+repository iOS Simulator or Android QEMU launcher. Copy the 64-byte capability
+into app-private `portal-offer.capability`, delete the host copy, and deliver
+only the fixed `openid-credential-offer://standalone-portal-test-fetch` trigger.
+Ctrl-C on the stack command capability-authenticates completion and proves the
+Portal consumer project was removed; it never removes `oxid-standalone`.
+`just portal-virtual-mobile-stack-contract` drives the real 18090/18091/18093
+routes, derived manifest, unauthorized request, single authenticated offer, and
+exact cleanup without a device.
+
+The loopback bearer authenticates the app to the offer listener, but plaintext
+loopback does not authenticate that listener to the app. Another local process
+that binds first could consume the capability and choose the candidate offer.
+This is permitted only in the compile-gated virtual development profile and is
+bounded by strict offer routing, explicit holder consent, and complete issuer
+DID/method/JWK trust, credential-proof, and holder-binding verification before
+encrypted storage. It is not a production channel or server-authentication
+claim.
+
+The lower-level `just portal-virtual-mobile-offer-harness` remains available for
+an externally prepared owner-private offer/capability pair; its contract covers
+only exact route, client authentication, replay rejection, and cleanup. Port
+18091 belongs only to these mutually exclusive virtual offer endpoints. The
+physical Android suite keeps its unpublished control API on 18095 and its
+dedicated unpublished offer listener on 18094; neither is installed through
+ADB reverse.
 
 The Dioxus card permits explicit device-local first/last reveal and age
 threshold planning. A separate OpenID4VP 1.0 Final-shaped DCQL panel previews a

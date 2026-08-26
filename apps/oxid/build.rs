@@ -116,7 +116,7 @@ fn authorize_portal_profile() {
         let public_origin = env::var(PORTAL_PUBLIC_ORIGIN_ENV).unwrap_or_else(|_| {
             panic!("Portal tailnet profile requires {PORTAL_PUBLIC_ORIGIN_ENV}")
         });
-        portal_profile_authority::validate_tailnet_public_origin(&public_origin)
+        oxid_adapter_identity_ingress::validate_tailnet_public_origin(&public_origin)
             .unwrap_or_else(|error| panic!("{error}"));
         println!("cargo:rustc-env=OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN={public_origin}");
         println!("cargo:rustc-cfg=oxid_portal_android_physical_profile_authorized");

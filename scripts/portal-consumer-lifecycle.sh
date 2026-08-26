@@ -23,7 +23,7 @@ fail() {
   exit 1
 }
 
-case "$OPERATION" in up|status|down) ;; *) fail usage ;; esac
+case "$OPERATION" in prerequisite|up|status|down) ;; *) fail usage ;; esac
 for command_name in awk curl docker git jq nix openssl shasum; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
@@ -115,6 +115,11 @@ build_image() {
   esac
   [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   printf -v "$variable" '%s' "$image_id"
+}
+
+run_prerequisite() {
+  shared_midnight_ready || fail shared-midnight
+  jq -cn '{schema:"oxid-portal-midnight-prerequisite-v1",state:"ready",project:"oxid-standalone"}'
 }
 
 run_up() {
@@ -210,6 +215,7 @@ run_down() {
 }
 
 case "$OPERATION" in
+  prerequisite) run_prerequisite ;;
   up) run_up ;;
   status) run_status ;;
   down) run_down ;;

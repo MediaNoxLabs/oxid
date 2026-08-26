@@ -30,10 +30,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Stage the authenticated synthetic JWT fixture exclusions
+      - name: Stage the authenticated synthetic JWT fixture exclusion
         id: stage-checkov-exclusion
-        # Checkov CKV_SECRET_9 mistakes these manifest-authenticated negative JWTs
-        # for credentials. Exclude only these exact immutable public test vectors;
+        # Checkov CKV_SECRET_9 mistakes this manifest-authenticated negative JWT
+        # for a credential. Exclude only this exact immutable public test vector;
         # do not skip Checkov, a framework, a check, or a broader path.
         run: |
           fixture="fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/unsupported-proof-alg.json"
@@ -53,7 +53,7 @@ jobs:
           fail_severity: high
           skip_scorecard_scan: "true"
 
-      - name: Restore the authenticated synthetic JWT fixtures
+      - name: Restore the authenticated synthetic JWT fixture
         id: restore-checkov-exclusion
         if: always()
         run: |

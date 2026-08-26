@@ -106,6 +106,15 @@ physical_devices="$($adb devices | awk 'NR > 1 && $2 == "device" && $1 !~ /^emul
 [ "$(awk 'NF { count++ } END { print count + 0 }' <<<"$physical_devices")" -eq 1 ] || fail physical-device
 device="$physical_devices"
 adb_device() { ANDROID_SERIAL="$device" "$adb" "$@"; }
+redact_physical_failure() {
+  sed -E \
+    -e "s#${device}#<redacted-device>#g" \
+    -e 's#(https?|wss?)://[^[:space:]]+#<redacted-url>#g' \
+    -e 's/[[:alnum:]_-]+(\.[[:alnum:]_-]+)+\.ts\.net/<redacted-tailnet>/g' \
+    -e 's/did:[^[:space:]"'"'"']+/<redacted-did>/g' \
+    -e 's/[0-9a-fA-F]{64}/<redacted-digest>/g' \
+    -e 's/(Bearer )[0-9a-fA-F]+/\1<redacted>/g'
+}
 [ "$(adb_device shell getprop ro.kernel.qemu | tr -d '\r\n')" = 0 ] || fail physical-device
 [ "$(adb_device get-state 2>/dev/null)" = device ] || fail physical-device
 if $adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" { found=1 } END { exit !found }'; then
@@ -213,17 +222,10 @@ if ! OXID_MOBILE_CUSTODY=development \
     "$REPOSITORY_ROOT/scripts/run-android-tailnet.sh" >>"$PRIVATE_LOG" 2>&1; then
   build_diagnostic="$(rg '^(error(\[[A-Z0-9]+\])?:|error: could not compile|Caused by:)' "$PRIVATE_LOG" | tail -n 20 || true)"
   if [ -n "$build_diagnostic" ]; then
-    sed -E 's#https?://[^[:space:]]+#<redacted-url>#g; s/[0-9a-f]{64}/<redacted-digest>/g' \
-      <<<"$build_diagnostic" >&2
+    redact_physical_failure <<<"$build_diagnostic" >&2
   fi
   build_diagnostic=""
-  tail -n 80 "$PRIVATE_LOG" | sed -E \
-    -e "s#${device}#<redacted-device>#g" \
-    -e 's#https?://[^[:space:]]+#<redacted-url>#g' \
-    -e 's/[[:alnum:]_-]+(\.[[:alnum:]_-]+)+\.ts\.net/<redacted-tailnet>/g' \
-    -e 's/did:[^[:space:]"'"'"']+/<redacted-did>/g' \
-    -e 's/[0-9a-f]{64}/<redacted-digest>/g' \
-    -e 's/(Bearer )[0-9a-f]+/\1<redacted>/g' >&2
+  tail -n 80 "$PRIVATE_LOG" | redact_physical_failure >&2
   fail android-build
 fi
 

@@ -2558,8 +2558,8 @@ impl PassportVaultCallCompletionPort for ComposedPassportVaultCallCompletion {
             ))
             .map_err(map_wallet_transaction_error)?;
         Ok(PassportVaultCallInclusion {
-            transaction_hash_hex: hex::encode(outcome.transaction_hash),
-            block_hash_hex: hex::encode(outcome.block_hash),
+            transaction_hash_hex: encode_lower_hex(outcome.transaction_hash),
+            block_hash_hex: encode_lower_hex(outcome.block_hash),
             block_height: outcome.block_height,
             fee_atomic_units: outcome.fee_specks,
             mode: midnight_submission_mode(outcome.mode).to_owned(),
@@ -2636,12 +2636,25 @@ fn map_midnight_contract_call_status(
     Ok(PassportVaultCallSubmissionStatus {
         draft_id,
         state,
-        transaction_hash_hex: status.transaction_hash.map(hex::encode),
-        block_hash_hex: status.block_hash.map(hex::encode),
+        transaction_hash_hex: status.transaction_hash.map(encode_lower_hex),
+        block_hash_hex: status.block_hash.map(encode_lower_hex),
         block_height: status.block_height,
         fee_atomic_units: status.fee_specks,
         mode: status.mode.map(midnight_submission_mode).map(str::to_owned),
     })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn encode_lower_hex(bytes: impl AsRef<[u8]>) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+    let bytes = bytes.as_ref();
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 #[cfg(not(target_arch = "wasm32"))]

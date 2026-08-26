@@ -2094,6 +2094,11 @@ fn credential_issuance_review_blocks_replacement(
     prepared.is_some_and(|review| review.state == "awaiting_consent")
 }
 
+fn credential_issuance_review_is_terminal(prepared: Option<&CredentialIssuanceView>) -> bool {
+    prepared
+        .is_some_and(|review| matches!(review.state.as_str(), "succeeded" | "refused" | "failed"))
+}
+
 fn retained_identity_review_route(
     pending: &Option<PendingIdentityRequest>,
     manual_credential_review_locked: bool,
@@ -11451,6 +11456,20 @@ fn CredentialsPage(
                             oninput: move |event| offer_draft.set(CredentialOfferDraft::editable(event.value())),
                         }
                     }
+                    if credential_issuance_review_is_terminal(prepared_issuance.read().as_ref()) {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            disabled: issuance_busy(),
+                            onclick: move |_| {
+                                offer_draft.set(CredentialOfferDraft::default());
+                                prepared_issuance.set(None);
+                                issuance_consent.set(false);
+                                issuance_notice.set(Some("Ready for another credential offer.".to_owned()));
+                            },
+                            "Start another offer"
+                        }
+                    }
                     if let Some(offer) = demo_offer {
                         button {
                             class: "secondary-action",
@@ -13395,8 +13414,10 @@ mod tests {
             failure_code: None,
         };
         let awaiting = review("awaiting_consent");
+        let issuing = review("issuing");
         let succeeded = review("succeeded");
         let refused = review("refused");
+        let failed = review("failed");
 
         assert!(credential_issuance_review_blocks_replacement(Some(
             &awaiting
@@ -13408,6 +13429,12 @@ mod tests {
             &refused
         )));
         assert!(!credential_issuance_review_blocks_replacement(None));
+        assert!(!credential_issuance_review_is_terminal(Some(&awaiting)));
+        assert!(!credential_issuance_review_is_terminal(Some(&issuing)));
+        assert!(credential_issuance_review_is_terminal(Some(&succeeded)));
+        assert!(credential_issuance_review_is_terminal(Some(&refused)));
+        assert!(credential_issuance_review_is_terminal(Some(&failed)));
+        assert!(!credential_issuance_review_is_terminal(None));
     }
 
     #[test]

@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-pub use oxid_adapter_identity_ingress::validate_tailnet_public_origin;
-
 pub const LOCAL_PROFILE: &str = "standalone-local-development-portal";
 pub const ANDROID_TAILNET_PROFILE: &str = "standalone-tailnet-development-portal-android";
 pub const SCHEMA: &str = "oxid-app-profile-authority-v2";
@@ -110,34 +108,6 @@ mod tests {
             format!("{valid}\n"),
         ] {
             assert!(validate_manifest(invalid.as_bytes(), PortalProfile::Local, target).is_err());
-        }
-    }
-
-    #[test]
-    fn tailnet_origin_is_canonical_dynamic_magic_dns_https() {
-        for valid in [
-            "https://oxid-demo.tail1234.ts.net:9443",
-            "https://wallet.tailabcd.ts.net:12001",
-        ] {
-            assert_eq!(validate_tailnet_public_origin(valid), Ok(()));
-        }
-        for invalid in [
-            "http://oxid-demo.tail1234.ts.net:9443",
-            "https://oxid-demo.tail1234.ts.net",
-            "https://oxid-demo.tail1234.ts.net:443",
-            "https://oxid-demo.tail1234.ts.net:8443",
-            "https://oxid-demo.tail1234.ts.net:10000",
-            "https://oxid-demo.tail1234.ts.net:9443/offer",
-            "https://user@oxid-demo.tail1234.ts.net:9443",
-            "https://127.0.0.1:9443",
-            "https://Oxid-demo.tail1234.ts.net:9443",
-            "https://-oxid.tail1234.ts.net:9443",
-            "https://oxid.example:9443",
-        ] {
-            assert!(
-                validate_tailnet_public_origin(invalid).is_err(),
-                "{invalid}"
-            );
         }
     }
 }
