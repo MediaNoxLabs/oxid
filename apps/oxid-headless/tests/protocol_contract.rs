@@ -3,9 +3,11 @@
 #![forbid(unsafe_code)]
 
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     error::Error as _,
     io::{self, BufRead, Read, Write},
+    rc::Rc,
 };
 
 use oxid_headless::{HeadlessIoError, HeadlessWallet, PROTOCOL_VERSION};
@@ -242,6 +244,111 @@ fn manifest_declared_aliases_remain_wire_equivalent_to_their_exact_targets() {
         }));
         assert_eq!(alias_response, target_response, "alias drifted: {alias}");
     }
+}
+
+#[derive(Default)]
+struct RecordingOutput {
+    bytes: Vec<u8>,
+    flush_offsets: Vec<usize>,
+}
+
+struct RecordingWriter {
+    output: Rc<RefCell<RecordingOutput>>,
+    fail_on_flush: Option<usize>,
+}
+
+impl RecordingWriter {
+    fn new(output: Rc<RefCell<RecordingOutput>>) -> Self {
+        Self {
+            output,
+            fail_on_flush: None,
+        }
+    }
+
+    fn failing_on(output: Rc<RefCell<RecordingOutput>>, flush: usize) -> Self {
+        Self {
+            output,
+            fail_on_flush: Some(flush),
+        }
+    }
+}
+
+impl Write for RecordingWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.output.borrow_mut().bytes.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let mut output = self.output.borrow_mut();
+        let offset = output.bytes.len();
+        output.flush_offsets.push(offset);
+        if self.fail_on_flush == Some(output.flush_offsets.len()) {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "private flush detail",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn flushes_each_complete_response_before_processing_structured_shutdown() {
+    let input =
+        br#"{"protocol":"oxid.headless.v1","id":"unknown","method":"not.a.method","params":{}}
+quit
+ignored
+"#;
+    let first_response = b"{\"protocol\":\"oxid.headless.v1\",\"id\":\"unknown\",\"ok\":false,\"error\":{\"code\":\"method_not_found\",\"message\":\"requested method is not implemented\"}}\n";
+    let shutdown_response = b"{\"protocol\":\"oxid.headless.v1\",\"id\":null,\"ok\":true,\"result\":{\"alias\":\"quit\",\"shuttingDown\":true}}\n";
+    let mut expected = first_response.to_vec();
+    expected.extend_from_slice(shutdown_response);
+
+    let output = Rc::new(RefCell::new(RecordingOutput::default()));
+    HeadlessWallet::new(oxid_composition::compose_in_memory())
+        .run(input.as_slice(), RecordingWriter::new(Rc::clone(&output)))
+        .expect("multi-response stream should flush and shut down");
+
+    let output = output.borrow();
+    assert_eq!(output.bytes, expected);
+    assert_eq!(
+        output.flush_offsets,
+        vec![
+            first_response.len(),
+            first_response.len() + shutdown_response.len()
+        ]
+    );
+    assert_eq!(output.flush_offsets.last(), Some(&output.bytes.len()));
+}
+
+#[test]
+fn flush_failure_is_a_safe_write_error_and_prevents_successful_shutdown() {
+    let input = b"quit\nignored\n";
+    let expected = b"{\"protocol\":\"oxid.headless.v1\",\"id\":null,\"ok\":true,\"result\":{\"alias\":\"quit\",\"shuttingDown\":true}}\n";
+    let output = Rc::new(RefCell::new(RecordingOutput::default()));
+    let error = HeadlessWallet::new(oxid_composition::compose_in_memory())
+        .run(
+            input.as_slice(),
+            RecordingWriter::failing_on(Rc::clone(&output), 1),
+        )
+        .expect_err("shutdown response flush should fail");
+
+    assert!(matches!(&error, HeadlessIoError::Write(_)));
+    assert_eq!(
+        error.to_string(),
+        "failed to write a headless wallet response"
+    );
+    assert_eq!(
+        error
+            .source()
+            .and_then(|source| source.downcast_ref::<io::Error>())
+            .map(io::Error::kind),
+        Some(io::ErrorKind::BrokenPipe)
+    );
+    let output = output.borrow();
+    assert_eq!(output.bytes, expected);
+    assert_eq!(output.flush_offsets, vec![expected.len()]);
 }
 
 struct FailingReader;
