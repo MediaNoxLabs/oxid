@@ -225,6 +225,23 @@ if ! [[ "$android_qemu_guard_line" =~ ^[0-9]+$ && "$android_authority_line" =~ ^
   echo "Android Portal authority must be created only after live QEMU validation" >&2
   exit 1
 fi
+ios_simulator_guard_line="$(grep -nF 'OXID_IOS_DEVICE does not identify an installed simulator' scripts/run-ios-simulator.sh | cut -d: -f1)"
+ios_authority_line="$(grep -nF 'write-portal-profile-authority.sh' scripts/run-ios-simulator.sh | cut -d: -f1)"
+if ! [[ "$ios_simulator_guard_line" =~ ^[0-9]+$ && "$ios_authority_line" =~ ^[0-9]+$ ]] || \
+  [ "$ios_simulator_guard_line" -ge "$ios_authority_line" ]; then
+  echo "iOS Portal authority must be created only after live Simulator validation" >&2
+  exit 1
+fi
+for ios_portal_build_input in \
+  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH \
+  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256 \
+  OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH \
+  OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256; do
+  rg -qF "$ios_portal_build_input" scripts/run-ios-simulator.sh || {
+    echo "iOS Portal build input is missing: $ios_portal_build_input" >&2
+    exit 1
+  }
+done
 
 # This strict/static gate must execute the trigger failure, worker-bound, and
 # one-item reservation tests rather than merely compiling their feature.

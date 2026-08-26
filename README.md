@@ -441,7 +441,9 @@ PORTAL_SOURCE_TREE=/absolute/clean/lace-id-portal-checkout just portal-headless-
 The command requires Nix, Docker Compose v2, and the exact fetchable Portal
 commits. It tears down only its uniquely named project and retains one
 allow-listed secret-free evidence JSON, bound to the clean tested Oxid commit,
-under `target/portal-headless-e2e/`.
+under `target/portal-headless-e2e/`. Portal harnesses intentionally share one
+ownership-validated Compose project and must run sequentially on a host; never
+run the headless and physical Android suites concurrently.
 
 The `standalone-portal` iOS Simulator/Android QEMU profile retrieves its fixed
 non-secret trigger from the repository-owned virtual offer harness on

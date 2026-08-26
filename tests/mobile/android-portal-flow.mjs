@@ -3,7 +3,17 @@
 const endpoint = process.argv[2];
 const mode = process.argv[3];
 const controlOrigin = process.env.OXID_PORTAL_CONTROL_ORIGIN;
-const controlCapability = process.env.OXID_PORTAL_CONTROL_CAPABILITY;
+const capabilityChunks = [];
+let capabilityBytes = 0;
+for await (const chunk of process.stdin) {
+  capabilityBytes += chunk.length;
+  if (capabilityBytes > 64) throw new Error("invalid Android Portal control input");
+  capabilityChunks.push(chunk);
+}
+const controlCapabilityBytes = Buffer.concat(capabilityChunks);
+const controlCapability = controlCapabilityBytes.toString("utf8");
+for (const chunk of capabilityChunks) chunk.fill(0);
+controlCapabilityBytes.fill(0);
 const modes = new Set([
   "prepare-holder",
   "route-refuse",

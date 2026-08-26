@@ -15,7 +15,14 @@ readonly RAW_LOG="${TMPDIR:-/tmp}/oxid-portal-headless-$$.log"
 readonly SOURCE_INPUT="${OXID_PORTAL_SOURCE_REPOSITORY:-$PORTAL_REMOTE}"
 
 cleanup() {
-  local status=$?
+  local status=$? portal_state
+  portal_state="$(dirname -- "$EVIDENCE")/runtime/portal-state"
+  if [ -f "$portal_state/owner-receipt.json" ] && [ -d "$RUN_TREE" ]; then
+    PORTAL_INTEGRATION_CHECKOUT="$RUN_TREE" \
+    OXID_PORTAL_CONSUMER_STATE_DIR="$portal_state" \
+      "$REPO_ROOT/scripts/portal-consumer-lifecycle.sh" down \
+      >>"$RAW_LOG" 2>&1 || status=1
+  fi
   rm -rf -- "$RUN_TREE"
   if [ "$status" -ne 0 ] && [ "${OXID_PORTAL_KEEP_FAILURE_LOG:-0}" = 1 ]; then
     chmod 600 "$RAW_LOG" 2>/dev/null || true

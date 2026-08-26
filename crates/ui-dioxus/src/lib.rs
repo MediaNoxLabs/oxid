@@ -10856,7 +10856,7 @@ fn CredentialPresentationPanel(
 
 enum CredentialChange {
     ReverificationStarted,
-    Updated(CredentialView),
+    Reverified(CredentialView),
     Deleted(String),
     Failed(String),
 }
@@ -10867,7 +10867,7 @@ fn credential_page_after_change(
 ) -> CredentialPageState {
     let (operation_error, reverification_applied) = match change {
         CredentialChange::ReverificationStarted => (None, false),
-        CredentialChange::Updated(updated) => {
+        CredentialChange::Reverified(updated) => {
             credentials.retain(|entry| entry.id != updated.id);
             credentials.push(updated);
             credentials.sort_by(|left, right| left.id.cmp(&right.id));
@@ -11241,7 +11241,7 @@ fn CredentialRecordCard(
                             .await;
                             working.set(false);
                             on_change.call(match result {
-                                Ok(Ok(credential)) => CredentialChange::Updated(credential),
+                                Ok(Ok(credential)) => CredentialChange::Reverified(credential),
                                 Ok(Err(error)) => CredentialChange::Failed(credential_operation_message(error)),
                                 Err(error) => CredentialChange::Failed(error.to_string()),
                             });
@@ -14067,7 +14067,7 @@ mod tests {
 
         let applied = credential_page_after_change(
             vec![credential.clone()],
-            CredentialChange::Updated(credential.clone()),
+            CredentialChange::Reverified(credential.clone()),
         );
         assert!(matches!(
             applied,

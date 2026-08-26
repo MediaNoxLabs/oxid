@@ -797,26 +797,28 @@ impl IdentityLinkIngressPort for NativeIdentityLinkIngress {
     fn take_pending(&self) -> Result<Option<InboundIdentityLink>, IdentityLinkIngressError> {
         #[cfg(feature = "loopback-test-offer-trigger")]
         let trigger_fetch_in_flight;
+        let has_captured_link;
         {
-            let mut captured = self
+            let captured = self
                 .captured
                 .lock()
                 .map_err(|_| IdentityLinkIngressError::Failed)?;
-            if !captured.links.is_empty() {
-                // A direct Tao event and Android's native Activity bridge may
-                // observe the same or concurrent VIEW intents. Keep the first
-                // Rust item queued while draining/rejecting any native second
-                // item so there is never a two-consent handoff.
-                #[cfg(all(feature = "loopback-test-offer-trigger", target_os = "android"))]
-                if take_native_identity_link()?.is_some() {
-                    return Err(IdentityLinkIngressError::QueueFull);
-                }
-                return Ok(captured.links.pop_front());
-            }
+            has_captured_link = !captured.links.is_empty();
             #[cfg(feature = "loopback-test-offer-trigger")]
             {
                 trigger_fetch_in_flight = captured.trigger_fetch_in_flight;
             }
+        }
+        if has_captured_link {
+            #[cfg(all(feature = "loopback-test-offer-trigger", target_os = "android"))]
+            if take_native_identity_link()?.is_some() {
+                return Err(IdentityLinkIngressError::QueueFull);
+            }
+            return self
+                .captured
+                .lock()
+                .map_err(|_| IdentityLinkIngressError::Failed)
+                .map(|mut captured| captured.links.pop_front());
         }
 
         #[cfg(feature = "loopback-test-offer-trigger")]

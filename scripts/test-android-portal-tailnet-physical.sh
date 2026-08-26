@@ -80,6 +80,8 @@ cleanup() {
     wait "$support_pid" >/dev/null 2>&1 || cleanup_status=1
     support_pid=""
   fi
+  exec 8>&- 2>/dev/null || true
+  rm -f -- "$READY_FIFO" "$CAPABILITY_FIFO" "$STATE/ready.json" "$CONTROL_CONFIG"
   if [ "$cleanup_status" -eq 0 ]; then
     rm -rf -- "$STATE"
   else
@@ -251,10 +253,10 @@ run_scenario() {
   open_webview || fail webview
   rm -f -- "$scenario_log" "$scenario_result"
   control_capability="$(jq -r '.controlCapability' "$ready")"
-  if ! OXID_PORTAL_CONTROL_ORIGIN="$CONTROL_ORIGIN" \
-    OXID_PORTAL_CONTROL_CAPABILITY="$control_capability" \
-    node "$REPOSITORY_ROOT/tests/mobile/android-portal-flow.mjs" "$websocket_url" "$mode" \
-    >"$scenario_result" 2>"$scenario_log"; then
+  if ! printf '%s' "$control_capability" | \
+    OXID_PORTAL_CONTROL_ORIGIN="$CONTROL_ORIGIN" \
+      node "$REPOSITORY_ROOT/tests/mobile/android-portal-flow.mjs" "$websocket_url" "$mode" \
+      >"$scenario_result" 2>"$scenario_log"; then
     if ! rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|private.?parts|signed.?bytes|detached.?proof|capability|seed|serial|\.ts\.net' "$scenario_log"; then
       tail -n 12 "$scenario_log" >&2
     fi
