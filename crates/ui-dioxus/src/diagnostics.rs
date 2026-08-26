@@ -328,7 +328,10 @@ mod tests {
     }
     use std::{
         collections::VecDeque,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     use oxid_diagnostics_application::{
@@ -338,23 +341,25 @@ mod tests {
 
     use super::*;
 
-    const SECRET_SENTINEL: &str = "secret://credential-bearing-fake-error";
+    const SECRET_SENTINEL: &str = "__OXID_TEST_ONLY_SYNTHETIC_DIAGNOSTICS_BRIDGE_SENTINEL__";
+
+    enum FakeGetOutcome {
+        Return(Result<DiagnosticSnapshotView, DiagnosticsError>),
+        Panic,
+    }
 
     struct FakeGetDiagnostics {
-        outcomes: Mutex<VecDeque<Result<DiagnosticSnapshotView, DiagnosticsError>>>,
+        outcomes: Mutex<VecDeque<FakeGetOutcome>>,
         calls: Arc<Mutex<Vec<&'static str>>>,
-        private_error_detail: &'static str,
+        bridge_panics: Arc<AtomicUsize>,
     }
 
     impl FakeGetDiagnostics {
-        fn new(
-            outcomes: Vec<Result<DiagnosticSnapshotView, DiagnosticsError>>,
-            calls: Arc<Mutex<Vec<&'static str>>>,
-        ) -> Self {
+        fn new(outcomes: Vec<FakeGetOutcome>, calls: Arc<Mutex<Vec<&'static str>>>) -> Self {
             Self {
                 outcomes: Mutex::new(outcomes.into()),
                 calls,
-                private_error_detail: SECRET_SENTINEL,
+                bridge_panics: Arc::new(AtomicUsize::new(0)),
             }
         }
     }
@@ -362,25 +367,37 @@ mod tests {
     impl GetDiagnosticSnapshotUseCase for FakeGetDiagnostics {
         fn execute(&self) -> Result<DiagnosticSnapshotView, DiagnosticsError> {
             self.calls.lock().expect("call log").push("get");
-            let _private_error_detail = self.private_error_detail;
-            self.outcomes
+            let outcome = self
+                .outcomes
                 .lock()
                 .expect("snapshot outcomes")
                 .pop_front()
-                .expect("configured snapshot outcome")
+                .expect("configured snapshot outcome");
+            match outcome {
+                FakeGetOutcome::Return(outcome) => outcome,
+                FakeGetOutcome::Panic => {
+                    self.bridge_panics.fetch_add(1, Ordering::SeqCst);
+                    panic!("{SECRET_SENTINEL}");
+                }
+            }
         }
     }
 
+    enum FakeClearOutcome {
+        Return(Result<ClearedDiagnosticsView, DiagnosticsError>),
+        Panic,
+    }
+
     struct FakeClearDiagnostics {
-        outcome: Result<ClearedDiagnosticsView, DiagnosticsError>,
+        outcome: FakeClearOutcome,
         calls: Arc<Mutex<Vec<&'static str>>>,
         commands: Arc<Mutex<Vec<ClearDiagnosticsCommand>>>,
-        private_error_detail: &'static str,
+        bridge_panics: Arc<AtomicUsize>,
     }
 
     impl FakeClearDiagnostics {
         fn new(
-            outcome: Result<ClearedDiagnosticsView, DiagnosticsError>,
+            outcome: FakeClearOutcome,
             calls: Arc<Mutex<Vec<&'static str>>>,
             commands: Arc<Mutex<Vec<ClearDiagnosticsCommand>>>,
         ) -> Self {
@@ -388,7 +405,7 @@ mod tests {
                 outcome,
                 calls,
                 commands,
-                private_error_detail: SECRET_SENTINEL,
+                bridge_panics: Arc::new(AtomicUsize::new(0)),
             }
         }
     }
@@ -400,8 +417,13 @@ mod tests {
         ) -> Result<ClearedDiagnosticsView, DiagnosticsError> {
             self.calls.lock().expect("call log").push("clear");
             self.commands.lock().expect("commands").push(command);
-            let _private_error_detail = self.private_error_detail;
-            self.outcome
+            match self.outcome {
+                FakeClearOutcome::Return(outcome) => outcome,
+                FakeClearOutcome::Panic => {
+                    self.bridge_panics.fetch_add(1, Ordering::SeqCst);
+                    panic!("{SECRET_SENTINEL}");
+                }
+            }
         }
     }
 
@@ -445,6 +467,21 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
         format!("{} {rows}", projection.summary)
+    }
+
+    fn assert_closed_unavailable(state: &LocalDiagnosticsPageState) {
+        assert!(matches!(state, LocalDiagnosticsPageState::Failed));
+        let projection = project_diagnostics(state);
+        assert_eq!(
+            projection,
+            DiagnosticsProjection {
+                summary: "Status unavailable".to_owned(),
+                rows: Vec::new(),
+                ready: false,
+                empty: false,
+            }
+        );
+        assert!(!projection_text(&projection).contains(SECRET_SENTINEL));
     }
 
     #[test]
@@ -507,7 +544,10 @@ mod tests {
     fn initial_and_refresh_snapshot_outcomes_use_payload_free_states() {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let get = Arc::new(FakeGetDiagnostics::new(
-            vec![Ok(populated_snapshot()), Err(DiagnosticsError::Unavailable)],
+            vec![
+                FakeGetOutcome::Return(Ok(populated_snapshot())),
+                FakeGetOutcome::Return(Err(DiagnosticsError::Unavailable)),
+            ],
             calls.clone(),
         ));
 
@@ -518,9 +558,26 @@ mod tests {
             project_diagnostics(&initial).summary,
             "2 retained · 4 total · 1 evicted · capacity 8"
         );
-        let refresh_projection = project_diagnostics(&refresh);
-        assert_eq!(refresh_projection.summary, "Status unavailable");
-        assert!(!projection_text(&refresh_projection).contains(SECRET_SENTINEL));
+        assert_closed_unavailable(&refresh);
+        assert_eq!(*calls.lock().expect("call log"), ["get", "get"]);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn initial_and_refresh_snapshot_bridge_failures_are_closed() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let get = Arc::new(FakeGetDiagnostics::new(
+            vec![FakeGetOutcome::Panic, FakeGetOutcome::Panic],
+            calls.clone(),
+        ));
+        let bridge_panics = Arc::clone(&get.bridge_panics);
+
+        let initial = futures::executor::block_on(load_diagnostic_snapshot(get.clone()));
+        let refresh = futures::executor::block_on(load_diagnostic_snapshot(get));
+
+        assert_closed_unavailable(&initial);
+        assert_closed_unavailable(&refresh);
+        assert_eq!(bridge_panics.load(Ordering::SeqCst), 2);
         assert_eq!(*calls.lock().expect("call log"), ["get", "get"]);
     }
 
@@ -530,18 +587,18 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let commands = Arc::new(Mutex::new(Vec::new()));
         let clear = Arc::new(FakeClearDiagnostics::new(
-            Ok(ClearedDiagnosticsView { cleared_events: 4 }),
+            FakeClearOutcome::Return(Ok(ClearedDiagnosticsView { cleared_events: 4 })),
             calls.clone(),
             commands.clone(),
         ));
         let get = Arc::new(FakeGetDiagnostics::new(
-            vec![Ok(DiagnosticSnapshotView::new(
+            vec![FakeGetOutcome::Return(Ok(DiagnosticSnapshotView::new(
                 8,
                 0,
                 0,
                 Vec::new(),
                 Vec::new(),
-            ))],
+            )))],
             calls.clone(),
         ));
 
@@ -565,7 +622,7 @@ mod tests {
     fn clear_and_reload_failures_are_redacted_and_stop_in_order() {
         let clear_failure_calls = Arc::new(Mutex::new(Vec::new()));
         let clear_failure = Arc::new(FakeClearDiagnostics::new(
-            Err(DiagnosticsError::Unavailable),
+            FakeClearOutcome::Return(Err(DiagnosticsError::Unavailable)),
             clear_failure_calls.clone(),
             Arc::new(Mutex::new(Vec::new())),
         ));
@@ -576,29 +633,68 @@ mod tests {
 
         let clear_failure =
             futures::executor::block_on(clear_diagnostics_and_reload(clear_failure, skipped_get));
-        let clear_failure_projection = project_diagnostics(&clear_failure);
         assert_eq!(*clear_failure_calls.lock().expect("call log"), ["clear"]);
-        assert_eq!(clear_failure_projection.summary, "Status unavailable");
-        assert!(!projection_text(&clear_failure_projection).contains(SECRET_SENTINEL));
+        assert_closed_unavailable(&clear_failure);
 
         let reload_failure_calls = Arc::new(Mutex::new(Vec::new()));
         let reload_failure = futures::executor::block_on(clear_diagnostics_and_reload(
             Arc::new(FakeClearDiagnostics::new(
-                Ok(ClearedDiagnosticsView { cleared_events: 4 }),
+                FakeClearOutcome::Return(Ok(ClearedDiagnosticsView { cleared_events: 4 })),
                 reload_failure_calls.clone(),
                 Arc::new(Mutex::new(Vec::new())),
             )),
             Arc::new(FakeGetDiagnostics::new(
-                vec![Err(DiagnosticsError::Unavailable)],
+                vec![FakeGetOutcome::Return(Err(DiagnosticsError::Unavailable))],
                 reload_failure_calls.clone(),
             )),
         ));
-        let reload_failure_projection = project_diagnostics(&reload_failure);
         assert_eq!(
             *reload_failure_calls.lock().expect("call log"),
             ["clear", "get"]
         );
-        assert_eq!(reload_failure_projection.summary, "Status unavailable");
-        assert!(!projection_text(&reload_failure_projection).contains(SECRET_SENTINEL));
+        assert_closed_unavailable(&reload_failure);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn clear_bridge_failure_stops_before_reload() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let clear = Arc::new(FakeClearDiagnostics::new(
+            FakeClearOutcome::Panic,
+            calls.clone(),
+            Arc::new(Mutex::new(Vec::new())),
+        ));
+        let bridge_panics = Arc::clone(&clear.bridge_panics);
+        let skipped_get = Arc::new(FakeGetDiagnostics::new(Vec::new(), calls.clone()));
+
+        let state = futures::executor::block_on(clear_diagnostics_and_reload(clear, skipped_get));
+
+        assert_eq!(bridge_panics.load(Ordering::SeqCst), 1);
+        assert_eq!(*calls.lock().expect("call log"), ["clear"]);
+        assert_closed_unavailable(&state);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn post_clear_reload_bridge_failure_is_closed() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let get = Arc::new(FakeGetDiagnostics::new(
+            vec![FakeGetOutcome::Panic],
+            calls.clone(),
+        ));
+        let bridge_panics = Arc::clone(&get.bridge_panics);
+
+        let state = futures::executor::block_on(clear_diagnostics_and_reload(
+            Arc::new(FakeClearDiagnostics::new(
+                FakeClearOutcome::Return(Ok(ClearedDiagnosticsView { cleared_events: 4 })),
+                calls.clone(),
+                Arc::new(Mutex::new(Vec::new())),
+            )),
+            get,
+        ));
+
+        assert_eq!(bridge_panics.load(Ordering::SeqCst), 1);
+        assert_eq!(*calls.lock().expect("call log"), ["clear", "get"]);
+        assert_closed_unavailable(&state);
     }
 }
