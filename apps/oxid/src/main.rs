@@ -128,7 +128,7 @@ fn main() {
 
     #[cfg(all(feature = "standalone-portal", target_os = "android"))]
     oxid_composition::verify_android_portal_virtual_device_profile()
-        .unwrap_or_else(startup_failure);
+        .unwrap_or_else(|error| startup_failure(error));
 
     #[cfg(all(
         feature = "standalone-portal",
@@ -150,7 +150,7 @@ fn main() {
             include_bytes!(concat!(env!("OUT_DIR"), "/portal-deployment.json")),
             env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
         )
-        .unwrap_or_else(startup_failure)
+        .unwrap_or_else(|error| startup_failure(error))
     };
 
     #[cfg(all(
@@ -172,7 +172,7 @@ fn main() {
         env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
         env!("OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN"),
     )
-    .unwrap_or_else(startup_failure);
+    .unwrap_or_else(|error| startup_failure(error));
 
     #[cfg(feature = "standalone-native-proving-artifacts")]
     let application =
