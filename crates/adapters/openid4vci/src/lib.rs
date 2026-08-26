@@ -37,20 +37,23 @@ use zeroize::Zeroizing;
 
 #[cfg(all(
     not(target_arch = "wasm32"),
-    not(target_os = "ios"),
-    not(target_os = "android")
+    any(
+        feature = "portal-http-mobile",
+        not(any(target_os = "ios", target_os = "android"))
+    )
 ))]
 mod portal;
 #[cfg(all(
     not(target_arch = "wasm32"),
-    not(target_os = "ios"),
-    not(target_os = "android")
+    any(
+        feature = "portal-http-mobile",
+        not(any(target_os = "ios", target_os = "android"))
+    )
 ))]
 pub use portal::{
-    PORTAL_INTEGRATION_COMMIT, PORTAL_INTEGRATION_TREE, PORTAL_PR_HEAD, PORTAL_PROFILE_SOURCE,
-    PortalCredentialMaterialDecoder, PortalCredentialMaterialError, PortalDeploymentManifest,
-    PortalDeploymentManifestError, PortalOid4vciClient, PortalOid4vciClientFactory,
-    authenticate_bundled_portal_source,
+    PORTAL_INTEGRATION_COMMIT, PORTAL_INTEGRATION_TREE, PortalCredentialMaterialDecoder,
+    PortalCredentialMaterialError, PortalDeploymentManifest, PortalDeploymentManifestError,
+    PortalOid4vciClient, PortalOid4vciClientFactory, authenticate_bundled_portal_source,
 };
 #[cfg(all(
     test,

@@ -34,6 +34,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
+import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
@@ -46,6 +47,19 @@ class OxidMobilePlugin(private val activity: Activity) {
     fun timeoutScanJson(): String = ScannerState.timeout()
 
     fun takeIdentityLinkJson(): String = IdentityLinkState.take()
+
+    fun virtualDeviceProfileJson(): String {
+        val hardware = Build.HARDWARE.orEmpty().lowercase(Locale.ROOT)
+        val product = Build.PRODUCT.orEmpty().lowercase(Locale.ROOT)
+        val fingerprint = Build.FINGERPRINT.orEmpty().lowercase(Locale.ROOT)
+        val qemuHardware = hardware == "ranchu" || hardware == "goldfish"
+        val emulatorBuild = product.startsWith("sdk_") ||
+            product.contains("emulator") ||
+            fingerprint.startsWith("generic") ||
+            fingerprint.contains("/emu") ||
+            fingerprint.startsWith("google/sdk_gphone")
+        return JSONObject(mapOf("androidQemu" to (qemuHardware && emulatorBuild))).toString()
+    }
 
     fun copyPublicReceiveAddress(value: String): String {
         return if (onUiThread {

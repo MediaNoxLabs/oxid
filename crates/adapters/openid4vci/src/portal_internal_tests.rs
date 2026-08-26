@@ -15,12 +15,24 @@ use tokio::{
 
 use super::*;
 
+#[test]
+fn deployment_resolver_base_accepts_the_exact_tailnet_prefix() {
+    assert_eq!(
+        validate_origin("https://oxid-demo.tail1234.ts.net:9443"),
+        Ok(())
+    );
+    assert_eq!(
+        validate_resolver_base("https://oxid-demo.tail1234.ts.net:9443/issuer-resolver"),
+        Ok(())
+    );
+}
+
 const HOLDER_DID: &str = "did:example:synthetic-holder";
 const AUTH_METHOD: &str = "did:example:synthetic-holder#auth";
 const BINDING_METHOD: &str = "did:example:synthetic-holder#assert";
 const POSITIVE_ROOT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final"
+    "/../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/openid4vci-final"
 );
 
 struct Proof;
@@ -136,10 +148,8 @@ fn deployment(origin: &str) -> PortalDeploymentManifest {
             issuer_method: "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef#key-assert".to_owned(),
             issuer_origin: origin.to_owned(),
             issuer_resolver_origin: origin.to_owned(),
-            portal_pr_head: PORTAL_PR_HEAD.to_owned(),
-            profile_source_commit: PORTAL_PROFILE_SOURCE.to_owned(),
             provenance_sha256: PORTAL_PROVENANCE_SHA256.to_owned(),
-            schema: "oxid-portal-deployment-v2".to_owned(),
+            schema: "oxid-portal-deployment-v3".to_owned(),
         };
     let bytes = serde_json::to_vec(&manifest).expect("manifest");
     PortalDeploymentManifest::from_bytes(&bytes, &sha256_hex(&bytes)).expect("deployment")
@@ -578,7 +588,7 @@ fn hostile_urls_content_types_sizes_and_legacy_shapes_fail_closed() {
     assert!(validate_json_content_type("application/json; charset=UTF-8").is_ok());
     assert_eq!(
         parse_token_response(include_bytes!(
-            "../../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/legacy-json-token-request.json"
+            "../../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/openid4vci-final/negative/legacy-json-token-request.json"
         )),
         Err(IssuanceProtocolError::IssuerRejected)
     );

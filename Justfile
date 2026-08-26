@@ -38,6 +38,10 @@ headless:
 portal-headless-e2e:
     ./scripts/e2e/portal-headless-e2e.sh
 
+# Run strict Portal issuance, encrypted restart, and fresh reverification on a discovered physical Android device.
+android-portal-tailnet-physical-smoke:
+    ./scripts/test-android-portal-tailnet-physical.sh
+
 standalone-recovery-smoke:
     cargo test -p oxid-composition standalone_composition_recovers_a_complete_wallet_into_a_fresh_instance
 

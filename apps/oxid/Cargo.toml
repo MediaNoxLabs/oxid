@@ -27,6 +27,24 @@ standalone-development = []
 # stack. Routes are immutable loopback constants; Android emulators reach them
 # only through repository-owned adb reverse mappings.
 standalone-local = []
+# Simulator/emulator-only Portal profile. These feature dependencies make the
+# required mobile development/local composition explicit. `build.rs` also
+# requires the authenticated transient profile-authority manifest emitted only
+# after the repository launchers validate iOS Simulator or Android QEMU.
+standalone-portal = [
+  "mobile",
+  "standalone-development",
+  "standalone-local",
+  "oxid-composition/mobile-portal",
+]
+# Physical Android Portal profile using compile-time authenticated Tailscale
+# HTTPS and the existing standalone Midnight routes.
+standalone-portal-tailnet = [
+  "mobile",
+  "standalone-development",
+  "standalone-tailnet",
+  "oxid-composition/mobile-portal-tailnet",
+]
 # Opt-in physical-device route profile for a TLS-terminated standalone stack.
 # Every route is supplied at compile time by the repository launcher; normal
 # and native-custody builds cannot select it.
@@ -51,6 +69,7 @@ android-jni-exception-recovery-test = [
 dioxus = { workspace = true, features = ["launch"] }
 oxid-composition.workspace = true
 oxid-ui-dioxus.workspace = true
+url.workspace = true
 
 # Tier-2 browser entropy backends. Three `getrandom` majors resolve in the
 # wasm32 graph and each one refuses to build for `wasm32-unknown-unknown`
@@ -70,6 +89,8 @@ getrandom_04 = { package = "getrandom", version = "=0.4.3", features = [
 
 [build-dependencies]
 oxid-brand-build.workspace = true
+sha2.workspace = true
+url.workspace = true
 
 [lints]
 workspace = true

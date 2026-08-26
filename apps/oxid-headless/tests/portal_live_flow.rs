@@ -30,10 +30,8 @@ use oxid_identity_domain::MidnightDid;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
-const PORTAL_INTEGRATION_COMMIT: &str = "925ec8d04882eabd4ac7b784c70fc2f0c152faae";
-const PORTAL_INTEGRATION_TREE: &str = "58b4597524f88a0ae2253439a44dab0dc60cbb6f";
-const PORTAL_PR_HEAD: &str = "9c82db23eabe8b6d758b2731f2225910ea627c14";
-const PORTAL_PROFILE_SOURCE: &str = "76e8edf394a4cb37ca822037272d543c68f25f71";
+const PORTAL_INTEGRATION_COMMIT: &str = "22ae5369b6f939e6b20648f4b85dd993527748ef";
+const PORTAL_INTEGRATION_TREE: &str = "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10";
 const PORTAL_PROVENANCE_SHA256: &str =
     "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87";
 const PORTAL_ISSUER_RESOLVER: &str = "http://127.0.0.1:9092";
@@ -112,6 +110,48 @@ impl ProcessHarness {
     fn quit(mut self) {
         assert_eq!(self.request("quit", "system.quit", json!({}))["ok"], true);
         assert!(self.child.wait().expect("wait").success());
+    }
+}
+
+struct PortalLifecycle {
+    script: PathBuf,
+    source: PathBuf,
+    state: PathBuf,
+}
+
+impl PortalLifecycle {
+    fn start(script: PathBuf, source: PathBuf, state: PathBuf, issuer: &str, holder: &str) -> Self {
+        let status = Command::new(&script)
+            .arg("up")
+            .env("PORTAL_INTEGRATION_CHECKOUT", &source)
+            .env("OXID_PORTAL_CONSUMER_STATE_DIR", &state)
+            .env("PORTAL_ISSUER_URL", issuer)
+            .env("PORTAL_HOLDER_RESOLVER_URL", holder)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("Portal consumer lifecycle");
+        assert!(status.success(), "Portal consumer lifecycle failed");
+        Self {
+            script,
+            source,
+            state,
+        }
+    }
+}
+
+impl Drop for PortalLifecycle {
+    fn drop(&mut self) {
+        let status = Command::new(&self.script)
+            .arg("down")
+            .env("PORTAL_INTEGRATION_CHECKOUT", &self.source)
+            .env("OXID_PORTAL_CONSUMER_STATE_DIR", &self.state)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if !std::thread::panicking() {
+            assert!(status.is_ok_and(|status| status.success()));
+        }
     }
 }
 
@@ -480,28 +520,28 @@ fn portal_request(origin: &str, method: &str, path: &str, body: Option<&str>) ->
     serde_json::from_slice(&response[split..]).expect("Portal JSON")
 }
 
-fn docker_compose(portal_tree: &Path, override_path: &Path, args: &[&str]) {
-    let status = Command::new("docker")
-        .current_dir(portal_tree)
-        .args(["compose", "-f", "docker/docker-compose.yml", "-f"])
-        .arg(override_path)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("docker compose");
-    assert!(status.success(), "docker compose live harness phase failed");
-}
-
-fn issuer_public_facts(portal_tree: &Path, override_path: &Path) -> (String, String, Value) {
+fn issuer_public_facts() -> (String, String, Value) {
+    let containers = Command::new("docker")
+        .args([
+            "ps",
+            "--quiet",
+            "--filter",
+            "label=com.docker.compose.project=oxid-portal-consumer",
+            "--filter",
+            "label=com.docker.compose.service=issuer",
+        ])
+        .output()
+        .expect("issuer container");
+    assert!(containers.status.success());
+    let container = String::from_utf8(containers.stdout)
+        .expect("container UTF-8")
+        .trim()
+        .to_owned();
+    assert!(!container.is_empty() && !container.contains(char::is_whitespace));
     let output = Command::new("docker")
-        .current_dir(portal_tree)
-        .args(["compose", "-f", "docker/docker-compose.yml", "-f"])
-        .arg(override_path)
         .args([
             "exec",
-            "-T",
-            "issuer",
+            &container,
             "sh",
             "-c",
             r#"IFS= read -r value < /bootstrap/issuer-key-id; printf %s "$value""#,
@@ -564,10 +604,8 @@ fn write_manifest(
         "issuerMethod":issuer_method,
         "issuerOrigin":issuer_origin,
         "issuerResolverOrigin":PORTAL_ISSUER_RESOLVER,
-        "portalPrHead":PORTAL_PR_HEAD,
-        "profileSourceCommit":PORTAL_PROFILE_SOURCE,
         "provenanceSha256":PORTAL_PROVENANCE_SHA256,
-        "schema":"oxid-portal-deployment-v2"
+        "schema":"oxid-portal-deployment-v3"
     });
     let bytes = serde_json::to_vec(&manifest).expect("manifest");
     fs::write(path, &bytes).expect("manifest file");
@@ -732,6 +770,12 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
             .into_string()
             .expect("Portal path UTF-8"),
     );
+    let lifecycle_script = PathBuf::from(
+        std::env::var_os("PORTAL_CONSUMER_LIFECYCLE")
+            .expect("PORTAL_CONSUMER_LIFECYCLE")
+            .into_string()
+            .expect("lifecycle path UTF-8"),
+    );
     let oxid_head = std::env::var("OXID_PORTAL_EVIDENCE_HEAD").expect("OXID_PORTAL_EVIDENCE_HEAD");
     assert!(
         oxid_head.len() == 40 && oxid_head.bytes().all(|byte| byte.is_ascii_hexdigit()),
@@ -754,31 +798,16 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
 
     let portal_proxy = PortalProxy::spawn();
     let holder_resolver = HolderResolver::spawn();
-    let override_path = run_root.join("portal-override.yml");
-    fs::write(
-        &override_path,
-        format!(
-            "services:\n  issuer:\n    environment:\n      DID_RESOLVER_URL: {}\n      ISSUER_URL: {}\n    extra_hosts:\n      - host.docker.internal:host-gateway\n",
-            holder_resolver.origin_for_container,
-            portal_proxy.origin
-        ),
-    )
-    .expect("compose override");
-    docker_compose(
-        &portal_tree,
-        &override_path,
-        &[
-            "up",
-            "-d",
-            "--wait",
-            "--no-deps",
-            "--force-recreate",
-            "issuer",
-        ],
+    let _portal_lifecycle = PortalLifecycle::start(
+        lifecycle_script,
+        portal_tree,
+        run_root.join("portal-state"),
+        &portal_proxy.origin,
+        &holder_resolver.origin_for_container,
     );
     wait_for_portal();
 
-    let (issuer_did, issuer_method, issuer_jwk) = issuer_public_facts(&portal_tree, &override_path);
+    let (issuer_did, issuer_method, issuer_jwk) = issuer_public_facts();
     let manifest_path = run_root.join("deployment.json");
     let manifest_digest = write_manifest(
         &manifest_path,
@@ -957,8 +986,6 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         "portal":{
             "integrationCommit":PORTAL_INTEGRATION_COMMIT,
             "integrationTree":PORTAL_INTEGRATION_TREE,
-            "prHead":PORTAL_PR_HEAD,
-            "profileSourceCommit":PORTAL_PROFILE_SOURCE,
             "provenanceSha256":PORTAL_PROVENANCE_SHA256
         },
         "schema":"oxid-portal-headless-evidence-v1"

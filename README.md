@@ -425,8 +425,8 @@ cargo run -p oxid-headless
 ```
 
 The manifest and bundled source lock distinguish Portal's landed
-`integration@925ec8d`, the tree-identical historical PR #17 head `9c82db2`, and
-the `76e8edf` profile-source/provenance identity. The HTTP client accepts only
+`integration@22ae536` / tree `74d8d1a`, with the exact Final-profile provenance
+digest retained as a compatibility boundary. The HTTP client accepts only
 the strict Final profile, disables redirects/proxies/retries, keeps plaintext
 loopback-only, converts private parts through the exact Digital Passport
 commitment boundary, and reuses the existing valid-only encrypted import.

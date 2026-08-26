@@ -586,17 +586,23 @@ method from this set; never infer control merely because a resolved or restored
 public DID document contains an authentication relationship.
 
 ADR-0101 keeps Portal `804de0a9e58cf48ece3cc6c24b2245bb70bc80f1`
-as source-derived negative contract evidence only. ADR-0102 separately pins the
-landed Portal `integration` squash `925ec8d04882eabd4ac7b784c70fc2f0c152faae`,
-its tree-identical historical PR head `9c82db23eabe8b6d758b2731f2225910ea627c14`,
-and profile source `76e8edf394a4cb37ca822037272d543c68f25f71`.
-Only native desktop/headless development may select that strict HTTP adapter,
-through an absolute manifest path plus exact digest. Keep ADR-0039's Final-only
-wire contract, HTTPS-only nonloopback/loopback-only plaintext, explicit consent,
-distinct managed authentication and Jubjub methods, exact three-part verified
-import, encrypted persistence, unavailable production composition, and
-compile-time mobile isolation. Never add a permissive Portal decoder or runtime
-production/mobile route switch.
+as source-derived negative contract evidence only. ADR-0102 pins merged Portal
+`integration` commit `22ae5369b6f939e6b20648f4b85dd993527748ef`, tree
+`74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`, and the existing Final-profile
+provenance digest. Native desktop/headless development selects the strict HTTP
+adapter through an absolute manifest path plus exact digest. ADR-0103 additionally
+permits one compile-gated physical Android tailnet conformance profile. Oxid owns
+consumer composition, lifecycle, mobile automation, and evidence; Portal input
+is only its merged public source and generic Tailscale HTTPS profile. Runtime
+discovery supplies the physical device, MagicDNS identity, and unoccupied HTTPS
+listener. Existing routes 443, 8443, and 10000 remain unchanged, and Portal's
+exact ownership receipt must restore the complete Serve pre-state. Keep
+ADR-0039's Final-only wire contract, HTTPS-only nonloopback/loopback-only
+plaintext, explicit consent, distinct managed authentication and Jubjub methods,
+exact three-part verified import, encrypted persistence, unavailable production
+composition, and compile-time mobile isolation. Never add a permissive Portal
+decoder, runtime production route switch, helper checkout, personal endpoint,
+or fixed device selector.
 
 [Issue #25](https://github.com/MediaNoxLabs/oxid/issues/25) and ADR-0040 migrate
 the prototype's actual `oid4vp_client` behavior as a separate SIOPv2 draft-13

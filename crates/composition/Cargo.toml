@@ -11,6 +11,18 @@ publish = false
 [features]
 default = []
 mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
+# Native-mobile Portal identity/HTTP capability. It is target-gated, and its
+# fixed trigger remains runtime-inert until the app-owned standalone-portal path
+# calls the explicit Portal composition constructor.
+mobile-portal = [
+  "dep:oxid-adapter-mobile-native",
+  "oxid-adapter-openid4vci/portal-http-mobile",
+  "oxid-adapter-identity-ingress/loopback-test-offer-trigger",
+]
+mobile-portal-tailnet = [
+  "mobile-portal",
+  "oxid-adapter-identity-ingress/tailnet-test-offer-trigger",
+]
 android-jni-exception-recovery-test = [
   "dep:oxid-adapter-mobile-native",
   "oxid-adapter-mobile-native/android-jni-exception-recovery-test",
@@ -56,6 +68,7 @@ midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-zswap.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 zeroize.workspace = true
 

@@ -60,6 +60,8 @@ class MainActivity : WryActivity() {
 
     fun oxidTakeIdentityLinkJson(): String = oxidMobilePlugin.takeIdentityLinkJson()
 
+    fun oxidVirtualDeviceProfileJson(): String = oxidMobilePlugin.virtualDeviceProfileJson()
+
     fun oxidCopyPublicReceiveAddress(value: String): String =
         oxidMobilePlugin.copyPublicReceiveAddress(value)
 

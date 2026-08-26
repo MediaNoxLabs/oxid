@@ -2,20 +2,19 @@
 
 - Status: Accepted
 - Date: 2026-08-21
-- Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124) and Portal PR #17
-- Portal integration source: squash commit `925ec8d04882eabd4ac7b784c70fc2f0c152faae`, tree `58b4597524f88a0ae2253439a44dab0dc60cbb6f`
-- Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14` (the same tree as the landed squash commit)
-- Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; exact provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
+- Source: [issue #124](https://github.com/MediaNoxLabs/oxid/issues/124) and merged Portal integration
+- Portal integration source: commit `22ae5369b6f939e6b20648f4b85dd993527748ef`, tree `74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`
+- Final-profile provenance SHA-256: `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039 and ADR-0101
 - Implementation state: strict native desktop/headless Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; production and mobile Portal HTTP composition remain unavailable
 
 ## Context
 
 ADR-0101 preserved the incompatible Portal `804de0a9` wire shapes as negative
-regression evidence. Portal PR #17 subsequently implemented the reviewed
+regression evidence. Portal integration subsequently implemented the reviewed
 OpenID4VCI 1.0 Final profile and landed on Portal `integration` as squash commit
-`925ec8d`. The landed tree is byte-identical to historical PR head `9c82db2`.
-The profile provenance was authored at `76e8edf`; squash history does not make
+`925ec8d`, now consumed through merged Portal `integration@22ae536`.
+The profile provenance was authored at `76e8edf`; later integration history does not make
 that commit an ancestor of the landed integration commit, so the source lock
 records all three identities rather than conflating them.
 
