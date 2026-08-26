@@ -210,6 +210,12 @@ if ! OXID_MOBILE_CUSTODY=development \
       <<<"$build_diagnostic" >&2
   fi
   build_diagnostic=""
+  tail -n 80 "$PRIVATE_LOG" | sed -E \
+    -e 's#https?://[^[:space:]]+#<redacted-url>#g' \
+    -e 's/[[:alnum:]_-]+(\.[[:alnum:]_-]+)+\.ts\.net/<redacted-tailnet>/g' \
+    -e 's/did:[^[:space:]"'"'"']+/<redacted-did>/g' \
+    -e 's/[0-9a-f]{64}/<redacted-digest>/g' \
+    -e 's/(Bearer )[0-9a-f]+/\1<redacted>/g' >&2
   fail android-build
 fi
 
