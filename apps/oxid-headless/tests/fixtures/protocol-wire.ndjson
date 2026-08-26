@@ -1,0 +1,11 @@
+
+{
+{"protocol":"oxid.headless.v1","id":{"private":"must-not-echo"},"method":"system.capabilities","params":{}}
+{"id":"missing-protocol","method":"system.capabilities","params":{}}
+{"protocol":"oxid.headless.v2","id":"future","method":"system.capabilities","params":{}}
+{"protocol":"oxid.headless.v1","id":"array-params","method":"system.capabilities","params":[]}
+{"protocol":"oxid.headless.v1","id":"empty-unknown","method":"system.capabilities","params":{"unexpected":true}}
+{"protocol":"oxid.headless.v1","id":"typed-unknown","method":"wallet.profile.create","params":{"displayName":"Sanitized profile","seedHex":"must-not-echo"}}
+{"protocol":"oxid.headless.v1","id":"unknown","method":"private.export","params":{}}
+{"protocol":"oxid.headless.v1","id":"quit","method":"system.quit","params":{}}
+{"protocol":"oxid.headless.v1","id":"ignored","method":"system.capabilities","params":{}}

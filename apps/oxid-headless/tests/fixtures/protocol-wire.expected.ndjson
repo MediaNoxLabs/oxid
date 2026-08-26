@@ -1,0 +1,9 @@
+{"protocol":"oxid.headless.v1","id":null,"ok":false,"error":{"code":"parse_error","message":"request is not valid JSON"}}
+{"protocol":"oxid.headless.v1","id":null,"ok":false,"error":{"code":"invalid_request","message":"id must be a string when present"}}
+{"protocol":"oxid.headless.v1","id":"missing-protocol","ok":false,"error":{"code":"invalid_request","message":"request must include string protocol and method fields"}}
+{"protocol":"oxid.headless.v1","id":"future","ok":false,"error":{"code":"unsupported_protocol","message":"request protocol is not supported"}}
+{"protocol":"oxid.headless.v1","id":"array-params","ok":false,"error":{"code":"invalid_params","message":"params must be a JSON object"}}
+{"protocol":"oxid.headless.v1","id":"empty-unknown","ok":false,"error":{"code":"invalid_params","message":"system.capabilities does not accept parameters"}}
+{"protocol":"oxid.headless.v1","id":"typed-unknown","ok":false,"error":{"code":"invalid_params","message":"wallet.profile.create requires only a string displayName"}}
+{"protocol":"oxid.headless.v1","id":"unknown","ok":false,"error":{"code":"method_not_found","message":"requested method is not implemented"}}
+{"protocol":"oxid.headless.v1","id":"quit","ok":true,"result":{"shuttingDown":true}}
