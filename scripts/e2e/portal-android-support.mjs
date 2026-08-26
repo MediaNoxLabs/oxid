@@ -357,6 +357,8 @@ const controlServer = http.createServer(async (request, response) => {
       sendJson(response, 200, { ok: true });
     } else if (request.method === "GET" && request.url === "/counters") {
       sendJson(response, 200, counters);
+    } else if (request.method === "GET" && request.url === "/handoff-status") {
+      sendJson(response, 200, { state: handoffState });
     } else if (request.method === "POST" && request.url === "/holder") {
       holderDocument = transformStoredDid(await readBounded(request));
       sendJson(response, 200, { accepted: true });

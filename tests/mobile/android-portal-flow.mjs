@@ -159,10 +159,18 @@ async function ensureProfile() {
 }
 
 async function assertRouted() {
-  await waitFor(
-    'document.body.innerText.includes("App link recognized as a credential offer. Review the request before consent.")',
-    "credential-offer route",
-  );
+  try {
+    await waitFor(
+      'document.body.innerText.includes("App link recognized as a credential offer. Review the request before consent.")',
+      "credential-offer route",
+    );
+  } catch (error) {
+    const handoff = await fetch(`${controlOrigin}/handoff-status`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
+    }).then((response) => response.json());
+    throw new Error(`credential-offer route unavailable with handoff state ${handoff.state}: ${error.message}`);
+  }
   await waitFor(
     `Object.values(${strictReviewBoundaryExpression()}).every(Boolean)`,
     "strict credential-offer boundary",
