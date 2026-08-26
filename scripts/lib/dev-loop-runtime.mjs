@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -132,41 +131,57 @@ export async function resolveDevLoopsPackageRoot({ cwd = process.cwd() } = {}) {
   );
 }
 
-function yamlParserFor(packageRoot) {
-  try {
-    const require = createRequire(path.join(packageRoot, "package.json"));
-    const yaml = require("yaml");
-    if (typeof yaml?.parse !== "function") throw new Error("yaml.parse is unavailable");
-    return yaml.parse;
-  } catch (error) {
-    throw new Error(`could not load the YAML parser from the exact project package tree: ${error.message}`, { cause: error });
+function unquoteFrontmatterScalar(value, file) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
   }
+  if (trimmed.startsWith('"') || trimmed.endsWith('"') || trimmed.startsWith("'") || trimmed.endsWith("'")) {
+    throw new Error(`invalid YAML frontmatter in agent manifest ${file}: unmatched quote`);
+  }
+  return trimmed;
 }
 
-/** Parse one agent manifest with the same YAML forms accepted by the pinned runtime. */
-export function parseAgentFrontmatter(source, file, parseYaml) {
+/**
+ * Parse only the name/tools subset used by the preflight. Keeping this parser
+ * local makes the mandatory public-CI contract independent of installed Pi
+ * packages while still accepting the pinned runtime's inline and block lists.
+ */
+export function parseAgentFrontmatter(source, file) {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) throw new Error(`agent manifest has no YAML frontmatter: ${file}`);
-  let fields;
-  try {
-    fields = parseYaml(match[1]);
-  } catch (error) {
-    throw new Error(`invalid YAML frontmatter in agent manifest ${file}: ${error.message}`, { cause: error });
-  }
-  if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
-    throw new Error(`agent manifest frontmatter must be a mapping: ${file}`);
-  }
-  const name = typeof fields.name === "string" ? fields.name.trim() : "";
-  const rawTools = fields.tools;
+  const lines = match[1].split(/\r?\n/);
+  let name = "";
   let tools;
-  if (Array.isArray(rawTools)) {
-    tools = rawTools.map((tool) => typeof tool === "string" ? tool.trim() : tool);
-  } else if (typeof rawTools === "string") {
-    tools = rawTools.split(",").map((tool) => tool.trim());
-  } else {
-    throw new Error(`agent manifest requires tools as an inline or multiline string list: ${file}`);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^\s*(?:#.*)?$/.test(line)) continue;
+    const field = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(?:\s*(.*))?$/);
+    if (!field) {
+      if (/^\s+-\s+/.test(line)) throw new Error(`invalid YAML frontmatter in agent manifest ${file}: unexpected list item`);
+      continue;
+    }
+    const [, key, raw = ""] = field;
+    if (key === "name") name = unquoteFrontmatterScalar(raw, file).trim();
+    if (key !== "tools") continue;
+    const value = raw.trim();
+    if (value.startsWith("[")) {
+      if (!value.endsWith("]")) throw new Error(`invalid YAML frontmatter in agent manifest ${file}: unterminated tools list`);
+      tools = value.slice(1, -1).split(",").map((tool) => unquoteFrontmatterScalar(tool, file).trim()).filter(Boolean);
+    } else if (value) {
+      tools = value.split(",").map((tool) => unquoteFrontmatterScalar(tool, file).trim()).filter(Boolean);
+    } else {
+      tools = [];
+      while (index + 1 < lines.length) {
+        const item = lines[index + 1].match(/^\s+-\s+(.+?)\s*$/);
+        if (!item) break;
+        tools.push(unquoteFrontmatterScalar(item[1], file).trim());
+        index += 1;
+      }
+    }
   }
-  if (!name || tools.length === 0 || tools.some((tool) => typeof tool !== "string" || !tool)) {
+  if (!name || !Array.isArray(tools) || tools.length === 0 || tools.some((tool) => !tool)) {
     throw new Error(`agent manifest requires a non-empty name and tools allowlist: ${file}`);
   }
   return { name, tools };
@@ -187,25 +202,24 @@ function assertSupportedProjectSettings(settings) {
   }
 }
 
-async function readAgentDirectory(root, parseYaml) {
+async function readAgentDirectory(root) {
   if (!(await exists(root))) return [];
   const files = (await readdir(root)).filter((file) => file.endsWith(".md")).sort();
   return Promise.all(files.map(async (file) => ({
-    ...parseAgentFrontmatter(await readFile(path.join(root, file), "utf8"), path.join(root, file), parseYaml),
+    ...parseAgentFrontmatter(await readFile(path.join(root, file), "utf8"), path.join(root, file)),
     file: path.join(root, file),
   })));
 }
 
-/** Check effective package agents after supported tracked project shadows. */
+/** Check package agents after supported repository-local project shadows. */
 export async function checkAgentToolAllowlists({ packageRoot, settings, availableTools, projectRoot }) {
   if (!packageRoot) throw new Error("packageRoot is required");
   if (!projectRoot) throw new Error("projectRoot is required");
   if (!Array.isArray(availableTools)) throw new Error("availableTools must be an array");
   assertSupportedProjectSettings(settings);
   const available = new Set(availableTools);
-  const parseYaml = yamlParserFor(packageRoot);
-  const packaged = await readAgentDirectory(path.join(packageRoot, "agents"), parseYaml);
-  const project = await readAgentDirectory(path.join(projectRoot, PROJECT_AGENTS_PATH), parseYaml);
+  const packaged = await readAgentDirectory(path.join(packageRoot, "agents"));
+  const project = await readAgentDirectory(path.join(projectRoot, PROJECT_AGENTS_PATH));
   const projectByName = new Map();
   for (const agent of project) {
     if (projectByName.has(agent.name)) throw new Error(`duplicate tracked project agent '${agent.name}'`);
@@ -232,7 +246,7 @@ export async function checkAgentToolAllowlists({ packageRoot, settings, availabl
 export function formatAgentToolAllowlistFailure(result) {
   const invalid = result.agents.filter(({ missingTools }) => missingTools.length > 0);
   if (invalid.length === 0) return "";
-  return `Pi dev-loop preflight failed: unavailable agent tools: ${invalid
+  return `Pi dev-loop preflight failed: unavailable repository/package agent tools: ${invalid
     .map(({ name, missingTools }) => `${name}=[${missingTools.join(", ")}]`)
-    .join("; ")}. Fix the tracked .pi/agents manifest or exact package installation before model execution. For unrelated emergency Pi use only, 'pi --no-approve' ignores the project extension; never run a dev-loop in that mode.`;
+    .join("; ")}. Fix the tracked .pi/agents manifest or exact package installation before model execution. This preflight covers the exact repository package plus repository-local shadows; separately installed user agents are outside its claim.`;
 }

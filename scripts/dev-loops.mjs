@@ -23,16 +23,24 @@ function readOption(args, name) {
   return values;
 }
 
+const GLOBAL_VALUE_OPTIONS = new Set(["--jq", "--repo", "--cwd", "--config"]);
+const GLOBAL_BOOLEAN_OPTIONS = new Set(["--silent", "-s", "--json"]);
+
 function publicRoute(args) {
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
-    if (argument === "--silent" || argument === "-s") continue;
-    if (argument === "--jq") {
-      if (index + 1 >= args.length) throw new Error("--jq requires a value");
+    if (GLOBAL_BOOLEAN_OPTIONS.has(argument)) continue;
+    const equalsOption = [...GLOBAL_VALUE_OPTIONS].find((option) => argument.startsWith(`${option}=`));
+    if (equalsOption) {
+      if (argument.length === equalsOption.length + 1) throw new Error(`${equalsOption} requires a value`);
+      continue;
+    }
+    if (GLOBAL_VALUE_OPTIONS.has(argument)) {
+      if (index + 1 >= args.length || args[index + 1].startsWith("--")) throw new Error(`${argument} requires a value`);
       index += 1;
       continue;
     }
-    if (argument.startsWith("--jq=")) continue;
+    if (argument.startsWith("-")) throw new Error(`unsupported leading dev-loops option: ${argument}`);
     return { category: argument, command: args[index + 1] };
   }
   return {};
@@ -63,8 +71,8 @@ export async function runDevLoops(argv = process.argv.slice(2), {
   const cli = path.join(resolved.packageRoot, "cli", "index.mjs");
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cli, ...args], { cwd, stdio: ["inherit", "pipe", "pipe"] });
-    child.stdout.pipe(stdout);
-    child.stderr.pipe(stderr);
+    child.stdout.pipe(stdout, { end: false });
+    child.stderr.pipe(stderr, { end: false });
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (signal) reject(new Error(`dev-loops terminated by ${signal}`));

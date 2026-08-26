@@ -31,23 +31,25 @@ These wrappers govern only the public routes shown above. They do not rewrite
 raw `gh`, direct package-script calls, or arbitrary internal dev-loops commands;
 repository rules and contributor policy remain authoritative for those paths.
 
-The exact `pi-subagents@0.42.1` runtime accepts
-`subagents.projectRootResolution: "git-root"`, but it deliberately does not
-replace `tools` already declared in a custom agent's frontmatter. Therefore the
-repository uses tracked `.pi/agents/*.agent.md` project shadows, which have
-higher precedence than the package agents copied to `~/.agents`; it does not
-claim that `subagents.agentOverrides` repairs those manifests.
+The repository selects `subagents.projectRootResolution: "git-root"` for the
+exact `pi-subagents@0.42.1` pin and uses tracked
+`.pi/agents/*.agent.md` project shadows because a custom agent's frontmatter
+owns its tool list. A pinned-runtime smoke test confirms project precedence
+when the local Pi installation is present; public CI tests the repository
+contract without claiming to validate unavailable user-level installations.
+`subagents.agentOverrides` is deliberately not presented as a tool-list repair.
 
-The project extension `.pi/extensions/dev-loop-preflight.ts` obtains Pi's
-registered tool names after extension registration, parses the package and
-project manifests with the exact installed YAML dependency, and checks every
-effective allowlist. Inline and multiline YAML tool lists are supported;
-malformed YAML fails with the exact path. An unavailable tool causes the input
-event to be handled without an agent/model turn, and defense-in-depth hooks
-abort programmatic turns before a provider request. Fix the tracked manifest or
-exact installation instead of adding aliases. For unrelated emergency Pi use,
-`pi --no-approve` ignores project-local extensions; never run a dev-loop in
-that mode.
+The project extension keeps its runtime-independent logic in
+`.pi/extensions/dev-loop-preflight-core.mjs`; the TypeScript file is only Pi's
+adapter. It obtains Pi's registered tool names after extension registration and
+uses a bounded, dependency-free parser for the `name` and `tools` frontmatter
+fields in the exact package plus repository-local shadows. Inline and
+multiline tool lists are supported; malformed frontmatter fails with the exact
+path. An unavailable tool causes the input event to be handled without an
+agent/model turn, and defense-in-depth hooks abort programmatic turns before a
+provider request. Fix the tracked manifest or exact installation instead of
+adding aliases. Separately installed user agents are outside this repository
+preflight and must be governed by their owning installation.
 
 The Nix default devshell includes `gh`. Before issue/PR link automation, probe
 the exact read-only REST behavior and then use the timeline resolver:
@@ -85,8 +87,9 @@ node scripts/review/claude-current-head.mjs \
 ```
 
 The runner independently derives HEAD and the `origin/integration` merge base,
-creates an exact-byte diff artifact and digest, preflights every Claude CLI
-flag it relies on, invokes Claude outside the checkout in safe mode with an
+creates an exact UTF-8 textual diff artifact whose exact bytes are both hashed
+and sent to the reviewer, preflights every Claude CLI flag it relies on,
+invokes Claude outside the checkout in safe mode with an
 empty tool set and no session persistence, and records CLI account readiness,
 version, observed session id, timestamps, raw-output digest, exit status, and a
 structured verdict. It checks clean/head/base/exact-diff facts again afterward.
@@ -106,7 +109,7 @@ complements rather than bypasses CI, security, DCO/signature, and merge controls
 
 | Issue #150 acceptance or definition-of-done item | First-slice status | Authority / remaining work |
 | --- | --- | --- |
-| Effective repository agent tool allowlists match installed Pi tools before model execution | Landed in this slice | `.pi/agents/`, `scripts/lib/dev-loop-runtime.mjs`, and `.pi/extensions/dev-loop-preflight.ts`; `.pi/settings.json` owns only the supported git-root selection |
+| Effective repository agent tool allowlists match installed Pi tools before model execution | Landed in this slice | `.pi/agents/`, `scripts/lib/dev-loop-runtime.mjs`, and `.pi/extensions/dev-loop-preflight-core.mjs` with its thin TypeScript adapter; `.pi/settings.json` owns only the supported git-root selection |
 | Project-local package discovery works at root and linked worktrees | Landed in this slice | The bounded tracked resolver and wrappers above |
 | Timeout, deadline, `usageBudget`, turn, tool, and control budgets survive resume exactly | **Upstream-only** | [pi-subagents #985](https://github.com/nicobailon/pi-subagents/issues/985) and the pinned [v0.42.1 async-resume source](https://github.com/nicobailon/pi-subagents/blob/v0.42.1/src/runs/background/async-resume.ts) |
 | Provider payload compaction/checkpointing and streamed-mutation retry idempotency | Deferred / **upstream-only** | No exact upstream issue was established during this bounded slice. File a minimal upstream reproduction before claiming a fix; no repository wrapper can safely reconstruct provider stream state. |

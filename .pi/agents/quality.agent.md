@@ -7,6 +7,8 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 ---
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Compatibility shadow derived from dev-loops@0.9.0 agents/quality.agent.md; repository tests bind this source version. -->
 You are a specialized quality agent. You improve how the repository builds, tests, validates, and runs in automation.
 
 ## Purpose

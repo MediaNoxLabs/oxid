@@ -126,8 +126,8 @@ attestation is usable only when it records:
 - a review timestamp after the last push.
 
 Any push makes the evidence stale. Run the tracked
-`scripts/review/claude-current-head.mjs` wrapper with a clean checkout and an
-a private XDG state directory (or an equally hardened explicit directory). It
+`scripts/review/claude-current-head.mjs` wrapper with a clean checkout and a
+private XDG state directory (or an equally hardened explicit directory). It
 invokes the CLI from outside the checkout in safe mode with no tools, supplies
 caller-provided issue scope plus the exact diff artifact, and fails on stale
 state or malformed output. Findings are persisted as structured attestational

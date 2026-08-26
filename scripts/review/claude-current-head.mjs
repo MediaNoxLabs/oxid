@@ -148,7 +148,15 @@ function gitBytes(gitCommand, args, cwd) {
 }
 
 function exactDiff(gitCommand, baseSha, headSha, cwd) {
-  return gitBytes(gitCommand, ["diff", "--binary", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], cwd);
+  return gitBytes(gitCommand, ["diff", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], cwd);
+}
+
+function exactUtf8(value) {
+  const rendered = value.toString("utf8");
+  if (!Buffer.from(rendered, "utf8").equals(value)) {
+    throw new Error("review diff is not exact UTF-8 text; split binary changes into a separately reviewed slice");
+  }
+  return rendered;
 }
 
 function assertClean(gitCommand, repoRoot) {
@@ -177,16 +185,29 @@ async function assertPrivateOwnedDirectory(directory) {
   if ((info.mode & 0o077) !== 0) throw new Error(`evidence directory must have mode 0700: ${directory}`);
 }
 
-async function prepareEvidenceDirectory(requested, repoRoot) {
-  const directory = path.resolve(requested ?? defaultEvidenceDirectory());
-  if (isContained(repoRoot, directory)) throw new Error("evidenceDir must be outside the reviewed checkout");
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+async function assertPrivateOwnedFile(file) {
+  const info = await lstat(file);
+  if (info.isSymbolicLink() || !info.isFile()) throw new Error(`review artifact must be a real regular file: ${file}`);
+  if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
+    throw new Error(`review artifact is not owned by the invoking user: ${file}`);
+  }
+  if ((info.mode & 0o077) !== 0) throw new Error(`review artifact must have mode 0600: ${file}`);
+}
+
+async function resolveEvidenceDirectory(directory, repoRoot) {
   await assertPrivateOwnedDirectory(directory);
   const resolved = await realpath(directory);
   // lstat above rejects a final-component symlink. Ancestor aliases such as
   // macOS /tmp -> /private/tmp are acceptable after ownership/mode checks.
   if (isContained(repoRoot, resolved)) throw new Error("evidenceDir must be outside the reviewed checkout");
   return resolved;
+}
+
+async function prepareEvidenceDirectory(requested, repoRoot) {
+  const directory = path.resolve(requested ?? defaultEvidenceDirectory());
+  if (isContained(repoRoot, directory)) throw new Error("evidenceDir must be outside the reviewed checkout");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  return resolveEvidenceDirectory(directory, repoRoot);
 }
 
 async function atomicPrivateWrite(file, content) {
@@ -250,6 +271,7 @@ export async function runClaudeCurrentHeadReview({
   if (expectedHead && expectedHead !== headSha) throw new Error(`expected head ${expectedHead}, found ${headSha}`);
   const baseSha = gitText(gitCommand, ["merge-base", "HEAD", BASE_REF], root);
   const diffContent = exactDiff(gitCommand, baseSha, headSha, root);
+  const diffText = exactUtf8(diffContent);
   const diffDigest = sha256(diffContent);
   if (diffContent.length > MAX_REVIEW_DIFF_BYTES) {
     throw new Error(`review diff exceeds the ${MAX_REVIEW_DIFF_BYTES}-byte safe payload bound; split or checkpoint the change`);
@@ -290,7 +312,7 @@ export async function runClaudeCurrentHeadReview({
     baseSha,
     diffPath,
     diffDigest,
-    diff: diffContent.toString("utf8"),
+    diff: diffText,
     issueContract,
     boundary: randomBytes(24).toString("hex"),
   });
@@ -352,11 +374,22 @@ export async function runClaudeCurrentHeadReview({
 
 /** Fail closed when saved clean evidence no longer describes the exact clean HEAD. */
 export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = process.cwd(), gitCommand = "git", fetchBase = true }) {
-  const evidence = JSON.parse(await readFile(evidencePath, "utf8"));
+  const root = await realpath(path.resolve(repoRoot));
+  const requestedEvidence = path.resolve(evidencePath);
+  const evidenceRoot = await resolveEvidenceDirectory(path.dirname(requestedEvidence), root);
+  await assertPrivateOwnedFile(requestedEvidence);
+  let evidence;
+  try {
+    evidence = JSON.parse(await readFile(requestedEvidence, "utf8"));
+  } catch (error) {
+    throw new Error(`Claude review evidence is not valid JSON: ${error.message}`, { cause: error });
+  }
   if (evidence.schemaVersion !== 2 || evidence.evidenceKind !== "local-attestation" || evidence.baseRef !== BASE_REF || evidence.verdict !== "clean") {
     throw new Error("unsupported or non-clean Claude review attestation");
   }
-  const root = await realpath(path.resolve(repoRoot));
+  if (!evidence.diff || typeof evidence.diff !== "object" || !evidence.rawResponse || typeof evidence.rawResponse !== "object") {
+    throw new Error("Claude review attestation is missing artifact descriptors");
+  }
   assertClean(gitCommand, root);
   if (fetchBase) gitText(gitCommand, ["fetch", "origin", "integration"], root);
   const headSha = gitText(gitCommand, ["rev-parse", "HEAD"], root);
@@ -365,14 +398,16 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   if (headSha !== evidence.headSha || baseSha !== evidence.baseSha || sha256(diffContent) !== evidence.diff?.sha256) {
     throw new Error("Claude review attestation is stale for the current head or integration base");
   }
-  const evidenceRoot = await prepareEvidenceDirectory(path.dirname(path.resolve(evidencePath)), root);
   const artifactPath = (value) => {
     if (typeof value !== "string" || path.basename(value) !== value) throw new Error("Claude review attestation contains an unsafe artifact path");
     return path.join(evidenceRoot, value);
   };
+  const savedDiffPath = artifactPath(evidence.diff.path);
+  const rawResponsePath = artifactPath(evidence.rawResponse.path);
+  await Promise.all([assertPrivateOwnedFile(savedDiffPath), assertPrivateOwnedFile(rawResponsePath)]);
   const [savedDiff, rawResponse] = await Promise.all([
-    readFile(artifactPath(evidence.diff.path)),
-    readFile(artifactPath(evidence.rawResponse.path), "utf8"),
+    readFile(savedDiffPath),
+    readFile(rawResponsePath, "utf8"),
   ]);
   if (sha256(savedDiff) !== evidence.diff.sha256 || sha256(rawResponse) !== evidence.rawResponse.sha256) {
     throw new Error("Claude review artifact digest mismatch");

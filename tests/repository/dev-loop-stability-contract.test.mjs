@@ -28,7 +28,7 @@ import {
   runClaudeCurrentHeadReview,
   verifyClaudeReviewEvidence,
 } from "../../scripts/review/claude-current-head.mjs";
-import registerDevLoopPreflight from "../../.pi/extensions/dev-loop-preflight.ts";
+import registerDevLoopPreflight from "../../.pi/extensions/dev-loop-preflight-core.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relativePath) => readFile(path.join(repoRoot, relativePath), "utf8");
@@ -59,7 +59,6 @@ async function makeFixture() {
   await writeFile(path.join(root, ".pi", "agents", "developer.agent.md"), [
     "---", "name: developer", "description: fixture", "tools:", "  - read", "  - grep", "  - find", "  - ls", "  - bash", "  - edit", "  - write", "---", "fixture",
   ].join("\n"));
-  await symlink(path.join(repoRoot, ".pi", "npm", "node_modules", "yaml"), path.join(root, ".pi", "npm", "node_modules", "yaml"), "dir");
   const worktree = path.join(root, "tmp", "worktrees", "dev-loops", "issue-150");
   await mkdir(worktree, { recursive: true });
   await writeFile(path.join(worktree, ".git"), `gitdir: ${path.join(root, ".git", "worktrees", "fixture")}\n`);
@@ -98,7 +97,7 @@ test("package resolution rejects mismatched identities and symlink escapes", asy
   await assert.rejects(resolveDevLoopsPackageRoot({ cwd: fixture.root }), /escapes allowed project roots/);
 });
 
-test("effective packaged agent allowlists use YAML project shadows, not ineffective settings overrides", async (t) => {
+test("effective packaged agent allowlists use self-contained project shadows, not ineffective settings overrides", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const settings = JSON.parse(await readFile(path.join(fixture.root, ".pi", "settings.json"), "utf8"));
@@ -158,12 +157,13 @@ test("tracked extension blocks invalid tools at input and provider hooks before 
   assert.deepEqual(inputResult, { action: "handled" });
   assert.equal(providerLaunches, 0);
   assert.match(notifications[0], /before model execution|unavailable agent tools/);
-  await assert.rejects(handlers.get("before_provider_request")({}, ctx), /unavailable agent tools/);
+  await assert.rejects(handlers.get("before_provider_request")({}, ctx), /unavailable repository\/package agent tools/);
   assert.equal(ctx.abortCalled, true);
 });
 
 test("tracked project agents shadow every incompatible packaged dev-loops manifest", async () => {
   const settings = JSON.parse(await read(".pi/settings.json"));
+  assert.equal(settings.packages.includes("npm:dev-loops@0.9.0"), true);
   assert.equal(settings.subagents.projectRootResolution, "git-root");
   assert.equal(settings.subagents.agentOverrides, undefined);
   for (const name of ["dev-loop", "developer", "docs", "fixer", "quality", "refiner", "review"]) {
@@ -172,7 +172,12 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
     assert.ok(toolsLine, `${name} has a tracked project shadow`);
     const tools = toolsLine.slice("tools:".length).split(",").map((tool) => tool.trim());
     assert.equal(tools.some((tool) => legacyTools.has(tool)), false, `${name} has no legacy tool alias`);
+    assert.match(source, /SPDX-License-Identifier: Apache-2\.0/, `${name} carries repository licensing`);
+    assert.match(source, new RegExp(`derived from dev-loops@0\\.9\\.0 agents/${name}\\.agent\\.md`), `${name} binds its source pin`);
+    assert.doesNotMatch(source, /\]\(\.\.\/npm\/node_modules\//, `${name} has no link into an untracked package tree`);
   }
+  const reviewTools = (await read(".pi/agents/review.agent.md")).match(/^tools:\s*(.+)$/m)?.[1] ?? "";
+  assert.doesNotMatch(reviewTools, /\b(?:edit|write)\b/, "review shadow is mutation-free");
 });
 
 test("pinned pi-subagents runtime applies git-root project-agent precedence", async (t) => {
@@ -206,10 +211,14 @@ test("pinned pi-subagents runtime applies git-root project-agent precedence", as
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), ["pr", "create", "--head", "topic", "--base", "integration"]);
   assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic"]), ["--silent", "pr", "create-draft", "--head", "topic", "--base", "integration"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic"]), ["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic", "--base", "integration"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["--repo=MediaNoxLabs/oxid", "--json", "pr", "create", "--head", "topic"]), ["--repo=MediaNoxLabs/oxid", "--json", "pr", "create", "--head", "topic", "--base", "integration"]);
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "ready-for-review", "--pr", "153"]), ["pr", "ready-for-review", "--pr", "153"]);
   assert.deepEqual(normalizeDevLoopsArgs(["queue", "add", "--title", "pr", "create"]), ["queue", "add", "--title", "pr", "create"]);
   assert.deepEqual(normalizeDevLoopsArgs(["--jq", ".ok", "pr", "create"]), ["--jq", ".ok", "pr", "create", "--base", "integration"]);
   assert.throws(() => normalizeDevLoopsArgs(["--silent", "pr", "create", "--base", "main"]), /must target integration/);
+  assert.throws(() => normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--base", "main"]), /must target integration/);
+  assert.throws(() => normalizeDevLoopsArgs(["--future-global", "pr", "create", "--base", "main"]), /unsupported leading dev-loops option/);
   assert.throws(() => normalizeDevLoopsArgs(["pr", "create-draft", "--base=develop"]), /must target integration/);
   assert.deepEqual(normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150"]), ["--repo-root", "/repo", "--issue", "150", "--base", "origin/integration"]);
   assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--base", "origin/main"]), /must use origin\/integration/);
@@ -242,6 +251,14 @@ else process.exit(9);
   const probe = preflightGh({ repository: "MediaNoxLabs/oxid", issue: 150, ghCommand: fakeGh });
   assert.deepEqual(probe.version, [2, 67, 0]);
   assert.equal(probe.timelinePages, 1);
+  await writeFile(fakeGh, (await readFile(fakeGh, "utf8")).replace(
+    'JSON.stringify([[{ event: "cross-referenced" }]])',
+    'JSON.stringify([{ event: "cross-referenced" }])',
+  ));
+  assert.throws(
+    () => preflightGh({ repository: "MediaNoxLabs/oxid", issue: 150, ghCommand: fakeGh }),
+    /did not return paginated arrays/,
+  );
 
   for (const file of [
     "scripts/github/resolve-issue-pr-links.mjs",
@@ -293,8 +310,11 @@ test("Claude runner binds clean exact-head evidence and rejects stale worktrees"
   git("commit", "--quiet", "-m", "head");
   const headSha = git("rev-parse", "HEAD");
 
-  await writeFile(fakeClaude, `#!/usr/bin/env node
+  const writeFakeClaude = async (mode) => {
+    await writeFile(fakeClaude, `#!/usr/bin/env node
 const fs = require("node:fs");
+const { execFileSync } = require("node:child_process");
+const mode = ${JSON.stringify(mode)};
 if (process.argv.includes("--version")) {
   process.stdout.write("claude fixture 1.0\\n");
 } else if (process.argv.includes("--help")) {
@@ -304,13 +324,23 @@ if (process.argv.includes("--version")) {
 } else {
   const prompt = fs.readFileSync(0, "utf8");
   if (!prompt.includes("${headSha}") || !prompt.includes("${baseSha}")) process.exit(9);
-  process.stdout.write(JSON.stringify({
-    session_id: "fixture-session",
-    structured_output: { verdict: "clean", findings: [], summary: "No findings" },
-  }));
+  if (mode === "timeout") setTimeout(() => {}, 60_000);
+  else if (mode === "nonzero") { process.stderr.write("fixture failure\\n"); process.exit(7); }
+  else if (mode === "malformed") process.stdout.write("not json");
+  else {
+    if (mode === "advance") execFileSync("git", ["-C", ${JSON.stringify(repository)}, "commit", "--allow-empty", "-m", "advance"]);
+    process.stdout.write(JSON.stringify({
+      session_id: "fixture-session",
+      structured_output: mode === "findings"
+        ? { verdict: "findings", findings: [{ severity: "major", message: "Fixture finding" }], summary: "Has findings" }
+        : { verdict: "clean", findings: [], summary: "No findings" },
+    }));
+  }
 }
 `);
-  await chmod(fakeClaude, 0o755);
+    await chmod(fakeClaude, 0o755);
+  };
+  await writeFakeClaude("clean");
 
   const result = await runClaudeCurrentHeadReview({
     issue: 150,
@@ -335,13 +365,10 @@ if (process.argv.includes("--version")) {
   for (const file of [result.evidencePath, path.join(evidenceDir, result.evidence.diff.path), path.join(evidenceDir, result.evidence.rawResponse.path)]) {
     assert.equal((await lstat(file)).mode & 0o777, 0o600);
   }
-  const exactGitDiff = execFileSync("git", ["diff", "--binary", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], { cwd: repository });
+  const exactGitDiff = execFileSync("git", ["diff", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], { cwd: repository });
   assert.deepEqual(await readFile(path.join(evidenceDir, result.evidence.diff.path)), exactGitDiff);
 
-  await writeFile(fakeClaude, (await readFile(fakeClaude, "utf8")).replace(
-    'structured_output: { verdict: "clean", findings: [], summary: "No findings" }',
-    'structured_output: { verdict: "findings", findings: [{ severity: "major", message: "Fixture finding" }], summary: "Has findings" }',
-  ));
+  await writeFakeClaude("findings");
   let findingsError;
   try {
     await runClaudeCurrentHeadReview({
@@ -359,6 +386,36 @@ if (process.argv.includes("--version")) {
   assert.ok(findingsError instanceof ClaudeReviewFindingsError);
   assert.equal(JSON.parse(await readFile(findingsError.evidencePath, "utf8")).verdict, "findings");
 
+  for (const [mode, pattern, timeoutMs] of [
+    ["malformed", /did not return JSON/, 1_000],
+    ["nonzero", /exited 7/, 1_000],
+    ["timeout", /timed out|terminated/, 50],
+  ]) {
+    await writeFakeClaude(mode);
+    await assert.rejects(runClaudeCurrentHeadReview({
+      issue: 150,
+      repoRoot: repository,
+      evidenceDir,
+      expectedHead: headSha,
+      claudeCommand: fakeClaude,
+      issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+      fetchBase: false,
+      timeoutMs,
+    }), pattern, mode);
+  }
+
+  await writeFakeClaude("advance");
+  await assert.rejects(runClaudeCurrentHeadReview({
+    issue: 150,
+    repoRoot: repository,
+    evidenceDir,
+    expectedHead: headSha,
+    claudeCommand: fakeClaude,
+    issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+    fetchBase: false,
+  }), /changed during Claude review/);
+  git("reset", "--hard", headSha);
+
   const symlinkTarget = path.join(fixtureRoot, "symlink-target");
   const symlinkEvidence = path.join(fixtureRoot, "symlink-evidence");
   await mkdir(symlinkTarget, { mode: 0o700 });
@@ -372,6 +429,24 @@ if (process.argv.includes("--version")) {
     issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
     fetchBase: false,
   }), /real directory|final symlink/);
+
+  const missingEvidence = path.join(fixtureRoot, "must-not-be-created", "evidence.json");
+  await assert.rejects(
+    verifyClaudeReviewEvidence({ evidencePath: missingEvidence, repoRoot: repository, fetchBase: false }),
+    /ENOENT|no such file/i,
+  );
+  await assert.rejects(lstat(path.dirname(missingEvidence)), /ENOENT/);
+
+  const malformedEvidence = path.join(evidenceDir, "malformed.evidence.json");
+  await writeFile(malformedEvidence, JSON.stringify({
+    ...result.evidence,
+    diff: null,
+  }), { mode: 0o600 });
+  await chmod(malformedEvidence, 0o600);
+  await assert.rejects(
+    verifyClaudeReviewEvidence({ evidencePath: malformedEvidence, repoRoot: repository, fetchBase: false }),
+    /missing artifact descriptors/,
+  );
 
   await writeFile(path.join(repository, "dirty.txt"), "dirty\n");
   await assert.rejects(

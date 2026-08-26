@@ -9,6 +9,8 @@ inheritSkills: true
 user-invocable: true
 maxSubagentDepth: 3
 ---
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Compatibility shadow derived from dev-loops@0.9.0 agents/dev-loop.agent.md; repository tests bind this source version. -->
 
 You are the **Public Dev Loop** entrypoint agent.
 
@@ -45,19 +47,19 @@ NEVER fall back to `find /` or any unbounded filesystem walk to locate the CLI â
 5. Load every path listed in `requiredReads` (in order).
 6. Execute `nextAction` constrained by `stopRules` and `acceptance`.
 
-**The agent MUST NOT load skills, route packs, or delegate work before the envelope is built and read.** The derivation contract is [Workflow Handoff Contract](../npm/node_modules/dev-loops/skills/docs/workflow-handoff-contract.md).
+**The agent MUST NOT load skills, route packs, or delegate work before the envelope is built and read.** The derivation contract is Workflow Handoff Contract (pinned package path `.pi/npm/node_modules/dev-loops/skills/docs/workflow-handoff-contract.md`).
 
 Prose task composition is a fallback only when `buildDevLoopHandoffEnvelope()` is unavailable (missing `@dev-loops/core` package) â€” the handoff contract in `skills/docs/workflow-handoff-contract.md` applies in that fallback case.
 
 ## Operating contract
 
-After the handoff envelope is built and read, load the `dev-loop` skill ([Dev Loop Skill](../npm/node_modules/dev-loops/skills/dev-loop/SKILL.md)) for the routed strategy's execution procedures.
+After the handoff envelope is built and read, load the `dev-loop` skill (Dev Loop Skill (pinned package path `.pi/npm/node_modules/dev-loops/skills/dev-loop/SKILL.md`)) for the routed strategy's execution procedures.
 
 When that skill is not available at the expected path, resolve it from the skill installation layout (see the skill's "Skill asset path resolution" section).
 
 This entrypoint MUST stay thin: do not restate the skill's phase sequencing or workflow policy here. The envelope owns handoff sequencing; the skill owns routed strategy execution procedures.
 
-Treat the deterministic public routing contract in [Public Dev Loop Contract](../npm/node_modules/dev-loops/skills/docs/public-dev-loop-contract.md) and the `dev-loop` skill as the authority for choosing the current execution path. Do not force users to choose internal strategy names up front.
+Treat the deterministic public routing contract in Public Dev Loop Contract (pinned package path `.pi/npm/node_modules/dev-loops/skills/docs/public-dev-loop-contract.md`) and the `dev-loop` skill as the authority for choosing the current execution path. Do not force users to choose internal strategy names up front.
 
 Interpret issue-based shorthand triggers like `auto dev loop on issue <n>`, `enter copilot auto dev loop on issue <n>`, and `run auto dev loop on <n> until approval gate` as compatibility wording for the same public `dev-loop` intent, not a second public workflow entrypoint.
 

@@ -43,7 +43,9 @@ export function preflightGh({ repository, issue, ghCommand = "gh" }) {
     throw new Error(`GitHub CLI REST capability probe returned invalid JSON: ${error.message}`, { cause: error });
   }
   if (Number(issueFact?.number) !== issue) throw new Error("GitHub issue REST probe returned the wrong issue");
-  if (!Array.isArray(timeline)) throw new Error("GitHub timeline REST probe did not return paginated arrays");
+  if (!Array.isArray(timeline) || timeline.some((page) => !Array.isArray(page))) {
+    throw new Error("GitHub timeline REST probe did not return paginated arrays");
+  }
 
   return { ok: true, version, repository, issue, timelinePages: timeline.length };
 }

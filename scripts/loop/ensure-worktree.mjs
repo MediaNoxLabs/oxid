@@ -45,8 +45,8 @@ export async function runEnsureWorktree(argv = process.argv.slice(2), {
   const script = path.join(resolved.packageRoot, "scripts", "loop", "ensure-worktree.mjs");
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, ...args], { cwd, stdio: ["inherit", "pipe", "pipe"] });
-    child.stdout.pipe(stdout);
-    child.stderr.pipe(stderr);
+    child.stdout.pipe(stdout, { end: false });
+    child.stderr.pipe(stderr, { end: false });
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (signal) reject(new Error(`ensure-worktree terminated by ${signal}`));

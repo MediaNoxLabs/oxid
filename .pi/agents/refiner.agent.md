@@ -7,6 +7,8 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 ---
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Compatibility shadow derived from dev-loops@0.9.0 agents/refiner.agent.md; repository tests bind this source version. -->
 You are a focused phase-refinement agent. Your job is to strengthen one already-selected phase at a time before implementation begins.
 
 ## Purpose
