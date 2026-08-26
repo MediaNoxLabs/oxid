@@ -84,7 +84,48 @@ export function assertClaudeHelpCapabilities(help) {
   if (typeof help !== "string") throw new Error("Claude CLI help output must be text");
   const missing = REQUIRED_CLAUDE_FLAGS.filter((flag) => !help.includes(flag));
   if (missing.length > 0) throw new Error(`Claude CLI does not expose required review flags: ${missing.join(", ")}`);
-  return true;
+  const emptyToolsDisabled = /--tools[\s\S]{0,320}Use "" to disable all\s+tools/i.test(help);
+  if (!emptyToolsDisabled) throw new Error('Claude CLI help does not attest that --tools "" disables all tools');
+  return { flags: [...REQUIRED_CLAUDE_FLAGS], emptyToolsDisabled };
+}
+
+/** Probe the actual CLI contract; tests may additionally request a tiny output smoke. */
+export function probeClaudeCliCapabilities({ claudeCommand = "claude", cwd = process.cwd(), performOutputSmoke = false } = {}) {
+  const authResult = run(claudeCommand, ["auth", "status"], { cwd, timeout: 30_000 });
+  if (authResult.error || authResult.status !== 0) {
+    throw new Error(`could not verify Claude CLI account readiness: ${String(authResult.stderr || authResult.error?.message || "unknown error").trim()}`);
+  }
+  let accountStatus;
+  try { accountStatus = JSON.parse(authResult.stdout); } catch (error) {
+    throw new Error(`Claude CLI account status was not JSON: ${error.message}`, { cause: error });
+  }
+  if (accountStatus?.loggedIn !== true) throw new Error("Claude CLI is not logged in");
+
+  const helpResult = run(claudeCommand, ["--help"], { cwd, timeout: 30_000 });
+  if (helpResult.error || helpResult.status !== 0) throw new Error("could not read Claude CLI help");
+  const help = `${helpResult.stdout ?? ""}\n${helpResult.stderr ?? ""}`;
+  const capabilities = assertClaudeHelpCapabilities(help);
+
+  const versionResult = run(claudeCommand, ["--version"], { cwd, timeout: 30_000 });
+  if (versionResult.error || versionResult.status !== 0) {
+    throw new Error(`could not record Claude CLI version: ${String(versionResult.stderr || versionResult.error?.message || "unknown error").trim()}`);
+  }
+  const version = versionResult.stdout.trim();
+  if (!version) throw new Error("Claude CLI returned an empty version");
+
+  let outputSmoke = null;
+  if (performOutputSmoke) {
+    const invocation = buildClaudeInvocation({ command: claudeCommand, maxBudgetUsd: 1 });
+    const smokeResult = run(invocation.command, invocation.args, {
+      cwd,
+      timeout: 120_000,
+      input: 'Return verdict "clean", an empty findings array, and summary "Capability smoke".',
+    });
+    if (smokeResult.error || smokeResult.status !== 0) throw commandFailure(claudeCommand, invocation.args, smokeResult);
+    outputSmoke = parseClaudeReviewResult(smokeResult.stdout);
+    if (outputSmoke.review.verdict !== "clean") throw new Error("Claude CLI capability smoke did not return a clean structured result");
+  }
+  return { accountStatus, help, version, capabilities, outputSmoke };
 }
 
 export function parseClaudeReviewResult(source) {
@@ -147,8 +188,30 @@ function gitBytes(gitCommand, args, cwd) {
   return result.stdout;
 }
 
+function assertNoBinaryChanges(gitCommand, baseSha, headSha, cwd) {
+  const fields = gitBytes(gitCommand, ["diff", "--numstat", "-z", baseSha, headSha, "--"], cwd).toString("utf8").split("\0");
+  const binaryPaths = [];
+  for (let index = 0; index < fields.length; index += 1) {
+    if (!fields[index]) continue;
+    const match = fields[index].match(/^([^\t]+)\t([^\t]+)\t([\s\S]*)$/);
+    if (!match) throw new Error("could not parse git binary-detection numstat output");
+    let changedPath = match[3];
+    if (!changedPath) {
+      const oldPath = fields[index + 1];
+      const newPath = fields[index + 2];
+      if (!oldPath || !newPath) throw new Error("could not parse git rename numstat output");
+      changedPath = `${oldPath} -> ${newPath}`;
+      index += 2;
+    }
+    if (match[1] === "-" || match[2] === "-") binaryPaths.push(changedPath);
+  }
+  if (binaryPaths.length > 0) {
+    throw new Error(`review diff contains binary paths that cannot be independently inspected as exact UTF-8 text: ${binaryPaths.join(", ")}`);
+  }
+}
+
 function exactDiff(gitCommand, baseSha, headSha, cwd) {
-  return gitBytes(gitCommand, ["diff", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], cwd);
+  return gitBytes(gitCommand, ["diff", "--binary", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], cwd);
 }
 
 function exactUtf8(value) {
@@ -270,6 +333,7 @@ export async function runClaudeCurrentHeadReview({
   const headSha = gitText(gitCommand, ["rev-parse", "HEAD"], root);
   if (expectedHead && expectedHead !== headSha) throw new Error(`expected head ${expectedHead}, found ${headSha}`);
   const baseSha = gitText(gitCommand, ["merge-base", "HEAD", BASE_REF], root);
+  assertNoBinaryChanges(gitCommand, baseSha, headSha, root);
   const diffContent = exactDiff(gitCommand, baseSha, headSha, root);
   const diffText = exactUtf8(diffContent);
   const diffDigest = sha256(diffContent);
@@ -280,30 +344,15 @@ export async function runClaudeCurrentHeadReview({
   const outputRoot = await prepareEvidenceDirectory(evidenceDir, root);
   const runId = `${headSha.slice(0, 12)}-${Date.now()}-${randomBytes(4).toString("hex")}`;
   const diffPath = path.join(outputRoot, `${runId}.diff`);
+  const helpPath = path.join(outputRoot, `${runId}.claude-help.txt`);
   const rawResponsePath = path.join(outputRoot, `${runId}.claude.json`);
   const evidencePath = path.join(outputRoot, `${runId}.evidence.json`);
   await atomicPrivateWrite(diffPath, diffContent);
 
-  const authResult = run(claudeCommand, ["auth", "status"], { cwd: outputRoot, timeout: 30_000 });
-  if (authResult.error || authResult.status !== 0) {
-    throw new Error(`could not verify Claude CLI account readiness: ${String(authResult.stderr || authResult.error?.message || "unknown error").trim()}`);
-  }
-  let accountStatus;
-  try { accountStatus = JSON.parse(authResult.stdout); } catch (error) {
-    throw new Error(`Claude CLI account status was not JSON: ${error.message}`, { cause: error });
-  }
-  if (accountStatus?.loggedIn !== true) throw new Error("Claude CLI is not logged in");
-
-  const helpResult = run(claudeCommand, ["--help"], { cwd: outputRoot, timeout: 30_000 });
-  if (helpResult.error || helpResult.status !== 0) throw new Error("could not read Claude CLI help");
-  assertClaudeHelpCapabilities(`${helpResult.stdout ?? ""}\n${helpResult.stderr ?? ""}`);
-
-  const versionResult = run(claudeCommand, ["--version"], { cwd: outputRoot, timeout: 30_000 });
-  if (versionResult.error || versionResult.status !== 0) {
-    throw new Error(`could not record Claude CLI version: ${String(versionResult.stderr || versionResult.error?.message || "unknown error").trim()}`);
-  }
-  const claudeVersion = versionResult.stdout.trim();
-  if (!claudeVersion) throw new Error("Claude CLI returned an empty version");
+  const probe = probeClaudeCliCapabilities({ claudeCommand, cwd: outputRoot });
+  const { accountStatus } = probe;
+  const claudeVersion = probe.version;
+  await atomicPrivateWrite(helpPath, probe.help);
 
   const invocation = buildClaudeInvocation({ command: claudeCommand, maxBudgetUsd });
   const prompt = reviewPrompt({
@@ -322,6 +371,12 @@ export async function runClaudeCurrentHeadReview({
   const rawResponse = result.stdout ?? "";
   await atomicPrivateWrite(rawResponsePath, rawResponse);
 
+  // Preserve the process failure as the primary deterministic diagnostic even
+  // if the checkout also moved while the process was running.
+  if (result.error?.code === "ETIMEDOUT" || result.signal) throw new Error(`Claude review timed out or was terminated after ${timeoutMs}ms`);
+  if (result.error) throw new Error(`Claude review could not start: ${result.error.message}`);
+  if (result.status !== 0) throw new Error(`Claude review exited ${result.status}: ${String(result.stderr ?? "").trim()}`);
+
   assertClean(gitCommand, root);
   const finalHead = gitText(gitCommand, ["rev-parse", "HEAD"], root);
   const finalBase = gitText(gitCommand, ["merge-base", "HEAD", BASE_REF], root);
@@ -329,9 +384,6 @@ export async function runClaudeCurrentHeadReview({
   if (finalHead !== headSha || finalBase !== baseSha || sha256(finalDiff) !== diffDigest) {
     throw new Error("head, integration merge base, or exact diff bytes changed during Claude review; evidence is stale");
   }
-  if (result.error?.code === "ETIMEDOUT" || result.signal) throw new Error(`Claude review timed out or was terminated after ${timeoutMs}ms`);
-  if (result.error) throw new Error(`Claude review could not start: ${result.error.message}`);
-  if (result.status !== 0) throw new Error(`Claude review exited ${result.status}: ${String(result.stderr ?? "").trim()}`);
 
   const parsed = parseClaudeReviewResult(rawResponse);
   const evidence = {
@@ -355,6 +407,11 @@ export async function runClaudeCurrentHeadReview({
       safeMode: true,
       tools: [],
       noSessionPersistence: true,
+      capabilities: {
+        help: { path: path.basename(helpPath), sha256: sha256(probe.help), bytes: Buffer.byteLength(probe.help) },
+        flags: probe.capabilities.flags,
+        emptyToolsDisabled: probe.capabilities.emptyToolsDisabled,
+      },
       cliAccountStatus: {
         loggedIn: true,
         authMethod: typeof accountStatus.authMethod === "string" ? accountStatus.authMethod : null,
@@ -387,13 +444,15 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   if (evidence.schemaVersion !== 2 || evidence.evidenceKind !== "local-attestation" || evidence.baseRef !== BASE_REF || evidence.verdict !== "clean") {
     throw new Error("unsupported or non-clean Claude review attestation");
   }
-  if (!evidence.diff || typeof evidence.diff !== "object" || !evidence.rawResponse || typeof evidence.rawResponse !== "object") {
+  if (!evidence.diff || typeof evidence.diff !== "object" || !evidence.rawResponse || typeof evidence.rawResponse !== "object"
+    || !evidence.claude?.capabilities?.help || typeof evidence.claude.capabilities.help !== "object") {
     throw new Error("Claude review attestation is missing artifact descriptors");
   }
   assertClean(gitCommand, root);
   if (fetchBase) gitText(gitCommand, ["fetch", "origin", "integration"], root);
   const headSha = gitText(gitCommand, ["rev-parse", "HEAD"], root);
   const baseSha = gitText(gitCommand, ["merge-base", "HEAD", BASE_REF], root);
+  assertNoBinaryChanges(gitCommand, baseSha, headSha, root);
   const diffContent = exactDiff(gitCommand, baseSha, headSha, root);
   if (headSha !== evidence.headSha || baseSha !== evidence.baseSha || sha256(diffContent) !== evidence.diff?.sha256) {
     throw new Error("Claude review attestation is stale for the current head or integration base");
@@ -404,13 +463,20 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   };
   const savedDiffPath = artifactPath(evidence.diff.path);
   const rawResponsePath = artifactPath(evidence.rawResponse.path);
-  await Promise.all([assertPrivateOwnedFile(savedDiffPath), assertPrivateOwnedFile(rawResponsePath)]);
-  const [savedDiff, rawResponse] = await Promise.all([
+  const helpPath = artifactPath(evidence.claude.capabilities.help.path);
+  await Promise.all([assertPrivateOwnedFile(savedDiffPath), assertPrivateOwnedFile(rawResponsePath), assertPrivateOwnedFile(helpPath)]);
+  const [savedDiff, rawResponse, help] = await Promise.all([
     readFile(savedDiffPath),
     readFile(rawResponsePath, "utf8"),
+    readFile(helpPath, "utf8"),
   ]);
-  if (sha256(savedDiff) !== evidence.diff.sha256 || sha256(rawResponse) !== evidence.rawResponse.sha256) {
+  if (sha256(savedDiff) !== evidence.diff.sha256 || sha256(rawResponse) !== evidence.rawResponse.sha256
+    || sha256(help) !== evidence.claude.capabilities.help.sha256) {
     throw new Error("Claude review artifact digest mismatch");
+  }
+  const capabilities = assertClaudeHelpCapabilities(help);
+  if (!capabilities.emptyToolsDisabled || evidence.claude.capabilities.emptyToolsDisabled !== true) {
+    throw new Error("Claude review attestation does not prove the empty tool-set capability");
   }
   const parsed = parseClaudeReviewResult(rawResponse);
   if (parsed.observedSessionId !== evidence.claude?.observedSessionId || parsed.review.verdict !== "clean") {

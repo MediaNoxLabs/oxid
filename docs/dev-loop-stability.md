@@ -40,16 +40,22 @@ contract without claiming to validate unavailable user-level installations.
 `subagents.agentOverrides` is deliberately not presented as a tool-list repair.
 
 The project extension keeps its runtime-independent logic in
-`.pi/extensions/dev-loop-preflight-core.mjs`; the TypeScript file is only Pi's
-adapter. It obtains Pi's registered tool names after extension registration and
-uses a bounded, dependency-free parser for the `name` and `tools` frontmatter
-fields in the exact package plus repository-local shadows. Inline and
-multiline tool lists are supported; malformed frontmatter fails with the exact
-path. An unavailable tool causes the input event to be handled without an
-agent/model turn, and defense-in-depth hooks abort programmatic turns before a
-provider request. Fix the tracked manifest or exact installation instead of
-adding aliases. Separately installed user agents are outside this repository
-preflight and must be governed by their owning installation.
+`scripts/lib/dev-loop-preflight-core.mjs`; `.pi/extensions/dev-loop-preflight.ts`
+is the only auto-loaded Pi registrar. Registration is idempotent. The preflight
+obtains Pi's registered tool names and uses a bounded, dependency-free parser
+for `name` and `tools` in every installed package pinned by `.pi/settings.json`
+plus repository-local shadows. Only `*.agent.md` manifests are scanned. Results
+are cached per session using the checkout, settings, package, manifest mtime and
+tool-set facts; a changed manifest invalidates the cache.
+
+An unavailable declared tool causes the input event to be handled without an
+agent/model turn, and defense-in-depth hooks abort before an agent or provider
+request. A missing or unprovisioned package instead produces a prominent input
+warning and leaves the interactive turn available for diagnosis/provisioning;
+agent and provider launch remains blocked until the environment is valid. Fix
+the tracked manifest or exact installation instead of adding aliases.
+Separately installed user agents remain outside this repository preflight and
+must be governed by their owning installation.
 
 The Nix default devshell includes `gh`. Before issue/PR link automation, probe
 the exact read-only REST behavior and then use the timeline resolver:
@@ -87,12 +93,14 @@ node scripts/review/claude-current-head.mjs \
 ```
 
 The runner independently derives HEAD and the `origin/integration` merge base,
-creates an exact UTF-8 textual diff artifact whose exact bytes are both hashed
-and sent to the reviewer, preflights every Claude CLI flag it relies on,
-invokes Claude outside the checkout in safe mode with an
-empty tool set and no session persistence, and records CLI account readiness,
-version, observed session id, timestamps, raw-output digest, exit status, and a
-structured verdict. It checks clean/head/base/exact-diff facts again afterward.
+rejects any binary path before review, and creates a `git diff --binary` UTF-8
+text artifact whose exact bytes are both hashed and sent to the reviewer. It
+probes the actual Claude CLI help/auth/version contracts; the private evidence
+includes the observed help artifact proving that `--tools ""` disables all
+tools. It invokes Claude outside the checkout in safe mode with that empty tool
+set and no session persistence, then records CLI account readiness, version,
+observed session id, timestamps, raw-output digest, exit status, and a structured
+verdict. It checks clean/head/base/exact-diff facts again afterward.
 Timeout, nonzero exit, malformed output, mutation, or a changed ref is a hard
 failure. A findings verdict is also a failed gate, but its structured findings
 attestation is written first so the next fix pass has durable evidence.
@@ -109,7 +117,7 @@ complements rather than bypasses CI, security, DCO/signature, and merge controls
 
 | Issue #150 acceptance or definition-of-done item | First-slice status | Authority / remaining work |
 | --- | --- | --- |
-| Effective repository agent tool allowlists match installed Pi tools before model execution | Landed in this slice | `.pi/agents/`, `scripts/lib/dev-loop-runtime.mjs`, and `.pi/extensions/dev-loop-preflight-core.mjs` with its thin TypeScript adapter; `.pi/settings.json` owns only the supported git-root selection |
+| Effective repository agent tool allowlists match installed Pi tools before model execution | Landed in this slice | `.pi/agents/`, `scripts/lib/dev-loop-runtime.mjs`, `scripts/lib/dev-loop-preflight-core.mjs`, and the thin `.pi/extensions/dev-loop-preflight.ts` registrar; `.pi/settings.json` owns only the supported git-root selection |
 | Project-local package discovery works at root and linked worktrees | Landed in this slice | The bounded tracked resolver and wrappers above |
 | Timeout, deadline, `usageBudget`, turn, tool, and control budgets survive resume exactly | **Upstream-only** | [pi-subagents #985](https://github.com/nicobailon/pi-subagents/issues/985) and the pinned [v0.42.1 async-resume source](https://github.com/nicobailon/pi-subagents/blob/v0.42.1/src/runs/background/async-resume.ts) |
 | Provider payload compaction/checkpointing and streamed-mutation retry idempotency | Deferred / **upstream-only** | No exact upstream issue was established during this bounded slice. File a minimal upstream reproduction before claiming a fix; no repository wrapper can safely reconstruct provider stream state. |
@@ -133,4 +141,7 @@ must not be collapsed into one caller-authored checkpoint.
 Do not patch, modify, or vendor installed `.pi/npm` packages to close an
 upstream-only row. Do not convert a successful side effect into a passed gate.
 Open or update the linked upstream issue with a minimal reproduction, keep all
-local budgets bounded, and stop at the existing failure boundary.
+local budgets bounded, and stop at the existing failure boundary. PR #153 uses
+`Refs #150`, not a closing keyword: issue #150 remains the follow-up authority
+for every upstream-only and deferred row above until each is either delivered
+or moved to an explicitly linked issue with its own acceptance contract.

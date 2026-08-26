@@ -72,10 +72,27 @@ function runGh(ghCommand, args, options = {}) {
   }
 }
 
-export function bodyClosesIssue(body, issue) {
+function issueReferencePattern(issue, repository) {
+  const escapedIssue = String(issue).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const references = [`#${escapedIssue}`, `GH-${escapedIssue}`];
+  if (typeof repository === "string" && /^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
+    const escapedRepository = repository.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    references.push(
+      `${escapedRepository}#${escapedIssue}`,
+      `https:\/\/github\\.com\/${escapedRepository}\/issues\/${escapedIssue}`,
+    );
+  }
+  return `(?:${references.join("|")})(?:\\b|$)`;
+}
+
+export function bodyClosesIssue(body, issue, repository) {
   if (typeof body !== "string") return false;
-  const escaped = String(issue).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#${escaped}(?:\\b|$)`, "i").test(body);
+  return new RegExp(`(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+${issueReferencePattern(issue, repository)}`, "i").test(body);
+}
+
+export function bodyReferencesIssue(body, issue, repository) {
+  if (typeof body !== "string") return false;
+  return new RegExp(`(?:refs?|references?|close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+${issueReferencePattern(issue, repository)}`, "i").test(body);
 }
 
 export function resolveIssuePullRequestLinks({ repository, issue, ghCommand = "gh" }) {
@@ -100,7 +117,7 @@ export function resolveIssuePullRequestLinks({ repository, issue, ghCommand = "g
     const source = runGh(ghCommand, ["api", "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28", `repos/${repository}/pulls/${link.number}`]);
     let pull;
     try { pull = JSON.parse(source); } catch (error) { throw new Error(`GitHub pull REST response was invalid JSON: ${error.message}`, { cause: error }); }
-    if (!bodyClosesIssue(pull.body, issue)) return [];
+    if (!bodyReferencesIssue(pull.body, issue, repository)) return [];
     return [{ ...link, state: pull.state, draft: pull.draft === true, mergedAt: pull.merged_at ?? null, baseRefName: pull.base?.ref ?? null, headRefName: pull.head?.ref ?? null }];
   });
 }

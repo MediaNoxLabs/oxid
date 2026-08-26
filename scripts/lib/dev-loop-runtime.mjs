@@ -44,18 +44,30 @@ async function resolveCommonCheckoutRoot(gitRoot) {
   return path.dirname(worktreesParent);
 }
 
-function parseExactNpmPin(settings) {
-  const pins = (settings?.packages ?? []).filter((entry) => {
-    if (typeof entry !== "string" || !entry.startsWith("npm:")) return false;
-    const reference = entry.slice(4);
-    return reference === "dev-loops" || reference.startsWith("dev-loops@");
+const EXACT_SEMVER = "(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
+const EXACT_NPM_PIN = new RegExp(`^npm:((?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+)@(${EXACT_SEMVER})$`);
+
+function parseExactNpmPins(settings) {
+  const packages = settings?.packages;
+  if (!Array.isArray(packages)) throw new Error(".pi/settings.json packages must be an array");
+  return packages.map((entry) => {
+    if (typeof entry !== "string" || !entry.startsWith("npm:")) {
+      throw new Error("every repository Pi package must be an exact npm semantic-version pin");
+    }
+    const match = entry.match(EXACT_NPM_PIN);
+    if (!match) throw new Error(`repository Pi package must use an exact npm semantic-version pin: ${entry}`);
+    return { name: match[1], version: match[2], spec: entry };
   });
+}
+
+function parseExactNpmPin(settings) {
+  const pins = parseExactNpmPins(settings).filter(({ name }) => name === "dev-loops");
   if (pins.length !== 1) throw new Error(".pi/settings.json must contain exactly one dev-loops npm pin");
-  const match = pins[0].match(
-    /^npm:dev-loops@((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$/,
-  );
-  if (!match) throw new Error("dev-loops must use an exact npm semantic-version pin");
-  return { name: "dev-loops", version: match[1], spec: pins[0] };
+  return pins[0];
+}
+
+function npmPackagePath(root, name) {
+  return path.join(root, ".pi", "npm", "node_modules", ...name.split("/"));
 }
 
 function isContained(parent, child) {
@@ -77,9 +89,39 @@ async function readJson(file, description) {
   }
 }
 
+async function resolveInstalledPinnedPackages({ candidates, settings }) {
+  const installed = [];
+  for (const pin of parseExactNpmPins(settings)) {
+    let found = false;
+    for (const candidate of candidates) {
+      const requestedRoot = npmPackagePath(candidate.root, pin.name);
+      if (!(await exists(requestedRoot))) continue;
+      const [realCandidateRoot, packageRoot] = await Promise.all([realpath(candidate.root), realpath(requestedRoot)]);
+      if (!isContained(realCandidateRoot, packageRoot)) {
+        throw new Error(`${pin.name} package escapes allowed project roots: ${requestedRoot}`);
+      }
+      const manifest = await readJson(path.join(packageRoot, "package.json"), `${pin.name} package manifest`);
+      if (manifest.name !== pin.name || manifest.version !== pin.version) {
+        throw new Error(
+          `expected ${pin.name}@${pin.version} at ${requestedRoot}, found ${manifest.name ?? "unknown"}@${manifest.version ?? "unknown"}`,
+        );
+      }
+      installed.push({ ...pin, packageRoot, source: candidate.source });
+      found = true;
+      break;
+    }
+    if (!found) {
+      throw new Error(
+        `missing exact ${pin.name}@${pin.version}; checked only ${candidates.map(({ root }) => npmPackagePath(root, pin.name)).join(", ")}`,
+      );
+    }
+  }
+  return installed;
+}
+
 /**
- * Resolve only the exact repository pin. Candidates are bounded to the active
- * Git root and, for a linked worktree, that worktree's common checkout root.
+ * Resolve only exact repository pins. Candidates are bounded to the active Git
+ * root and, for a linked worktree, that worktree's common checkout root.
  */
 export async function resolveDevLoopsPackageRoot({ cwd = process.cwd() } = {}) {
   const gitRoot = await findGitRoot(cwd);
@@ -92,43 +134,27 @@ export async function resolveDevLoopsPackageRoot({ cwd = process.cwd() } = {}) {
     ...(path.resolve(commonRoot) === path.resolve(gitRoot) ? [] : [{ root: commonRoot, source: "git-common-root" }]),
   ];
 
-  for (const candidate of candidates) {
-    const packageRoot = path.join(candidate.root, PACKAGE_RELATIVE_PATH);
-    if (!(await exists(packageRoot))) continue;
-
-    const [realCandidateRoot, realPackageRoot] = await Promise.all([
-      realpath(candidate.root),
-      realpath(packageRoot),
-    ]);
-    if (!isContained(realCandidateRoot, realPackageRoot)) {
-      throw new Error(`dev-loops package escapes allowed project roots: ${packageRoot}`);
-    }
-
-    const manifestPath = path.join(realPackageRoot, "package.json");
-    const manifest = await readJson(manifestPath, "dev-loops package manifest");
-    if (manifest.name !== pin.name || manifest.version !== pin.version) {
-      throw new Error(
-        `expected ${pin.name}@${pin.version} at ${packageRoot}, found ${manifest.name ?? "unknown"}@${manifest.version ?? "unknown"}`,
-      );
-    }
-    if (!(await exists(path.join(realPackageRoot, "cli", "index.mjs")))) {
-      throw new Error(`expected ${pin.name}@${pin.version} CLI at ${path.join(packageRoot, "cli", "index.mjs")}`);
-    }
-    return {
-      packageRoot: realPackageRoot,
-      version: pin.version,
-      spec: pin.spec,
-      source: candidate.source,
-      gitRoot,
-      commonRoot,
-      settingsPath,
-      settings,
-    };
+  const packageRoots = await resolveInstalledPinnedPackages({ candidates, settings });
+  const devLoops = packageRoots.find(({ name }) => name === pin.name);
+  if (!devLoops) {
+    throw new Error(
+      `missing exact ${pin.name}@${pin.version}; checked only ${candidates.map(({ root }) => path.join(root, PACKAGE_RELATIVE_PATH)).join(", ")}`,
+    );
   }
-
-  throw new Error(
-    `missing exact ${pin.name}@${pin.version}; checked only ${candidates.map(({ root }) => path.join(root, PACKAGE_RELATIVE_PATH)).join(", ")}`,
-  );
+  if (!(await exists(path.join(devLoops.packageRoot, "cli", "index.mjs")))) {
+    throw new Error(`expected ${pin.name}@${pin.version} CLI at ${path.join(devLoops.packageRoot, "cli", "index.mjs")}`);
+  }
+  return {
+    packageRoot: devLoops.packageRoot,
+    packageRoots,
+    version: pin.version,
+    spec: pin.spec,
+    source: devLoops.source,
+    gitRoot,
+    commonRoot,
+    settingsPath,
+    settings,
+  };
 }
 
 function unquoteFrontmatterScalar(value, file) {
@@ -204,21 +230,24 @@ function assertSupportedProjectSettings(settings) {
 
 async function readAgentDirectory(root) {
   if (!(await exists(root))) return [];
-  const files = (await readdir(root)).filter((file) => file.endsWith(".md")).sort();
+  const files = (await readdir(root)).filter((file) => file.endsWith(".agent.md")).sort();
   return Promise.all(files.map(async (file) => ({
     ...parseAgentFrontmatter(await readFile(path.join(root, file), "utf8"), path.join(root, file)),
     file: path.join(root, file),
   })));
 }
 
-/** Check package agents after supported repository-local project shadows. */
-export async function checkAgentToolAllowlists({ packageRoot, settings, availableTools, projectRoot }) {
-  if (!packageRoot) throw new Error("packageRoot is required");
+/** Check every installed repository-pinned package after project shadows. */
+export async function checkAgentToolAllowlists({ packageRoot, packageRoots, settings, availableTools, projectRoot }) {
+  const roots = packageRoots ?? (packageRoot ? [{ name: "dev-loops", packageRoot }] : []);
+  if (!Array.isArray(roots) || roots.length === 0) throw new Error("at least one pinned packageRoot is required");
   if (!projectRoot) throw new Error("projectRoot is required");
   if (!Array.isArray(availableTools)) throw new Error("availableTools must be an array");
   assertSupportedProjectSettings(settings);
   const available = new Set(availableTools);
-  const packaged = await readAgentDirectory(path.join(packageRoot, "agents"));
+  const packaged = (await Promise.all(roots.map(async ({ name = "unknown", packageRoot: root }) =>
+    (await readAgentDirectory(path.join(root, "agents"))).map((agent) => ({ ...agent, packageName: name }))
+  ))).flat();
   const project = await readAgentDirectory(path.join(projectRoot, PROJECT_AGENTS_PATH));
   const projectByName = new Map();
   for (const agent of project) {
@@ -227,15 +256,21 @@ export async function checkAgentToolAllowlists({ packageRoot, settings, availabl
   }
 
   const agents = [];
-  const covered = new Set();
+  const coveredProjects = new Set();
   for (const packageAgent of packaged) {
     const effective = projectByName.get(packageAgent.name) ?? packageAgent;
-    covered.add(effective.name);
+    coveredProjects.add(effective.name);
     const missingTools = effective.tools.filter((tool) => !available.has(tool));
-    agents.push({ name: effective.name, file: effective.file, source: effective === packageAgent ? "package" : "project", tools: [...effective.tools], missingTools });
+    agents.push({
+      name: effective.name,
+      file: effective.file,
+      source: effective === packageAgent ? `package:${packageAgent.packageName}` : "project",
+      tools: [...effective.tools],
+      missingTools,
+    });
   }
   for (const projectAgent of project) {
-    if (covered.has(projectAgent.name)) continue;
+    if (coveredProjects.has(projectAgent.name)) continue;
     const missingTools = projectAgent.tools.filter((tool) => !available.has(tool));
     agents.push({ name: projectAgent.name, file: projectAgent.file, source: "project", tools: [...projectAgent.tools], missingTools });
   }
@@ -243,10 +278,37 @@ export async function checkAgentToolAllowlists({ packageRoot, settings, availabl
   return { ok: agents.every(({ missingTools }) => missingTools.length === 0), agents };
 }
 
+async function manifestFingerprints(root) {
+  if (!(await exists(root))) return [];
+  const files = (await readdir(root)).filter((file) => file.endsWith(".agent.md")).sort();
+  return Promise.all(files.map(async (file) => {
+    const candidate = path.join(root, file);
+    const info = await stat(candidate);
+    return `${candidate}:${info.mtimeMs}:${info.size}`;
+  }));
+}
+
+/** Cheap cache key: cwd/settings/package/manifest identity plus Pi's tool set. */
+export async function devLoopPreflightCacheKey({ resolved, availableTools }) {
+  const settingsInfo = await stat(resolved.settingsPath);
+  const roots = resolved.packageRoots ?? [{ name: "dev-loops", packageRoot: resolved.packageRoot }];
+  const fingerprints = [
+    `cwd:${resolved.gitRoot}`,
+    `settings:${resolved.settingsPath}:${settingsInfo.mtimeMs}:${settingsInfo.size}`,
+    `tools:${[...availableTools].sort().join(",")}`,
+  ];
+  for (const { name, version = "", packageRoot: root } of roots) {
+    fingerprints.push(`package:${name}@${version}:${root}`);
+    fingerprints.push(...await manifestFingerprints(path.join(root, "agents")));
+  }
+  fingerprints.push(...await manifestFingerprints(path.join(resolved.gitRoot, PROJECT_AGENTS_PATH)));
+  return fingerprints.join("|");
+}
+
 export function formatAgentToolAllowlistFailure(result) {
   const invalid = result.agents.filter(({ missingTools }) => missingTools.length > 0);
   if (invalid.length === 0) return "";
   return `Pi dev-loop preflight failed: unavailable repository/package agent tools: ${invalid
     .map(({ name, missingTools }) => `${name}=[${missingTools.join(", ")}]`)
-    .join("; ")}. Fix the tracked .pi/agents manifest or exact package installation before model execution. This preflight covers the exact repository package plus repository-local shadows; separately installed user agents are outside its claim.`;
+    .join("; ")}. Fix the tracked .pi/agents manifest or exact package installation before model execution. This preflight covers every installed repository-pinned package plus repository-local shadows; separately installed user agents are outside its claim.`;
 }

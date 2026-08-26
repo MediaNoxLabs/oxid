@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, lstat, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   checkAgentToolAllowlists,
+  devLoopPreflightCacheKey,
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeDevLoopsArgs } from "../../scripts/dev-loops.mjs";
@@ -16,6 +17,7 @@ import { normalizeWorktreeArgs } from "../../scripts/loop/ensure-worktree.mjs";
 import {
   assertMinimumGhVersion,
   bodyClosesIssue,
+  bodyReferencesIssue,
   normalizeTimelinePullRequests,
   parseGhVersion,
 } from "../../scripts/github/resolve-issue-pr-links.mjs";
@@ -25,10 +27,11 @@ import {
   buildClaudeInvocation,
   ClaudeReviewFindingsError,
   parseClaudeReviewResult,
+  probeClaudeCliCapabilities,
   runClaudeCurrentHeadReview,
   verifyClaudeReviewEvidence,
 } from "../../scripts/review/claude-current-head.mjs";
-import registerDevLoopPreflight from "../../.pi/extensions/dev-loop-preflight-core.mjs";
+import registerDevLoopPreflight from "../../scripts/lib/dev-loop-preflight-core.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relativePath) => readFile(path.join(repoRoot, relativePath), "utf8");
@@ -131,7 +134,45 @@ test("effective packaged agent allowlists use self-contained project shadows, no
   );
 });
 
-test("tracked extension blocks invalid tools at input and provider hooks before launch", async (t) => {
+test("preflight scans all installed pinned package agents, ignores notes, and invalidates its mtime key", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const settingsPath = path.join(fixture.root, ".pi", "settings.json");
+  const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+  settings.packages.push("npm:pi-subagents@0.42.1", "npm:@input-output-hk/agent-review-pi@0.5.0");
+  await writeFile(settingsPath, JSON.stringify(settings));
+  const piSubagents = path.join(fixture.root, ".pi", "npm", "node_modules", "pi-subagents");
+  const reviewPackage = path.join(fixture.root, ".pi", "npm", "node_modules", "@input-output-hk", "agent-review-pi");
+  for (const [root, name, version] of [
+    [piSubagents, "pi-subagents", "0.42.1"],
+    [reviewPackage, "@input-output-hk/agent-review-pi", "0.5.0"],
+  ]) {
+    await mkdir(path.join(root, "agents"), { recursive: true });
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ name, version }));
+  }
+  await writeFile(path.join(piSubagents, "agents", "README.md"), "not an agent manifest\n");
+  await writeFile(path.join(reviewPackage, "agents", "auditor.agent.md"), "---\nname: auditor\ntools: [read, unavailable-review-tool]\n---\n");
+
+  const resolved = await resolveDevLoopsPackageRoot({ cwd: fixture.root });
+  assert.deepEqual(resolved.packageRoots.map(({ name }) => name).sort(), [
+    "@input-output-hk/agent-review-pi", "dev-loops", "pi-subagents",
+  ]);
+  const result = await checkAgentToolAllowlists({
+    packageRoots: resolved.packageRoots,
+    projectRoot: fixture.root,
+    settings: resolved.settings,
+    availableTools: supportedTools,
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.agents.find(({ name }) => name === "auditor").missingTools, ["unavailable-review-tool"]);
+
+  const firstKey = await devLoopPreflightCacheKey({ resolved, availableTools: supportedTools });
+  await writeFile(path.join(reviewPackage, "agents", "auditor.agent.md"), "---\nname: auditor\ntools: [read]\n---\nupdated\n");
+  const secondKey = await devLoopPreflightCacheKey({ resolved, availableTools: supportedTools });
+  assert.notEqual(firstKey, secondKey, "manifest size/mtime invalidates the per-session result cache");
+});
+
+test("tracked extension registers once and blocks invalid allowlists before launch", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const settings = JSON.parse(await readFile(path.join(fixture.root, ".pi", "settings.json"), "utf8"));
@@ -139,29 +180,58 @@ test("tracked extension blocks invalid tools at input and provider hooks before 
   const notifications = [];
   const pi = {
     getAllTools: () => [{ name: "read" }],
-    on: (event, handler) => handlers.set(event, handler),
+    on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
   };
-  registerDevLoopPreflight(pi, {
+  const runtime = {
     resolve: async () => ({ packageRoot: fixture.packageRoot, gitRoot: fixture.root, settings }),
     check: checkAgentToolAllowlists,
-  });
+    cacheKey: async () => "fixture-invalid",
+  };
+  registerDevLoopPreflight(pi, runtime);
+  registerDevLoopPreflight(pi, runtime);
+  for (const event of ["input", "before_agent_start", "before_provider_request"]) {
+    assert.equal(handlers.get(event).length, 1, `${event} is registered once`);
+  }
   const ctx = {
     cwd: fixture.root,
     ui: { notify: (message) => notifications.push(message) },
     abortCalled: false,
     abort() { this.abortCalled = true; },
   };
-  let providerLaunches = 0;
-  const inputResult = await handlers.get("input")({}, ctx);
-  if (inputResult.action === "continue") providerLaunches += 1;
+  const inputResult = await handlers.get("input")[0]({}, ctx);
   assert.deepEqual(inputResult, { action: "handled" });
-  assert.equal(providerLaunches, 0);
-  assert.match(notifications[0], /before model execution|unavailable agent tools/);
-  await assert.rejects(handlers.get("before_provider_request")({}, ctx), /unavailable repository\/package agent tools/);
+  assert.match(notifications[0], /unavailable repository\/package agent tools/);
+  await assert.rejects(handlers.get("before_provider_request")[0]({}, ctx), /unavailable repository\/package agent tools/);
   assert.equal(ctx.abortCalled, true);
 });
 
+test("unprovisioned package keeps input interactive but blocks agent/provider launch", async () => {
+  const handlers = new Map();
+  const notifications = [];
+  const pi = {
+    getAllTools: () => [{ name: "read" }],
+    on: (event, handler) => handlers.set(event, handler),
+  };
+  registerDevLoopPreflight(pi, {
+    resolve: async () => { throw new Error("missing exact dev-loops@0.9.0"); },
+  });
+  const ctx = {
+    cwd: repoRoot,
+    ui: { notify: (message, level) => notifications.push({ message, level }) },
+    abortCalled: false,
+    abort() { this.abortCalled = true; },
+  };
+  assert.deepEqual(await handlers.get("input")({}, ctx), { action: "continue" });
+  assert.equal(notifications[0].level, "warning");
+  assert.match(notifications[0].message, /interactive input is allowed.*agent\/provider launch remains blocked/i);
+  await handlers.get("before_agent_start")({}, ctx);
+  assert.equal(ctx.abortCalled, true);
+  await assert.rejects(handlers.get("before_provider_request")({}, ctx), /environment is not ready/);
+});
+
 test("tracked project agents shadow every incompatible packaged dev-loops manifest", async () => {
+  const extensionFiles = (await readdir(path.join(repoRoot, ".pi", "extensions"))).filter((file) => file.startsWith("dev-loop-preflight"));
+  assert.deepEqual(extensionFiles, ["dev-loop-preflight.ts"], "only the thin Pi registrar is auto-loaded");
   const settings = JSON.parse(await read(".pi/settings.json"));
   assert.equal(settings.packages.includes("npm:dev-loops@0.9.0"), true);
   assert.equal(settings.subagents.projectRootResolution, "git-root");
@@ -177,7 +247,7 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
     assert.doesNotMatch(source, /\]\(\.\.\/npm\/node_modules\//, `${name} has no link into an untracked package tree`);
   }
   const reviewTools = (await read(".pi/agents/review.agent.md")).match(/^tools:\s*(.+)$/m)?.[1] ?? "";
-  assert.doesNotMatch(reviewTools, /\b(?:edit|write)\b/, "review shadow is mutation-free");
+  assert.doesNotMatch(reviewTools, /\b(?:bash|edit|write)\b/, "review shadow exposes only read-only inspection tools");
 });
 
 test("pinned pi-subagents runtime applies git-root project-agent precedence", async (t) => {
@@ -233,9 +303,15 @@ test("GitHub compatibility enforces the supported CLI floor and REST capabilitie
     { event: "cross-referenced", source: { issue: { number: 71, html_url: "https://github.com/MediaNoxLabs/oxid/pull/71", pull_request: { url: "https://api.github.com/repos/MediaNoxLabs/oxid/pulls/71" } } } },
   ], "MediaNoxLabs/oxid");
   assert.deepEqual(links.map((link) => link.number), [71]);
-  assert.equal(bodyClosesIssue("Closes #150", 150), true);
-  assert.equal(bodyClosesIssue("Related to #150", 150), false);
-  assert.equal(bodyClosesIssue("Closes other/repo#150", 150), false);
+  assert.equal(bodyClosesIssue("Closes #150", 150, "MediaNoxLabs/oxid"), true);
+  assert.equal(bodyClosesIssue("Fixes GH-150", 150, "MediaNoxLabs/oxid"), true);
+  assert.equal(bodyClosesIssue("Resolves MediaNoxLabs/oxid#150", 150, "MediaNoxLabs/oxid"), true);
+  assert.equal(bodyClosesIssue("Closes https://github.com/MediaNoxLabs/oxid/issues/150", 150, "MediaNoxLabs/oxid"), true);
+  assert.equal(bodyClosesIssue("Related to #150", 150, "MediaNoxLabs/oxid"), false);
+  assert.equal(bodyClosesIssue("Closes other/repo#150", 150, "MediaNoxLabs/oxid"), false);
+  assert.equal(bodyClosesIssue("Closes https://github.com/other/repo/issues/150", 150, "MediaNoxLabs/oxid"), false);
+  assert.equal(bodyReferencesIssue("Refs #150", 150, "MediaNoxLabs/oxid"), true);
+  assert.equal(bodyReferencesIssue("Refs other/repo#150", 150, "MediaNoxLabs/oxid"), false);
 
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "oxid-gh-preflight-"));
   t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
@@ -271,20 +347,48 @@ else process.exit(9);
   assert.match(await read("nix/devshells/default.nix"), /^\s+gh$/m);
 });
 
-test("Claude invocation preflights every relied-on flag and requires structured output", () => {
+test("Claude invocation requires documented empty-tool semantics and structured output", () => {
   const invocation = buildClaudeInvocation({ schema: { type: "object" }, maxBudgetUsd: 10 });
   assert.ok(invocation.args.includes("--safe-mode"));
   const toolsIndex = invocation.args.indexOf("--tools");
   assert.ok(toolsIndex >= 0);
   assert.equal(invocation.args[toolsIndex + 1], "");
   assert.ok(invocation.args.includes("--no-session-persistence"));
-  assert.equal(assertClaudeHelpCapabilities(invocation.args.filter((arg) => String(arg).startsWith("--")).join("\n")), true);
+  const observedHelp = [
+    "--print --output-format --json-schema --max-budget-usd --safe-mode",
+    '--tools <tools...> Specify tools. Use "" to disable all tools.',
+    "--no-session-persistence --permission-mode --system-prompt",
+  ].join("\n");
+  assert.equal(assertClaudeHelpCapabilities(observedHelp).emptyToolsDisabled, true);
   assert.throws(() => assertClaudeHelpCapabilities("--safe-mode --tools"), /required review flags/);
+  assert.throws(
+    () => assertClaudeHelpCapabilities("--print --output-format --json-schema --max-budget-usd --safe-mode --tools --no-session-persistence --permission-mode --system-prompt"),
+    /does not attest.*disables all tools/,
+  );
   const parsed = parseClaudeReviewResult(JSON.stringify({ structured_output: { verdict: "clean", findings: [], summary: "No findings" }, session_id: "session-1" }));
   assert.equal(parsed.review.verdict, "clean");
   assert.equal(parsed.observedSessionId, "session-1");
   assert.throws(() => parseClaudeReviewResult(JSON.stringify({ result: "No findings" })), /structured review result/);
   assert.throws(() => parseClaudeReviewResult(JSON.stringify({ structured_output: { verdict: "clean", findings: [{ severity: "blocker", message: "bad" }] } })), /clean verdict cannot contain findings/);
+});
+
+test("installed real Claude CLI satisfies help, auth, and structured-output contracts", async (t) => {
+  try {
+    execFileSync("claude", ["--version"], { stdio: "ignore", timeout: 30_000 });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      t.skip("Claude CLI is absent in public CI");
+      return;
+    }
+    throw error;
+  }
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "oxid-claude-capability-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const probe = probeClaudeCliCapabilities({ cwd, performOutputSmoke: true });
+  assert.equal(probe.accountStatus.loggedIn, true);
+  assert.equal(probe.capabilities.emptyToolsDisabled, true);
+  assert.equal(probe.outputSmoke.review.verdict, "clean");
+  assert.ok(probe.outputSmoke.observedSessionId);
 });
 
 test("Claude runner binds clean exact-head evidence and rejects stale worktrees", async (t) => {
@@ -318,13 +422,16 @@ const mode = ${JSON.stringify(mode)};
 if (process.argv.includes("--version")) {
   process.stdout.write("claude fixture 1.0\\n");
 } else if (process.argv.includes("--help")) {
-  process.stdout.write("--print --output-format --json-schema --max-budget-usd --safe-mode --tools --no-session-persistence --permission-mode --system-prompt\\n");
+  process.stdout.write('--print --output-format --json-schema --max-budget-usd --safe-mode --tools <tools...> Use "" to disable all tools --no-session-persistence --permission-mode --system-prompt\\n');
 } else if (process.argv[2] === "auth" && process.argv[3] === "status") {
   process.stdout.write(JSON.stringify({ loggedIn: true, authMethod: "fixture", apiProvider: "fixture" }));
 } else {
   const prompt = fs.readFileSync(0, "utf8");
   if (!prompt.includes("${headSha}") || !prompt.includes("${baseSha}")) process.exit(9);
-  if (mode === "timeout") setTimeout(() => {}, 60_000);
+  if (mode === "timeout") {
+    execFileSync("git", ["-C", ${JSON.stringify(repository)}, "commit", "--allow-empty", "-m", "timeout-advance"]);
+    setTimeout(() => {}, 60_000);
+  }
   else if (mode === "nonzero") { process.stderr.write("fixture failure\\n"); process.exit(7); }
   else if (mode === "malformed") process.stdout.write("not json");
   else {
@@ -357,16 +464,37 @@ if (process.argv.includes("--version")) {
   assert.equal(result.evidence.evidenceKind, "local-attestation");
   assert.equal(result.evidence.claude.observedSessionId, "fixture-session");
   assert.equal(result.evidence.claude.tools.length, 0);
+  assert.equal(result.evidence.claude.capabilities.emptyToolsDisabled, true);
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
   assert.equal(path.isAbsolute(result.evidence.diff.path), false);
   assert.equal(path.isAbsolute(result.evidence.rawResponse.path), false);
   assert.equal((await verifyClaudeReviewEvidence({ evidencePath: result.evidencePath, repoRoot: repository, fetchBase: false })).ok, true);
   assert.equal((await lstat(evidenceDir)).mode & 0o777, 0o700);
-  for (const file of [result.evidencePath, path.join(evidenceDir, result.evidence.diff.path), path.join(evidenceDir, result.evidence.rawResponse.path)]) {
+  for (const file of [
+    result.evidencePath,
+    path.join(evidenceDir, result.evidence.diff.path),
+    path.join(evidenceDir, result.evidence.rawResponse.path),
+    path.join(evidenceDir, result.evidence.claude.capabilities.help.path),
+  ]) {
     assert.equal((await lstat(file)).mode & 0o777, 0o600);
   }
-  const exactGitDiff = execFileSync("git", ["diff", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], { cwd: repository });
+  const exactGitDiff = execFileSync("git", ["diff", "--binary", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], { cwd: repository });
   assert.deepEqual(await readFile(path.join(evidenceDir, result.evidence.diff.path)), exactGitDiff);
+
+  await writeFile(path.join(repository, "opaque.bin"), Buffer.from([0, 255, 0, 254]));
+  git("add", "opaque.bin");
+  git("commit", "--quiet", "-m", "binary");
+  const binaryHead = git("rev-parse", "HEAD");
+  await assert.rejects(runClaudeCurrentHeadReview({
+    issue: 150,
+    repoRoot: repository,
+    evidenceDir,
+    expectedHead: binaryHead,
+    claudeCommand: fakeClaude,
+    issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+    fetchBase: false,
+  }), /binary paths.*opaque\.bin/);
+  git("reset", "--hard", headSha);
 
   await writeFakeClaude("findings");
   let findingsError;
@@ -403,6 +531,7 @@ if (process.argv.includes("--version")) {
       timeoutMs,
     }), pattern, mode);
   }
+  git("reset", "--hard", headSha);
 
   await writeFakeClaude("advance");
   await assert.rejects(runClaudeCurrentHeadReview({

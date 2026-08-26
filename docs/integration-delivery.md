@@ -49,8 +49,11 @@ node scripts/dev-loops.mjs pr create \
 ```
 
 The tracked wrapper supplies `--base integration` and rejects any conflicting
-caller value. The body must contain `Closes #<number>`. Active owner ruleset `21481544` is the
-cross-base authority preventing every update to `develop` and `main`. Repository
+caller value. Use `Closes #<number>` only when the PR completes that issue's
+contract. A bounded partial slice must use `Refs #<number>`, enumerate the
+remaining rows, and leave the issue open (or move them to an explicitly linked
+follow-up issue). Active owner ruleset `21481544` is the cross-base authority
+preventing every update to `develop` and `main`. Repository
 workflows deliberately make no cross-base enforcement claim: a workflow loaded
 from one pull request base cannot authoritatively guard another base, and an
 advisory base check would create false failures for stacked pull requests.
