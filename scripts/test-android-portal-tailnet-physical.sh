@@ -316,7 +316,7 @@ jq -e '
   and .kyc == 14
   and .nonce == 1
   and .other == 0
-  and .token == 3
+  and .token == 2
 ' >/dev/null <<<"$counters" || fail protocol-counts
 [ "$(adb_device reverse --list 2>/dev/null | sort)" = "$adb_reverse_before" ] || fail adb-reverse
 

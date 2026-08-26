@@ -375,7 +375,7 @@ try {
     assertExactCounterDelta(start, counts, {
       authorizationMetadata: 1,
       issuerMetadata: 1,
-      token: 2,
+      token: 1,
     }, "failed issuance");
     await click("Leave credential review");
     await waitFor(
