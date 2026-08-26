@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::Arc;
+
+use oxid_diagnostics_application::{ClearDiagnosticsUseCase, GetDiagnosticSnapshotUseCase};
 #[cfg(feature = "ui-profile-dev")]
 use oxid_ui_dioxus::CapabilityManifestContext;
 use oxid_ui_dioxus::{
@@ -51,7 +54,10 @@ fn service_facade_type_and_constructor_paths_remain_at_the_crate_root() {
     assert_public_type::<WalletTransactionRecoveryUiServices>();
 
     assert_public_path(WalletUiServices::new);
-    assert_public_path(DiagnosticsUiServices::new);
+    let _: fn(
+        Arc<dyn GetDiagnosticSnapshotUseCase>,
+        Arc<dyn ClearDiagnosticsUseCase>,
+    ) -> DiagnosticsUiServices = DiagnosticsUiServices::new;
     let _: fn(_, _, _, _, _, String, _) -> PassportVaultUiServices = PassportVaultUiServices::new;
     assert_public_path(PassportVaultContractCallRecoveryUiServices::new);
     let _: fn(_, _, _, _, _, String, _) -> PassportVaultContractCallUiServices =
