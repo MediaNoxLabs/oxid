@@ -293,6 +293,15 @@ try {
     await setProxyMode(mode === "protocol-timeout" ? "timeout" : "unavailable");
     await assertRouted();
     await preview();
+    const requestDeadline = Date.now() + 5_000;
+    let observed = await counters();
+    while (observed.issuerMetadata <= start.issuerMetadata && Date.now() < requestDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      observed = await counters();
+    }
+    if (observed.issuerMetadata <= start.issuerMetadata) {
+      throw new Error(`${mode} did not reach the issuer metadata boundary`);
+    }
     if (mode === "protocol-timeout") {
       await waitFor(
         `(() => { const element = ${button("Checking offer…")}; return Boolean(element && element.disabled); })()`,
