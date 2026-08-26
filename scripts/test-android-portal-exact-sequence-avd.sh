@@ -33,7 +33,10 @@ forward_active=0
 emulator_online=0
 cleanup_running=0
 cleanup_ok=true
+run_root_owned=0
+run_root_identity=""
 private_state_owned=0
+evidence_published=0
 portal_ready=0
 build_owned=0
 launcher_mutation_owned=0
@@ -76,6 +79,7 @@ for command_name in awk cargo curl docker git jq lsof mktemp nix node ps rg rust
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
  done
 if timeout -k 1s 0.1s sleep 5; then fail timeout-capability; else [ "$?" -eq 124 ] || fail timeout-capability; fi
+[ ! -e "$RUN_ROOT" ] && [ ! -L "$RUN_ROOT" ] || fail occupied-evidence
 
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [ -z "$android_sdk" ] && [ -d "$HOME/Library/Android/sdk" ]; then
@@ -134,10 +138,11 @@ remove_forward() {
 
 write_evidence() {
   local candidate outcome incoming_status="$1"
-  [ -n "$head" ] && [[ "$journey_status" = warm_* ]] || return 0
+  [ "$run_root_owned" -eq 1 ] && [ -n "$head" ] && [[ "$journey_status" = warm_* ]] || return 0
+  oxid_path_has_identity "$RUN_ROOT" "$run_root_identity" || return 1
+  [ ! -e "$EVIDENCE" ] && [ ! -L "$EVIDENCE" ] || return 1
   outcome="$journey_status"
   if [ "$incoming_status" -ne 0 ] && [ "$outcome" = not_started ]; then outcome="pre_warm_failure"; fi
-  run_deadline 5 mkdir -p "$RUN_ROOT" || return 1
   candidate="$(run_deadline 5 mktemp "$RUN_ROOT/.evidence.XXXXXX")" || return 1
   run_deadline 10 jq -cn \
     --arg schema oxid-portal-android-exact-sequence-avd-v1 \
@@ -185,12 +190,24 @@ write_evidence() {
     run_deadline 5 rm -f -- "$candidate"
     return 1
   fi
-  run_deadline 5 chmod 600 "$candidate" || return 1
-  run_deadline 5 mv -f -- "$candidate" "$EVIDENCE"
+  run_deadline 5 chmod 600 "$candidate" || {
+    run_deadline 5 rm -f -- "$candidate" || true
+    return 1
+  }
+  oxid_path_has_identity "$RUN_ROOT" "$run_root_identity" || {
+    run_deadline 5 rm -f -- "$candidate" || true
+    return 1
+  }
+  if ! run_deadline 5 ln "$candidate" "$EVIDENCE"; then
+    run_deadline 5 rm -f -- "$candidate" || true
+    return 1
+  fi
+  evidence_published=1
+  run_deadline 5 rm -f -- "$candidate"
 }
 
 cleanup() {
-  local incoming=$? current package_path after_portal port emulator_status=0 emulator_wait=1
+  local incoming=$? current package_path after_portal port emulator_status=0
   if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
   cleanup_running=1
   trap - EXIT INT TERM HUP
@@ -243,32 +260,17 @@ cleanup() {
 
   if [ -n "$emulator_pid" ]; then
     if oxid_job_is_running "$emulator_pid"; then
-      if oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then
-        if ! kill -TERM "$emulator_pid" 2>/dev/null; then
-          cleanup_ok=false
-          emulator_wait=0
-        fi
-        for ((_attempt = 0; _attempt < 200; _attempt++)); do
-          oxid_job_is_running "$emulator_pid" || break
-          run_deadline 2 sleep 0.1
-        done
-        if oxid_job_is_running "$emulator_pid"; then
-          if oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then
-            kill -KILL "$emulator_pid" 2>/dev/null || cleanup_ok=false
-          else
-            cleanup_ok=false
-            emulator_wait=0
-          fi
-        fi
+      if oxid_terminate_emulator_job "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then
+        emulator_cleanup=true
       else
         cleanup_ok=false
-        emulator_wait=0
       fi
-    fi
-    if [ "$emulator_wait" -eq 1 ]; then
+    else
       wait "$emulator_pid" >/dev/null 2>&1 || emulator_status=$?
-      case "$emulator_status" in 0|137|143) ;; *) cleanup_ok=false ;; esac
-      [ "$cleanup_ok" = true ] && emulator_cleanup=true
+      case "$emulator_status" in
+        0|137|143) emulator_cleanup=true ;;
+        *) cleanup_ok=false ;;
+      esac
     fi
     emulator_pid=""
   fi
@@ -283,12 +285,20 @@ cleanup() {
   fi
 
   if [ "$build_owned" -eq 1 ]; then
-    run_deadline 30 rm -rf -- "$BUILD_SOURCE" >/dev/null 2>&1
-    [ ! -e "$BUILD_SOURCE" ] && build_cleanup=true || cleanup_ok=false
+    if oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then
+      run_deadline 30 rm -rf -- "$BUILD_SOURCE" >/dev/null 2>&1
+      [ ! -e "$BUILD_SOURCE" ] && build_cleanup=true || cleanup_ok=false
+    else
+      cleanup_ok=false
+    fi
   fi
   if [ "$private_state_owned" -eq 1 ]; then
-    run_deadline 30 rm -rf -- "$PRIVATE_STATE" >/dev/null 2>&1
-    [ ! -e "$PRIVATE_STATE" ] && private_logs_removed=true || cleanup_ok=false
+    if oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then
+      run_deadline 30 rm -rf -- "$PRIVATE_STATE" >/dev/null 2>&1
+      [ ! -e "$PRIVATE_STATE" ] && private_logs_removed=true || cleanup_ok=false
+    else
+      cleanup_ok=false
+    fi
   fi
   if [ "$(run_deadline 10 git -C "$ROOT" rev-parse HEAD 2>/dev/null)" = "$head" ] \
     && [ -z "$(run_deadline 10 git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
@@ -298,6 +308,12 @@ cleanup() {
   fi
 
   write_evidence "$incoming" || cleanup_ok=false
+  if [ "$run_root_owned" -eq 1 ] && [ "$evidence_published" -eq 0 ]; then
+    oxid_path_has_identity "$RUN_ROOT" "$run_root_identity" \
+      && run_deadline 5 rmdir -- "$RUN_ROOT" >/dev/null 2>&1 \
+      || cleanup_ok=false
+    [ ! -e "$RUN_ROOT" ] && [ ! -L "$RUN_ROOT" ] && run_root_owned=0
+  fi
   if [ "$cleanup_ok" != true ]; then
     incoming=1
     printf 'android-portal-exact-sequence-avd: cleanup could not prove owned-state restoration\n' >&2
@@ -308,8 +324,11 @@ cleanup() {
 head="$(run_deadline 10 git -C "$ROOT" rev-parse HEAD)"
 [[ "$head" =~ ^[0-9a-f]{40}$ ]] || fail oxid-head
 run_deadline 20 git -C "$ROOT" verify-commit "$head" >/dev/null 2>&1 || fail oxid-signature
-[ -z "$(run_deadline 10 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet)" ] \
-  || fail occupied-portal-project
+if ! portal_project_ids="$(run_deadline 10 docker ps -a \
+  --filter label=com.docker.compose.project=oxid-portal-consumer --quiet)"; then
+  fail docker-query
+fi
+[ -z "$portal_project_ids" ] || fail occupied-portal-project
 [ ! -e "$PORTAL_STATE" ] && [ ! -L "$PORTAL_STATE" ] || fail occupied-portal-state
 
 for port in "${PORTAL_PORTS[@]}"; do
@@ -338,8 +357,12 @@ trap 'failure_phase=signal-term; exit 143' TERM
 trap 'failure_phase=signal-hup; exit 129' HUP
 
 umask 077
-[ ! -e "$PRIVATE_STATE" ] && [ ! -L "$PRIVATE_STATE" ] || fail occupied-private-state
-run_deadline 5 mkdir -p "$PRIVATE_STATE" || fail private-state-create
+run_deadline 5 mkdir -p -- "${RUN_ROOT%/*}" || fail run-parent-create
+run_deadline 5 mkdir -- "$RUN_ROOT" 2>/dev/null || fail occupied-evidence
+run_root_owned=1
+run_root_identity="$(oxid_filesystem_identity "$RUN_ROOT")" || fail run-root-identity
+run_deadline 5 chmod 700 "$RUN_ROOT" || fail run-root-mode
+run_deadline 5 mkdir -- "$PRIVATE_STATE" || fail private-state-create
 private_state_owned=1
 run_deadline 5 chmod 700 "$PRIVATE_STATE" || fail private-state-mode
 : >"$PRIVATE_LOG"

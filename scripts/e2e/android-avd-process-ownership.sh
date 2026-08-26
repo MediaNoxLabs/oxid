@@ -58,20 +58,81 @@ oxid_emulator_job_owned() {
   oxid_emulator_command_matches "$command_line" "$executable" "$avd" "$port"
 }
 
+oxid_poll_job_dead() {
+  local pid="$1" attempts="$2"
+  for ((_attempt = 0; _attempt < attempts; _attempt++)); do
+    oxid_job_is_running "$pid" || return 0
+    timeout -k 1s 2s sleep 0.1 || return 1
+  done
+  ! oxid_job_is_running "$pid"
+}
+
+oxid_process_group_is_live() {
+  local pgid="$1" snapshot
+  snapshot="$(oxid_process_ps -axo pgid=,stat= 2>/dev/null)" || return 0
+  timeout -k 1s "${OXID_PROCESS_PS_TIMEOUT_SECONDS:-5}s" \
+    awk -v pgid="$pgid" '$1 == pgid && $2 !~ /^Z/ { found=1 } END { exit !found }' <<<"$snapshot"
+  case "$?" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+oxid_poll_process_group_dead() {
+  local pgid="$1" attempts="$2"
+  for ((_attempt = 0; _attempt < attempts; _attempt++)); do
+    oxid_process_group_is_live "$pgid" || return 0
+    timeout -k 1s 2s sleep 0.1 || return 1
+  done
+  ! oxid_process_group_is_live "$pgid"
+}
+
 oxid_terminate_supervised_job() {
   local pid="$1" status=0
   oxid_job_is_running "$pid" || return 2
   kill -TERM -- "-$pid" 2>/dev/null || return 1
-  for ((_attempt = 0; _attempt < 50; _attempt++)); do
-    kill -0 -- "-$pid" 2>/dev/null || break
-    timeout -k 1s 2s sleep 0.1
-  done
-  if kill -0 -- "-$pid" 2>/dev/null; then
+  if ! oxid_poll_process_group_dead "$pid" 50; then
     kill -KILL -- "-$pid" 2>/dev/null || return 1
+    oxid_poll_process_group_dead "$pid" 50 || return 1
   fi
+  oxid_job_is_running "$pid" && return 1
   wait "$pid" 2>/dev/null || status=$?
   case "$status" in
     0|124|137|143) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+oxid_terminate_emulator_job() {
+  local pid="$1" expected_parent="$2" executable="$3" avd="$4" port="$5" status=0
+  oxid_emulator_job_owned "$pid" "$expected_parent" "$executable" "$avd" "$port" || return 2
+  kill -TERM "$pid" 2>/dev/null || return 1
+  if ! oxid_poll_job_dead "$pid" 200; then
+    oxid_emulator_job_owned "$pid" "$expected_parent" "$executable" "$avd" "$port" || return 1
+    kill -KILL "$pid" 2>/dev/null || return 1
+    oxid_poll_job_dead "$pid" 50 || return 1
+  fi
+  oxid_job_is_running "$pid" && return 1
+  wait "$pid" 2>/dev/null || status=$?
+  case "$status" in
+    0|137|143) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+oxid_filesystem_identity() {
+  local path="$1" deadline="${OXID_PROCESS_STAT_TIMEOUT_SECONDS:-5}" identity
+  if identity="$(timeout -k 1s "${deadline}s" stat -c '%d:%i' -- "$path" 2>/dev/null)"; then
+    printf '%s\n' "$identity"
+    return 0
+  fi
+  timeout -k 1s "${deadline}s" stat -f '%d:%i' -- "$path" 2>/dev/null
+}
+
+oxid_path_has_identity() {
+  local path="$1" expected="$2" actual
+  [ -n "$expected" ] && [ -e "$path" ] && [ ! -L "$path" ] || return 1
+  actual="$(oxid_filesystem_identity "$path")" || return 1
+  [ "$actual" = "$expected" ]
 }

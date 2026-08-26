@@ -26,14 +26,19 @@ readonly BUILD_ENV="$STATE/build.env"
 readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
 readonly SOURCE_INPUT="${OXID_PORTAL_SOURCE_REPOSITORY:-$PORTAL_REMOTE}"
 readonly OPERATION="${1:-serve}"
+readonly DOCKER_QUERY_TIMEOUT_SECONDS="${OXID_STACK_DOCKER_QUERY_TIMEOUT_SECONDS:-15}"
 
 # shellcheck source=android-avd-process-ownership.sh
 source "$PROCESS_SUPPORT"
 
 support_pid=""
 lock_receipt=""
+lock_identity=""
+lock_receipt_identity=""
+state_identity=""
 lock_owned=0
 state_owned=0
+restoration_proven=0
 cleanup_running=0
 
 fail() {
@@ -52,8 +57,13 @@ control_curl() {
     --fail --silent --show-error --max-time 30 "$@"
 }
 
+docker_project_ids() {
+  run_deadline "$DOCKER_QUERY_TIMEOUT_SECONDS" docker ps -a \
+    --filter label=com.docker.compose.project=oxid-portal-consumer --quiet
+}
+
 cleanup() {
-  local incoming=$? cleanup_status=0
+  local incoming=$? cleanup_status=0 project_ids="" query_status=0
   if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
   cleanup_running=1
   trap - EXIT INT TERM HUP
@@ -74,22 +84,48 @@ cleanup() {
     fi
     support_pid=""
   fi
-  exec 8>&- 9>&- 2>/dev/null || true
+  exec 8>&- 9>&- || true
 
-  if [ "$state_owned" -eq 1 ]; then
-    project_ids="$(run_deadline 15 docker ps -a \
-      --filter label=com.docker.compose.project=oxid-portal-consumer --quiet 2>/dev/null || true)"
-    [ -z "$project_ids" ] || cleanup_status=1
-    if [ "$cleanup_status" -eq 0 ]; then
-      run_deadline 30 rm -rf -- "$STATE" || cleanup_status=1
-      [ ! -e "$STATE" ] || cleanup_status=1
+  if [ "$restoration_proven" -eq 0 ] \
+    && { [ "$state_owned" -eq 1 ] || [ "$lock_owned" -eq 1 ]; }; then
+    project_ids="$(docker_project_ids 2>/dev/null)"
+    query_status=$?
+    if [ "$query_status" -ne 0 ]; then
+      cleanup_status=1
+      printf 'portal-virtual-mobile-stack: cleanup Docker query failed; preserving owned state and lock for owner recovery\n' >&2
+    elif [ -n "$project_ids" ]; then
+      cleanup_status=1
+      printf 'portal-virtual-mobile-stack: cleanup found project containers; preserving owned state and lock for owner recovery\n' >&2
+    else
+      if [ "$state_owned" -eq 1 ]; then
+        if oxid_path_has_identity "$STATE" "$state_identity"; then
+          run_deadline 30 rm -rf -- "$STATE" || cleanup_status=1
+        else
+          cleanup_status=1
+        fi
+        if [ ! -e "$STATE" ] && [ ! -L "$STATE" ]; then
+          state_owned=0
+        else
+          cleanup_status=1
+        fi
+      fi
+      [ "$state_owned" -eq 0 ] && [ "$cleanup_status" -eq 0 ] && restoration_proven=1
     fi
   fi
 
-  if [ "$lock_owned" -eq 1 ]; then
-    run_deadline 5 rmdir -- "$STACK_LOCK/$lock_receipt" >/dev/null 2>&1 || cleanup_status=1
-    run_deadline 5 rmdir -- "$STACK_LOCK" >/dev/null 2>&1 || cleanup_status=1
-    lock_owned=0
+  if [ "$lock_owned" -eq 1 ] && [ "$restoration_proven" -eq 1 ]; then
+    if [ -n "$lock_receipt" ] \
+      && oxid_path_has_identity "$STACK_LOCK" "$lock_identity" \
+      && oxid_path_has_identity "$STACK_LOCK/$lock_receipt" "$lock_receipt_identity" \
+      && run_deadline 5 rmdir -- "$STACK_LOCK/$lock_receipt" >/dev/null 2>&1 \
+      && [ ! -e "$STACK_LOCK/$lock_receipt" ] && [ ! -L "$STACK_LOCK/$lock_receipt" ] \
+      && oxid_path_has_identity "$STACK_LOCK" "$lock_identity" \
+      && run_deadline 5 rmdir -- "$STACK_LOCK" >/dev/null 2>&1; then
+      lock_owned=0
+    else
+      cleanup_status=1
+      printf 'portal-virtual-mobile-stack: owned lock proof/removal failed; owner review is required before stale-lock recovery\n' >&2
+    fi
   fi
 
   if [ "$cleanup_status" -ne 0 ]; then
@@ -104,25 +140,31 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 case "$OPERATION" in serve|--contract-test) ;; *) fail usage ;; esac
-for command_name in curl docker git grep jq node shasum timeout; do
+for command_name in curl docker git grep jq node shasum stat timeout; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
 if timeout -k 1s 0.1s sleep 5; then fail timeout-capability; else [ "$?" -eq 124 ] || fail timeout-capability; fi
 run_deadline 15 docker info >/dev/null 2>&1 || fail docker
 [ -z "$(run_deadline 10 git -C "$REPOSITORY_ROOT" status --porcelain --untracked-files=no)" ] || fail oxid-dirty
-[ -z "$(run_deadline 15 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet)" ] \
-  || fail occupied-project
+if ! project_ids="$(docker_project_ids)"; then fail docker-query; fi
+[ -z "$project_ids" ] || fail occupied-project
 [ ! -e "$STATE" ] && [ ! -L "$STATE" ] || fail occupied-state
 
 umask 077
 run_deadline 5 mkdir -p -- "$STACK_ROOT" || fail stack-root
-run_deadline 5 mkdir -- "$STACK_LOCK" 2>/dev/null || fail occupied-lock
+if ! run_deadline 5 mkdir -- "$STACK_LOCK" 2>/dev/null; then
+  printf 'portal-virtual-mobile-stack: existing lock requires owner-reviewed stale-lock recovery; automatic deletion is disabled\n' >&2
+  fail occupied-lock
+fi
 lock_owned=1
+lock_identity="$(oxid_filesystem_identity "$STACK_LOCK")" || fail lock-identity
 lock_receipt="receipt-$BASHPID-$RANDOM-$RANDOM-$RANDOM"
 run_deadline 5 mkdir -- "$STACK_LOCK/$lock_receipt" || fail lock-receipt
+lock_receipt_identity="$(oxid_filesystem_identity "$STACK_LOCK/$lock_receipt")" || fail lock-receipt-identity
 run_deadline 5 chmod 700 "$STACK_LOCK" "$STACK_LOCK/$lock_receipt" || fail lock-mode
 run_deadline 5 mkdir -- "$STATE" || fail state-create
 state_owned=1
+state_identity="$(oxid_filesystem_identity "$STATE")" || fail state-identity
 run_deadline 5 chmod 700 "$STATE" || fail state-mode
 : >"$PRIVATE_LOG"
 run_deadline 5 chmod 600 "$PRIVATE_LOG" || fail log-mode
@@ -231,11 +273,13 @@ if [ "$OPERATION" = --contract-test ]; then
   control_curl -X POST "$CONTROL_ORIGIN/complete" >/dev/null || fail support-complete
   wait "$support_pid" || fail support-stop
   support_pid=""
-  project_ids="$(run_deadline 15 docker ps -a \
-    --filter label=com.docker.compose.project=oxid-portal-consumer --quiet)"
+  if ! project_ids="$(docker_project_ids)"; then fail portal-cleanup-query; fi
   [ -z "$project_ids" ] || fail portal-cleanup
+  oxid_path_has_identity "$STATE" "$state_identity" || fail state-identity
   run_deadline 30 rm -rf -- "$STATE" || fail state-cleanup
+  [ ! -e "$STATE" ] && [ ! -L "$STATE" ] || fail state-cleanup
   state_owned=0
+  restoration_proven=1
   printf 'portal-virtual-mobile-stack-contract: PASS endpoints=18090,18091,18093 manifest=digest-authenticated\n'
   exit 0
 fi

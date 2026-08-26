@@ -91,62 +91,218 @@ if oxid_emulator_command_matches "/sdk/emulator -avd other_avd -read-only -no-sn
   fail emulator-avd-refusal
 fi
 
+cat >"$temporary/emulator.mjs" <<'EOF'
+import fs from "node:fs";
+process.on("SIGTERM", () => fs.writeFileSync(process.env.OXID_FAKE_EMULATOR_TERM, "TERM\n"));
+setInterval(() => {}, 1000);
+EOF
+OXID_FAKE_EMULATOR_TERM="$temporary/emulator-term.seen" \
+  node "$temporary/emulator.mjs" -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562 &
+fake_emulator_pid=$!
+fake_emulator_executable=node
+for ((_attempt = 0; _attempt < 50; _attempt++)); do
+  oxid_emulator_job_owned "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 && break
+  timeout -k 1s 1s sleep 0.05
+done
+oxid_emulator_job_owned "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 \
+  || fail direct-emulator-owned
+oxid_terminate_emulator_job "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 \
+  || fail direct-emulator-cleanup
+[ -f "$temporary/emulator-term.seen" ] || fail direct-emulator-term
+process_is_live "$fake_emulator_pid" && fail direct-emulator-survivor
+
 fixture_root="$temporary/refusal-repository"
-timeout -k 1s 5s mkdir -p "$fixture_root/scripts/e2e" "$temporary/fake-bin"
+timeout -k 1s 5s mkdir -p "$fixture_root/scripts/e2e" "$fixture_root/scripts" "$temporary/fake-bin"
 timeout -k 1s 5s cp "$ROOT/scripts/e2e/portal-virtual-mobile-stack.sh" \
   "$ROOT/scripts/e2e/android-avd-process-ownership.sh" "$fixture_root/scripts/e2e/"
+timeout -k 1s 5s cp "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" "$fixture_root/scripts/"
 cat >"$temporary/fake-bin/docker" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$OXID_FAKE_DOCKER_LOG"
 case "${1:-}" in
   info) exit 0 ;;
-  ps) [ "${OXID_FAKE_PROJECT_PRESENT:-1}" = 1 ] && printf 'occupied-public-project\n' ;;
+  ps)
+    count=0
+    [ ! -f "$OXID_FAKE_DOCKER_COUNT" ] || count="$(cat "$OXID_FAKE_DOCKER_COUNT")"
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$OXID_FAKE_DOCKER_COUNT"
+    if [ "$count" -eq 1 ]; then
+      behavior="${OXID_FAKE_DOCKER_INITIAL:-empty}"
+    else
+      behavior="${OXID_FAKE_DOCKER_CLEANUP:-empty}"
+      receipt="$(find "$OXID_FAKE_STACK_ROOT/target/portal-virtual-mobile/stack.lock" \
+        -mindepth 1 -maxdepth 1 -type d -name 'receipt-*' -print -quit)"
+      case "${OXID_FAKE_STACK_MUTATION:-none}" in
+        receipt-nonempty) printf 'block\n' >"$receipt/blocker" ;;
+        replace-receipt)
+          rmdir "$receipt" && mkdir "$receipt" && printf 'foreign\n' >"$receipt/marker"
+          ;;
+        replace-lock)
+          rm -rf "$OXID_FAKE_STACK_ROOT/target/portal-virtual-mobile/stack.lock"
+          mkdir "$OXID_FAKE_STACK_ROOT/target/portal-virtual-mobile/stack.lock"
+          printf 'foreign\n' >"$OXID_FAKE_STACK_ROOT/target/portal-virtual-mobile/stack.lock/marker"
+          ;;
+      esac
+    fi
+    case "$behavior" in
+      empty) ;;
+      nonempty) printf 'occupied-public-project\n' ;;
+      error) exit 96 ;;
+      timeout) sleep 30 ;;
+      *) exit 95 ;;
+    esac
+    ;;
   *) exit 97 ;;
 esac
 EOF
 cat >"$temporary/fake-bin/git" <<'EOF'
 #!/usr/bin/env bash
-[ "${3:-}" = status ] && exit 0
+if [ "${3:-}" = status ]; then exit 0; fi
+if [ "${1:-}" = clone ]; then
+  if [ "${OXID_FAKE_GIT_CLONE_MODE:-fail}" = block ]; then
+    printf 'ready\n' >"$OXID_FAKE_GIT_READY"
+    sleep 2
+  fi
+fi
 exit 97
 EOF
 chmod 700 "$temporary/fake-bin/docker" "$temporary/fake-bin/git"
-fake_docker_log="$temporary/docker.log"
-public_process_before="$(timeout -k 1s 5s ps -p "$$" -o pid=,ppid=)"
-public_listener_before="$(timeout -k 1s 5s lsof -nP -iTCP:19876 -sTCP:LISTEN -Fpcn 2>/dev/null || true)"
-public_project_before="$(OXID_FAKE_DOCKER_LOG="$fake_docker_log" PATH="$temporary/fake-bin:$PATH" docker ps -a --quiet)"
-if OXID_FAKE_DOCKER_LOG="$fake_docker_log" PATH="$temporary/fake-bin:$PATH" \
-  timeout -k 1s 10s "$fixture_root/scripts/e2e/portal-virtual-mobile-stack.sh" \
-  >"$temporary/refusal.out" 2>"$temporary/refusal.err"; then
-  fail occupied-project-result
-fi
-grep -qF 'FAIL phase=occupied-project' "$temporary/refusal.err" || fail occupied-project-phase
-public_process_after="$(timeout -k 1s 5s ps -p "$$" -o pid=,ppid=)"
-public_listener_after="$(timeout -k 1s 5s lsof -nP -iTCP:19876 -sTCP:LISTEN -Fpcn 2>/dev/null || true)"
-public_project_after="$(OXID_FAKE_DOCKER_LOG="$fake_docker_log" PATH="$temporary/fake-bin:$PATH" docker ps -a --quiet)"
-[ "$public_process_before" = "$public_process_after" ] || fail occupied-process-mutated
-[ "$public_listener_before" = "$public_listener_after" ] || fail occupied-listener-mutated
-[ "$public_project_before" = "$public_project_after" ] || fail occupied-project-mutated
-[ ! -e "$fixture_root/target" ] || fail occupied-cleanup-mutation
-[ ! -e "$fixture_root/target/android-portal-exact-sequence-avd/evidence.json" ] || fail occupied-artifact
 
+run_stack_fixture() {
+  local name="$1" initial="$2" cleanup_behavior="$3" mutation="$4"
+  rm -rf -- "$fixture_root/target"
+  : >"$temporary/docker-$name.log"
+  rm -f -- "$temporary/docker-$name.count"
+  if OXID_FAKE_DOCKER_LOG="$temporary/docker-$name.log" \
+    OXID_FAKE_DOCKER_COUNT="$temporary/docker-$name.count" \
+    OXID_FAKE_DOCKER_INITIAL="$initial" OXID_FAKE_DOCKER_CLEANUP="$cleanup_behavior" \
+    OXID_FAKE_STACK_MUTATION="$mutation" OXID_FAKE_STACK_ROOT="$fixture_root" \
+    OXID_STACK_DOCKER_QUERY_TIMEOUT_SECONDS=0.2 PATH="$temporary/fake-bin:$PATH" \
+    timeout -k 1s 8s "$fixture_root/scripts/e2e/portal-virtual-mobile-stack.sh" \
+    >"$temporary/$name.out" 2>"$temporary/$name.err"; then
+    fail "$name-result"
+  fi
+}
+
+run_stack_fixture occupied-project nonempty empty none
+grep -qF 'FAIL phase=occupied-project' "$temporary/occupied-project.err" || fail occupied-project-phase
+[ ! -e "$fixture_root/target" ] || fail occupied-cleanup-mutation
+
+run_stack_fixture initial-query-error error empty none
+grep -qF 'FAIL phase=docker-query' "$temporary/initial-query-error.err" || fail initial-query-error-phase
+[ ! -e "$fixture_root/target" ] || fail initial-query-error-mutation
+
+for behavior in error timeout nonempty; do
+  run_stack_fixture "cleanup-$behavior" empty "$behavior" none
+  grep -qF 'cleanup could not prove owned-state restoration' "$temporary/cleanup-$behavior.err" \
+    || fail "cleanup-$behavior-phase"
+  [ -d "$fixture_root/target/portal-virtual-mobile/runtime" ] || fail "cleanup-$behavior-state"
+  receipt_path="$(printf '%s\n' "$fixture_root"/target/portal-virtual-mobile/stack.lock/receipt-*)"
+  [ -d "$receipt_path" ] || fail "cleanup-$behavior-receipt"
+done
+
+run_stack_fixture cleanup-empty empty empty none
+[ ! -e "$fixture_root/target/portal-virtual-mobile/runtime" ] || fail cleanup-empty-state
+[ ! -e "$fixture_root/target/portal-virtual-mobile/stack.lock" ] || fail cleanup-empty-lock
+
+for mutation in receipt-nonempty replace-receipt replace-lock; do
+  run_stack_fixture "lock-$mutation" empty empty "$mutation"
+  grep -qF 'owned lock proof/removal failed' "$temporary/lock-$mutation.err" \
+    || fail "lock-$mutation-phase"
+  [ -d "$fixture_root/target/portal-virtual-mobile/stack.lock" ] || fail "lock-$mutation-preserved"
+done
+[ -f "$fixture_root/target/portal-virtual-mobile/stack.lock/marker" ] || fail foreign-parent-marker
+
+rm -rf -- "$fixture_root/target"
 timeout -k 1s 5s mkdir -p "$fixture_root/target/portal-virtual-mobile/stack.lock/foreign-receipt"
 printf 'foreign\n' >"$fixture_root/target/portal-virtual-mobile/stack.lock/foreign-receipt/marker"
-foreign_before="$(timeout -k 1s 5s stat -c '%i:%s' \
-  "$fixture_root/target/portal-virtual-mobile/stack.lock/foreign-receipt/marker" 2>/dev/null || \
-  timeout -k 1s 5s stat -f '%i:%z' \
-    "$fixture_root/target/portal-virtual-mobile/stack.lock/foreign-receipt/marker")"
-if OXID_FAKE_PROJECT_PRESENT=0 OXID_FAKE_DOCKER_LOG="$fake_docker_log" \
-  PATH="$temporary/fake-bin:$PATH" timeout -k 1s 10s \
+foreign_before="$(oxid_filesystem_identity "$fixture_root/target/portal-virtual-mobile/stack.lock/foreign-receipt/marker")"
+rm -f -- "$temporary/docker-foreign-lock.count"
+if OXID_FAKE_DOCKER_LOG="$temporary/docker-foreign-lock.log" \
+  OXID_FAKE_DOCKER_COUNT="$temporary/docker-foreign-lock.count" OXID_FAKE_DOCKER_INITIAL=empty \
+  OXID_FAKE_STACK_ROOT="$fixture_root" PATH="$temporary/fake-bin:$PATH" timeout -k 1s 8s \
   "$fixture_root/scripts/e2e/portal-virtual-mobile-stack.sh" \
-  >"$temporary/lock.out" 2>"$temporary/lock.err"; then
+  >"$temporary/foreign-lock.out" 2>"$temporary/foreign-lock.err"; then
   fail foreign-lock-result
 fi
-grep -qF 'FAIL phase=occupied-lock' "$temporary/lock.err" || fail foreign-lock-phase
-foreign_after="$(timeout -k 1s 5s stat -c '%i:%s' \
-  "$fixture_root/target/portal-virtual-mobile/stack.lock/foreign-receipt/marker" 2>/dev/null || \
-  timeout -k 1s 5s stat -f '%i:%z' \
-    "$fixture_root/target/portal-virtual-mobile/stack.lock/foreign-receipt/marker")"
+grep -qF 'FAIL phase=occupied-lock' "$temporary/foreign-lock.err" || fail foreign-lock-phase
+grep -qF 'owner-reviewed stale-lock recovery' "$temporary/foreign-lock.err" || fail foreign-lock-guidance
+foreign_after="$(oxid_filesystem_identity "$fixture_root/target/portal-virtual-mobile/stack.lock/foreign-receipt/marker")"
 [ "$foreign_before" = "$foreign_after" ] || fail foreign-lock-mutated
+
+rm -rf -- "$fixture_root/target"
+timeout -k 1s 5s mkdir -p "$fixture_root/target/android-portal-exact-sequence-avd"
+printf '{"stale":true}\n' >"$fixture_root/target/android-portal-exact-sequence-avd/evidence.json"
+stale_before="$(shasum -a 256 "$fixture_root/target/android-portal-exact-sequence-avd/evidence.json")"
+if timeout -k 1s 8s "$fixture_root/scripts/test-android-portal-exact-sequence-avd.sh" \
+  >"$temporary/stale-evidence.out" 2>"$temporary/stale-evidence.err"; then
+  fail stale-evidence-result
+fi
+grep -qF 'FAIL phase=occupied-evidence' "$temporary/stale-evidence.err" || fail stale-evidence-phase
+stale_after="$(shasum -a 256 "$fixture_root/target/android-portal-exact-sequence-avd/evidence.json")"
+[ "$stale_before" = "$stale_after" ] || fail stale-evidence-mutated
+[ "$(find "$fixture_root/target/android-portal-exact-sequence-avd" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" -eq 1 ] \
+  || fail stale-evidence-artifact
+if grep -Eq 'mv[[:space:]].*-f.*EVIDENCE' "$fixture_root/scripts/test-android-portal-exact-sequence-avd.sh"; then
+  fail evidence-force-move
+fi
+
+acquisition_parent="$temporary/evidence-acquisition"
+timeout -k 1s 5s mkdir "$acquisition_parent"
+: >"$temporary/acquisition-winners"
+for contender in one two; do
+  (
+    if mkdir "$acquisition_parent/run" 2>/dev/null; then
+      printf '%s\n' "$contender" >>"$temporary/acquisition-winners"
+      sleep 0.2
+    fi
+  ) &
+done
+wait
+[ "$(wc -l <"$temporary/acquisition-winners" | tr -d ' ')" -eq 1 ] || fail concurrent-evidence-acquisition
+
+rm -rf -- "$fixture_root/target"
+rm -f -- "$temporary/docker-signal.count" "$temporary/signal-ready"
+OXID_FAKE_DOCKER_LOG="$temporary/docker-signal.log" OXID_FAKE_DOCKER_COUNT="$temporary/docker-signal.count" \
+  OXID_FAKE_DOCKER_INITIAL=empty OXID_FAKE_DOCKER_CLEANUP=empty OXID_FAKE_GIT_CLONE_MODE=block \
+  OXID_FAKE_GIT_READY="$temporary/signal-ready" OXID_FAKE_STACK_ROOT="$fixture_root" \
+  PATH="$temporary/fake-bin:$PATH" "$fixture_root/scripts/e2e/portal-virtual-mobile-stack.sh" \
+  >"$temporary/signal.out" 2>"$temporary/signal.err" &
+signal_pid=$!
+for ((_attempt = 0; _attempt < 50; _attempt++)); do
+  [ -f "$temporary/signal-ready" ] && break
+  timeout -k 1s 1s sleep 0.05
+done
+[ -f "$temporary/signal-ready" ] || fail signal-TERM-partial-ready
+kill -TERM "$signal_pid"
+for ((_attempt = 0; _attempt < 80; _attempt++)); do
+  kill -0 "$signal_pid" 2>/dev/null || break
+  timeout -k 1s 1s sleep 0.05
+done
+if kill -0 "$signal_pid" 2>/dev/null; then
+  kill -KILL "$signal_pid" 2>/dev/null || true
+  fail signal-TERM-cleanup-timeout
+fi
+signal_status=0
+wait "$signal_pid" 2>/dev/null || signal_status=$?
+[ "$signal_status" -eq 143 ] || fail signal-TERM-status
+[ ! -e "$fixture_root/target/portal-virtual-mobile/runtime" ] || fail signal-TERM-state
+[ ! -e "$fixture_root/target/portal-virtual-mobile/stack.lock" ] || fail signal-TERM-lock
+
+rm -rf -- "$fixture_root/target"
+rm -f -- "$temporary/docker-signal-int.count" "$temporary/signal-int-ready"
+if OXID_FAKE_DOCKER_LOG="$temporary/docker-signal-int.log" \
+  OXID_FAKE_DOCKER_COUNT="$temporary/docker-signal-int.count" \
+  OXID_FAKE_DOCKER_INITIAL=empty OXID_FAKE_DOCKER_CLEANUP=empty OXID_FAKE_GIT_CLONE_MODE=block \
+  OXID_FAKE_GIT_READY="$temporary/signal-int-ready" OXID_FAKE_STACK_ROOT="$fixture_root" \
+  PATH="$temporary/fake-bin:$PATH" timeout -s INT -k 3s 0.5s \
+  "$fixture_root/scripts/e2e/portal-virtual-mobile-stack.sh" \
+  >"$temporary/signal-int.out" 2>"$temporary/signal-int.err"; then
+  fail signal-INT-result
+fi
+[ -f "$temporary/signal-int-ready" ] || fail signal-INT-partial-ready
+[ ! -e "$fixture_root/target/portal-virtual-mobile/runtime" ] || fail signal-INT-state
+[ ! -e "$fixture_root/target/portal-virtual-mobile/stack.lock" ] || fail signal-INT-lock
 
 launcher_bin="$temporary/launcher-bin"
 launcher_sdk="$temporary/android-sdk"
@@ -180,4 +336,4 @@ if grep -q 'parent=timeout' "$fake_adb_log"; then fail launcher-unset-timeout; f
 grep -q 'serial=unset args=devices' "$fake_adb_log" || fail launcher-discovery-wrapper
 grep -q 'serial=fixture-device args=get-state' "$fake_adb_log" || fail launcher-selected-wrapper
 
-printf 'android-avd-process-ownership-contract: PASS process_group=term-then-kill-no-survivor direct_child=owned changed_parent=refused identity_change=refused occupied_project=unchanged-no-artifact foreign_lock=preserved adb_unset=normal\n'
+printf 'android-avd-process-ownership-contract: PASS process_group=bounded-term-kill direct_emulator=bounded-term-kill docker_query=error-timeout-nonempty evidence=no-clobber-concurrent lock=identity-preserved signal=partial-readiness adb_unset=normal\n'
