@@ -32,21 +32,28 @@ Fetch before creating or refreshing a worktree:
 
 ```bash
 git fetch origin integration
-node .pi/npm/node_modules/dev-loops/scripts/loop/ensure-worktree.mjs \
-  --repo-root "$PWD" --issue <number> --base origin/integration
+node scripts/loop/ensure-worktree.mjs \
+  --repo-root "$PWD" --issue <number>
 ```
+
+The tracked wrapper supplies `--base origin/integration` and rejects any
+conflicting caller value.
 
 Create tracker-backed pull requests through the pinned local dev-loops CLI and
 always state the base:
 
 ```bash
-node .pi/npm/node_modules/dev-loops/cli/index.mjs pr create \
-  --repo MediaNoxLabs/oxid --base integration --head <branch> \
+node scripts/dev-loops.mjs pr create \
+  --repo MediaNoxLabs/oxid --head <branch> \
   --assignee @me --title "<type>: <subject>" --body-file <body-file>
 ```
 
-The body must contain `Closes #<number>`. Active owner ruleset `21481544` is the
-cross-base authority preventing every update to `develop` and `main`. Repository
+The tracked wrapper supplies `--base integration` and rejects any conflicting
+caller value. Use `Closes #<number>` only when the PR completes that issue's
+contract. A bounded partial slice must use `Refs #<number>`, enumerate the
+remaining rows, and leave the issue open (or move them to an explicitly linked
+follow-up issue). Active owner ruleset `21481544` is the cross-base authority
+preventing every update to `develop` and `main`. Repository
 workflows deliberately make no cross-base enforcement claim: a workflow loaded
 from one pull request base cannot authoritatively guard another base, and an
 advisory base check would create false failures for stacked pull requests.
@@ -111,8 +118,9 @@ permissions to make a check required.
 Copilot review is unavailable and remains disabled with
 `refinement.maxCopilotRounds: 0`. The `external-review` angle is configured in
 both local `draft` and `preApproval` gates. It requires a manually invoked fresh
-independent Claude CLI review and records that evidence in the local gate; it is
-not a hosted GitHub status check. Evidence is valid only when it records:
+independent Claude CLI review and records a local attestation in the local gate;
+it is not a hosted GitHub status check or authenticated reviewer identity. The
+attestation is usable only when it records:
 
 - `claude --version`;
 - the exact reviewed head SHA and integration merge-base SHA;
@@ -120,10 +128,17 @@ not a hosted GitHub status check. Evidence is valid only when it records:
 - findings (or an explicit `No findings` verdict);
 - a review timestamp after the last push.
 
-Any push makes the evidence stale. Run the CLI from outside the checkout in
-safe mode with no tools, give it the issue contract plus the exact diff
-artifact, fix every accepted finding, and repeat against the new head. Post the
-current-head evidence to the pull request before merge. Integration branch
-protection intentionally does not require a hosted human or code-owner approval;
-the owner has authorized clean integration merges only after this review
-control and every other current-head gate pass.
+Any push makes the evidence stale. Run the tracked
+`scripts/review/claude-current-head.mjs` wrapper with a clean checkout and a
+private XDG state directory (or an equally hardened explicit directory). It
+invokes the CLI from outside the checkout in safe mode with no tools, supplies
+caller-provided issue scope plus the exact diff artifact, and fails on stale
+state or malformed output. Findings are persisted as structured attestational
+evidence before the gate fails. Verify only a saved clean artifact with the same
+wrapper, fix every accepted finding, and repeat against the new head. See
+`docs/dev-loop-stability.md` for the exact command, limitations, and evidence
+shape. Post the current-head evidence to the pull request before merge; that
+evidence is the local attestation described above.
+Integration branch protection intentionally does not require a hosted
+human or code-owner approval; the owner has authorized clean integration
+merges only after this review control and every other current-head gate pass.

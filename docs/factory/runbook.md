@@ -121,9 +121,17 @@ review.
 ## Running a loop
 
 ```bash
-npx dev-loops@0.9.0 doctor    # environment readiness
-npx dev-loops@0.9.0 gates     # resolve and print every configured angle
+node scripts/dev-loops.mjs doctor    # environment readiness
+node scripts/dev-loops.mjs gates     # resolve and print every configured angle
 ```
+
+The tracked wrapper resolves only the exact project pin from the active Git
+root or its linked-worktree common checkout; it never searches home/global
+installs. Project Pi input is also preflighted against the effective packaged
+agent tool allowlists before model dispatch. See
+`docs/dev-loop-stability.md` for failure remediation, the REST GitHub probes,
+forced integration-base wrappers, exact-head Claude command, and the explicit
+upstream-only gap table.
 
 `gates` is the authoritative config validator — it exercises the real loader,
 so a `.devloops` that `gates` parses is a `.devloops` that will run. Prefer it
@@ -155,10 +163,13 @@ undetectable later. The check that matters is `gates` parsing.
   Copilot review disabled. `external-review` is nevertheless configured as an
   angle in both `gates.draft` and `gates.preApproval`. That angle requires a
   manually invoked independent Claude CLI review pinned to the exact current
-  head and records its evidence in the local gate; it is not a hosted GitHub
-  check. Any push invalidates that evidence, and the fresh evidence must be
-  posted to the pull request before merge. See
-  `docs/integration-delivery.md`.
+  head and records a local attestation in the local gate; it is not a hosted GitHub
+  check. It also does not authenticate reviewer identity or provide
+  dev-loops-native provenance.
+  Run `scripts/review/claude-current-head.mjs` from a clean worktree as
+  documented in `docs/dev-loop-stability.md`. Any push invalidates that
+  attestation, and the fresh attestation must be posted to the pull request
+  before merge. See `docs/integration-delivery.md`.
 
 ## One decision still needed from the owner
 
