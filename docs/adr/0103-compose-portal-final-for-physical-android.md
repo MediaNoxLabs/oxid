@@ -26,10 +26,15 @@ Oxid owns the consumer composition and lifecycle.
 
 The `oxid-app/standalone-portal-tailnet` feature is available only with the
 standalone development and tailnet profiles on `aarch64-linux-android`. The
-repository launcher supplies two digest-authenticated build inputs:
+repository launcher supplies two canonical build inputs:
 
-- the canonical Portal deployment manifest; and
-- the canonical physical-Android profile authority.
+- the digest-checked Portal deployment manifest; and
+- a deterministic physical-Android target/profile declaration.
+
+The target/profile declaration and its caller-supplied digest detect launcher
+or input drift; they are not signed provenance or independent authentication.
+Physical-device enforcement additionally depends on the launcher's live
+non-QEMU probe and the app's exact target compile guard.
 
 The deployment manifest schema is `oxid-portal-deployment-v3`. It pins only the
 merged Portal commit/tree, the existing Final-profile provenance digest, the

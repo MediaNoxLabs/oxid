@@ -63,6 +63,9 @@ jobs:
             mv -- "$staged" "$fixture"
           elif [ ! -f "$staged" ] && [ -f "$fixture" ]; then
             :
+          elif [ ! -f "$staged" ] && [ ! -e "$fixture" ]; then
+            # The staging step already reports the missing canonical fixture.
+            :
           else
             echo "::error::The canonical synthetic JWT fixture has an ambiguous staged state."
             exit 1

@@ -6,7 +6,7 @@
 - Portal integration source: commit `22ae5369b6f939e6b20648f4b85dd993527748ef`, tree `74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`
 - Final-profile provenance SHA-256: `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039 and ADR-0101
-- Implementation state: strict native desktop/headless Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; production and ordinary mobile Portal HTTP composition remain unavailable, while ADR-0103 separately admits one physical-Android conformance profile
+- Implementation state: strict native desktop/headless Portal HTTP issuance, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; one compile-gated iOS Simulator/Android QEMU development profile uses the same client, production composition remains unavailable, and ADR-0103 separately admits one physical-Android conformance profile
 
 ## Context
 
@@ -37,8 +37,10 @@ manifest must bind Portal integration commit/tree, provenance digest,
 issuer/resolver origins, issuer DID/full assertion
 method, and canonical Jubjub public JWK digest. Partial, malformed, mismatched,
 or alternate-resolver/live-Midnight combinations fail startup without fallback.
-Normal `compose()` remains unavailable, and iOS, Android, and WebAssembly cannot
-compile or name the Portal client/configuration variant.
+Normal `compose()` remains unavailable. WebAssembly cannot compile or name the
+Portal client/configuration variant. Mobile can name it only through the
+`standalone-portal` development feature on iOS Simulator or Android QEMU, or
+through ADR-0103's separate physical-Android feature.
 
 The Portal client accepts only the pinned Final profile: by-value offer,
 separate issuer and authorization-server metadata, form token request, empty
@@ -78,18 +80,27 @@ proof JWTs, credentials, private parts, claims, DIDs, routes, logs, PIDs, and
 timestamps are excluded. Scripted HTTP/component tests remain separate from
 this live evidence.
 
-The iOS simulator and Android emulator continue to exercise the same incoming
-router, explicit consent, managed-method, verification, encrypted-persistence,
-and restart flows through their compile-time standalone test framework. They do
-not compile or claim the native-headless Portal HTTP route.
+The `standalone-portal` virtual-mobile profile reuses the exact Final client,
+deployment manifest, consent, managed-method, verification, encrypted storage,
+and embedded holder-DID resolver boundaries. A repository launcher emits a
+canonical target/profile declaration only after selecting an installed iOS
+Simulator or live Android QEMU target; its caller-supplied digest detects drift
+but is not a source attestation. The app receives a fixed non-secret trigger and
+fetches one capability-authenticated offer from the repository-owned loopback
+18091 harness. The harness unlinks its owner-private inputs before listening,
+rejects replay, and retains no protocol material. The profile is compile-time
+standalone development only, uses loopback transport without ambient proxying,
+and has no production discovery, runtime feature selection, live DID write, or
+release promotion path.
 
 ## Consequences
 
 - Portal `integration` is now a positive, immutable local interoperability
   input without weakening ADR-0101's historical negative regression gate.
-- Production discovery/trust, runtime production-route selection, native mobile
-  Portal transport, real KYC, live holder DID deployment, physical-device
-  camera/tailnet evidence, and promotion beyond integration remain separate.
+- Production discovery/trust, runtime production-route selection, ordinary
+  mobile Portal transport, real KYC, live holder DID deployment,
+  physical-device camera/tailnet evidence, and promotion beyond integration
+  remain separate.
 - A new Portal head, integration tree, profile source, or provenance digest is
   rejected until this source lock and decision are deliberately reviewed.
 - Operator-selected local source/manifest authentication must not be described

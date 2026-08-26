@@ -8,6 +8,7 @@ CDPATH=
 readonly PORTAL_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
 readonly PORTAL_COMMIT="22ae5369b6f939e6b20648f4b85dd993527748ef"
 readonly PORTAL_TREE="74d8d1a5b87c160ea554006e47d5f3edc3cd3e10"
+readonly PORTAL_PROVENANCE_SHA256="cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87"
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 readonly EVIDENCE="${OXID_PORTAL_EVIDENCE_PATH:-$REPO_ROOT/target/portal-headless-e2e/evidence.json}"
 readonly RUN_TREE="${TMPDIR:-/tmp}/oxid-portal-source-$$"
@@ -39,7 +40,7 @@ fail() {
   exit 1
 }
 
-for command_name in cargo docker git jq nix; do
+for command_name in cargo docker git jq nix shasum; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
 docker info >/dev/null 2>&1 || fail docker
@@ -60,6 +61,8 @@ fi
 [ "$(git -C "$RUN_TREE" rev-parse FETCH_HEAD^{tree})" = "$PORTAL_TREE" ] || fail portal-tree
 git -C "$RUN_TREE" checkout --detach "$PORTAL_COMMIT" >>"$RAW_LOG" 2>&1
 [ -z "$(git -C "$RUN_TREE" status --porcelain --untracked-files=all)" ] || fail source-dirty
+provenance_path="crates/issuer-integration/fixtures/openid4vci-final/provenance.json"
+[ "$(git -C "$RUN_TREE" show "$PORTAL_COMMIT:$provenance_path" | shasum -a 256 | awk '{print $1}')" = "$PORTAL_PROVENANCE_SHA256" ] || fail portal-provenance
 [ -x "$RUN_TREE/scripts/tailscale-https-profile.sh" ] || fail tailscale-profile
 
 rm -f -- "$EVIDENCE"
