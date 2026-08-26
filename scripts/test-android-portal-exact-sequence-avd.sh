@@ -37,6 +37,10 @@ forward_active=0
 emulator_online=0
 cleanup_running=0
 cleanup_ok=true
+private_state_owned=0
+portal_owned=0
+build_owned=0
+launcher_mutation_owned=0
 journey_status="not_started"
 failure_phase="none"
 head=""
@@ -213,23 +217,25 @@ cleanup() {
     remove_forward
     [ "$?" -eq 0 ] && forward_cleanup=true || cleanup_ok=false
 
-    package_path="$(cleanup_adb shell pm path "$PACKAGE" 2>/dev/null | tr -d '\r\n')"
-    if [ -n "$package_path" ]; then
-      cleanup_adb shell "run-as $PACKAGE sh -c 'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp'" \
-        >/dev/null 2>&1 || cleanup_ok=false
-      cleanup_adb uninstall "$PACKAGE" >/dev/null 2>&1 || cleanup_ok=false
-    fi
-    package_path="$(cleanup_adb shell pm path "$PACKAGE" 2>/dev/null | tr -d '\r\n')"
-    [ -z "$package_path" ] && package_cleanup=true || cleanup_ok=false
+    if [ "$launcher_mutation_owned" -eq 1 ]; then
+      package_path="$(cleanup_adb shell pm path "$PACKAGE" 2>/dev/null | tr -d '\r\n')"
+      if [ -n "$package_path" ]; then
+        cleanup_adb shell "run-as $PACKAGE sh -c 'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp'" \
+          >/dev/null 2>&1 || cleanup_ok=false
+        cleanup_adb uninstall "$PACKAGE" >/dev/null 2>&1 || cleanup_ok=false
+      fi
+      package_path="$(cleanup_adb shell pm path "$PACKAGE" 2>/dev/null | tr -d '\r\n')"
+      [ -z "$package_path" ] && package_cleanup=true || cleanup_ok=false
 
-    for port in "${REVERSE_PORTS[@]}"; do
-      cleanup_adb reverse --remove "tcp:$port" >/dev/null 2>&1 || true
-    done
-    current="$(cleanup_adb reverse --list 2>/dev/null | sort || true)"
-    [ "$current" = "$reverse_before" ] && reverse_cleanup=true || cleanup_ok=false
+      for port in "${REVERSE_PORTS[@]}"; do
+        cleanup_adb reverse --remove "tcp:$port" >/dev/null 2>&1 || true
+      done
+      current="$(cleanup_adb reverse --list 2>/dev/null | sort || true)"
+      [ "$current" = "$reverse_before" ] && reverse_cleanup=true || cleanup_ok=false
+    fi
   fi
 
-  if [ -n "$portal_pid" ]; then
+  if [ "$portal_owned" -eq 1 ] && [ -n "$portal_pid" ]; then
     if child_active "$portal_pid"; then
       if [ -f "$PORTAL_STATE/control-curl.conf" ]; then
         control_curl -X POST "$CONTROL_ORIGIN/complete" >/dev/null 2>&1 || true
@@ -245,8 +251,10 @@ cleanup() {
     wait "$portal_pid" >/dev/null 2>&1 || true
     portal_pid=""
   fi
-  current="$(run_deadline 15 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet 2>/dev/null || true)"
-  [ -z "$current" ] && portal_cleanup=true || cleanup_ok=false
+  if [ "$portal_owned" -eq 1 ]; then
+    current="$(run_deadline 15 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet 2>/dev/null || true)"
+    [ -z "$current" ] && portal_cleanup=true || cleanup_ok=false
+  fi
 
   if [ -n "$launcher_pid" ]; then
     if child_active "$launcher_pid"; then
@@ -278,15 +286,25 @@ cleanup() {
     [ "$cleanup_ok" = true ] && emulator_cleanup=true
   fi
 
-  after_portal="$(listener_fingerprint "${PORTAL_PORTS[@]}")"
-  if ! rg -q '[[:digit:]]+:p[0-9]+' <<<"$after_portal"; then listener_cleanup=true; else cleanup_ok=false; fi
+  if [ "$portal_owned" -eq 1 ]; then
+    after_portal="$(listener_fingerprint "${PORTAL_PORTS[@]}")"
+    if ! rg -q '[[:digit:]]+:p[0-9]+' <<<"$after_portal"; then listener_cleanup=true; else cleanup_ok=false; fi
+  fi
   after_shared="$(listener_fingerprint "${SHARED_PORTS[@]}")"
   [ "$after_shared" = "$shared_before" ] && shared_listeners_preserved=true || cleanup_ok=false
 
-  run_deadline 30 rm -rf -- "$BUILD_SOURCE" >/dev/null 2>&1
-  [ ! -e "$BUILD_SOURCE" ] && build_cleanup=true || cleanup_ok=false
-  run_deadline 30 rm -rf -- "$PRIVATE_STATE" "$PORTAL_STATE" >/dev/null 2>&1
-  if [ ! -e "$PRIVATE_STATE" ] && [ ! -e "$PORTAL_STATE" ]; then private_logs_removed=true; else cleanup_ok=false; fi
+  if [ "$build_owned" -eq 1 ]; then
+    run_deadline 30 rm -rf -- "$BUILD_SOURCE" >/dev/null 2>&1
+    [ ! -e "$BUILD_SOURCE" ] && build_cleanup=true || cleanup_ok=false
+  fi
+  if [ "$private_state_owned" -eq 1 ]; then
+    run_deadline 30 rm -rf -- "$PRIVATE_STATE" >/dev/null 2>&1
+    [ ! -e "$PRIVATE_STATE" ] && private_logs_removed=true || cleanup_ok=false
+  fi
+  if [ "$portal_owned" -eq 1 ]; then
+    run_deadline 30 rm -rf -- "$PORTAL_STATE" >/dev/null 2>&1
+    [ ! -e "$PORTAL_STATE" ] || cleanup_ok=false
+  fi
   if [ "$(run_deadline 10 git -C "$ROOT" rev-parse HEAD 2>/dev/null)" = "$head" ] \
     && [ -z "$(run_deadline 10 git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
     head_clean=true
@@ -301,17 +319,13 @@ cleanup() {
   fi
   exit "$incoming"
 }
-trap cleanup EXIT
-trap 'failure_phase=signal-int; exit 130' INT
-trap 'failure_phase=signal-term; exit 143' TERM
-trap 'failure_phase=signal-hup; exit 129' HUP
-
 [ -z "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ] || fail oxid-dirty
 head="$(git -C "$ROOT" rev-parse HEAD)"
 [[ "$head" =~ ^[0-9a-f]{40}$ ]] || fail oxid-head
 run_deadline 20 git -C "$ROOT" verify-commit "$head" >/dev/null 2>&1 || fail oxid-signature
 [ -z "$(run_deadline 10 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet)" ] \
   || fail occupied-portal-project
+[ ! -e "$PORTAL_STATE" ] && [ ! -L "$PORTAL_STATE" ] || fail occupied-portal-state
 
 for port in "${PORTAL_PORTS[@]}"; do
   [ -z "$(run_deadline 5 lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)" ] || fail occupied-portal-listener
@@ -333,9 +347,15 @@ if adb_device get-state >/dev/null 2>&1; then fail transport-in-use; fi
 [ -z "$(run_deadline 5 lsof -nP -iTCP:"$CDP_PORT" -sTCP:LISTEN 2>/dev/null || true)" ] \
   || fail cdp-port-in-use
 
+trap cleanup EXIT
+trap 'failure_phase=signal-int; exit 130' INT
+trap 'failure_phase=signal-term; exit 143' TERM
+trap 'failure_phase=signal-hup; exit 129' HUP
+
 umask 077
-rm -rf -- "$PRIVATE_STATE"
+[ ! -e "$PRIVATE_STATE" ] && [ ! -L "$PRIVATE_STATE" ] || fail occupied-private-state
 mkdir -p "$PRIVATE_STATE"
+private_state_owned=1
 chmod 700 "$PRIVATE_STATE"
 : >"$PRIVATE_LOG"
 chmod 600 "$PRIVATE_LOG"
@@ -372,6 +392,7 @@ for port in "${REVERSE_PORTS[@]}"; do
   fi
  done
 
+portal_owned=1
 "$ROOT/scripts/e2e/portal-virtual-mobile-stack.sh" >>"$PRIVATE_LOG" 2>&1 &
 portal_pid=$!
 for _attempt in $(seq 1 50); do
@@ -401,10 +422,12 @@ manifest_sha="$(jq -r '.manifestSha256 // empty' "$PORTAL_STATE/ready.json")"
 archive="$PRIVATE_STATE/source.tar"
 run_deadline 60 git -C "$ROOT" archive --format=tar --output="$archive" "$head" || fail build-source-archive
 mkdir -p "$BUILD_SOURCE"
+build_owned=1
 run_deadline 60 tar -xf "$archive" -C "$BUILD_SOURCE" || fail build-source-extract
 rm -f -- "$archive"
 [ ! -e "$BUILD_SOURCE/target" ] || fail isolated-build-output
 
+launcher_mutation_owned=1
 timeout -k 30s 3700s env \
   OXID_ANDROID_DEVICE="$SERIAL" \
   OXID_ANDROID_AVD="$avd" \
