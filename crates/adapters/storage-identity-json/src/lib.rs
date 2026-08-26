@@ -553,6 +553,10 @@ mod tests {
     }
 
     fn record(profile: &str) -> DidRecord {
+        record_with_deactivation(profile, None)
+    }
+
+    fn record_with_deactivation(profile: &str, deactivated: Option<bool>) -> DidRecord {
         let profile = IdentityProfileId::parse(profile).expect("profile");
         let did =
             MidnightDid::parse(format!("did:midnight:undeployed:{}", "a".repeat(64))).expect("DID");
@@ -570,7 +574,10 @@ mod tests {
             profile,
             DidResolution::new(
                 document,
-                DidDocumentMetadata::default(),
+                DidDocumentMetadata {
+                    deactivated,
+                    ..DidDocumentMetadata::default()
+                },
                 DidResolutionMetadata::default(),
                 DidResolutionSource::Standalone,
             ),
@@ -578,10 +585,13 @@ mod tests {
     }
 
     #[test]
-    fn reopens_profile_scoped_public_records_and_forgets_them() {
+    fn reopens_profile_scoped_public_records_replaces_and_forgets_them() {
         let store = Store::new();
         let repository = JsonDidRecordRepository::new(&store.path);
         repository.upsert(record("profile_one")).expect("save");
+        repository
+            .upsert(record_with_deactivation("profile_one", Some(true)))
+            .expect("replace");
         repository.upsert(record("profile_two")).expect("save");
         let reopened = JsonDidRecordRepository::new(&store.path);
         let profile = IdentityProfileId::parse("profile_one").expect("profile");
@@ -591,15 +601,95 @@ mod tests {
             records[0].resolution().source(),
             DidResolutionSource::Stored
         );
+        assert_eq!(
+            records[0].resolution().document_metadata().deactivated,
+            Some(true)
+        );
         reopened
             .remove(&profile, records[0].resolution().document().id())
             .expect("remove");
         assert!(reopened.list(&profile).expect("list").is_empty());
     }
 
+    fn rich_record(profile: &str) -> DidRecord {
+        let profile = IdentityProfileId::parse(profile).expect("profile");
+        let did =
+            MidnightDid::parse(format!("did:midnight:undeployed:{}", "b".repeat(64))).expect("DID");
+        let signing = VerificationMethod::new(
+            &did,
+            "#signing",
+            did.clone(),
+            PublicJwk::new(JwkKeyType::Okp, JwkCurve::Ed25519, "A".repeat(43), None)
+                .expect("signing JWK"),
+        )
+        .expect("signing method");
+        let agreement = VerificationMethod::new(
+            &did,
+            "#agreement",
+            did.clone(),
+            PublicJwk::new(JwkKeyType::Okp, JwkCurve::X25519, "A".repeat(43), None)
+                .expect("agreement JWK"),
+        )
+        .expect("agreement method");
+        let document = DidDocument::new(DidDocumentParts {
+            contexts: vec![DID_CONTEXT.to_owned(), JWK_CONTEXT.to_owned()],
+            id: did.clone(),
+            controllers: vec![did.clone()],
+            also_known_as: vec!["https://example.test/identity".to_owned()],
+            verification_methods: vec![signing.clone(), agreement.clone()],
+            relationships: vec![
+                VerificationRelationshipEntry::new(
+                    VerificationRelationship::Authentication,
+                    vec![signing.id().to_owned()],
+                ),
+                VerificationRelationshipEntry::new(
+                    VerificationRelationship::KeyAgreement,
+                    vec![agreement.id().to_owned()],
+                ),
+            ],
+            services: vec![
+                Service::new(
+                    format!("{did}#messages"),
+                    vec!["DIDCommMessaging".to_owned()],
+                    vec![
+                        ServiceEndpointValue::uri("https://example.test/messages")
+                            .expect("URI endpoint"),
+                        ServiceEndpointValue::json_object(
+                            r#"{"uri":"https://example.test/relay"}"#,
+                        )
+                        .expect("JSON endpoint"),
+                    ],
+                    true,
+                )
+                .expect("service"),
+            ],
+        })
+        .expect("document");
+        DidRecord::new(
+            profile,
+            DidResolution::new(
+                document,
+                DidDocumentMetadata {
+                    created: Some("2026-08-01T00:00:00Z".to_owned()),
+                    updated: Some("2026-08-02T00:00:00Z".to_owned()),
+                    deactivated: Some(false),
+                    version_id: Some("version-2".to_owned()),
+                    next_update: Some("2026-09-01T00:00:00Z".to_owned()),
+                    next_version_id: Some("version-3".to_owned()),
+                    equivalent_ids: vec![did.as_str().to_owned()],
+                    canonical_id: Some(did.as_str().to_owned()),
+                },
+                DidResolutionMetadata {
+                    content_type: Some("application/did+json".to_owned()),
+                },
+                DidResolutionSource::Standalone,
+            ),
+        )
+    }
+
     #[test]
-    fn portable_did_snapshot_round_trips_through_strict_domain_validation() {
-        let original = record("profile_portable");
+    fn portable_did_snapshot_round_trips_the_complete_public_schema() {
+        let original = rich_record("profile_portable");
         let bytes = encode_portable_did_snapshot(std::slice::from_ref(&original))
             .expect("snapshot encodes");
         let decoded = decode_portable_did_snapshot(&bytes).expect("snapshot decodes");
@@ -610,37 +700,93 @@ mod tests {
             original.resolution().document()
         );
         assert_eq!(
+            decoded[0].resolution().document_metadata(),
+            original.resolution().document_metadata()
+        );
+        assert_eq!(
+            decoded[0].resolution().resolution_metadata(),
+            original.resolution().resolution_metadata()
+        );
+        assert_eq!(
             decoded[0].resolution().source(),
             DidResolutionSource::Stored
         );
     }
 
     #[test]
-    fn rejects_unknown_fields_and_symlinks() {
+    fn rejects_malformed_wrong_schema_and_unknown_fields_without_echoing_contents() {
+        let documents = [
+            br#"{"schemaVersion":1,"records":["private-store-sentinel""#.as_slice(),
+            br#"{"schemaVersion":2,"records":[]}"#.as_slice(),
+            br#"{"schemaVersion":1,"records":[],"unexpected":true}"#.as_slice(),
+        ];
+        let profile = IdentityProfileId::parse("profile_one").expect("profile");
+        for bytes in documents {
+            let store = Store::new();
+            store_atomic::write_owner_private(&store.path, bytes).expect("write fixture");
+            let error = JsonDidRecordRepository::new(&store.path)
+                .list(&profile)
+                .expect_err("invalid store must fail");
+            assert_eq!(error, DidRecordRepositoryError::Integrity);
+            let diagnostic = format!("{error:?} {error}");
+            assert!(!diagnostic.contains("private-store-sentinel"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_permissive_store_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let store = Store::new();
+        let repository = JsonDidRecordRepository::new(&store.path);
+        repository.upsert(record("profile_one")).expect("save");
+        fs::set_permissions(&store.path, fs::Permissions::from_mode(0o644)).expect("chmod");
+        assert_eq!(
+            repository.list(&IdentityProfileId::parse("profile_one").expect("profile")),
+            Err(DidRecordRepositoryError::Integrity)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_replacement_preserves_the_previous_document() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let store = Store::new();
+        let repository = JsonDidRecordRepository::new(&store.path);
+        repository.upsert(record("profile_one")).expect("save");
+        let original = fs::read(&store.path).expect("original document");
+        let parent = store.path.parent().expect("parent");
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o500)).expect("make read-only");
+        let result = repository.upsert(record_with_deactivation("profile_one", Some(true)));
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+            .expect("restore permissions");
+        assert_eq!(result, Err(DidRecordRepositoryError::Unavailable));
+        assert_eq!(fs::read(&store.path).expect("preserved document"), original);
+        let profile = IdentityProfileId::parse("profile_one").expect("profile");
+        let did =
+            MidnightDid::parse(format!("did:midnight:undeployed:{}", "a".repeat(64))).expect("DID");
+        let restored = JsonDidRecordRepository::new(&store.path)
+            .get(&profile, &did)
+            .expect("restored record");
+        assert_eq!(restored.resolution().document_metadata().deactivated, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinks() {
+        use std::os::unix::fs::symlink;
+
         let store = Store::new();
         fs::create_dir_all(store.path.parent().expect("parent")).expect("directory");
-        fs::write(
-            &store.path,
-            br#"{"schemaVersion":1,"records":[],"unexpected":true}"#,
-        )
-        .expect("write");
+        let target = store.root.join("target.json");
+        fs::write(&target, br#"{"schemaVersion":1,"records":[]}"#).expect("target");
+        symlink(&target, &store.path).expect("symlink");
         assert_eq!(
             JsonDidRecordRepository::new(&store.path)
                 .list(&IdentityProfileId::parse("profile_one").expect("profile")),
             Err(DidRecordRepositoryError::Integrity)
         );
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::symlink;
-            fs::remove_file(&store.path).expect("remove");
-            let target = store.root.join("target.json");
-            fs::write(&target, br#"{"schemaVersion":1,"records":[]}"#).expect("target");
-            symlink(&target, &store.path).expect("symlink");
-            assert_eq!(
-                JsonDidRecordRepository::new(&store.path)
-                    .list(&IdentityProfileId::parse("profile_one").expect("profile")),
-                Err(DidRecordRepositoryError::Integrity)
-            );
-        }
     }
 }
