@@ -17,8 +17,14 @@ import {
 export { assertMinimumGhVersion, parseGhVersion } from "./rest-client.mjs";
 
 function flattenPages(value) {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => Array.isArray(entry) ? flattenPages(entry) : [entry]);
+  return value.flat();
+}
+
+export function assertTimelinePages(value) {
+  if (!Array.isArray(value) || value.some((page) => !Array.isArray(page))) {
+    throw new Error("GitHub timeline REST response did not return paginated arrays");
+  }
+  return value;
 }
 
 function repositoryFromUrl(url) {
@@ -28,8 +34,8 @@ function repositoryFromUrl(url) {
 }
 
 function pullRequestFromTimelineEvent(event) {
-  if (!event || typeof event !== "object") return undefined;
-  const issue = event.event === "cross-referenced" ? event.source?.issue : event.subject;
+  if (!event || typeof event !== "object" || event.event !== "cross-referenced") return undefined;
+  const issue = event.source?.issue;
   if (!issue || typeof issue !== "object" || !issue.pull_request) return undefined;
   const number = Number(issue.number);
   if (!Number.isInteger(number) || number < 1) return undefined;
@@ -85,6 +91,7 @@ export function resolveIssuePullRequestLinks({ repository, issue, ghCommand = "g
   } catch (error) {
     throw new Error(`GitHub timeline returned invalid JSON: ${error.message}`, { cause: error });
   }
+  assertTimelinePages(pages);
   const links = normalizeTimelinePullRequests(pages, repository);
   return links.flatMap((link) => {
     const source = runGh(["api", ...GITHUB_REST_HEADERS, `repos/${repository}/pulls/${link.number}`]);

@@ -27,8 +27,8 @@ export async function runDevLoopPreflight(pi, cwd, runtime = {}) {
       availableTools,
     });
     const checked = result.ok
-      ? { ok: true, kind: "valid" }
-      : { ok: false, kind: "invalid-allowlist", message: formatAgentToolAllowlistFailure(result) };
+      ? { ok: true }
+      : { ok: false, message: formatAgentToolAllowlistFailure(result) };
     if (cache && key !== undefined) {
       cache.clear();
       cache.set(key, checked);
@@ -36,13 +36,10 @@ export async function runDevLoopPreflight(pi, cwd, runtime = {}) {
     return checked;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    // Manifest-shape drift in a pinned third-party package must not lock the
-    // operator out of the interactive repair turn. Agent/provider launch still
-    // fails closed below until the preflight can parse and validate every tool.
-    const recoverable = /(?:missing exact |could not read .*package manifest|expected .* CLI at |agent manifest|YAML frontmatter)/i.test(detail);
+    // Any environment/manifest failure leaves input interactive for diagnosis;
+    // agent and provider launch still fail closed below.
     return {
       ok: false,
-      kind: recoverable ? "unprovisioned" : "invalid-environment",
       message: `Pi dev-loop preflight environment is not ready: ${detail}`,
     };
   }

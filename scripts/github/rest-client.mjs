@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 
 export const MINIMUM_GH_VERSION = [2, 67, 0];
+export const GH_REST_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 export const GITHUB_REST_HEADERS = [
   "-H", "Accept: application/vnd.github+json",
   "-H", "X-GitHub-Api-Version: 2022-11-28",
@@ -43,6 +44,7 @@ export function runGhCommand(ghCommand, args, { failureLabel = "GitHub REST requ
     return execFileSync(ghCommand, args, {
       encoding: "utf8",
       timeout: 120_000,
+      maxBuffer: GH_REST_MAX_BUFFER_BYTES,
       stdio: ["ignore", "pipe", "pipe"],
       ...options,
     });

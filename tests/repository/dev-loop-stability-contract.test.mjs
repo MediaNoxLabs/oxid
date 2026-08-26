@@ -19,14 +19,19 @@ import { normalizeDevLoopsArgs, runDevLoops } from "../../scripts/dev-loops.mjs"
 import { normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import {
   assertMinimumGhVersion,
+  assertTimelinePages,
   bodyReferencesIssue,
   normalizeTimelinePullRequests,
   parseGhVersion,
+  resolveIssuePullRequestLinks,
 } from "../../scripts/github/resolve-issue-pr-links.mjs";
 import { preflightGh } from "../../scripts/github/preflight-gh.mjs";
+import { GH_REST_MAX_BUFFER_BYTES, runGhCommand } from "../../scripts/github/rest-client.mjs";
 import {
+  assertClaudeAuthHelpCapabilities,
   assertClaudeHelpCapabilities,
   assertMinimumClaudeVersion,
+  MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
   buildClaudeInvocation,
   ClaudeReviewFindingsError,
   MAX_REVIEW_DIFF_BYTES,
@@ -48,8 +53,25 @@ const supportedTools = [
   "review_enrich", "review_list",
 ];
 
+const fixtureClaudeHelp = [
+  "  --print",
+  "  --output-format <format>",
+  "  --json-schema <schema>",
+  "  --max-budget-usd <amount>",
+  "  --safe-mode",
+  '  --tools <tools...> Specify tools. Use "" to disable all tools.',
+  "  --no-session-persistence",
+  '  --permission-mode <mode> (choices: "acceptEdits", "dontAsk", "plan")',
+  "  --system-prompt <prompt>",
+].join("\n");
+const fixtureClaudeAuthHelp = "Usage: claude auth status [options]\n  --json Output as JSON (default)\n";
+
+async function realMkdtemp(prefix) {
+  return realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
+}
+
 async function makeFixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-dev-loop-root-"));
+  const root = await realMkdtemp("oxid-dev-loop-root-");
   await mkdir(path.join(root, ".git", "worktrees", "fixture"), { recursive: true });
   await mkdir(path.join(root, ".pi", "npm", "node_modules", "dev-loops", "agents"), { recursive: true });
   await mkdir(path.join(root, ".pi", "agents"), { recursive: true });
@@ -98,7 +120,7 @@ test("package resolution rejects mismatched identities and symlink escapes", asy
   await assert.rejects(resolveDevLoopsPackageRoot({ cwd: fixture.root }), /expected dev-loops@0\.9\.0/);
 
   await rm(fixture.packageRoot, { recursive: true, force: true });
-  const outside = await mkdtemp(path.join(os.tmpdir(), "oxid-dev-loop-outside-"));
+  const outside = await realMkdtemp("oxid-dev-loop-outside-");
   t.after(() => rm(outside, { recursive: true, force: true }));
   await mkdir(path.join(outside, "cli"));
   await writeFile(path.join(outside, "cli", "index.mjs"), "");
@@ -159,6 +181,14 @@ test("bounded frontmatter parser ignores unrelated YAML and strips inline commen
   assert.deepEqual(parseAgentFrontmatter("---\nname: inherited\nkeywords:\n  - one\n---\n", "inherited.agent.md"), {
     name: "inherited",
     tools: null,
+  });
+  assert.deepEqual(parseAgentFrontmatter("---\nname: none\ntools: []\n---\n", "none.agent.md"), {
+    name: "none",
+    tools: [],
+  });
+  assert.deepEqual(parseAgentFrontmatter('---\nname: quoted\ntools: "read, grep"\n---\n', "quoted.agent.md"), {
+    name: "quoted",
+    tools: ["read", "grep"],
   });
 });
 
@@ -417,6 +447,7 @@ test("GitHub compatibility enforces the supported CLI floor and REST capabilitie
     { event: "cross-referenced", source: { issue: { number: 71, html_url: "https://github.com/MediaNoxLabs/oxid/pull/71", pull_request: { url: "https://api.github.com/repos/MediaNoxLabs/oxid/pulls/71" } } } },
   ], "MediaNoxLabs/oxid");
   assert.deepEqual(links.map((link) => link.number), [71]);
+  assert.throws(() => assertTimelinePages([{ event: "cross-referenced" }]), /did not return paginated arrays/);
   assert.equal(bodyReferencesIssue("Closes #150", 150, "MediaNoxLabs/oxid"), true);
   assert.equal(bodyReferencesIssue("Fixes GH-150", 150, "MediaNoxLabs/oxid"), true);
   assert.equal(bodyReferencesIssue("Resolves MediaNoxLabs/oxid#150", 150, "MediaNoxLabs/oxid"), true);
@@ -425,7 +456,7 @@ test("GitHub compatibility enforces the supported CLI floor and REST capabilitie
   assert.equal(bodyReferencesIssue("Refs #150", 150, "MediaNoxLabs/oxid"), true);
   assert.equal(bodyReferencesIssue("Refs other/repo#150", 150, "MediaNoxLabs/oxid"), false);
 
-  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "oxid-gh-preflight-"));
+  const fixtureRoot = await realMkdtemp("oxid-gh-preflight-");
   t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
   const fakeGh = path.join(fixtureRoot, "gh");
   await writeFile(fakeGh, `#!/usr/bin/env node
@@ -447,6 +478,18 @@ else process.exit(9);
     () => preflightGh({ repository: "MediaNoxLabs/oxid", issue: 150, ghCommand: fakeGh }),
     /did not return paginated arrays/,
   );
+  assert.throws(
+    () => resolveIssuePullRequestLinks({ repository: "MediaNoxLabs/oxid", issue: 150, ghCommand: fakeGh }),
+    /did not return paginated arrays/,
+  );
+
+  const largeGh = path.join(fixtureRoot, "gh-large");
+  const payloadBytes = 2 * 1024 * 1024;
+  await writeFile(largeGh, `#!/usr/bin/env node\nprocess.stdout.write("x".repeat(${payloadBytes}));\n`);
+  await chmod(largeGh, 0o755);
+  const largeOutput = runGhCommand(largeGh, []);
+  assert.equal(largeOutput.length, payloadBytes);
+  assert.ok(GH_REST_MAX_BUFFER_BYTES > payloadBytes);
 
   for (const file of [
     "scripts/github/resolve-issue-pr-links.mjs",
@@ -466,23 +509,42 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.ok(toolsIndex >= 0);
   assert.equal(invocation.args[toolsIndex + 1], "");
   assert.ok(invocation.args.includes("--no-session-persistence"));
-  const observedHelp = [
-    "--print --output-format --json-schema --max-budget-usd --safe-mode",
-    '--tools <tools...> Specify tools. Use "" to disable all tools.',
-    "--no-session-persistence --permission-mode --system-prompt",
-  ].join("\n");
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
   assert.deepEqual(assertMinimumClaudeVersion([2, 1, 228]), [2, 1, 228]);
-  assert.throws(() => assertMinimumClaudeVersion([2, 1, 227]), /unsupported; require >= 2\.1\.228/);
-  const capabilities = assertClaudeHelpCapabilities(observedHelp, [2, 1, 228]);
+  assert.throws(() => assertMinimumClaudeVersion([2, 1, 227]), /unsupported; require >= 2\.1\.228 and < 2\.2\.0/);
+  assert.throws(() => assertMinimumClaudeVersion(MAXIMUM_EXCLUSIVE_CLAUDE_VERSION), /unsupported.*< 2\.2\.0/);
+  const capabilities = assertClaudeHelpCapabilities(fixtureClaudeHelp, [2, 1, 228]);
   assert.equal(capabilities.emptyToolsDisabled, true);
-  assert.equal(capabilities.emptyToolsBasis, "supported-version-contract");
-  assert.throws(() => assertClaudeHelpCapabilities("--safe-mode --tools", [2, 1, 228]), /required review flags/);
-  assert.equal(
-    assertClaudeHelpCapabilities("--print --output-format --json-schema --max-budget-usd --safe-mode --tools --no-session-persistence --permission-mode --system-prompt", [2, 1, 229]).emptyToolsDisabled,
-    true,
-    "benign help prose changes do not invalidate a supported CLI version",
+  assert.equal(capabilities.emptyToolsBasis, "captured-help-and-bounded-version-contract");
+  assert.equal(capabilities.permissionMode, "dontAsk");
+  assert.equal(assertClaudeAuthHelpCapabilities(fixtureClaudeAuthHelp).jsonOutput, true);
+  assert.throws(() => assertClaudeHelpCapabilities("  --safe-mode\n  --toolsfoo\n", [2, 1, 228]), /required review flags/);
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('Use "" to disable all tools.', "Use defaults."), [2, 1, 228]),
+    /no-tools form/,
   );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('"dontAsk", ', ""), [2, 1, 228]),
+    /dontAsk permission mode/,
+  );
+  assert.throws(() => assertClaudeAuthHelpCapabilities("Usage: claude auth status\n"), /default JSON output/);
+  const calls = [];
+  const capabilityProbe = probeClaudeCliCapabilities({
+    claudeCommand: "fixture-claude",
+    runner: (_command, args) => {
+      calls.push(args);
+      if (args[0] === "--version") return { status: 0, stdout: "2.1.228 (Claude Code)\n", stderr: "" };
+      if (args[0] === "--help") return { status: 0, stdout: fixtureClaudeHelp, stderr: "" };
+      if (args.at(-1) === "--help") return { status: 0, stdout: fixtureClaudeAuthHelp, stderr: "" };
+      if (args.at(-1) === "--json") return { status: 0, stdout: JSON.stringify({ loggedIn: true }), stderr: "" };
+      throw new Error(`unexpected fixture argv: ${args.join(" ")}`);
+    },
+  });
+  assert.deepEqual(calls, [["--version"], ["--help"], ["auth", "status", "--help"], ["auth", "status", "--json"]]);
+  assert.equal(capabilityProbe.authCapabilities.jsonOutput, true);
+  assert.equal(capabilityProbe.outputSmoke, null, "capability contract probe does not invoke a model");
+  const permissionIndex = invocation.args.indexOf("--permission-mode");
+  assert.equal(invocation.args[permissionIndex + 1], "dontAsk");
   const parsed = parseClaudeReviewResult(JSON.stringify({ structured_output: { verdict: "clean", findings: [], summary: "No findings" }, session_id: "session-1" }));
   assert.equal(parsed.review.verdict, "clean");
   assert.equal(parsed.observedSessionId, "session-1");
@@ -495,7 +557,7 @@ test("installed real Claude CLI smoke is explicit opt-in and never a default API
     t.skip("set OXID_CLAUDE_LIVE_SMOKE=1 to opt into the authenticated billed capability smoke");
     return;
   }
-  const cwd = await mkdtemp(path.join(os.tmpdir(), "oxid-claude-capability-"));
+  const cwd = await realMkdtemp("oxid-claude-capability-");
   t.after(() => rm(cwd, { recursive: true, force: true }));
   let probe;
   try {
@@ -511,7 +573,7 @@ test("installed real Claude CLI smoke is explicit opt-in and never a default API
 });
 
 test("Claude runner binds clean exact-head evidence and rejects stale worktrees", async (t) => {
-  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "oxid-claude-runner-"));
+  const fixtureRoot = await realMkdtemp("oxid-claude-runner-");
   const repository = path.join(fixtureRoot, "repo");
   const evidenceDir = path.join(fixtureRoot, "evidence");
   const fakeClaude = path.join(fixtureRoot, "claude");
@@ -540,13 +602,16 @@ const { execFileSync } = require("node:child_process");
 const mode = ${JSON.stringify(mode)};
 if (process.argv.includes("--version")) {
   process.stdout.write("2.1.228 (Claude Code)\\n");
+} else if (process.argv[2] === "auth" && process.argv[3] === "status" && process.argv.includes("--help")) {
+  process.stdout.write(${JSON.stringify(fixtureClaudeAuthHelp)});
 } else if (process.argv.includes("--help")) {
-  process.stdout.write('--print --output-format --json-schema --max-budget-usd --safe-mode --tools <tools...> Use "" to disable all tools --no-session-persistence --permission-mode --system-prompt\\n');
-} else if (process.argv[2] === "auth" && process.argv[3] === "status") {
+  process.stdout.write(${JSON.stringify(fixtureClaudeHelp)});
+} else if (process.argv[2] === "auth" && process.argv[3] === "status" && process.argv.includes("--json")) {
   process.stdout.write(JSON.stringify({ loggedIn: true, authMethod: "fixture", apiProvider: "fixture" }));
 } else {
   const prompt = fs.readFileSync(0, "utf8");
   if (!prompt.includes("${headSha}") || !prompt.includes("${baseSha}")) process.exit(9);
+  if (prompt.includes(${JSON.stringify(evidenceDir)})) process.exit(10);
   if (mode === "timeout") {
     execFileSync("git", ["-C", ${JSON.stringify(repository)}, "commit", "--allow-empty", "-m", "timeout-advance"]);
     setTimeout(() => {}, 60_000);
@@ -594,6 +659,7 @@ if (process.argv.includes("--version")) {
     path.join(evidenceDir, result.evidence.diff.path),
     path.join(evidenceDir, result.evidence.rawResponse.path),
     path.join(evidenceDir, result.evidence.claude.capabilities.help.path),
+    path.join(evidenceDir, result.evidence.claude.capabilities.authHelp.path),
   ]) {
     assert.equal((await lstat(file)).mode & 0o777, 0o600);
   }
@@ -698,24 +764,34 @@ if (process.argv.includes("--version")) {
       timeoutMs,
     }), pattern, mode);
   }
-  const deterministicTimeoutRunner = (_command, args) => {
-    if (args.includes("--version")) return { status: 0, stdout: "2.1.228 (Claude Code)\n", stderr: "" };
-    if (args.includes("--help")) return { status: 0, stdout: '--print --output-format --json-schema --max-budget-usd --safe-mode --tools --no-session-persistence --permission-mode --system-prompt\n', stderr: "" };
-    if (args[0] === "auth") return { status: 0, stdout: JSON.stringify({ loggedIn: true }), stderr: "" };
-    const error = Object.assign(new Error("fixture timeout"), { code: "ETIMEDOUT" });
-    return { status: null, stdout: "", stderr: "", error };
-  };
+  const sleepingClaude = path.join(fixtureRoot, "claude-sleeping");
+  await writeFile(sleepingClaude, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\\n' '2.1.228 (Claude Code)'
+elif [ "$1" = "auth" ] && [ "$2" = "status" ] && [ "$3" = "--help" ]; then
+  cat <<'AUTH_HELP'
+${fixtureClaudeAuthHelp}AUTH_HELP
+elif [ "$1" = "--help" ]; then
+  cat <<'CLAUDE_HELP'
+${fixtureClaudeHelp}
+CLAUDE_HELP
+elif [ "$1" = "auth" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then
+  printf '%s' '{"loggedIn":true}'
+else
+  sleep 10
+fi
+`);
+  await chmod(sleepingClaude, 0o755);
   await assert.rejects(runClaudeCurrentHeadReview({
     issue: 150,
     repoRoot: repository,
     evidenceDir,
     expectedHead: headSha,
-    claudeCommand: "fixture-claude",
-    claudeRunner: deterministicTimeoutRunner,
+    claudeCommand: sleepingClaude,
     issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
     fetchBase: false,
-    timeoutMs: 50,
-  }), /timed out or was terminated after 50ms/);
+    timeoutMs: 500,
+  }), /timed out or was terminated after 500ms/);
   git("reset", "--hard", headSha);
 
   await writeFakeClaude("advance");
@@ -761,7 +837,8 @@ if (process.argv.includes("--version")) {
   const symlinkAncestor = path.join(fixtureRoot, "symlink-ancestor");
   await mkdir(safeTarget, { mode: 0o700 });
   await symlink(safeTarget, symlinkAncestor, "dir");
-  await assert.rejects(runClaudeCurrentHeadReview({
+  await writeFakeClaude("clean");
+  const aliasedAncestorResult = await runClaudeCurrentHeadReview({
     issue: 150,
     repoRoot: repository,
     evidenceDir: path.join(symlinkAncestor, "evidence"),
@@ -769,7 +846,9 @@ if (process.argv.includes("--version")) {
     claudeCommand: fakeClaude,
     issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
     fetchBase: false,
-  }), /path component must not be a symlink/);
+  });
+  assert.equal(aliasedAncestorResult.evidence.verdict, "clean", "safe resolved aliases such as macOS /var are admitted");
+  assert.equal(await realpath(path.dirname(aliasedAncestorResult.evidencePath)), path.join(safeTarget, "evidence"));
 
   const stickyAncestor = path.join(fixtureRoot, "sticky-ancestor");
   await mkdir(stickyAncestor, { mode: 0o1777 });

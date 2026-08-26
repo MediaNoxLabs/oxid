@@ -4,7 +4,6 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 const SETTINGS_PATH = path.join(".pi", "settings.json");
-const PACKAGE_RELATIVE_PATH = path.join(".pi", "npm", "node_modules", "dev-loops");
 const PROJECT_AGENTS_PATH = path.join(".pi", "agents");
 
 async function exists(candidate) {
@@ -139,11 +138,6 @@ export async function resolveDevLoopsPackageRoot({ cwd = process.cwd(), includeA
   const pins = includeAllPinnedPackages ? parseExactNpmPins(settings) : [pin];
   const packageRoots = await resolveInstalledPinnedPackages({ candidates, pins });
   const devLoops = packageRoots.find(({ name }) => name === pin.name);
-  if (!devLoops) {
-    throw new Error(
-      `missing exact ${pin.name}@${pin.version}; checked only ${candidates.map(({ root }) => path.join(root, PACKAGE_RELATIVE_PATH)).join(", ")}`,
-    );
-  }
   if (!(await exists(path.join(devLoops.packageRoot, "cli", "index.mjs")))) {
     throw new Error(`expected ${pin.name}@${pin.version} CLI at ${path.join(devLoops.packageRoot, "cli", "index.mjs")}`);
   }
@@ -223,7 +217,8 @@ export function parseAgentFrontmatter(source, file) {
       if (!value.endsWith("]")) throw new Error(`unmodelled YAML frontmatter in agent manifest ${file}: unterminated tools list`);
       tools = value.slice(1, -1).split(",").map((tool) => unquoteFrontmatterScalar(tool, file).trim()).filter(Boolean);
     } else if (value) {
-      tools = value.split(",").map((tool) => unquoteFrontmatterScalar(tool, file).trim()).filter(Boolean);
+      const scalar = unquoteFrontmatterScalar(value, file);
+      tools = scalar.split(",").map((tool) => tool.trim()).filter(Boolean);
     } else {
       tools = [];
       while (index + 1 < lines.length) {
@@ -247,9 +242,6 @@ export function parseAgentFrontmatter(source, file) {
     }
   }
   if (!name) throw new Error(`agent manifest requires a non-empty name: ${file}`);
-  if (Array.isArray(tools) && (tools.length === 0 || tools.some((tool) => !tool))) {
-    throw new Error(`agent manifest requires a non-empty tools allowlist when tools is declared: ${file}`);
-  }
   return { name, tools };
 }
 

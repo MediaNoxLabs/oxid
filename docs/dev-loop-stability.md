@@ -48,10 +48,12 @@ The project extension keeps its runtime-independent logic in
 `scripts/lib/dev-loop-preflight-core.mjs`; `.pi/extensions/dev-loop-preflight.ts`
 is the only auto-loaded Pi registrar. Registration is idempotent. The preflight
 obtains Pi's registered tool names and uses a bounded, dependency-free parser
-for `name` and `tools` in every installed package pinned by `.pi/settings.json`
-plus repository-local shadows. Only `*.agent.md` manifests are scanned. Results
-are cached per session using the checkout, settings, package, manifest mtime and
-tool-set facts; a changed manifest invalidates the cache.
+for `name` and `tools` in each installed pinned package's top-level
+`agents/*.agent.md` manifests plus repository-local `.pi/agents/*.agent.md`
+shadows. Packages that discover agents from any other location are outside this
+bounded claim. Results are cached per session using the checkout, settings,
+package, manifest mtime and tool-set facts; a changed manifest invalidates the
+cache.
 
 Every preflight failure produces a prominent input warning and leaves the
 interactive turn available for diagnosis or repair. Defense-in-depth hooks
@@ -82,10 +84,14 @@ Both draft and pre-approval gates make `external-review` mandatory, while
 fetching `origin/integration`, run the reviewer with a clean worktree. By
 default it writes beneath `${XDG_STATE_HOME:-$HOME/.local/state}/oxid/claude-reviews`.
 The final directory must be a real, invoking-user-owned `0700` directory and
-each artifact is an owned regular `0600` file; symlinks and permissive modes
-fail closed. An explicit evidence directory must meet the same rules, stay
-outside the checkout, and have no symlink or group/world-writable non-sticky
-ancestor (the root directory and sticky temporary directories remain valid).
+each artifact is an owned regular `0600` file; a symlink as the final evidence
+directory and permissive modes fail closed. The runner resolves the effective
+ancestor chain before checking it, so root-owned macOS aliases such as
+`/var -> /private/var` are portable while their targets remain authoritative.
+An explicit evidence directory must stay outside the checkout; every resolved
+ancestor must be owned by root or the invoking user and must not be
+group/world-writable without sticky protection. Root and sticky temporary
+directories remain valid.
 
 ```bash
 git fetch origin integration
@@ -101,13 +107,17 @@ node scripts/review/claude-current-head.mjs \
 The runner independently derives HEAD and the `origin/integration` merge base,
 rejects any binary path before review, and creates a `git diff --binary` UTF-8
 text artifact whose exact bytes are both hashed and sent to the reviewer. It
-requires Claude CLI `>= 2.1.228`, probes the actual CLI flags/auth/version, and
-retains the observed help artifact. The evidence binds empty-tool semantics to
-the supported-version contract for the documented `--tools ""` form rather
-than brittle help prose. It invokes Claude outside the checkout in safe mode
-with that empty tool
-set and no session persistence, then records CLI account readiness, version,
-observed session id, timestamps, raw-output digest, exit status, and a
+supports the deliberately bounded Claude CLI range `>= 2.1.228,< 2.2.0`, parses
+exact flag tokens and the `dontAsk` permission choice from captured general
+help, and confirms `claude auth status --json` from separately captured auth
+help before parsing the actual account response. Evidence binds empty-tool
+semantics to the exact captured `--tools ""` help contract and that version
+range. A CLI upgrade outside the range requires an explicit source/test update
+and a new captured capability pass; do not widen the range speculatively. The
+provider prompt receives only the diff artifact basename and digest, never its
+local absolute path. Claude runs outside the checkout in safe mode with an
+empty tool set and no session persistence, then records CLI account readiness,
+version, observed session id, timestamps, raw-output digest, exit status, and a
 structured verdict. It checks clean/head/base/exact-diff facts again afterward.
 Timeout, nonzero exit, malformed output, mutation, or a changed ref is a hard
 failure. A findings verdict is also a failed gate, but its structured findings

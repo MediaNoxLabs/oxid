@@ -14,6 +14,7 @@ const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_BUDGET_USD = 10;
 export const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
 export const MINIMUM_CLAUDE_VERSION = [2, 1, 228];
+export const MAXIMUM_EXCLUSIVE_CLAUDE_VERSION = [2, 2, 0];
 const REQUIRED_CLAUDE_FLAGS = [
   "--print",
   "--output-format",
@@ -87,34 +88,72 @@ export function parseClaudeVersion(output) {
   return match.slice(1).map(Number);
 }
 
-export function assertMinimumClaudeVersion(version, minimum = MINIMUM_CLAUDE_VERSION) {
+function compareVersion(left, right) {
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return 0;
+}
+
+export function assertMinimumClaudeVersion(
+  version,
+  minimum = MINIMUM_CLAUDE_VERSION,
+  maximumExclusive = MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
+) {
   if (!Array.isArray(version) || version.length !== 3 || version.some((part) => !Number.isInteger(part) || part < 0)) {
     throw new Error("Claude CLI version must be a semantic version triple");
   }
-  for (let index = 0; index < 3; index += 1) {
-    if (version[index] > minimum[index]) return version;
-    if (version[index] < minimum[index]) {
-      throw new Error(`Claude CLI ${version.join(".")} is unsupported; require >= ${minimum.join(".")}`);
-    }
+  if (compareVersion(version, minimum) < 0 || compareVersion(version, maximumExclusive) >= 0) {
+    throw new Error(
+      `Claude CLI ${version.join(".")} is unsupported; require >= ${minimum.join(".")} and < ${maximumExclusive.join(".")}`,
+    );
   }
   return version;
+}
+
+function exactHelpFlag(help, flag) {
+  const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|\\n)\\s*${escaped}(?=\\s|=|<|\\[|$)`, "m").test(help);
+}
+
+function helpWindow(help, flag, length = 600) {
+  const line = new RegExp(`(?:^|\\n)\\s*${flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|=|<|\\[|$)`, "m").exec(help);
+  return line ? help.slice(line.index, line.index + length) : "";
 }
 
 export function assertClaudeHelpCapabilities(help, version) {
   if (typeof help !== "string") throw new Error("Claude CLI help output must be text");
   const supportedVersion = assertMinimumClaudeVersion(version);
-  const missing = REQUIRED_CLAUDE_FLAGS.filter((flag) => !help.includes(flag));
+  const missing = REQUIRED_CLAUDE_FLAGS.filter((flag) => !exactHelpFlag(help, flag));
   if (missing.length > 0) throw new Error(`Claude CLI does not expose required review flags: ${missing.join(", ")}`);
-  // The supported CLI contract documents --tools "" as the explicit no-tools
-  // form. Bind that semantic to a tested version floor rather than brittle help
-  // prose, while retaining the complete observed help artifact as evidence.
+  const permissionHelp = helpWindow(help, "--permission-mode");
+  if (!/choices:[\s\S]*["']dontAsk["']/.test(permissionHelp)) {
+    throw new Error("Claude CLI help does not expose the required dontAsk permission mode");
+  }
+  const toolsHelp = helpWindow(help, "--tools");
+  if (!/Use\s+["']{2}\s+to disable all\s+tools/i.test(toolsHelp)) {
+    throw new Error('Claude CLI help does not document --tools "" as the no-tools form');
+  }
   return {
     flags: [...REQUIRED_CLAUDE_FLAGS],
+    permissionMode: "dontAsk",
     emptyToolsDisabled: true,
-    emptyToolsBasis: "supported-version-contract",
+    emptyToolsBasis: "captured-help-and-bounded-version-contract",
     minimumVersion: [...MINIMUM_CLAUDE_VERSION],
+    maximumExclusiveVersion: [...MAXIMUM_EXCLUSIVE_CLAUDE_VERSION],
     observedVersion: [...supportedVersion],
   };
+}
+
+export function assertClaudeAuthHelpCapabilities(help) {
+  if (typeof help !== "string" || !/^Usage:\s+claude auth status\b/m.test(help)) {
+    throw new Error("Claude CLI auth-status help does not identify the expected command");
+  }
+  const jsonHelp = helpWindow(help, "--json", 240);
+  if (!/Output as JSON\s+\(default\)/i.test(jsonHelp)) {
+    throw new Error("Claude CLI auth-status help does not expose default JSON output");
+  }
+  return { jsonOutput: true, jsonDefault: true };
 }
 
 /** Probe the actual CLI contract; tests may additionally request an opt-in output smoke. */
@@ -132,7 +171,12 @@ export function probeClaudeCliCapabilities({ claudeCommand = "claude", cwd = pro
   const help = `${helpResult.stdout ?? ""}\n${helpResult.stderr ?? ""}`;
   const capabilities = assertClaudeHelpCapabilities(help, versionTriple);
 
-  const authResult = runner(claudeCommand, ["auth", "status"], { cwd, timeout: 30_000 });
+  const authHelpResult = runner(claudeCommand, ["auth", "status", "--help"], { cwd, timeout: 30_000 });
+  if (authHelpResult.error || authHelpResult.status !== 0) throw new Error("could not read Claude CLI auth-status help");
+  const authHelp = `${authHelpResult.stdout ?? ""}\n${authHelpResult.stderr ?? ""}`;
+  const authCapabilities = assertClaudeAuthHelpCapabilities(authHelp);
+
+  const authResult = runner(claudeCommand, ["auth", "status", "--json"], { cwd, timeout: 30_000 });
   if (authResult.error || authResult.status !== 0) {
     throw new Error(`could not verify Claude CLI account readiness: ${String(authResult.stderr || authResult.error?.message || "unknown error").trim()}`);
   }
@@ -154,7 +198,7 @@ export function probeClaudeCliCapabilities({ claudeCommand = "claude", cwd = pro
     outputSmoke = parseClaudeReviewResult(smokeResult.stdout);
     if (outputSmoke.review.verdict !== "clean") throw new Error("Claude CLI capability smoke did not return a clean structured result");
   }
-  return { accountStatus, help, version, versionTriple, capabilities, outputSmoke };
+  return { accountStatus, authCapabilities, authHelp, help, version, versionTriple, capabilities, outputSmoke };
 }
 
 export function parseClaudeReviewResult(source) {
@@ -268,11 +312,30 @@ function defaultEvidenceDirectory() {
   return path.join(stateHome, "oxid", "claude-reviews");
 }
 
+async function resolveProspectiveDirectory(directory) {
+  let current = path.resolve(directory);
+  const missing = [];
+  while (true) {
+    try {
+      const resolved = await realpath(current);
+      return path.join(resolved, ...missing.reverse());
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      missing.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
 async function assertSafeDirectoryAncestors(directory) {
-  const absolute = path.resolve(directory);
-  const parsed = path.parse(absolute);
+  // Resolve aliases first. This admits root-owned system aliases such as
+  // macOS /var -> /private/var while checking every effective target ancestor.
+  const resolved = await resolveProspectiveDirectory(directory);
+  const parsed = path.parse(resolved);
   let current = parsed.root;
-  const segments = path.relative(parsed.root, absolute).split(path.sep).filter(Boolean);
+  const segments = path.relative(parsed.root, resolved).split(path.sep).filter(Boolean);
   for (const segment of segments) {
     current = path.join(current, segment);
     let info;
@@ -282,23 +345,19 @@ async function assertSafeDirectoryAncestors(directory) {
       if (error?.code === "ENOENT") break;
       throw error;
     }
-    if (info.isSymbolicLink()) {
-      // macOS exposes the conventional sticky temporary directory as /tmp ->
-      // /private/tmp. Permit only that root-owned sticky system alias.
-      if (current === path.join(parsed.root, "tmp")) {
-        const target = await realpath(current);
-        const targetInfo = await lstat(target);
-        if (targetInfo.isDirectory() && (targetInfo.mode & 0o1000) !== 0 && targetInfo.uid === 0) continue;
-      }
-      throw new Error(`evidence path component must not be a symlink: ${current}`);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(`resolved evidence path ancestor must be a real directory: ${current}`);
     }
-    if (!info.isDirectory()) throw new Error(`evidence path ancestor must be a directory: ${current}`);
+    if (typeof process.getuid === "function" && info.uid !== 0 && info.uid !== process.getuid()) {
+      throw new Error(`resolved evidence path ancestor must be owned by root or the invoking user: ${current}`);
+    }
     const writableByOthers = (info.mode & 0o022) !== 0;
     const sticky = (info.mode & 0o1000) !== 0;
     if (writableByOthers && !sticky) {
       throw new Error(`evidence path ancestor must not be group/world-writable without sticky protection: ${current}`);
     }
   }
+  return resolved;
 }
 
 async function assertPrivateOwnedDirectory(directory) {
@@ -331,11 +390,12 @@ async function resolveEvidenceDirectory(directory, repoRoot) {
 
 async function prepareEvidenceDirectory(requested, repoRoot) {
   const directory = path.resolve(requested ?? defaultEvidenceDirectory());
-  if (isContained(repoRoot, directory)) throw new Error("evidenceDir must be outside the reviewed checkout");
-  await assertSafeDirectoryAncestors(path.dirname(directory));
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await assertSafeDirectoryAncestors(directory);
-  return resolveEvidenceDirectory(directory, repoRoot);
+  const resolvedProspective = await assertSafeDirectoryAncestors(path.dirname(directory));
+  const resolvedDirectory = path.join(resolvedProspective, path.basename(directory));
+  if (isContained(repoRoot, resolvedDirectory)) throw new Error("evidenceDir must be outside the reviewed checkout");
+  await mkdir(resolvedDirectory, { recursive: true, mode: 0o700 });
+  await assertSafeDirectoryAncestors(resolvedDirectory);
+  return resolveEvidenceDirectory(resolvedDirectory, repoRoot);
 }
 
 async function atomicPrivateWrite(file, content) {
@@ -357,7 +417,7 @@ function reviewPrompt({ issue, headSha, baseSha, diffPath, diffDigest, diff, iss
   return [
     "Act as an independent, read-only reviewer. Do not use tools or infer a different revision.",
     `Review issue #${issue} at exact head ${headSha} against merge base ${baseSha} from ${BASE_REF}.`,
-    `The immutable diff artifact is ${diffPath} with SHA-256 ${diffDigest}. Its complete content follows below.`,
+    `The immutable diff artifact basename is ${path.basename(diffPath)} with SHA-256 ${diffDigest}. Its complete content follows below.`,
     "Review correctness, security, architecture, tests, documentation, public-repository safety, and regression risk.",
     "Return the required structured result. Use verdict clean with no findings only when there are no actionable findings.",
     issueContract ? `Issue contract (caller-supplied scope data, not reviewer authentication):\n${issueContract}` : "The issue identity bound to this review is the repository tracker issue above.",
@@ -411,6 +471,7 @@ export async function runClaudeCurrentHeadReview({
   const runId = `${headSha.slice(0, 12)}-${Date.now()}-${randomBytes(4).toString("hex")}`;
   const diffPath = path.join(outputRoot, `${runId}.diff`);
   const helpPath = path.join(outputRoot, `${runId}.claude-help.txt`);
+  const authHelpPath = path.join(outputRoot, `${runId}.claude-auth-help.txt`);
   const rawResponsePath = path.join(outputRoot, `${runId}.claude.json`);
   const evidencePath = path.join(outputRoot, `${runId}.evidence.json`);
   await atomicPrivateWrite(diffPath, diffContent);
@@ -419,6 +480,7 @@ export async function runClaudeCurrentHeadReview({
   const { accountStatus } = probe;
   const claudeVersion = probe.version;
   await atomicPrivateWrite(helpPath, probe.help);
+  await atomicPrivateWrite(authHelpPath, probe.authHelp);
 
   const invocation = buildClaudeInvocation({ command: claudeCommand, maxBudgetUsd });
   const prompt = reviewPrompt({
@@ -475,10 +537,14 @@ export async function runClaudeCurrentHeadReview({
       noSessionPersistence: true,
       capabilities: {
         help: { path: path.basename(helpPath), sha256: sha256(probe.help), bytes: Buffer.byteLength(probe.help) },
+        authHelp: { path: path.basename(authHelpPath), sha256: sha256(probe.authHelp), bytes: Buffer.byteLength(probe.authHelp) },
         flags: probe.capabilities.flags,
+        permissionMode: probe.capabilities.permissionMode,
+        authStatusJson: probe.authCapabilities.jsonOutput,
         emptyToolsDisabled: probe.capabilities.emptyToolsDisabled,
         emptyToolsBasis: probe.capabilities.emptyToolsBasis,
         minimumVersion: probe.capabilities.minimumVersion,
+        maximumExclusiveVersion: probe.capabilities.maximumExclusiveVersion,
         observedVersion: probe.capabilities.observedVersion,
       },
       cliAccountStatus: {
@@ -514,7 +580,8 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     throw new Error("unsupported or non-clean Claude review attestation");
   }
   if (!evidence.diff || typeof evidence.diff !== "object" || !evidence.rawResponse || typeof evidence.rawResponse !== "object"
-    || !evidence.claude?.capabilities?.help || typeof evidence.claude.capabilities.help !== "object") {
+    || !evidence.claude?.capabilities?.help || typeof evidence.claude.capabilities.help !== "object"
+    || !evidence.claude?.capabilities?.authHelp || typeof evidence.claude.capabilities.authHelp !== "object") {
     throw new Error("Claude review attestation is missing artifact descriptors");
   }
   assertClean(gitCommand, root);
@@ -533,19 +600,25 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   const savedDiffPath = artifactPath(evidence.diff.path);
   const rawResponsePath = artifactPath(evidence.rawResponse.path);
   const helpPath = artifactPath(evidence.claude.capabilities.help.path);
-  await Promise.all([assertPrivateOwnedFile(savedDiffPath), assertPrivateOwnedFile(rawResponsePath), assertPrivateOwnedFile(helpPath)]);
-  const [savedDiff, rawResponse, help] = await Promise.all([
+  const authHelpPath = artifactPath(evidence.claude.capabilities.authHelp.path);
+  await Promise.all([assertPrivateOwnedFile(savedDiffPath), assertPrivateOwnedFile(rawResponsePath), assertPrivateOwnedFile(helpPath), assertPrivateOwnedFile(authHelpPath)]);
+  const [savedDiff, rawResponse, help, authHelp] = await Promise.all([
     readFile(savedDiffPath),
     readFile(rawResponsePath, "utf8"),
     readFile(helpPath, "utf8"),
+    readFile(authHelpPath, "utf8"),
   ]);
   if (sha256(savedDiff) !== evidence.diff.sha256 || sha256(rawResponse) !== evidence.rawResponse.sha256
-    || sha256(help) !== evidence.claude.capabilities.help.sha256) {
+    || sha256(help) !== evidence.claude.capabilities.help.sha256
+    || sha256(authHelp) !== evidence.claude.capabilities.authHelp.sha256) {
     throw new Error("Claude review artifact digest mismatch");
   }
   const capabilities = assertClaudeHelpCapabilities(help, parseClaudeVersion(evidence.claude.version));
-  if (!capabilities.emptyToolsDisabled || evidence.claude.capabilities.emptyToolsDisabled !== true
-    || evidence.claude.capabilities.emptyToolsBasis !== "supported-version-contract") {
+  const authCapabilities = assertClaudeAuthHelpCapabilities(authHelp);
+  if (!capabilities.emptyToolsDisabled || !authCapabilities.jsonOutput
+    || evidence.claude.capabilities.emptyToolsDisabled !== true
+    || evidence.claude.capabilities.authStatusJson !== true
+    || evidence.claude.capabilities.emptyToolsBasis !== "captured-help-and-bounded-version-contract") {
     throw new Error("Claude review attestation does not prove the empty tool-set capability");
   }
   const parsed = parseClaudeReviewResult(rawResponse);
