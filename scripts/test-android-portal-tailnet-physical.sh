@@ -205,8 +205,9 @@ if ! OXID_MOBILE_CUSTODY=development \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$manifest_sha" \
     "$REPOSITORY_ROOT/scripts/run-android-tailnet.sh" >>"$PRIVATE_LOG" 2>&1; then
   build_diagnostic="$(rg '^(error(\[[A-Z0-9]+\])?:|error: could not compile|Caused by:)' "$PRIVATE_LOG" | tail -n 20 || true)"
-  if [ -n "$build_diagnostic" ] && ! rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|private.?parts|signed.?bytes|detached.?proof|capability|seed|serial|\.ts\.net' <<<"$build_diagnostic"; then
-    printf '%s\n' "$build_diagnostic" >&2
+  if [ -n "$build_diagnostic" ]; then
+    sed -E 's#https?://[^[:space:]]+#<redacted-url>#g; s/[0-9a-f]{64}/<redacted-digest>/g' \
+      <<<"$build_diagnostic" >&2
   fi
   build_diagnostic=""
   fail android-build
