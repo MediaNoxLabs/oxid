@@ -301,12 +301,16 @@ try {
       );
     }
     await waitFor(
-      `Array.from(document.querySelectorAll('[role="status"]')).some((element) => {
-        const text = element.textContent.trim().toLowerCase();
-        return text.includes("unavailable")
-          && !/(openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|did:|https?:\\/\\/)/u.test(text);
-      })`,
-      "payload-free unavailable protocol failure",
+      `(() => {
+        const retry = ${button("Preview credential offer")};
+        return Boolean(retry && !retry.disabled)
+          && Array.from(document.querySelectorAll('[role="status"]')).some((element) => {
+            const text = element.textContent.trim();
+            return text.length > 0 && text.length <= 512
+              && !/(openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|did:|https?:\\/\\/)/iu.test(text);
+          });
+      })()`,
+      "payload-free terminal protocol failure",
       35_000,
     );
     await waitFor(`!Boolean(${button("Dismiss identity request")})`, "failed request cleanup");
