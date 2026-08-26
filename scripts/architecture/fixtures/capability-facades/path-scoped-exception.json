@@ -39,7 +39,7 @@
           "extraLineCeiling": 1,
           "issue": "#fixture",
           "reason": "path-scoping fixture",
-          "expiresOn": "2026-01-03"
+          "expiresOn": "2999-12-31"
         }
       ]
     }

@@ -4,15 +4,25 @@
 set -euo pipefail
 export LC_ALL=C
 
-repository_root="$(git rev-parse --show-toplevel)"
-baseline="${1:-$repository_root/scripts/architecture/capability-facades.json}"
-inventory="${CAPABILITY_FACADES_INVENTORY:-}"
-today="${CAPABILITY_FACADES_TODAY:-$(date -u +%F)}"
-
 fail() {
   echo "Capability façade check failed: $*" >&2
   exit 1
 }
+
+for override in CAPABILITY_FACADES_INVENTORY CAPABILITY_FACADES_TODAY CAPABILITY_FACADES_TEST_MODE; do
+  if [ "${!override+x}" = x ]; then
+    fail "production checker does not accept $override."
+  fi
+done
+[ "$#" -eq 0 ] || fail "production checker does not accept arguments."
+
+repository_root="$(git rev-parse --show-toplevel)"
+baseline_path="scripts/architecture/capability-facades.json"
+today="$(date -u +%F)"
+temporary_directory="$(mktemp -d)"
+trap 'rm -rf "$temporary_directory"' EXIT
+baseline="$temporary_directory/capability-facades.json"
+baseline_entries="$temporary_directory/baseline-index-entry"
 
 is_iso_date() {
   local value="$1"
@@ -28,9 +38,73 @@ is_iso_date() {
   return 1
 }
 
+path_has_glob() {
+  case "$1" in
+    *'*'*|*'?'*|*'['*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+encode_path() {
+  printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'
+}
+
+decode_path() {
+  local encoded="$1"
+  local escaped=""
+  while [ -n "$encoded" ]; do
+    escaped="$escaped\\x${encoded:0:2}"
+    encoded="${encoded:2}"
+  done
+  printf '%b' "$escaped"
+}
+
+display_path() {
+  printf '%q' "$1"
+}
+
+inventory_has() {
+  local encoded
+  encoded="$(encode_path "$1")"
+  awk -F '\t' -v path="$encoded" '$1 == path { found = 1 } END { exit !found }' "$inventory"
+}
+
+inventory_lines() {
+  local encoded
+  encoded="$(encode_path "$1")"
+  awk -F '\t' -v path="$encoded" '$1 == path { print $2 }' "$inventory"
+}
+
 command -v jq >/dev/null 2>&1 || fail "jq is required; run this check from 'nix develop'."
-is_iso_date "$today" || fail "comparison date '$today' is not an ISO-8601 calendar date."
-[ -f "$baseline" ] || fail "baseline '$baseline' does not exist."
+is_iso_date "$today" || fail "UTC date '$today' is not an ISO-8601 calendar date."
+if ! git -C "$repository_root" ls-files -s -z -- "$baseline_path" >"$baseline_entries"; then
+  fail "could not enumerate the indexed capability façade baseline."
+fi
+baseline_entry_count=0
+while IFS= read -r -d '' entry; do
+  baseline_entry_count=$((baseline_entry_count + 1))
+  case "$entry" in
+    *$'\t'*) ;;
+    *) fail "Git returned malformed baseline index metadata." ;;
+  esac
+  metadata="${entry%%$'\t'*}"
+  indexed_path="${entry#*$'\t'}"
+  mode=""
+  baseline_object_id=""
+  stage=""
+  extra=""
+  read -r mode baseline_object_id stage extra <<<"$metadata"
+  [ "$indexed_path" = "$baseline_path" ] && [ "$stage" = 0 ] && [ -z "$extra" ] ||
+    fail "capability façade baseline has an unresolved or malformed index entry."
+  case "$mode" in
+    100644|100755) ;;
+    *) fail "capability façade baseline is not a regular indexed blob." ;;
+  esac
+done <"$baseline_entries"
+[ "$baseline_entry_count" -eq 1 ] || fail "capability façade baseline is missing from the index."
+if ! git -C "$repository_root" cat-file blob "$baseline_object_id" >"$baseline"; then
+  fail "could not read the indexed capability façade baseline blob."
+fi
 
 jq -e '
   (keys == ["crates", "schemaVersion"]) and
@@ -56,50 +130,65 @@ jq -e '
   ))
 ' "$baseline" >/dev/null || fail "baseline schema is invalid."
 
-if [ -z "$inventory" ]; then
-  inventory="$(mktemp)"
-  trap 'rm -f "$inventory"' EXIT
-  while IFS= read -r source_root; do
-    while IFS= read -r path; do
-      case "$path" in
-        *.rs)
-          tracked_mode="$(git -C "$repository_root" ls-files --stage -- "$path" | awk 'NR == 1 { mode = $1 } END { if (NR == 1) print mode }')"
-          case "$tracked_mode" in
-            100644|100755) ;;
-            *) fail "governed Rust path '$path' is not a regular tracked file." ;;
-          esac
-          [ ! -L "$repository_root/$path" ] || fail "governed Rust path '$path' is a working-tree symlink."
-          [ -f "$repository_root/$path" ] || fail "governed Rust path '$path' is not a regular working-tree file."
-          printf '%s\t%s\n' "$path" "$(wc -l <"$repository_root/$path" | tr -d ' ')"
-          ;;
-      esac
-    done < <(git -C "$repository_root" ls-files -- "$source_root" | sort)
-  done < <(jq -r '.crates[].sourceRoot' "$baseline") >"$inventory"
-else
-  [ -f "$inventory" ] || fail "inventory '$inventory' does not exist."
+source_roots=()
+while IFS= read -r source_root; do
+  case "$source_root" in
+    /*|*..*|*/|*.rs) fail "invalid sourceRoot '$source_root'." ;;
+  esac
+  path_has_glob "$source_root" && fail "sourceRoot '$source_root' must not contain a glob."
+  source_roots+=("$source_root")
+done < <(jq -r '.crates[].sourceRoot' "$baseline")
+
+inventory="$temporary_directory/inventory"
+unsorted_inventory="$temporary_directory/unsorted-inventory"
+index_entries="$temporary_directory/index-entries"
+if ! git -C "$repository_root" ls-files -s -z -- "${source_roots[@]}" >"$index_entries"; then
+  fail "could not enumerate governed index entries."
 fi
 
+while IFS= read -r -d '' entry; do
+  case "$entry" in
+    *$'\t'*) ;;
+    *) fail "Git returned malformed index metadata." ;;
+  esac
+  metadata="${entry%%$'\t'*}"
+  path="${entry#*$'\t'}"
+  case "$path" in
+    *.rs) ;;
+    *) continue ;;
+  esac
+
+  mode=""
+  object_id=""
+  stage=""
+  extra=""
+  read -r mode object_id stage extra <<<"$metadata"
+  [ -n "$mode" ] && [ -n "$object_id" ] && [ "$stage" = 0 ] && [ -z "$extra" ] ||
+    fail "governed Rust path '$(display_path "$path")' has an unresolved or malformed index entry."
+  case "$mode" in
+    100644|100755) ;;
+    *) fail "governed Rust path '$(display_path "$path")' is not a regular indexed blob." ;;
+  esac
+  case "$object_id" in
+    *[!0-9a-f]*|'') fail "governed Rust path '$(display_path "$path")' has an invalid indexed object ID." ;;
+  esac
+
+  if ! lines="$(git -C "$repository_root" cat-file blob "$object_id" | wc -l | tr -d ' ')"; then
+    fail "could not read indexed blob for governed Rust path '$(display_path "$path")'."
+  fi
+  printf '%s\t%s\n' "$(encode_path "$path")" "$lines" >>"$unsorted_inventory"
+done <"$index_entries"
+
+sort -t $'\t' -k1,1 "$unsorted_inventory" >"$inventory"
 awk -F '\t' '
   NF != 2 || $1 == "" || $2 !~ /^[0-9]+$/ { exit 1 }
   seen[$1]++ { if (seen[$1] > 1) exit 1 }
-' "$inventory" || fail "inventory must contain unique PATH<TAB>PHYSICAL_LINES records."
-
-path_has_glob() {
-  case "$1" in
-    *'*'*|*'?'*|*'['*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+' "$inventory" || fail "indexed inventory must contain unique path and physical-line records."
 
 while IFS= read -r crate; do
   name="$(jq -r '.name' <<<"$crate")"
   source_root="$(jq -r '.sourceRoot' <<<"$crate")"
   maximum="$(jq -r '.facadeMaximumPhysicalLines' <<<"$crate")"
-
-  case "$source_root" in
-    /*|*..*|*/|*.rs) fail "$name has an invalid sourceRoot '$source_root'." ;;
-  esac
-  path_has_glob "$source_root" && fail "$name sourceRoot must not contain a glob."
 
   duplicate_facade="$(jq -r '.facadeFiles[]' <<<"$crate" | sort | uniq -d)"
   [ -z "$duplicate_facade" ] || fail "$name repeats façade path '$duplicate_facade'."
@@ -111,7 +200,7 @@ while IFS= read -r crate; do
       "$source_root"/*.rs) ;;
       *) fail "$name façade '$facade' is not a Rust file below '$source_root'." ;;
     esac
-    grep -Fqx "$facade" < <(cut -f1 "$inventory") || fail "$name façade '$facade' is missing from the committed inventory."
+    inventory_has "$facade" || fail "$name façade '$facade' is missing from the indexed inventory."
   done < <(jq -r '.facadeFiles[]' <<<"$crate")
 
   jq -e 'all(.capabilityOwners[];
@@ -135,12 +224,13 @@ while IFS= read -r crate; do
       *.rs|*/) fail "$name owner '$owner' prefix '$prefix' must be a Rust module path without an extension or trailing slash." ;;
     esac
     owned_paths=0
-    while IFS= read -r inventory_path; do
+    while IFS=$'\t' read -r encoded_path lines; do
+      inventory_path="$(decode_path "$encoded_path")"
       case "$inventory_path" in
         "$prefix.rs"|"$prefix"/*) owned_paths=$((owned_paths + 1)) ;;
       esac
-    done < <(cut -f1 "$inventory")
-    [ "$owned_paths" -gt 0 ] || fail "$name owner '$owner' prefix '$prefix' owns no committed Rust source."
+    done <"$inventory"
+    [ "$owned_paths" -gt 0 ] || fail "$name owner '$owner' prefix '$prefix' owns no indexed Rust source."
   done <"$prefixes"
   while IFS=$'\t' read -r owner prefix; do
     while IFS=$'\t' read -r other_owner other_prefix; do
@@ -165,7 +255,7 @@ while IFS= read -r crate; do
       "$source_root"/*.rs) ;;
       *) fail "$name exclusion '$exclusion' is not a Rust file below '$source_root'." ;;
     esac
-    grep -Fqx "$exclusion" < <(cut -f1 "$inventory") || fail "$name exclusion '$exclusion' is missing from the committed inventory."
+    inventory_has "$exclusion" || fail "$name exclusion '$exclusion' is missing from the indexed inventory."
   done < <(jq -r '.exclusions[].path' <<<"$crate")
 
   jq -e 'all(.temporaryExceptions[];
@@ -188,7 +278,7 @@ while IFS= read -r crate; do
     exception_excess=0
     while IFS= read -r exception_path; do
       jq -e --arg path "$exception_path" '.facadeFiles | index($path) != null' <<<"$crate" >/dev/null || fail "$name exception path '$exception_path' is not an exact façade path."
-      lines="$(awk -F '\t' -v path="$exception_path" '$1 == path { print $2 }' "$inventory")"
+      lines="$(inventory_lines "$exception_path")"
       path_maximum="$(jq -r --arg path "$exception_path" '.facadeMaximumPhysicalLinesByPath[$path]' <<<"$crate")"
       if [ "$lines" -gt "$path_maximum" ]; then
         exception_excess=$((exception_excess + lines - path_maximum))
@@ -201,7 +291,7 @@ while IFS= read -r crate; do
 
   facade_total=0
   while IFS= read -r facade; do
-    lines="$(awk -F '\t' -v path="$facade" '$1 == path { print $2 }' "$inventory")"
+    lines="$(inventory_lines "$facade")"
     facade_total=$((facade_total + lines))
     if ! jq -e --arg path "$facade" '[.temporaryExceptions[].paths[]] | index($path) != null' <<<"$crate" >/dev/null; then
       path_maximum="$(jq -r --arg path "$facade" '.facadeMaximumPhysicalLinesByPath[$path]' <<<"$crate")"
@@ -211,7 +301,8 @@ while IFS= read -r crate; do
   allowed_total=$((maximum + exception_ceiling))
   [ "$facade_total" -le "$allowed_total" ] || fail "$name façade total $facade_total exceeds its allowed maximum $allowed_total."
 
-  while IFS=$'\t' read -r path lines; do
+  while IFS=$'\t' read -r encoded_path lines; do
+    path="$(decode_path "$encoded_path")"
     case "$path" in
       "$source_root"/*.rs) ;;
       *) continue ;;
@@ -228,7 +319,7 @@ while IFS= read -r crate; do
         "$prefix.rs"|"$prefix"/*) owners=$((owners + 1)) ;;
       esac
     done <"$prefixes"
-    [ "$owners" -eq 1 ] || fail "$name source '$path' belongs to $owners capability owners; expected exactly one."
+    [ "$owners" -eq 1 ] || fail "$name source '$(display_path "$path")' belongs to $owners capability owners; expected exactly one."
   done <"$inventory"
   rm -f "$prefixes"
 done < <(jq -c '.crates[]' "$baseline")

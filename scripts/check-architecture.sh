@@ -3,6 +3,17 @@
 
 set -euo pipefail
 
+for override in CAPABILITY_FACADES_INVENTORY CAPABILITY_FACADES_TODAY CAPABILITY_FACADES_TEST_MODE; do
+  if [ "${!override+x}" = x ]; then
+    echo "Architecture check does not accept $override." >&2
+    exit 1
+  fi
+done
+if [ "$#" -ne 0 ]; then
+  echo "Architecture check does not accept arguments." >&2
+  exit 1
+fi
+
 for required_tool in jq rg; do
   if ! command -v "$required_tool" >/dev/null 2>&1; then
     echo "$required_tool is required; run this check from 'nix develop'." >&2
