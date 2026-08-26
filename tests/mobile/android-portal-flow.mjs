@@ -314,7 +314,12 @@ try {
     );
     await waitFor(`!Boolean(${button("Dismiss identity request")})`, "failed request cleanup");
     const after = await counters();
-    assertExactCounterDelta(start, after, { issuerMetadata: 1 }, mode);
+    assertExactCounterDelta(
+      start,
+      after,
+      { issuerMetadata: mode === "protocol-error" ? 2 : 1 },
+      mode,
+    );
     await setProxyMode("normal");
   } else if (mode === "issue-error") {
     const start = await counters();
@@ -354,7 +359,7 @@ try {
     assertExactCounterDelta(start, counts, {
       authorizationMetadata: 1,
       issuerMetadata: 1,
-      token: 1,
+      token: 2,
     }, "failed issuance");
     await click("Leave credential review");
     await waitFor(

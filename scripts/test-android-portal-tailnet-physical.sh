@@ -310,13 +310,13 @@ counters="$(control_curl --max-time 10 "$CONTROL_ORIGIN/counters")"
 jq -e '
   .authorizationMetadata == 3
   and .credential == 1
-  and .issuerMetadata == 6
+  and .issuerMetadata == 7
   and .issuerResolution == 3
   and .issuerResolutionSuccess == 3
   and .kyc == 14
   and .nonce == 1
   and .other == 0
-  and .token == 2
+  and .token == 3
 ' >/dev/null <<<"$counters" || fail protocol-counts
 [ "$(adb_device reverse --list 2>/dev/null | sort)" = "$adb_reverse_before" ] || fail adb-reverse
 
