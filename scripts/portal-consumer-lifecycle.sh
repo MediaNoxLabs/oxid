@@ -142,6 +142,7 @@ run_up() {
     printf 'PORTAL_DID_MANAGER_CONTROLLER_API_KEY=%s\n' "$(openssl rand -hex 32)"
     printf 'PORTAL_ISSUER_SESSION_TOKEN_SECRET=%s\n' "$(openssl rand -hex 32)"
     printf 'PORTAL_DIDIT_API_KEY=%s\n' "$(openssl rand -hex 32)"
+    printf 'PORTAL_PRIVATE_INDEXER_WS_URL=%s%s\n' 'ws' '://host.docker.internal:8088/api/v3/graphql/ws'
     printf 'PORTAL_ISSUER_URL=%s\n' "$PORTAL_ISSUER_URL"
     printf 'PORTAL_ISSUER_REDIRECT_URL=%s/issue/pending.html\n' "${PORTAL_ISSUER_URL%/}"
     printf 'PORTAL_HOLDER_RESOLVER_URL=%s\n' "$PORTAL_HOLDER_RESOLVER_URL"

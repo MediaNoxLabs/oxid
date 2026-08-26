@@ -18,8 +18,7 @@ services:
     environment:
       MIDNIGHT_NETWORK: undeployed
       MIDNIGHT_INDEXER_HTTP_URL: http://host.docker.internal:8088/api/v3/graphql
-      # The development indexer has no TLS listener and is private to this same-host stack.
-      MIDNIGHT_INDEXER_WS_URL: ws://host.docker.internal:8088/api/v3/graphql/ws # nosem: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
+      MIDNIGHT_INDEXER_WS_URL: "${PORTAL_PRIVATE_INDEXER_WS_URL:?}"
       RESOLVER_PORT: "3001"
       RESOLVER_DEBUG: "false"
     healthcheck:
@@ -43,8 +42,7 @@ services:
       DID_MANAGER_NETWORK: undeployed
       DID_MANAGER_NODE_RPC_URL: http://host.docker.internal:9944
       DID_MANAGER_INDEXER_URL: http://host.docker.internal:8088/api/v3/graphql
-      # The development indexer has no TLS listener and is private to this same-host stack.
-      DID_MANAGER_INDEXER_WS_URL: ws://host.docker.internal:8088/api/v3/graphql/ws # nosem: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
+      DID_MANAGER_INDEXER_WS_URL: "${PORTAL_PRIVATE_INDEXER_WS_URL:?}"
       DID_MANAGER_PROOF_SERVER_URL: http://host.docker.internal:6300
       DID_MANAGER_BIND: 0.0.0.0
       DID_MANAGER_PORT: "8098"
