@@ -225,8 +225,8 @@ adb_device exec-out run-as io.medianox.oxid cat files/oxid/private/did-records.j
 
 curl --noproxy '*' --fail --silent --show-error --max-time 30 \
   -X POST "$CONTROL_ORIGIN/arm-android-offer" >/dev/null || fail offer-arm
-head -c 64 <&8 | adb_device shell run-as io.medianox.oxid sh -c \
-  'umask 077; target=files/portal-offer.capability; candidate=files/.portal-offer.capability.tmp; rm -f "$candidate" "$target"; cat >"$candidate"; test "$(wc -c <"$candidate")" -eq 64; mv "$candidate" "$target"' \
+capability_stage_command="run-as io.medianox.oxid sh -c 'umask 077; target=files/portal-offer.capability; candidate=files/.portal-offer.capability.tmp; rm -f \"\$candidate\" \"\$target\"; cat >\"\$candidate\"; test \"\$(wc -c <\"\$candidate\")\" -eq 64; mv \"\$candidate\" \"\$target\"'"
+head -c 64 <&8 | adb_device shell "$capability_stage_command" \
   >/dev/null 2>>"$PRIVATE_LOG" || fail capability-stage
 adb_device shell am start -W -a android.intent.action.VIEW -d "$TRIGGER" io.medianox.oxid \
   >/dev/null 2>>"$PRIVATE_LOG" || fail ingress
