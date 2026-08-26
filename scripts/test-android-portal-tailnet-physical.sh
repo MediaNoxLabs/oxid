@@ -53,9 +53,11 @@ cleanup() {
     adb_device forward --remove "tcp:$forward_port" >/dev/null 2>&1 || cleanup_status=1
     forward_port=""
   fi
-  adb_device shell run-as io.medianox.oxid sh -c \
-    'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp' \
-    >/dev/null 2>&1 || true
+  if ! adb_device shell \
+    "run-as io.medianox.oxid sh -c 'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp && test ! -e files/portal-offer.capability && test ! -e files/.portal-offer.capability.tmp'" \
+    >/dev/null 2>&1; then
+    cleanup_status=1
+  fi
   if [ "$profile_active" -eq 1 ]; then
     XDG_CONFIG_HOME="$XDG_CONFIG" XDG_STATE_HOME="$XDG_STATE" \
       "$SOURCE/scripts/tailscale-https-profile.sh" cleanup \
