@@ -6,10 +6,25 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
+export const MINIMUM_GH_VERSION = [2, 67, 0];
+
 export function parseGhVersion(output) {
   const match = String(output).match(/(?:^|\n)gh version (\d+)\.(\d+)\.(\d+)(?:\s|$)/);
   if (!match) throw new Error("could not parse GitHub CLI version");
   return match.slice(1).map(Number);
+}
+
+export function assertMinimumGhVersion(version, minimum = MINIMUM_GH_VERSION) {
+  if (!Array.isArray(version) || version.length !== 3 || version.some((part) => !Number.isInteger(part) || part < 0)) {
+    throw new Error("GitHub CLI version must be a semantic version triple");
+  }
+  for (let index = 0; index < 3; index += 1) {
+    if (version[index] > minimum[index]) return version;
+    if (version[index] < minimum[index]) {
+      throw new Error(`GitHub CLI ${version.join(".")} is unsupported; require >= ${minimum.join(".")}`);
+    }
+  }
+  return version;
 }
 
 function flattenPages(value) {
@@ -66,7 +81,7 @@ export function bodyClosesIssue(body, issue) {
 export function resolveIssuePullRequestLinks({ repository, issue, ghCommand = "gh" }) {
   if (!/^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "")) throw new Error("--repo must be OWNER/REPO");
   if (!Number.isInteger(issue) || issue < 1) throw new Error("--issue must be a positive integer");
-  parseGhVersion(runGh(ghCommand, ["--version"]));
+  assertMinimumGhVersion(parseGhVersion(runGh(ghCommand, ["--version"])));
   const endpoint = `repos/${repository}/issues/${issue}/timeline`;
   const source = runGh(ghCommand, [
     "api", "--paginate", "--slurp",

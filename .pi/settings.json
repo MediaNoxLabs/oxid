@@ -5,29 +5,6 @@
     "npm:@input-output-hk/agent-review-pi@0.5.0"
   ],
   "subagents": {
-    "projectRootResolution": "git-root",
-    "agentOverrides": {
-      "dev-loop": {
-        "tools": ["read", "grep", "find", "ls", "bash", "subagent"]
-      },
-      "developer": {
-        "tools": ["read", "grep", "find", "ls", "bash", "edit", "write"]
-      },
-      "docs": {
-        "tools": ["read", "grep", "find", "ls", "bash", "edit", "write"]
-      },
-      "fixer": {
-        "tools": ["read", "grep", "find", "ls", "bash", "edit", "write"]
-      },
-      "quality": {
-        "tools": ["read", "grep", "find", "ls", "bash", "edit", "write"]
-      },
-      "refiner": {
-        "tools": ["read", "grep", "find", "ls", "bash", "edit", "write"]
-      },
-      "review": {
-        "tools": ["read", "grep", "find", "ls", "bash", "edit", "write"]
-      }
-    }
+    "projectRootResolution": "git-root"
   }
 }

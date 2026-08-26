@@ -23,11 +23,26 @@ function readOption(args, name) {
   return values;
 }
 
-/** Force the only writable delivery base for repository PR creation. */
+function publicRoute(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--silent" || argument === "-s") continue;
+    if (argument === "--jq") {
+      if (index + 1 >= args.length) throw new Error("--jq requires a value");
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--jq=")) continue;
+    return { category: argument, command: args[index + 1] };
+  }
+  return {};
+}
+
+/** Force the base on dev-loops' public PR create route and deprecated alias. */
 export function normalizeDevLoopsArgs(argv) {
   const args = [...argv];
-  const prIndex = args.findIndex((argument) => argument === "pr");
-  const isPrCreate = prIndex >= 0 && (args[prIndex + 1] === "create" || args[prIndex + 1] === "create-draft");
+  const route = publicRoute(args);
+  const isPrCreate = route.category === "pr" && (route.command === "create" || route.command === "create-draft");
   if (!isPrCreate) return args;
   const bases = readOption(args, "--base");
   if (bases.length > 1) throw new Error("repository pull requests accept exactly one base");

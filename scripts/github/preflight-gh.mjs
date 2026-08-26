@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
-import { parseGhVersion } from "./resolve-issue-pr-links.mjs";
+import { assertMinimumGhVersion, parseGhVersion } from "./resolve-issue-pr-links.mjs";
 
 function run(ghCommand, args) {
   try {
@@ -23,7 +23,7 @@ export function preflightGh({ repository, issue, ghCommand = "gh" }) {
   if (!Number.isInteger(issue) || issue < 1) throw new Error("--issue must be a positive integer");
 
   const versionOutput = run(ghCommand, ["--version"]);
-  const version = parseGhVersion(versionOutput);
+  const version = assertMinimumGhVersion(parseGhVersion(versionOutput));
   const headers = [
     "-H", "Accept: application/vnd.github+json",
     "-H", "X-GitHub-Api-Version: 2022-11-28",

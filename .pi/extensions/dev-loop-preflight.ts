@@ -9,13 +9,20 @@ import {
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 
 type PreflightState = { ok: true } | { ok: false; message: string };
+type PreflightRuntime = {
+  resolve?: typeof resolveDevLoopsPackageRoot;
+  check?: typeof checkAgentToolAllowlists;
+};
 
-export async function runDevLoopPreflight(pi: ExtensionAPI, cwd: string): Promise<PreflightState> {
+export async function runDevLoopPreflight(pi: ExtensionAPI, cwd: string, runtime: PreflightRuntime = {}): Promise<PreflightState> {
   try {
-    const resolved = await resolveDevLoopsPackageRoot({ cwd });
+    const resolve = runtime.resolve ?? resolveDevLoopsPackageRoot;
+    const checkAllowlists = runtime.check ?? checkAgentToolAllowlists;
+    const resolved = await resolve({ cwd });
     const availableTools = pi.getAllTools().map((tool) => tool.name);
-    const result = await checkAgentToolAllowlists({
+    const result = await checkAllowlists({
       packageRoot: resolved.packageRoot,
+      projectRoot: resolved.gitRoot,
       settings: resolved.settings,
       availableTools,
     });
@@ -29,10 +36,10 @@ export async function runDevLoopPreflight(pi: ExtensionAPI, cwd: string): Promis
   }
 }
 
-export default function devLoopPreflight(pi: ExtensionAPI) {
+export default function devLoopPreflight(pi: ExtensionAPI, runtime: PreflightRuntime = {}) {
   // Recheck rather than caching: settings and registered tools can change during
   // a session, including between tool execution and the next provider turn.
-  const check = (cwd: string) => runDevLoopPreflight(pi, cwd);
+  const check = (cwd: string) => runDevLoopPreflight(pi, cwd, runtime);
 
   // Input interception is Pi's documented no-model boundary. It applies to
   // interactive, RPC, and extension-injected user input.

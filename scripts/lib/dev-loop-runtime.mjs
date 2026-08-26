@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { createRequire } from "node:module";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 const SETTINGS_PATH = path.join(".pi", "settings.json");
 const PACKAGE_RELATIVE_PATH = path.join(".pi", "npm", "node_modules", "dev-loops");
+const PROJECT_AGENTS_PATH = path.join(".pi", "agents");
 
 async function exists(candidate) {
   try {
@@ -130,49 +132,98 @@ export async function resolveDevLoopsPackageRoot({ cwd = process.cwd() } = {}) {
   );
 }
 
-function parseFrontmatter(source, file) {
+function yamlParserFor(packageRoot) {
+  try {
+    const require = createRequire(path.join(packageRoot, "package.json"));
+    const yaml = require("yaml");
+    if (typeof yaml?.parse !== "function") throw new Error("yaml.parse is unavailable");
+    return yaml.parse;
+  } catch (error) {
+    throw new Error(`could not load the YAML parser from the exact project package tree: ${error.message}`, { cause: error });
+  }
+}
+
+/** Parse one agent manifest with the same YAML forms accepted by the pinned runtime. */
+export function parseAgentFrontmatter(source, file, parseYaml) {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) throw new Error(`agent manifest has no YAML frontmatter: ${file}`);
-  const fields = new Map();
-  for (const line of match[1].split(/\r?\n/)) {
-    const field = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.*?)\s*$/);
-    if (field) fields.set(field[1], field[2]);
+  let fields;
+  try {
+    fields = parseYaml(match[1]);
+  } catch (error) {
+    throw new Error(`invalid YAML frontmatter in agent manifest ${file}: ${error.message}`, { cause: error });
   }
-  const unquote = (value) => value?.replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, (_all, double, single) => double ?? single);
-  const name = unquote(fields.get("name"));
-  const rawTools = fields.get("tools");
-  if (!name || rawTools === undefined) throw new Error(`agent manifest requires name and tools: ${file}`);
-  const normalizedTools = rawTools.trim();
-  if (!normalizedTools) throw new Error(`agent manifest tools must use a non-empty inline allowlist: ${file}`);
-  const toolsSource = normalizedTools.startsWith("[") && normalizedTools.endsWith("]")
-    ? normalizedTools.slice(1, -1)
-    : normalizedTools;
-  const tools = toolsSource.split(",").map((tool) => unquote(tool.trim())).filter(Boolean);
-  if (!Array.isArray(tools) || tools.some((tool) => typeof tool !== "string" || !tool)) {
-    throw new Error(`agent manifest has an invalid tools allowlist: ${file}`);
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+    throw new Error(`agent manifest frontmatter must be a mapping: ${file}`);
+  }
+  const name = typeof fields.name === "string" ? fields.name.trim() : "";
+  const rawTools = fields.tools;
+  let tools;
+  if (Array.isArray(rawTools)) {
+    tools = rawTools.map((tool) => typeof tool === "string" ? tool.trim() : tool);
+  } else if (typeof rawTools === "string") {
+    tools = rawTools.split(",").map((tool) => tool.trim());
+  } else {
+    throw new Error(`agent manifest requires tools as an inline or multiline string list: ${file}`);
+  }
+  if (!name || tools.length === 0 || tools.some((tool) => typeof tool !== "string" || !tool)) {
+    throw new Error(`agent manifest requires a non-empty name and tools allowlist: ${file}`);
   }
   return { name, tools };
 }
 
-/** Check effective packaged agent allowlists after tracked project overrides. */
-export async function checkAgentToolAllowlists({ packageRoot, settings, availableTools }) {
-  if (!packageRoot) throw new Error("packageRoot is required");
-  if (!Array.isArray(availableTools)) throw new Error("availableTools must be an array");
-  const available = new Set(availableTools);
-  const agentsRoot = path.join(packageRoot, "agents");
-  const files = (await readdir(agentsRoot)).filter((file) => file.endsWith(".agent.md")).sort();
-  const overrides = settings?.subagents?.agentOverrides ?? {};
-  const agents = [];
+function assertSupportedProjectSettings(settings) {
+  const subagents = settings?.subagents;
+  if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) {
+    throw new Error(".pi/settings.json must define subagents.projectRootResolution");
+  }
+  if (subagents.projectRootResolution !== "git-root") {
+    throw new Error("subagents.projectRootResolution must be git-root for managed worktrees");
+  }
+  if (subagents.agentOverrides !== undefined) {
+    throw new Error(
+      "tracked agentOverrides are forbidden for tool repair: pi-subagents 0.42.1 does not replace a custom agent's frontmatter tools; use tracked .pi/agents shadows",
+    );
+  }
+}
 
-  for (const file of files) {
-    const packaged = parseFrontmatter(await readFile(path.join(agentsRoot, file), "utf8"), file);
-    const override = overrides[packaged.name]?.tools;
-    if (override !== undefined && (!Array.isArray(override) || override.some((tool) => typeof tool !== "string" || !tool))) {
-      throw new Error(`invalid tool override for agent ${packaged.name}`);
-    }
-    const tools = override ?? packaged.tools;
-    const missingTools = tools.filter((tool) => !available.has(tool));
-    agents.push({ name: packaged.name, file, tools: [...tools], missingTools });
+async function readAgentDirectory(root, parseYaml) {
+  if (!(await exists(root))) return [];
+  const files = (await readdir(root)).filter((file) => file.endsWith(".md")).sort();
+  return Promise.all(files.map(async (file) => ({
+    ...parseAgentFrontmatter(await readFile(path.join(root, file), "utf8"), path.join(root, file), parseYaml),
+    file: path.join(root, file),
+  })));
+}
+
+/** Check effective package agents after supported tracked project shadows. */
+export async function checkAgentToolAllowlists({ packageRoot, settings, availableTools, projectRoot }) {
+  if (!packageRoot) throw new Error("packageRoot is required");
+  if (!projectRoot) throw new Error("projectRoot is required");
+  if (!Array.isArray(availableTools)) throw new Error("availableTools must be an array");
+  assertSupportedProjectSettings(settings);
+  const available = new Set(availableTools);
+  const parseYaml = yamlParserFor(packageRoot);
+  const packaged = await readAgentDirectory(path.join(packageRoot, "agents"), parseYaml);
+  const project = await readAgentDirectory(path.join(projectRoot, PROJECT_AGENTS_PATH), parseYaml);
+  const projectByName = new Map();
+  for (const agent of project) {
+    if (projectByName.has(agent.name)) throw new Error(`duplicate tracked project agent '${agent.name}'`);
+    projectByName.set(agent.name, agent);
+  }
+
+  const agents = [];
+  const covered = new Set();
+  for (const packageAgent of packaged) {
+    const effective = projectByName.get(packageAgent.name) ?? packageAgent;
+    covered.add(effective.name);
+    const missingTools = effective.tools.filter((tool) => !available.has(tool));
+    agents.push({ name: effective.name, file: effective.file, source: effective === packageAgent ? "package" : "project", tools: [...effective.tools], missingTools });
+  }
+  for (const projectAgent of project) {
+    if (covered.has(projectAgent.name)) continue;
+    const missingTools = projectAgent.tools.filter((tool) => !available.has(tool));
+    agents.push({ name: projectAgent.name, file: projectAgent.file, source: "project", tools: [...projectAgent.tools], missingTools });
   }
 
   return { ok: agents.every(({ missingTools }) => missingTools.length === 0), agents };
@@ -183,5 +234,5 @@ export function formatAgentToolAllowlistFailure(result) {
   if (invalid.length === 0) return "";
   return `Pi dev-loop preflight failed: unavailable agent tools: ${invalid
     .map(({ name, missingTools }) => `${name}=[${missingTools.join(", ")}]`)
-    .join("; ")}. Update tracked .pi/settings.json overrides or the pinned packages before model execution.`;
+    .join("; ")}. Fix the tracked .pi/agents manifest or exact package installation before model execution. For unrelated emergency Pi use only, 'pi --no-approve' ignores the project extension; never run a dev-loop in that mode.`;
 }

@@ -163,11 +163,13 @@ undetectable later. The check that matters is `gates` parsing.
   Copilot review disabled. `external-review` is nevertheless configured as an
   angle in both `gates.draft` and `gates.preApproval`. That angle requires a
   manually invoked independent Claude CLI review pinned to the exact current
-  head and records its evidence in the local gate; it is not a hosted GitHub
-  check. Run `scripts/review/claude-current-head.mjs` from a clean worktree as
+  head and records a local attestation in the local gate; it is not a hosted GitHub
+  check. It also does not authenticate reviewer identity or provide
+  dev-loops-native provenance.
+  Run `scripts/review/claude-current-head.mjs` from a clean worktree as
   documented in `docs/dev-loop-stability.md`. Any push invalidates that
-  evidence, and the fresh evidence must be posted to the pull request before
-  merge. See `docs/integration-delivery.md`.
+  attestation, and the fresh attestation must be posted to the pull request
+  before merge. See `docs/integration-delivery.md`.
 
 ## One decision still needed from the owner
 

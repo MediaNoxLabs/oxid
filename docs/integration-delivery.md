@@ -115,8 +115,9 @@ permissions to make a check required.
 Copilot review is unavailable and remains disabled with
 `refinement.maxCopilotRounds: 0`. The `external-review` angle is configured in
 both local `draft` and `preApproval` gates. It requires a manually invoked fresh
-independent Claude CLI review and records that evidence in the local gate; it is
-not a hosted GitHub status check. Evidence is valid only when it records:
+independent Claude CLI review and records a local attestation in the local gate;
+it is not a hosted GitHub status check or authenticated reviewer identity. The
+attestation is usable only when it records:
 
 - `claude --version`;
 - the exact reviewed head SHA and integration merge-base SHA;
@@ -126,12 +127,15 @@ not a hosted GitHub status check. Evidence is valid only when it records:
 
 Any push makes the evidence stale. Run the tracked
 `scripts/review/claude-current-head.mjs` wrapper with a clean checkout and an
-external evidence directory. It invokes the CLI from outside the checkout in
-safe mode with no tools, supplies the issue contract plus the exact diff
-artifact, and fails on stale state, malformed output, or findings. Verify the
-saved artifact with the same wrapper, fix every accepted finding, and repeat
-against the new head. See `docs/dev-loop-stability.md` for the exact command and
-evidence shape. Post the current-head evidence to the pull request before merge.
+a private XDG state directory (or an equally hardened explicit directory). It
+invokes the CLI from outside the checkout in safe mode with no tools, supplies
+caller-provided issue scope plus the exact diff artifact, and fails on stale
+state or malformed output. Findings are persisted as structured attestational
+evidence before the gate fails. Verify only a saved clean artifact with the same
+wrapper, fix every accepted finding, and repeat against the new head. See
+`docs/dev-loop-stability.md` for the exact command, limitations, and evidence
+shape. Post the current-head evidence to the pull request before merge; that
+evidence is the local attestation described above.
 Integration branch protection intentionally does not require a hosted
 human or code-owner approval; the owner has authorized clean integration
 merges only after this review control and every other current-head gate pass.

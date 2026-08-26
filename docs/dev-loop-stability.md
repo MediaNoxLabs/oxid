@@ -20,19 +20,34 @@ personal-path, arbitrary-ancestor, or filesystem-search fallback.
 node scripts/loop/ensure-worktree.mjs \
   --repo-root "$PWD" --issue <number>
 
-# Dev-loops CLI; PR creation adds integration and rejects another base.
+# Public dev-loops PR creation (`create-draft` is the deprecated alias) adds
+# integration and rejects another base. Other dev-loops subcommands pass through.
 node scripts/dev-loops.mjs pr create \
   --repo MediaNoxLabs/oxid --head <branch> \
   --assignee @me --title "<type>: <subject>" --body-file <body-file>
 ```
 
+These wrappers govern only the public routes shown above. They do not rewrite
+raw `gh`, direct package-script calls, or arbitrary internal dev-loops commands;
+repository rules and contributor policy remain authoritative for those paths.
+
+The exact `pi-subagents@0.42.1` runtime accepts
+`subagents.projectRootResolution: "git-root"`, but it deliberately does not
+replace `tools` already declared in a custom agent's frontmatter. Therefore the
+repository uses tracked `.pi/agents/*.agent.md` project shadows, which have
+higher precedence than the package agents copied to `~/.agents`; it does not
+claim that `subagents.agentOverrides` repairs those manifests.
+
 The project extension `.pi/extensions/dev-loop-preflight.ts` obtains Pi's
-registered tool names after extension registration, applies the tracked
-`subagents.agentOverrides`, and checks every effective packaged dev-loops agent
-allowlist. An unavailable tool causes the input event to be handled without an
-agent/model turn; defense-in-depth hooks abort programmatic turns before a
-provider request. Correct the package installation or tracked override instead
-of adding compatibility aliases.
+registered tool names after extension registration, parses the package and
+project manifests with the exact installed YAML dependency, and checks every
+effective allowlist. Inline and multiline YAML tool lists are supported;
+malformed YAML fails with the exact path. An unavailable tool causes the input
+event to be handled without an agent/model turn, and defense-in-depth hooks
+abort programmatic turns before a provider request. Fix the tracked manifest or
+exact installation instead of adding aliases. For unrelated emergency Pi use,
+`pi --no-approve` ignores project-local extensions; never run a dev-loop in
+that mode.
 
 The Nix default devshell includes `gh`. Before issue/PR link automation, probe
 the exact read-only REST behavior and then use the timeline resolver:
@@ -43,46 +58,55 @@ node scripts/github/resolve-issue-pr-links.mjs \
   --repo MediaNoxLabs/oxid --issue <number>
 ```
 
-Both commands use the issue and issue-timeline REST endpoints, including
-pagination. They fail closed on CLI, authentication, capability, or response
-shape errors and perform no mutation.
+Both commands require `gh >= 2.67.0` and use the issue and issue-timeline REST
+endpoints, including pagination. They fail closed on CLI version,
+authentication, capability, or response-shape errors and perform no mutation.
 
 ## Independent current-head review
 
 Both draft and pre-approval gates make `external-review` mandatory, while
 `maxCopilotRounds` remains zero. After committing all intended changes and
-fetching `origin/integration`, run the reviewer with a clean worktree. Put its
-artifacts outside the checkout so evidence generation cannot change the
-reviewed state.
+fetching `origin/integration`, run the reviewer with a clean worktree. By
+default it writes beneath `${XDG_STATE_HOME:-$HOME/.local/state}/oxid/claude-reviews`.
+The final directory must be a real, invoking-user-owned `0700` directory and
+each artifact is an owned regular `0600` file; symlinks and permissive modes
+fail closed. An explicit evidence directory must meet the same rules and stay
+outside the checkout.
 
 ```bash
 git fetch origin integration
 node scripts/review/claude-current-head.mjs \
   --issue <number> \
   --expected-head "$(git rev-parse HEAD)" \
-  --issue-contract-file <tracker-export.json> \
-  --evidence-dir "${TMPDIR:-/tmp}/oxid-claude-review-<number>"
+  --issue-contract-file <tracker-export.json>
 
 node scripts/review/claude-current-head.mjs \
   --verify-evidence <evidence.json>
 ```
 
 The runner independently derives HEAD and the `origin/integration` merge base,
-creates an immutable diff artifact and digest, invokes Claude outside the
-checkout in safe mode with an empty tool set and no session persistence, and
-records redacted authenticated-CLI status, CLI version, session id, timestamps,
-raw-output digest, exit status, and structured verdict. It checks clean/head/base/diff facts again afterward.
-Timeout, nonzero exit, malformed output, findings, mutation, or a changed ref is
-a hard failure. Verification re-derives these facts, so a push or integration
-advance makes old evidence stale. Post the verified evidence to the pull
-request; it complements rather than bypasses CI, security, DCO/signature, and
-merge controls.
+creates an exact-byte diff artifact and digest, preflights every Claude CLI
+flag it relies on, invokes Claude outside the checkout in safe mode with an
+empty tool set and no session persistence, and records CLI account readiness,
+version, observed session id, timestamps, raw-output digest, exit status, and a
+structured verdict. It checks clean/head/base/exact-diff facts again afterward.
+Timeout, nonzero exit, malformed output, mutation, or a changed ref is a hard
+failure. A findings verdict is also a failed gate, but its structured findings
+attestation is written first so the next fix pass has durable evidence.
+Verification accepts only clean evidence and re-derives all revision facts, so
+a push or integration advance makes it stale.
+
+This is **local attestational evidence**, not cryptographic reviewer-identity,
+GitHub-hosted, or dev-loops-native provenance. Caller-supplied tracker data and
+artifact digests bind bytes within the local record; they do not authenticate
+who operated the CLI. Post the current-head attestation to the pull request; it
+complements rather than bypasses CI, security, DCO/signature, and merge controls.
 
 ## Exact issue traceability
 
 | Issue #150 acceptance or definition-of-done item | First-slice status | Authority / remaining work |
 | --- | --- | --- |
-| Effective repository agent tool allowlists match installed Pi tools before model execution | Landed in this slice | `.pi/settings.json`, `scripts/lib/dev-loop-runtime.mjs`, and `.pi/extensions/dev-loop-preflight.ts` |
+| Effective repository agent tool allowlists match installed Pi tools before model execution | Landed in this slice | `.pi/agents/`, `scripts/lib/dev-loop-runtime.mjs`, and `.pi/extensions/dev-loop-preflight.ts`; `.pi/settings.json` owns only the supported git-root selection |
 | Project-local package discovery works at root and linked worktrees | Landed in this slice | The bounded tracked resolver and wrappers above |
 | Timeout, deadline, `usageBudget`, turn, tool, and control budgets survive resume exactly | **Upstream-only** | [pi-subagents #985](https://github.com/nicobailon/pi-subagents/issues/985) and the pinned [v0.42.1 async-resume source](https://github.com/nicobailon/pi-subagents/blob/v0.42.1/src/runs/background/async-resume.ts) |
 | Provider payload compaction/checkpointing and streamed-mutation retry idempotency | Deferred / **upstream-only** | No exact upstream issue was established during this bounded slice. File a minimal upstream reproduction before claiming a fix; no repository wrapper can safely reconstruct provider stream state. |
@@ -90,7 +114,7 @@ merge controls.
 | Unavailable Copilot review routes to mandatory independent current-head Claude review | Landed in this slice | `.devloops` and the Claude runner; hosted Copilot stays disabled |
 | Valid nested reviewer output cannot be overturned by a late unavailable-tool diagnostic | Deferred / **upstream-only** | Result/finalization ownership remains in pi-subagents. [pi-subagents #1434](https://github.com/nicobailon/pi-subagents/issues/1434) is the exact adjacent final-return serialization failure, not proof that the late-diagnostic case is fixed; that case still needs its own minimal upstream reproduction. |
 | Supported GitHub CLI behavior is deterministic | Landed in this slice | Nix pin plus REST behavior probe and timeline resolver |
-| dev-loops and pi-subagents share authenticated acceptance provenance | Partially landed / **upstream-only** | This slice records executable/version/session/artifact provenance for Claude. A shared cross-package provenance state machine requires upstream work in #1434 and #1460. |
+| dev-loops and pi-subagents share authenticated acceptance provenance | **Upstream-only** | This slice records explicit local attestational facts and does not claim reviewer authentication. A shared cross-package provenance state machine requires upstream work in #1434 and #1460. |
 | Reproduction coverage | Partial, first slice | Repository tests cover package roots, allowlists, integration normalization, REST normalization, Claude invocation/result contracts, policy, and docs. Resume, WebSocket interruption/idempotency, and upstream finalization reproduction stay upstream-only. |
 | Bounded issue-backed canary through PR/CI/merge checkpoint | Deferred operational validation | Run only after the repository slice is committed and every current-head gate is available; merge and board mutations remain orchestrator-owned. |
 
