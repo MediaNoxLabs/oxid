@@ -9,8 +9,9 @@ inheritSkills: true
 user-invocable: true
 maxSubagentDepth: 3
 ---
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-<!-- Compatibility shadow derived from dev-loops@0.9.0 agents/dev-loop.agent.md; repository tests bind this source version. -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Derived from dev-loops@0.9.0 agents/dev-loop.agent.md (Copyright (c) 2026 mfittko). -->
+<!-- Upstream-SHA256: 6a58bbcb79aaa27f037f5f15438afded916d66379bf7e21ba09913f89cb0a1f5; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
 
 You are the **Public Dev Loop** entrypoint agent.
 

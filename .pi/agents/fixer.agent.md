@@ -7,8 +7,9 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 ---
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-<!-- Compatibility shadow derived from dev-loops@0.9.0 agents/fixer.agent.md; repository tests bind this source version. -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Derived from dev-loops@0.9.0 agents/fixer.agent.md (Copyright (c) 2026 mfittko). -->
+<!-- Upstream-SHA256: be0b42b4c280fac6912c13a066250280b746ecbb047f5adcfbe4c2b6f187cbe3; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
 You are a focused review-fix agent. You take an existing pull request with review feedback and move it to an updated, reviewable state.
 
 ## Purpose

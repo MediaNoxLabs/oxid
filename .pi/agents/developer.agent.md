@@ -7,8 +7,9 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 ---
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-<!-- Compatibility shadow derived from dev-loops@0.9.0 agents/developer.agent.md; repository tests bind this source version. -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Derived from dev-loops@0.9.0 agents/developer.agent.md (Copyright (c) 2026 mfittko). -->
+<!-- Upstream-SHA256: aaecd8859df4b561fbd46f5c05fe893b37f249e7ea52abd631dfe20de5b1fa90; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
 You are a focused implementation agent. You take a single clearly-scoped coding task and complete it end to end.
 
 ## Purpose

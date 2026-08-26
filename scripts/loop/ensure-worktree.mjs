@@ -6,33 +6,16 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
+import { enforceSingleBase } from "../lib/pinned-dev-loops-args.mjs";
 
 const INTEGRATION_BASE = "origin/integration";
 
-function baseValues(args) {
-  const values = [];
-  for (let index = 0; index < args.length; index += 1) {
-    if (args[index] === "--base") {
-      if (index + 1 >= args.length || args[index + 1].startsWith("--")) throw new Error("--base requires a value");
-      values.push(args[index + 1]);
-      index += 1;
-    } else if (args[index].startsWith("--base=")) {
-      values.push(args[index].slice("--base=".length));
-    }
-  }
-  return values;
-}
-
 /** Force all managed worktrees to start from the integration remote ref. */
 export function normalizeWorktreeArgs(argv) {
-  const args = [...argv];
-  const bases = baseValues(args);
-  if (bases.length > 1) throw new Error("repository worktrees accept exactly one base");
-  if (bases.some((base) => base !== INTEGRATION_BASE)) {
-    throw new Error("repository worktrees must use origin/integration");
-  }
-  if (bases.length === 0) args.push("--base", INTEGRATION_BASE);
-  return args;
+  return enforceSingleBase(argv, INTEGRATION_BASE, {
+    addWhenMissing: true,
+    label: "repository worktrees",
+  });
 }
 
 export async function runEnsureWorktree(argv = process.argv.slice(2), {

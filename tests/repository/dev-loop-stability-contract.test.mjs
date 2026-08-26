@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import {
   checkAgentToolAllowlists,
   devLoopPreflightCacheKey,
+  parseAgentFrontmatter,
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeDevLoopsArgs, runDevLoops } from "../../scripts/dev-loops.mjs";
@@ -27,6 +29,7 @@ import {
   assertMinimumClaudeVersion,
   buildClaudeInvocation,
   ClaudeReviewFindingsError,
+  MAX_REVIEW_DIFF_BYTES,
   parseClaudeReviewResult,
   parseClaudeVersion,
   probeClaudeCliCapabilities,
@@ -123,7 +126,7 @@ test("effective packaged agent allowlists use self-contained project shadows, no
   await writeFile(shadow, "---\nname: developer\ntools: [read\n---\n");
   await assert.rejects(
     checkAgentToolAllowlists({ packageRoot: fixture.packageRoot, projectRoot: fixture.root, settings, availableTools: supportedTools }),
-    /invalid YAML frontmatter.*developer\.agent\.md/,
+    /unmodelled YAML frontmatter.*developer\.agent\.md/,
   );
   await writeFile(shadow, validShadow);
   await rm(shadow);
@@ -136,6 +139,27 @@ test("effective packaged agent allowlists use self-contained project shadows, no
     checkAgentToolAllowlists({ packageRoot: fixture.packageRoot, projectRoot: fixture.root, settings, availableTools: supportedTools }),
     /agentOverrides are forbidden.*frontmatter tools/,
   );
+});
+
+test("bounded frontmatter parser ignores unrelated YAML and strips inline comments", () => {
+  const parsed = parseAgentFrontmatter([
+    "---",
+    "name: reviewer # effective name",
+    "keywords:",
+    "  - one",
+    "description: >",
+    "  folded content",
+    "  - that is not a tools item",
+    "tools: read, grep # keep bash out",
+    "---",
+  ].join("\n"), "fixture.agent.md");
+  assert.equal(parsed.name, "reviewer");
+  assert.deepEqual(parsed.tools, ["read", "grep"]);
+  assert.throws(() => parseAgentFrontmatter("---\nname: reviewer\ntools: >\n  read, grep\n---\n", "unknown.agent.md"), /unmodelled YAML frontmatter/);
+  assert.deepEqual(parseAgentFrontmatter("---\nname: inherited\nkeywords:\n  - one\n---\n", "inherited.agent.md"), {
+    name: "inherited",
+    tools: null,
+  });
 });
 
 test("preflight scans all installed pinned package agents, ignores notes, and invalidates its mtime key", async (t) => {
@@ -155,7 +179,8 @@ test("preflight scans all installed pinned package agents, ignores notes, and in
     await writeFile(path.join(root, "package.json"), JSON.stringify({ name, version }));
   }
   await writeFile(path.join(piSubagents, "agents", "README.md"), "not an agent manifest\n");
-  await writeFile(path.join(piSubagents, "agents", "developer.agent.md"), "---\nname: developer\ntools: [read, unavailable-duplicate-tool]\n---\n");
+  await writeFile(path.join(piSubagents, "agents", "developer.agent.md"), "---\nname: developer\ntools: [read, unavailable-shadowed-tool]\n---\n");
+  await writeFile(path.join(piSubagents, "agents", "auditor.agent.md"), "---\nname: auditor\ntools: [read, unavailable-pi-tool]\n---\n");
   await writeFile(path.join(reviewPackage, "agents", "auditor.agent.md"), "---\nname: auditor\ntools: [read, unavailable-review-tool]\n---\n");
 
   const resolved = await resolveDevLoopsPackageRoot({ cwd: fixture.root, includeAllPinnedPackages: true });
@@ -169,8 +194,14 @@ test("preflight scans all installed pinned package agents, ignores notes, and in
     availableTools: supportedTools,
   });
   assert.equal(result.ok, false);
-  assert.deepEqual(result.agents.find(({ name }) => name === "auditor").missingTools, ["unavailable-review-tool"]);
-  assert.equal(result.agents.filter(({ name }) => name === "developer").length, 1, "effective names are deduplicated across packages");
+  const auditors = result.agents.filter(({ name }) => name === "auditor");
+  assert.equal(auditors.length, 2, "every duplicate package manifest is validated when no project shadow exists");
+  assert.deepEqual(auditors.map(({ missingTools }) => missingTools[0]).sort(), ["unavailable-pi-tool", "unavailable-review-tool"]);
+  const developers = result.agents.filter(({ name }) => name === "developer");
+  assert.equal(developers.length, 1, "one project shadow replaces every package manifest of the same name");
+  assert.equal(developers[0].source, "project");
+  assert.equal(developers[0].shadowsPackages, true);
+  assert.deepEqual(developers[0].missingTools, []);
 
   const firstKey = await devLoopPreflightCacheKey({ resolved, availableTools: supportedTools });
   await writeFile(path.join(reviewPackage, "agents", "auditor.agent.md"), "---\nname: auditor\ntools: [read]\n---\nupdated\n");
@@ -213,8 +244,9 @@ test("tracked extension registers once and blocks invalid allowlists before laun
     abort() { this.abortCalled = true; },
   };
   const inputResult = await handlers.get("input")[0]({}, ctx);
-  assert.deepEqual(inputResult, { action: "handled" });
+  assert.deepEqual(inputResult, { action: "continue" });
   assert.match(notifications[0], /unavailable repository\/package agent tools/);
+  assert.match(notifications[0], /interactive input is allowed/);
   await assert.rejects(handlers.get("before_provider_request")[0]({}, ctx), /unavailable repository\/package agent tools/);
   assert.equal(ctx.abortCalled, true);
 });
@@ -270,6 +302,15 @@ test("manifest-shape drift preserves interactive recovery but blocks agent/provi
 });
 
 test("tracked project agents shadow every incompatible packaged dev-loops manifest", async () => {
+  const upstreamDigests = {
+    "dev-loop": "6a58bbcb79aaa27f037f5f15438afded916d66379bf7e21ba09913f89cb0a1f5",
+    developer: "aaecd8859df4b561fbd46f5c05fe893b37f249e7ea52abd631dfe20de5b1fa90",
+    docs: "eefeace5309224ef13fd271321b6137330a29bd2e973eb9a575bd4e4bc375912",
+    fixer: "be0b42b4c280fac6912c13a066250280b746ecbb047f5adcfbe4c2b6f187cbe3",
+    quality: "d52480ced74b3c695eb15f8d04da292d18300ed5f4eb29bab4f4011b82de28ec",
+    refiner: "8563349bbf77d799b8c2db78696124799262ac3ceff8b14784002ccea6daae11",
+    review: "2d3b46334b9fd5731f6ba0f081b5472b580e541d2d2ba56cf2b9ed2f90714acd",
+  };
   const extensionFiles = (await readdir(path.join(repoRoot, ".pi", "extensions"))).filter((file) => file.startsWith("dev-loop-preflight"));
   assert.deepEqual(extensionFiles, ["dev-loop-preflight.ts"], "only the thin Pi registrar is auto-loaded");
   const settings = JSON.parse(await read(".pi/settings.json"));
@@ -282,9 +323,16 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
     assert.ok(toolsLine, `${name} has a tracked project shadow`);
     const tools = toolsLine.slice("tools:".length).split(",").map((tool) => tool.trim());
     assert.equal(tools.some((tool) => legacyTools.has(tool)), false, `${name} has no legacy tool alias`);
-    assert.match(source, /SPDX-License-Identifier: Apache-2\.0/, `${name} carries repository licensing`);
-    assert.match(source, new RegExp(`derived from dev-loops@0\\.9\\.0 agents/${name}\\.agent\\.md`), `${name} binds its source pin`);
+    assert.match(source, /SPDX-License-Identifier: MIT/, `${name} preserves the upstream derived-content license`);
+    assert.match(source, new RegExp(`Derived from dev-loops@0\\.9\\.0 agents/${name}\\.agent\\.md`), `${name} binds its source pin`);
+    assert.match(source, new RegExp(`Upstream-SHA256: ${upstreamDigests[name]}`), `${name} binds exact upstream source bytes`);
     assert.doesNotMatch(source, /\]\(\.\.\/npm\/node_modules\//, `${name} has no link into an untracked package tree`);
+    try {
+      const upstream = await readFile(path.join(repoRoot, ".pi", "npm", "node_modules", "dev-loops", "agents", `${name}.agent.md`));
+      assert.equal(createHash("sha256").update(upstream).digest("hex"), upstreamDigests[name], `${name} source digest matches installed pin`);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
   }
   const reviewTools = (await read(".pi/agents/review.agent.md")).match(/^tools:\s*(.+)$/m)?.[1] ?? "";
   assert.doesNotMatch(reviewTools, /\b(?:bash|edit|write)\b/, "review shadow exposes only read-only inspection tools");
@@ -294,7 +342,10 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   const review = await read(".pi/agents/review.agent.md");
   assert.doesNotMatch(review, /\bgh api\b|\bgit (?:diff|log)\b/);
   assert.match(review, /gate-context artifact/i);
-
+  const notices = await read("THIRD_PARTY_NOTICES.md");
+  assert.match(notices, /dev-loops agent compatibility shadows/);
+  assert.match(notices, /Copyright \(c\) 2026 mfittko/);
+  assert.match(notices, /Permission is hereby granted, free of charge/);
 });
 
 test("pinned pi-subagents runtime applies git-root project-agent precedence", async (t) => {
@@ -328,15 +379,18 @@ test("pinned pi-subagents runtime applies git-root project-agent precedence", as
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), ["pr", "create", "--head", "topic", "--base", "integration"]);
   assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic"]), ["--silent", "pr", "create-draft", "--head", "topic", "--base", "integration"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["-s", "pr", "create", "--head", "topic"]), ["-s", "pr", "create", "--head", "topic", "--base", "integration"]);
   assert.deepEqual(normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic"]), ["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic", "--base", "integration"]);
   assert.deepEqual(normalizeDevLoopsArgs(["--repo=MediaNoxLabs/oxid", "--json", "pr", "create", "--head", "topic"]), ["--repo=MediaNoxLabs/oxid", "--json", "pr", "create", "--head", "topic", "--base", "integration"]);
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "ready-for-review", "--pr", "153"]), ["pr", "ready-for-review", "--pr", "153"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["pr", "edit", "--pr", "153", "--base", "integration"]), ["pr", "edit", "--pr", "153", "--base", "integration"]);
+  assert.throws(() => normalizeDevLoopsArgs(["pr", "edit", "--pr", "153", "--base", "main"]), /must use integration/);
   assert.deepEqual(normalizeDevLoopsArgs(["queue", "add", "--title", "pr", "create"]), ["queue", "add", "--title", "pr", "create"]);
   assert.deepEqual(normalizeDevLoopsArgs(["--jq", ".ok", "pr", "create"]), ["--jq", ".ok", "pr", "create", "--base", "integration"]);
-  assert.throws(() => normalizeDevLoopsArgs(["--silent", "pr", "create", "--base", "main"]), /must target integration/);
-  assert.throws(() => normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--base", "main"]), /must target integration/);
-  assert.throws(() => normalizeDevLoopsArgs(["--future-global", "pr", "create", "--base", "main"]), /unsupported leading dev-loops option/);
-  assert.throws(() => normalizeDevLoopsArgs(["pr", "create-draft", "--base=develop"]), /must target integration/);
+  assert.throws(() => normalizeDevLoopsArgs(["--silent", "pr", "create", "--base", "main"]), /must use integration/);
+  assert.throws(() => normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--base", "main"]), /must use integration/);
+  assert.throws(() => normalizeDevLoopsArgs(["--future-global", "pr", "create", "--base", "main"]), /unsupported leading dev-loops@0\.9\.0 option/);
+  assert.throws(() => normalizeDevLoopsArgs(["pr", "create-draft", "--base=develop"]), /must use integration/);
   assert.deepEqual(normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150"]), ["--repo-root", "/repo", "--issue", "150", "--base", "origin/integration"]);
   assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--base", "origin/main"]), /must use origin\/integration/);
 });
@@ -546,6 +600,40 @@ if (process.argv.includes("--version")) {
   const exactGitDiff = execFileSync("git", ["diff", "--binary", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], { cwd: repository });
   assert.deepEqual(await readFile(path.join(evidenceDir, result.evidence.diff.path)), exactGitDiff);
 
+  await assert.rejects(runClaudeCurrentHeadReview({
+    issue: 151,
+    repoRoot: repository,
+    evidenceDir,
+    expectedHead: headSha,
+    claudeCommand: fakeClaude,
+    issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+    fetchBase: false,
+  }), /issueContract does not match/);
+  await assert.rejects(runClaudeCurrentHeadReview({
+    issue: 150,
+    repoRoot: repository,
+    evidenceDir: path.join(repository, "review-evidence"),
+    expectedHead: headSha,
+    claudeCommand: fakeClaude,
+    issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+    fetchBase: false,
+  }), /outside the reviewed checkout/);
+  const priorStateHome = process.env.XDG_STATE_HOME;
+  process.env.XDG_STATE_HOME = "relative/state";
+  try {
+    await assert.rejects(runClaudeCurrentHeadReview({
+      issue: 150,
+      repoRoot: repository,
+      expectedHead: headSha,
+      claudeCommand: fakeClaude,
+      issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+      fetchBase: false,
+    }), /XDG_STATE_HOME must be absolute/);
+  } finally {
+    if (priorStateHome === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = priorStateHome;
+  }
+
   await writeFile(path.join(repository, "opaque.bin"), Buffer.from([0, 255, 0, 254]));
   git("add", "opaque.bin");
   git("commit", "--quiet", "-m", "binary");
@@ -559,6 +647,21 @@ if (process.argv.includes("--version")) {
     issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
     fetchBase: false,
   }), /binary paths.*opaque\.bin/);
+  git("reset", "--hard", headSha);
+
+  await writeFile(path.join(repository, "oversized.txt"), "x".repeat(MAX_REVIEW_DIFF_BYTES + 1));
+  git("add", "oversized.txt");
+  git("commit", "--quiet", "-m", "oversized");
+  const oversizedHead = git("rev-parse", "HEAD");
+  await assert.rejects(runClaudeCurrentHeadReview({
+    issue: 150,
+    repoRoot: repository,
+    evidenceDir,
+    expectedHead: oversizedHead,
+    claudeCommand: fakeClaude,
+    issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+    fetchBase: false,
+  }), new RegExp(`exceeds the ${MAX_REVIEW_DIFF_BYTES}-byte`));
   git("reset", "--hard", headSha);
 
   await writeFakeClaude("findings");
@@ -582,7 +685,6 @@ if (process.argv.includes("--version")) {
   for (const [mode, pattern, timeoutMs] of [
     ["malformed", /did not return JSON/, 1_000],
     ["nonzero", /exited 7/, 1_000],
-    ["timeout", /timed out|terminated/, 50],
   ]) {
     await writeFakeClaude(mode);
     await assert.rejects(runClaudeCurrentHeadReview({
@@ -596,6 +698,24 @@ if (process.argv.includes("--version")) {
       timeoutMs,
     }), pattern, mode);
   }
+  const deterministicTimeoutRunner = (_command, args) => {
+    if (args.includes("--version")) return { status: 0, stdout: "2.1.228 (Claude Code)\n", stderr: "" };
+    if (args.includes("--help")) return { status: 0, stdout: '--print --output-format --json-schema --max-budget-usd --safe-mode --tools --no-session-persistence --permission-mode --system-prompt\n', stderr: "" };
+    if (args[0] === "auth") return { status: 0, stdout: JSON.stringify({ loggedIn: true }), stderr: "" };
+    const error = Object.assign(new Error("fixture timeout"), { code: "ETIMEDOUT" });
+    return { status: null, stdout: "", stderr: "", error };
+  };
+  await assert.rejects(runClaudeCurrentHeadReview({
+    issue: 150,
+    repoRoot: repository,
+    evidenceDir,
+    expectedHead: headSha,
+    claudeCommand: "fixture-claude",
+    claudeRunner: deterministicTimeoutRunner,
+    issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+    fetchBase: false,
+    timeoutMs: 50,
+  }), /timed out or was terminated after 50ms/);
   git("reset", "--hard", headSha);
 
   await writeFakeClaude("advance");
@@ -622,7 +742,49 @@ if (process.argv.includes("--version")) {
     claudeCommand: fakeClaude,
     issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
     fetchBase: false,
-  }), /real directory|final symlink/);
+  }), /real directory|symlink/);
+
+  const unsafeAncestor = path.join(fixtureRoot, "unsafe-ancestor");
+  await mkdir(unsafeAncestor, { mode: 0o777 });
+  await chmod(unsafeAncestor, 0o777);
+  await assert.rejects(runClaudeCurrentHeadReview({
+    issue: 150,
+    repoRoot: repository,
+    evidenceDir: path.join(unsafeAncestor, "evidence"),
+    expectedHead: headSha,
+    claudeCommand: fakeClaude,
+    issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+    fetchBase: false,
+  }), /group\/world-writable without sticky protection/);
+
+  const safeTarget = path.join(fixtureRoot, "safe-target");
+  const symlinkAncestor = path.join(fixtureRoot, "symlink-ancestor");
+  await mkdir(safeTarget, { mode: 0o700 });
+  await symlink(safeTarget, symlinkAncestor, "dir");
+  await assert.rejects(runClaudeCurrentHeadReview({
+    issue: 150,
+    repoRoot: repository,
+    evidenceDir: path.join(symlinkAncestor, "evidence"),
+    expectedHead: headSha,
+    claudeCommand: fakeClaude,
+    issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+    fetchBase: false,
+  }), /path component must not be a symlink/);
+
+  const stickyAncestor = path.join(fixtureRoot, "sticky-ancestor");
+  await mkdir(stickyAncestor, { mode: 0o1777 });
+  await chmod(stickyAncestor, 0o1777);
+  await writeFakeClaude("clean");
+  const stickyResult = await runClaudeCurrentHeadReview({
+    issue: 150,
+    repoRoot: repository,
+    evidenceDir: path.join(stickyAncestor, "evidence"),
+    expectedHead: headSha,
+    claudeCommand: fakeClaude,
+    issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+    fetchBase: false,
+  });
+  assert.equal(stickyResult.evidence.verdict, "clean");
 
   const missingEvidence = path.join(fixtureRoot, "must-not-be-created", "evidence.json");
   await assert.rejects(

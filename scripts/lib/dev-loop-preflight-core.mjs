@@ -59,12 +59,8 @@ export default function devLoopPreflight(pi, runtime = {}) {
   pi.on("input", async (_event, ctx) => {
     const result = await check(ctx.cwd);
     if (result.ok) return { action: "continue" };
-    if (result.kind === "unprovisioned") {
-      ctx.ui.notify(`${result.message}. This interactive input is allowed so you can provision or repair the repository; agent/provider launch remains blocked until preflight succeeds.`, "warning");
-      return { action: "continue" };
-    }
-    ctx.ui.notify(result.message, "error");
-    return { action: "handled" };
+    ctx.ui.notify(`${result.message}. This interactive input is allowed so you can diagnose or repair the repository; agent/provider launch remains blocked until preflight succeeds.`, "warning");
+    return { action: "continue" };
   });
 
   pi.on("before_agent_start", async (_event, ctx) => {

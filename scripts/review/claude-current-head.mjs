@@ -12,7 +12,7 @@ import { parseArgs } from "node:util";
 const BASE_REF = "origin/integration";
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_BUDGET_USD = 10;
-const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
+export const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
 export const MINIMUM_CLAUDE_VERSION = [2, 1, 228];
 const REQUIRED_CLAUDE_FLAGS = [
   "--print",
@@ -118,8 +118,8 @@ export function assertClaudeHelpCapabilities(help, version) {
 }
 
 /** Probe the actual CLI contract; tests may additionally request an opt-in output smoke. */
-export function probeClaudeCliCapabilities({ claudeCommand = "claude", cwd = process.cwd(), performOutputSmoke = false } = {}) {
-  const versionResult = run(claudeCommand, ["--version"], { cwd, timeout: 30_000 });
+export function probeClaudeCliCapabilities({ claudeCommand = "claude", cwd = process.cwd(), performOutputSmoke = false, runner = run } = {}) {
+  const versionResult = runner(claudeCommand, ["--version"], { cwd, timeout: 30_000 });
   if (versionResult.error || versionResult.status !== 0) {
     throw new Error(`could not record Claude CLI version: ${String(versionResult.stderr || versionResult.error?.message || "unknown error").trim()}`);
   }
@@ -127,12 +127,12 @@ export function probeClaudeCliCapabilities({ claudeCommand = "claude", cwd = pro
   if (!version) throw new Error("Claude CLI returned an empty version");
   const versionTriple = assertMinimumClaudeVersion(parseClaudeVersion(version));
 
-  const helpResult = run(claudeCommand, ["--help"], { cwd, timeout: 30_000 });
+  const helpResult = runner(claudeCommand, ["--help"], { cwd, timeout: 30_000 });
   if (helpResult.error || helpResult.status !== 0) throw new Error("could not read Claude CLI help");
   const help = `${helpResult.stdout ?? ""}\n${helpResult.stderr ?? ""}`;
   const capabilities = assertClaudeHelpCapabilities(help, versionTriple);
 
-  const authResult = run(claudeCommand, ["auth", "status"], { cwd, timeout: 30_000 });
+  const authResult = runner(claudeCommand, ["auth", "status"], { cwd, timeout: 30_000 });
   if (authResult.error || authResult.status !== 0) {
     throw new Error(`could not verify Claude CLI account readiness: ${String(authResult.stderr || authResult.error?.message || "unknown error").trim()}`);
   }
@@ -145,7 +145,7 @@ export function probeClaudeCliCapabilities({ claudeCommand = "claude", cwd = pro
   let outputSmoke = null;
   if (performOutputSmoke) {
     const invocation = buildClaudeInvocation({ command: claudeCommand, maxBudgetUsd: 1 });
-    const smokeResult = run(invocation.command, invocation.args, {
+    const smokeResult = runner(invocation.command, invocation.args, {
       cwd,
       timeout: 120_000,
       input: 'Return verdict "clean", an empty findings array, and summary "Capability smoke".',
@@ -268,7 +268,41 @@ function defaultEvidenceDirectory() {
   return path.join(stateHome, "oxid", "claude-reviews");
 }
 
+async function assertSafeDirectoryAncestors(directory) {
+  const absolute = path.resolve(directory);
+  const parsed = path.parse(absolute);
+  let current = parsed.root;
+  const segments = path.relative(parsed.root, absolute).split(path.sep).filter(Boolean);
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    let info;
+    try {
+      info = await lstat(current);
+    } catch (error) {
+      if (error?.code === "ENOENT") break;
+      throw error;
+    }
+    if (info.isSymbolicLink()) {
+      // macOS exposes the conventional sticky temporary directory as /tmp ->
+      // /private/tmp. Permit only that root-owned sticky system alias.
+      if (current === path.join(parsed.root, "tmp")) {
+        const target = await realpath(current);
+        const targetInfo = await lstat(target);
+        if (targetInfo.isDirectory() && (targetInfo.mode & 0o1000) !== 0 && targetInfo.uid === 0) continue;
+      }
+      throw new Error(`evidence path component must not be a symlink: ${current}`);
+    }
+    if (!info.isDirectory()) throw new Error(`evidence path ancestor must be a directory: ${current}`);
+    const writableByOthers = (info.mode & 0o022) !== 0;
+    const sticky = (info.mode & 0o1000) !== 0;
+    if (writableByOthers && !sticky) {
+      throw new Error(`evidence path ancestor must not be group/world-writable without sticky protection: ${current}`);
+    }
+  }
+}
+
 async function assertPrivateOwnedDirectory(directory) {
+  await assertSafeDirectoryAncestors(directory);
   const info = await lstat(directory);
   if (info.isSymbolicLink() || !info.isDirectory()) throw new Error(`evidence directory must be a real directory, not a symlink: ${directory}`);
   if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
@@ -298,7 +332,9 @@ async function resolveEvidenceDirectory(directory, repoRoot) {
 async function prepareEvidenceDirectory(requested, repoRoot) {
   const directory = path.resolve(requested ?? defaultEvidenceDirectory());
   if (isContained(repoRoot, directory)) throw new Error("evidenceDir must be outside the reviewed checkout");
+  await assertSafeDirectoryAncestors(path.dirname(directory));
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  await assertSafeDirectoryAncestors(directory);
   return resolveEvidenceDirectory(directory, repoRoot);
 }
 
@@ -343,6 +379,7 @@ export async function runClaudeCurrentHeadReview({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxBudgetUsd = DEFAULT_MAX_BUDGET_USD,
   fetchBase = true,
+  claudeRunner = run,
 } = {}) {
   if (!Number.isInteger(issue) || issue < 1) throw new Error("issue must be a positive integer");
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new Error("timeoutMs must be a positive integer");
@@ -378,7 +415,7 @@ export async function runClaudeCurrentHeadReview({
   const evidencePath = path.join(outputRoot, `${runId}.evidence.json`);
   await atomicPrivateWrite(diffPath, diffContent);
 
-  const probe = probeClaudeCliCapabilities({ claudeCommand, cwd: outputRoot });
+  const probe = probeClaudeCliCapabilities({ claudeCommand, cwd: outputRoot, runner: claudeRunner });
   const { accountStatus } = probe;
   const claudeVersion = probe.version;
   await atomicPrivateWrite(helpPath, probe.help);
@@ -395,7 +432,7 @@ export async function runClaudeCurrentHeadReview({
     boundary: randomBytes(24).toString("hex"),
   });
   const startedAt = new Date().toISOString();
-  const result = run(invocation.command, invocation.args, { cwd: outputRoot, timeout: timeoutMs, input: prompt });
+  const result = claudeRunner(invocation.command, invocation.args, { cwd: outputRoot, timeout: timeoutMs, input: prompt });
   const reviewedAt = new Date().toISOString();
   const rawResponse = result.stdout ?? "";
   await atomicPrivateWrite(rawResponsePath, rawResponse);

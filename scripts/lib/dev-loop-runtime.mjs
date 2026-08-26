@@ -160,58 +160,95 @@ export async function resolveDevLoopsPackageRoot({ cwd = process.cwd(), includeA
   };
 }
 
+function stripYamlComment(value, file) {
+  let quote = null;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote === '"' && escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote === '"' && character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === "#" && (index === 0 || /\s/.test(value[index - 1]))) return value.slice(0, index).trimEnd();
+  }
+  if (quote) throw new Error(`unmodelled YAML frontmatter in agent manifest ${file}: unmatched quote`);
+  return value;
+}
+
 function unquoteFrontmatterScalar(value, file) {
-  const trimmed = value.trim();
+  const trimmed = stripYamlComment(value, file).trim();
   if (!trimmed) return "";
   if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
     return trimmed.slice(1, -1);
   }
   if (trimmed.startsWith('"') || trimmed.endsWith('"') || trimmed.startsWith("'") || trimmed.endsWith("'")) {
-    throw new Error(`invalid YAML frontmatter in agent manifest ${file}: unmatched quote`);
+    throw new Error(`unmodelled YAML frontmatter in agent manifest ${file}: unmatched quote`);
   }
   return trimmed;
 }
 
 /**
- * Parse only the name/tools subset used by the preflight. Keeping this parser
- * local makes the mandatory public-CI contract independent of installed Pi
- * packages while still accepting the pinned runtime's inline and block lists.
+ * Parse only root-level name/tools fields. Other valid YAML fields, including
+ * nested lists and folded content, are deliberately ignored. An unmodelled
+ * tools shape throws so input can warn while agent/provider launch fails closed.
  */
 export function parseAgentFrontmatter(source, file) {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) throw new Error(`agent manifest has no YAML frontmatter: ${file}`);
   const lines = match[1].split(/\r?\n/);
   let name = "";
-  let tools;
+  let tools = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (/^\s*(?:#.*)?$/.test(line)) continue;
+    if (/^\s*(?:#.*)?$/.test(line) || /^\s/.test(line)) continue;
     const field = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(?:\s*(.*))?$/);
-    if (!field) {
-      if (/^\s+-\s+/.test(line)) throw new Error(`invalid YAML frontmatter in agent manifest ${file}: unexpected list item`);
-      continue;
-    }
+    if (!field) continue;
     const [, key, raw = ""] = field;
     if (key === "name") name = unquoteFrontmatterScalar(raw, file).trim();
     if (key !== "tools") continue;
-    const value = raw.trim();
+    const value = stripYamlComment(raw, file).trim();
+    if (value === ">" || value === "|" || value.startsWith(">-") || value.startsWith("|-")) {
+      throw new Error(`unmodelled YAML frontmatter in agent manifest ${file}: tools must be a scalar or sequence`);
+    }
     if (value.startsWith("[")) {
-      if (!value.endsWith("]")) throw new Error(`invalid YAML frontmatter in agent manifest ${file}: unterminated tools list`);
+      if (!value.endsWith("]")) throw new Error(`unmodelled YAML frontmatter in agent manifest ${file}: unterminated tools list`);
       tools = value.slice(1, -1).split(",").map((tool) => unquoteFrontmatterScalar(tool, file).trim()).filter(Boolean);
     } else if (value) {
       tools = value.split(",").map((tool) => unquoteFrontmatterScalar(tool, file).trim()).filter(Boolean);
     } else {
       tools = [];
       while (index + 1 < lines.length) {
-        const item = lines[index + 1].match(/^\s+-\s+(.+?)\s*$/);
-        if (!item) break;
-        tools.push(unquoteFrontmatterScalar(item[1], file).trim());
-        index += 1;
+        const next = lines[index + 1];
+        if (/^\s*(?:#.*)?$/.test(next)) {
+          index += 1;
+          continue;
+        }
+        const item = next.match(/^\s+-\s+(.+?)\s*$/);
+        if (item) {
+          const tool = unquoteFrontmatterScalar(item[1], file).trim();
+          if (tool) tools.push(tool);
+          index += 1;
+          continue;
+        }
+        if (/^\s/.test(next)) {
+          throw new Error(`unmodelled YAML frontmatter in agent manifest ${file}: unsupported tools sequence`);
+        }
+        break;
       }
     }
   }
-  if (!name || !Array.isArray(tools) || tools.length === 0 || tools.some((tool) => !tool)) {
-    throw new Error(`agent manifest requires a non-empty name and tools allowlist: ${file}`);
+  if (!name) throw new Error(`agent manifest requires a non-empty name: ${file}`);
+  if (Array.isArray(tools) && (tools.length === 0 || tools.some((tool) => !tool))) {
+    throw new Error(`agent manifest requires a non-empty tools allowlist when tools is declared: ${file}`);
   }
   return { name, tools };
 }
@@ -231,13 +268,20 @@ function assertSupportedProjectSettings(settings) {
   }
 }
 
-async function readAgentDirectory(root) {
+async function readAgentDirectory(root, { requireTools = false } = {}) {
   if (!(await exists(root))) return [];
   const files = (await readdir(root)).filter((file) => file.endsWith(".agent.md")).sort();
-  return Promise.all(files.map(async (file) => ({
+  const agents = await Promise.all(files.map(async (file) => ({
     ...parseAgentFrontmatter(await readFile(path.join(root, file), "utf8"), path.join(root, file)),
     file: path.join(root, file),
   })));
+  if (requireTools) {
+    const inherited = agents.find(({ tools }) => tools === null);
+    if (inherited) throw new Error(`tracked project agent must declare an explicit tools allowlist: ${inherited.file}`);
+  }
+  // A package manifest without tools inherits runtime defaults and declares no
+  // allowlist for this preflight to validate.
+  return agents.filter(({ tools }) => tools !== null);
 }
 
 /** Check every installed repository-pinned package after project shadows. */
@@ -251,7 +295,7 @@ export async function checkAgentToolAllowlists({ packageRoot, packageRoots, sett
   const packaged = (await Promise.all(roots.map(async ({ name = "unknown", packageRoot: root }) =>
     (await readAgentDirectory(path.join(root, "agents"))).map((agent) => ({ ...agent, packageName: name }))
   ))).flat();
-  const project = await readAgentDirectory(path.join(projectRoot, PROJECT_AGENTS_PATH));
+  const project = await readAgentDirectory(path.join(projectRoot, PROJECT_AGENTS_PATH), { requireTools: true });
   const projectByName = new Map();
   for (const agent of project) {
     if (projectByName.has(agent.name)) throw new Error(`duplicate tracked project agent '${agent.name}'`);
@@ -259,26 +303,34 @@ export async function checkAgentToolAllowlists({ packageRoot, packageRoots, sett
   }
 
   const agents = [];
-  const coveredProjects = new Set();
-  const coveredEffectiveNames = new Set();
+  const shadowedNames = new Set();
   for (const packageAgent of packaged) {
-    const effective = projectByName.get(packageAgent.name) ?? packageAgent;
-    if (coveredEffectiveNames.has(effective.name)) continue;
-    coveredEffectiveNames.add(effective.name);
-    coveredProjects.add(effective.name);
-    const missingTools = effective.tools.filter((tool) => !available.has(tool));
+    const shadow = projectByName.get(packageAgent.name);
+    if (shadow) {
+      shadowedNames.add(packageAgent.name);
+      continue;
+    }
+    // Validate every duplicate-named package manifest. Settings order is not
+    // assumed to match Pi's package-discovery precedence.
+    const missingTools = packageAgent.tools.filter((tool) => !available.has(tool));
     agents.push({
-      name: effective.name,
-      file: effective.file,
-      source: effective === packageAgent ? `package:${packageAgent.packageName}` : "project",
-      tools: [...effective.tools],
+      name: packageAgent.name,
+      file: packageAgent.file,
+      source: `package:${packageAgent.packageName}`,
+      tools: [...packageAgent.tools],
       missingTools,
     });
   }
   for (const projectAgent of project) {
-    if (coveredProjects.has(projectAgent.name)) continue;
     const missingTools = projectAgent.tools.filter((tool) => !available.has(tool));
-    agents.push({ name: projectAgent.name, file: projectAgent.file, source: "project", tools: [...projectAgent.tools], missingTools });
+    agents.push({
+      name: projectAgent.name,
+      file: projectAgent.file,
+      source: "project",
+      shadowsPackages: shadowedNames.has(projectAgent.name),
+      tools: [...projectAgent.tools],
+      missingTools,
+    });
   }
 
   return { ok: agents.every(({ missingTools }) => missingTools.length === 0), agents };
@@ -315,6 +367,6 @@ export function formatAgentToolAllowlistFailure(result) {
   const invalid = result.agents.filter(({ missingTools }) => missingTools.length > 0);
   if (invalid.length === 0) return "";
   return `Pi dev-loop preflight failed: unavailable repository/package agent tools: ${invalid
-    .map(({ name, missingTools }) => `${name}=[${missingTools.join(", ")}]`)
+    .map(({ name, source, missingTools }) => `${name}@${source}=[${missingTools.join(", ")}]`)
     .join("; ")}. Fix the tracked .pi/agents manifest or exact package installation before model execution. This preflight covers every installed repository-pinned package plus repository-local shadows; separately installed user agents are outside its claim.`;
 }

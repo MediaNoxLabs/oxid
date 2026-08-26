@@ -23,15 +23,18 @@ node scripts/loop/ensure-worktree.mjs \
   --repo-root "$PWD" --issue <number>
 
 # Public dev-loops PR creation (`create-draft` is the deprecated alias) adds
-# integration and rejects another base. Other dev-loops subcommands pass through.
+# integration. Every wrapper route rejects an explicit non-integration base.
 node scripts/dev-loops.mjs pr create \
   --repo MediaNoxLabs/oxid --head <branch> \
   --assignee @me --title "<type>: <subject>" --body-file <body-file>
 ```
 
-These wrappers govern only the public routes shown above. They do not rewrite
-raw `gh`, direct package-script calls, or arbitrary internal dev-loops commands;
-repository rules and contributor policy remain authoritative for those paths.
+The public wrapper accepts only the global option forms supported by the exact
+`dev-loops@0.9.0` pin (`--repo`, `--cwd`, `--config`, `--jq`, `--silent`/`-s`,
+and `--json`) before the route. Unknown leading options fail closed. A pin
+upgrade must update the shared parser and contract tests before new option
+shapes are accepted. These wrappers do not rewrite raw `gh` or direct package
+scripts; repository rules and contributor policy remain authoritative there.
 
 The repository selects `subagents.projectRootResolution: "git-root"` for the
 exact `pi-subagents@0.42.1` pin and uses tracked
@@ -50,13 +53,12 @@ plus repository-local shadows. Only `*.agent.md` manifests are scanned. Results
 are cached per session using the checkout, settings, package, manifest mtime and
 tool-set facts; a changed manifest invalidates the cache.
 
-An unavailable declared tool causes the input event to be handled without an
-agent/model turn, and defense-in-depth hooks abort before an agent or provider
-request. A missing or unprovisioned package, or a pinned third-party manifest
-shape the bounded parser cannot model, instead produces a prominent input warning and
-leaves the interactive turn available for diagnosis/provisioning; agent and
-provider launch remains blocked until the environment is valid. Fix the tracked
-manifest or exact installation instead of adding aliases.
+Every preflight failure produces a prominent input warning and leaves the
+interactive turn available for diagnosis or repair. Defense-in-depth hooks
+still abort before every agent or provider request, including unavailable
+declared tools, missing packages, invalid settings, and pinned third-party
+manifest shapes the bounded parser cannot model. Fix the tracked manifest or
+exact installation instead of adding aliases.
 Separately installed user agents remain outside this repository preflight and
 must be governed by their owning installation.
 
@@ -81,8 +83,9 @@ fetching `origin/integration`, run the reviewer with a clean worktree. By
 default it writes beneath `${XDG_STATE_HOME:-$HOME/.local/state}/oxid/claude-reviews`.
 The final directory must be a real, invoking-user-owned `0700` directory and
 each artifact is an owned regular `0600` file; symlinks and permissive modes
-fail closed. An explicit evidence directory must meet the same rules and stay
-outside the checkout.
+fail closed. An explicit evidence directory must meet the same rules, stay
+outside the checkout, and have no symlink or group/world-writable non-sticky
+ancestor (the root directory and sticky temporary directories remain valid).
 
 ```bash
 git fetch origin integration

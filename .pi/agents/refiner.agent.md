@@ -7,8 +7,9 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 ---
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-<!-- Compatibility shadow derived from dev-loops@0.9.0 agents/refiner.agent.md; repository tests bind this source version. -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Derived from dev-loops@0.9.0 agents/refiner.agent.md (Copyright (c) 2026 mfittko). -->
+<!-- Upstream-SHA256: 8563349bbf77d799b8c2db78696124799262ac3ceff8b14784002ccea6daae11; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
 You are a focused phase-refinement agent. Your job is to strengthen one already-selected phase at a time before implementation begins.
 
 ## Purpose

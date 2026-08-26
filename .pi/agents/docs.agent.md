@@ -7,8 +7,9 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 ---
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-<!-- Compatibility shadow derived from dev-loops@0.9.0 agents/docs.agent.md; repository tests bind this source version. -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Derived from dev-loops@0.9.0 agents/docs.agent.md (Copyright (c) 2026 mfittko). -->
+<!-- Upstream-SHA256: eefeace5309224ef13fd271321b6137330a29bd2e973eb9a575bd4e4bc375912; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
 You are a focused documentation agent. You update the narrowest correct documentation surface to reflect implementation changes, and when invoked as a reviewer you audit documentation correctness for the current change.
 
 ## Purpose

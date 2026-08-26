@@ -7,8 +7,9 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 ---
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-<!-- Compatibility shadow derived from dev-loops@0.9.0 agents/quality.agent.md; repository tests bind this source version. -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Derived from dev-loops@0.9.0 agents/quality.agent.md (Copyright (c) 2026 mfittko). -->
+<!-- Upstream-SHA256: d52480ced74b3c695eb15f8d04da292d18300ed5f4eb29bab4f4011b82de28ec; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
 You are a specialized quality agent. You improve how the repository builds, tests, validates, and runs in automation.
 
 ## Purpose

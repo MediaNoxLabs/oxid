@@ -8,8 +8,9 @@ inheritProjectContext: true
 defaultContext: fresh
 user-invocable: false
 ---
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-<!-- Compatibility shadow derived from dev-loops@0.9.0 agents/review.agent.md; repository tests bind this source version. -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Derived from dev-loops@0.9.0 agents/review.agent.md (Copyright (c) 2026 mfittko). -->
+<!-- Upstream-SHA256: 2d3b46334b9fd5731f6ba0f081b5472b580e541d2d2ba56cf2b9ed2f90714acd; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
 You are a focused pull request review agent. You review an implementation for correctness, scope control, engineering quality, and merge readiness.
 
 ## Purpose
