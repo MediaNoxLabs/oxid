@@ -67,7 +67,6 @@ android-jni-exception-recovery-test = [
 
 [dependencies]
 dioxus = { workspace = true, features = ["launch"] }
-oxid-adapter-identity-ingress.workspace = true
 oxid-composition.workspace = true
 oxid-ui-dioxus.workspace = true
 
@@ -86,6 +85,9 @@ getrandom_02 = { package = "getrandom", version = "=0.2.17", features = ["js"] }
 getrandom_04 = { package = "getrandom", version = "=0.4.3", features = [
   "wasm_js",
 ] }
+
+[dev-dependencies]
+oxid-adapter-identity-ingress.workspace = true
 
 [build-dependencies]
 oxid-adapter-identity-ingress.workspace = true

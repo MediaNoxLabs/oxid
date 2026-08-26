@@ -15,7 +15,7 @@ const modes = new Set([
   "cold-route",
   "restored",
 ]);
-if (!endpoint || !modes.has(mode) || controlOrigin !== "http://127.0.0.1:18091"
+if (!endpoint || !modes.has(mode) || controlOrigin !== "http://127.0.0.1:18095"
     || !/^[0-9a-f]{64}$/u.test(controlCapability ?? "")) {
   throw new Error("invalid Android Portal test arguments");
 }
@@ -27,6 +27,7 @@ const socket = new WebSocket(endpoint);
 let nextId = 1;
 let terminalError = null;
 const pending = new Map();
+const measurements = {};
 
 function rejectPending(error) {
   terminalError ??= error;
@@ -245,6 +246,7 @@ try {
     if (await evaluate('Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")')) {
       throw new Error("managed DID creation ran without activated development custody");
     }
+    Object.assign(measurements, { managedDidPrepared: true });
   } else if (mode === "route-refuse") {
     const start = await counters();
     await assertRouted();
@@ -278,6 +280,12 @@ try {
       `!Boolean(${button("Dismiss identity request")})`,
       "refusal clears the consumed router request and raw offer",
     );
+    const refusalDelta = counterDelta(after, start);
+    Object.assign(measurements, {
+      refusalBeforeConsent: true,
+      refusalSecretEndpointCalls: refusalDelta.token + refusalDelta.nonce + refusalDelta.credential,
+      warmIngress: true,
+    });
   } else if (mode === "malformed") {
     const start = await counters();
     await setProxyMode("malformed");
@@ -288,6 +296,7 @@ try {
     const after = await counters();
     assertExactCounterDelta(start, after, { issuerMetadata: 1 }, "malformed response");
     await setProxyMode("normal");
+    Object.assign(measurements, { malformedRejected: true, warmIngress: true });
   } else if (mode === "protocol-error" || mode === "protocol-timeout") {
     const start = await counters();
     await setProxyMode(mode === "protocol-timeout" ? "timeout" : "unavailable");
@@ -330,6 +339,12 @@ try {
       mode,
     );
     await setProxyMode("normal");
+    Object.assign(
+      measurements,
+      mode === "protocol-timeout"
+        ? { timeoutRejected: true, warmIngress: true }
+        : { unavailableRejected: true, warmIngress: true },
+    );
   } else if (mode === "issue-error") {
     const start = await counters();
     await assertRouted();
@@ -382,6 +397,7 @@ try {
       `!Boolean(${button("Leave credential review")}) && !document.body.innerText.includes("Credential offer preview")`,
       "safe credential review cleanup and navigation escape",
     );
+    Object.assign(measurements, { issueErrorEscapedSafely: true, warmIngress: true });
   } else if (mode === "issue") {
     const start = await counters();
     await assertRouted();
@@ -419,12 +435,21 @@ try {
       nonce: 1,
       token: 1,
     }, "successful issuance");
+    Object.assign(measurements, {
+      exactBundleImported: true,
+      explicitConsent: true,
+      managedAuthenticationProof: true,
+      separateJubjubAssertionBinding: true,
+      strictFinalExchange: true,
+      warmIngress: true,
+    });
   } else if (mode === "cold-route") {
     const start = await counters();
     await assertRouted();
     await click("Dismiss identity request");
     const after = await counters();
     assertExactCounterDelta(start, after, {}, "cold route");
+    Object.assign(measurements, { coldIngress: true, oneItemIngress: true });
   } else if (mode === "restored") {
     await click("Wallet");
     await waitFor(`Boolean(${button("Activate development wallet")})`, "truthful development-custody reset");
@@ -491,8 +516,13 @@ try {
     if (!Object.values(reverified).every(Boolean)) {
       throw new Error(`restored credential reverification UI evidence failed: ${JSON.stringify(reverified)}`);
     }
+    Object.assign(measurements, {
+      custodyReactivated: true,
+      freshReverification: true,
+      listedAfterRestart: true,
+    });
   }
-  process.stdout.write(`${JSON.stringify({ mode, passed: true })}\n`);
+  process.stdout.write(`${JSON.stringify({ measurements, mode, passed: true })}\n`);
 } finally {
   socket.close();
 }

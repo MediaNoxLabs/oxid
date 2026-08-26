@@ -45,7 +45,7 @@ use response::*;
 
 pub const PORTAL_INTEGRATION_COMMIT: &str = "22ae5369b6f939e6b20648f4b85dd993527748ef";
 pub const PORTAL_INTEGRATION_TREE: &str = "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10";
-const PORTAL_PROFILE_SOURCE: &str = "76e8edf394a4cb37ca822037272d543c68f25f71";
+pub const PORTAL_PROFILE_SOURCE_COMMIT: &str = "76e8edf394a4cb37ca822037272d543c68f25f71";
 pub const PORTAL_PROVENANCE_SHA256: &str =
     "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87";
 const PORTAL_CONFIGURATION_ID: &str = "digital_passport_v1";
@@ -67,7 +67,7 @@ const BUNDLED_SOURCE_LOCK: &[u8] = include_bytes!(
     "../../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/source-lock.json"
 );
 const BUNDLED_PROVENANCE: &[u8] = include_bytes!(
-    "../../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/provenance.json"
+    "../../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/openid4vci-final/provenance.json"
 );
 
 /// Payload-free deployment/source-lock authentication errors.
@@ -275,6 +275,7 @@ pub fn authenticate_bundled_portal_source() -> Result<(), PortalDeploymentManife
     let lock_keys = [
         "integrationCommit",
         "integrationTree",
+        "profileSourceCommit",
         "provenancePath",
         "provenanceSha256",
         "schema",
@@ -283,8 +284,8 @@ pub fn authenticate_bundled_portal_source() -> Result<(), PortalDeploymentManife
         || !lock_keys.iter().all(|key| lock.contains_key(*key))
         || lock["integrationCommit"] != PORTAL_INTEGRATION_COMMIT
         || lock["integrationTree"] != PORTAL_INTEGRATION_TREE
-        || lock["provenancePath"]
-            != "../76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/provenance.json"
+        || lock["profileSourceCommit"] != PORTAL_PROFILE_SOURCE_COMMIT
+        || lock["provenancePath"] != "openid4vci-final/provenance.json"
         || lock["provenanceSha256"] != PORTAL_PROVENANCE_SHA256
         || lock["schema"] != "oxid-portal-source-lock-v3"
     {
@@ -293,7 +294,7 @@ pub fn authenticate_bundled_portal_source() -> Result<(), PortalDeploymentManife
     let value = parse_strict_json(BUNDLED_PROVENANCE)
         .map_err(|_| PortalDeploymentManifestError::SourceLockMismatch)?;
     if value["schema"] != "laceid-openid4vci-profile-provenance-v1"
-        || value["portal"]["profileSourceCommit"] != PORTAL_PROFILE_SOURCE
+        || value["portal"]["profileSourceCommit"] != PORTAL_PROFILE_SOURCE_COMMIT
         || value["portal"]["baselineCommit"] != "804de0a9e58cf48ece3cc6c24b2245bb70bc80f1"
         || value["profile"]["credentialConfigurationId"] != PORTAL_CONFIGURATION_ID
         || value["profile"]["name"] != "lace-id-portal-oxid-midnight-phase1"

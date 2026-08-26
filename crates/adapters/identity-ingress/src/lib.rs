@@ -626,6 +626,48 @@ struct CapturedIdentityLinks {
     trigger_fetch_in_flight: bool,
 }
 
+#[cfg(feature = "loopback-test-offer-trigger")]
+struct TriggerFetchInFlightReset {
+    captured: Arc<Mutex<CapturedIdentityLinks>>,
+    armed: bool,
+}
+
+#[cfg(feature = "loopback-test-offer-trigger")]
+impl TriggerFetchInFlightReset {
+    fn new(captured: Arc<Mutex<CapturedIdentityLinks>>) -> Self {
+        Self {
+            captured,
+            armed: true,
+        }
+    }
+
+    fn complete(mut self, link: InboundIdentityLink) {
+        let completed = if let Ok(mut captured) = self.captured.lock() {
+            captured.trigger_fetch_in_flight = false;
+            if captured.links.is_empty() {
+                captured.links.push_back(link);
+            }
+            true
+        } else {
+            false
+        };
+        if completed {
+            self.armed = false;
+        }
+    }
+}
+
+#[cfg(feature = "loopback-test-offer-trigger")]
+impl Drop for TriggerFetchInFlightReset {
+    fn drop(&mut self) {
+        if self.armed
+            && let Ok(mut captured) = self.captured.lock()
+        {
+            captured.trigger_fetch_in_flight = false;
+        }
+    }
+}
+
 impl NativeIdentityLinkIngress {
     #[cfg(feature = "loopback-test-offer-trigger")]
     #[must_use]
@@ -701,14 +743,10 @@ impl NativeIdentityLinkIngress {
         let worker = std::thread::Builder::new()
             .name("oxid-portal-offer-fetch".to_owned())
             .spawn(move || {
+                let reset = TriggerFetchInFlightReset::new(captured);
                 let resolved = resolver();
                 let resolved = validated_trigger_result(&resolved).unwrap_or(fallback);
-                if let Ok(mut captured) = captured.lock() {
-                    captured.trigger_fetch_in_flight = false;
-                    if captured.links.is_empty() {
-                        captured.links.push_back(resolved);
-                    }
-                }
+                reset.complete(resolved);
             });
         if worker.is_err() {
             let mut captured = self
@@ -1144,6 +1182,40 @@ mod tests {
             "openid-credential-offer://?credential_offer=%7B%7D"
         );
         assert_eq!(ingress.take_pending(), Ok(None));
+    }
+
+    #[cfg(feature = "loopback-test-offer-trigger")]
+    #[test]
+    fn portal_trigger_worker_panic_releases_the_reserved_queue_slot() {
+        let ingress = NativeIdentityLinkIngress::standalone_portal_test();
+        ingress
+            .capture_with_trigger_resolver(loopback_test_offer_trigger::TRIGGER.to_owned(), || {
+                panic!("injected resolver panic")
+            })
+            .expect("schedule trigger");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match ingress.capture(LOGIN.to_owned()) {
+                Ok(()) => break,
+                Err(IdentityLinkIngressError::QueueFull) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "panicked trigger worker retained the queue reservation"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(error) => panic!("capture failed after worker panic: {error}"),
+            }
+        }
+        assert_eq!(
+            ingress
+                .take_pending()
+                .expect("take pending")
+                .expect("replacement link")
+                .into_inner(),
+            LOGIN
+        );
     }
 
     #[cfg(feature = "loopback-test-offer-trigger")]

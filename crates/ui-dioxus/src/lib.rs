@@ -10269,10 +10269,55 @@ fn credential_issuance_message(error: CredentialIssuanceError) -> String {
     }
 }
 
+fn credential_issuance_error_proves_no_retained_session(error: &CredentialIssuanceError) -> bool {
+    matches!(
+        error,
+        CredentialIssuanceError::NotFound | CredentialIssuanceError::Unavailable
+    )
+}
+
 fn credential_issuance_cleanup_allows_release(
     result: &Result<CredentialIssuanceView, CredentialIssuanceError>,
 ) -> bool {
-    result.is_ok()
+    match result {
+        Ok(_) => true,
+        Err(error) => credential_issuance_error_proves_no_retained_session(error),
+    }
+}
+
+fn discard_open_credential_issuance_reviews(
+    list_service: &dyn ListCredentialIssuancesUseCase,
+    refuse_service: &dyn RefuseCredentialIssuanceUseCase,
+    profile_id: &str,
+) -> Result<(), String> {
+    let reviews = match list_service.execute(CredentialIssuanceProfileQuery {
+        profile_id: profile_id.to_owned(),
+    }) {
+        Ok(reviews) => reviews,
+        Err(error) if credential_issuance_error_proves_no_retained_session(&error) => Vec::new(),
+        Err(error) => return Err(credential_issuance_message(error)),
+    };
+    for review in reviews {
+        match review.state.as_str() {
+            "awaiting_consent" => {
+                match refuse_service.execute(RefuseCredentialIssuanceCommand {
+                    profile_id: profile_id.to_owned(),
+                    issuance_id: review.id,
+                }) {
+                    Ok(_) => {}
+                    Err(error) if credential_issuance_error_proves_no_retained_session(&error) => {}
+                    Err(error) => return Err(credential_issuance_message(error)),
+                }
+            }
+            "failed" | "refused" | "succeeded" => {}
+            _ => {
+                return Err(
+                    "Credential cleanup is still in progress. Retry after it finishes.".to_owned(),
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn apply_failed_credential_acceptance_state<Prepared>(
@@ -11551,28 +11596,11 @@ fn CredentialsPage(
                                     issuance_notice.set(None);
                                     spawn(async move {
                                         let cleanup = run_ui_blocking(move || {
-                                            let reviews = list_service
-                                                .execute(CredentialIssuanceProfileQuery {
-                                                    profile_id: profile_id.clone(),
-                                                })
-                                                .map_err(credential_issuance_message)?;
-                                            for review in reviews {
-                                                match review.state.as_str() {
-                                                    "awaiting_consent" => {
-                                                        refuse_service
-                                                            .execute(RefuseCredentialIssuanceCommand {
-                                                                profile_id: profile_id.clone(),
-                                                                issuance_id: review.id,
-                                                            })
-                                                            .map_err(credential_issuance_message)?;
-                                                    }
-                                                    "failed" | "refused" | "succeeded" => {}
-                                                    _ => {
-                                                        return Err("Credential cleanup is still in progress. Retry after it finishes.".to_owned());
-                                                    }
-                                                }
-                                            }
-                                            Ok::<(), String>(())
+                                            discard_open_credential_issuance_reviews(
+                                                list_service.as_ref(),
+                                                refuse_service.as_ref(),
+                                                &profile_id,
+                                            )
                                         })
                                         .await;
                                         match cleanup {
@@ -13085,13 +13113,16 @@ mod tests {
     }
 
     #[test]
-    fn issuance_failure_releases_the_route_only_after_confirmed_cleanup() {
+    fn issuance_failure_releases_the_route_after_cleanup_or_proved_no_session() {
         assert!(!credential_issuance_cleanup_allows_release(&Err(
             CredentialIssuanceError::InvalidState
         )));
-        assert!(!credential_issuance_cleanup_allows_release(&Err(
-            CredentialIssuanceError::Unavailable
-        )));
+        for error in [
+            CredentialIssuanceError::NotFound,
+            CredentialIssuanceError::Unavailable,
+        ] {
+            assert!(credential_issuance_cleanup_allows_release(&Err(error)));
+        }
     }
 
     #[test]
@@ -13136,7 +13167,6 @@ mod tests {
         };
         for cleanup in [
             Ok(Err(CredentialIssuanceError::InvalidState)),
-            Ok(Err(CredentialIssuanceError::Unavailable)),
             Err(UiBlockingTaskError::WorkerFailed),
         ] {
             assert_retained(
@@ -13148,11 +13178,100 @@ mod tests {
         }
         for cleanup in [
             Ok(Err(CredentialIssuanceError::InvalidState)),
-            Ok(Err(CredentialIssuanceError::Unavailable)),
             Err(UiBlockingTaskError::WorkerFailed),
         ] {
             assert_retained(cleanup, None, true, Some(Route::Documents));
         }
+    }
+
+    #[test]
+    fn unavailable_cleanup_releases_imported_and_manual_review_without_restart() {
+        for cleanup_error in [
+            CredentialIssuanceError::NotFound,
+            CredentialIssuanceError::Unavailable,
+        ] {
+            for imported in [true, false] {
+                let mut pending = imported.then(|| PendingIdentityRequest {
+                    kind: IdentityRequestKind::CredentialIssuance,
+                    request_uri: String::new(),
+                });
+                let mut manual_review_lock = !imported;
+                let mut prepared = Some("prepared credential review".to_owned());
+                let mut consent = true;
+                let cleanup = Ok(Err(cleanup_error.clone()));
+
+                assert!(apply_failed_credential_acceptance_state(
+                    &cleanup,
+                    &mut pending,
+                    &mut manual_review_lock,
+                    &mut prepared,
+                    &mut consent,
+                ));
+                assert!(pending.is_none());
+                assert!(!manual_review_lock);
+                assert!(prepared.is_none());
+                assert!(!consent);
+                assert!(identity_request_admits_new_link(false, false));
+                assert_eq!(
+                    retained_identity_review_route(&pending, manual_review_lock),
+                    None
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn leave_review_treats_unavailable_list_and_missing_refusal_as_no_session() {
+        struct UnavailableList;
+        impl ListCredentialIssuancesUseCase for UnavailableList {
+            fn execute(
+                &self,
+                _: CredentialIssuanceProfileQuery,
+            ) -> Result<Vec<CredentialIssuanceView>, CredentialIssuanceError> {
+                Err(CredentialIssuanceError::Unavailable)
+            }
+        }
+
+        struct AwaitingList;
+        impl ListCredentialIssuancesUseCase for AwaitingList {
+            fn execute(
+                &self,
+                _: CredentialIssuanceProfileQuery,
+            ) -> Result<Vec<CredentialIssuanceView>, CredentialIssuanceError> {
+                Ok(vec![CredentialIssuanceView {
+                    id: "issuance-missing".to_owned(),
+                    issuer: "https://issuer.example".to_owned(),
+                    configuration_ids: vec!["DigitalPassport".to_owned()],
+                    display_names: vec!["Digital Passport".to_owned()],
+                    state: "awaiting_consent".to_owned(),
+                    credential_id: None,
+                    failure_code: None,
+                }])
+            }
+        }
+
+        struct MissingRefusal;
+        impl RefuseCredentialIssuanceUseCase for MissingRefusal {
+            fn execute(
+                &self,
+                _: RefuseCredentialIssuanceCommand,
+            ) -> Result<CredentialIssuanceView, CredentialIssuanceError> {
+                Err(CredentialIssuanceError::NotFound)
+            }
+        }
+
+        assert_eq!(
+            discard_open_credential_issuance_reviews(
+                &UnavailableList,
+                &MissingRefusal,
+                "profile-1",
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            discard_open_credential_issuance_reviews(&AwaitingList, &MissingRefusal, "profile-1"),
+            Ok(())
+        );
     }
 
     #[test]

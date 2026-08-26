@@ -15,8 +15,9 @@ regression evidence. Portal integration subsequently implemented the reviewed
 OpenID4VCI 1.0 Final profile and landed on merged Portal
 `integration@22ae5369b6f939e6b20648f4b85dd993527748ef`. The schema-v3 source
 lock pins that integration commit and tree plus the existing Final-profile
-provenance digest. The provenance document retains its own historical source
-facts; they are not duplicated as runtime-authority fields.
+source commit and provenance digest. Its commit directory contains the lock and
+the one authenticated provenance document; the historical protocol fixtures
+remain in their original source directory instead of being duplicated.
 
 The integration remains a controlled development capability. A local source
 lock plus an operator-supplied exact deployment-manifest digest authenticates

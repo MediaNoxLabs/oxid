@@ -38,6 +38,18 @@ headless:
 portal-headless-e2e:
     ./scripts/e2e/portal-headless-e2e.sh
 
+# Serve one single-use Portal offer to the virtual-mobile loopback profile.
+portal-virtual-mobile-offer-harness:
+    node ./scripts/e2e/portal-virtual-mobile-offer-harness.mjs
+
+# Verify virtual-mobile offer port ownership, authentication, and replay rejection.
+portal-virtual-mobile-offer-harness-contract:
+    node ./scripts/e2e/portal-virtual-mobile-offer-harness.mjs --contract-test
+
+# Verify physical Portal evidence is derived from exact measured results.
+portal-android-evidence-contract:
+    node --test ./scripts/e2e/portal-android-evidence.test.mjs
+
 # Run strict Portal issuance, encrypted restart, and fresh reverification on a discovered physical Android device.
 android-portal-tailnet-physical-smoke:
     ./scripts/test-android-portal-tailnet-physical.sh

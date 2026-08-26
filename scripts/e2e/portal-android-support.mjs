@@ -13,9 +13,9 @@ const PORTAL_COMMIT = "22ae5369b6f939e6b20648f4b85dd993527748ef";
 const PORTAL_TREE = "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10";
 const PORTAL_PROVENANCE_SHA256 = "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87";
 const ISSUER_PROXY_PORT = 18090;
-const CONTROL_PORT = 18091;
+const PHYSICAL_CONTROL_PORT = 18095;
 const HOLDER_RESOLVER_PORT = 18092;
-const OFFER_PORT = 18094;
+const PHYSICAL_OFFER_PORT = 18094;
 const ISSUER_RESOLVER_PROXY_PORT = 18093;
 const MAX_CONTROL_BODY = 2 * 1024 * 1024;
 const MAX_OFFER_BYTES = 32 * 1024;
@@ -485,9 +485,9 @@ try {
   phase = "listeners";
   await Promise.all([
     listen(issuerProxy, ISSUER_PROXY_PORT),
-    listen(controlServer, CONTROL_PORT),
+    listen(controlServer, PHYSICAL_CONTROL_PORT),
     listen(holderResolver, HOLDER_RESOLVER_PORT),
-    listen(offerServer, OFFER_PORT),
+    listen(offerServer, PHYSICAL_OFFER_PORT),
     listen(issuerResolverProxy, ISSUER_RESOLVER_PROXY_PORT),
   ]);
   phase = "portal-stack";
@@ -510,9 +510,9 @@ try {
   fs.writeFileSync(manifestPath, manifestBytes, { mode: 0o600 });
   const ready = {
     controlCapability: "0".repeat(controlCapability.length),
-    controlOrigin: `http://127.0.0.1:${CONTROL_PORT}`,
+    controlOrigin: `http://127.0.0.1:${PHYSICAL_CONTROL_PORT}`,
     issuerProxyPort: ISSUER_PROXY_PORT,
-    offerPort: OFFER_PORT,
+    offerPort: PHYSICAL_OFFER_PORT,
     resolverProxyPort: ISSUER_RESOLVER_PROXY_PORT,
     manifestPath,
     manifestSha256: sha256(manifestBytes),

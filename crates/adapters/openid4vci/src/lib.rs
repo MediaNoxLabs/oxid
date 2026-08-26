@@ -51,9 +51,10 @@ mod portal;
     )
 ))]
 pub use portal::{
-    PORTAL_INTEGRATION_COMMIT, PORTAL_INTEGRATION_TREE, PortalCredentialMaterialDecoder,
-    PortalCredentialMaterialError, PortalDeploymentManifest, PortalDeploymentManifestError,
-    PortalOid4vciClient, PortalOid4vciClientFactory, authenticate_bundled_portal_source,
+    PORTAL_INTEGRATION_COMMIT, PORTAL_INTEGRATION_TREE, PORTAL_PROFILE_SOURCE_COMMIT,
+    PORTAL_PROVENANCE_SHA256, PortalCredentialMaterialDecoder, PortalCredentialMaterialError,
+    PortalDeploymentManifest, PortalDeploymentManifestError, PortalOid4vciClient,
+    PortalOid4vciClientFactory, authenticate_bundled_portal_source,
 };
 #[cfg(all(
     test,

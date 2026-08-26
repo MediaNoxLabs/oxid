@@ -16,9 +16,10 @@ readonly READY_FIFO="$STATE/ready.fifo"
 readonly CAPABILITY_FIFO="$STATE/capability.fifo"
 readonly XDG_CONFIG="$STATE/xdg-config"
 readonly XDG_STATE="$STATE/xdg-state"
-readonly CONTROL_ORIGIN="http://127.0.0.1:18091"
+readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
 readonly CONTROL_CONFIG="$STATE/control-curl.conf"
 readonly ORIGIN_POLICY="$REPOSITORY_ROOT/scripts/e2e/tailnet-origin-policy.mjs"
+readonly EVIDENCE_FILTER="$REPOSITORY_ROOT/scripts/e2e/portal-android-evidence.jq"
 readonly TRIGGER="openid-credential-offer://standalone-portal-test-fetch"
 readonly SOURCE_INPUT="${OXID_PORTAL_SOURCE_REPOSITORY:-$PORTAL_REMOTE}"
 
@@ -114,12 +115,14 @@ status_json="$(tailscale status --json)"
 dns_name="$(jq -r '.Self.DNSName | rtrimstr(".")' <<<"$status_json")"
 OXID_TAILNET_ORIGIN_POLICY_INPUT="$dns_name" node "$ORIGIN_POLICY" --host-env \
   || fail tailscale-identity
+tailnet_identity_discovered=true
 baseline="$(tailscale serve status --json | jq -S -c '.')"
-printf '%s' "$baseline" | jq -e '
+preserved_standalone_routes="$(printf '%s' "$baseline" | jq -r '
   .TCP["443"].HTTPS == true
   and .TCP["8443"].HTTPS == true
   and .TCP["10000"].HTTPS == true
-' >/dev/null || fail preserved-routes
+')"
+[ "$preserved_standalone_routes" = true ] || fail preserved-routes
 listener=""
 for candidate in $(seq 11000 11999); do
   key="$dns_name:$candidate"
@@ -130,6 +133,7 @@ for candidate in $(seq 11000 11999); do
   fi
 done
 [ -n "$listener" ] || fail listener
+temporary_listener_discovered=true
 public_origin="https://$dns_name:$listener"
 OXID_TAILNET_ORIGIN_POLICY_INPUT="$public_origin" node "$ORIGIN_POLICY" --origin-env \
   || fail listener
@@ -176,6 +180,7 @@ manifest_path="$(jq -r '.manifestPath // empty' "$ready")"
 manifest_sha="$(jq -r '.manifestSha256 // empty' "$ready")"
 control_capability="$(jq -r '.controlCapability // empty' "$ready")"
 [ "$(jq -r '.schema // empty' "$ready")" = oxid-portal-android-ready-v2 ] \
+  && [ "$(jq -r '.controlOrigin // empty' "$ready")" = "$CONTROL_ORIGIN" ] \
   && [ "$(jq -r '.offerPort // empty' "$ready")" = 18094 ] \
   && [[ "$control_capability" =~ ^[0-9a-f]{64}$ ]] \
   && [[ "$manifest_path" = /* && "$manifest_sha" =~ ^[0-9a-f]{64}$ ]] || fail manifest
@@ -242,19 +247,30 @@ open_webview() {
 
 run_scenario() {
   local mode="$1" scenario_log="$STATE/scenario-error.log"
+  local scenario_result="$STATE/scenario-result-$mode.json"
   open_webview || fail webview
-  rm -f -- "$scenario_log"
+  rm -f -- "$scenario_log" "$scenario_result"
   control_capability="$(jq -r '.controlCapability' "$ready")"
   if ! OXID_PORTAL_CONTROL_ORIGIN="$CONTROL_ORIGIN" \
     OXID_PORTAL_CONTROL_CAPABILITY="$control_capability" \
     node "$REPOSITORY_ROOT/tests/mobile/android-portal-flow.mjs" "$websocket_url" "$mode" \
-    >>"$PRIVATE_LOG" 2>"$scenario_log"; then
+    >"$scenario_result" 2>"$scenario_log"; then
     if ! rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|private.?parts|signed.?bytes|detached.?proof|capability|seed|serial|\.ts\.net' "$scenario_log"; then
       tail -n 12 "$scenario_log" >&2
     fi
     fail "$mode"
   fi
   control_capability=""
+  jq -e --arg mode "$mode" '
+    type == "object"
+    and .mode == $mode
+    and .passed == true
+    and (.measurements | type == "object")
+  ' "$scenario_result" >/dev/null || fail "$mode-marker"
+  if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|private.?parts|signed.?bytes|detached.?proof|capability|seed|serial|\.ts\.net' "$scenario_result"; then
+    fail "$mode-marker-secret"
+  fi
+  chmod 600 "$scenario_result"
   rm -f -- "$scenario_log"
   adb_device forward --remove "tcp:$forward_port" >/dev/null 2>&1 || fail forward-cleanup
   forward_port=""
@@ -294,6 +310,7 @@ run_scenario issue
 credential_header="$(adb_device shell run-as io.medianox.oxid od -An -tx1 -N8 files/oxid/private/credentials.enc 2>/dev/null | tr -d ' \r\n')"
 credential_key_size="$(adb_device shell run-as io.medianox.oxid wc -c files/oxid/private/credentials.key 2>/dev/null | awk '{print $1}' | tr -d '\r\n')"
 [ "$credential_header" = 4f58494456433031 ] && [ "$credential_key_size" = 32 ] || fail encrypted-store
+encrypted_persistence=true
 old_pid="$(adb_device shell pidof io.medianox.oxid | tr -d '\r\n')"
 adb_device shell am force-stop io.medianox.oxid
 adb_device shell am start -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
@@ -303,11 +320,14 @@ for _attempt in $(seq 1 60); do
   sleep 0.25
 done
 [ -n "${new_pid:-}" ] && [ "$new_pid" != "$old_pid" ] || fail process-restart
+process_restart=true
 run_scenario restored
-[ "$SECONDS" -le 300 ] || fail duration
+duration_seconds="$SECONDS"
+[ "$duration_seconds" -le 300 ] || fail duration
+completed_within_300_seconds=true
 
 counters="$(control_curl --max-time 10 "$CONTROL_ORIGIN/counters")"
-jq -e '
+exact_protocol_counters="$(jq -r '
   .authorizationMetadata == 3
   and .credential == 1
   and .issuerMetadata == 7
@@ -317,8 +337,10 @@ jq -e '
   and .nonce == 1
   and .other == 0
   and .token == 2
-' >/dev/null <<<"$counters" || fail protocol-counts
+' <<<"$counters")"
+[ "$exact_protocol_counters" = true ] || fail protocol-counts
 [ "$(adb_device reverse --list 2>/dev/null | sort)" = "$adb_reverse_before" ] || fail adb-reverse
+no_adb_reverse=true
 
 receipt="$STATE/portal-consumer/owner-receipt.json"
 resolver_image="$(jq -r '.images.resolver' "$receipt")"
@@ -333,6 +355,7 @@ XDG_CONFIG_HOME="$XDG_CONFIG" XDG_STATE_HOME="$XDG_STATE" \
 profile_active=0
 after_cleanup="$(tailscale serve status --json | jq -S -c '.')"
 [ "$after_cleanup" = "$baseline" ] || fail serve-restoration
+exact_serve_receipt_cleanup=true
 control_curl --max-time 10 -X POST "$CONTROL_ORIGIN/complete" >/dev/null || fail support-finish
 for _attempt in $(seq 1 90); do
   kill -0 "$support_pid" 2>/dev/null || break
@@ -342,6 +365,7 @@ kill -0 "$support_pid" 2>/dev/null && fail support-stop
 wait "$support_pid" || fail support-stop
 support_pid=""
 [ -z "$(docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet)" ] || fail portal-cleanup
+portal_consumer_cleanup=true
 
 os_version="$(adb_device shell getprop ro.build.version.release | tr -d '\r\n')"
 api_level="$(adb_device shell getprop ro.build.version.sdk | tr -d '\r\n')"
@@ -349,19 +373,60 @@ api_level="$(adb_device shell getprop ro.build.version.sdk | tr -d '\r\n')"
 [ "$(git -C "$REPOSITORY_ROOT" rev-parse HEAD)" = "$OXID_HEAD" ] || fail head-changed
 [ -z "$(git -C "$REPOSITORY_ROOT" status --porcelain --untracked-files=no)" ] || fail oxid-dirty
 
+scenario_results="$(jq -s -c 'sort_by(.mode)' "$STATE"/scenario-result-*.json)"
+jq -e '
+  length == 9
+  and ([.[].mode] == [
+    "cold-route",
+    "issue",
+    "issue-error",
+    "malformed",
+    "prepare-holder",
+    "protocol-error",
+    "protocol-timeout",
+    "restored",
+    "route-refuse"
+  ])
+  and all(.[]; .passed == true)
+' <<<"$scenario_results" >/dev/null || fail scenario-results
+
 evidence="$REPOSITORY_ROOT/target/portal-android-physical/evidence.json"
 mkdir -p "$(dirname -- "$evidence")"
+candidate_base="$(mktemp "$(dirname -- "$evidence")/.evidence-base.XXXXXX")"
 candidate="$(mktemp "$(dirname -- "$evidence")/.evidence.XXXXXX")"
 jq -cn \
   --arg head "$OXID_HEAD" --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
   --arg resolver "$resolver_image" --arg didManager "$did_manager_image" --arg issuer "$issuer_image" \
-  --arg os "$os_version" --arg api "$api_level" --argjson duration "$SECONDS" \
-  '{schema:"oxid-portal-android-evidence-v1",oxid:{head:$head},portal:{integrationCommit:$commit,integrationTree:$tree,images:{resolver:$resolver,didManager:$didManager,issuer:$issuer}},platform:{kind:"android_physical_tailnet",os:$os,apiLevel:$api,applicationId:"io.medianox.oxid"},acceptance:{mockKycApproved:true,warmIngress:true,coldIngress:true,refusalBeforeConsent:true,refusalSecretEndpointCalls:0,malformedRejected:true,unavailableRejected:true,timeoutRejected:true,issueErrorEscapedSafely:true,exactProtocolCounters:true,strictFinalExchange:true,explicitConsent:true,managedAuthenticationProof:true,separateJubjubAssertionBinding:true,exactBundleImported:true,encryptedPersistence:true,processRestart:true,custodyReactivated:true,listedAfterRestart:true,freshReverification:true,oneItemIngress:true,noAdbReverse:true,tailnetIdentityDiscovered:true,temporaryListenerDiscovered:true,preservedStandaloneRoutes:true,exactServeReceiptCleanup:true,secretFreeEvidence:true,completedWithin300Seconds:($duration <= 300)}}' \
-  >"$candidate"
+  --arg os "$os_version" --arg api "$api_level" --argjson duration "$duration_seconds" \
+  --argjson counters "$counters" --argjson scenarios "$scenario_results" \
+  --argjson encryptedPersistence "$encrypted_persistence" \
+  --argjson processRestart "$process_restart" \
+  --argjson noAdbReverse "$no_adb_reverse" \
+  --argjson tailnetIdentityDiscovered "$tailnet_identity_discovered" \
+  --argjson temporaryListenerDiscovered "$temporary_listener_discovered" \
+  --argjson preservedStandaloneRoutes "$preserved_standalone_routes" \
+  --argjson exactServeReceiptCleanup "$exact_serve_receipt_cleanup" \
+  --argjson portalConsumerCleanup "$portal_consumer_cleanup" \
+  -f "$EVIDENCE_FILTER" >"$candidate_base"
+if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|John|Doe|AB1234567|private.?parts|signed.?bytes|detached.?proof|capability|seed|serial|\.ts\.net' "$candidate_base"; then
+  rm -f -- "$candidate_base" "$candidate"
+  fail evidence-schema
+fi
+secret_free_evidence=true
+jq -c --argjson secretFreeEvidence "$secret_free_evidence" \
+  '.acceptance.secretFreeEvidence = $secretFreeEvidence' "$candidate_base" >"$candidate"
+rm -f -- "$candidate_base"
 if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|John|Doe|AB1234567|private.?parts|signed.?bytes|detached.?proof|capability|seed|serial|\.ts\.net' "$candidate"; then
   rm -f -- "$candidate"
   fail evidence-schema
 fi
+jq -e '
+  .acceptance.refusalSecretEndpointCalls == 0
+  and (.acceptance | del(.refusalSecretEndpointCalls) | [.[]] | all(.[]; . == true))
+' "$candidate" >/dev/null || {
+  rm -f -- "$candidate"
+  fail evidence-measurements
+}
 chmod 600 "$candidate"
 mv -f -- "$candidate" "$evidence"
 printf 'android-portal-tailnet: PASS head=%s evidence=%s\n' "$OXID_HEAD" "${evidence#"$REPOSITORY_ROOT/"}"

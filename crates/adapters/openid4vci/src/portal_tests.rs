@@ -14,6 +14,10 @@ const PROFILE_FIXTURE_ROOT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final"
 );
+const SOURCE_LOCK_ROOT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef"
+);
 
 fn sha256(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -38,6 +42,24 @@ fn manifest_bytes(origin: &str) -> Vec<u8> {
 #[test]
 fn exact_portal_source_lock_and_all_profile_fixtures_authenticate() {
     authenticate_bundled_portal_source().expect("exact checked-in Portal source must authenticate");
+    let source_lock = fs::read(format!("{SOURCE_LOCK_ROOT}/source-lock.json"))
+        .expect("self-contained source lock");
+    let source_lock: serde_json::Value =
+        serde_json::from_slice(&source_lock).expect("source-lock JSON");
+    assert_eq!(
+        source_lock["profileSourceCommit"],
+        PORTAL_PROFILE_SOURCE_COMMIT
+    );
+    assert_eq!(
+        source_lock["provenancePath"],
+        "openid4vci-final/provenance.json"
+    );
+    let bundled_provenance = fs::read(format!(
+        "{SOURCE_LOCK_ROOT}/openid4vci-final/provenance.json"
+    ))
+    .expect("self-contained provenance");
+    assert_eq!(sha256(&bundled_provenance), PORTAL_PROVENANCE_SHA256);
+
     let provenance = fs::read(format!("{PROFILE_FIXTURE_ROOT}/provenance.json")).expect("manifest");
     assert_eq!(
         sha256(&provenance),

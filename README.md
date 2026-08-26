@@ -443,6 +443,26 @@ commits. It tears down only its uniquely named project and retains one
 allow-listed secret-free evidence JSON, bound to the clean tested Oxid commit,
 under `target/portal-headless-e2e/`.
 
+The `standalone-portal` iOS Simulator/Android QEMU profile retrieves its fixed
+non-secret trigger from the repository-owned virtual offer harness on
+`127.0.0.1:18091`. Stage the same 64-byte lowercase hexadecimal capability in
+app-private `portal-offer.capability` and an owner-only host file, and place one
+bounded `openid-credential-offer://` URI in a second owner-only host file. The
+harness unlinks both host files before listening, serves only one authenticated
+`GET /offer`, rejects replay, and retains no offer or capability:
+
+```bash
+export OXID_PORTAL_VIRTUAL_CAPABILITY_FILE='<absolute-owner-only-capability-file>'
+export OXID_PORTAL_VIRTUAL_OFFER_FILE='<absolute-owner-only-offer-file>'
+just portal-virtual-mobile-offer-harness
+```
+
+Run `just portal-virtual-mobile-offer-harness-contract` to exercise exact port,
+route, authentication, single-use, and cleanup behavior without a device. Port
+18091 belongs only to this virtual offer endpoint. The physical Android suite
+keeps its unpublished control API on 18095 and its dedicated unpublished offer
+listener on 18094; neither is installed through ADB reverse.
+
 The Dioxus card permits explicit device-local first/last reveal and age
 threshold planning. A separate OpenID4VP 1.0 Final-shaped DCQL panel previews a
 deterministic standalone verifier request, matching credential, and exact claim

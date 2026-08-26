@@ -336,8 +336,8 @@ if [ "$standalone_network_profile" = "local" ]; then
   fi
   reverse_ports=(8088 9944 6300)
   if [ "$portal_profile" = "local" ]; then
-    # 18091 is the fixed-trigger loopback control endpoint; only the app's
-    # bounded worker uses it to retrieve the real offer in process.
+    # 18091 is owned only by the virtual-mobile single-use offer harness; the
+    # physical suite keeps its unpublished control API on 18095.
     reverse_ports+=(18090 18091 18093)
   fi
   for local_port in "${reverse_ports[@]}"; do

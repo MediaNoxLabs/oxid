@@ -41,10 +41,12 @@ not select the Portal client or offer handoff.
 The application receives only a fixed non-secret custom-scheme trigger. A
 fresh 64-byte hexadecimal capability is streamed into app-private storage over
 ADB standard input. The app unlinks it before issuing a single bounded HTTPS
-`/offer` request. Serve forwards that mount to a dedicated unpublished loopback
-listener, which accepts only the proven stripped `/` request path. The separate
-control listener is never published and capability-authenticates every endpoint
-except health. The offer, grant, tokens, proof JWT, credential bundle,
+`/offer` request. Serve forwards that mount to the dedicated unpublished 18094
+loopback listener, which accepts only the proven stripped `/` request path. The
+separate 18095 control listener is never published and capability-authenticates
+every endpoint except health. Virtual mobile owns 18091 for its repository
+single-use offer harness; physical control and offer traffic never share that
+listener. The offer, grant, tokens, proof JWT, credential bundle,
 private parts, DIDs, and capability never enter process arguments, retained
 logs, or evidence.
 
