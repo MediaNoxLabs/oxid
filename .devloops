@@ -35,6 +35,7 @@ gates:
       - external-review
     mandatoryAngles:
       - pr-description
+      - external-review
     required: true
     requireCi: true
   preApproval:
@@ -49,6 +50,7 @@ gates:
       - external-review
     mandatoryAngles:
       - pr-checklist-matrix
+      - external-review
     required: true
     requireCi: true
   requireFanoutEvidence: true
@@ -83,8 +85,10 @@ personas:
     persona: review
     prompt: >-
       Run an independent Claude CLI review of the exact current head against
-      its `origin/integration` merge base. Record the Claude CLI version, head
-      SHA, base SHA, immutable diff-artifact path, and review timestamp. Any push
+      its `origin/integration` merge base. Record a local attestation with the
+      Claude CLI version, head SHA, base SHA, exact diff-artifact path, and
+      review timestamp; do not claim it authenticates reviewer identity or is a
+      hosted/dev-loops-native status. Any push
       makes prior evidence stale. Review correctness, security, architecture,
       tests, documentation, public-repository safety, and regression risk. Do
       not modify files. Return actionable findings with file/line references,
