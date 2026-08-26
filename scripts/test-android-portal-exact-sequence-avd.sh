@@ -5,7 +5,7 @@ set -euo pipefail
 export LC_ALL=C
 export CDPATH=
 
-readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"
 readonly PROCESS_SUPPORT="$ROOT/scripts/e2e/android-avd-process-ownership.sh"
 readonly PORTAL_STATE="$ROOT/target/portal-virtual-mobile/runtime"
 readonly RUN_ROOT="$ROOT/target/android-portal-exact-sequence-avd"
@@ -14,7 +14,6 @@ readonly PRIVATE_LOG="$PRIVATE_STATE/journey.log"
 readonly EVIDENCE="$RUN_ROOT/evidence.json"
 readonly BUILD_SOURCE="$PRIVATE_STATE/build-source"
 readonly PACKAGE="io.medianox.oxid"
-readonly ACTIVITY="$PACKAGE/dev.dioxus.main.MainActivity"
 readonly TRIGGER="openid-credential-offer://standalone-portal-test-fetch"
 readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
 readonly EMULATOR_PORT=5562
@@ -28,17 +27,14 @@ readonly -a SHARED_PORTS=(6300 8088 9944)
 source "$PROCESS_SUPPORT"
 
 portal_pid=""
-portal_identity=""
 emulator_pid=""
-emulator_identity=""
 launcher_pid=""
-launcher_identity=""
 forward_active=0
 emulator_online=0
 cleanup_running=0
 cleanup_ok=true
 private_state_owned=0
-portal_owned=0
+portal_ready=0
 build_owned=0
 launcher_mutation_owned=0
 journey_status="not_started"
@@ -59,15 +55,13 @@ cold_capability_absent=false
 warm_capability_absent=false
 cold_delta='{}'
 warm_delta='{}'
-warm_intents=0
+warm_intents_attempted=0
+warm_intents_delivered=0
 websocket_url=""
-portal_cleanup=false
-package_cleanup=false
 emulator_cleanup=false
 reverse_cleanup=false
 forward_cleanup=false
 listener_cleanup=false
-shared_listeners_preserved=false
 build_cleanup=false
 private_logs_removed=false
 head_clean=false
@@ -82,7 +76,6 @@ for command_name in awk cargo curl docker git jq lsof mktemp nix node ps rg rust
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
  done
 if timeout -k 1s 0.1s sleep 5; then fail timeout-capability; else [ "$?" -eq 124 ] || fail timeout-capability; fi
-export OXID_PROCESS_TIMEOUT_COMMAND="$(command -v timeout)"
 
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [ -z "$android_sdk" ] && [ -d "$HOME/Library/Android/sdk" ]; then
@@ -113,6 +106,12 @@ cleanup_adb() {
   run_deadline 15 env ANDROID_SERIAL="$SERIAL" "$ADB" "$@"
 }
 
+adb_text() {
+  local output
+  output="$(adb_device "$@")" || return 1
+  printf '%s' "${output//$'\r'/}"
+}
+
 control_curl() {
   run_deadline 15 curl --config "$PORTAL_STATE/control-curl.conf" --noproxy '*' \
     --fail --silent --show-error --max-time 10 "$@"
@@ -126,22 +125,6 @@ listener_fingerprint() {
   done
 }
 
-child_active() {
-  local pid="$1" stat_value
-  [ -n "$pid" ] || return 1
-  stat_value="$(run_deadline 5 ps -p "$pid" -o stat= 2>/dev/null || true)"
-  [ -n "$stat_value" ] && [[ "$stat_value" != Z* ]]
-}
-
-wait_child_for() {
-  local pid="$1" attempts="$2"
-  for ((_attempt = 0; _attempt < attempts; _attempt++)); do
-    child_active "$pid" || return 0
-    sleep 0.2
-  done
-  return 1
-}
-
 remove_forward() {
   if [ "$forward_active" -eq 1 ]; then
     cleanup_adb forward --remove "tcp:$CDP_PORT" >/dev/null 2>&1 || return 1
@@ -151,12 +134,12 @@ remove_forward() {
 
 write_evidence() {
   local candidate outcome incoming_status="$1"
-  [ -n "$head" ] || return 0
+  [ -n "$head" ] && [[ "$journey_status" = warm_* ]] || return 0
   outcome="$journey_status"
   if [ "$incoming_status" -ne 0 ] && [ "$outcome" = not_started ]; then outcome="pre_warm_failure"; fi
-  mkdir -p "$RUN_ROOT"
-  candidate="$(mktemp "$RUN_ROOT/.evidence.XXXXXX")"
-  jq -cn \
+  run_deadline 5 mkdir -p "$RUN_ROOT" || return 1
+  candidate="$(run_deadline 5 mktemp "$RUN_ROOT/.evidence.XXXXXX")" || return 1
+  run_deadline 10 jq -cn \
     --arg schema oxid-portal-android-exact-sequence-avd-v1 \
     --arg head "$head" --arg apkSha256 "$apk_sha256" --arg outcome "$outcome" \
     --arg classification "$failure_phase" \
@@ -167,11 +150,10 @@ write_evidence() {
     --argjson coldCapabilityAbsent "$cold_capability_absent" \
     --argjson warmCapabilityAbsent "$warm_capability_absent" \
     --argjson coldDelta "$cold_delta" --argjson warmDelta "$warm_delta" \
-    --argjson exactlyOneWarmIntent "$([ "$warm_intents" -eq 1 ] && printf true || printf false)" \
-    --argjson portalCleanup "$portal_cleanup" --argjson packageCleanup "$package_cleanup" \
+    --argjson warmIntentAttempted "$([ "$warm_intents_attempted" -eq 1 ] && printf true || printf false)" \
+    --argjson exactlyOneWarmIntent "$([ "$warm_intents_delivered" -eq 1 ] && printf true || printf false)" \
     --argjson emulatorCleanup "$emulator_cleanup" --argjson reverseCleanup "$reverse_cleanup" \
     --argjson forwardCleanup "$forward_cleanup" --argjson listenerCleanup "$listener_cleanup" \
-    --argjson sharedListenersPreserved "$shared_listeners_preserved" \
     --argjson buildCleanup "$build_cleanup" --argjson privateLogsRemoved "$private_logs_removed" \
     --argjson headClean "$head_clean" \
     '{schema:$schema,head:$head,apkSha256:$apkSha256,outcome:$outcome,
@@ -182,13 +164,14 @@ write_evidence() {
         holder:{prepared:$holderResult,sameProcessSession:$samePid},
         warm:{previewRefusal:$warmResult,handoffBefore:$warmBefore,handoffAfter:$warmAfter,
           capabilityAbsent:$warmCapabilityAbsent,counterDelta:$warmDelta,
-          exactlyOneIntent:$exactlyOneWarmIntent,sameProcessSession:$samePid}
+          intentAttempted:$warmIntentAttempted,exactlyOneIntent:$exactlyOneWarmIntent,
+          sameProcessSession:$samePid}
       },
-      cleanup:{portal:$portalCleanup,package:$packageCleanup,emulator:$emulatorCleanup,
+      cleanup:{emulator:$emulatorCleanup,
         reverseMappings:$reverseCleanup,forwardMapping:$forwardCleanup,listeners:$listenerCleanup,
-        sharedListenersPreserved:$sharedListenersPreserved,buildOutput:$buildCleanup,
+        buildOutput:$buildCleanup,
         privateLogs:$privateLogsRemoved,headClean:$headClean}}' >"$candidate"
-  jq -e '
+  run_deadline 10 jq -e '
     .schema == "oxid-portal-android-exact-sequence-avd-v1"
     and (.head | test("^[0-9a-f]{40}$"))
     and ((.apkSha256 == "") or (.apkSha256 | test("^[0-9a-f]{64}$")))
@@ -197,101 +180,107 @@ write_evidence() {
     and (.observations.warm.handoffBefore | IN("unknown", "ready"))
     and (.observations.warm.handoffAfter | IN("unknown", "empty", "ready", "consuming"))
     and ([.cleanup[]] | all(type == "boolean"))
-  ' "$candidate" >/dev/null || { rm -f -- "$candidate"; return 1; }
-  if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|serial|\.ts\.net|/Users/|/tmp/' "$candidate"; then
-    rm -f -- "$candidate"
+  ' "$candidate" >/dev/null || { run_deadline 5 rm -f -- "$candidate"; return 1; }
+  if run_deadline 5 rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|serial|\.ts\.net|/Users/|/tmp/' "$candidate"; then
+    run_deadline 5 rm -f -- "$candidate"
     return 1
   fi
-  chmod 600 "$candidate"
-  mv -f -- "$candidate" "$EVIDENCE"
+  run_deadline 5 chmod 600 "$candidate" || return 1
+  run_deadline 5 mv -f -- "$candidate" "$EVIDENCE"
 }
 
 cleanup() {
-  local incoming=$? current command_line package_path after_shared after_portal port
+  local incoming=$? current package_path after_portal port emulator_status=0 emulator_wait=1
   if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
   cleanup_running=1
   trap - EXIT INT TERM HUP
   set +e
+
+  if [ -n "$launcher_pid" ]; then
+    if oxid_job_is_running "$launcher_pid"; then
+      oxid_terminate_supervised_job "$launcher_pid" || cleanup_ok=false
+    else
+      wait "$launcher_pid" >/dev/null 2>&1 || true
+    fi
+    launcher_pid=""
+  fi
 
   if [ "$emulator_online" -eq 1 ]; then
     remove_forward
     [ "$?" -eq 0 ] && forward_cleanup=true || cleanup_ok=false
 
     if [ "$launcher_mutation_owned" -eq 1 ]; then
-      package_path="$(cleanup_adb shell pm path "$PACKAGE" 2>/dev/null | tr -d '\r\n')"
+      package_path="$(cleanup_adb shell pm path "$PACKAGE" 2>/dev/null || true)"
+      package_path="${package_path//$'\r'/}"
       if [ -n "$package_path" ]; then
         cleanup_adb shell "run-as $PACKAGE sh -c 'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp'" \
           >/dev/null 2>&1 || cleanup_ok=false
         cleanup_adb uninstall "$PACKAGE" >/dev/null 2>&1 || cleanup_ok=false
       fi
-      package_path="$(cleanup_adb shell pm path "$PACKAGE" 2>/dev/null | tr -d '\r\n')"
-      [ -z "$package_path" ] && package_cleanup=true || cleanup_ok=false
-
       for port in "${REVERSE_PORTS[@]}"; do
         cleanup_adb reverse --remove "tcp:$port" >/dev/null 2>&1 || true
       done
-      current="$(cleanup_adb reverse --list 2>/dev/null | sort || true)"
+      current="$(cleanup_adb reverse --list 2>/dev/null | run_deadline 5 sort || true)"
       [ "$current" = "$reverse_before" ] && reverse_cleanup=true || cleanup_ok=false
     fi
   fi
 
-  if [ "$portal_owned" -eq 1 ] && [ -n "$portal_pid" ]; then
-    if child_active "$portal_pid"; then
-      if [ -f "$PORTAL_STATE/control-curl.conf" ]; then
+  if [ -n "$portal_pid" ]; then
+    if oxid_job_is_running "$portal_pid"; then
+      if [ "$portal_ready" -eq 1 ] && [ -f "$PORTAL_STATE/control-curl.conf" ]; then
         control_curl -X POST "$CONTROL_ORIGIN/complete" >/dev/null 2>&1 || true
       fi
-      wait_child_for "$portal_pid" 600 || {
-        if oxid_process_still_owned "$portal_pid" "$portal_identity"; then
-          oxid_terminate_owned_process "$portal_pid" "$portal_identity" 100 || cleanup_ok=false
-        else
-          cleanup_ok=false
-        fi
-      }
-    fi
-    wait "$portal_pid" >/dev/null 2>&1 || true
-    portal_pid=""
-  fi
-  if [ "$portal_owned" -eq 1 ]; then
-    current="$(run_deadline 15 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet 2>/dev/null || true)"
-    [ -z "$current" ] && portal_cleanup=true || cleanup_ok=false
-  fi
-
-  if [ -n "$launcher_pid" ]; then
-    if child_active "$launcher_pid"; then
-      if oxid_process_still_owned "$launcher_pid" "$launcher_identity"; then
-        oxid_terminate_owned_process "$launcher_pid" "$launcher_identity" 100 || cleanup_ok=false
+      if oxid_job_is_running "$portal_pid"; then
+        oxid_terminate_supervised_job "$portal_pid" || cleanup_ok=false
       else
-        cleanup_ok=false
+        wait "$portal_pid" >/dev/null 2>&1 || true
       fi
+    else
+      wait "$portal_pid" >/dev/null 2>&1 || true
     fi
-    wait "$launcher_pid" >/dev/null 2>&1 || true
-    launcher_pid=""
+    portal_pid=""
   fi
 
   if [ -n "$emulator_pid" ]; then
-    if child_active "$emulator_pid"; then
-      if oxid_process_still_owned "$emulator_pid" "$emulator_identity"; then
-        command_line="$(oxid_identity_command "$emulator_identity")"
-        if oxid_emulator_command_matches "$command_line" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then
-          oxid_terminate_owned_process "$emulator_pid" "$emulator_identity" 200 || cleanup_ok=false
-        else
+    if oxid_job_is_running "$emulator_pid"; then
+      if oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then
+        if ! kill -TERM "$emulator_pid" 2>/dev/null; then
           cleanup_ok=false
+          emulator_wait=0
+        fi
+        for ((_attempt = 0; _attempt < 200; _attempt++)); do
+          oxid_job_is_running "$emulator_pid" || break
+          run_deadline 2 sleep 0.1
+        done
+        if oxid_job_is_running "$emulator_pid"; then
+          if oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then
+            kill -KILL "$emulator_pid" 2>/dev/null || cleanup_ok=false
+          else
+            cleanup_ok=false
+            emulator_wait=0
+          fi
         fi
       else
         cleanup_ok=false
+        emulator_wait=0
       fi
     fi
-    wait "$emulator_pid" >/dev/null 2>&1 || true
+    if [ "$emulator_wait" -eq 1 ]; then
+      wait "$emulator_pid" >/dev/null 2>&1 || emulator_status=$?
+      case "$emulator_status" in 0|137|143) ;; *) cleanup_ok=false ;; esac
+      [ "$cleanup_ok" = true ] && emulator_cleanup=true
+    fi
     emulator_pid=""
-    [ "$cleanup_ok" = true ] && emulator_cleanup=true
   fi
 
-  if [ "$portal_owned" -eq 1 ]; then
+  if [ "$portal_ready" -eq 1 ]; then
     after_portal="$(listener_fingerprint "${PORTAL_PORTS[@]}")"
-    if ! rg -q '[[:digit:]]+:p[0-9]+' <<<"$after_portal"; then listener_cleanup=true; else cleanup_ok=false; fi
+    if ! run_deadline 5 rg -q '[[:digit:]]+:p[0-9]+' <<<"$after_portal"; then
+      listener_cleanup=true
+    else
+      cleanup_ok=false
+    fi
   fi
-  after_shared="$(listener_fingerprint "${SHARED_PORTS[@]}")"
-  [ "$after_shared" = "$shared_before" ] && shared_listeners_preserved=true || cleanup_ok=false
 
   if [ "$build_owned" -eq 1 ]; then
     run_deadline 30 rm -rf -- "$BUILD_SOURCE" >/dev/null 2>&1
@@ -300,10 +289,6 @@ cleanup() {
   if [ "$private_state_owned" -eq 1 ]; then
     run_deadline 30 rm -rf -- "$PRIVATE_STATE" >/dev/null 2>&1
     [ ! -e "$PRIVATE_STATE" ] && private_logs_removed=true || cleanup_ok=false
-  fi
-  if [ "$portal_owned" -eq 1 ]; then
-    run_deadline 30 rm -rf -- "$PORTAL_STATE" >/dev/null 2>&1
-    [ ! -e "$PORTAL_STATE" ] || cleanup_ok=false
   fi
   if [ "$(run_deadline 10 git -C "$ROOT" rev-parse HEAD 2>/dev/null)" = "$head" ] \
     && [ -z "$(run_deadline 10 git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
@@ -315,12 +300,12 @@ cleanup() {
   write_evidence "$incoming" || cleanup_ok=false
   if [ "$cleanup_ok" != true ]; then
     incoming=1
-    printf 'android-portal-exact-sequence-avd: cleanup could not prove exact restoration\n' >&2
+    printf 'android-portal-exact-sequence-avd: cleanup could not prove owned-state restoration\n' >&2
   fi
   exit "$incoming"
 }
-[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ] || fail oxid-dirty
-head="$(git -C "$ROOT" rev-parse HEAD)"
+[ -z "$(run_deadline 10 git -C "$ROOT" status --porcelain --untracked-files=no)" ] || fail oxid-dirty
+head="$(run_deadline 10 git -C "$ROOT" rev-parse HEAD)"
 [[ "$head" =~ ^[0-9a-f]{40}$ ]] || fail oxid-head
 run_deadline 20 git -C "$ROOT" verify-commit "$head" >/dev/null 2>&1 || fail oxid-signature
 [ -z "$(run_deadline 10 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet)" ] \
@@ -332,10 +317,10 @@ for port in "${PORTAL_PORTS[@]}"; do
  done
 shared_before="$(listener_fingerprint "${SHARED_PORTS[@]}")"
 for port in "${SHARED_PORTS[@]}"; do
-  rg -q "^${port}:p[0-9]+" <<<"$shared_before" || fail shared-listener
+  run_deadline 5 rg -q "^${port}:p[0-9]+" <<<"$shared_before" || fail shared-listener
  done
 
-existing_avd="$(run_deadline 5 ps -axo pid=,command= | awk -v avd="$avd" '
+existing_avd="$(run_deadline 5 ps -axo pid=,command= | run_deadline 5 awk -v avd="$avd" '
   { for (i = 2; i <= NF; i++) if ($(i - 1) == "-avd" && $i == avd) print $1 }
 ')"
 [ -z "$existing_avd" ] || fail avd-in-use
@@ -354,77 +339,79 @@ trap 'failure_phase=signal-hup; exit 129' HUP
 
 umask 077
 [ ! -e "$PRIVATE_STATE" ] && [ ! -L "$PRIVATE_STATE" ] || fail occupied-private-state
-mkdir -p "$PRIVATE_STATE"
+run_deadline 5 mkdir -p "$PRIVATE_STATE" || fail private-state-create
 private_state_owned=1
-chmod 700 "$PRIVATE_STATE"
+run_deadline 5 chmod 700 "$PRIVATE_STATE" || fail private-state-mode
 : >"$PRIVATE_LOG"
-chmod 600 "$PRIVATE_LOG"
+run_deadline 5 chmod 600 "$PRIVATE_LOG" || fail private-log-mode
 
 "$EMULATOR" -avd "$avd" -read-only -no-snapshot -no-snapshot-save -port "$EMULATOR_PORT" \
   </dev/null >>"$PRIVATE_LOG" 2>&1 &
 emulator_pid=$!
-for _attempt in $(seq 1 50); do
-  emulator_identity="$(oxid_process_identity "$emulator_pid" 2>/dev/null || true)"
-  [ -n "$emulator_identity" ] && break
-  sleep 0.1
+for ((_attempt = 0; _attempt < 50; _attempt++)); do
+  oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" && break
+  run_deadline 2 sleep 0.1
  done
-[ -n "$emulator_identity" ] || fail emulator-identity
-oxid_emulator_command_matches "$(oxid_identity_command "$emulator_identity")" "$EMULATOR" "$avd" "$EMULATOR_PORT" \
-  || fail emulator-command
+oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" \
+  || fail emulator-ownership
 
-for _attempt in $(seq 1 240); do
-  child_active "$emulator_pid" || fail emulator-exited
+for ((_attempt = 0; _attempt < 240; _attempt++)); do
+  oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" \
+    || fail emulator-ownership-lost
   if [ "$(adb_device get-state 2>/dev/null || true)" = device ] && \
-    [ "$(adb_device shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n')" = 1 ]; then
+    [ "$(adb_text shell getprop sys.boot_completed 2>/dev/null)" = 1 ]; then
     emulator_online=1
     break
   fi
-  sleep 1
+  run_deadline 2 sleep 1
  done
 [ "$emulator_online" -eq 1 ] || fail emulator-boot
-[ "$(adb_device shell getprop ro.kernel.qemu | tr -d '\r\n')" = 1 ] || fail qemu
-[ "$(adb_device emu avd name 2>/dev/null | sed -n '1{s/\r$//;p;}')" = "$avd" ] || fail avd-identity
-[ -z "$(adb_device shell pm path "$PACKAGE" 2>/dev/null | tr -d '\r\n')" ] || fail preinstalled-package
-reverse_before="$(adb_device reverse --list 2>/dev/null | sort)"
+[ "$(adb_text shell getprop ro.kernel.qemu)" = 1 ] || fail qemu
+avd_name="$(adb_text emu avd name 2>/dev/null)"
+avd_name="${avd_name%%$'\n'*}"
+[ "$avd_name" = "$avd" ] || fail avd-identity
+[ -z "$(adb_text shell pm path "$PACKAGE" 2>/dev/null)" ] || fail preinstalled-package
+reverse_before="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)"
 for port in "${REVERSE_PORTS[@]}"; do
-  if awk -v route="tcp:$port" '$2 == route || $3 == route { found=1 } END { exit !found }' <<<"$reverse_before"; then
+  if run_deadline 5 awk -v route="tcp:$port" '$2 == route || $3 == route { found=1 } END { exit !found }' <<<"$reverse_before"; then
     fail occupied-reverse
   fi
  done
 
-portal_owned=1
-"$ROOT/scripts/e2e/portal-virtual-mobile-stack.sh" >>"$PRIVATE_LOG" 2>&1 &
+timeout -k 30s 7200s "$ROOT/scripts/e2e/portal-virtual-mobile-stack.sh" >>"$PRIVATE_LOG" 2>&1 &
 portal_pid=$!
-for _attempt in $(seq 1 50); do
-  portal_identity="$(oxid_process_identity "$portal_pid" 2>/dev/null || true)"
-  [ -n "$portal_identity" ] && break
-  sleep 0.1
- done
-[ -n "$portal_identity" ] || fail portal-identity
-for _attempt in $(seq 1 4500); do
-  child_active "$portal_pid" || fail portal-exited
+oxid_job_is_running "$portal_pid" || fail portal-supervisor
+for ((_attempt = 0; _attempt < 4500; _attempt++)); do
+  oxid_job_is_running "$portal_pid" || fail portal-exited
   if [ -f "$PORTAL_STATE/ready.json" ] && [ -f "$PORTAL_STATE/control-curl.conf" ] \
-    && [ -f "$PORTAL_STATE/portal-offer.capability" ]; then break; fi
-  sleep 0.2
+    && [ -f "$PORTAL_STATE/portal-offer.capability" ] && [ -f "$PORTAL_STATE/build.env" ]; then break; fi
+  run_deadline 2 sleep 0.2
  done
-[ -f "$PORTAL_STATE/ready.json" ] && [ -p "$PORTAL_STATE/capability.fifo" ] || fail portal-ready
-if capability_mode="$(stat -c '%a' "$PORTAL_STATE/portal-offer.capability" 2>/dev/null)"; then
+[ -f "$PORTAL_STATE/ready.json" ] && [ -p "$PORTAL_STATE/capability.fifo" ] \
+  && [ -f "$PORTAL_STATE/build.env" ] || fail portal-ready
+if capability_mode="$(run_deadline 5 stat -c '%a' "$PORTAL_STATE/portal-offer.capability" 2>/dev/null)"; then
   :
 else
-  capability_mode="$(stat -f '%Lp' "$PORTAL_STATE/portal-offer.capability")"
+  capability_mode="$(run_deadline 5 stat -f '%Lp' "$PORTAL_STATE/portal-offer.capability")"
 fi
 [ "$capability_mode" = 600 ] || fail host-capability-mode
-[ "$(wc -c <"$PORTAL_STATE/portal-offer.capability" | tr -d ' ')" = 64 ] || fail host-capability-size
-manifest_path="$(jq -r '.manifestPath // empty' "$PORTAL_STATE/ready.json")"
-manifest_sha="$(jq -r '.manifestSha256 // empty' "$PORTAL_STATE/ready.json")"
+capability_size="$(run_deadline 5 wc -c <"$PORTAL_STATE/portal-offer.capability")"
+capability_size="${capability_size// /}"
+[ "$capability_size" = 64 ] || fail host-capability-size
+manifest_path="$(run_deadline 10 jq -r '.manifestPath // empty' "$PORTAL_STATE/ready.json")"
+manifest_sha="$(run_deadline 10 jq -r '.manifestSha256 // empty' "$PORTAL_STATE/ready.json")"
 [[ "$manifest_path" = /* && "$manifest_sha" =~ ^[0-9a-f]{64}$ ]] || fail portal-manifest
+run_deadline 5 rg -qF "OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH=" "$PORTAL_STATE/build.env" \
+  || fail portal-build-env
+oxid_job_is_running "$portal_pid" || fail portal-ownership-lost
+portal_ready=1
 
 archive="$PRIVATE_STATE/source.tar"
 run_deadline 60 git -C "$ROOT" archive --format=tar --output="$archive" "$head" || fail build-source-archive
-mkdir -p "$BUILD_SOURCE"
+run_deadline 5 mkdir -p "$BUILD_SOURCE" || fail build-source-create
 build_owned=1
 run_deadline 60 tar -xf "$archive" -C "$BUILD_SOURCE" || fail build-source-extract
-rm -f -- "$archive"
+run_deadline 5 rm -f -- "$archive" || fail build-archive-remove
 [ ! -e "$BUILD_SOURCE/target" ] || fail isolated-build-output
 
 launcher_mutation_owned=1
@@ -439,24 +426,19 @@ timeout -k 30s 3700s env \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$manifest_sha" \
   "$BUILD_SOURCE/scripts/run-android-emulator.sh" >>"$PRIVATE_LOG" 2>&1 &
 launcher_pid=$!
-for _attempt in $(seq 1 50); do
-  launcher_identity="$(oxid_process_identity "$launcher_pid" 2>/dev/null || true)"
-  [ -n "$launcher_identity" ] && break
-  sleep 0.1
- done
-[ -n "$launcher_identity" ] || fail launcher-identity
+oxid_job_is_running "$launcher_pid" || fail launcher-supervisor
 wait "$launcher_pid" || fail android-launcher
 launcher_pid=""
-launcher_identity=""
 
 apk="$BUILD_SOURCE/target/dx/oxid-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk"
 [ -f "$apk" ] && [ ! -L "$apk" ] || fail owned-apk
-apk_sha256="$(shasum -a 256 "$apk" | awk '{print $1}')"
+apk_sha256="$(run_deadline 30 shasum -a 256 "$apk")"
+apk_sha256="${apk_sha256%% *}"
 [[ "$apk_sha256" =~ ^[0-9a-f]{64}$ ]] || fail apk-digest
-[ -n "$(adb_device shell pm path "$PACKAGE" 2>/dev/null | tr -d '\r\n')" ] || fail package-install
-reverse_after="$(adb_device reverse --list 2>/dev/null | sort)"
+[ -n "$(adb_text shell pm path "$PACKAGE" 2>/dev/null)" ] || fail package-install
+reverse_after="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)"
 for port in "${REVERSE_PORTS[@]}"; do
-  awk -v route="tcp:$port" '$2 == route && $3 == route { found=1 } END { exit !found }' <<<"$reverse_after" \
+  run_deadline 5 awk -v route="tcp:$port" '$2 == route && $3 == route { found=1 } END { exit !found }' <<<"$reverse_after" \
     || fail reverse-install
  done
 
@@ -466,7 +448,10 @@ capability_absent() {
 }
 
 wait_capability_absent() {
-  for _attempt in $(seq 1 100); do capability_absent && return 0; sleep 0.1; done
+  for ((_attempt = 0; _attempt < 100; _attempt++)); do
+    capability_absent && return 0
+    run_deadline 2 sleep 0.1
+  done
   return 1
 }
 
@@ -478,20 +463,20 @@ stage_capability_file() {
   else
     run_deadline 10 head -c 64 "$source_path" | adb_device shell "$stage" >>"$PRIVATE_LOG" 2>&1
   fi
-  metadata="$(adb_device shell "run-as $PACKAGE stat -c '%s %a' files/portal-offer.capability" 2>/dev/null | tr -d '\r\n')"
+  metadata="$(adb_text shell "run-as $PACKAGE stat -c '%s %a' files/portal-offer.capability" 2>/dev/null)"
   [ "$metadata" = "64 600" ]
 }
 
 handoff_state() {
-  control_curl "$CONTROL_ORIGIN/handoff-status" | jq -r '.state'
+  control_curl "$CONTROL_ORIGIN/handoff-status" | run_deadline 10 jq -r '.state'
 }
 
 counter_snapshot() {
-  control_curl "$CONTROL_ORIGIN/counters" | jq -cS .
+  control_curl "$CONTROL_ORIGIN/counters" | run_deadline 10 jq -cS .
 }
 
 counter_delta() {
-  jq -cn --argjson before "$1" --argjson after "$2" '
+  run_deadline 10 jq -cn --argjson before "$1" --argjson after "$2" '
     $before | with_entries(.value = ($after[.key] - .value))'
 }
 
@@ -501,19 +486,19 @@ open_webview() {
   remove_forward || return 1
   adb_device forward "tcp:$CDP_PORT" "localabstract:webview_devtools_remote_$pid" >/dev/null || return 1
   forward_active=1
-  for _attempt in $(seq 1 120); do
+  for ((_attempt = 0; _attempt < 120; _attempt++)); do
     pages="$(run_deadline 5 curl --noproxy '*' --fail --silent --show-error --max-time 2 \
       "http://127.0.0.1:$CDP_PORT/json" 2>/dev/null || true)"
-    websocket_url="$(jq -r 'first(.[] | select(.type == "page" and .url == "https://dioxus.index.html/")) | .webSocketDebuggerUrl // empty' \
+    websocket_url="$(run_deadline 5 jq -r 'first(.[] | select(.type == "page" and .url == "https://dioxus.index.html/")) | .webSocketDebuggerUrl // empty' \
       <<<"$pages" 2>/dev/null || true)"
     [ -n "$websocket_url" ] && return 0
-    sleep 0.25
+    run_deadline 2 sleep 0.25
   done
   return 1
 }
 
 app_pid() {
-  adb_device shell pidof "$PACKAGE" 2>/dev/null | tr -d '\r\n'
+  adb_text shell pidof "$PACKAGE" 2>/dev/null
 }
 
 run_scenario() {
@@ -521,18 +506,18 @@ run_scenario() {
   pid="$(app_pid)"
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
   open_webview "$pid" || return 1
-  control_capability="$(jq -r '.controlCapability // empty' "$PORTAL_STATE/ready.json")"
+  control_capability="$(run_deadline 10 jq -r '.controlCapability // empty' "$PORTAL_STATE/ready.json")"
   [[ "$control_capability" =~ ^[0-9a-f]{64}$ ]] || return 1
   printf '%s' "$control_capability" | run_deadline 180 env OXID_PORTAL_CONTROL_ORIGIN="$CONTROL_ORIGIN" \
     node "$ROOT/tests/mobile/android-portal-flow.mjs" "$websocket_url" "$mode" \
     >"$result" 2>>"$PRIVATE_LOG" || return 1
   control_capability=""
-  jq -e --arg mode "$mode" '.mode == $mode and .passed == true and (.measurements | type == "object")' \
+  run_deadline 10 jq -e --arg mode "$mode" '.mode == $mode and .passed == true and (.measurements | type == "object")' \
     "$result" >/dev/null || return 1
-  if rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|serial|\.ts\.net' "$result"; then
+  if run_deadline 5 rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|serial|\.ts\.net' "$result"; then
     return 1
   fi
-  chmod 600 "$result"
+  run_deadline 5 chmod 600 "$result" || return 1
   remove_forward
 }
 
@@ -541,7 +526,7 @@ cold_handoff_before="$(handoff_state)"
 [ "$cold_handoff_before" = ready ] || fail cold-handoff-ready
 cold_before="$(counter_snapshot)"
 stage_capability_file file "$PORTAL_STATE/portal-offer.capability" || fail cold-capability-stage
-rm -f -- "$PORTAL_STATE/portal-offer.capability"
+run_deadline 5 rm -f -- "$PORTAL_STATE/portal-offer.capability" || fail cold-capability-remove
 adb_device shell am force-stop "$PACKAGE" >/dev/null || fail cold-stop
 adb_device shell am start -W -a android.intent.action.VIEW -d "$TRIGGER" "$PACKAGE" \
   >/dev/null 2>>"$PRIVATE_LOG" || fail cold-intent
@@ -551,7 +536,7 @@ session_pid="$(app_pid)"
 [[ "$session_pid" =~ ^[1-9][0-9]*$ ]] || fail cold-pid
 cold_after="$(counter_snapshot)"
 cold_delta="$(counter_delta "$cold_before" "$cold_after")"
-jq -e 'all(.[]; . == 0)' <<<"$cold_delta" >/dev/null || fail cold-counters
+run_deadline 10 jq -e 'all(.[]; . == 0)' <<<"$cold_delta" >/dev/null || fail cold-counters
 cold_handoff_after="$(handoff_state)"
 [ "$cold_handoff_after" = empty ] || fail cold-handoff-empty
 wait_capability_absent || fail cold-capability-present
@@ -567,9 +552,10 @@ warm_handoff_before="$(handoff_state)"
 stage_capability_file fifo "$PORTAL_STATE/capability.fifo" || fail warm-capability-stage
 warm_before="$(counter_snapshot)"
 [ "$(app_pid)" = "$session_pid" ] || fail pre-warm-pid
-warm_intents=1
+warm_intents_attempted=1
 adb_device shell am start -W -a android.intent.action.VIEW -d "$TRIGGER" "$PACKAGE" \
   >/dev/null 2>>"$PRIVATE_LOG" || fail warm-intent
+warm_intents_delivered=1
 [ "$(app_pid)" = "$session_pid" ] || fail warm-pid
 same_pid=true
 journey_status="warm_delivered"
@@ -586,7 +572,7 @@ warm_handoff_after="$(handoff_state)"
 if wait_capability_absent; then warm_capability_absent=true; fi
 
 if [ "$warm_result" = true ]; then
-  jq -e '.authorizationMetadata == 1 and .issuerMetadata == 1 and .token == 0
+  run_deadline 10 jq -e '.authorizationMetadata == 1 and .issuerMetadata == 1 and .token == 0
     and .nonce == 0 and .credential == 0 and .issuerResolution == 0
     and .issuerResolutionSuccess == 0 and .other == 0 and .kyc == 0' \
     <<<"$warm_delta" >/dev/null || fail warm-counters

@@ -225,11 +225,19 @@ if [ ! -x "$adb_command" ]; then
   exit 1
 fi
 
+adb_call() {
+  if [ -n "$adb_timeout_seconds" ]; then
+    timeout -k 5s "${adb_timeout_seconds}s" "$adb_command" "$@"
+  else
+    "$adb_command" "$@"
+  fi
+}
+
 first_online_device() {
   if [ "$standalone_network_profile" = "local" ]; then
-    "$adb_command" devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }'
+    adb_call devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }'
   else
-    "$adb_command" devices | awk 'NR > 1 && $2 == "device" { print $1; exit }'
+    adb_call devices | awk 'NR > 1 && $2 == "device" { print $1; exit }'
   fi
 }
 
