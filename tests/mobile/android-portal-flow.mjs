@@ -301,8 +301,12 @@ try {
       );
     }
     await waitFor(
-      'document.body.innerText.includes("This protocol is unavailable in the current build")',
-      "payload-free protocol failure",
+      `Array.from(document.querySelectorAll('[role="status"]')).some((element) => {
+        const text = element.textContent.trim().toLowerCase();
+        return text.includes("unavailable")
+          && !/(openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|did:|https?:\\/\\/)/u.test(text);
+      })`,
+      "payload-free unavailable protocol failure",
       35_000,
     );
     await waitFor(`!Boolean(${button("Dismiss identity request")})`, "failed request cleanup");
