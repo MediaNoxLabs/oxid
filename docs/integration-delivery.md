@@ -32,20 +32,24 @@ Fetch before creating or refreshing a worktree:
 
 ```bash
 git fetch origin integration
-node .pi/npm/node_modules/dev-loops/scripts/loop/ensure-worktree.mjs \
-  --repo-root "$PWD" --issue <number> --base origin/integration
+node scripts/loop/ensure-worktree.mjs \
+  --repo-root "$PWD" --issue <number>
 ```
+
+The tracked wrapper supplies `--base origin/integration` and rejects any
+conflicting caller value.
 
 Create tracker-backed pull requests through the pinned local dev-loops CLI and
 always state the base:
 
 ```bash
-node .pi/npm/node_modules/dev-loops/cli/index.mjs pr create \
-  --repo MediaNoxLabs/oxid --base integration --head <branch> \
+node scripts/dev-loops.mjs pr create \
+  --repo MediaNoxLabs/oxid --head <branch> \
   --assignee @me --title "<type>: <subject>" --body-file <body-file>
 ```
 
-The body must contain `Closes #<number>`. Active owner ruleset `21481544` is the
+The tracked wrapper supplies `--base integration` and rejects any conflicting
+caller value. The body must contain `Closes #<number>`. Active owner ruleset `21481544` is the
 cross-base authority preventing every update to `develop` and `main`. Repository
 workflows deliberately make no cross-base enforcement claim: a workflow loaded
 from one pull request base cannot authoritatively guard another base, and an
@@ -120,10 +124,14 @@ not a hosted GitHub status check. Evidence is valid only when it records:
 - findings (or an explicit `No findings` verdict);
 - a review timestamp after the last push.
 
-Any push makes the evidence stale. Run the CLI from outside the checkout in
-safe mode with no tools, give it the issue contract plus the exact diff
-artifact, fix every accepted finding, and repeat against the new head. Post the
-current-head evidence to the pull request before merge. Integration branch
-protection intentionally does not require a hosted human or code-owner approval;
-the owner has authorized clean integration merges only after this review
-control and every other current-head gate pass.
+Any push makes the evidence stale. Run the tracked
+`scripts/review/claude-current-head.mjs` wrapper with a clean checkout and an
+external evidence directory. It invokes the CLI from outside the checkout in
+safe mode with no tools, supplies the issue contract plus the exact diff
+artifact, and fails on stale state, malformed output, or findings. Verify the
+saved artifact with the same wrapper, fix every accepted finding, and repeat
+against the new head. See `docs/dev-loop-stability.md` for the exact command and
+evidence shape. Post the current-head evidence to the pull request before merge.
+Integration branch protection intentionally does not require a hosted
+human or code-owner approval; the owner has authorized clean integration
+merges only after this review control and every other current-head gate pass.

@@ -35,6 +35,7 @@ gates:
       - external-review
     mandatoryAngles:
       - pr-description
+      - external-review
     required: true
     requireCi: true
   preApproval:
@@ -49,6 +50,7 @@ gates:
       - external-review
     mandatoryAngles:
       - pr-checklist-matrix
+      - external-review
     required: true
     requireCi: true
   requireFanoutEvidence: true

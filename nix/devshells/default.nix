@@ -39,6 +39,7 @@
             clippy
             dioxus-cli
             git
+            gh
             jq
             just
             lychee
