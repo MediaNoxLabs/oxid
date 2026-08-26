@@ -51,10 +51,14 @@ These rules reflect current repository controls and apply to every change:
   review. Existing capabilities and workspace dependencies must be considered
   first.
 - Compiler and configured Clippy warnings fail the strict gate.
-- Safe Rust is the default. The workspace denies unsafe code; any unsafe code
-  outside the single reviewed Android profile-path boundary is rejected by the
-  architecture check. New unsafe code requires an ADR and security review, not
-  an ordinary quality exception.
+- Safe Rust is the default. The workspace denies unsafe code, and the
+  architecture check has a file-level allowlist that rejects any `unsafe` token
+  outside `crates/adapters/storage-json/src/lib.rs`. The compiler requires an
+  explicit allowance, while ADR and security review constrain the allowed
+  file's use to the reviewed Android profile-path JNI boundary. The architecture
+  check does not by itself pin a function, allowance attribute, or unsafe-block
+  count. New or widened unsafe code requires an ADR and security review, not an
+  ordinary quality exception.
 - Changed behavior ships with tests at the lowest deterministic layer that can
   prove it. Failure and boundary cases are first-class test requirements.
 - Tests must be deterministic and isolated from public networks, execution

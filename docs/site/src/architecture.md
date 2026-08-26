@@ -30,12 +30,16 @@ collaboration goes through ports wired in composition.
 - `scripts/check-architecture.sh` validates a per-crate dependency allowlist
   over the entire workspace against `cargo metadata`, with a default-deny
   sweep: a crate without an allowlist entry fails the gate.
-- The 14 core crates (foundation, domains, applications, platform-ports) are
+- The 16 core crates (foundation, domains, applications, platform-ports) are
   additionally checked to have **no external dependencies of any kind** —
   the application layer hand-rolls its boxed-future aliases rather than pull
   `async-trait`.
-- `unsafe` is denied workspace-wide, with a single reviewed exception (the
-  Android profile-path JNI boundary) pinned by the gate.
+- `unsafe` is denied workspace-wide. The architecture gate adds a file-level
+  allowlist: only `crates/adapters/storage-json/src/lib.rs` may contain an
+  `unsafe` token. The compiler rejects unsafe code without an explicit
+  allowance; ADR and security review constrain the allowed file's use to the
+  reviewed Android profile-path JNI boundary. The architecture gate does not
+  pin the allowed function or unsafe-block count.
 - The gate runs inside `./run.sh --light --strict`, which is both the local
   `just check` and the CI repository gate — local and CI enforcement are the
   same script by construction.

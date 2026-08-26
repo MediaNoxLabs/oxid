@@ -203,7 +203,7 @@ Adopting the `midnight-identity` `rust-codegen` crates is a dependency decision
 with architecture-boundary consequences that this ADR does not resolve: seven
 new crates carrying `compact-runtime`, `midnight-onchain-runtime`, and
 `midnight-base-crypto`, plus a path-mounted `generated.rs` materialised from a
-Compact flake input. Oxid's 14 core crates are required to have zero external
+Compact flake input. Oxid's 16 core crates are required to have zero external
 dependencies and `scripts/check-architecture.sh` enforces per-crate allowlists,
 so these belong in an adapter tier with an explicit allowlist entry, and the Nix
 closure cost should be measured against the CI budget before adoption rather

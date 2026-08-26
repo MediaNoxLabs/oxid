@@ -183,10 +183,14 @@ lane, not as part of this docs-only baseline:
 
 ## Unsafe Rust, warnings, and documentation
 
-The workspace sets `unsafe_code = "deny"`. The architecture checker permits
-unsafe tokens only in `crates/adapters/storage-json/src/lib.rs`, the reviewed
-Android profile-path JNI boundary. That file contains one `#[allow(unsafe_code)]`
-and two unsafe blocks. No other Rust source file may contain unsafe code.
+The workspace sets `unsafe_code = "deny"`. The architecture checker uses a
+file-level allowlist: if any Rust source contains an `unsafe` token, the complete
+matching file set must be exactly `crates/adapters/storage-json/src/lib.rs`. It
+does not constrain functions, allowance attributes, or block counts within that
+file. Compiler enforcement still requires an explicit allowance; the current
+reviewed Android profile-path JNI function has one `#[allow(unsafe_code)]` and
+two unsafe blocks. Any widening requires the ADR and security-review controls in
+the constitution. No other Rust source file may contain an unsafe token.
 
 ```bash
 git grep -n '\bunsafe\b' -- 'apps/**/*.rs' 'crates/**/*.rs'
@@ -207,22 +211,33 @@ sed -n '/\[workspace.lints.clippy\]/,/^$/p' Cargo.toml
 
 ## CI duration and tier baseline
 
-Read-only GitHub metadata was captured for the base commit. Durations below are
-job wall times, not local benchmark results:
+Read-only GitHub metadata was captured with the exact source head shown for
+each run. The first four rows are for the baseline commit; the Nightly row is
+the latest captured predecessor evidence and is not evidence for that commit.
+Durations are job wall times, not local benchmark results:
 
-| Workflow/job | Run | Result | Wall time |
-| --- | ---: | --- | ---: |
-| CI / Repository gate | 32967440061 | passed | 42m43s |
-| CI / Locked Nix package and Compact artifacts | 32967440061 | passed | 19m28s |
-| Quality / Audit, Licenses, Sources, and Documentation | 32967440027 | passed | 8m38s |
-| Documentation links | 32967440074 | passed | 9s |
-| Nightly / Hermetic Nix flake check | 32927158478 | failed | 56m53s |
+| Workflow/job | Run | Source head | Result | Wall time |
+| --- | ---: | --- | --- | ---: |
+| CI / Repository gate | 32967440061 | `21ec1234ff26390464535043a58fc183cda83fd5` | passed | 42m43s |
+| CI / Locked Nix package and Compact artifacts | 32967440061 | `21ec1234ff26390464535043a58fc183cda83fd5` | passed | 19m28s |
+| Quality / Audit, Licenses, Sources, and Documentation | 32967440027 | `21ec1234ff26390464535043a58fc183cda83fd5` | passed | 8m38s |
+| Documentation links | 32967440074 | `21ec1234ff26390464535043a58fc183cda83fd5` | successful context; link step skipped | 9s |
+| Nightly / Hermetic Nix flake check (predecessor evidence) | 32927158478 | `0712e859f51984f468b96c14f675942b39c3f86c` | failed | 56m53s |
+
+Documentation-links run 32967440074 emitted a successful context after change
+detection found no documentation changes. Its `Check Markdown links` step was
+therefore skipped, so the run is context-emission and change-detection evidence,
+not link-validity evidence. A separate local Lychee check of documentation
+commit `af91d663e79172aea71ee2674263eb243c7466cb` checked 559 links, with
+552 successful, zero errors, and seven configured exclusions. That local
+exact-head result is neither evidence for the baseline commit nor a substitute
+for required hosted contexts on the eventual delivery head.
 
 The required CI workflow wall time was 42m49s. The repository-gate step itself
 used 39m28s. This exceeds the north star's 10-minute required-PR target and
 15-minute investigation threshold. It is baseline debt, not grounds to reduce
-coverage or skip work. The latest nightly failure is residual evidence that
-must be diagnosed separately; no green scheduled claim is made here.
+coverage or skip work. The captured predecessor Nightly failure must be
+diagnosed separately; no scheduled result is claimed for the baseline head.
 
 Current configured ceilings are 45 minutes for repository and quality jobs, 60
 minutes for the locked Nix build, and 120 minutes for nightly. The AGENT guide
