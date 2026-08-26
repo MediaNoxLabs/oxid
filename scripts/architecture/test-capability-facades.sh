@@ -32,6 +32,7 @@ run_checker() {
     env -u CAPABILITY_FACADES_INVENTORY \
       -u CAPABILITY_FACADES_TODAY \
       -u CAPABILITY_FACADES_TEST_MODE \
+      -u GIT_NO_REPLACE_OBJECTS \
       "$checker"
   )
 }
@@ -177,6 +178,25 @@ worktree_mismatch_repo="$fixture_root/worktree-mismatch"
 prepare_staged_over_limit "$worktree_mismatch_repo"
 printf 'short\n' >"$worktree_mismatch_repo/fixture/src/lib.rs"
 expect_failure "$worktree_mismatch_repo" "façade 'fixture/src/lib.rs' has 3 lines; path maximum is 2"
+
+source_replace_repo="$fixture_root/source-replace"
+prepare_staged_over_limit "$source_replace_repo"
+indexed_source_object="$(git -C "$source_replace_repo" ls-files -s -- fixture/src/lib.rs | awk '{print $2}')"
+short_source_object="$(printf 'short\n' | git -C "$source_replace_repo" hash-object -w --stdin)"
+git -C "$source_replace_repo" replace "$indexed_source_object" "$short_source_object"
+expect_failure "$source_replace_repo" "façade 'fixture/src/lib.rs' has 3 lines; path maximum is 2"
+
+baseline_replace_repo="$fixture_root/baseline-replace"
+init_fixture "$baseline_replace_repo"
+printf 'orphan\n' >"$baseline_replace_repo/fixture/src/orphan.rs"
+git -C "$baseline_replace_repo" add fixture/src/orphan.rs
+indexed_baseline_object="$(git -C "$baseline_replace_repo" ls-files -s -- scripts/architecture/capability-facades.json | awk '{print $2}')"
+replacement_baseline_object="$(
+  jq '.crates[0].exclusions += [{"path": "fixture/src/orphan.rs", "classification": "fixture"}]' \
+    "$fixtures/valid.json" | git -C "$baseline_replace_repo" hash-object -w --stdin
+)"
+git -C "$baseline_replace_repo" replace "$indexed_baseline_object" "$replacement_baseline_object"
+expect_failure "$baseline_replace_repo" "source 'fixture/src/orphan.rs' belongs to 0 capability owners; expected exactly one"
 
 unusual_path_repo="$fixture_root/unusual-path"
 init_fixture "$unusual_path_repo"

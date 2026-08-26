@@ -3,6 +3,7 @@
 
 set -euo pipefail
 export LC_ALL=C
+export GIT_NO_REPLACE_OBJECTS=1
 
 fail() {
   echo "Capability façade check failed: $*" >&2
