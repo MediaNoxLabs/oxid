@@ -198,12 +198,19 @@ profile_active=1
 
 adb_reverse_before="$(adb_device reverse --list 2>/dev/null | sort)"
 adb_device shell pm clear io.medianox.oxid >/dev/null 2>&1 || true
-OXID_MOBILE_CUSTODY=development \
-OXID_MOBILE_PORTAL_PROFILE=tailnet-android \
-OXID_BUILD_PORTAL_PUBLIC_ORIGIN="$public_origin" \
-OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$manifest_path" \
-OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$manifest_sha" \
-  "$REPOSITORY_ROOT/scripts/run-android-tailnet.sh" >>"$PRIVATE_LOG" 2>&1
+if ! OXID_MOBILE_CUSTODY=development \
+  OXID_MOBILE_PORTAL_PROFILE=tailnet-android \
+  OXID_BUILD_PORTAL_PUBLIC_ORIGIN="$public_origin" \
+  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$manifest_path" \
+  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$manifest_sha" \
+    "$REPOSITORY_ROOT/scripts/run-android-tailnet.sh" >>"$PRIVATE_LOG" 2>&1; then
+  build_diagnostic="$(rg '^(error(\[[A-Z0-9]+\])?:|error: could not compile|Caused by:)' "$PRIVATE_LOG" | tail -n 20 || true)"
+  if [ -n "$build_diagnostic" ] && ! rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|private.?parts|signed.?bytes|detached.?proof|capability|seed|serial|\.ts\.net' <<<"$build_diagnostic"; then
+    printf '%s\n' "$build_diagnostic" >&2
+  fi
+  build_diagnostic=""
+  fail android-build
+fi
 
 open_webview() {
   local pid socket_list pages
