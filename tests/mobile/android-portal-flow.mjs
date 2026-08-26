@@ -379,10 +379,9 @@ try {
     }, "failed issuance");
     await click("Leave credential review");
     await waitFor(
-      'Array.from(document.querySelectorAll("h1")).some((element) => element.textContent.trim() === "Wallet")',
-      "safe credential review navigation escape",
+      `!Boolean(${button("Leave credential review")}) && !document.body.innerText.includes("Credential offer preview")`,
+      "safe credential review cleanup and navigation escape",
     );
-    await waitFor(`!Boolean(${button("Leave credential review")})`, "credential review cleanup");
   } else if (mode === "issue") {
     const start = await counters();
     await assertRouted();
