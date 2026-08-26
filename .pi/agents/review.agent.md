@@ -25,10 +25,10 @@ You are a focused pull request review agent. You review an implementation for co
 - If the PR description contains verdict status, evidence tables, or changelog content, report that as a review finding because those belong in the review verdict, not the PR description.
 
 ## Follow-up Review Scope
-- When this is a follow-up review on a PR that already has at least one formal GitHub review verdict submitted by the current reviewer, default to a **delta review**: scope the code analysis to commits pushed since that prior review, and scope findings to only those issues that are new, changed, or resolved relative to it.
-- To determine the delta lower bound: use `gh api repos/{owner}/{repo}/pulls/{number}/reviews` to list reviews, find the most recent one from the current GitHub reviewer identity (or an explicitly supplied reviewer login) where `state` is `APPROVED` or `CHANGES_REQUESTED`, then use `gh api repos/{owner}/{repo}/pulls/{number}/commits` to find the commit SHA at the time of that review's `submitted_at` timestamp. Use that SHA as the lower bound for `git diff` or `git log`.
-- Only perform a full re-review when the caller explicitly requests one (e.g., "full review", "review from scratch", "re-review everything"), or when no prior review by that reviewer exists.
-- Explicitly state the delta scope at the top of the output (e.g., "Delta review covering commits since `abc1234` on 2026-05-07").
+- Follow-up scope facts must arrive in the read-only gate-context artifact: prior verdict identity/time, lower-bound SHA, exact diff artifact, and current head. This agent has no shell or GitHub mutation/read command tool and must not reconstruct those facts itself.
+- When valid gate context identifies a prior formal verdict and a delta lower bound, default to a **delta review** limited to new, changed, or resolved findings since that bound.
+- When the caller explicitly requests a full review, or gate context states that no prior verdict exists, perform a full review. If required scope facts are absent or inconsistent, report the context gap rather than guessing or fabricating a delta.
+- Explicitly state the supplied scope at the top of the output (for example, "Delta review covering commits since `abc1234` on 2026-05-07").
 
 ## Scoped angle-review mode
 
@@ -37,7 +37,7 @@ This agent has two modes. The default mode is the full-PR review described in th
 Its full execution shape is owned elsewhere — read those owners before reviewing and do not re-derive their rules here:
 
 - The build-once neutral bundle seeding, fresh-context guard (`verify-fresh-review-context.mjs`), no-worktree-isolation prohibition (#1135), single-angle read-only scope, and briefing composition are owned by the Gate Review Sub-Loop Contract (pinned package path `.pi/npm/node_modules/dev-loops/docs/gate-review-sub-loop-contract.md`) (`GATE-EXEC-BUILD-ONCE-SEED`, `GATE-EXEC-BRIEFING-PREFIX`) — you receive only the neutral artifact + your angle, never the orchestrating agent's conversation, opinions, or state.
-- The adversarial reviewing behavior is owned by `COPILOT-FOLLOWUP-ADVERSARIAL-BRIEFING` in the Copilot PR Follow-up Skill (pinned package path `.pi/npm/node_modules/dev-loops/skills/copilot-pr-followup/SKILL.md`): read the FULL diff (from `scope.diffPath`, or reconstruct it with `git diff` against the change base when `scope.diffPath` is null/missing — never a hunk-only review) plus the bundled adjacent code rather than re-deriving them, then hunt concrete `file:line` defects (edge cases, input validation, numeric coercion incl. NaN/Infinity/floats/negatives, null/undefined, boundary conditions, mismatched caller/callee contracts, dedup/identity bugs) over process nits, recording any scope-widening in the optional `contextWidened` field on your findings artifact.
+- The adversarial reviewing behavior is owned by `COPILOT-FOLLOWUP-ADVERSARIAL-BRIEFING` in the Copilot PR Follow-up Skill (pinned package path `.pi/npm/node_modules/dev-loops/skills/copilot-pr-followup/SKILL.md`): read the FULL diff only from the gate context's `scope.diffPath` plus the bundled adjacent code rather than re-deriving them. If that artifact is absent, report the context gap and stop rather than reconstructing it. Hunt concrete `file:line` defects (edge cases, input validation, numeric coercion incl. NaN/Infinity/floats/negatives, null/undefined, boundary conditions, mismatched caller/callee contracts, dedup/identity bugs) over process nits, recording any scope-widening in the optional `contextWidened` field on your findings artifact.
 
 Follow those owners, then return your findings via the structured artifact below (this agent's canonical output contract):
 

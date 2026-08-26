@@ -1,31 +1,20 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
-export const MINIMUM_GH_VERSION = [2, 67, 0];
+import {
+  assertMinimumGhVersion,
+  assertRepositoryName,
+  GITHUB_REST_HEADERS,
+  isRepositoryName,
+  parseGhVersion,
+  runGhCommand,
+} from "./rest-client.mjs";
 
-export function parseGhVersion(output) {
-  const match = String(output).match(/(?:^|\n)gh version (\d+)\.(\d+)\.(\d+)(?:\s|$)/);
-  if (!match) throw new Error("could not parse GitHub CLI version");
-  return match.slice(1).map(Number);
-}
-
-export function assertMinimumGhVersion(version, minimum = MINIMUM_GH_VERSION) {
-  if (!Array.isArray(version) || version.length !== 3 || version.some((part) => !Number.isInteger(part) || part < 0)) {
-    throw new Error("GitHub CLI version must be a semantic version triple");
-  }
-  for (let index = 0; index < 3; index += 1) {
-    if (version[index] > minimum[index]) return version;
-    if (version[index] < minimum[index]) {
-      throw new Error(`GitHub CLI ${version.join(".")} is unsupported; require >= ${minimum.join(".")}`);
-    }
-  }
-  return version;
-}
+export { assertMinimumGhVersion, parseGhVersion } from "./rest-client.mjs";
 
 function flattenPages(value) {
   if (!Array.isArray(value)) return [];
@@ -63,19 +52,10 @@ export function normalizeTimelinePullRequests(pages, repository) {
   return [...links.values()].sort((left, right) => left.number - right.number);
 }
 
-function runGh(ghCommand, args, options = {}) {
-  try {
-    return execFileSync(ghCommand, args, { encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"], ...options });
-  } catch (error) {
-    const diagnostic = String(error?.stderr ?? error?.message ?? "GitHub CLI failed").trim();
-    throw new Error(`GitHub REST request failed: ${diagnostic}`, { cause: error });
-  }
-}
-
 function issueReferencePattern(issue, repository) {
   const escapedIssue = String(issue).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const references = [`#${escapedIssue}`, `GH-${escapedIssue}`];
-  if (typeof repository === "string" && /^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
+  if (isRepositoryName(repository)) {
     const escapedRepository = repository.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     references.push(
       `${escapedRepository}#${escapedIssue}`,
@@ -85,26 +65,19 @@ function issueReferencePattern(issue, repository) {
   return `(?:${references.join("|")})(?:\\b|$)`;
 }
 
-export function bodyClosesIssue(body, issue, repository) {
-  if (typeof body !== "string") return false;
-  return new RegExp(`(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+${issueReferencePattern(issue, repository)}`, "i").test(body);
-}
-
 export function bodyReferencesIssue(body, issue, repository) {
   if (typeof body !== "string") return false;
   return new RegExp(`(?:refs?|references?|close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+${issueReferencePattern(issue, repository)}`, "i").test(body);
 }
 
 export function resolveIssuePullRequestLinks({ repository, issue, ghCommand = "gh" }) {
-  if (!/^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "")) throw new Error("--repo must be OWNER/REPO");
+  assertRepositoryName(repository);
   if (!Number.isInteger(issue) || issue < 1) throw new Error("--issue must be a positive integer");
-  assertMinimumGhVersion(parseGhVersion(runGh(ghCommand, ["--version"])));
+  const runGh = (args) => runGhCommand(ghCommand, args);
+  assertMinimumGhVersion(parseGhVersion(runGh(["--version"])));
   const endpoint = `repos/${repository}/issues/${issue}/timeline`;
-  const source = runGh(ghCommand, [
-    "api", "--paginate", "--slurp",
-    "-H", "Accept: application/vnd.github+json",
-    "-H", "X-GitHub-Api-Version: 2022-11-28",
-    endpoint,
+  const source = runGh([
+    "api", "--paginate", "--slurp", ...GITHUB_REST_HEADERS, endpoint,
   ]);
   let pages;
   try {
@@ -114,7 +87,7 @@ export function resolveIssuePullRequestLinks({ repository, issue, ghCommand = "g
   }
   const links = normalizeTimelinePullRequests(pages, repository);
   return links.flatMap((link) => {
-    const source = runGh(ghCommand, ["api", "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28", `repos/${repository}/pulls/${link.number}`]);
+    const source = runGh(["api", ...GITHUB_REST_HEADERS, `repos/${repository}/pulls/${link.number}`]);
     let pull;
     try { pull = JSON.parse(source); } catch (error) { throw new Error(`GitHub pull REST response was invalid JSON: ${error.message}`, { cause: error }); }
     if (!bodyReferencesIssue(pull.body, issue, repository)) return [];

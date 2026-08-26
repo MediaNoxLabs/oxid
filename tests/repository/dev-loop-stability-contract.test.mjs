@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -12,11 +13,10 @@ import {
   devLoopPreflightCacheKey,
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
-import { normalizeDevLoopsArgs } from "../../scripts/dev-loops.mjs";
-import { normalizeWorktreeArgs } from "../../scripts/loop/ensure-worktree.mjs";
+import { normalizeDevLoopsArgs, runDevLoops } from "../../scripts/dev-loops.mjs";
+import { normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import {
   assertMinimumGhVersion,
-  bodyClosesIssue,
   bodyReferencesIssue,
   normalizeTimelinePullRequests,
   parseGhVersion,
@@ -24,9 +24,11 @@ import {
 import { preflightGh } from "../../scripts/github/preflight-gh.mjs";
 import {
   assertClaudeHelpCapabilities,
+  assertMinimumClaudeVersion,
   buildClaudeInvocation,
   ClaudeReviewFindingsError,
   parseClaudeReviewResult,
+  parseClaudeVersion,
   probeClaudeCliCapabilities,
   runClaudeCurrentHeadReview,
   verifyClaudeReviewEvidence,
@@ -55,7 +57,9 @@ async function makeFixture() {
   const packageRoot = path.join(root, ".pi", "npm", "node_modules", "dev-loops");
   await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
   await mkdir(path.join(packageRoot, "cli"));
-  await writeFile(path.join(packageRoot, "cli", "index.mjs"), "");
+  await writeFile(path.join(packageRoot, "cli", "index.mjs"), 'process.stdout.write("dev-loop-out\\n"); process.stderr.write("dev-loop-err\\n");\n');
+  await mkdir(path.join(packageRoot, "scripts", "loop"), { recursive: true });
+  await writeFile(path.join(packageRoot, "scripts", "loop", "ensure-worktree.mjs"), 'process.stdout.write("worktree-out\\n"); process.stderr.write("worktree-err\\n");\n');
   await writeFile(path.join(packageRoot, "agents", "developer.agent.md"), [
     "---", "name: developer", "description: fixture", "tools: read, search, execute, bash, edit, write", "---", "fixture",
   ].join("\n"));
@@ -151,9 +155,10 @@ test("preflight scans all installed pinned package agents, ignores notes, and in
     await writeFile(path.join(root, "package.json"), JSON.stringify({ name, version }));
   }
   await writeFile(path.join(piSubagents, "agents", "README.md"), "not an agent manifest\n");
+  await writeFile(path.join(piSubagents, "agents", "developer.agent.md"), "---\nname: developer\ntools: [read, unavailable-duplicate-tool]\n---\n");
   await writeFile(path.join(reviewPackage, "agents", "auditor.agent.md"), "---\nname: auditor\ntools: [read, unavailable-review-tool]\n---\n");
 
-  const resolved = await resolveDevLoopsPackageRoot({ cwd: fixture.root });
+  const resolved = await resolveDevLoopsPackageRoot({ cwd: fixture.root, includeAllPinnedPackages: true });
   assert.deepEqual(resolved.packageRoots.map(({ name }) => name).sort(), [
     "@input-output-hk/agent-review-pi", "dev-loops", "pi-subagents",
   ]);
@@ -165,11 +170,20 @@ test("preflight scans all installed pinned package agents, ignores notes, and in
   });
   assert.equal(result.ok, false);
   assert.deepEqual(result.agents.find(({ name }) => name === "auditor").missingTools, ["unavailable-review-tool"]);
+  assert.equal(result.agents.filter(({ name }) => name === "developer").length, 1, "effective names are deduplicated across packages");
 
   const firstKey = await devLoopPreflightCacheKey({ resolved, availableTools: supportedTools });
   await writeFile(path.join(reviewPackage, "agents", "auditor.agent.md"), "---\nname: auditor\ntools: [read]\n---\nupdated\n");
   const secondKey = await devLoopPreflightCacheKey({ resolved, availableTools: supportedTools });
   assert.notEqual(firstKey, secondKey, "manifest size/mtime invalidates the per-session result cache");
+
+  await rm(reviewPackage, { recursive: true, force: true });
+  const cliOnly = await resolveDevLoopsPackageRoot({ cwd: fixture.root });
+  assert.equal(await realpath(cliOnly.packageRoot), await realpath(fixture.packageRoot), "CLI wrapper resolution does not couple to unrelated pins");
+  await assert.rejects(
+    resolveDevLoopsPackageRoot({ cwd: fixture.root, includeAllPinnedPackages: true }),
+    /missing exact @input-output-hk\/agent-review-pi@0\.5\.0/,
+  );
 });
 
 test("tracked extension registers once and blocks invalid allowlists before launch", async (t) => {
@@ -229,6 +243,32 @@ test("unprovisioned package keeps input interactive but blocks agent/provider la
   await assert.rejects(handlers.get("before_provider_request")({}, ctx), /environment is not ready/);
 });
 
+test("manifest-shape drift preserves interactive recovery but blocks agent/provider launch", async () => {
+  for (const detail of [
+    "invalid YAML frontmatter in agent manifest package/agent.agent.md: unexpected list item",
+    "agent manifest requires a non-empty name and tools allowlist: package/agent.agent.md",
+  ]) {
+    const handlers = new Map();
+    const notifications = [];
+    const pi = {
+      getAllTools: () => [{ name: "read" }],
+      on: (event, handler) => handlers.set(event, handler),
+    };
+    registerDevLoopPreflight(pi, { resolve: async () => { throw new Error(detail); } });
+    const ctx = {
+      cwd: repoRoot,
+      ui: { notify: (message, level) => notifications.push({ message, level }) },
+      abortCalled: false,
+      abort() { this.abortCalled = true; },
+    };
+    assert.deepEqual(await handlers.get("input")({}, ctx), { action: "continue" });
+    assert.equal(notifications[0].level, "warning");
+    await handlers.get("before_agent_start")({}, ctx);
+    assert.equal(ctx.abortCalled, true);
+    await assert.rejects(handlers.get("before_provider_request")({}, ctx), /environment is not ready/);
+  }
+});
+
 test("tracked project agents shadow every incompatible packaged dev-loops manifest", async () => {
   const extensionFiles = (await readdir(path.join(repoRoot, ".pi", "extensions"))).filter((file) => file.startsWith("dev-loop-preflight"));
   assert.deepEqual(extensionFiles, ["dev-loop-preflight.ts"], "only the thin Pi registrar is auto-loaded");
@@ -248,6 +288,13 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   }
   const reviewTools = (await read(".pi/agents/review.agent.md")).match(/^tools:\s*(.+)$/m)?.[1] ?? "";
   assert.doesNotMatch(reviewTools, /\b(?:bash|edit|write)\b/, "review shadow exposes only read-only inspection tools");
+  const devLoop = await read(".pi/agents/dev-loop.agent.md");
+  assert.match(devLoop, /scripts\/dev-loops\.mjs/);
+  assert.doesNotMatch(devLoop, /~\/.pi|npm root -g|require\.resolve\(['"]dev-loops|<dev-loops-package-root>\/cli\/index\.mjs/);
+  const review = await read(".pi/agents/review.agent.md");
+  assert.doesNotMatch(review, /\bgh api\b|\bgit (?:diff|log)\b/);
+  assert.match(review, /gate-context artifact/i);
+
 });
 
 test("pinned pi-subagents runtime applies git-root project-agent precedence", async (t) => {
@@ -294,6 +341,19 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--base", "origin/main"]), /must use origin\/integration/);
 });
 
+test("repository wrappers await child close and preserve trailing output", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const output = [];
+  const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
+  assert.equal(await runDevLoops(["gates"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.equal(await runEnsureWorktree(["--issue", "150"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.match(output.join(""), /dev-loop-out/);
+  assert.match(output.join(""), /dev-loop-err/);
+  assert.match(output.join(""), /worktree-out/);
+  assert.match(output.join(""), /worktree-err/);
+});
+
 test("GitHub compatibility enforces the supported CLI floor and REST capabilities", async (t) => {
   assert.deepEqual(parseGhVersion("gh version 2.97.0 (2026-08-14)"), [2, 97, 0]);
   assert.deepEqual(assertMinimumGhVersion([2, 67, 0]), [2, 67, 0]);
@@ -303,13 +363,11 @@ test("GitHub compatibility enforces the supported CLI floor and REST capabilitie
     { event: "cross-referenced", source: { issue: { number: 71, html_url: "https://github.com/MediaNoxLabs/oxid/pull/71", pull_request: { url: "https://api.github.com/repos/MediaNoxLabs/oxid/pulls/71" } } } },
   ], "MediaNoxLabs/oxid");
   assert.deepEqual(links.map((link) => link.number), [71]);
-  assert.equal(bodyClosesIssue("Closes #150", 150, "MediaNoxLabs/oxid"), true);
-  assert.equal(bodyClosesIssue("Fixes GH-150", 150, "MediaNoxLabs/oxid"), true);
-  assert.equal(bodyClosesIssue("Resolves MediaNoxLabs/oxid#150", 150, "MediaNoxLabs/oxid"), true);
-  assert.equal(bodyClosesIssue("Closes https://github.com/MediaNoxLabs/oxid/issues/150", 150, "MediaNoxLabs/oxid"), true);
-  assert.equal(bodyClosesIssue("Related to #150", 150, "MediaNoxLabs/oxid"), false);
-  assert.equal(bodyClosesIssue("Closes other/repo#150", 150, "MediaNoxLabs/oxid"), false);
-  assert.equal(bodyClosesIssue("Closes https://github.com/other/repo/issues/150", 150, "MediaNoxLabs/oxid"), false);
+  assert.equal(bodyReferencesIssue("Closes #150", 150, "MediaNoxLabs/oxid"), true);
+  assert.equal(bodyReferencesIssue("Fixes GH-150", 150, "MediaNoxLabs/oxid"), true);
+  assert.equal(bodyReferencesIssue("Resolves MediaNoxLabs/oxid#150", 150, "MediaNoxLabs/oxid"), true);
+  assert.equal(bodyReferencesIssue("Closes https://github.com/MediaNoxLabs/oxid/issues/150", 150, "MediaNoxLabs/oxid"), true);
+  assert.equal(bodyReferencesIssue("Related to #150", 150, "MediaNoxLabs/oxid"), false);
   assert.equal(bodyReferencesIssue("Refs #150", 150, "MediaNoxLabs/oxid"), true);
   assert.equal(bodyReferencesIssue("Refs other/repo#150", 150, "MediaNoxLabs/oxid"), false);
 
@@ -359,11 +417,17 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     '--tools <tools...> Specify tools. Use "" to disable all tools.',
     "--no-session-persistence --permission-mode --system-prompt",
   ].join("\n");
-  assert.equal(assertClaudeHelpCapabilities(observedHelp).emptyToolsDisabled, true);
-  assert.throws(() => assertClaudeHelpCapabilities("--safe-mode --tools"), /required review flags/);
-  assert.throws(
-    () => assertClaudeHelpCapabilities("--print --output-format --json-schema --max-budget-usd --safe-mode --tools --no-session-persistence --permission-mode --system-prompt"),
-    /does not attest.*disables all tools/,
+  assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
+  assert.deepEqual(assertMinimumClaudeVersion([2, 1, 228]), [2, 1, 228]);
+  assert.throws(() => assertMinimumClaudeVersion([2, 1, 227]), /unsupported; require >= 2\.1\.228/);
+  const capabilities = assertClaudeHelpCapabilities(observedHelp, [2, 1, 228]);
+  assert.equal(capabilities.emptyToolsDisabled, true);
+  assert.equal(capabilities.emptyToolsBasis, "supported-version-contract");
+  assert.throws(() => assertClaudeHelpCapabilities("--safe-mode --tools", [2, 1, 228]), /required review flags/);
+  assert.equal(
+    assertClaudeHelpCapabilities("--print --output-format --json-schema --max-budget-usd --safe-mode --tools --no-session-persistence --permission-mode --system-prompt", [2, 1, 229]).emptyToolsDisabled,
+    true,
+    "benign help prose changes do not invalidate a supported CLI version",
   );
   const parsed = parseClaudeReviewResult(JSON.stringify({ structured_output: { verdict: "clean", findings: [], summary: "No findings" }, session_id: "session-1" }));
   assert.equal(parsed.review.verdict, "clean");
@@ -372,19 +436,20 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(() => parseClaudeReviewResult(JSON.stringify({ structured_output: { verdict: "clean", findings: [{ severity: "blocker", message: "bad" }] } })), /clean verdict cannot contain findings/);
 });
 
-test("installed real Claude CLI satisfies help, auth, and structured-output contracts", async (t) => {
-  try {
-    execFileSync("claude", ["--version"], { stdio: "ignore", timeout: 30_000 });
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      t.skip("Claude CLI is absent in public CI");
-      return;
-    }
-    throw error;
+test("installed real Claude CLI smoke is explicit opt-in and never a default API dependency", async (t) => {
+  if (process.env.OXID_CLAUDE_LIVE_SMOKE !== "1") {
+    t.skip("set OXID_CLAUDE_LIVE_SMOKE=1 to opt into the authenticated billed capability smoke");
+    return;
   }
   const cwd = await mkdtemp(path.join(os.tmpdir(), "oxid-claude-capability-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const probe = probeClaudeCliCapabilities({ cwd, performOutputSmoke: true });
+  let probe;
+  try {
+    probe = probeClaudeCliCapabilities({ cwd, performOutputSmoke: true });
+  } catch (error) {
+    t.skip(`opt-in Claude smoke unavailable: ${error.message}`);
+    return;
+  }
   assert.equal(probe.accountStatus.loggedIn, true);
   assert.equal(probe.capabilities.emptyToolsDisabled, true);
   assert.equal(probe.outputSmoke.review.verdict, "clean");
@@ -420,7 +485,7 @@ const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const mode = ${JSON.stringify(mode)};
 if (process.argv.includes("--version")) {
-  process.stdout.write("claude fixture 1.0\\n");
+  process.stdout.write("2.1.228 (Claude Code)\\n");
 } else if (process.argv.includes("--help")) {
   process.stdout.write('--print --output-format --json-schema --max-budget-usd --safe-mode --tools <tools...> Use "" to disable all tools --no-session-persistence --permission-mode --system-prompt\\n');
 } else if (process.argv[2] === "auth" && process.argv[3] === "status") {

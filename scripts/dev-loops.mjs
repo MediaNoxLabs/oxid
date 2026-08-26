@@ -74,7 +74,7 @@ export async function runDevLoops(argv = process.argv.slice(2), {
     child.stdout.pipe(stdout, { end: false });
     child.stderr.pipe(stderr, { end: false });
     child.once("error", reject);
-    child.once("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       if (signal) reject(new Error(`dev-loops terminated by ${signal}`));
       else resolve(code ?? 1);
     });

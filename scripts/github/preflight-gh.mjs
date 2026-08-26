@@ -1,36 +1,29 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
-import { assertMinimumGhVersion, parseGhVersion } from "./resolve-issue-pr-links.mjs";
-
-function run(ghCommand, args) {
-  try {
-    return execFileSync(ghCommand, args, { encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"] });
-  } catch (error) {
-    const diagnostic = String(error?.stderr ?? error?.message ?? "GitHub CLI failed").trim();
-    throw new Error(`GitHub CLI REST capability probe failed: ${diagnostic}`, { cause: error });
-  }
-}
+import {
+  assertMinimumGhVersion,
+  assertRepositoryName,
+  GITHUB_REST_HEADERS,
+  parseGhVersion,
+  runGhCommand,
+} from "./rest-client.mjs";
 
 /** Probe the exact read-only REST behavior used by repository loop wrappers. */
 export function preflightGh({ repository, issue, ghCommand = "gh" }) {
-  if (!/^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "")) throw new Error("--repo must be OWNER/REPO");
+  assertRepositoryName(repository);
   if (!Number.isInteger(issue) || issue < 1) throw new Error("--issue must be a positive integer");
 
-  const versionOutput = run(ghCommand, ["--version"]);
+  const run = (args) => runGhCommand(ghCommand, args, { failureLabel: "GitHub CLI REST capability probe" });
+  const versionOutput = run(["--version"]);
   const version = assertMinimumGhVersion(parseGhVersion(versionOutput));
-  const headers = [
-    "-H", "Accept: application/vnd.github+json",
-    "-H", "X-GitHub-Api-Version: 2022-11-28",
-  ];
-  const issueSource = run(ghCommand, ["api", ...headers, `repos/${repository}/issues/${issue}`]);
-  const timelineSource = run(ghCommand, [
-    "api", "--paginate", "--slurp", ...headers,
+  const issueSource = run(["api", ...GITHUB_REST_HEADERS, `repos/${repository}/issues/${issue}`]);
+  const timelineSource = run([
+    "api", "--paginate", "--slurp", ...GITHUB_REST_HEADERS,
     `repos/${repository}/issues/${issue}/timeline`,
   ]);
 

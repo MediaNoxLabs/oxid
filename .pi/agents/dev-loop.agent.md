@@ -29,18 +29,12 @@ The envelope is the primary handoff artifact — it is derived from resolver out
 
 **Construction sequence:**
 <!-- pi-only -->
-**CLI invocation (`<dev-loops-package-root>`):** dev-loop CLI commands are invoked as `node <dev-loops-package-root>/cli/index.mjs <verb...>` using the package-local CLI rather than `npx`, so they resolve unambiguously from the installed package without a global install. Resolve `<dev-loops-package-root>` via the first of these **bounded** candidates whose `cli/index.mjs` exists — never assume a single fixed layout (this agent may be installed user-level at `~/.agents/`, where the old `../..` package-relative guess resolves to `~`, not the package):
+**Repository wrapper mandate:** resolve the checkout with `git rev-parse --show-toplevel`, then invoke dev-loops only through `node <git-root>/scripts/dev-loops.mjs <verb...>`. The wrapper validates the exact repository-local `dev-loops` pin from the Git root or its bounded common checkout, and it forces public PR creation to `integration`. Managed worktrees use `node <git-root>/scripts/loop/ensure-worktree.mjs ...`, which forces `origin/integration`.
 
-1. **Repository-local exact pin** (preferred in this project): resolve the Git root with `git rev-parse --show-toplevel`, then use `<git-root>/.pi/npm/node_modules/dev-loops` only when its manifest and `cli/index.mjs` match `.pi/settings.json`.
-2. **Node module resolution** (best-effort): `node -e "try{const p=require('node:path');console.log(p.resolve(p.dirname(require.resolve('dev-loops/cli/index.mjs')),'..'))}catch{process.exit(1)}"` — resolves the package root when `dev-loops` is reachable from Node's module search path (notably under `~/.pi/agent/npm`); this is cwd-dependent and commonly misses from a target-repo cwd, so the probe is wrapped in try/catch (no stack trace, exits non-zero on miss) — treat a non-zero exit as "probe missed, try the next candidate", not a hard failure.
-3. **Pi user-agent npm root** (reliable for user-level installs): `~/.pi/agent/npm/node_modules/dev-loops`.
-4. **Package-relative (legacy):** `../..` only when this agent was loaded from the original package-local layout; it is not valid for the tracked `.pi/agents` shadow.
-5. **Global npm root:** `$(npm root -g)/dev-loops`.
-
-NEVER fall back to `find /` or any unbounded filesystem walk to locate the CLI — it stalls and trips the needs-attention timeout. If every bounded candidate fails, stop and ask the orchestrator/operator for the dev-loops package root rather than searching. (The `dev-loop` skill resolves it analogously.)
+Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global npm, Node module-search, package-relative, arbitrary-ancestor, or filesystem-search fallbacks. If the tracked wrapper cannot resolve the exact project pin, stop at its diagnostic; interactive repair is allowed, but agent/provider execution remains blocked by preflight.
 <!-- /pi-only -->
 
-1. Run the deterministic startup resolver to produce the authoritative state bundle: `node <dev-loops-package-root>/cli/index.mjs loop startup --issue <n>` for issues, or `node <dev-loops-package-root>/cli/index.mjs loop startup --pr <n>` for PRs.
+1. Run the deterministic startup resolver to produce the authoritative state bundle: `node <git-root>/scripts/dev-loops.mjs loop startup --issue <n>` for issues, or `node <git-root>/scripts/dev-loops.mjs loop startup --pr <n>` for PRs.
 2. Pass the resolver output, resolved settings (merged from `.devloops` and `.pi/dev-loop/defaults.yaml`), and current gate state to `buildDevLoopHandoffEnvelope()`.
 3. **Validate the envelope** with `validateHandoffEnvelope()` before consuming any field. If validation returns `ok: false`, reject the handoff with the structured error — do not load requiredReads, do not execute nextAction, do not delegate.
 4. Read the envelope as the first artifact.
@@ -55,7 +49,7 @@ Prose task composition is a fallback only when `buildDevLoopHandoffEnvelope()` i
 
 After the handoff envelope is built and read, load the `dev-loop` skill (Dev Loop Skill (pinned package path `.pi/npm/node_modules/dev-loops/skills/dev-loop/SKILL.md`)) for the routed strategy's execution procedures.
 
-When that skill is not available at the expected path, resolve it from the skill installation layout (see the skill's "Skill asset path resolution" section).
+When that skill is not available beneath the exact repository pin, stop at the tracked wrapper/preflight diagnostic; do not search other installation layouts.
 
 This entrypoint MUST stay thin: do not restate the skill's phase sequencing or workflow policy here. The envelope owns handoff sequencing; the skill owns routed strategy execution procedures.
 

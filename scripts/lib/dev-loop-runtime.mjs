@@ -89,9 +89,9 @@ async function readJson(file, description) {
   }
 }
 
-async function resolveInstalledPinnedPackages({ candidates, settings }) {
+async function resolveInstalledPinnedPackages({ candidates, pins }) {
   const installed = [];
-  for (const pin of parseExactNpmPins(settings)) {
+  for (const pin of pins) {
     let found = false;
     for (const candidate of candidates) {
       const requestedRoot = npmPackagePath(candidate.root, pin.name);
@@ -123,7 +123,7 @@ async function resolveInstalledPinnedPackages({ candidates, settings }) {
  * Resolve only exact repository pins. Candidates are bounded to the active Git
  * root and, for a linked worktree, that worktree's common checkout root.
  */
-export async function resolveDevLoopsPackageRoot({ cwd = process.cwd() } = {}) {
+export async function resolveDevLoopsPackageRoot({ cwd = process.cwd(), includeAllPinnedPackages = false } = {}) {
   const gitRoot = await findGitRoot(cwd);
   const commonRoot = await resolveCommonCheckoutRoot(gitRoot);
   const settingsPath = path.join(gitRoot, SETTINGS_PATH);
@@ -134,7 +134,10 @@ export async function resolveDevLoopsPackageRoot({ cwd = process.cwd() } = {}) {
     ...(path.resolve(commonRoot) === path.resolve(gitRoot) ? [] : [{ root: commonRoot, source: "git-common-root" }]),
   ];
 
-  const packageRoots = await resolveInstalledPinnedPackages({ candidates, settings });
+  // Public CLI wrappers need only dev-loops itself. The provider preflight opts
+  // into every repository pin because it inspects every installed agent set.
+  const pins = includeAllPinnedPackages ? parseExactNpmPins(settings) : [pin];
+  const packageRoots = await resolveInstalledPinnedPackages({ candidates, pins });
   const devLoops = packageRoots.find(({ name }) => name === pin.name);
   if (!devLoops) {
     throw new Error(
@@ -257,8 +260,11 @@ export async function checkAgentToolAllowlists({ packageRoot, packageRoots, sett
 
   const agents = [];
   const coveredProjects = new Set();
+  const coveredEffectiveNames = new Set();
   for (const packageAgent of packaged) {
     const effective = projectByName.get(packageAgent.name) ?? packageAgent;
+    if (coveredEffectiveNames.has(effective.name)) continue;
+    coveredEffectiveNames.add(effective.name);
     coveredProjects.add(effective.name);
     const missingTools = effective.tools.filter((tool) => !available.has(tool));
     agents.push({

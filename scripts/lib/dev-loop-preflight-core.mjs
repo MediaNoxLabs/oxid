@@ -15,7 +15,7 @@ export async function runDevLoopPreflight(pi, cwd, runtime = {}) {
     const checkAllowlists = runtime.check ?? checkAgentToolAllowlists;
     const cacheKey = runtime.cacheKey ?? devLoopPreflightCacheKey;
     const cache = runtime.cache;
-    const resolved = await resolve({ cwd });
+    const resolved = await resolve({ cwd, includeAllPinnedPackages: true });
     const availableTools = pi.getAllTools().map((tool) => tool.name);
     const key = cache ? await cacheKey({ resolved, availableTools }) : undefined;
     if (key !== undefined && cache.has(key)) return cache.get(key);
@@ -36,7 +36,10 @@ export async function runDevLoopPreflight(pi, cwd, runtime = {}) {
     return checked;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    const recoverable = /(?:missing exact |could not read .*package manifest|expected .* CLI at )/i.test(detail);
+    // Manifest-shape drift in a pinned third-party package must not lock the
+    // operator out of the interactive repair turn. Agent/provider launch still
+    // fails closed below until the preflight can parse and validate every tool.
+    const recoverable = /(?:missing exact |could not read .*package manifest|expected .* CLI at |agent manifest|YAML frontmatter)/i.test(detail);
     return {
       ok: false,
       kind: recoverable ? "unprovisioned" : "invalid-environment",

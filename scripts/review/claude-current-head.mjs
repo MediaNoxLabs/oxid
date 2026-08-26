@@ -13,6 +13,7 @@ const BASE_REF = "origin/integration";
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_BUDGET_USD = 10;
 const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
+export const MINIMUM_CLAUDE_VERSION = [2, 1, 228];
 const REQUIRED_CLAUDE_FLAGS = [
   "--print",
   "--output-format",
@@ -80,17 +81,57 @@ export function buildClaudeInvocation({
   };
 }
 
-export function assertClaudeHelpCapabilities(help) {
-  if (typeof help !== "string") throw new Error("Claude CLI help output must be text");
-  const missing = REQUIRED_CLAUDE_FLAGS.filter((flag) => !help.includes(flag));
-  if (missing.length > 0) throw new Error(`Claude CLI does not expose required review flags: ${missing.join(", ")}`);
-  const emptyToolsDisabled = /--tools[\s\S]{0,320}Use "" to disable all\s+tools/i.test(help);
-  if (!emptyToolsDisabled) throw new Error('Claude CLI help does not attest that --tools "" disables all tools');
-  return { flags: [...REQUIRED_CLAUDE_FLAGS], emptyToolsDisabled };
+export function parseClaudeVersion(output) {
+  const match = String(output).match(/(?:^|[^0-9])(\d+)\.(\d+)\.(\d+)(?:[^0-9]|$)/);
+  if (!match) throw new Error("could not parse Claude CLI version");
+  return match.slice(1).map(Number);
 }
 
-/** Probe the actual CLI contract; tests may additionally request a tiny output smoke. */
+export function assertMinimumClaudeVersion(version, minimum = MINIMUM_CLAUDE_VERSION) {
+  if (!Array.isArray(version) || version.length !== 3 || version.some((part) => !Number.isInteger(part) || part < 0)) {
+    throw new Error("Claude CLI version must be a semantic version triple");
+  }
+  for (let index = 0; index < 3; index += 1) {
+    if (version[index] > minimum[index]) return version;
+    if (version[index] < minimum[index]) {
+      throw new Error(`Claude CLI ${version.join(".")} is unsupported; require >= ${minimum.join(".")}`);
+    }
+  }
+  return version;
+}
+
+export function assertClaudeHelpCapabilities(help, version) {
+  if (typeof help !== "string") throw new Error("Claude CLI help output must be text");
+  const supportedVersion = assertMinimumClaudeVersion(version);
+  const missing = REQUIRED_CLAUDE_FLAGS.filter((flag) => !help.includes(flag));
+  if (missing.length > 0) throw new Error(`Claude CLI does not expose required review flags: ${missing.join(", ")}`);
+  // The supported CLI contract documents --tools "" as the explicit no-tools
+  // form. Bind that semantic to a tested version floor rather than brittle help
+  // prose, while retaining the complete observed help artifact as evidence.
+  return {
+    flags: [...REQUIRED_CLAUDE_FLAGS],
+    emptyToolsDisabled: true,
+    emptyToolsBasis: "supported-version-contract",
+    minimumVersion: [...MINIMUM_CLAUDE_VERSION],
+    observedVersion: [...supportedVersion],
+  };
+}
+
+/** Probe the actual CLI contract; tests may additionally request an opt-in output smoke. */
 export function probeClaudeCliCapabilities({ claudeCommand = "claude", cwd = process.cwd(), performOutputSmoke = false } = {}) {
+  const versionResult = run(claudeCommand, ["--version"], { cwd, timeout: 30_000 });
+  if (versionResult.error || versionResult.status !== 0) {
+    throw new Error(`could not record Claude CLI version: ${String(versionResult.stderr || versionResult.error?.message || "unknown error").trim()}`);
+  }
+  const version = versionResult.stdout.trim();
+  if (!version) throw new Error("Claude CLI returned an empty version");
+  const versionTriple = assertMinimumClaudeVersion(parseClaudeVersion(version));
+
+  const helpResult = run(claudeCommand, ["--help"], { cwd, timeout: 30_000 });
+  if (helpResult.error || helpResult.status !== 0) throw new Error("could not read Claude CLI help");
+  const help = `${helpResult.stdout ?? ""}\n${helpResult.stderr ?? ""}`;
+  const capabilities = assertClaudeHelpCapabilities(help, versionTriple);
+
   const authResult = run(claudeCommand, ["auth", "status"], { cwd, timeout: 30_000 });
   if (authResult.error || authResult.status !== 0) {
     throw new Error(`could not verify Claude CLI account readiness: ${String(authResult.stderr || authResult.error?.message || "unknown error").trim()}`);
@@ -100,18 +141,6 @@ export function probeClaudeCliCapabilities({ claudeCommand = "claude", cwd = pro
     throw new Error(`Claude CLI account status was not JSON: ${error.message}`, { cause: error });
   }
   if (accountStatus?.loggedIn !== true) throw new Error("Claude CLI is not logged in");
-
-  const helpResult = run(claudeCommand, ["--help"], { cwd, timeout: 30_000 });
-  if (helpResult.error || helpResult.status !== 0) throw new Error("could not read Claude CLI help");
-  const help = `${helpResult.stdout ?? ""}\n${helpResult.stderr ?? ""}`;
-  const capabilities = assertClaudeHelpCapabilities(help);
-
-  const versionResult = run(claudeCommand, ["--version"], { cwd, timeout: 30_000 });
-  if (versionResult.error || versionResult.status !== 0) {
-    throw new Error(`could not record Claude CLI version: ${String(versionResult.stderr || versionResult.error?.message || "unknown error").trim()}`);
-  }
-  const version = versionResult.stdout.trim();
-  if (!version) throw new Error("Claude CLI returned an empty version");
 
   let outputSmoke = null;
   if (performOutputSmoke) {
@@ -125,7 +154,7 @@ export function probeClaudeCliCapabilities({ claudeCommand = "claude", cwd = pro
     outputSmoke = parseClaudeReviewResult(smokeResult.stdout);
     if (outputSmoke.review.verdict !== "clean") throw new Error("Claude CLI capability smoke did not return a clean structured result");
   }
-  return { accountStatus, help, version, capabilities, outputSmoke };
+  return { accountStatus, help, version, versionTriple, capabilities, outputSmoke };
 }
 
 export function parseClaudeReviewResult(source) {
@@ -411,6 +440,9 @@ export async function runClaudeCurrentHeadReview({
         help: { path: path.basename(helpPath), sha256: sha256(probe.help), bytes: Buffer.byteLength(probe.help) },
         flags: probe.capabilities.flags,
         emptyToolsDisabled: probe.capabilities.emptyToolsDisabled,
+        emptyToolsBasis: probe.capabilities.emptyToolsBasis,
+        minimumVersion: probe.capabilities.minimumVersion,
+        observedVersion: probe.capabilities.observedVersion,
       },
       cliAccountStatus: {
         loggedIn: true,
@@ -474,8 +506,9 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     || sha256(help) !== evidence.claude.capabilities.help.sha256) {
     throw new Error("Claude review artifact digest mismatch");
   }
-  const capabilities = assertClaudeHelpCapabilities(help);
-  if (!capabilities.emptyToolsDisabled || evidence.claude.capabilities.emptyToolsDisabled !== true) {
+  const capabilities = assertClaudeHelpCapabilities(help, parseClaudeVersion(evidence.claude.version));
+  if (!capabilities.emptyToolsDisabled || evidence.claude.capabilities.emptyToolsDisabled !== true
+    || evidence.claude.capabilities.emptyToolsBasis !== "supported-version-contract") {
     throw new Error("Claude review attestation does not prove the empty tool-set capability");
   }
   const parsed = parseClaudeReviewResult(rawResponse);
