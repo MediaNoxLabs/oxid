@@ -10,7 +10,7 @@ import { parseGhVersion } from "./resolve-issue-pr-links.mjs";
 
 function run(ghCommand, args) {
   try {
-    return execFileSync(ghCommand, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return execFileSync(ghCommand, args, { encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"] });
   } catch (error) {
     const diagnostic = String(error?.stderr ?? error?.message ?? "GitHub CLI failed").trim();
     throw new Error(`GitHub CLI REST capability probe failed: ${diagnostic}`, { cause: error });
@@ -19,7 +19,7 @@ function run(ghCommand, args) {
 
 /** Probe the exact read-only REST behavior used by repository loop wrappers. */
 export function preflightGh({ repository, issue, ghCommand = "gh" }) {
-  if (!/^[^/\s]+\/[^/\s]+$/.test(repository ?? "")) throw new Error("--repo must be OWNER/REPO");
+  if (!/^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "")) throw new Error("--repo must be OWNER/REPO");
   if (!Number.isInteger(issue) || issue < 1) throw new Error("--issue must be a positive integer");
 
   const versionOutput = run(ghCommand, ["--version"]);

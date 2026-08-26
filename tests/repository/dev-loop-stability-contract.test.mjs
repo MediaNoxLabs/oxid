@@ -137,6 +137,7 @@ test("GitHub compatibility uses REST timeline facts without deprecated fields", 
   assert.deepEqual(links.map((link) => link.number), [71]);
   assert.equal(bodyClosesIssue("Closes #150", 150), true);
   assert.equal(bodyClosesIssue("Related to #150", 150), false);
+  assert.equal(bodyClosesIssue("Closes other/repo#150", 150), false);
 
   for (const file of [
     "scripts/github/resolve-issue-pr-links.mjs",

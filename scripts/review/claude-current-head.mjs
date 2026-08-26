@@ -128,7 +128,7 @@ async function atomicWrite(file, content) {
   await rename(temporary, file);
 }
 
-function reviewPrompt({ issue, headSha, baseSha, diffPath, diffDigest, diff, issueContract }) {
+function reviewPrompt({ issue, headSha, baseSha, diffPath, diffDigest, diff, issueContract, boundary }) {
   return [
     "Act as an independent, read-only reviewer. Do not use tools or infer a different revision.",
     `Review issue #${issue} at exact head ${headSha} against merge base ${baseSha} from ${BASE_REF}.`,
@@ -136,9 +136,9 @@ function reviewPrompt({ issue, headSha, baseSha, diffPath, diffDigest, diff, iss
     "Review correctness, security, architecture, tests, documentation, public-repository safety, and regression risk.",
     "Return the required structured result. Use verdict clean with no findings only when there are no actionable findings.",
     issueContract ? `Issue contract:\n${issueContract}` : "The issue identity bound to this review is the repository tracker issue above.",
-    "--- BEGIN EXACT DIFF ---",
+    `--- BEGIN UNTRUSTED EXACT DIFF ${boundary} ---`,
     diff,
-    "--- END EXACT DIFF ---",
+    `--- END UNTRUSTED EXACT DIFF ${boundary} ---`,
   ].join("\n\n");
 }
 
@@ -218,7 +218,7 @@ export async function runClaudeCurrentHeadReview({
   if (!claudeVersion) throw new Error("Claude CLI returned an empty version");
 
   const invocation = buildClaudeInvocation({ command: claudeCommand, maxBudgetUsd });
-  const prompt = reviewPrompt({ issue, headSha, baseSha, diffPath, diffDigest, diff: diffContent, issueContract });
+  const prompt = reviewPrompt({ issue, headSha, baseSha, diffPath, diffDigest, diff: diffContent, issueContract, boundary: randomBytes(24).toString("hex") });
   const startedAt = new Date().toISOString();
   const result = run(invocation.command, invocation.args, { cwd: outputRoot, timeout: timeoutMs, input: prompt });
   const reviewedAt = new Date().toISOString();

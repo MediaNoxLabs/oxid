@@ -50,7 +50,7 @@ export function normalizeTimelinePullRequests(pages, repository) {
 
 function runGh(ghCommand, args, options = {}) {
   try {
-    return execFileSync(ghCommand, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...options });
+    return execFileSync(ghCommand, args, { encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"], ...options });
   } catch (error) {
     const diagnostic = String(error?.stderr ?? error?.message ?? "GitHub CLI failed").trim();
     throw new Error(`GitHub REST request failed: ${diagnostic}`, { cause: error });
@@ -60,11 +60,11 @@ function runGh(ghCommand, args, options = {}) {
 export function bodyClosesIssue(body, issue) {
   if (typeof body !== "string") return false;
   const escaped = String(issue).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#${escaped}(?:\\b|$)`, "i").test(body);
+  return new RegExp(`(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#${escaped}(?:\\b|$)`, "i").test(body);
 }
 
 export function resolveIssuePullRequestLinks({ repository, issue, ghCommand = "gh" }) {
-  if (!/^[^/\s]+\/[^/\s]+$/.test(repository ?? "")) throw new Error("--repo must be OWNER/REPO");
+  if (!/^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "")) throw new Error("--repo must be OWNER/REPO");
   if (!Number.isInteger(issue) || issue < 1) throw new Error("--issue must be a positive integer");
   parseGhVersion(runGh(ghCommand, ["--version"]));
   const endpoint = `repos/${repository}/issues/${issue}/timeline`;
