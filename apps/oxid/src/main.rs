@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 #[cfg(test)]
 mod portal_profile_authority;
 
 mod generated_brand {
     include!(concat!(env!("OUT_DIR"), "/brand.rs"));
+}
+
+#[cfg(any(feature = "standalone-portal", feature = "standalone-portal-tailnet"))]
+fn startup_failure(error: impl std::fmt::Display) -> ! {
+    eprintln!("Oxid startup failed: {error}");
+    std::process::exit(2)
 }
 
 fn main() {
@@ -122,7 +128,7 @@ fn main() {
 
     #[cfg(all(feature = "standalone-portal", target_os = "android"))]
     oxid_composition::verify_android_portal_virtual_device_profile()
-        .unwrap_or_else(|error| panic!("{error}"));
+        .unwrap_or_else(startup_failure);
 
     #[cfg(all(
         feature = "standalone-portal",
@@ -144,7 +150,7 @@ fn main() {
             include_bytes!(concat!(env!("OUT_DIR"), "/portal-deployment.json")),
             env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
         )
-        .unwrap_or_else(|error| panic!("standalone Portal configuration is invalid: {error}"))
+        .unwrap_or_else(startup_failure)
     };
 
     #[cfg(all(
@@ -166,9 +172,7 @@ fn main() {
         env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
         env!("OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN"),
     )
-    .unwrap_or_else(|error| {
-        panic!("standalone physical Android Portal configuration is invalid: {error}")
-    });
+    .unwrap_or_else(startup_failure);
 
     #[cfg(feature = "standalone-native-proving-artifacts")]
     let application =
@@ -408,6 +412,7 @@ fn main() {
                     application.prepare_credential_issuance(),
                     application.accept_credential_issuance(),
                     application.refuse_credential_issuance(),
+                    application.list_credential_issuances(),
                     standalone_credential_offer,
                     credential_issuance_ready,
                 ),

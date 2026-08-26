@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-for command_name in nix rustup java; do
+for command_name in nix rustup java node; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command '$command_name' is missing." >&2
     exit 1
@@ -11,6 +11,7 @@ for command_name in nix rustup java; do
 done
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+origin_policy="$repository_root/scripts/e2e/tailnet-origin-policy.mjs"
 cd "$repository_root"
 
 portal_profile_authority_directory=""
@@ -138,7 +139,8 @@ case "$portal_profile" in
       exit 1
     fi
     portal_public_origin="${OXID_BUILD_PORTAL_PUBLIC_ORIGIN:-}"
-    if ! [[ "$portal_public_origin" =~ ^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.ts\.net:[0-9]{4,5}$ ]]; then
+    if ! OXID_TAILNET_ORIGIN_POLICY_INPUT="$portal_public_origin" \
+      node "$origin_policy" --origin-env; then
       echo "The Android Portal profile requires a canonical HTTPS MagicDNS origin with an explicit listener." >&2
       exit 1
     fi

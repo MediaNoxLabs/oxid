@@ -41,7 +41,10 @@ not select the Portal client or offer handoff.
 The application receives only a fixed non-secret custom-scheme trigger. A
 fresh 64-byte hexadecimal capability is streamed into app-private storage over
 ADB standard input. The app unlinks it before issuing a single bounded HTTPS
-`/offer` request. The offer, grant, tokens, proof JWT, credential bundle,
+`/offer` request. Serve forwards that mount to a dedicated unpublished loopback
+listener, which accepts only the proven stripped `/` request path. The separate
+control listener is never published and capability-authenticates every endpoint
+except health. The offer, grant, tokens, proof JWT, credential bundle,
 private parts, DIDs, and capability never enter process arguments, retained
 logs, or evidence.
 
@@ -66,6 +69,15 @@ and passes its selector through process environment rather than a recipe or
 argument. It discovers the current Tailscale MagicDNS identity from
 `tailscale status --json` and chooses an unused HTTPS listener at runtime.
 Existing Oxid Serve routes on 443, 8443, and 10000 are immutable baseline state.
+The ordinary physical-device launcher honors an explicit validated
+`OXID_ANDROID_DEVICE` selector and refuses builds unless those protected Serve
+routes already exist.
+
+Mobile compositions intentionally use the embedded standalone DID resolver for
+holder-managed records rather than honoring `OXID_MIDNIGHT_DID_RESOLVER_URL`.
+This removes a runtime-selected holder-resolution seam from existing mobile
+standalone profiles; the authenticated Portal issuer resolver remains a
+separate exact path-bearing HTTPS authority.
 
 Oxid writes a private, transient config for the merged Portal
 `scripts/tailscale-https-profile.sh`. That profile installs only `/`,
@@ -78,9 +90,12 @@ published. Oxid does not call `tailscale serve reset` for this flow.
 `just portal-headless-e2e` proves real issuance followed by a second headless
 process restoring, listing, and freshly reverifying the encrypted credential.
 
-`just android-portal-tailnet-physical-smoke` proves physical Android ingress,
-explicit consent, real Final issuance, encrypted storage shape, process death,
-development-custody reactivation, listing, and fresh reverification. The
+`just android-portal-tailnet-physical-smoke` proves physical Android warm and
+cold ingress, refusal before consent with zero secret endpoint calls, strict
+malformed-response rejection, unavailable and timeout behavior, issuance-error
+cleanup and navigation escape, explicit consent, real Final issuance with exact
+request counters, encrypted storage shape, process death, development-custody
+reactivation, listing, and one fresh resolver-backed reverification. The
 post-install journey is bounded to 300 seconds. Evidence contains only the exact
 Oxid head, Portal commit/tree, OCI image digests, coarse Android OS/API facts,
 and closed booleans. It excludes identifiers, endpoints, protocol artifacts,

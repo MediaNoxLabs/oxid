@@ -12,7 +12,7 @@ use super::*;
 
 const PROFILE_FIXTURE_ROOT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/openid4vci-final"
+    "/../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final"
 );
 
 fn sha256(bytes: &[u8]) -> String {

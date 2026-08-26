@@ -5931,11 +5931,11 @@ dependencies = [
  "dioxus",
  "getrandom 0.2.17",
  "getrandom 0.4.3",
+ "oxid-adapter-identity-ingress",
  "oxid-brand-build",
  "oxid-composition",
  "oxid-ui-dioxus",
  "sha2 0.10.9",
- "url",
 ]
 
 [[package]]

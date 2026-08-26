@@ -7,12 +7,15 @@ import http from "node:http";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+import { exactPublicOrigin } from "./tailnet-origin-policy.mjs";
+
 const PORTAL_COMMIT = "22ae5369b6f939e6b20648f4b85dd993527748ef";
 const PORTAL_TREE = "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10";
 const PORTAL_PROVENANCE_SHA256 = "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87";
 const ISSUER_PROXY_PORT = 18090;
 const CONTROL_PORT = 18091;
 const HOLDER_RESOLVER_PORT = 18092;
+const OFFER_PORT = 18094;
 const ISSUER_RESOLVER_PROXY_PORT = 18093;
 const MAX_CONTROL_BODY = 2 * 1024 * 1024;
 const MAX_OFFER_BYTES = 32 * 1024;
@@ -25,23 +28,6 @@ const readyFifo = process.env.OXID_PORTAL_MOBILE_READY_FIFO;
 const capabilityFifo = process.env.OXID_PORTAL_MOBILE_CAPABILITY_FIFO;
 const lifecycle = process.env.PORTAL_CONSUMER_LIFECYCLE;
 const publicOrigin = process.env.OXID_BUILD_PORTAL_PUBLIC_ORIGIN;
-
-function exactPublicOrigin(value) {
-  try {
-    const parsed = new URL(value);
-    const port = Number(parsed.port);
-    return parsed.protocol === "https:"
-      && parsed.username === "" && parsed.password === ""
-      && Number.isInteger(port) && port >= 1024
-      && !new Set([443, 8443, 10000]).has(port)
-      && parsed.pathname === "/" && parsed.search === "" && parsed.hash === ""
-      && parsed.hostname.endsWith(".ts.net") && parsed.hostname !== "ts.net"
-      && parsed.hostname.split(".").every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label))
-      && parsed.origin === value;
-  } catch {
-    return false;
-  }
-}
 
 function exactPrivatePath(value, kind) {
   if (!value || !path.isAbsolute(value) || !fs.existsSync(value)) return false;
@@ -68,11 +54,14 @@ let phase = "startup";
 let holderDocument = null;
 let offer = null;
 let capability = null;
+const controlCapability = Buffer.from(randomBytes(32).toString("hex"), "utf8");
 let handoffState = "empty";
+let proxyMode = "normal";
 let completionResolve;
 let complete = false;
 let cleanupStarted = false;
 const proxied = new Set();
+const delayedResponses = new Map();
 const counters = {
   authorizationMetadata: 0,
   credential: 0,
@@ -184,13 +173,40 @@ const issuerProxy = http.createServer((request, response) => {
     response.destroy();
     return;
   }
-  counters[pathCounter(parsed.pathname)] += 1;
+  const counter = pathCounter(parsed.pathname);
+  counters[counter] += 1;
+  if (counter !== "kyc" && proxyMode === "unavailable") {
+    sendJson(response, 503, { error: "unavailable" });
+    return;
+  }
+  if (counter === "issuerMetadata" && proxyMode === "malformed") {
+    const body = Buffer.from('{"credential_issuer":');
+    response.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Length": body.length,
+      "Content-Type": "application/json",
+    });
+    response.end(body);
+    return;
+  }
+  if (counter !== "kyc" && proxyMode === "timeout") {
+    const timer = setTimeout(() => {
+      delayedResponses.delete(response);
+      if (!response.destroyed) sendJson(response, 504, { error: "timeout" });
+    }, REQUEST_TIMEOUT_MS);
+    delayedResponses.set(response, timer);
+    response.once("close", () => {
+      const active = delayedResponses.get(response);
+      if (active) clearTimeout(active);
+      delayedResponses.delete(response);
+    });
+    return;
+  }
   proxyRequest(request, response, 8090);
 });
 
 const issuerResolverProxy = http.createServer((request, response) => {
-  if (request.method !== "POST"
-      || !new Set(["/resolve", "/issuer-resolver/resolve"]).has(request.url)) {
+  if (request.method !== "POST" || request.url !== "/resolve") {
     sendJson(response, 404, { error: "not_found" });
     return;
   }
@@ -289,7 +305,7 @@ function clearHandoff() {
 }
 
 function handleOffer(request, response) {
-  if (request.method !== "GET" || !new Set(["/", "/offer"]).has(request.url)) return false;
+  if (request.method !== "GET" || request.url !== "/") return false;
   if (handoffState !== "ready" || !offer || !capability) {
     sendJson(response, 410, { error: "unavailable" });
     return true;
@@ -350,12 +366,32 @@ async function armOffer() {
   }
 }
 
+function controlAuthorized(request) {
+  const prefix = "Bearer ";
+  const header = request.headers.authorization;
+  const supplied = typeof header === "string" && header.startsWith(prefix)
+    ? Buffer.from(header.slice(prefix.length), "utf8") : Buffer.alloc(0);
+  const authenticated = supplied.length === controlCapability.length
+    && timingSafeEqual(supplied, controlCapability);
+  supplied.fill(0);
+  return authenticated;
+}
+
+const offerServer = http.createServer((request, response) => {
+  if (!handleOffer(request, response)) sendJson(response, 404, { error: "not_found" });
+});
+
 const controlServer = http.createServer(async (request, response) => {
   try {
-    if (handleOffer(request, response)) return;
     if (request.method === "GET" && request.url === "/health") {
       sendJson(response, 200, { ok: true });
-    } else if (request.method === "GET" && request.url === "/counters") {
+      return;
+    }
+    if (!controlAuthorized(request)) {
+      sendJson(response, 401, { error: "unauthorized" });
+      return;
+    }
+    if (request.method === "GET" && request.url === "/counters") {
       sendJson(response, 200, counters);
     } else if (request.method === "GET" && request.url === "/handoff-status") {
       sendJson(response, 200, { state: handoffState });
@@ -365,6 +401,14 @@ const controlServer = http.createServer(async (request, response) => {
     } else if (request.method === "POST" && request.url === "/arm-android-offer") {
       await armOffer();
       sendJson(response, 200, { armed: true });
+    } else if (request.method === "POST" && request.url === "/proxy-mode") {
+      const candidate = (await readBounded(request, 32)).toString("utf8");
+      if (!new Set(["normal", "malformed", "unavailable", "timeout"]).has(candidate)) {
+        sendJson(response, 400, { error: "invalid_mode" });
+        return;
+      }
+      proxyMode = candidate;
+      sendJson(response, 200, { mode: proxyMode });
     } else if (request.method === "POST" && request.url === "/complete") {
       complete = true;
       sendJson(response, 200, { ok: true });
@@ -413,8 +457,14 @@ async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
   clearHandoff();
+  controlCapability.fill(0);
   for (const request of proxied) request.destroy();
-  await Promise.all([issuerProxy, issuerResolverProxy, holderResolver, controlServer].map(
+  for (const [response, timer] of delayedResponses) {
+    clearTimeout(timer);
+    response.destroy();
+  }
+  delayedResponses.clear();
+  await Promise.all([issuerProxy, issuerResolverProxy, holderResolver, offerServer, controlServer].map(
     (server) => new Promise((resolve) => server.close(resolve)),
   ));
   try {
@@ -437,6 +487,7 @@ try {
     listen(issuerProxy, ISSUER_PROXY_PORT),
     listen(controlServer, CONTROL_PORT),
     listen(holderResolver, HOLDER_RESOLVER_PORT),
+    listen(offerServer, OFFER_PORT),
     listen(issuerResolverProxy, ISSUER_RESOLVER_PROXY_PORT),
   ]);
   phase = "portal-stack";
@@ -458,14 +509,23 @@ try {
   const manifestBytes = Buffer.from(JSON.stringify(manifest));
   fs.writeFileSync(manifestPath, manifestBytes, { mode: 0o600 });
   const ready = {
+    controlCapability: "0".repeat(controlCapability.length),
     controlOrigin: `http://127.0.0.1:${CONTROL_PORT}`,
     issuerProxyPort: ISSUER_PROXY_PORT,
+    offerPort: OFFER_PORT,
     resolverProxyPort: ISSUER_RESOLVER_PROXY_PORT,
     manifestPath,
     manifestSha256: sha256(manifestBytes),
-    schema: "oxid-portal-android-ready-v1",
+    schema: "oxid-portal-android-ready-v2",
   };
-  fs.writeFileSync(path.join(stateDirectory, "ready.json"), JSON.stringify(ready), { mode: 0o600 });
+  const readyBytes = Buffer.from(JSON.stringify(ready));
+  const placeholder = Buffer.from(`"${"0".repeat(controlCapability.length)}"`);
+  const placeholderOffset = readyBytes.indexOf(placeholder);
+  if (placeholderOffset < 0) throw new Error("control capability staging failed");
+  controlCapability.copy(readyBytes, placeholderOffset + 1);
+  fs.writeFileSync(path.join(stateDirectory, "ready.json"), readyBytes, { mode: 0o600 });
+  readyBytes.fill(0);
+  placeholder.fill(0);
   fs.writeFileSync(readyFifo, "READY\n");
   process.stdout.write("portal-android-support: READY\n");
   await completion;

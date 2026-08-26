@@ -35,13 +35,11 @@ jobs:
         # Checkov CKV_SECRET_9 mistakes these manifest-authenticated negative JWTs
         # for credentials. Exclude only these exact immutable public test vectors;
         # do not skip Checkov, a framework, a check, or a broader path.
-        continue-on-error: true
         run: |
           fixture="fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/unsupported-proof-alg.json"
-          portal_fixture="fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/openid4vci-final/negative/unsupported-proof-alg.json"
           mkdir -p "$RUNNER_TEMP/oxid-checkov-exclusion"
+          test -f "$fixture"
           mv -- "$fixture" "$RUNNER_TEMP/oxid-checkov-exclusion/fixture.json"
-          mv -- "$portal_fixture" "$RUNNER_TEMP/oxid-checkov-exclusion/portal-fixture.json"
 
       - name: Run scanners and upload SARIF
         id: security-scan
@@ -58,12 +56,17 @@ jobs:
       - name: Restore the authenticated synthetic JWT fixtures
         id: restore-checkov-exclusion
         if: always()
-        continue-on-error: true
         run: |
           fixture="fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/unsupported-proof-alg.json"
-          portal_fixture="fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/openid4vci-final/negative/unsupported-proof-alg.json"
-          mv -- "$RUNNER_TEMP/oxid-checkov-exclusion/fixture.json" "$fixture"
-          mv -- "$RUNNER_TEMP/oxid-checkov-exclusion/portal-fixture.json" "$portal_fixture"
+          staged="$RUNNER_TEMP/oxid-checkov-exclusion/fixture.json"
+          if [ -f "$staged" ] && [ ! -e "$fixture" ]; then
+            mv -- "$staged" "$fixture"
+          elif [ ! -f "$staged" ] && [ -f "$fixture" ]; then
+            :
+          else
+            echo "::error::The canonical synthetic JWT fixture has an ambiguous staged state."
+            exit 1
+          fi
 
       - name: Aggregate scanner and fixture results
         if: always()

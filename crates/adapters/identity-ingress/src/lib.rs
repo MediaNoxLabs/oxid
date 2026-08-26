@@ -25,6 +25,8 @@ use oxid_protocol_application::{
 #[cfg(any(target_os = "ios", target_os = "android", test))]
 use serde::Deserialize;
 use url::Url;
+#[cfg(feature = "loopback-test-offer-trigger")]
+use zeroize::Zeroizing;
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
 const SCAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -33,6 +35,44 @@ const SCAN_POLL_LIMIT: usize = 600;
 // A second request must not replace a consent screen that the holder is
 // already reviewing.
 const IDENTITY_LINK_QUEUE_LIMIT: usize = 1;
+
+/// Accepts only one canonical, explicit-port Tailscale HTTPS origin outside
+/// the standalone routes reserved by Oxid.
+pub fn validate_tailnet_public_origin(value: &str) -> Result<(), &'static str> {
+    if value.len() > 512 {
+        return Err("Portal tailnet public origin is invalid");
+    }
+    let url = Url::parse(value).map_err(|_| "Portal tailnet public origin is invalid")?;
+    let host = url
+        .host_str()
+        .ok_or("Portal tailnet public origin is invalid")?;
+    let labels_are_canonical = host.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+    });
+    url.port()
+        .filter(|port| *port >= 1024 && !matches!(*port, 8443 | 10_000))
+        .ok_or("Portal tailnet public origin is invalid")?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !host.ends_with(".ts.net")
+        || host == "ts.net"
+        || !labels_are_canonical
+        || url.origin().ascii_serialization() != value
+    {
+        return Err("Portal tailnet public origin is invalid");
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RegisteredOpenId4VpRequest {
@@ -206,49 +246,15 @@ mod loopback_test_offer_trigger {
         value == TRIGGER
     }
 
-    pub fn resolve_trigger() -> String {
+    pub fn resolve_trigger() -> Zeroizing<String> {
         let control_address = SocketAddr::from(([127, 0, 0, 1], 18091));
         read_capability()
             .and_then(|capability| fetch_offer(control_address, CONTROL_TIMEOUT, &capability))
-            .unwrap_or_else(|()| TRIGGER.to_owned())
+            .unwrap_or_else(|()| Zeroizing::new(TRIGGER.to_owned()))
     }
 
     #[cfg(feature = "tailnet-test-offer-trigger")]
-    pub fn validate_tailnet_public_origin(public_origin: &str) -> Result<(), ()> {
-        let url = url::Url::parse(public_origin).map_err(|_| ())?;
-        let host = url.host_str().ok_or(())?;
-        let canonical_labels = host.split('.').all(|label| {
-            !label.is_empty()
-                && label.len() <= 63
-                && label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-        });
-        let port = url
-            .port()
-            .filter(|port| *port >= 1024 && !matches!(*port, 8443 | 10_000))
-            .ok_or(())?;
-        if url.scheme() != "https"
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || port == 443
-            || url.path() != "/"
-            || url.query().is_some()
-            || url.fragment().is_some()
-            || !host.ends_with(".ts.net")
-            || host == "ts.net"
-            || !canonical_labels
-            || url.origin().ascii_serialization() != public_origin
-        {
-            return Err(());
-        }
-        Ok(())
-    }
-
-    #[cfg(feature = "tailnet-test-offer-trigger")]
-    pub fn resolve_tailnet_trigger(public_origin: &str) -> String {
+    pub fn resolve_tailnet_trigger(public_origin: &str) -> Zeroizing<String> {
         read_capability()
             .and_then(|capability| {
                 let runtime = tokio::runtime::Builder::new_current_thread()
@@ -257,12 +263,15 @@ mod loopback_test_offer_trigger {
                     .map_err(|_| ())?;
                 runtime.block_on(fetch_tailnet_offer(public_origin, &capability))
             })
-            .unwrap_or_else(|()| TRIGGER.to_owned())
+            .unwrap_or_else(|()| Zeroizing::new(TRIGGER.to_owned()))
     }
 
     #[cfg(feature = "tailnet-test-offer-trigger")]
-    async fn fetch_tailnet_offer(public_origin: &str, capability: &[u8]) -> Result<String, ()> {
-        validate_tailnet_public_origin(public_origin)?;
+    async fn fetch_tailnet_offer(
+        public_origin: &str,
+        capability: &[u8],
+    ) -> Result<Zeroizing<String>, ()> {
+        super::validate_tailnet_public_origin(public_origin).map_err(|_| ())?;
         if capability.len() != CAPABILITY_BYTES {
             return Err(());
         }
@@ -303,7 +312,7 @@ mod loopback_test_offer_trigger {
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|length| *length > 0 && *length <= MAX_RESPONSE_BYTES)
             .ok_or(())?;
-        let mut body = Vec::with_capacity(expected_length);
+        let mut body = Zeroizing::new(Vec::with_capacity(expected_length));
         while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
             if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
                 return Err(());
@@ -313,7 +322,9 @@ mod loopback_test_offer_trigger {
         if body.len() != expected_length {
             return Err(());
         }
-        String::from_utf8(body).map_err(|_| ())
+        String::from_utf8(std::mem::take(&mut *body))
+            .map(Zeroizing::new)
+            .map_err(|_| ())
     }
 
     fn capability_path() -> Result<PathBuf, ()> {
@@ -373,7 +384,7 @@ mod loopback_test_offer_trigger {
         address: SocketAddr,
         timeout: Duration,
         capability: &[u8],
-    ) -> Result<String, ()> {
+    ) -> Result<Zeroizing<String>, ()> {
         if capability.len() != CAPABILITY_BYTES {
             return Err(());
         }
@@ -388,11 +399,11 @@ mod loopback_test_offer_trigger {
             .write_all(b"\r\nConnection: close\r\n\r\n")
             .map_err(|_| ())?;
 
-        let mut buffer = Vec::new();
-        let mut chunk = [0_u8; 4_096];
+        let mut buffer = Zeroizing::new(Vec::new());
+        let mut chunk = Zeroizing::new([0_u8; 4_096]);
         loop {
             set_remaining_timeouts(&stream, started, timeout)?;
-            let read = stream.read(&mut chunk).map_err(|_| ())?;
+            let read = stream.read(&mut chunk[..]).map_err(|_| ())?;
             if read == 0 {
                 break;
             }
@@ -401,7 +412,8 @@ mod loopback_test_offer_trigger {
                 return Err(());
             }
         }
-        let response = String::from_utf8(buffer).map_err(|_| ())?;
+        let response =
+            Zeroizing::new(String::from_utf8(std::mem::take(&mut *buffer)).map_err(|_| ())?);
         parse_offer_response(&response).ok_or(())
     }
 
@@ -418,7 +430,7 @@ mod loopback_test_offer_trigger {
         stream.set_write_timeout(Some(remaining)).map_err(|_| ())
     }
 
-    fn parse_offer_response(response: &str) -> Option<String> {
+    fn parse_offer_response(response: &str) -> Option<Zeroizing<String>> {
         let (head, body) = response.split_once("\r\n\r\n")?;
         let mut lines = head.split("\r\n");
         let mut status = lines.next()?.splitn(3, ' ');
@@ -449,7 +461,7 @@ mod loopback_test_offer_trigger {
         {
             return None;
         }
-        Some(body.to_owned())
+        Some(Zeroizing::new(body.to_owned()))
     }
 
     #[cfg(test)]
@@ -463,7 +475,12 @@ mod loopback_test_offer_trigger {
                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{offer}",
                 offer.len()
             );
-            assert_eq!(parse_offer_response(&response), Some(offer.to_owned()));
+            assert_eq!(
+                parse_offer_response(&response)
+                    .as_deref()
+                    .map(String::as_str),
+                Some(offer)
+            );
 
             for rejected in [
                 "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 1\r\n\r\nx",
@@ -473,14 +490,14 @@ mod loopback_test_offer_trigger {
                 "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
                 "not an http response",
             ] {
-                assert_eq!(parse_offer_response(rejected), None);
+                assert!(parse_offer_response(rejected).is_none());
             }
-            assert_eq!(
+            assert!(
                 parse_offer_response(&format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\nx",
                     MAX_RESPONSE_BYTES + 1
-                )),
-                None
+                ))
+                .is_none()
             );
         }
 
@@ -515,9 +532,11 @@ mod loopback_test_offer_trigger {
                 .expect("write response");
             });
 
+            let fetched =
+                fetch_offer(address, Duration::from_secs(1), capability).expect("fetched offer");
             assert_eq!(
-                fetch_offer(address, Duration::from_secs(1), capability),
-                Ok("openid-credential-offer://?credential_offer=abc".to_owned())
+                fetched.as_str(),
+                "openid-credential-offer://?credential_offer=abc"
             );
             server.join().expect("server thread");
         }
@@ -621,8 +640,8 @@ impl NativeIdentityLinkIngress {
 
     #[cfg(feature = "tailnet-test-offer-trigger")]
     pub fn standalone_portal_tailnet(public_origin: &str) -> Result<Self, &'static str> {
-        loopback_test_offer_trigger::validate_tailnet_public_origin(public_origin)
-            .map_err(|()| "Portal tailnet offer origin is invalid")?;
+        validate_tailnet_public_origin(public_origin)
+            .map_err(|_| "Portal tailnet offer origin is invalid")?;
         Ok(Self {
             captured: Arc::new(Mutex::new(CapturedIdentityLinks::default())),
             resolve_loopback_test_offer_trigger: true,
@@ -653,7 +672,7 @@ impl NativeIdentityLinkIngress {
         resolver: F,
     ) -> Result<(), IdentityLinkIngressError>
     where
-        F: FnOnce() -> String + Send + 'static,
+        F: FnOnce() -> Zeroizing<String> + Send + 'static,
     {
         if !loopback_test_offer_trigger::is_trigger(&value) {
             return self.enqueue(InboundIdentityLink::new(value)?);
@@ -682,7 +701,8 @@ impl NativeIdentityLinkIngress {
         let worker = std::thread::Builder::new()
             .name("oxid-portal-offer-fetch".to_owned())
             .spawn(move || {
-                let resolved = validated_trigger_result(resolver()).unwrap_or(fallback);
+                let resolved = resolver();
+                let resolved = validated_trigger_result(&resolved).unwrap_or(fallback);
                 if let Ok(mut captured) = captured.lock() {
                     captured.trigger_fetch_in_flight = false;
                     if captured.links.is_empty() {
@@ -705,8 +725,8 @@ impl NativeIdentityLinkIngress {
 }
 
 #[cfg(feature = "loopback-test-offer-trigger")]
-fn validated_trigger_result(value: String) -> Option<InboundIdentityLink> {
-    let link = InboundIdentityLink::new(value).ok()?;
+fn validated_trigger_result(value: &str) -> Option<InboundIdentityLink> {
+    let link = InboundIdentityLink::new(value.to_owned()).ok()?;
     let route = StrictIdentityRequestRouter::credential_offers_only()
         .route(&link.clone().into_inner())
         .ok()?;
@@ -1100,7 +1120,7 @@ mod tests {
                         .send(std::thread::current().name().map(str::to_owned))
                         .expect("signal worker start");
                     release_rx.recv().expect("release worker");
-                    "openid-credential-offer://?credential_offer=%7B%7D".to_owned()
+                    Zeroizing::new("openid-credential-offer://?credential_offer=%7B%7D".to_owned())
                 },
             )
             .expect("schedule trigger");
@@ -1139,7 +1159,7 @@ mod tests {
             ingress
                 .capture_with_trigger_resolver(
                     loopback_test_offer_trigger::TRIGGER.to_owned(),
-                    move || resolved,
+                    move || Zeroizing::new(resolved),
                 )
                 .expect("schedule trigger");
             let literal = wait_for_pending(&ingress).into_inner();

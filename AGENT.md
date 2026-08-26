@@ -596,7 +596,10 @@ consumer composition, lifecycle, mobile automation, and evidence; Portal input
 is only its merged public source and generic Tailscale HTTPS profile. Runtime
 discovery supplies the physical device, MagicDNS identity, and unoccupied HTTPS
 listener. Existing routes 443, 8443, and 10000 remain unchanged, and Portal's
-exact ownership receipt must restore the complete Serve pre-state. Keep
+exact ownership receipt must restore the complete Serve pre-state. Mobile
+standalone profiles intentionally keep holder DID resolution embedded and do
+not honor the headless `OXID_MIDNIGHT_DID_RESOLVER_URL`; the authenticated
+Portal issuer resolver remains a separate exact path-bearing authority. Keep
 ADR-0039's Final-only wire contract, HTTPS-only nonloopback/loopback-only
 plaintext, explicit consent, distinct managed authentication and Jubjub methods,
 exact three-part verified import, encrypted persistence, unavailable production

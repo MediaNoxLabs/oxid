@@ -67,7 +67,7 @@ const BUNDLED_SOURCE_LOCK: &[u8] = include_bytes!(
     "../../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/source-lock.json"
 );
 const BUNDLED_PROVENANCE: &[u8] = include_bytes!(
-    "../../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/openid4vci-final/provenance.json"
+    "../../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/provenance.json"
 );
 
 /// Payload-free deployment/source-lock authentication errors.
@@ -283,7 +283,8 @@ pub fn authenticate_bundled_portal_source() -> Result<(), PortalDeploymentManife
         || !lock_keys.iter().all(|key| lock.contains_key(*key))
         || lock["integrationCommit"] != PORTAL_INTEGRATION_COMMIT
         || lock["integrationTree"] != PORTAL_INTEGRATION_TREE
-        || lock["provenancePath"] != "openid4vci-final/provenance.json"
+        || lock["provenancePath"]
+            != "../76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/provenance.json"
         || lock["provenanceSha256"] != PORTAL_PROVENANCE_SHA256
         || lock["schema"] != "oxid-portal-source-lock-v3"
     {

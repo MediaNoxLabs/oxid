@@ -3,6 +3,7 @@
 const endpoint = process.argv[2];
 const mode = process.argv[3];
 const controlOrigin = process.env.OXID_PORTAL_CONTROL_ORIGIN;
+const controlCapability = process.env.OXID_PORTAL_CONTROL_CAPABILITY;
 const modes = new Set([
   "prepare-holder",
   "route-refuse",
@@ -14,7 +15,8 @@ const modes = new Set([
   "cold-route",
   "restored",
 ]);
-if (!endpoint || !modes.has(mode) || controlOrigin !== "http://127.0.0.1:18091") {
+if (!endpoint || !modes.has(mode) || controlOrigin !== "http://127.0.0.1:18091"
+    || !/^[0-9a-f]{64}$/u.test(controlCapability ?? "")) {
   throw new Error("invalid Android Portal test arguments");
 }
 
@@ -158,6 +160,14 @@ async function ensureProfile() {
   await waitFor(`Boolean(${button("Home")})`, "composed wallet", 60_000);
 }
 
+function controlFetch(path, options = {}) {
+  return fetch(`${controlOrigin}${path}`, {
+    ...options,
+    headers: { ...options.headers, Authorization: `Bearer ${controlCapability}` },
+    signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
+  });
+}
+
 async function assertRouted() {
   try {
     await waitFor(
@@ -165,9 +175,8 @@ async function assertRouted() {
       "credential-offer route",
     );
   } catch (error) {
-    const handoff = await fetch(`${controlOrigin}/handoff-status`, {
+    const handoff = await controlFetch("/handoff-status", {
       cache: "no-store",
-      signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
     }).then((response) => response.json());
     throw new Error(`credential-offer route unavailable with handoff state ${handoff.state}: ${error.message}`);
   }
@@ -186,20 +195,25 @@ async function preview() {
 }
 
 async function counters() {
-  const response = await fetch(`${controlOrigin}/counters`, {
-    cache: "no-store",
-    signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
-  });
+  const response = await controlFetch("/counters", { cache: "no-store" });
   if (!response.ok) throw new Error("Portal counters unavailable");
   return response.json();
 }
 
+function counterDelta(after, before) {
+  return Object.fromEntries(Object.keys(before).map((key) => [key, after[key] - before[key]]));
+}
+
+function assertExactCounterDelta(before, after, expected, scenario) {
+  const delta = counterDelta(after, before);
+  const exact = Object.fromEntries(Object.keys(before).map((key) => [key, expected[key] ?? 0]));
+  if (JSON.stringify(delta) !== JSON.stringify(exact)) {
+    throw new Error(`${scenario} counters were not exact: ${JSON.stringify(delta)}`);
+  }
+}
+
 async function setProxyMode(mode) {
-  const response = await fetch(`${controlOrigin}/proxy-mode`, {
-    method: "POST",
-    body: mode,
-    signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
-  });
+  const response = await controlFetch("/proxy-mode", { method: "POST", body: mode });
   if (!response.ok) throw new Error("Portal proxy mode unavailable");
 }
 
@@ -232,6 +246,7 @@ try {
       throw new Error("managed DID creation ran without activated development custody");
     }
   } else if (mode === "route-refuse") {
+    const start = await counters();
     await assertRouted();
     await preview();
     await waitFor('document.body.innerText.includes("Credential offer preview")', "Portal preview", 30_000);
@@ -245,28 +260,37 @@ try {
     ].every((value) => document.body.innerText.includes(value))`);
     if (!questions) throw new Error("Portal consent questions are incomplete");
     const before = await counters();
-    if (before.token !== 0 || before.nonce !== 0 || before.credential !== 0) {
-      throw new Error("Portal denial preflight contacted a secret endpoint");
-    }
+    assertExactCounterDelta(start, before, {
+      authorizationMetadata: 1,
+      issuerMetadata: 1,
+    }, "refusal preflight");
     await click("Refuse offer");
     await waitFor(
       'document.body.innerText.includes("Credential offer refused; ephemeral protocol secrets were discarded.")',
       "refusal",
     );
     const after = await counters();
-    if (after.token !== 0 || after.nonce !== 0 || after.credential !== 0) {
-      throw new Error("Portal refusal contacted a secret endpoint");
-    }
+    assertExactCounterDelta(start, after, {
+      authorizationMetadata: 1,
+      issuerMetadata: 1,
+    }, "refusal");
     await waitFor(
       `!Boolean(${button("Dismiss identity request")})`,
       "refusal clears the consumed router request and raw offer",
     );
   } else if (mode === "malformed") {
+    const start = await counters();
+    await setProxyMode("malformed");
     await assertRouted();
     await preview();
     await waitFor('document.body.innerText.includes("The issuer metadata is not valid")', "strict malformed rejection");
     await waitFor(`!Boolean(${button("Dismiss identity request")})`, "malformed request cleanup");
+    const after = await counters();
+    assertExactCounterDelta(start, after, { issuerMetadata: 1 }, "malformed response");
+    await setProxyMode("normal");
   } else if (mode === "protocol-error" || mode === "protocol-timeout") {
+    const start = await counters();
+    await setProxyMode(mode === "protocol-timeout" ? "timeout" : "unavailable");
     await assertRouted();
     await preview();
     if (mode === "protocol-timeout") {
@@ -282,7 +306,11 @@ try {
       35_000,
     );
     await waitFor(`!Boolean(${button("Dismiss identity request")})`, "failed request cleanup");
+    const after = await counters();
+    assertExactCounterDelta(start, after, { issuerMetadata: 1 }, mode);
+    await setProxyMode("normal");
   } else if (mode === "issue-error") {
+    const start = await counters();
     await assertRouted();
     await preview();
     await waitFor('document.body.innerText.includes("Credential offer preview")', "Portal preview", 30_000);
@@ -290,7 +318,7 @@ try {
     await evaluate('document.querySelector("#credential-issuance-consent").click()');
     await setProxyMode("unavailable");
     await click("Accept and issue credential");
-    const lockedReviewNotice = "This protocol is unavailable in the current build. Session cleanup is unavailable; this review remains locked until refusal succeeds or the app restarts.";
+    const lockedReviewNotice = "This protocol is unavailable in the current build. Session cleanup is unavailable; use Leave credential review to retry secret disposal before navigating away.";
     await waitFor(
       `Array.from(document.querySelectorAll('[role="status"]')).some((element) => element.textContent.trim() === ${JSON.stringify(lockedReviewNotice)})`,
       "payload-free cleanup-unavailable locked-review notice",
@@ -316,10 +344,19 @@ try {
       "failed issuance retained prepared review and route lock",
     );
     const counts = await counters();
-    if (counts.token !== 2 || counts.nonce !== 1 || counts.credential !== 1) {
-      throw new Error(`failed issuance counters were not exact: ${JSON.stringify(counts)}`);
-    }
+    assertExactCounterDelta(start, counts, {
+      authorizationMetadata: 1,
+      issuerMetadata: 1,
+      token: 1,
+    }, "failed issuance");
+    await click("Leave credential review");
+    await waitFor(
+      'Array.from(document.querySelectorAll("h1")).some((element) => element.textContent.trim() === "Wallet")',
+      "safe credential review navigation escape",
+    );
+    await waitFor(`!Boolean(${button("Leave credential review")})`, "credential review cleanup");
   } else if (mode === "issue") {
+    const start = await counters();
     await assertRouted();
     await preview();
     await waitFor('document.body.innerText.includes("Credential offer preview")', "Portal preview", 30_000);
@@ -343,12 +380,24 @@ try {
       claimsHidden: !document.body.innerText.includes("John") && !document.body.innerText.includes("Doe")
     })`);
     const counts = await counters();
-    if (!Object.values(result).every(Boolean) || counts.token !== 1 || counts.nonce !== 1 || counts.credential !== 1) {
-      throw new Error(`Portal issuance evidence failed: ${JSON.stringify({ result, counts })}`);
+    if (!Object.values(result).every(Boolean)) {
+      throw new Error(`Portal issuance UI evidence failed: ${JSON.stringify(result)}`);
     }
+    assertExactCounterDelta(start, counts, {
+      authorizationMetadata: 1,
+      credential: 1,
+      issuerMetadata: 1,
+      issuerResolution: 1,
+      issuerResolutionSuccess: 1,
+      nonce: 1,
+      token: 1,
+    }, "successful issuance");
   } else if (mode === "cold-route") {
+    const start = await counters();
     await assertRouted();
     await click("Dismiss identity request");
+    const after = await counters();
+    assertExactCounterDelta(start, after, {}, "cold route");
   } else if (mode === "restored") {
     await click("Wallet");
     await waitFor(`Boolean(${button("Activate development wallet")})`, "truthful development-custody reset");
@@ -383,10 +432,12 @@ try {
       afterReverify = await counters();
     }
     if (!(afterReverify.issuerResolutionSuccess > beforeReverify.issuerResolutionSuccess)) {
-      throw new Error(
-        `Reverify did not produce a fresh issuer-resolution success: before=${beforeReverify.issuerResolutionSuccess} after=${afterReverify.issuerResolutionSuccess}`,
-      );
+      throw new Error("Reverify did not produce a fresh issuer-resolution success");
     }
+    assertExactCounterDelta(beforeReverify, afterReverify, {
+      issuerResolution: 1,
+      issuerResolutionSuccess: 1,
+    }, "restart reverification");
     await waitFor(
       `(() => { const element = ${button("Reverify")}; return Boolean(element && !element.disabled); })()`,
       "reverify busy completion",

@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-for required_command in jq tailscale; do
+for required_command in jq node tailscale; do
   command -v "$required_command" >/dev/null 2>&1 || {
     echo "Required command '$required_command' is missing." >&2
     exit 1
@@ -11,6 +11,7 @@ for required_command in jq tailscale; do
 done
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+origin_policy="$repository_root/scripts/e2e/tailnet-origin-policy.mjs"
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [ -z "$android_sdk" ] && [ "$(uname -s)" = Darwin ]; then
   android_sdk="$HOME/Library/Android/sdk"
@@ -30,11 +31,20 @@ if xcrun simctl list devices 2>/dev/null | grep -q '(Booted)'; then
   exit 1
 fi
 
-device="$($adb_command devices | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { print $1 }')"
-[ "$(printf '%s\n' "$device" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] || {
-  echo "Exactly one authorized physical Android device is required." >&2
-  exit 1
-}
+physical_devices="$($adb_command devices | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { print $1 }')"
+device="${OXID_ANDROID_DEVICE:-}"
+if [ -n "$device" ]; then
+  [ "$(printf '%s\n' "$physical_devices" | awk -v selected="$device" '$0 == selected { count++ } END { print count + 0 }')" -eq 1 ] || {
+    echo "OXID_ANDROID_DEVICE must select one authorized physical Android device." >&2
+    exit 1
+  }
+else
+  [ "$(printf '%s\n' "$physical_devices" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] || {
+    echo "Exactly one authorized physical Android device is required unless OXID_ANDROID_DEVICE selects one." >&2
+    exit 1
+  }
+  device="$physical_devices"
+fi
 adb_device() { ANDROID_SERIAL="$device" "$adb_command" "$@"; }
 [ "$(adb_device shell getprop ro.kernel.qemu | tr -d '\r\n')" = 0 ] || {
   echo "The selected Android device must be physical." >&2
@@ -47,8 +57,17 @@ status="$(tailscale status --json)"
   exit 1
 }
 tailnet_dns_name="$(jq -r '.Self.DNSName | rtrimstr(".")' <<<"$status")"
-[[ "$tailnet_dns_name" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.ts\.net$ ]] || {
+OXID_TAILNET_ORIGIN_POLICY_INPUT="$tailnet_dns_name" node "$origin_policy" --host-env || {
   echo "Tailscale did not report a canonical MagicDNS identity." >&2
+  exit 1
+}
+serve_status="$(tailscale serve status --json)"
+jq -e '
+  .TCP["443"].HTTPS == true
+  and .TCP["8443"].HTTPS == true
+  and .TCP["10000"].HTTPS == true
+' >/dev/null <<<"$serve_status" || {
+  echo "Protected standalone Serve routes are unavailable; run just standalone-phone-up first." >&2
   exit 1
 }
 

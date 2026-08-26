@@ -958,33 +958,40 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn http_adapter_uses_official_post_contract() {
+    fn http_adapter_preserves_the_exact_path_bearing_post_contract() {
         use std::{
             io::{Read as _, Write as _},
             net::TcpListener,
             thread,
         };
-        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
-        let address = listener.local_addr().expect("address");
-        let response = serde_json::to_vec(&resolution_to_json_value(
-            &standalone_resolution().expect("fixture"),
-        ))
-        .expect("response");
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
-            let mut request = vec![0_u8; 8_192];
-            let read = stream.read(&mut request).expect("read");
-            let request = String::from_utf8_lossy(&request[..read]);
-            assert!(request.starts_with("POST /resolve HTTP/1.1"));
-            assert!(request.contains(STANDALONE_FIXTURE_DID));
-            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.len()).expect("headers");
-            stream.write_all(&response).expect("body");
-        });
-        let config = HttpDidResolverConfig::new(format!("http://{address}/")).expect("config");
-        let resolver = HttpDidResolver::new(config);
-        let did = MidnightDid::parse(STANDALONE_FIXTURE_DID).expect("DID");
-        let resolved = futures::executor::block_on(resolver.resolve(&did)).expect("resolve");
-        assert_eq!(resolved.source(), DidResolutionSource::Live);
-        server.join().expect("server");
+        for (base_path, expected_request_path) in [
+            ("/", "/resolve"),
+            ("/issuer-resolver", "/issuer-resolver/resolve"),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+            let address = listener.local_addr().expect("address");
+            let response = serde_json::to_vec(&resolution_to_json_value(
+                &standalone_resolution().expect("fixture"),
+            ))
+            .expect("response");
+            let expected_request_line = format!("POST {expected_request_path} HTTP/1.1");
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut request = vec![0_u8; 8_192];
+                let read = stream.read(&mut request).expect("read");
+                let request = String::from_utf8_lossy(&request[..read]);
+                assert_eq!(request.lines().next(), Some(expected_request_line.as_str()));
+                assert!(request.contains(STANDALONE_FIXTURE_DID));
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.len()).expect("headers");
+                stream.write_all(&response).expect("body");
+            });
+            let config =
+                HttpDidResolverConfig::new(format!("http://{address}{base_path}")).expect("config");
+            let resolver = HttpDidResolver::new(config);
+            let did = MidnightDid::parse(STANDALONE_FIXTURE_DID).expect("DID");
+            let resolved = futures::executor::block_on(resolver.resolve(&did)).expect("resolve");
+            assert_eq!(resolved.source(), DidResolutionSource::Live);
+            server.join().expect("server");
+        }
     }
 }

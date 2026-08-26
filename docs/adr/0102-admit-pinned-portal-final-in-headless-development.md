@@ -6,17 +6,17 @@
 - Portal integration source: commit `22ae5369b6f939e6b20648f4b85dd993527748ef`, tree `74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`
 - Final-profile provenance SHA-256: `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039 and ADR-0101
-- Implementation state: strict native desktop/headless Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; production and mobile Portal HTTP composition remain unavailable
+- Implementation state: strict native desktop/headless Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; production and ordinary mobile Portal HTTP composition remain unavailable, while ADR-0103 separately admits one physical-Android conformance profile
 
 ## Context
 
 ADR-0101 preserved the incompatible Portal `804de0a9` wire shapes as negative
 regression evidence. Portal integration subsequently implemented the reviewed
-OpenID4VCI 1.0 Final profile and landed on Portal `integration` as squash commit
-`925ec8d`, now consumed through merged Portal `integration@22ae536`.
-The profile provenance was authored at `76e8edf`; later integration history does not make
-that commit an ancestor of the landed integration commit, so the source lock
-records all three identities rather than conflating them.
+OpenID4VCI 1.0 Final profile and landed on merged Portal
+`integration@22ae5369b6f939e6b20648f4b85dd993527748ef`. The schema-v3 source
+lock pins that integration commit and tree plus the existing Final-profile
+provenance digest. The provenance document retains its own historical source
+facts; they are not duplicated as runtime-authority fields.
 
 The integration remains a controlled development capability. A local source
 lock plus an operator-supplied exact deployment-manifest digest authenticates
@@ -32,8 +32,8 @@ both of these variables are present:
 - `OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256`.
 
 The path must be absolute, regular, and non-symlinked. The exact canonical
-manifest must bind Portal integration commit/tree, historical PR head, profile
-source, provenance digest, issuer/resolver origins, issuer DID/full assertion
+manifest must bind Portal integration commit/tree, provenance digest,
+issuer/resolver origins, issuer DID/full assertion
 method, and canonical Jubjub public JWK digest. Partial, malformed, mismatched,
 or alternate-resolver/live-Midnight combinations fail startup without fallback.
 Normal `compose()` remains unavailable, and iOS, Android, and WebAssembly cannot

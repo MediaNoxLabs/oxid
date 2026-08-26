@@ -67,9 +67,9 @@ android-jni-exception-recovery-test = [
 
 [dependencies]
 dioxus = { workspace = true, features = ["launch"] }
+oxid-adapter-identity-ingress.workspace = true
 oxid-composition.workspace = true
 oxid-ui-dioxus.workspace = true
-url.workspace = true
 
 # Tier-2 browser entropy backends. Three `getrandom` majors resolve in the
 # wasm32 graph and each one refuses to build for `wasm32-unknown-unknown`
@@ -88,9 +88,9 @@ getrandom_04 = { package = "getrandom", version = "=0.4.3", features = [
 ] }
 
 [build-dependencies]
+oxid-adapter-identity-ingress.workspace = true
 oxid-brand-build.workspace = true
 sha2.workspace = true
-url.workspace = true
 
 [lints]
 workspace = true

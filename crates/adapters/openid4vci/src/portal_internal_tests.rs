@@ -32,7 +32,7 @@ const AUTH_METHOD: &str = "did:example:synthetic-holder#auth";
 const BINDING_METHOD: &str = "did:example:synthetic-holder#assert";
 const POSITIVE_ROOT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/openid4vci-final"
+    "/../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final"
 );
 
 struct Proof;
@@ -588,7 +588,7 @@ fn hostile_urls_content_types_sizes_and_legacy_shapes_fail_closed() {
     assert!(validate_json_content_type("application/json; charset=UTF-8").is_ok());
     assert_eq!(
         parse_token_response(include_bytes!(
-            "../../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/openid4vci-final/negative/legacy-json-token-request.json"
+            "../../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/negative/legacy-json-token-request.json"
         )),
         Err(IssuanceProtocolError::IssuerRejected)
     );

@@ -1,8 +1,0 @@
-{
-  "grant_types_supported": [
-    "urn:ietf:params:oauth:grant-type:pre-authorized_code"
-  ],
-  "issuer": "https://issuer.example",
-  "pre-authorized_grant_anonymous_access_supported": true,
-  "token_endpoint": "https://issuer.example/api/issuer/token"
-}

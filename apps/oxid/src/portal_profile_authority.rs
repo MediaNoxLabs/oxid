@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use url::Url;
+pub use oxid_adapter_identity_ingress::validate_tailnet_public_origin;
 
 pub const LOCAL_PROFILE: &str = "standalone-local-development-portal";
 pub const ANDROID_TAILNET_PROFILE: &str = "standalone-tailnet-development-portal-android";
@@ -55,44 +55,6 @@ pub fn validate_manifest(
     } else {
         Err("standalone Portal authority manifest is not canonical")
     }
-}
-
-pub fn validate_tailnet_public_origin(value: &str) -> Result<(), &'static str> {
-    if value.len() > 512 {
-        return Err("Portal tailnet public origin is invalid");
-    }
-    let url = Url::parse(value).map_err(|_| "Portal tailnet public origin is invalid")?;
-    let host = url
-        .host_str()
-        .ok_or("Portal tailnet public origin is invalid")?;
-    let labels_are_canonical = host.split('.').all(|label| {
-        !label.is_empty()
-            && label.len() <= 63
-            && label
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-            && !label.starts_with('-')
-            && !label.ends_with('-')
-    });
-    let port = url
-        .port()
-        .filter(|port| *port >= 1024 && !matches!(*port, 8443 | 10_000))
-        .ok_or("Portal tailnet public origin is invalid")?;
-    if url.scheme() != "https"
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.path() != "/"
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || !host.ends_with(".ts.net")
-        || host == "ts.net"
-        || !labels_are_canonical
-        || url.origin().ascii_serialization() != value
-        || port == 443
-    {
-        return Err("Portal tailnet public origin is invalid");
-    }
-    Ok(())
 }
 
 #[cfg(test)]

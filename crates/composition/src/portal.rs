@@ -13,6 +13,8 @@ use std::path::Path;
 use oxid_adapter_did_midnight::{
     HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
 };
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_adapter_identity_ingress::NativeIdentityLinkIngress;
 use oxid_adapter_openid4vci::{
     PortalCredentialMaterialDecoder, PortalCredentialMaterialError, PortalDeploymentManifest,
     PortalDeploymentManifestError, PortalOid4vciClientFactory,
@@ -22,8 +24,7 @@ use oxid_adapter_vc_midnight::{
     convert_portal_private_parts,
 };
 use oxid_identity_application::DidResolutionPort;
-
-use crate::PortalTestIngress;
+use oxid_platform_ports::IdentityLinkIngressPort;
 
 #[cfg(any(test, target_os = "ios", target_os = "android"))]
 const MOBILE_PORTAL_ISSUER_ORIGIN: &str = "http://127.0.0.1:18090";
@@ -37,6 +38,8 @@ pub(crate) enum PortalIdentityConfigurationError {
     TrustAnchor(DigitalPassportIssuerTrustAnchorError),
     #[cfg(any(test, target_os = "ios", target_os = "android"))]
     MobileHarnessOriginMismatch,
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    InvalidOfferIngress,
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     ManifestPathMustBeAbsolute,
 }
@@ -50,6 +53,10 @@ impl std::fmt::Display for PortalIdentityConfigurationError {
             #[cfg(any(test, target_os = "ios", target_os = "android"))]
             Self::MobileHarnessOriginMismatch => formatter
                 .write_str("Portal mobile harness routes do not match the authenticated profile"),
+            #[cfg(any(target_os = "ios", target_os = "android"))]
+            Self::InvalidOfferIngress => {
+                formatter.write_str("Portal mobile offer ingress is invalid")
+            }
             #[cfg(not(any(target_os = "ios", target_os = "android")))]
             Self::ManifestPathMustBeAbsolute => {
                 formatter.write_str("Portal deployment manifest path must be absolute")
@@ -64,7 +71,7 @@ pub(crate) struct PortalIdentityConfiguration {
     pub(crate) client_factory: PortalOid4vciClientFactory,
     pub(crate) issuer_resolver: Arc<dyn DidResolutionPort>,
     pub(crate) trust_anchor: DigitalPassportIssuerTrustAnchor,
-    pub(crate) test_ingress: PortalTestIngress,
+    pub(crate) test_ingress: Option<Arc<dyn IdentityLinkIngressPort>>,
 }
 
 impl PortalIdentityConfiguration {
@@ -79,7 +86,7 @@ impl PortalIdentityConfiguration {
         }
         let deployment = PortalDeploymentManifest::from_file(path, expected_sha256)
             .map_err(PortalIdentityConfigurationError::Manifest)?;
-        Self::new(deployment, PortalTestIngress::None)
+        Self::new(deployment, None)
     }
 
     #[cfg(all(
@@ -93,7 +100,10 @@ impl PortalIdentityConfiguration {
         let deployment = PortalDeploymentManifest::from_bytes(bytes, expected_sha256)
             .map_err(PortalIdentityConfigurationError::Manifest)?;
         validate_mobile_harness_origins(&deployment)?;
-        Self::new(deployment, PortalTestIngress::Loopback)
+        Self::new(
+            deployment,
+            Some(Arc::new(NativeIdentityLinkIngress::standalone_portal_test())),
+        )
     }
 
     #[cfg(all(feature = "mobile-portal-tailnet", target_os = "android"))]
@@ -105,17 +115,14 @@ impl PortalIdentityConfiguration {
         let deployment = PortalDeploymentManifest::from_bytes(bytes, expected_sha256)
             .map_err(PortalIdentityConfigurationError::Manifest)?;
         validate_tailnet_harness_origins(&deployment, public_origin)?;
-        Self::new(
-            deployment,
-            PortalTestIngress::Tailnet {
-                public_origin: public_origin.to_owned(),
-            },
-        )
+        let ingress = NativeIdentityLinkIngress::standalone_portal_tailnet(public_origin)
+            .map_err(|_| PortalIdentityConfigurationError::InvalidOfferIngress)?;
+        Self::new(deployment, Some(Arc::new(ingress)))
     }
 
     fn new(
         deployment: PortalDeploymentManifest,
-        test_ingress: PortalTestIngress,
+        test_ingress: Option<Arc<dyn IdentityLinkIngressPort>>,
     ) -> Result<Self, PortalIdentityConfigurationError> {
         let resolver = HttpDidResolverConfig::new(deployment.issuer_resolver_origin())
             .map(HttpDidResolver::new)
@@ -261,7 +268,7 @@ mod tests {
     #[test]
     fn headless_portal_configuration_preserves_generic_https_origins() {
         let deployment = deployment("https://issuer.example", "https://resolver.example");
-        PortalIdentityConfiguration::new(deployment, PortalTestIngress::None)
+        PortalIdentityConfiguration::new(deployment, None)
             .expect("headless authenticated HTTPS routes remain supported");
     }
 }
