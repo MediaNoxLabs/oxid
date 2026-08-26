@@ -57,6 +57,12 @@ function runGh(ghCommand, args, options = {}) {
   }
 }
 
+export function bodyClosesIssue(body, issue) {
+  if (typeof body !== "string") return false;
+  const escaped = String(issue).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#${escaped}(?:\\b|$)`, "i").test(body);
+}
+
 export function resolveIssuePullRequestLinks({ repository, issue, ghCommand = "gh" }) {
   if (!/^[^/\s]+\/[^/\s]+$/.test(repository ?? "")) throw new Error("--repo must be OWNER/REPO");
   if (!Number.isInteger(issue) || issue < 1) throw new Error("--issue must be a positive integer");
@@ -74,7 +80,14 @@ export function resolveIssuePullRequestLinks({ repository, issue, ghCommand = "g
   } catch (error) {
     throw new Error(`GitHub timeline returned invalid JSON: ${error.message}`, { cause: error });
   }
-  return normalizeTimelinePullRequests(pages, repository);
+  const links = normalizeTimelinePullRequests(pages, repository);
+  return links.flatMap((link) => {
+    const source = runGh(ghCommand, ["api", "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28", `repos/${repository}/pulls/${link.number}`]);
+    let pull;
+    try { pull = JSON.parse(source); } catch (error) { throw new Error(`GitHub pull REST response was invalid JSON: ${error.message}`, { cause: error }); }
+    if (!bodyClosesIssue(pull.body, issue)) return [];
+    return [{ ...link, state: pull.state, draft: pull.draft === true, mergedAt: pull.merged_at ?? null, baseRefName: pull.base?.ref ?? null, headRefName: pull.head?.ref ?? null }];
+  });
 }
 
 export function runCli(argv = process.argv.slice(2), { stdout = process.stdout } = {}) {

@@ -93,7 +93,7 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function run(command, args, { cwd, timeout, input, maxBuffer = 32 * 1024 * 1024 } = {}) {
+function run(command, args, { cwd, timeout = 120_000, input, maxBuffer = 32 * 1024 * 1024 } = {}) {
   return spawnSync(command, args, {
     cwd,
     input,
@@ -158,6 +158,11 @@ export async function runClaudeCurrentHeadReview({
   if (!Number.isInteger(issue) || issue < 1) throw new Error("issue must be a positive integer");
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new Error("timeoutMs must be a positive integer");
   if (typeof issueContract !== "string" || !issueContract.trim()) throw new Error("issueContract is required for an exact-scope review");
+  let contractPayload;
+  try { contractPayload = JSON.parse(issueContract); } catch (error) {
+    throw new Error(`issueContract must be the JSON tracker export: ${error.message}`, { cause: error });
+  }
+  if (Number(contractPayload?.issue) !== issue) throw new Error("issueContract does not match the reviewed issue");
 
   const root = await realpath(path.resolve(repoRoot));
   const actualRoot = await realpath(git(gitCommand, ["rev-parse", "--show-toplevel"], root));
@@ -293,9 +298,14 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   if (headSha !== evidence.headSha || baseSha !== evidence.baseSha || sha256(diffContent) !== evidence.diff?.sha256) {
     throw new Error("Claude review evidence is stale for the current head or integration base");
   }
+  const evidenceRoot = await realpath(path.dirname(path.resolve(evidencePath)));
+  const artifactPath = (value) => {
+    if (typeof value !== "string" || path.basename(value) !== value) throw new Error("Claude review evidence contains an unsafe artifact path");
+    return path.join(evidenceRoot, value);
+  };
   const [savedDiff, rawResponse] = await Promise.all([
-    readFile(path.resolve(path.dirname(evidencePath), evidence.diff.path)),
-    readFile(path.resolve(path.dirname(evidencePath), evidence.rawResponse.path), "utf8"),
+    readFile(artifactPath(evidence.diff.path)),
+    readFile(artifactPath(evidence.rawResponse.path), "utf8"),
   ]);
   if (sha256(savedDiff) !== evidence.diff.sha256 || sha256(rawResponse) !== evidence.rawResponse.sha256) {
     throw new Error("Claude review artifact digest mismatch");

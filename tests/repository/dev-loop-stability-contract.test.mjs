@@ -14,6 +14,7 @@ import {
 import { normalizeDevLoopsArgs } from "../../scripts/dev-loops.mjs";
 import { normalizeWorktreeArgs } from "../../scripts/loop/ensure-worktree.mjs";
 import {
+  bodyClosesIssue,
   normalizeTimelinePullRequests,
   parseGhVersion,
 } from "../../scripts/github/resolve-issue-pr-links.mjs";
@@ -134,6 +135,8 @@ test("GitHub compatibility uses REST timeline facts without deprecated fields", 
     { event: "cross-referenced", source: { issue: { number: 71, html_url: "https://github.com/MediaNoxLabs/oxid/pull/71", pull_request: { url: "https://api.github.com/repos/MediaNoxLabs/oxid/pulls/71" } } } },
   ], "MediaNoxLabs/oxid");
   assert.deepEqual(links.map((link) => link.number), [71]);
+  assert.equal(bodyClosesIssue("Closes #150", 150), true);
+  assert.equal(bodyClosesIssue("Related to #150", 150), false);
 
   for (const file of [
     "scripts/github/resolve-issue-pr-links.mjs",
@@ -206,7 +209,7 @@ if (process.argv.includes("--version")) {
     evidenceDir,
     expectedHead: headSha,
     claudeCommand: fakeClaude,
-    issueContract: "Issue #150 fixture contract",
+    issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
     fetchBase: false,
   });
   assert.equal(result.evidence.headSha, headSha);
