@@ -4,7 +4,7 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 3 and 6
 - Implementation state: Implemented for the M0 use case and parity shell
-- Amended by: ADR-0095
+- Amended by: ADR-0095 and ADR-0103
 
 ## Context
 
