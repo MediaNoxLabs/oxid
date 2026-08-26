@@ -2,7 +2,7 @@
 
 Oxid's security posture is defined by what the code *refuses* to do, and the
 refusals are tested. This page describes the model at a working level; the
-repository [`SECURITY.md`](https://github.com/MediaNoxLabs/oxid/blob/develop/SECURITY.md)
+repository [`SECURITY.md`](https://github.com/MediaNoxLabs/oxid/blob/integration/SECURITY.md)
 carries the disclosure policy, and the [ADRs](adr-catalog.md) carry the
 binding decisions.
 
@@ -67,7 +67,7 @@ content-addressed Nix builds, cargo-audit/cargo-deny gates, and a checksum-pinne
 the 2026-08-20 crates.io publication mismatch. The gate also rejects the
 unreviewed `proc-macro1` dependency introduced only by the later registry
 publication. A dated, per-advisory exception register lives under
-[`docs/security/`](https://github.com/MediaNoxLabs/oxid/tree/develop/docs/security).
+[`docs/security/`](https://github.com/MediaNoxLabs/oxid/tree/integration/docs/security).
 
 ## Known limits (the honest part)
 
@@ -77,4 +77,4 @@ publication. A dated, per-advisory exception register lives under
 - Development custody and simulations are clearly labeled but present in
   development builds; never point them at real value.
 - Reporting a vulnerability: see
-  [`SECURITY.md`](https://github.com/MediaNoxLabs/oxid/blob/develop/SECURITY.md).
+  [`SECURITY.md`](https://github.com/MediaNoxLabs/oxid/blob/integration/SECURITY.md).

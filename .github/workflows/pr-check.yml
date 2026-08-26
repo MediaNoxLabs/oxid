@@ -1,6 +1,9 @@
 name: Check PR
 
 on:
+  # Keep title/body validation on the unprivileged PR-head event so required
+  # contexts attach to the reviewed commit. Cross-base enforcement is owned by
+  # the repository ruleset, not by this workflow.
   pull_request:
     types: [opened, edited, synchronize, reopened]
 

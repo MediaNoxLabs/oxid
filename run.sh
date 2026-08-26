@@ -45,6 +45,8 @@ run_core() {
   if [[ "${1:-}" == "--skip-workspace-tests" ]]; then
     run_workspace_tests=false
   fi
+  require_command node
+  node --test tests/repository/integration-delivery-contract.test.mjs
   cargo fmt --all --check
   ./scripts/check-architecture.sh
   ./scripts/check-arrayref-source.sh

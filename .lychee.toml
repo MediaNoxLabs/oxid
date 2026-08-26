@@ -3,7 +3,7 @@
 max_retries = 3
 timeout = 45
 
-# The workflow badge returns 404 until the CI workflow exists on `develop`.
+# The workflow badge returns 404 until the CI workflow exists on `integration`.
 # Keep checking its destination link while allowing the generated badge image.
 # Apple and Android Developer documentation reject automated GitHub-hosted
 # clients, and midnight.network rate-limits them with 429 regardless of

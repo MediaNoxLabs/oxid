@@ -6,8 +6,8 @@ version, license, maintenance, security evidence, target support, cryptography,
 API stability, rationale, alternatives, adapter boundary, and exit strategy.
 
 The Cargo lock file pins the resolved graph. Automated updates target
-`develop`, and changes must pass advisory, license, source, build, and test
-gates.
+`integration` through the repository's GitHub default-branch authority, and
+changes must pass advisory, license, source, build, and test gates.
 
 Current reviews and source policies:
 
@@ -34,7 +34,12 @@ Current reviews and source policies:
 
 ## Automated dependency pull requests
 
-Two bots operate on this repository with deliberately separate jobs:
+Two bots operate on this repository with deliberately separate jobs. Both
+inherit `integration` from GitHub's default branch; neither configuration
+repeats an explicit base. Renovate's absent `baseBranchPatterns` preserves its
+default-branch behavior. Dependabot's absent `target-branch` is
+security-relevant: adding that key disables security updates for the configured
+ecosystem even when it names the default branch.
 
 - **Renovate** (`renovate.json`) owns routine version bumps. It understands
   the exact `=x.y.z` pinning convention, batches related crates into grouped
@@ -47,6 +52,14 @@ Two bots operate on this repository with deliberately separate jobs:
 Overlapping proposals for the same crate are therefore expected, not
 duplication: prefer the Renovate pull request unless the Dependabot one is
 addressing an advisory, in which case take the security bump first.
+
+Automation configuration changes affect newly created pull requests, not open
+ones. Dependabot PRs [#138](https://github.com/MediaNoxLabs/oxid/pull/138) and
+[#139](https://github.com/MediaNoxLabs/oxid/pull/139) still target the retired
+`develop` branch and cannot land under ruleset `21481544`. Close those stale
+PRs after the default-branch change lands and allow Dependabot to recreate any
+update that remains applicable; do not use the old PRs as delivery
+or validation evidence.
 
 Neither bot can satisfy this repository's contribution gates — they cannot add
 a DCO `Signed-off-by` trailer to generated commits, nor author a title and body

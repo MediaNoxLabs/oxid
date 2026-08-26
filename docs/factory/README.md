@@ -3,8 +3,8 @@
 The factory is Oxid's formalized agent-driven delivery system, proposed in
 [issue #35](https://github.com/MediaNoxLabs/oxid/issues/35). The repository
 itself is the coordination plane: issues are the backlog, pull requests are
-work units, labels carry finite-state-machine state, checks are gates, and a
-human holds merge authority.
+work units, labels carry finite-state-machine state, and checks plus recorded
+current-head review evidence are the delivery gates.
 
 | Document | Contents |
 | --- | --- |
@@ -29,16 +29,21 @@ any LLM provider.
 3. **Provider-agnostic.** Roles reference capabilities, never a specific LLM.
    Model selection is configuration (`.pi/settings.json`, `.devloops`
    persona `defaultModel`), not process.
-4. **Humans merge.** Agents deliver evidence; `.devloops` `humanMergeOnly`
-   remains binding.
+4. **Evidence before merge.** The owner authorizes clean `integration` merges
+   after all gates pass and fresh independent Claude CLI current-head evidence
+   is posted. `.devloops` deliberately requires neither human nor CODEOWNERS
+   approval; release, settings, and ADR authority remain human.
 
-## Field experience, 2026-08-18 to 2026-08-20
+## Historical field experience, 2026-08-18 to 2026-08-20
 
 The protocol in these documents was exercised before it was accepted, by two
-agents working the same repository in parallel: a build agent delivering the
-feature backlog on `develop`, and a quality steward reviewing that stream and
-executing separate backlog items on branches. What held up and what did not is
-recorded here so the proposal is judged on evidence rather than intent.
+agents working the same repository in parallel. During that recorded period,
+`develop` was the active delivery branch: a build agent delivered the feature
+backlog there while a quality steward reviewed that stream and executed
+separate backlog items on branches. Current work instead targets `integration`
+as defined by [the delivery authority](../integration-delivery.md). What held
+up and what did not is recorded here so the proposal is judged on evidence
+rather than intent.
 
 **What worked.**
 
@@ -69,11 +74,12 @@ recorded here so the proposal is judged on evidence rather than intent.
   steward's own worktree left uncommitted changes on the wrong branch. Parallel
   workers need separate worktrees, and `git add` with explicit paths rather
   than `-A`.
-- *Merge cadence hides verification.* Merging five pull requests in quick
-  succession made `cancel-in-progress` cancel each intermediate `develop` run,
-  so those commits carry no completed verdict even though every pull request
-  was green before merge. Space merges, or state plainly that verification is
-  tip-only.
+- *Merge cadence hides verification.* During that historical `develop` period,
+  merging five pull requests in quick succession made `cancel-in-progress`
+  cancel each intermediate run, so those commits carry no completed verdict
+  even though every pull request was green before merge. This lesson now
+  applies to `integration`: space merges, or state plainly that verification
+  is tip-only.
 - *A check that cannot fail is worse than no check.* A first version of the
   decision-record lint used `sed` alternation that BSD `sed` ignores: it
   reported a clean corpus while matching nothing. Prove a new gate fails
