@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "crates": [
+    {
+      "name": "fixture-adapter",
+      "sourceRoot": "fixture/src",
+      "facadeFiles": [
+        "fixture/src/lib.rs",
+        "fixture/src/shell.rs"
+      ],
+      "facadeMaximumPhysicalLines": 4,
+      "facadeMaximumPhysicalLinesByPath": {
+        "fixture/src/lib.rs": 2,
+        "fixture/src/shell.rs": 2
+      },
+      "capabilityOwners": [
+        {
+          "name": "fixture-capability",
+          "modulePathPrefixes": [
+            "fixture/src/capability"
+          ]
+        }
+      ],
+      "exclusions": [
+        {
+          "path": "fixture/src/generated.rs",
+          "classification": "generated"
+        },
+        {
+          "path": "fixture/src/protocol_fixture.rs",
+          "classification": "fixture"
+        }
+      ],
+      "temporaryExceptions": [
+        {
+          "paths": [
+            "fixture/src/lib.rs"
+          ],
+          "extraLineCeiling": 1,
+          "issue": "#fixture",
+          "reason": "negative expiry fixture",
+          "expiresOn": "2026-01-01"
+        }
+      ]
+    }
+  ]
+}

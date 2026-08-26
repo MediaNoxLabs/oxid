@@ -10,6 +10,10 @@ for required_tool in jq rg; do
   fi
 done
 
+script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"$script_directory/check-capability-facades.sh"
+"$script_directory/architecture/test-capability-facades.sh"
+
 metadata_file="$(mktemp)"
 trap 'rm -f "$metadata_file"' EXIT
 cargo metadata --no-deps --format-version 1 >"$metadata_file"

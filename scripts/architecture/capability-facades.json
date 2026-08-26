@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 1,
+  "crates": [
+    {
+      "name": "oxid-headless",
+      "sourceRoot": "apps/oxid-headless/src",
+      "facadeFiles": [
+        "apps/oxid-headless/src/lib.rs"
+      ],
+      "facadeMaximumPhysicalLines": 8766,
+      "facadeMaximumPhysicalLinesByPath": {
+        "apps/oxid-headless/src/lib.rs": 8766
+      },
+      "capabilityOwners": [
+        {
+          "name": "wallet-profiles",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/wallet_profiles"
+          ]
+        },
+        {
+          "name": "executable-shell",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/main"
+          ]
+        }
+      ],
+      "exclusions": [],
+      "temporaryExceptions": []
+    },
+    {
+      "name": "oxid-ui-dioxus",
+      "sourceRoot": "crates/ui-dioxus/src",
+      "facadeFiles": [
+        "crates/ui-dioxus/src/lib.rs"
+      ],
+      "facadeMaximumPhysicalLines": 13489,
+      "facadeMaximumPhysicalLinesByPath": {
+        "crates/ui-dioxus/src/lib.rs": 13489
+      },
+      "capabilityOwners": [
+        {
+          "name": "brand-profile",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/brand"
+          ]
+        },
+        {
+          "name": "public-labels",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/labels"
+          ]
+        },
+        {
+          "name": "profile-guard",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/profile_guard"
+          ]
+        }
+      ],
+      "exclusions": [],
+      "temporaryExceptions": []
+    },
+    {
+      "name": "oxid-composition",
+      "sourceRoot": "crates/composition/src",
+      "facadeFiles": [
+        "crates/composition/src/lib.rs"
+      ],
+      "facadeMaximumPhysicalLines": 4514,
+      "facadeMaximumPhysicalLinesByPath": {
+        "crates/composition/src/lib.rs": 4514
+      },
+      "capabilityOwners": [
+        {
+          "name": "portal-composition",
+          "modulePathPrefixes": [
+            "crates/composition/src/portal"
+          ]
+        },
+        {
+          "name": "standalone-funding-conformance",
+          "modulePathPrefixes": [
+            "crates/composition/src/standalone_funding_tests"
+          ]
+        }
+      ],
+      "exclusions": [],
+      "temporaryExceptions": []
+    },
+    {
+      "name": "oxid-adapter-midnight",
+      "sourceRoot": "crates/adapters/midnight/src",
+      "facadeFiles": [
+        "crates/adapters/midnight/src/lib.rs"
+      ],
+      "facadeMaximumPhysicalLines": 2340,
+      "facadeMaximumPhysicalLinesByPath": {
+        "crates/adapters/midnight/src/lib.rs": 2340
+      },
+      "capabilityOwners": [
+        {
+          "name": "public-account-checkpoint",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/checkpoint"
+          ]
+        },
+        {
+          "name": "dust-checkpoint",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/dust_checkpoint"
+          ]
+        },
+        {
+          "name": "dust-registration",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/dust_registration"
+          ]
+        },
+        {
+          "name": "dust-synchronization",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/dust_sync"
+          ]
+        },
+        {
+          "name": "indexer-boundary",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/indexer"
+          ]
+        },
+        {
+          "name": "local-proving",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/local_proving"
+          ]
+        },
+        {
+          "name": "shielded-account",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/shielded"
+          ]
+        },
+        {
+          "name": "shielded-checkpoint",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/shielded_checkpoint"
+          ]
+        },
+        {
+          "name": "shielded-synchronization",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/shielded_sync"
+          ]
+        },
+        {
+          "name": "shielded-transport",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/shielded_transport"
+          ]
+        },
+        {
+          "name": "submission-lifecycle",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/submission"
+          ]
+        },
+        {
+          "name": "submission-journal",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/submission_journal"
+          ]
+        },
+        {
+          "name": "transaction-lifecycle",
+          "modulePathPrefixes": [
+            "crates/adapters/midnight/src/transaction"
+          ]
+        }
+      ],
+      "exclusions": [],
+      "temporaryExceptions": []
+    }
+  ]
+}
