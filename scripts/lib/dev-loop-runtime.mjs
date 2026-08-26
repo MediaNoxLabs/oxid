@@ -143,6 +143,7 @@ function parseFrontmatter(source, file) {
   const rawTools = fields.get("tools");
   if (!name || rawTools === undefined) throw new Error(`agent manifest requires name and tools: ${file}`);
   const normalizedTools = rawTools.trim();
+  if (!normalizedTools) throw new Error(`agent manifest tools must use a non-empty inline allowlist: ${file}`);
   const toolsSource = normalizedTools.startsWith("[") && normalizedTools.endsWith("]")
     ? normalizedTools.slice(1, -1)
     : normalizedTools;

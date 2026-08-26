@@ -26,7 +26,8 @@ function readOption(args, name) {
 /** Force the only writable delivery base for repository PR creation. */
 export function normalizeDevLoopsArgs(argv) {
   const args = [...argv];
-  const isPrCreate = args[0] === "pr" && (args[1] === "create" || args[1] === "create-draft");
+  const prIndex = args.findIndex((argument) => argument === "pr");
+  const isPrCreate = prIndex >= 0 && (args[prIndex + 1] === "create" || args[prIndex + 1] === "create-draft");
   if (!isPrCreate) return args;
   const bases = readOption(args, "--base");
   if (bases.length > 1) throw new Error("repository pull requests accept exactly one base");

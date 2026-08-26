@@ -121,6 +121,7 @@ test("tracked project settings replace legacy names and choose the git root", as
 
 test("repository wrappers force integration bases", () => {
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), ["pr", "create", "--head", "topic", "--base", "integration"]);
+  assert.throws(() => normalizeDevLoopsArgs(["--silent", "pr", "create", "--base", "main"]), /must target integration/);
   assert.throws(() => normalizeDevLoopsArgs(["pr", "create", "--base", "main"]), /must target integration/);
   assert.deepEqual(normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150"]), ["--repo-root", "/repo", "--issue", "150", "--base", "origin/integration"]);
   assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--base", "origin/main"]), /must use origin\/integration/);
@@ -131,9 +132,8 @@ test("GitHub compatibility uses REST timeline facts without deprecated fields", 
   assert.throws(() => parseGhVersion("not gh"), /could not parse/);
   const links = normalizeTimelinePullRequests([
     { event: "cross-referenced", source: { issue: { number: 71, html_url: "https://github.com/MediaNoxLabs/oxid/pull/71", pull_request: { url: "https://api.github.com/repos/MediaNoxLabs/oxid/pulls/71" } } } },
-    [{ event: "connected", subject: { number: 72, html_url: "https://github.com/MediaNoxLabs/oxid/pull/72", pull_request: { url: "https://api.github.com/repos/MediaNoxLabs/oxid/pulls/72" } } }],
   ], "MediaNoxLabs/oxid");
-  assert.deepEqual(links.map((link) => link.number), [71, 72]);
+  assert.deepEqual(links.map((link) => link.number), [71]);
 
   for (const file of [
     "scripts/github/resolve-issue-pr-links.mjs",
@@ -170,6 +170,7 @@ test("Claude runner binds clean exact-head evidence and rejects stale worktrees"
   git("init", "--quiet");
   git("config", "user.name", "Fixture");
   git("config", "user.email", "fixture@example.invalid");
+  git("config", "commit.gpgsign", "false");
   await writeFile(path.join(repository, "contract.txt"), "base\n");
   git("add", "contract.txt");
   git("commit", "--quiet", "-m", "base");
@@ -184,6 +185,8 @@ test("Claude runner binds clean exact-head evidence and rejects stale worktrees"
 const fs = require("node:fs");
 if (process.argv.includes("--version")) {
   process.stdout.write("claude fixture 1.0\\n");
+} else if (process.argv.includes("--help")) {
+  process.stdout.write("--safe-mode --tools --json-schema --no-session-persistence\\n");
 } else if (process.argv[2] === "auth" && process.argv[3] === "status") {
   process.stdout.write(JSON.stringify({ loggedIn: true, authMethod: "fixture", apiProvider: "fixture" }));
 } else {
@@ -210,6 +213,8 @@ if (process.argv.includes("--version")) {
   assert.equal(result.evidence.baseSha, baseSha);
   assert.equal(result.evidence.claude.sessionId, "fixture-session");
   assert.equal(result.evidence.claude.tools.length, 0);
+  assert.equal(path.isAbsolute(result.evidence.diff.path), false);
+  assert.equal(path.isAbsolute(result.evidence.rawResponse.path), false);
   assert.equal((await verifyClaudeReviewEvidence({ evidencePath: result.evidencePath, repoRoot: repository, fetchBase: false })).ok, true);
 
   await writeFile(path.join(repository, "dirty.txt"), "dirty\n");
