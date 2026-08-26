@@ -1,4 +1,4 @@
-# ADR-0103: Regrow oversized adapters behind capability façades
+# ADR-0104: Regrow oversized adapters behind capability façades
 
 - Status: Accepted
 - Date: 2026-08-26
@@ -44,13 +44,37 @@ transactions, identity, credentials and protocols, diagnostics, and Passport
 Vault. They do not create horizontal `handlers`, `models`, `errors`, `common`,
 or `utils` dumping grounds.
 
-The crate root remains the façade. It owns module declarations, genuinely
-cross-capability dispatch or shell wiring, and the existing public surface. New
-capability behavior starts in its capability module after that module exists;
-it does not regrow in `lib.rs`. Each decomposition delivery records the root
-line count after its last slice. Later root growth is limited to declarations,
-re-exports, and cross-capability wiring and must not raise that baseline overall
-without a separately reviewed cohesion reason.
+The crate root remains the façade. It owns module declarations, stable
+re-exports, genuinely cross-capability dispatch or shell wiring, and no other
+responsibilities. New capability behavior starts in its capability module after
+that module exists; it does not regrow in `lib.rs` or an arbitrary sibling file.
+
+The first decomposition delivery creates the committed machine-readable
+`scripts/architecture/capability-facades.json` baseline and extends
+`scripts/check-architecture.sh` to own and check it. That delivery and every
+later decomposition delivery update the artifact in the same commit. Each
+crate entry records its source root, exact façade-file paths, the maximum
+physical line total for those files after the slice, capability-owner names and
+their non-overlapping module path prefixes, exact exclusions classified as
+`generated` or `fixture`, and any temporary exception.
+
+Measurement is deterministic: under `LC_ALL=C`, the checker enumerates
+committed `*.rs` paths below each recorded source root with `git ls-files`, sorts
+them by repository-relative path, and counts physical lines as newline bytes.
+Only exact paths recorded as generated sources or fixtures are excluded; an
+exclusion glob or an unclassified exclusion fails. Every other Rust source path
+must be either an exact façade file or fall under exactly one capability-owned
+module prefix. This makes an unowned sibling file, overlapping ownership, or a
+move out of the measured façade into an unclassified file a check failure.
+
+The façade total may not exceed its committed maximum. A lower post-slice total
+lowers the maximum. A temporary increase requires a narrow reviewed exception
+in the artifact naming exact paths, an extra-line ceiling, its issue and reason,
+and an ISO-8601 expiry date; the checker rejects an expired or over-limit
+exception. Permanent growth or a broader façade responsibility requires a later
+ADR rather than a baseline refresh. The artifact is a ratchet and ownership
+map, not evidence that a module is cohesive: review must still confirm that
+moved code, tests, and boundary mapping belong to the named capability.
 
 The stable public paths are unchanged:
 
@@ -102,20 +126,28 @@ architecture and coverage gates.
 ### Use source modules before crates
 
 No crate is extracted in this decision or in the first decomposition pass. A
-capability must first exist as a cohesive source module and demonstrate a real
-independent dependency, target, feature, or ownership boundary. Convenience,
-file length alone, or parallel ownership is insufficient.
+candidate must first exist as a cohesive source module with its boundary,
+implementation, and tests together. Convenience, file length alone, or parallel
+ownership is insufficient.
 
-A later crate proposal must measure the candidate subtree and the workspace
-again. The candidate must contain at least the greater of 1,000 physical Rust
-source lines or the then-current workspace-package median, including its
-colocated tests and excluding generated sources and fixtures. At this baseline
-the threshold is 1,000 lines, rounded up from the measured 978-line median. It
-must also remove or independently gate at least one dependency or target
-boundary in the parent; crossing the line threshold does not by itself require
-or authorize extraction. A later ADR must approve the new dependency edge and
-update the architecture allowlist. These conditions prevent micro-crates while
-leaving a reversible path when a boundary becomes real.
+A later crate proposal must then demonstrate at least one of these independent
+reasons for extraction:
+
+- measured compile, dependency, feature, or target isolation, such as removing
+  a dependency from the parent, independently gating a target-specific
+  dependency, or showing with reproducible build-unit measurements that changes
+  to the candidate no longer rebuild an unrelated consumer; or
+- at least two independent production consumers of the same boundary. Tests,
+  examples, fixtures, generated clients, and forwarding wrappers do not count
+  as independent real consumers.
+
+The proposal remeasures the candidate subtree and workspace-package median with
+colocated tests included and generated sources and fixtures excluded. Candidate
+LOC and the median are review signals for accidental micro-crates, never an
+architectural gate or extraction entitlement. A clearly better security or
+architecture boundary may override either numeric signal. Every extraction
+still requires a later ADR to approve ownership and dependency edges and a
+reviewed update to the default-deny architecture allowlist.
 
 ### Deliver reversible slices in fixed order
 
@@ -142,8 +174,10 @@ protocol, custody, credential, ledger, composition, or UI behavior changes.
   tests without changing crate ownership or the architecture graph.
 - Existing downstream imports and feature-selected builds retain one stable
   façade while internal files can be moved incrementally.
-- Root regrowth has a measurable post-decomposition baseline, and future crate
-  extraction has both a size floor and an architectural-benefit requirement.
+- Root regrowth has a machine-checked post-decomposition baseline and complete
+  source ownership map; temporary exceptions are narrow and expire.
+- Future crate extraction follows demonstrated isolation or multiple real
+  consumers; source size remains a review signal rather than a gate.
 - The first work can be validated with headless and desktop-focused checks;
   mobile and sensitive-data gates remain neither weakened nor claimed.
 - Composition and Midnight cohesion remain visible debt with an explicit later
@@ -151,9 +185,11 @@ protocol, custody, credential, ledger, composition, or UI behavior changes.
 
 ## Validation for decomposition deliveries
 
-- Record before/after root and crate source-line measurements.
-- Run formatting, the unchanged architecture checker, and the affected crate's
-  existing tests.
+- Record before/after root and crate source-line measurements, update the
+  committed façade baseline and ownership map, and show that its checker rejects
+  an over-limit façade, an unowned sibling, and an expired exception.
+- Run formatting, the architecture checker, and the affected crate's existing
+  tests.
 - For headless slices, compare representative success, rejection, alias, and
   shutdown response streams byte-for-byte.
 - For Dioxus slices, run focused desktop tests for moved state/components and a
