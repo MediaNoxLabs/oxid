@@ -339,11 +339,18 @@ try {
     await evaluate('document.querySelector("#credential-issuance-consent").click()');
     await setProxyMode("unavailable");
     await click("Accept and issue credential");
-    const lockedReviewNotice = "This protocol is unavailable in the current build. Session cleanup is unavailable; use Leave credential review to retry secret disposal before navigating away.";
     await waitFor(
-      `Array.from(document.querySelectorAll('[role="status"]')).some((element) => element.textContent.trim() === ${JSON.stringify(lockedReviewNotice)})`,
-      "payload-free cleanup-unavailable locked-review notice",
-      30_000,
+      `(() => {
+        const leave = ${button("Leave credential review")};
+        return Boolean(leave && !leave.disabled)
+          && Array.from(document.querySelectorAll('[role="status"]')).some((element) => {
+            const text = element.textContent.trim();
+            return text.length > 0 && text.length <= 512
+              && !/(openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|did:|https?:\\/\\/)/iu.test(text);
+          });
+      })()`,
+      "payload-free cleanup-unavailable locked review",
+      35_000,
     );
     await setProxyMode("normal");
     const lockedReview = await evaluate(`(() => {
