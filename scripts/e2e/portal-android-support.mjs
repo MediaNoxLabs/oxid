@@ -176,7 +176,7 @@ const issuerProxy = http.createServer((request, response) => {
   const counter = pathCounter(parsed.pathname);
   counters[counter] += 1;
   if (counter !== "kyc" && proxyMode === "unavailable") {
-    sendJson(response, 503, { error: "unavailable" });
+    response.destroy();
     return;
   }
   if (counter === "issuerMetadata" && proxyMode === "malformed") {
