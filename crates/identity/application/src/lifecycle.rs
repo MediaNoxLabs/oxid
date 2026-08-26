@@ -446,7 +446,10 @@ impl From<DidRecordRepositoryError> for DidOperationError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use oxid_identity_domain::{
         DID_CONTEXT, DidDocument, DidDocumentMetadata, DidDocumentParts, DidResolutionMetadata,
@@ -511,8 +514,27 @@ mod tests {
         }
     }
 
+    struct SignCall {
+        profile_id: String,
+        did: String,
+        method_id: String,
+        payload: Vec<u8>,
+    }
+
     struct TestLifecycle {
         error: Option<DidLifecyclePortError>,
+        deactivate_calls: AtomicUsize,
+        sign_calls: Mutex<Vec<SignCall>>,
+    }
+
+    impl TestLifecycle {
+        fn new(error: Option<DidLifecyclePortError>) -> Self {
+            Self {
+                error,
+                deactivate_calls: AtomicUsize::new(0),
+                sign_calls: Mutex::new(Vec::new()),
+            }
+        }
     }
 
     impl DidLifecyclePort for TestLifecycle {
@@ -538,16 +560,23 @@ mod tests {
             _: &IdentityProfileId,
             current: &DidResolution,
         ) -> Result<DidResolution, DidLifecyclePortError> {
+            self.deactivate_calls.fetch_add(1, Ordering::Relaxed);
             self.error.map_or_else(|| Ok(current.clone()), Err)
         }
 
         fn sign(
             &self,
-            _: &IdentityProfileId,
-            _: &DidResolution,
+            profile_id: &IdentityProfileId,
+            current: &DidResolution,
             method_id: &str,
-            _: &[u8],
+            payload: &[u8],
         ) -> Result<DidLifecycleSignature, DidLifecyclePortError> {
+            self.sign_calls.lock().expect("sign calls").push(SignCall {
+                profile_id: profile_id.as_str().to_owned(),
+                did: current.document().id().as_str().to_owned(),
+                method_id: method_id.to_owned(),
+                payload: payload.to_vec(),
+            });
             self.error.map_or_else(
                 || {
                     Ok(DidLifecycleSignature {
@@ -561,6 +590,23 @@ mod tests {
         }
     }
 
+    fn service_with_lifecycle(
+        repository_error: (
+            Option<DidRecordRepositoryError>,
+            Option<DidRecordRepositoryError>,
+        ),
+        lifecycle_error: Option<DidLifecyclePortError>,
+    ) -> (DidService, Arc<TestLifecycle>) {
+        let repository: Arc<dyn DidRecordRepository> = Arc::new(TestRepository {
+            get_error: repository_error.0,
+            upsert_error: repository_error.1,
+        });
+        let resolver: Arc<dyn DidResolutionPort> = Arc::new(UnavailableDidResolver);
+        let lifecycle = Arc::new(TestLifecycle::new(lifecycle_error));
+        let service = DidService::from_ports(repository, resolver, lifecycle.clone());
+        (service, lifecycle)
+    }
+
     fn service(
         repository_error: (
             Option<DidRecordRepositoryError>,
@@ -568,15 +614,7 @@ mod tests {
         ),
         lifecycle_error: Option<DidLifecyclePortError>,
     ) -> DidService {
-        let repository: Arc<dyn DidRecordRepository> = Arc::new(TestRepository {
-            get_error: repository_error.0,
-            upsert_error: repository_error.1,
-        });
-        let resolver: Arc<dyn DidResolutionPort> = Arc::new(UnavailableDidResolver);
-        let lifecycle: Arc<dyn DidLifecyclePort> = Arc::new(TestLifecycle {
-            error: lifecycle_error,
-        });
-        DidService::from_ports(repository, resolver, lifecycle)
+        service_with_lifecycle(repository_error, lifecycle_error).0
     }
 
     fn confirmation(title: String, summary: String, confirmed: bool) -> DidOperationConfirmation {
@@ -663,6 +701,57 @@ mod tests {
     }
 
     #[test]
+    fn deactivate_rejects_unconfirmed_and_invalid_confirmation_without_forwarding() {
+        for (confirmation, expected) in [
+            (
+                confirmation("Title".to_owned(), "Summary".to_owned(), false),
+                DidOperationError::ConfirmationRequired,
+            ),
+            (
+                confirmation("Title\nInjected".to_owned(), "Summary".to_owned(), true),
+                DidOperationError::InvalidConfirmation,
+            ),
+        ] {
+            let (service, lifecycle) = service_with_lifecycle((None, None), None);
+            assert_eq!(
+                DeactivateDidUseCase::execute(
+                    &service,
+                    DeactivateDidCommand {
+                        profile_id: PROFILE.to_owned(),
+                        did: DID.to_owned(),
+                        confirmation,
+                    }
+                ),
+                Err(expected)
+            );
+            assert_eq!(lifecycle.deactivate_calls.load(Ordering::Relaxed), 0);
+        }
+    }
+
+    #[test]
+    fn signing_rejects_unconfirmed_and_invalid_confirmation_without_forwarding() {
+        for (confirmation, expected) in [
+            (
+                confirmation("Title".to_owned(), "Summary".to_owned(), false),
+                DidOperationError::ConfirmationRequired,
+            ),
+            (
+                confirmation("Title".to_owned(), "\t".to_owned(), true),
+                DidOperationError::InvalidConfirmation,
+            ),
+        ] {
+            let (service, lifecycle) = service_with_lifecycle((None, None), None);
+            let mut command = sign_command(b"challenge".to_vec());
+            command.confirmation = confirmation;
+            assert_eq!(
+                SignDidPayloadUseCase::execute(&service, command),
+                Err(expected)
+            );
+            assert!(lifecycle.sign_calls.lock().expect("sign calls").is_empty());
+        }
+    }
+
+    #[test]
     fn rejects_invalid_profile_network_and_did_inputs() {
         let service = service((None, None), None);
         assert!(matches!(
@@ -696,8 +785,8 @@ mod tests {
     }
 
     #[test]
-    fn signing_payload_bounds_fail_closed() {
-        let service = service((None, None), None);
+    fn signing_payload_bounds_fail_closed_and_exact_maximum_is_forwarded() {
+        let (service, lifecycle) = service_with_lifecycle((None, None), None);
         for (payload, expected) in [
             (Vec::new(), DidOperationError::EmptyPayload),
             (
@@ -710,12 +799,26 @@ mod tests {
                 Err(expected)
             );
         }
+        assert!(lifecycle.sign_calls.lock().expect("sign calls").is_empty());
+
+        let payload = (0..MAX_DID_SIGNING_PAYLOAD_BYTES)
+            .map(|index| (index % 251) as u8)
+            .collect();
+        assert!(SignDidPayloadUseCase::execute(&service, sign_command(payload)).is_ok());
+
+        let calls = lifecycle.sign_calls.lock().expect("sign calls");
+        assert_eq!(calls.len(), 1);
+        let call = &calls[0];
+        assert_eq!(call.profile_id, PROFILE);
+        assert_eq!(call.did, DID);
+        assert_eq!(call.method_id, format!("{DID}#auth-1"));
+        assert_eq!(call.payload.len(), MAX_DID_SIGNING_PAYLOAD_BYTES);
         assert!(
-            SignDidPayloadUseCase::execute(
-                &service,
-                sign_command(vec![0x5a; MAX_DID_SIGNING_PAYLOAD_BYTES])
-            )
-            .is_ok()
+            call.payload
+                .iter()
+                .copied()
+                .eq((0..MAX_DID_SIGNING_PAYLOAD_BYTES).map(|index| (index % 251) as u8)),
+            "forwarded signing payload differs"
         );
     }
 

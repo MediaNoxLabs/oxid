@@ -552,6 +552,35 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    struct PermissionGuard {
+        path: PathBuf,
+        original: fs::Permissions,
+    }
+
+    #[cfg(unix)]
+    impl PermissionGuard {
+        fn set(path: &Path, mode: u32) -> Self {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            let original = fs::metadata(path)
+                .expect("permission metadata")
+                .permissions();
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("set permissions");
+            Self {
+                path: path.to_owned(),
+                original,
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for PermissionGuard {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.path, self.original.clone());
+        }
+    }
+
     fn record(profile: &str) -> DidRecord {
         record_with_deactivation(profile, None)
     }
@@ -751,17 +780,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn failed_replacement_preserves_the_previous_document() {
-        use std::os::unix::fs::PermissionsExt as _;
-
         let store = Store::new();
         let repository = JsonDidRecordRepository::new(&store.path);
         repository.upsert(record("profile_one")).expect("save");
         let original = fs::read(&store.path).expect("original document");
         let parent = store.path.parent().expect("parent");
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o500)).expect("make read-only");
+        let permission_guard = PermissionGuard::set(parent, 0o500);
         let result = repository.upsert(record_with_deactivation("profile_one", Some(true)));
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-            .expect("restore permissions");
+        drop(permission_guard);
         assert_eq!(result, Err(DidRecordRepositoryError::Unavailable));
         assert_eq!(fs::read(&store.path).expect("preserved document"), original);
         let profile = IdentityProfileId::parse("profile_one").expect("profile");
