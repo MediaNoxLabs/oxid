@@ -219,7 +219,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(scanJob, /midnightntwrk\/upload-sarif-github-action@4bbe849e9707b46342832d4b7f94fec585823ca4/);
   assert.match(scanJob, /Run scanners and upload SARIF/);
   assert.equal((scanJob.match(/if: always\(\)/g) || []).length, 3);
-  assert.equal((scanJob.match(/continue-on-error: true/g) || []).length, 3);
+  assert.equal((scanJob.match(/continue-on-error: true/g) || []).length, 1);
   assert.match(scanJob, /STAGE_OUTCOME: \$\{\{ steps\.stage-checkov-exclusion\.outcome \}\}/);
   assert.match(scanJob, /SCAN_OUTCOME: \$\{\{ steps\.security-scan\.outcome \}\}/);
   assert.match(scanJob, /RESTORE_OUTCOME: \$\{\{ steps\.restore-checkov-exclusion\.outcome \}\}/);

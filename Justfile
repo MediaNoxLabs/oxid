@@ -38,6 +38,39 @@ headless:
 portal-headless-e2e:
     ./scripts/e2e/portal-headless-e2e.sh
 
+# Start the virtual-mobile Portal issuer, resolver, offer endpoint, and authenticated manifest.
+portal-virtual-mobile-stack:
+    ./scripts/e2e/portal-virtual-mobile-stack.sh
+
+# Verify the real virtual-mobile endpoints, single-use offer, manifest, and exact cleanup.
+portal-virtual-mobile-stack-contract:
+    ./scripts/e2e/portal-virtual-mobile-stack.sh --contract-test
+
+# Serve one externally prepared offer to the isolated virtual-mobile loopback endpoint.
+portal-virtual-mobile-offer-harness:
+    node ./scripts/e2e/portal-virtual-mobile-offer-harness.mjs
+
+# Verify isolated offer port ownership, authentication, and replay rejection.
+portal-virtual-mobile-offer-harness-contract:
+    node ./scripts/e2e/portal-virtual-mobile-offer-harness.mjs --contract-test
+
+# Drive one tailnet-origin vector contract through the Rust and JavaScript gates.
+portal-tailnet-origin-contract:
+    cargo test -p oxid-adapter-identity-ingress --features tailnet-test-offer-trigger tailnet_offer_profile_accepts_only_shared_contract_origins
+    node --test ./scripts/e2e/tailnet-origin-policy.test.mjs
+
+# Verify physical Portal evidence is derived from exact measured results.
+portal-android-evidence-contract:
+    node --test ./scripts/e2e/portal-android-evidence.test.mjs
+
+# Run strict Portal issuance, encrypted restart, and fresh reverification on a discovered physical Android device.
+android-portal-tailnet-physical-smoke:
+    ./scripts/test-android-portal-tailnet-physical.sh
+
+# Verify exact-sequence process ownership and bounded process-group cleanup without Android or Docker.
+android-portal-avd-safety-contract:
+    ./scripts/e2e/android-avd-process-ownership.test.sh
+
 standalone-recovery-smoke:
     cargo test -p oxid-composition standalone_composition_recovers_a_complete_wallet_into_a_fresh_instance
 

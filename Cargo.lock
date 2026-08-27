@@ -5622,10 +5622,14 @@ dependencies = [
  "oxid-adapter-mobile-native",
  "oxid-platform-ports",
  "oxid-protocol-application",
+ "reqwest 0.13.4",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",
  "url",
+ "webpki-root-certs 1.0.9",
+ "zeroize",
 ]
 
 [[package]]
@@ -5927,9 +5931,11 @@ dependencies = [
  "dioxus",
  "getrandom 0.2.17",
  "getrandom 0.4.3",
+ "oxid-adapter-identity-ingress",
  "oxid-brand-build",
  "oxid-composition",
  "oxid-ui-dioxus",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -5985,6 +5991,7 @@ dependencies = [
  "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",
+ "sha2 0.10.9",
  "tokio",
  "zeroize",
 ]

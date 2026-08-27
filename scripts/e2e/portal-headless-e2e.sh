@@ -1,34 +1,35 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+
 set -euo pipefail
+export LC_ALL=C
+CDPATH=
 
-readonly EXPECTED_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
-readonly INTEGRATION_COMMIT="925ec8d04882eabd4ac7b784c70fc2f0c152faae"
-readonly INTEGRATION_TREE="58b4597524f88a0ae2253439a44dab0dc60cbb6f"
-readonly PR_HEAD="9c82db23eabe8b6d758b2731f2225910ea627c14"
-readonly PROFILE_SOURCE="76e8edf394a4cb37ca822037272d543c68f25f71"
-readonly PROVENANCE_SHA="cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87"
+readonly PORTAL_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
+readonly PORTAL_COMMIT="22ae5369b6f939e6b20648f4b85dd993527748ef"
+readonly PORTAL_TREE="74d8d1a5b87c160ea554006e47d5f3edc3cd3e10"
+readonly PORTAL_PROVENANCE_SHA256="cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87"
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-readonly SOURCE_TREE="${PORTAL_SOURCE_TREE:-/Users/ysh/iohk/lace-id-portal/tmp/worktrees/dev-loops/issue-16}"
 readonly EVIDENCE="${OXID_PORTAL_EVIDENCE_PATH:-$REPO_ROOT/target/portal-headless-e2e/evidence.json}"
-readonly RUN_TREE="${TMPDIR:-/tmp}/oxid-portal-integration-${INTEGRATION_COMMIT:0:8}-$$"
-readonly RAW_LOG="${TMPDIR:-/tmp}/oxid-portal-headless-e2e-$$.log"
-export COMPOSE_PROJECT_NAME="oxidportal124$$"
+readonly RUN_TREE="${TMPDIR:-/tmp}/oxid-portal-source-$$"
+readonly RAW_LOG="${TMPDIR:-/tmp}/oxid-portal-headless-$$.log"
+readonly SOURCE_INPUT="${OXID_PORTAL_SOURCE_REPOSITORY:-$PORTAL_REMOTE}"
 
-stack_started=0
-worktree_created=0
 cleanup() {
-  status=$?
-  if [[ "$stack_started" == 1 && -d "$RUN_TREE" ]]; then
-    (cd "$RUN_TREE" && just compose-down) >>"$RAW_LOG" 2>&1 || status=1
+  local status=$? portal_state
+  portal_state="$(dirname -- "$EVIDENCE")/runtime/portal-state"
+  if [ -f "$portal_state/owner-receipt.json" ] && [ -d "$RUN_TREE" ]; then
+    PORTAL_INTEGRATION_CHECKOUT="$RUN_TREE" \
+    OXID_PORTAL_CONSUMER_STATE_DIR="$portal_state" \
+      "$REPO_ROOT/scripts/portal-consumer-lifecycle.sh" down \
+      >>"$RAW_LOG" 2>&1 || status=1
   fi
-  if [[ "$worktree_created" == 1 ]]; then
-    git -C "$SOURCE_TREE" worktree remove --force "$RUN_TREE" >>"$RAW_LOG" 2>&1 || status=1
-  fi
-  if [[ "$status" != 0 && "${OXID_PORTAL_KEEP_FAILURE_LOG:-0}" == 1 ]]; then
+  rm -rf -- "$RUN_TREE"
+  if [ "$status" -ne 0 ] && [ "${OXID_PORTAL_KEEP_FAILURE_LOG:-0}" = 1 ]; then
     chmod 600 "$RAW_LOG" 2>/dev/null || true
-    printf 'portal-headless-e2e: private failure log=%s\n' "$RAW_LOG" >&2
+    printf 'portal-headless-e2e: private failure log retained\n' >&2
   else
-    rm -f "$RAW_LOG"
+    rm -f -- "$RAW_LOG"
   fi
   exit "$status"
 }
@@ -39,41 +40,40 @@ fail() {
   exit 1
 }
 
-[[ "$SOURCE_TREE" = /* && -d "$SOURCE_TREE" ]] || fail source-path
-[[ "$(git -C "$SOURCE_TREE" remote get-url origin 2>/dev/null)" == "$EXPECTED_REMOTE" ]] || fail source-remote
-[[ -z "$(git -C "$SOURCE_TREE" status --porcelain 2>/dev/null)" ]] || fail source-dirty
-command -v nix >/dev/null 2>&1 || fail missing-nix
-command -v docker >/dev/null 2>&1 || fail missing-docker
-command -v just >/dev/null 2>&1 || fail missing-just
-docker info >/dev/null 2>&1 || fail docker-daemon
+for command_name in cargo docker git jq nix shasum; do
+  command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
+done
+docker info >/dev/null 2>&1 || fail docker
+[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ] || fail oxid-dirty
+readonly OXID_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+[[ "$OXID_HEAD" =~ ^[0-9a-f]{40}$ ]] || fail oxid-head
 
-if ! git -C "$SOURCE_TREE" fetch origin \
-  "integration:refs/remotes/origin/integration" \
-  "refs/pull/17/head:refs/oxid-evidence/portal-pr-17" >>"$RAW_LOG" 2>&1; then
+umask 077
+: >"$RAW_LOG"
+if ! git clone --no-checkout "$SOURCE_INPUT" "$RUN_TREE" >>"$RAW_LOG" 2>&1; then
+  fail source-clone
+fi
+git -C "$RUN_TREE" remote set-url origin "$PORTAL_REMOTE"
+if ! git -C "$RUN_TREE" fetch origin integration >>"$RAW_LOG" 2>&1; then
   fail source-fetch
 fi
-[[ "$(git -C "$SOURCE_TREE" rev-parse origin/integration^{commit})" == "$INTEGRATION_COMMIT" ]] || fail integration-commit
-[[ "$(git -C "$SOURCE_TREE" rev-parse origin/integration^{tree})" == "$INTEGRATION_TREE" ]] || fail integration-tree
-[[ "$(git -C "$SOURCE_TREE" rev-parse refs/oxid-evidence/portal-pr-17^{commit})" == "$PR_HEAD" ]] || fail pr-head
-[[ "$(git -C "$SOURCE_TREE" rev-parse refs/oxid-evidence/portal-pr-17^{tree})" == "$INTEGRATION_TREE" ]] || fail pr-tree
-[[ "$(git -C "$SOURCE_TREE" rev-parse "$PROFILE_SOURCE"^{commit})" == "$PROFILE_SOURCE" ]] || fail profile-source
-[[ "$(git -C "$SOURCE_TREE" show "$INTEGRATION_COMMIT:crates/issuer-integration/fixtures/openid4vci-final/provenance.json" | shasum -a 256 | awk '{print $1}')" == "$PROVENANCE_SHA" ]] || fail provenance
-
-if ! git -C "$SOURCE_TREE" worktree add --detach "$RUN_TREE" "$INTEGRATION_COMMIT" >>"$RAW_LOG" 2>&1; then
-  fail integration-checkout
-fi
-worktree_created=1
-[[ -z "$(git -C "$RUN_TREE" status --porcelain)" ]] || fail integration-checkout-dirty
-
-readonly OXID_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
-[[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ]] || fail oxid-tree-dirty
-rm -f "$EVIDENCE"
-stack_started=1
-if ! (cd "$RUN_TREE" && just compose-up) >>"$RAW_LOG" 2>&1; then
-  fail portal-compose-up
+[ "$(git -C "$RUN_TREE" rev-parse FETCH_HEAD^{commit})" = "$PORTAL_COMMIT" ] || fail portal-commit
+[ "$(git -C "$RUN_TREE" rev-parse FETCH_HEAD^{tree})" = "$PORTAL_TREE" ] || fail portal-tree
+git -C "$RUN_TREE" checkout --detach "$PORTAL_COMMIT" >>"$RAW_LOG" 2>&1
+[ -z "$(git -C "$RUN_TREE" status --porcelain --untracked-files=all)" ] || fail source-dirty
+provenance_path="crates/issuer-integration/fixtures/openid4vci-final/provenance.json"
+[ "$(git -C "$RUN_TREE" show "$PORTAL_COMMIT:$provenance_path" | shasum -a 256 | awk '{print $1}')" = "$PORTAL_PROVENANCE_SHA256" ] || fail portal-provenance
+[ -x "$RUN_TREE/scripts/tailscale-https-profile.sh" ] || fail tailscale-profile
+if ! PORTAL_INTEGRATION_CHECKOUT="$RUN_TREE" \
+  OXID_PORTAL_CONSUMER_STATE_DIR="$(dirname -- "$EVIDENCE")/runtime/portal-state" \
+    "$REPO_ROOT/scripts/portal-consumer-lifecycle.sh" prerequisite \
+      >>"$RAW_LOG" 2>&1; then
+  fail shared-midnight-prerequisite
 fi
 
+rm -f -- "$EVIDENCE"
 if ! PORTAL_INTEGRATION_TREE="$RUN_TREE" \
+  PORTAL_CONSUMER_LIFECYCLE="$REPO_ROOT/scripts/portal-consumer-lifecycle.sh" \
   OXID_PORTAL_EVIDENCE_PATH="$EVIDENCE" \
   OXID_PORTAL_EVIDENCE_HEAD="$OXID_HEAD" \
   cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p oxid-headless \
@@ -83,11 +83,17 @@ if ! PORTAL_INTEGRATION_TREE="$RUN_TREE" \
   fail live-flow
 fi
 
-[[ -f "$EVIDENCE" ]] || fail missing-evidence
-[[ -z "$(git -C "$RUN_TREE" status --porcelain)" ]] || fail portal-tree-mutated
-# Evidence is produced from a closed boolean/source-pin schema. Reject common
-# raw secret/value representations as a defense-in-depth sentinel scan.
-if grep -Eqi 'openid-credential-offer|access[_-]?token|pre-authorized|c_nonce|eyJ|did:|https?://|AB1234567|John|Doe|private.?parts|signed.?bytes|detached.?proof' "$EVIDENCE"; then
+[ -f "$EVIDENCE" ] || fail evidence
+[ -z "$(docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet)" ] || fail cleanup
+if grep -Eqi 'openid-credential-offer|access[_-]?token|pre-authorized|c_nonce|eyJ|did:|https?://|AB1234567|John|Doe|private.?parts|signed.?bytes|detached.?proof|capability|seed' "$EVIDENCE"; then
   fail evidence-schema
 fi
+jq -e \
+  --arg head "$OXID_HEAD" --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
+  '.schema == "oxid-portal-headless-evidence-v1"
+    and .oxid.head == $head
+    and .portal.integrationCommit == $commit
+    and .portal.integrationTree == $tree
+    and (.acceptance | to_entries | all(.value == true))' \
+  "$EVIDENCE" >/dev/null || fail evidence-schema
 printf 'portal-headless-e2e: PASS evidence=%s\n' "${EVIDENCE#"$REPO_ROOT/"}"

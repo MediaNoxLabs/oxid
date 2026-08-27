@@ -94,3 +94,32 @@ not compile or claim the native-headless Portal HTTP route.
   rejected until this source lock and decision are deliberately reviewed.
 - Operator-selected local source/manifest authentication must not be described
   as signed release provenance or production deployment attestation.
+
+## Amendment — 2026-08-26
+
+Portal subsequently landed the reviewed Final implementation at
+`22ae5369b6f939e6b20648f4b85dd993527748ef`, tree
+`74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`. That later integration identity
+supersedes the runtime pin recorded above; this amendment preserves the
+original accepted record rather than rewriting its 2026-08-21 history.
+
+The source lock moved from `oxid-portal-source-lock-v2` to
+`oxid-portal-source-lock-v3`. The v3 source lock still binds
+`profileSourceCommit=76e8edf394a4cb37ca822037272d543c68f25f71` and the exact provenance
+digest, but no longer treats the historical pull-request head as runtime
+authority. The runtime deployment manifest moved to
+`oxid-portal-deployment-v3`: it authenticates the landed integration
+commit/tree, provenance digest, issuer/resolver origins, issuer DID and method,
+and canonical Jubjub JWK digest. It does **not** attest `portalPrHead` or
+`profileSourceCommit`; the latter remains a compiled-in source-lock check, not
+a deployment-manifest claim.
+
+The strict native client is additionally admitted through one authority-gated
+iOS Simulator/Android QEMU development profile. Its loopback bearer capability
+authenticates the app to the listener, not the plaintext listener to the app;
+a competing local listener could consume the capability and choose a candidate
+offer. This one-directional trust is limited to the compile-gated development
+profile and is bounded by the strict offer router, explicit holder consent, and
+full issuer DID/method/JWK trust, credential-proof, and holder-binding
+verification before encrypted storage. ADR-0103 separately governs the
+HTTPS-authenticated physical Android conformance profile.

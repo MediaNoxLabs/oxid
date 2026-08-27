@@ -1,0 +1,22 @@
+{
+  "validOrigins": [
+    "https://oxid-demo.tail1234.ts.net:9443",
+    "https://wallet.tailabcd.ts.net:12001"
+  ],
+  "invalidOrigins": [
+    "http://oxid-demo.tail1234.ts.net:9443",
+    "https://oxid-demo.tail1234.ts.net",
+    "https://oxid-demo.tail1234.ts.net:443",
+    "https://oxid-demo.tail1234.ts.net:8443",
+    "https://oxid-demo.tail1234.ts.net:10000",
+    "https://oxid-demo.tail1234.ts.net:9443/offer",
+    "https://user@oxid-demo.tail1234.ts.net:9443",
+    "https://127.0.0.1:9443",
+    "https://Oxid-demo.tail1234.ts.net:9443",
+    "https://-oxid.tail1234.ts.net:9443",
+    "https://oxid.example:9443",
+    "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.ts.net:9443",
+    "https://oxid-demo.tail1234.ts.net:9443?query=1",
+    "https://oxid-demo.tail1234.ts.net:9443#fragment"
+  ]
+}

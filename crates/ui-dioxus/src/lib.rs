@@ -66,13 +66,14 @@ use oxid_presentation_application::{
 use oxid_protocol_application::{
     AcceptCredentialIssuanceCommand, AcceptCredentialIssuanceUseCase,
     AcceptSelfIssuedAuthenticationCommand, AcceptSelfIssuedAuthenticationUseCase,
-    CredentialIssuanceError, CredentialIssuanceView, IdentityRequestKind,
-    IdentityRequestRoutingError, PrepareCredentialIssuanceCommand,
-    PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationCommand,
-    PrepareSelfIssuedAuthenticationUseCase, RefuseCredentialIssuanceCommand,
-    RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationCommand,
-    RefuseSelfIssuedAuthenticationUseCase, RouteIdentityRequestCommand,
-    RouteIdentityRequestUseCase, SelfIssuedAuthenticationError, SelfIssuedAuthenticationView,
+    CredentialIssuanceError, CredentialIssuanceProfileQuery, CredentialIssuanceView,
+    IdentityRequestKind, IdentityRequestRoutingError, ListCredentialIssuancesUseCase,
+    PrepareCredentialIssuanceCommand, PrepareCredentialIssuanceUseCase,
+    PrepareSelfIssuedAuthenticationCommand, PrepareSelfIssuedAuthenticationUseCase,
+    RefuseCredentialIssuanceCommand, RefuseCredentialIssuanceUseCase,
+    RefuseSelfIssuedAuthenticationCommand, RefuseSelfIssuedAuthenticationUseCase,
+    RouteIdentityRequestCommand, RouteIdentityRequestUseCase, SelfIssuedAuthenticationError,
+    SelfIssuedAuthenticationView,
 };
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
@@ -116,7 +117,7 @@ use oxid_wallet_application::{
     WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
     WalletTransferSubmissionView,
 };
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use labels as ui;
 
@@ -274,7 +275,9 @@ pub struct WalletUiServices {
     prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+    list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
     standalone_credential_offer: Option<String>,
+    credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
@@ -468,7 +471,9 @@ pub struct CredentialUiServices {
     prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+    list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
     standalone_credential_offer: Option<String>,
+    credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
@@ -509,7 +514,9 @@ pub struct CredentialIssuanceUiServices {
     prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+    list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
     standalone_credential_offer: Option<String>,
+    credential_issuance_ready: bool,
 }
 
 /// Consent-driven OpenID4VP capabilities consumed by the Credentials page.
@@ -593,13 +600,17 @@ impl CredentialIssuanceUiServices {
         prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
         accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
         refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+        list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
         standalone_credential_offer: Option<String>,
+        credential_issuance_ready: bool,
     ) -> Self {
         Self {
             prepare_credential_issuance,
             accept_credential_issuance,
             refuse_credential_issuance,
+            list_credential_issuances,
             standalone_credential_offer,
+            credential_issuance_ready,
         }
     }
 }
@@ -624,7 +635,9 @@ impl CredentialUiServices {
             prepare_credential_issuance: issuance.prepare_credential_issuance,
             accept_credential_issuance: issuance.accept_credential_issuance,
             refuse_credential_issuance: issuance.refuse_credential_issuance,
+            list_credential_issuances: issuance.list_credential_issuances,
             standalone_credential_offer: issuance.standalone_credential_offer,
+            credential_issuance_ready: issuance.credential_issuance_ready,
             prepare_credential_presentation: presentation.prepare,
             accept_credential_presentation: presentation.accept,
             cancel_credential_presentation: presentation.cancel,
@@ -1089,7 +1102,9 @@ impl WalletUiServices {
             prepare_credential_issuance: credentials.prepare_credential_issuance,
             accept_credential_issuance: credentials.accept_credential_issuance,
             refuse_credential_issuance: credentials.refuse_credential_issuance,
+            list_credential_issuances: credentials.list_credential_issuances,
             standalone_credential_offer: credentials.standalone_credential_offer,
+            credential_issuance_ready: credentials.credential_issuance_ready,
             prepare_credential_presentation: credentials.prepare_credential_presentation,
             accept_credential_presentation: credentials.accept_credential_presentation,
             cancel_credential_presentation: credentials.cancel_credential_presentation,
@@ -1445,8 +1460,18 @@ impl WalletUiServices {
     }
 
     #[must_use]
+    pub fn list_credential_issuances(&self) -> Arc<dyn ListCredentialIssuancesUseCase> {
+        Arc::clone(&self.list_credential_issuances)
+    }
+
+    #[must_use]
     pub fn standalone_credential_offer(&self) -> Option<String> {
         self.standalone_credential_offer.clone()
+    }
+
+    #[must_use]
+    pub const fn credential_issuance_ready(&self) -> bool {
+        self.credential_issuance_ready
     }
 
     #[must_use]
@@ -1849,6 +1874,7 @@ enum CredentialPageState {
         credentials: Vec<CredentialView>,
         receiving: bool,
         operation_error: Option<String>,
+        reverification_applied: bool,
     },
     Failed(String),
 }
@@ -1857,6 +1883,242 @@ enum CredentialPageState {
 struct PendingIdentityRequest {
     kind: IdentityRequestKind,
     request_uri: String,
+}
+
+impl PendingIdentityRequest {
+    fn importable_uri(&self, expected: IdentityRequestKind) -> Option<&str> {
+        (self.kind == expected && !self.request_uri.is_empty()).then_some(self.request_uri.as_str())
+    }
+
+    fn has_raw_uri(&self) -> bool {
+        !self.request_uri.is_empty()
+    }
+}
+
+#[derive(Default)]
+struct CredentialOfferDraft {
+    value: Zeroizing<String>,
+    imported: bool,
+}
+
+impl CredentialOfferDraft {
+    fn editable(value: String) -> Self {
+        Self {
+            value: Zeroizing::new(value),
+            imported: false,
+        }
+    }
+
+    fn imported(value: String) -> Self {
+        Self {
+            value: Zeroizing::new(value),
+            imported: true,
+        }
+    }
+
+    fn import(&mut self, value: String) {
+        *self = Self::imported(value);
+    }
+
+    fn has_imported_offer(&self) -> bool {
+        self.imported
+    }
+
+    fn rendered_editable_value(&self) -> &str {
+        if self.imported {
+            ""
+        } else {
+            self.value.as_str()
+        }
+    }
+
+    fn offer_for_prepare(&self) -> &str {
+        self.value.as_str()
+    }
+
+    fn clear_imported(&mut self) {
+        self.value.zeroize();
+        self.value = Zeroizing::new(String::new());
+        self.imported = false;
+    }
+}
+
+/// Scrubs the raw imported request URI after the protocol adapter has prepared
+/// its private session while retaining the payload-free pending marker. The
+/// marker keeps the one-active-review guard closed until terminal consent or
+/// refusal clears it.
+fn scrub_pending_identity_request_value(
+    pending: &mut Option<PendingIdentityRequest>,
+    kind: IdentityRequestKind,
+) -> bool {
+    let Some(request) = pending
+        .as_mut()
+        .filter(|request| request.kind == kind && request.has_raw_uri())
+    else {
+        return false;
+    };
+    request.request_uri.zeroize();
+    request.request_uri.clear();
+    true
+}
+
+fn scrub_pending_identity_request(
+    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
+    kind: IdentityRequestKind,
+) {
+    let mut guard = pending_identity_request.write();
+    scrub_pending_identity_request_value(&mut guard, kind);
+}
+
+/// Synchronously reserves the process-local admission guard before a manual
+/// credential offer is prepared. Imported reviews keep using their pending
+/// request marker instead, including its existing pre-prepare behavior.
+fn reserve_manual_credential_review_admission_lock_value(
+    manual_review_lock: &mut bool,
+    has_imported_pending_marker: bool,
+) -> bool {
+    if has_imported_pending_marker || *manual_review_lock {
+        return false;
+    }
+    *manual_review_lock = true;
+    true
+}
+
+/// Starts one synchronous Preview admission attempt. Dioxus event handlers run
+/// serially, and holding the signal write guard makes the busy check-and-set a
+/// single operation before any review reservation or async task can start.
+fn begin_credential_preview_single_flight_value(issuance_busy: &mut bool) -> bool {
+    if *issuance_busy {
+        return false;
+    }
+    *issuance_busy = true;
+    true
+}
+
+/// Returns whether this attempt owns a manual reservation. An imported
+/// credential-issuance marker remains the owner for native ingress; every
+/// other pending request kind is cross-kind exclusive with manual issuance.
+fn reserve_credential_preview_review_admission_value(
+    pending: &Option<PendingIdentityRequest>,
+    manual_review_lock: &mut bool,
+) -> Option<bool> {
+    if let Some(request) = pending.as_ref() {
+        return (request.kind == IdentityRequestKind::CredentialIssuance && !*manual_review_lock)
+            .then_some(false);
+    }
+    reserve_manual_credential_review_admission_lock_value(manual_review_lock, false).then_some(true)
+}
+
+fn reserve_credential_preview_review_admission(
+    pending_identity_request: &Signal<Option<PendingIdentityRequest>>,
+    manual_review_lock: &mut Signal<bool>,
+) -> Option<bool> {
+    let pending = pending_identity_request.read();
+    let mut manual_review_lock = manual_review_lock.write();
+    reserve_credential_preview_review_admission_value(&pending, &mut manual_review_lock)
+}
+
+/// A protocol-level preparation error confirms that no prepared manual
+/// session survived. Worker failure is not confirmation and must leave the
+/// reservation closed because the adapter may still hold a session.
+fn release_manual_credential_review_after_confirmed_prepare_failure_value(
+    manual_review_lock: &mut bool,
+    manual_review_reserved: bool,
+) -> bool {
+    if !manual_review_reserved {
+        return false;
+    }
+    *manual_review_lock = false;
+    true
+}
+
+fn release_manual_credential_review_after_confirmed_prepare_failure(
+    manual_review_lock: &mut Signal<bool>,
+    manual_review_reserved: bool,
+) {
+    let mut guard = manual_review_lock.write();
+    release_manual_credential_review_after_confirmed_prepare_failure_value(
+        &mut guard,
+        manual_review_reserved,
+    );
+}
+
+/// Clears a pending identity review and zeroizes any raw URI still present.
+/// This is used only for explicit pre-prepare dismissal or after a prepared
+/// issuance reaches successful acceptance/refusal.
+fn wipe_pending_identity_request_value(
+    pending: &mut Option<PendingIdentityRequest>,
+    kind: Option<IdentityRequestKind>,
+) -> bool {
+    let matches_kind = match kind {
+        Some(expected) => pending
+            .as_ref()
+            .is_some_and(|request| request.kind == expected),
+        None => pending.is_some(),
+    };
+    if matches_kind && let Some(mut request) = pending.take() {
+        request.request_uri.zeroize();
+        return true;
+    }
+    false
+}
+
+fn wipe_pending_identity_request(
+    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
+    kind: Option<IdentityRequestKind>,
+) {
+    let mut guard = pending_identity_request.write();
+    wipe_pending_identity_request_value(&mut guard, kind);
+}
+
+fn clear_credential_issuance_review_admission_value(
+    pending: &mut Option<PendingIdentityRequest>,
+    manual_review_lock: &mut bool,
+) {
+    wipe_pending_identity_request_value(pending, Some(IdentityRequestKind::CredentialIssuance));
+    *manual_review_lock = false;
+}
+
+fn clear_credential_issuance_review_admission(
+    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
+    manual_review_lock: &mut Signal<bool>,
+) {
+    let mut pending = pending_identity_request.write();
+    let mut manual_review_lock = manual_review_lock.write();
+    clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
+}
+
+fn credential_issuance_review_blocks_replacement(
+    prepared: Option<&CredentialIssuanceView>,
+) -> bool {
+    prepared.is_some_and(|review| review.state == "awaiting_consent")
+}
+
+fn credential_issuance_review_is_terminal(prepared: Option<&CredentialIssuanceView>) -> bool {
+    prepared
+        .is_some_and(|review| matches!(review.state.as_str(), "succeeded" | "refused" | "failed"))
+}
+
+fn retained_identity_review_route(
+    pending: &Option<PendingIdentityRequest>,
+    manual_credential_review_locked: bool,
+) -> Option<Route> {
+    if pending.as_ref().is_some_and(|request| {
+        request.kind == IdentityRequestKind::CredentialIssuance && !request.has_raw_uri()
+    }) {
+        return Some(Route::CredentialRequest);
+    }
+    manual_credential_review_locked.then_some(Route::Documents)
+}
+
+fn credential_review_escape_is_visible(
+    pending: &Option<PendingIdentityRequest>,
+    manual_credential_review_locked: bool,
+) -> bool {
+    manual_credential_review_locked
+        || pending.as_ref().is_some_and(|request| {
+            request.kind == IdentityRequestKind::CredentialIssuance && !request.has_raw_uri()
+        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3039,8 +3301,15 @@ const fn html_boolean_attribute(enabled: bool) -> Option<&'static str> {
     if enabled { Some("true") } else { None }
 }
 
-const fn identity_request_dismiss_is_visible(has_notice: bool, request_waiting: bool) -> bool {
-    has_notice && request_waiting
+const fn identity_request_dismiss_is_visible(has_notice: bool, has_raw_request: bool) -> bool {
+    has_notice && has_raw_request
+}
+
+const fn identity_request_admits_new_link(
+    request_waiting: bool,
+    manual_credential_review_locked: bool,
+) -> bool {
+    !request_waiting && !manual_credential_review_locked
 }
 
 #[cfg(feature = "ui-profile-dev")]
@@ -3078,6 +3347,7 @@ pub fn App() -> Element {
         state: secret_mode_state,
     };
     let mut pending_identity_request = use_signal(|| None::<PendingIdentityRequest>);
+    let manual_credential_review_lock = use_signal(|| false);
     let mut identity_ingress_notice = use_signal(|| None::<String>);
     let identity_scan_busy = use_signal(|| false);
     #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -3128,22 +3398,26 @@ pub fn App() -> Element {
         });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         let services_for_native_links = services.clone();
         use_future(move || {
             let services = services_for_native_links.clone();
             async move {
                 // Wry does not surface Android onNewIntent as a Tao Opened
-                // event. Poll only the bounded one-item native handoff; the
-                // task is paused automatically while this component is not
-                // being rendered.
+                // event, while an iOS Portal trigger can finish its worker
+                // after the corresponding Opened wake has been handled. Poll
+                // only the bounded one-item native handoff; no link payload or
+                // routing authority moves into this task. Sleeping first
+                // avoids a busy loop, and the task is paused automatically
+                // while this component is not being rendered.
                 loop {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     if matches!(*profile_session.read(), ProfileSessionState::Active(_)) {
                         route_pending_identity_link(
                             &services,
                             pending_identity_request,
+                            manual_credential_review_lock,
                             navigation,
                             profile_menu_open,
                             identity_ingress_notice,
@@ -3161,6 +3435,7 @@ pub fn App() -> Element {
             route_pending_identity_link(
                 &services_for_links,
                 pending_identity_request,
+                manual_credential_review_lock,
                 navigation,
                 profile_menu_open,
                 identity_ingress_notice,
@@ -3232,19 +3507,28 @@ pub fn App() -> Element {
 
     let active_route = navigation.read().current();
     let receive_sheet_open = active_route == Route::Receive;
-    let content_route = if receive_sheet_open {
-        navigation.read().root()
-    } else {
-        active_route
-    };
+    let content_route = retained_identity_review_route(
+        &pending_identity_request.read(),
+        manual_credential_review_lock(),
+    )
+    .unwrap_or_else(|| {
+        if receive_sheet_open {
+            navigation.read().root()
+        } else {
+            active_route
+        }
+    });
     let active_primary = navigation.read().active_primary();
     let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name, brand.wordmark());
-    let identity_request_waiting = pending_identity_request.read().is_some();
+    let pending_identity_request_has_raw_uri = pending_identity_request
+        .read()
+        .as_ref()
+        .is_some_and(PendingIdentityRequest::has_raw_uri);
     let identity_ingress_notice_snapshot = identity_ingress_notice.read().clone();
     let identity_request_dismiss_visible = identity_request_dismiss_is_visible(
         identity_ingress_notice_snapshot.is_some(),
-        identity_request_waiting,
+        pending_identity_request_has_raw_uri,
     );
     let home_scanner = services.qr_scanner();
     let home_router = services.route_identity_request();
@@ -3411,7 +3695,7 @@ pub fn App() -> Element {
                             class: "identity-ingress-dismiss",
                             r#type: "button",
                             onclick: move |_| {
-                                pending_identity_request.set(None);
+                                wipe_pending_identity_request(&mut pending_identity_request, None);
                                 navigation.write().dismiss_identity_request();
                                 identity_ingress_notice.set(Some(
                                     "Identity request dismissed without consent.".to_owned(),
@@ -3458,6 +3742,7 @@ pub fn App() -> Element {
                         DocumentsPage {
                             active_profile: active_profile.clone(),
                             pending_identity_request,
+                            manual_credential_review_lock,
                             on_manage_identities: move |_| navigation.write().push(Route::ManageIdentities),
                         }
                     },
@@ -3473,6 +3758,7 @@ pub fn App() -> Element {
                         CredentialsPage {
                             active_profile: active_profile.clone(),
                             pending_identity_request,
+                            manual_credential_review_lock,
                         }
                     },
                     Route::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
@@ -4871,6 +5157,7 @@ fn HomeActivityPreview(
 fn DocumentsPage(
     active_profile: WalletProfileView,
     pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    manual_credential_review_lock: Signal<bool>,
     on_manage_identities: EventHandler<MouseEvent>,
 ) -> Element {
     rsx! {
@@ -4891,6 +5178,7 @@ fn DocumentsPage(
         CredentialsPage {
             active_profile,
             pending_identity_request,
+            manual_credential_review_lock,
         }
     }
 }
@@ -9535,6 +9823,7 @@ fn DidsPage(
             let create_services = services.clone();
             let create_profile = profile_id.clone();
             let create_records = records.clone();
+            let issuance_did_ready = active_managed_issuance_methods(&records).is_some();
             let standalone_authentication_request = services.standalone_self_issued_request();
             rsx! {
                 section { class: "page-heading",
@@ -9545,9 +9834,10 @@ fn DidsPage(
                 article { class: "surface-card did-resolver-card",
                     p { class: "card-eyebrow", "Managed identity" }
                     h2 { "Create a standalone DID" }
-                    p { class: "form-hint", "Creates protected Ed25519 authentication and P-256 assertion keys. Only the public DID document is persisted." }
+                    p { class: "form-hint", "Creates protected Ed25519 authentication, P-256 assertion, and Jubjub holder-binding keys. Only the public DID document is persisted." }
                     button {
                         class: "primary-action", r#type: "button", disabled: resolving,
+                        aria_busy: resolving,
                         onclick: move |_| {
                             state.set(DidPageState::Ready { records: create_records.clone(), resolving: true, operation_error: None });
                             let service = create_services.create_did();
@@ -9580,7 +9870,15 @@ fn DidsPage(
                                 }
                             });
                         },
-                        if resolving { "Working…" } else { "Create standalone DID" }
+                        if resolving { "Creating DID…" } else { "Create standalone DID" }
+                    }
+                    if issuance_did_ready {
+                        p {
+                            class: "credential-reverification-success",
+                            role: "status",
+                            aria_live: "polite",
+                            "A protected managed DID is ready for credential issuance. You can create additional standalone DIDs; exact profile-and-DID duplicates replace the existing public record."
+                        }
                     }
                 }
                 article { class: "surface-card did-resolver-card",
@@ -9960,6 +10258,7 @@ fn load_credential_page(services: &WalletUiServices, profile_id: &str) -> Creden
                 credentials,
                 receiving: false,
                 operation_error: None,
+                reverification_applied: false,
             },
         )
 }
@@ -9973,6 +10272,75 @@ fn credential_issuance_message(error: CredentialIssuanceError) -> String {
         CredentialIssuanceError::Protocol(error) => ui::protocol_failure(error.code()).to_owned(),
         other => other.to_string(),
     }
+}
+
+fn credential_issuance_error_proves_no_retained_session(error: &CredentialIssuanceError) -> bool {
+    matches!(
+        error,
+        CredentialIssuanceError::NotFound | CredentialIssuanceError::Unavailable
+    )
+}
+
+fn credential_issuance_cleanup_allows_release(
+    result: &Result<CredentialIssuanceView, CredentialIssuanceError>,
+) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(error) => credential_issuance_error_proves_no_retained_session(error),
+    }
+}
+
+fn discard_open_credential_issuance_reviews(
+    list_service: &dyn ListCredentialIssuancesUseCase,
+    refuse_service: &dyn RefuseCredentialIssuanceUseCase,
+    profile_id: &str,
+) -> Result<(), String> {
+    let reviews = match list_service.execute(CredentialIssuanceProfileQuery {
+        profile_id: profile_id.to_owned(),
+    }) {
+        Ok(reviews) => reviews,
+        Err(error) if credential_issuance_error_proves_no_retained_session(&error) => Vec::new(),
+        Err(error) => return Err(credential_issuance_message(error)),
+    };
+    for review in reviews {
+        match review.state.as_str() {
+            "awaiting_consent" => {
+                match refuse_service.execute(RefuseCredentialIssuanceCommand {
+                    profile_id: profile_id.to_owned(),
+                    issuance_id: review.id,
+                }) {
+                    Ok(_) => {}
+                    Err(error) if credential_issuance_error_proves_no_retained_session(&error) => {}
+                    Err(error) => return Err(credential_issuance_message(error)),
+                }
+            }
+            "failed" | "refused" | "succeeded" => {}
+            _ => {
+                return Err(
+                    "Credential cleanup is still in progress. Retry after it finishes.".to_owned(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_failed_credential_acceptance_state<Prepared>(
+    cleanup: &Result<Result<CredentialIssuanceView, CredentialIssuanceError>, UiBlockingTaskError>,
+    pending: &mut Option<PendingIdentityRequest>,
+    manual_review_lock: &mut bool,
+    prepared: &mut Option<Prepared>,
+    consent: &mut bool,
+) -> bool {
+    let cleanup_confirmed = cleanup
+        .as_ref()
+        .is_ok_and(credential_issuance_cleanup_allows_release);
+    *consent = false;
+    if cleanup_confirmed {
+        clear_credential_issuance_review_admission_value(pending, manual_review_lock);
+        *prepared = None;
+    }
+    cleanup_confirmed
 }
 
 fn identity_request_routing_message(error: IdentityRequestRoutingError) -> String {
@@ -9995,11 +10363,15 @@ fn identity_request_routing_message(error: IdentityRequestRoutingError) -> Strin
 fn route_pending_identity_link(
     services: &WalletUiServices,
     mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    manual_credential_review_lock: Signal<bool>,
     mut navigation: Signal<RouteStack>,
     mut profile_menu_open: Signal<bool>,
     mut notice: Signal<Option<String>>,
 ) {
-    if pending_identity_request.read().is_some() {
+    if !identity_request_admits_new_link(
+        pending_identity_request.read().is_some(),
+        manual_credential_review_lock(),
+    ) {
         return;
     }
     let ingress = services.identity_link_ingress();
@@ -10488,10 +10860,39 @@ fn CredentialPresentationPanel(
 }
 
 enum CredentialChange {
-    Updated(CredentialView),
+    ReverificationStarted,
+    Reverified(CredentialView),
     Deleted(String),
     Failed(String),
 }
+
+fn credential_page_after_change(
+    mut credentials: Vec<CredentialView>,
+    change: CredentialChange,
+) -> CredentialPageState {
+    let (operation_error, reverification_applied) = match change {
+        CredentialChange::ReverificationStarted => (None, false),
+        CredentialChange::Reverified(updated) => {
+            credentials.retain(|entry| entry.id != updated.id);
+            credentials.push(updated);
+            credentials.sort_by(|left, right| left.id.cmp(&right.id));
+            (None, true)
+        }
+        CredentialChange::Deleted(identifier) => {
+            credentials.retain(|entry| entry.id != identifier);
+            (None, false)
+        }
+        CredentialChange::Failed(message) => (Some(message), false),
+    };
+    CredentialPageState::Ready {
+        credentials,
+        receiving: false,
+        operation_error,
+        reverification_applied,
+    }
+}
+
+const CREDENTIAL_REVERIFICATION_APPLIED_MARKER: &str = "Credential reverification applied";
 
 const PASSPORT_FIRST_NAME: &str = "/credentialSubject/firstName";
 const PASSPORT_LAST_NAME: &str = "/credentialSubject/lastName";
@@ -10833,6 +11234,7 @@ fn CredentialRecordCard(
                 button {
                     class: "secondary-action", r#type: "button", disabled: working(),
                     onclick: move |_| {
+                        on_change.call(CredentialChange::ReverificationStarted);
                         working.set(true);
                         let service = verify_services.reverify_credential();
                         let profile_id = verify_profile.clone();
@@ -10844,7 +11246,7 @@ fn CredentialRecordCard(
                             .await;
                             working.set(false);
                             on_change.call(match result {
-                                Ok(Ok(credential)) => CredentialChange::Updated(credential),
+                                Ok(Ok(credential)) => CredentialChange::Reverified(credential),
                                 Ok(Err(error)) => CredentialChange::Failed(credential_operation_message(error)),
                                 Err(error) => CredentialChange::Failed(error.to_string()),
                             });
@@ -10920,25 +11322,33 @@ fn compact_credential_policy_summary(credential: &CredentialView) -> Option<Stri
 fn CredentialsPage(
     active_profile: WalletProfileView,
     pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    manual_credential_review_lock: Signal<bool>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| CredentialPageState::Loading);
-    let mut offer_input = use_signal(String::new);
+    let mut offer_draft = use_signal(CredentialOfferDraft::default);
     let mut prepared_issuance = use_signal(|| None::<CredentialIssuanceView>);
     let mut issuance_consent = use_signal(|| false);
     let mut issuance_busy = use_signal(|| false);
     let mut issuance_notice = use_signal(|| None::<String>);
     use_effect(move || {
-        let pending = pending_identity_request.read().clone();
-        if let Some(request) = pending
-            && request.kind == IdentityRequestKind::CredentialIssuance
-        {
-            offer_input.set(request.request_uri);
+        let request_uri = pending_identity_request
+            .read()
+            .as_ref()
+            .and_then(|request| request.importable_uri(IdentityRequestKind::CredentialIssuance))
+            .map(str::to_owned);
+        if let Some(request_uri) = request_uri {
+            offer_draft.write().import(request_uri);
             prepared_issuance.set(None);
             issuance_consent.set(false);
             issuance_notice.set(Some(
                 "Imported credential offer loaded. Preview it before accepting.".to_owned(),
             ));
+        } else if offer_draft.read().has_imported_offer() {
+            offer_draft.write().clear_imported();
+            prepared_issuance.set(None);
+            issuance_consent.set(false);
+            issuance_notice.set(None);
         }
     });
     let profile_id = active_profile.id.clone();
@@ -10996,11 +11406,16 @@ fn CredentialsPage(
             credentials,
             receiving,
             operation_error,
+            reverification_applied,
         } => {
             let receive_service = services.receive_credential();
             let receive_profile = profile_id.clone();
             let retained = credentials.clone();
             let demo_offer = services.standalone_credential_offer();
+            let credential_review_escape_visible = credential_review_escape_is_visible(
+                &pending_identity_request.read(),
+                manual_credential_review_lock(),
+            );
             rsx! {
                 section { class: "page-heading",
                     p { class: "eyebrow", "Identity centre" }
@@ -11011,23 +11426,60 @@ fn CredentialsPage(
                     p { class: "card-eyebrow", "OpenID4VCI 1.0 Final" }
                     h2 { "Accept a credential offer" }
                     p { class: "form-hint", "Preview an embedded offer before consent. The pre-authorized code, access token, nonce, and signed proof remain inside the protocol adapter." }
-                    label { r#for: "credential-offer", "Credential offer URI" }
-                    textarea {
-                        id: "credential-offer",
-                        maxlength: 32768,
-                        rows: 4,
-                        autocomplete: "off",
-                        spellcheck: false,
-                        value: "{offer_input}",
-                        oninput: move |event| offer_input.set(event.value()),
+                    if let Some(review) = prepared_issuance.read().as_ref() {
+                        p {
+                            class: "form-hint",
+                            role: "status",
+                            aria_label: "Credential offer URI cleared after private admission",
+                            if review.state == "succeeded" {
+                                "The exchange is complete. The transient offer URI, grant, access token, nonce, and proof were cleared."
+                            } else {
+                                "The offer is admitted to private review. Its URI and one-time grant were cleared instead of being shown in this field."
+                            }
+                        }
+                    } else if offer_draft.read().has_imported_offer() {
+                        p {
+                            class: "form-hint",
+                            aria_label: "Imported credential offer retained privately",
+                            "A credential offer was delivered by the operating system. Its one-time grant is hidden while you review it."
+                        }
+                    } else {
+                        label { r#for: "credential-offer", "Credential offer URI" }
+                        textarea {
+                            id: "credential-offer",
+                            aria_label: "Credential offer URI",
+                            maxlength: 32768,
+                            rows: 4,
+                            autocomplete: "off",
+                            spellcheck: false,
+                            value: "{offer_draft.read().rendered_editable_value()}",
+                            oninput: move |event| offer_draft.set(CredentialOfferDraft::editable(event.value())),
+                        }
                     }
-                    if let Some(offer) = demo_offer {
+                    if credential_issuance_review_is_terminal(prepared_issuance.read().as_ref()) {
                         button {
                             class: "secondary-action",
                             r#type: "button",
                             disabled: issuance_busy(),
                             onclick: move |_| {
-                                offer_input.set(offer.clone());
+                                offer_draft.set(CredentialOfferDraft::default());
+                                prepared_issuance.set(None);
+                                issuance_consent.set(false);
+                                issuance_notice.set(Some("Ready for another credential offer.".to_owned()));
+                            },
+                            "Start another offer"
+                        }
+                    }
+                    if let Some(offer) = demo_offer {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            disabled: issuance_busy()
+                                || credential_issuance_review_blocks_replacement(
+                                    prepared_issuance.read().as_ref(),
+                                ),
+                            onclick: move |_| {
+                                offer_draft.set(CredentialOfferDraft::editable(offer.clone()));
                                 prepared_issuance.set(None);
                                 issuance_consent.set(false);
                                 issuance_notice.set(Some("Standalone credential offer loaded. Preview it before accepting.".to_owned()));
@@ -11038,16 +11490,53 @@ fn CredentialsPage(
                     button {
                         class: "primary-action",
                         r#type: "button",
-                        disabled: issuance_busy() || offer_input.read().trim().is_empty(),
+                        disabled: issuance_busy()
+                            || credential_issuance_review_blocks_replacement(
+                                prepared_issuance.read().as_ref(),
+                            )
+                            || offer_draft.read().offer_for_prepare().trim().is_empty(),
                         onclick: {
                             let service = services.prepare_credential_issuance();
                             let profile_id = profile_id.clone();
                             move |_| {
+                                // Preview admission is a synchronous single-flight
+                                // transaction. The busy write guard closes duplicate
+                                // clicks before any reservation or task can start.
+                                {
+                                    let mut busy = issuance_busy.write();
+                                    if !begin_credential_preview_single_flight_value(&mut busy) {
+                                        return;
+                                    }
+                                }
+                                if credential_issuance_review_blocks_replacement(
+                                    prepared_issuance.read().as_ref(),
+                                ) {
+                                    issuance_busy.set(false);
+                                    return;
+                                }
+                                let offer = offer_draft.read().offer_for_prepare().trim().to_owned();
+                                if offer.is_empty() {
+                                    issuance_busy.set(false);
+                                    return;
+                                }
+                                let Some(manual_review_reserved) =
+                                    reserve_credential_preview_review_admission(
+                                        &pending_identity_request,
+                                        &mut manual_credential_review_lock,
+                                    )
+                                else {
+                                    issuance_busy.set(false);
+                                    return;
+                                };
                                 let service = service.clone();
                                 let profile_id = profile_id.clone();
-                                let offer = offer_input.read().trim().to_owned();
-                                issuance_busy.set(true);
+                                prepared_issuance.set(None);
+                                issuance_consent.set(false);
                                 issuance_notice.set(None);
+                                scrub_pending_identity_request(
+                                    &mut pending_identity_request,
+                                    IdentityRequestKind::CredentialIssuance,
+                                );
                                 spawn(async move {
                                     match run_ui_future(async move {
                                         service.execute(PrepareCredentialIssuanceCommand { profile_id, offer }).await
@@ -11055,17 +11544,36 @@ fn CredentialsPage(
                                     .await
                                     {
                                         Ok(Ok(preview)) => {
+                                            offer_draft.write().clear_imported();
+                                            scrub_pending_identity_request(
+                                                &mut pending_identity_request,
+                                                IdentityRequestKind::CredentialIssuance,
+                                            );
                                             prepared_issuance.set(Some(preview));
                                             issuance_consent.set(false);
                                             issuance_notice.set(Some("Offer preview ready. Review the issuer and requested credential before consenting.".to_owned()));
                                         }
                                         Ok(Err(error)) => {
+                                            wipe_pending_identity_request(
+                                                &mut pending_identity_request,
+                                                Some(IdentityRequestKind::CredentialIssuance),
+                                            );
+                                            release_manual_credential_review_after_confirmed_prepare_failure(
+                                                &mut manual_credential_review_lock,
+                                                manual_review_reserved,
+                                            );
+                                            offer_draft.write().clear_imported();
                                             prepared_issuance.set(None);
+                                            issuance_consent.set(false);
                                             issuance_notice.set(Some(credential_issuance_message(error)));
                                         }
                                         Err(error) => {
+                                            offer_draft.write().clear_imported();
                                             prepared_issuance.set(None);
-                                            issuance_notice.set(Some(error.to_string()));
+                                            issuance_consent.set(false);
+                                            issuance_notice.set(Some(format!(
+                                                "{error}. Offer preparation could not be confirmed; leave this review to discard any retained protocol session before navigating away."
+                                            )));
                                         }
                                     }
                                     issuance_busy.set(false);
@@ -11074,13 +11582,84 @@ fn CredentialsPage(
                         },
                         if issuance_busy() { "Checking offer…" } else { "Preview credential offer" }
                     }
+                    if issuance_busy() {
+                        p {
+                            class: "form-hint",
+                            role: "status",
+                            aria_live: "polite",
+                            "Credential operation in progress. Wait for a completed, refused, or error message before continuing."
+                        }
+                    }
+                    if let Some(message) = issuance_notice.read().as_deref() {
+                        p {
+                            class: if prepared_issuance.read().as_ref().is_some_and(|review| review.state == "succeeded") { "form-hint credential-reverification-success" } else { "form-hint" },
+                            role: "status",
+                            aria_live: "polite",
+                            "{message}"
+                        }
+                    }
+                    if credential_review_escape_visible {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            disabled: issuance_busy(),
+                            onclick: {
+                                let list_service = services.list_credential_issuances();
+                                let refuse_service = services.refuse_credential_issuance();
+                                let profile_id = profile_id.clone();
+                                move |_| {
+                                    let list_service = list_service.clone();
+                                    let refuse_service = refuse_service.clone();
+                                    let profile_id = profile_id.clone();
+                                    issuance_busy.set(true);
+                                    issuance_notice.set(None);
+                                    spawn(async move {
+                                        let cleanup = run_ui_blocking(move || {
+                                            discard_open_credential_issuance_reviews(
+                                                list_service.as_ref(),
+                                                refuse_service.as_ref(),
+                                                &profile_id,
+                                            )
+                                        })
+                                        .await;
+                                        match cleanup {
+                                            Ok(Ok(())) => {
+                                                offer_draft.write().clear_imported();
+                                                prepared_issuance.set(None);
+                                                issuance_consent.set(false);
+                                                clear_credential_issuance_review_admission(
+                                                    &mut pending_identity_request,
+                                                    &mut manual_credential_review_lock,
+                                                );
+                                                issuance_notice.set(Some(
+                                                    "Credential review left; transient protocol state was discarded without consent."
+                                                        .to_owned(),
+                                                ));
+                                            }
+                                            Ok(Err(message)) => issuance_notice.set(Some(message)),
+                                            Err(error) => issuance_notice.set(Some(error.to_string())),
+                                        }
+                                        issuance_busy.set(false);
+                                    });
+                                }
+                            },
+                            "Leave credential review"
+                        }
+                    }
                     if let Some(preview) = prepared_issuance.read().clone() {
                         div { class: "credential-offer-preview",
                             div { class: "consent-preview__heading",
                                 h3 { "Credential offer preview" }
                                 span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
                             }
-                            if preview.state == "awaiting_consent" {
+                            if preview.state == "succeeded" {
+                                p {
+                                    class: "credential-reverification-success",
+                                    role: "status",
+                                    aria_live: "polite",
+                                    "Credential stored. It is visible in the protected inventory below and ready for fresh reverification."
+                                }
+                            } else if preview.state == "awaiting_consent" {
                                 p { class: "privacy-consent-exemption", "Details shown for authorization." }
                                 ol { class: "consent-questions", aria_label: "Credential issuance consent questions",
                                     li { class: "consent-question",
@@ -11168,6 +11747,9 @@ fn CredentialsPage(
                                                         return;
                                                     };
                                                     let service = services.accept_credential_issuance();
+                                                    let cleanup_service = services.refuse_credential_issuance();
+                                                    let cleanup_profile = execute_profile.clone();
+                                                    let cleanup_issuance_id = execute_issuance_id.clone();
                                                     match run_ui_future(async move {
                                                         service.execute(AcceptCredentialIssuanceCommand {
                                                             profile_id: execute_profile,
@@ -11182,18 +11764,55 @@ fn CredentialsPage(
                                                     .await
                                                     {
                                                         Ok(Ok(result)) => {
+                                                            clear_credential_issuance_review_admission(
+                                                                &mut pending_identity_request,
+                                                                &mut manual_credential_review_lock,
+                                                            );
                                                             prepared_issuance.set(Some(result));
                                                             issuance_notice.set(Some("Credential issued, verified, and stored in the protected inventory.".to_owned()));
-                                                            state.set(
-                                                                run_ui_blocking(move || {
-                                                                    load_credential_page(&refresh_services, &refresh_profile)
-                                                                })
-                                                                .await
-                                                                .unwrap_or_else(|error| CredentialPageState::Failed(error.to_string())),
-                                                            );
+                                                            let refreshed = run_ui_blocking(move || {
+                                                                load_credential_page(&refresh_services, &refresh_profile)
+                                                            })
+                                                            .await;
+                                                            if let Ok(ready @ CredentialPageState::Ready { .. }) = refreshed {
+                                                                state.set(ready);
+                                                            } else {
+                                                                issuance_notice.set(Some("Credential issued, verified, and stored. Inventory refresh is unavailable; reopen Documents to reload the protected inventory.".to_owned()));
+                                                            }
                                                         }
-                                                        Ok(Err(error)) => issuance_notice.set(Some(credential_issuance_message(error))),
-                                                        Err(error) => issuance_notice.set(Some(error.to_string())),
+                                                        failure => {
+                                                            let message = match failure {
+                                                                Ok(Err(error)) => credential_issuance_message(error),
+                                                                Err(error) => error.to_string(),
+                                                                Ok(Ok(_)) => unreachable!(),
+                                                            };
+                                                            let cleanup = run_ui_blocking(move || {
+                                                                cleanup_service.execute(RefuseCredentialIssuanceCommand {
+                                                                    profile_id: cleanup_profile,
+                                                                    issuance_id: cleanup_issuance_id,
+                                                                })
+                                                            }).await;
+                                                            let cleanup_confirmed = {
+                                                                let mut pending = pending_identity_request.write();
+                                                                let mut manual_review_lock = manual_credential_review_lock.write();
+                                                                let mut prepared = prepared_issuance.write();
+                                                                let mut consent = issuance_consent.write();
+                                                                apply_failed_credential_acceptance_state(
+                                                                    &cleanup,
+                                                                    &mut pending,
+                                                                    &mut manual_review_lock,
+                                                                    &mut prepared,
+                                                                    &mut consent,
+                                                                )
+                                                            };
+                                                            if cleanup_confirmed {
+                                                                issuance_notice.set(Some(message));
+                                                            } else {
+                                                                issuance_notice.set(Some(format!(
+                                                                    "{message}. Session cleanup is unavailable; use Leave credential review to retry secret disposal before navigating away."
+                                                                )));
+                                                            }
+                                                        }
                                                     }
                                                     issuance_busy.set(false);
                                                 });
@@ -11225,6 +11844,10 @@ fn CredentialsPage(
                                                     .await;
                                                     match result {
                                                         Ok(Ok(result)) => {
+                                                            clear_credential_issuance_review_admission(
+                                                                &mut pending_identity_request,
+                                                                &mut manual_credential_review_lock,
+                                                            );
                                                             prepared_issuance.set(Some(result));
                                                             issuance_consent.set(false);
                                                             issuance_notice.set(Some("Credential offer refused; ephemeral protocol secrets were discarded.".to_owned()));
@@ -11242,13 +11865,18 @@ fn CredentialsPage(
                             }
                         }
                     }
-                    if let Some(message) = issuance_notice.read().as_deref() {
-                        p { class: "form-hint", role: "status", "{message}" }
-                    }
                 }
                 CredentialPresentationPanel {
                     profile_id: profile_id.clone(),
                     pending_identity_request,
+                }
+                if reverification_applied {
+                    p {
+                        class: "form-hint credential-reverification-success",
+                        role: "status",
+                        aria_label: CREDENTIAL_REVERIFICATION_APPLIED_MARKER,
+                        "{CREDENTIAL_REVERIFICATION_APPLIED_MARKER}"
+                    }
                 }
                 article { class: "surface-card credential-receive-card",
                     p { class: "card-eyebrow", "Standalone credential inbox" }
@@ -11257,7 +11885,7 @@ fn CredentialsPage(
                     button {
                         class: "primary-action", r#type: "button", disabled: receiving,
                         onclick: move |_| {
-                            state.set(CredentialPageState::Ready { credentials: retained.clone(), receiving: true, operation_error: None });
+                            state.set(CredentialPageState::Ready { credentials: retained.clone(), receiving: true, operation_error: None, reverification_applied: false });
                             let service = receive_service.clone();
                             let profile_id = receive_profile.clone();
                             let mut next = retained.clone();
@@ -11271,17 +11899,23 @@ fn CredentialsPage(
                                         next.retain(|existing| existing.id != credential.id);
                                         next.push(credential);
                                         next.sort_by(|left, right| left.id.cmp(&right.id));
-                                        state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
+                                        state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None, reverification_applied: false });
                                     }
-                                    Ok(Err(error)) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)) }),
-                                    Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(error.to_string()) }),
+                                    Ok(Err(error)) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)), reverification_applied: false }),
+                                    Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(error.to_string()), reverification_applied: false }),
                                 }
                             });
                         },
                         if receiving { "Receiving and verifying…" } else { "Receive standalone credential" }
                     }
                     if let Some(error) = operation_error.as_deref() {
-                        p { class: "field-error", role: "alert", "{error}" }
+                        p {
+                            class: "field-error credential-operation-error",
+                            role: "alert",
+                            strong { "Credential operation error" }
+                            br {}
+                            "{error}"
+                        }
                     }
                 }
                 if credentials.is_empty() {
@@ -11303,20 +11937,7 @@ fn CredentialsPage(
                                         profile_id: profile_id.clone(),
                                         credential,
                                         on_change: move |change| {
-                                            let mut next = retained.clone();
-                                            match change {
-                                                CredentialChange::Updated(updated) => {
-                                                    next.retain(|entry| entry.id != updated.id);
-                                                    next.push(updated);
-                                                    next.sort_by(|left, right| left.id.cmp(&right.id));
-                                                    state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
-                                                }
-                                                CredentialChange::Deleted(identifier) => {
-                                                    next.retain(|entry| entry.id != identifier);
-                                                    state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
-                                                }
-                                                CredentialChange::Failed(message) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(message) }),
-                                            }
+                                            state.set(credential_page_after_change(retained.clone(), change));
                                         }
                                     }
                                 }
@@ -11393,10 +12014,37 @@ enum LocalDiagnosticsPageState {
     Failed,
 }
 
+/// The Diagnostics page has only the composed booleans to work with:
+/// `ready` is true for both the in-process standalone issuer and the
+/// `standalone-portal` HTTP backend, and only the portal build omits the
+/// in-process demo offer (see `apps/oxid/src/main.rs`). Route on that
+/// distinction so a Portal-composed build is never mislabeled as the
+/// generic in-process standalone issuer.
+const fn credential_protocol_labels(
+    ready: bool,
+    standalone_demo_offer_available: bool,
+) -> (&'static str, &'static str) {
+    if !ready {
+        return ("Not connected", "Not connected");
+    }
+    if standalone_demo_offer_available {
+        ("Standalone Midnight DID", "OpenID4VCI 1.0 · standalone")
+    } else {
+        (
+            "Standalone Midnight DID · Portal HTTP",
+            "OpenID4VCI 1.0 · standalone-portal",
+        )
+    }
+}
+
 #[component]
 fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
-    let credential_protocol_ready = services.standalone_credential_offer().is_some();
+    let credential_protocol_ready = services.credential_issuance_ready();
+    let (did_adapter_state, credential_protocol_state) = credential_protocol_labels(
+        credential_protocol_ready,
+        services.standalone_credential_offer().is_some(),
+    );
     let mut account_state = use_signal(|| AccountPageState::Loading);
     let mut diagnostic_state = use_signal(|| LocalDiagnosticsPageState::Loading);
     let profile_id = active_profile.id.clone();
@@ -11512,10 +12160,10 @@ fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
             CapabilityStatus { name: "Midnight account", state: midnight_state, ready: midnight_ready }
             CapabilityStatus { name: "Transaction completion", state: completion_state, ready: midnight_ready }
             CapabilityStatus { name: "Local proof provider", state: "Device-gated".to_owned(), ready: false }
-            CapabilityStatus { name: "DID adapter", state: if credential_protocol_ready { "Standalone Midnight DID".to_owned() } else { "Not connected".to_owned() }, ready: credential_protocol_ready }
+            CapabilityStatus { name: "DID adapter", state: did_adapter_state.to_owned(), ready: credential_protocol_ready }
             CapabilityStatus {
                 name: "Credential protocols",
-                state: if credential_protocol_ready { "OpenID4VCI 1.0 · standalone".to_owned() } else { "Not connected".to_owned() },
+                state: credential_protocol_state.to_owned(),
                 ready: credential_protocol_ready,
             }
         }
@@ -12484,6 +13132,544 @@ mod tests {
     }
 
     #[test]
+    fn issuance_failure_releases_the_route_after_cleanup_or_proved_no_session() {
+        assert!(!credential_issuance_cleanup_allows_release(&Err(
+            CredentialIssuanceError::InvalidState
+        )));
+        for error in [
+            CredentialIssuanceError::NotFound,
+            CredentialIssuanceError::Unavailable,
+        ] {
+            assert!(credential_issuance_cleanup_allows_release(&Err(error)));
+        }
+    }
+
+    #[test]
+    fn uncertain_cleanup_retains_imported_or_manual_review_admission_lock() {
+        fn assert_retained(
+            cleanup: Result<
+                Result<CredentialIssuanceView, CredentialIssuanceError>,
+                UiBlockingTaskError,
+            >,
+            mut pending: Option<PendingIdentityRequest>,
+            mut manual_review_lock: bool,
+            expected_route: Option<Route>,
+        ) {
+            let mut prepared = Some("prepared credential review".to_owned());
+            let mut consent = true;
+
+            assert!(!apply_failed_credential_acceptance_state(
+                &cleanup,
+                &mut pending,
+                &mut manual_review_lock,
+                &mut prepared,
+                &mut consent,
+            ));
+
+            assert!(!consent, "failed acceptance must clear prior consent");
+            assert_eq!(prepared.as_deref(), Some("prepared credential review"));
+            assert_eq!(
+                retained_identity_review_route(&pending, manual_review_lock),
+                expected_route
+            );
+            assert!(!identity_request_admits_new_link(
+                pending.is_some(),
+                manual_review_lock,
+            ));
+        }
+
+        let imported_marker = || {
+            Some(PendingIdentityRequest {
+                kind: IdentityRequestKind::CredentialIssuance,
+                request_uri: String::new(),
+            })
+        };
+        for cleanup in [
+            Ok(Err(CredentialIssuanceError::InvalidState)),
+            Err(UiBlockingTaskError::WorkerFailed),
+        ] {
+            assert_retained(
+                cleanup,
+                imported_marker(),
+                false,
+                Some(Route::CredentialRequest),
+            );
+        }
+        for cleanup in [
+            Ok(Err(CredentialIssuanceError::InvalidState)),
+            Err(UiBlockingTaskError::WorkerFailed),
+        ] {
+            assert_retained(cleanup, None, true, Some(Route::Documents));
+        }
+    }
+
+    #[test]
+    fn unavailable_cleanup_releases_imported_and_manual_review_without_restart() {
+        for cleanup_error in [
+            CredentialIssuanceError::NotFound,
+            CredentialIssuanceError::Unavailable,
+        ] {
+            for imported in [true, false] {
+                let mut pending = imported.then(|| PendingIdentityRequest {
+                    kind: IdentityRequestKind::CredentialIssuance,
+                    request_uri: String::new(),
+                });
+                let mut manual_review_lock = !imported;
+                let mut prepared = Some("prepared credential review".to_owned());
+                let mut consent = true;
+                let cleanup = Ok(Err(cleanup_error.clone()));
+
+                assert!(apply_failed_credential_acceptance_state(
+                    &cleanup,
+                    &mut pending,
+                    &mut manual_review_lock,
+                    &mut prepared,
+                    &mut consent,
+                ));
+                assert!(pending.is_none());
+                assert!(!manual_review_lock);
+                assert!(prepared.is_none());
+                assert!(!consent);
+                assert!(identity_request_admits_new_link(false, false));
+                assert_eq!(
+                    retained_identity_review_route(&pending, manual_review_lock),
+                    None
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn leave_review_treats_unavailable_list_and_missing_refusal_as_no_session() {
+        struct UnavailableList;
+        impl ListCredentialIssuancesUseCase for UnavailableList {
+            fn execute(
+                &self,
+                _: CredentialIssuanceProfileQuery,
+            ) -> Result<Vec<CredentialIssuanceView>, CredentialIssuanceError> {
+                Err(CredentialIssuanceError::Unavailable)
+            }
+        }
+
+        struct AwaitingList;
+        impl ListCredentialIssuancesUseCase for AwaitingList {
+            fn execute(
+                &self,
+                _: CredentialIssuanceProfileQuery,
+            ) -> Result<Vec<CredentialIssuanceView>, CredentialIssuanceError> {
+                Ok(vec![CredentialIssuanceView {
+                    id: "issuance-missing".to_owned(),
+                    issuer: "https://issuer.example".to_owned(),
+                    configuration_ids: vec!["DigitalPassport".to_owned()],
+                    display_names: vec!["Digital Passport".to_owned()],
+                    state: "awaiting_consent".to_owned(),
+                    credential_id: None,
+                    failure_code: None,
+                }])
+            }
+        }
+
+        struct MissingRefusal;
+        impl RefuseCredentialIssuanceUseCase for MissingRefusal {
+            fn execute(
+                &self,
+                _: RefuseCredentialIssuanceCommand,
+            ) -> Result<CredentialIssuanceView, CredentialIssuanceError> {
+                Err(CredentialIssuanceError::NotFound)
+            }
+        }
+
+        assert_eq!(
+            discard_open_credential_issuance_reviews(
+                &UnavailableList,
+                &MissingRefusal,
+                "profile-1",
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            discard_open_credential_issuance_reviews(&AwaitingList, &MissingRefusal, "profile-1"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn manual_preparation_reserves_before_await_and_pins_existing_documents_content() {
+        let pending = None;
+        let mut manual_review_lock = false;
+        let active_route = Route::Documents;
+        let content_before_reservation =
+            retained_identity_review_route(&pending, manual_review_lock).unwrap_or(active_route);
+
+        let reserved =
+            reserve_manual_credential_review_admission_lock_value(&mut manual_review_lock, false);
+
+        assert!(reserved, "manual preparation must reserve synchronously");
+        assert!(pending.is_none(), "manual review must not create a marker");
+        assert_eq!(content_before_reservation, Route::Documents);
+        assert_eq!(
+            retained_identity_review_route(&pending, manual_review_lock),
+            Some(Route::Documents),
+        );
+        assert_eq!(
+            retained_identity_review_route(&pending, manual_review_lock).unwrap_or(active_route),
+            content_before_reservation,
+            "lock acquisition must not remount the Credentials page",
+        );
+        assert!(!identity_request_admits_new_link(
+            pending.is_some(),
+            manual_review_lock,
+        ));
+    }
+
+    #[test]
+    fn credential_preview_duplicate_click_is_single_flight_and_cannot_release_the_winner() {
+        let mut issuance_busy = false;
+        let pending = None;
+        let mut manual_review_lock = false;
+
+        assert!(begin_credential_preview_single_flight_value(
+            &mut issuance_busy
+        ));
+        let winning_reservation =
+            reserve_credential_preview_review_admission_value(&pending, &mut manual_review_lock);
+        assert_eq!(winning_reservation, Some(true));
+        assert!(manual_review_lock);
+
+        assert!(!begin_credential_preview_single_flight_value(
+            &mut issuance_busy
+        ));
+        assert!(
+            !reserve_manual_credential_review_admission_lock_value(&mut manual_review_lock, false,),
+            "an already-held manual reservation must reject a duplicate",
+        );
+        assert!(
+            !release_manual_credential_review_after_confirmed_prepare_failure_value(
+                &mut manual_review_lock,
+                false,
+            ),
+            "an unadmitted duplicate completion must not release the winning lock",
+        );
+        assert!(manual_review_lock);
+        assert!(credential_review_escape_is_visible(
+            &pending,
+            manual_review_lock,
+        ));
+    }
+
+    #[test]
+    fn credential_preview_admission_rejects_other_request_kinds_but_preserves_imported_issuance() {
+        for kind in [
+            IdentityRequestKind::SelfIssuedAuthentication,
+            IdentityRequestKind::CredentialPresentation,
+        ] {
+            let mut issuance_busy = false;
+            let pending = Some(PendingIdentityRequest {
+                kind,
+                request_uri: "openid://pending-review".to_owned(),
+            });
+            let mut manual_review_lock = false;
+
+            assert!(begin_credential_preview_single_flight_value(
+                &mut issuance_busy
+            ));
+            assert_eq!(
+                reserve_credential_preview_review_admission_value(
+                    &pending,
+                    &mut manual_review_lock,
+                ),
+                None,
+            );
+            issuance_busy = false;
+            assert!(!issuance_busy);
+            assert!(!manual_review_lock);
+            assert_eq!(
+                pending.as_ref().map(|request| request.request_uri.as_str()),
+                Some("openid://pending-review"),
+            );
+        }
+
+        let imported = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialIssuance,
+            request_uri: "openid-credential-offer://private".to_owned(),
+        });
+        let mut manual_review_lock = false;
+        assert_eq!(
+            reserve_credential_preview_review_admission_value(&imported, &mut manual_review_lock,),
+            Some(false),
+            "the imported issuance marker remains the review owner",
+        );
+        assert!(!manual_review_lock);
+    }
+
+    #[test]
+    fn only_awaiting_credential_review_blocks_offer_replacement() {
+        let review = |state: &str| CredentialIssuanceView {
+            id: format!("issuance-{state}"),
+            issuer: "https://issuer.example".to_owned(),
+            configuration_ids: vec!["DigitalPassport".to_owned()],
+            display_names: vec!["Digital Passport".to_owned()],
+            state: state.to_owned(),
+            credential_id: None,
+            failure_code: None,
+        };
+        let awaiting = review("awaiting_consent");
+        let issuing = review("issuing");
+        let succeeded = review("succeeded");
+        let refused = review("refused");
+        let failed = review("failed");
+
+        assert!(credential_issuance_review_blocks_replacement(Some(
+            &awaiting
+        )));
+        assert!(!credential_issuance_review_blocks_replacement(Some(
+            &succeeded
+        )));
+        assert!(!credential_issuance_review_blocks_replacement(Some(
+            &refused
+        )));
+        assert!(!credential_issuance_review_blocks_replacement(None));
+        assert!(!credential_issuance_review_is_terminal(Some(&awaiting)));
+        assert!(!credential_issuance_review_is_terminal(Some(&issuing)));
+        assert!(credential_issuance_review_is_terminal(Some(&succeeded)));
+        assert!(credential_issuance_review_is_terminal(Some(&refused)));
+        assert!(credential_issuance_review_is_terminal(Some(&failed)));
+        assert!(!credential_issuance_review_is_terminal(None));
+    }
+
+    #[test]
+    fn confirmed_manual_prepare_failure_releases_reservation_but_uncertainty_retains_it() {
+        let mut manual_review_lock = false;
+        let reserved =
+            reserve_manual_credential_review_admission_lock_value(&mut manual_review_lock, false);
+        assert!(reserved);
+        assert!(manual_review_lock);
+
+        // A worker failure is uncertain: do not invoke the confirmed-failure
+        // release and keep ingress closed.
+        assert_eq!(
+            retained_identity_review_route(&None, manual_review_lock),
+            Some(Route::Documents)
+        );
+        assert!(!identity_request_admits_new_link(false, manual_review_lock));
+
+        assert!(
+            release_manual_credential_review_after_confirmed_prepare_failure_value(
+                &mut manual_review_lock,
+                reserved,
+            )
+        );
+        assert!(!manual_review_lock);
+        assert_eq!(
+            retained_identity_review_route(&None, manual_review_lock),
+            None
+        );
+        assert!(identity_request_admits_new_link(false, manual_review_lock));
+
+        let mut imported_review_lock = false;
+        assert!(!reserve_manual_credential_review_admission_lock_value(
+            &mut imported_review_lock,
+            true,
+        ));
+        assert!(
+            !release_manual_credential_review_after_confirmed_prepare_failure_value(
+                &mut imported_review_lock,
+                false,
+            ),
+            "imported marker behavior must remain separate",
+        );
+    }
+
+    #[test]
+    fn confirmed_acceptance_cleanup_releases_imported_and_manual_review_state() {
+        let cleanup = Ok(Ok(CredentialIssuanceView {
+            id: "issuance-cleaned".to_owned(),
+            issuer: "https://issuer.example".to_owned(),
+            configuration_ids: vec!["DigitalPassport".to_owned()],
+            display_names: vec!["Digital Passport".to_owned()],
+            state: "refused".to_owned(),
+            credential_id: None,
+            failure_code: None,
+        }));
+
+        for imported in [true, false] {
+            let mut pending = imported.then(|| PendingIdentityRequest {
+                kind: IdentityRequestKind::CredentialIssuance,
+                request_uri: String::new(),
+            });
+            let mut manual_review_lock = !imported;
+            let mut prepared = Some("prepared credential review".to_owned());
+            let mut consent = true;
+
+            assert!(apply_failed_credential_acceptance_state(
+                &cleanup,
+                &mut pending,
+                &mut manual_review_lock,
+                &mut prepared,
+                &mut consent,
+            ));
+            assert!(pending.is_none());
+            assert!(!manual_review_lock);
+            assert!(prepared.is_none());
+            assert!(!consent);
+            assert!(identity_request_admits_new_link(
+                pending.is_some(),
+                manual_review_lock,
+            ));
+            assert_eq!(
+                retained_identity_review_route(&pending, manual_review_lock),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_clear_releases_manual_credential_review_admission_lock() {
+        let mut pending = None;
+        let mut manual_review_lock = true;
+
+        clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
+
+        assert!(pending.is_none());
+        assert!(!manual_review_lock);
+        assert!(identity_request_admits_new_link(
+            pending.is_some(),
+            manual_review_lock,
+        ));
+    }
+
+    #[test]
+    fn imported_credential_offer_is_never_rendered_and_is_cleared_after_prepare_or_dismissal() {
+        let raw_offer = "openid-credential-offer://?credential_offer=do_not_render";
+        let mut draft = CredentialOfferDraft::default();
+
+        draft.import(raw_offer.to_owned());
+
+        assert!(draft.has_imported_offer());
+        assert_eq!(draft.rendered_editable_value(), "");
+        assert_eq!(draft.offer_for_prepare(), raw_offer);
+
+        draft.clear_imported();
+
+        assert!(!draft.has_imported_offer());
+        assert!(draft.offer_for_prepare().is_empty());
+
+        draft.import(raw_offer.to_owned());
+        draft.clear_imported();
+
+        assert!(!draft.has_imported_offer());
+        assert!(draft.offer_for_prepare().is_empty());
+    }
+
+    #[test]
+    fn prepared_issuance_scrubs_raw_uri_but_guards_the_active_review_until_terminal_clear() {
+        let mut other_kind_pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::SelfIssuedAuthentication,
+            request_uri: "openid://login".to_owned(),
+        });
+        assert!(!scrub_pending_identity_request_value(
+            &mut other_kind_pending,
+            IdentityRequestKind::CredentialIssuance,
+        ));
+        assert_eq!(
+            other_kind_pending.as_ref().and_then(
+                |request| request.importable_uri(IdentityRequestKind::SelfIssuedAuthentication)
+            ),
+            Some("openid://login")
+        );
+
+        let mut matching_pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialIssuance,
+            request_uri: "openid-credential-offer://?credential_offer=grant".to_owned(),
+        });
+        assert!(scrub_pending_identity_request_value(
+            &mut matching_pending,
+            IdentityRequestKind::CredentialIssuance,
+        ));
+        let mut manual_review_lock = false;
+        assert!(!reserve_manual_credential_review_admission_lock_value(
+            &mut manual_review_lock,
+            true,
+        ));
+        assert!(!manual_review_lock);
+        let scrubbed_guard = matching_pending.as_ref().expect("review guard retained");
+        assert!(!scrubbed_guard.has_raw_uri());
+        assert_eq!(
+            scrubbed_guard.importable_uri(IdentityRequestKind::CredentialIssuance),
+            None
+        );
+        assert!(!identity_request_dismiss_is_visible(
+            true,
+            scrubbed_guard.has_raw_uri()
+        ));
+        assert!(credential_review_escape_is_visible(
+            &matching_pending,
+            manual_review_lock,
+        ));
+        assert_eq!(
+            retained_identity_review_route(&matching_pending, manual_review_lock),
+            Some(Route::CredentialRequest)
+        );
+        assert!(!identity_request_admits_new_link(
+            matching_pending.is_some(),
+            manual_review_lock,
+        ));
+
+        assert!(wipe_pending_identity_request_value(
+            &mut matching_pending,
+            Some(IdentityRequestKind::CredentialIssuance),
+        ));
+        assert!(matching_pending.is_none());
+        assert!(!credential_review_escape_is_visible(
+            &matching_pending,
+            manual_review_lock,
+        ));
+        assert_eq!(
+            retained_identity_review_route(&matching_pending, manual_review_lock),
+            None
+        );
+        assert!(identity_request_admits_new_link(
+            matching_pending.is_some(),
+            manual_review_lock,
+        ));
+    }
+
+    #[test]
+    fn wipe_pending_identity_request_on_dismissal_discards_any_kind() {
+        let mut pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialPresentation,
+            request_uri: "openid4vp://request".to_owned(),
+        });
+        assert!(wipe_pending_identity_request_value(&mut pending, None));
+        assert!(pending.is_none());
+
+        let mut already_empty = None::<PendingIdentityRequest>;
+        assert!(!wipe_pending_identity_request_value(
+            &mut already_empty,
+            None
+        ));
+    }
+
+    #[test]
+    fn credential_protocol_labels_never_mislabel_the_portal_http_backend_as_generic_standalone() {
+        assert_eq!(
+            credential_protocol_labels(false, false),
+            ("Not connected", "Not connected")
+        );
+        assert_eq!(
+            credential_protocol_labels(true, true),
+            ("Standalone Midnight DID", "OpenID4VCI 1.0 · standalone")
+        );
+        assert_eq!(
+            credential_protocol_labels(true, false),
+            (
+                "Standalone Midnight DID · Portal HTTP",
+                "OpenID4VCI 1.0 · standalone-portal",
+            )
+        );
+    }
+
+    #[test]
     fn denied_qr_camera_access_has_a_distinct_payload_free_message() {
         assert_eq!(
             qr_scan_message(QrScanError::Denied),
@@ -12878,6 +14064,64 @@ mod tests {
         let mut cbor = credential;
         cbor.format = "midnight_cbor_v1".to_owned();
         assert_eq!(compact_credential_policy_summary(&cbor), None);
+    }
+
+    #[test]
+    fn fresh_reverification_marker_requires_an_applied_updated_change() {
+        let credential = CredentialView {
+            id: "credential_test".to_owned(),
+            display_name: "Digital Passport".to_owned(),
+            issuer_did: "did:midnight:undeployed:issuer".to_owned(),
+            subject_did: None,
+            format: "midnight_compact_vc".to_owned(),
+            issued_at_ms: Some(42),
+            verification_outcome: "valid".to_owned(),
+            verification_stages: Vec::new(),
+        };
+
+        let started = credential_page_after_change(
+            vec![credential.clone()],
+            CredentialChange::ReverificationStarted,
+        );
+        assert!(matches!(
+            started,
+            CredentialPageState::Ready {
+                reverification_applied: false,
+                operation_error: None,
+                ..
+            }
+        ));
+
+        let applied = credential_page_after_change(
+            vec![credential.clone()],
+            CredentialChange::Reverified(credential.clone()),
+        );
+        assert!(matches!(
+            applied,
+            CredentialPageState::Ready {
+                reverification_applied: true,
+                operation_error: None,
+                ref credentials,
+                ..
+            } if credentials == std::slice::from_ref(&credential)
+        ));
+
+        let failed = credential_page_after_change(
+            vec![credential],
+            CredentialChange::Failed("payload-free failure".to_owned()),
+        );
+        assert!(matches!(
+            failed,
+            CredentialPageState::Ready {
+                reverification_applied: false,
+                operation_error: Some(_),
+                ..
+            }
+        ));
+        assert_eq!(
+            CREDENTIAL_REVERIFICATION_APPLIED_MARKER,
+            "Credential reverification applied"
+        );
     }
 
     fn presentation_candidate(

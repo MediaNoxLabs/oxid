@@ -8,14 +8,42 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+# Test-only, non-secret OS trigger for the standalone-portal mobile suite.
+# Native link tools deliver a fixed literal string, never the real Portal offer,
+# so the pre-authorized grant
+# never appears in host process argv or in any retained test log/evidence.
+# A fresh app-private capability authenticates the client to one bounded
+# loopback worker; it does not authenticate the plaintext listener to the
+# client. Strict routing, explicit consent, and full credential/issuer/trust
+# verification bound that development-only risk. The file is unlinked before
+# use, the server permits one response, and the fetched offer enters the same
+# one-item router as normal ingress.
+# Selected only by `oxid-composition`'s
+# authority-guarded `mobile-portal` feature, forwarded from the iOS/Android
+# `oxid-app/standalone-portal` profile.
+loopback-test-offer-trigger = ["dep:zeroize"]
+# Bounded HTTPS handoff for the compile-time authenticated tailnet profile.
+tailnet-test-offer-trigger = [
+  "loopback-test-offer-trigger",
+  "dep:reqwest",
+  "dep:rustls",
+  "dep:webpki-root-certs",
+]
+
 [dependencies]
 oxid-adapter-mobile-native.workspace = true
 oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
+reqwest = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 url.workspace = true
+webpki-root-certs = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
 
 [lints]
 workspace = true

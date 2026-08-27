@@ -191,7 +191,8 @@ check_workspace_dependencies oxid-composition \
   oxid-protocol-application \
   oxid-wallet-application
 check_workspace_dependencies oxid-mcp
-check_workspace_dependencies oxid-app oxid-brand-build oxid-composition oxid-ui-dioxus
+check_workspace_dependencies oxid-app \
+  oxid-adapter-identity-ingress oxid-brand-build oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
   oxid-capabilities-application oxid-composition oxid-credential-application \
   oxid-diagnostics-application oxid-identity-application oxid-identity-domain \
@@ -240,5 +241,7 @@ check_no_external_dependencies oxid-credential-application
 check_no_external_dependencies oxid-protocol-application
 check_no_external_dependencies oxid-presentation-application
 check_no_external_dependencies oxid-passport-vault-application
+
+./scripts/e2e/android-avd-process-ownership.test.sh
 
 echo "Architecture dependency rules passed."

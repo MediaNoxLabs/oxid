@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: oxid-portal-consumer
+
+services:
+  smocker:
+    image: "ghcr.io/smocker-dev/smocker@sha256:b4106c3aec1d58df09b6b94a89eba801298cbe5303f3c9236d105dbcaaaf4ab2"
+    pull_policy: never
+    ports:
+      - "127.0.0.1:9090:8080"
+      - "127.0.0.1:8081:8081"
+
+  did-resolver:
+    image: "${PORTAL_RESOLVER_IMAGE:?}"
+    pull_policy: never
+    ports:
+      - "127.0.0.1:9092:3001"
+    environment:
+      MIDNIGHT_NETWORK: undeployed
+      MIDNIGHT_INDEXER_HTTP_URL: http://host.docker.internal:8088/api/v3/graphql
+      MIDNIGHT_INDEXER_WS_URL: "${PORTAL_PRIVATE_INDEXER_WS_URL:?}"
+      RESOLVER_PORT: "3001"
+      RESOLVER_DEBUG: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  did-manager:
+    image: "${PORTAL_DID_MANAGER_IMAGE:?}"
+    pull_policy: never
+    ports:
+      - "127.0.0.1:8098:8098"
+    environment:
+      WALLET_SEED: "${PORTAL_WALLET_SEED:?}"
+      DID_MANAGER_API_KEY: "${PORTAL_DID_MANAGER_API_KEY:?}"
+      DID_MANAGER_CONTROLLER_API_KEY: "${PORTAL_DID_MANAGER_CONTROLLER_API_KEY:?}"
+      DID_MANAGER_NETWORK: undeployed
+      DID_MANAGER_NODE_RPC_URL: http://host.docker.internal:9944
+      DID_MANAGER_INDEXER_URL: http://host.docker.internal:8088/api/v3/graphql
+      DID_MANAGER_INDEXER_WS_URL: "${PORTAL_PRIVATE_INDEXER_WS_URL:?}"
+      DID_MANAGER_PROOF_SERVER_URL: http://host.docker.internal:6300
+      DID_MANAGER_BIND: 0.0.0.0
+      DID_MANAGER_PORT: "8098"
+      DID_MANAGER_STORAGE_DIR: /var/lib/did-manager
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8098/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    depends_on:
+      did-resolver:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  did-bootstrap:
+    image: "${PORTAL_RESOLVER_IMAGE:?}"
+    pull_policy: never
+    restart: "no"
+    volumes:
+      - bootstrap:/bootstrap
+    depends_on:
+      did-manager:
+        condition: service_healthy
+    environment:
+      DID_MANAGER_CONTROLLER_API_KEY: "${PORTAL_DID_MANAGER_CONTROLLER_API_KEY:?}"
+    command:
+      - bash
+      - -c
+      - |
+        set -eu
+        response="$$(curl -sf --retry 30 --retry-delay 2 --retry-max-time 240 --retry-connrefused --retry-all-errors --connect-timeout 5 --max-time 300 \
+          -X POST http://did-manager:8098/dids \
+          -H "x-did-manager-controller-key: $${DID_MANAGER_CONTROLLER_API_KEY}" \
+          -H 'x-did-manager-idempotency-key: bootstrap-issuer' \
+          -H 'Content-Type: application/json' \
+          -d '{"label":"issuer","verification_methods":[{"fragment":"key-assert","verification_relation":"assertionMethod","key_type":"schnorr_jubjub"}]}')"
+        did_url="$${response#*\"did_url\":\"}"
+        did_url="$${did_url%%\"*}"
+        printf '%s\n' "$${did_url}#key-assert" > /bootstrap/issuer-key-id
+
+  issuer:
+    image: "${PORTAL_ISSUER_IMAGE:?}"
+    pull_policy: never
+    ports:
+      - "127.0.0.1:8090:8090"
+    environment:
+      DIDIT_API_KEY: "${PORTAL_DIDIT_API_KEY:?}"
+      DIDIT_API_BASE_URL: http://smocker:8080
+      DIDIT_WORKFLOW_ID: 550e8400-e29b-41d4-a716-446655440001
+      ISSUER_KEY_SOURCE: http://did-manager:8098
+      DID_MANAGER_API_KEY: "${PORTAL_DID_MANAGER_API_KEY:?}"
+      ISSUER_SESSION_TOKEN_SECRET: "${PORTAL_ISSUER_SESSION_TOKEN_SECRET:?}"
+      ISSUER_URL: "${PORTAL_ISSUER_URL:?}"
+      ISSUER_REDIRECT_URL: "${PORTAL_ISSUER_REDIRECT_URL:?}"
+      DID_RESOLVER_URL: "${PORTAL_HOLDER_RESOLVER_URL:?}"
+    command:
+      - bash
+      - -c
+      - |
+        set -eu
+        test -s /bootstrap/issuer-key-id
+        export ISSUER_KEY_ID="$$(< /bootstrap/issuer-key-id)"
+        exec laceid-issuer
+    volumes:
+      - bootstrap:/bootstrap
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8090/.well-known/openid-credential-issuer"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+      start_period: 90s
+    depends_on:
+      did-bootstrap:
+        condition: service_completed_successfully
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  bootstrap:

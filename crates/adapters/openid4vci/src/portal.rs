@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Strict native-host-only HTTP client for the exact Portal PR #17 profile.
+//! Strict native HTTP client for the authenticated Portal Final profile.
 
 use std::{
     collections::BTreeMap,
@@ -43,10 +43,9 @@ use super::{
 mod response;
 use response::*;
 
-pub const PORTAL_INTEGRATION_COMMIT: &str = "925ec8d04882eabd4ac7b784c70fc2f0c152faae";
-pub const PORTAL_INTEGRATION_TREE: &str = "58b4597524f88a0ae2253439a44dab0dc60cbb6f";
-pub const PORTAL_PR_HEAD: &str = "9c82db23eabe8b6d758b2731f2225910ea627c14";
-pub const PORTAL_PROFILE_SOURCE: &str = "76e8edf394a4cb37ca822037272d543c68f25f71";
+pub const PORTAL_INTEGRATION_COMMIT: &str = "22ae5369b6f939e6b20648f4b85dd993527748ef";
+pub const PORTAL_INTEGRATION_TREE: &str = "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10";
+pub const PORTAL_PROFILE_SOURCE_COMMIT: &str = "76e8edf394a4cb37ca822037272d543c68f25f71";
 pub const PORTAL_PROVENANCE_SHA256: &str =
     "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87";
 const PORTAL_CONFIGURATION_ID: &str = "digital_passport_v1";
@@ -65,10 +64,10 @@ const MAX_SECRET_BYTES: usize = 4_096;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const BUNDLED_SOURCE_LOCK: &[u8] = include_bytes!(
-    "../../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/source-lock.json"
+    "../../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/source-lock.json"
 );
 const BUNDLED_PROVENANCE: &[u8] = include_bytes!(
-    "../../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/provenance.json"
+    "../../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/openid4vci-final/provenance.json"
 );
 
 /// Payload-free deployment/source-lock authentication errors.
@@ -125,8 +124,6 @@ pub struct PortalDeploymentManifest {
     issuer_method: String,
     issuer_origin: String,
     issuer_resolver_origin: String,
-    portal_pr_head: String,
-    profile_source_commit: String,
     provenance_sha256: String,
     schema: String,
 }
@@ -198,17 +195,15 @@ impl PortalDeploymentManifest {
     }
 
     fn validate(&self) -> Result<(), PortalDeploymentManifestError> {
-        if self.schema != "oxid-portal-deployment-v2"
+        if self.schema != "oxid-portal-deployment-v3"
             || self.integration_commit != PORTAL_INTEGRATION_COMMIT
             || self.integration_tree != PORTAL_INTEGRATION_TREE
-            || self.portal_pr_head != PORTAL_PR_HEAD
-            || self.profile_source_commit != PORTAL_PROFILE_SOURCE
             || self.provenance_sha256 != PORTAL_PROVENANCE_SHA256
         {
             return Err(PortalDeploymentManifestError::SourceLockMismatch);
         }
         validate_origin(&self.issuer_origin)?;
-        validate_origin(&self.issuer_resolver_origin)?;
+        validate_resolver_base(&self.issuer_resolver_origin)?;
         validate_issuer_did(&self.issuer_did)?;
         if !self
             .issuer_method
@@ -280,7 +275,6 @@ pub fn authenticate_bundled_portal_source() -> Result<(), PortalDeploymentManife
     let lock_keys = [
         "integrationCommit",
         "integrationTree",
-        "portalPrHead",
         "profileSourceCommit",
         "provenancePath",
         "provenanceSha256",
@@ -290,18 +284,17 @@ pub fn authenticate_bundled_portal_source() -> Result<(), PortalDeploymentManife
         || !lock_keys.iter().all(|key| lock.contains_key(*key))
         || lock["integrationCommit"] != PORTAL_INTEGRATION_COMMIT
         || lock["integrationTree"] != PORTAL_INTEGRATION_TREE
-        || lock["portalPrHead"] != PORTAL_PR_HEAD
-        || lock["profileSourceCommit"] != PORTAL_PROFILE_SOURCE
+        || lock["profileSourceCommit"] != PORTAL_PROFILE_SOURCE_COMMIT
         || lock["provenancePath"] != "openid4vci-final/provenance.json"
         || lock["provenanceSha256"] != PORTAL_PROVENANCE_SHA256
-        || lock["schema"] != "oxid-portal-source-lock-v2"
+        || lock["schema"] != "oxid-portal-source-lock-v3"
     {
         return Err(PortalDeploymentManifestError::SourceLockMismatch);
     }
     let value = parse_strict_json(BUNDLED_PROVENANCE)
         .map_err(|_| PortalDeploymentManifestError::SourceLockMismatch)?;
     if value["schema"] != "laceid-openid4vci-profile-provenance-v1"
-        || value["portal"]["profileSourceCommit"] != PORTAL_PROFILE_SOURCE
+        || value["portal"]["profileSourceCommit"] != PORTAL_PROFILE_SOURCE_COMMIT
         || value["portal"]["baselineCommit"] != "804de0a9e58cf48ece3cc6c24b2245bb70bc80f1"
         || value["profile"]["credentialConfigurationId"] != PORTAL_CONFIGURATION_ID
         || value["profile"]["name"] != "lace-id-portal-oxid-midnight-phase1"
@@ -329,20 +322,47 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn validate_origin(value: &str) -> Result<(), PortalDeploymentManifestError> {
+    let url = validate_transport_base(value)?;
+    if url.path() != "/" || url.origin().ascii_serialization() != value {
+        return Err(PortalDeploymentManifestError::InvalidOrigin);
+    }
+    Ok(())
+}
+
+fn validate_resolver_base(value: &str) -> Result<(), PortalDeploymentManifestError> {
+    let url = validate_transport_base(value)?;
+    let canonical = if url.path() == "/" {
+        url.origin().ascii_serialization() == value
+    } else {
+        url.as_str() == value
+    };
+    if !canonical
+        || (url.path() != "/"
+            && (url.path().ends_with('/')
+                || url.path().contains("//")
+                || url
+                    .path()
+                    .split('/')
+                    .any(|segment| matches!(segment, "." | ".."))))
+    {
+        return Err(PortalDeploymentManifestError::InvalidOrigin);
+    }
+    Ok(())
+}
+
+fn validate_transport_base(value: &str) -> Result<Url, PortalDeploymentManifestError> {
     let url = Url::parse(value).map_err(|_| PortalDeploymentManifestError::InvalidOrigin)?;
     if url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
-        || url.path() != "/"
         || !matches!(url.scheme(), "https" | "http")
         || (url.scheme() == "http" && !host_is_loopback(&url))
-        || url.origin().ascii_serialization() != value
     {
         return Err(PortalDeploymentManifestError::InvalidOrigin);
     }
-    Ok(())
+    Ok(url)
 }
 
 fn validate_issuer_did(value: &str) -> Result<(), PortalDeploymentManifestError> {

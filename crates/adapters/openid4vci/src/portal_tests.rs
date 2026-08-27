@@ -14,6 +14,10 @@ const PROFILE_FIXTURE_ROOT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final"
 );
+const SOURCE_LOCK_ROOT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef"
+);
 
 fn sha256(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -26,7 +30,7 @@ fn manifest_bytes(origin: &str) -> Vec<u8> {
     let jwk_digest = sha256(jwk.as_bytes());
     format!(
         concat!(
-            r#"{{"integrationCommit":"925ec8d04882eabd4ac7b784c70fc2f0c152faae","integrationTree":"58b4597524f88a0ae2253439a44dab0dc60cbb6f","issuerDid":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","issuerJubjubJwk":{jwk},"issuerJubjubJwkSha256":"{jwk_digest}","issuerMethod":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef#key-assert","issuerOrigin":"{origin}","issuerResolverOrigin":"{origin}","portalPrHead":"9c82db23eabe8b6d758b2731f2225910ea627c14","profileSourceCommit":"76e8edf394a4cb37ca822037272d543c68f25f71","provenanceSha256":"cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87","schema":"oxid-portal-deployment-v2"}}"#
+            r#"{{"integrationCommit":"22ae5369b6f939e6b20648f4b85dd993527748ef","integrationTree":"74d8d1a5b87c160ea554006e47d5f3edc3cd3e10","issuerDid":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","issuerJubjubJwk":{jwk},"issuerJubjubJwkSha256":"{jwk_digest}","issuerMethod":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef#key-assert","issuerOrigin":"{origin}","issuerResolverOrigin":"{origin}","provenanceSha256":"cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87","schema":"oxid-portal-deployment-v3"}}"#
         ),
         jwk = jwk,
         jwk_digest = jwk_digest,
@@ -38,6 +42,24 @@ fn manifest_bytes(origin: &str) -> Vec<u8> {
 #[test]
 fn exact_portal_source_lock_and_all_profile_fixtures_authenticate() {
     authenticate_bundled_portal_source().expect("exact checked-in Portal source must authenticate");
+    let source_lock = fs::read(format!("{SOURCE_LOCK_ROOT}/source-lock.json"))
+        .expect("self-contained source lock");
+    let source_lock: serde_json::Value =
+        serde_json::from_slice(&source_lock).expect("source-lock JSON");
+    assert_eq!(
+        source_lock["profileSourceCommit"],
+        PORTAL_PROFILE_SOURCE_COMMIT
+    );
+    assert_eq!(
+        source_lock["provenancePath"],
+        "openid4vci-final/provenance.json"
+    );
+    let bundled_provenance = fs::read(format!(
+        "{SOURCE_LOCK_ROOT}/openid4vci-final/provenance.json"
+    ))
+    .expect("self-contained provenance");
+    assert_eq!(sha256(&bundled_provenance), PORTAL_PROVENANCE_SHA256);
+
     let provenance = fs::read(format!("{PROFILE_FIXTURE_ROOT}/provenance.json")).expect("manifest");
     assert_eq!(
         sha256(&provenance),
@@ -81,20 +103,12 @@ fn deployment_manifest_requires_exact_digest_source_profile_and_canonical_public
 
     for replacement in [
         (
-            "925ec8d04882eabd4ac7b784c70fc2f0c152faae",
+            "22ae5369b6f939e6b20648f4b85dd993527748ef",
             "a25ec8d04882eabd4ac7b784c70fc2f0c152faae",
         ),
         (
-            "58b4597524f88a0ae2253439a44dab0dc60cbb6f",
+            "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10",
             "68b4597524f88a0ae2253439a44dab0dc60cbb6f",
-        ),
-        (
-            "9c82db23eabe8b6d758b2731f2225910ea627c14",
-            "ac82db23eabe8b6d758b2731f2225910ea627c14",
-        ),
-        (
-            "76e8edf394a4cb37ca822037272d543c68f25f71",
-            "86e8edf394a4cb37ca822037272d543c68f25f71",
         ),
         (
             "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87",
@@ -127,7 +141,7 @@ fn deployment_manifest_rejects_hostile_origins_jwk_drift_and_duplicate_fields() 
             .replace("https://issuer.example", "https://issuer.example/path"),
         String::from_utf8(valid.clone()).expect("utf8").replace(
             "\"schema\":",
-            "\"schema\":\"oxid-portal-deployment-v2\",\"schema\":",
+            "\"schema\":\"oxid-portal-deployment-v3\",\"schema\":",
         ),
         String::from_utf8(valid.clone())
             .expect("utf8")
