@@ -34,11 +34,12 @@ const AREA_PATTERNS = Object.freeze({
     /^(?:LICENSE|CODE_OF_CONDUCT\.md|CONTRIBUTING\.md|SECURITY\.md|SUPPORT\.md)$/,
   ],
   harness: [
+    /^run\.sh$/,
     /^\.devloops$/,
     /^\.pi\//,
     /^AGENT\.md$/,
     /^scripts\/check-pi-devshell\.sh$/,
-    /^scripts\/(?:dev-loops\.mjs|github\/|loop\/|lib\/(?:dev-loop|handoff-envelope)|review\/|worktree-lifecycle\.mjs)/,
+    /^scripts\/(?:dev-loops\.mjs|factory\/|github\/|loop\/|lib\/(?:dev-loop|handoff-envelope)|review\/|worktree-lifecycle\.mjs)/,
     /^tests\/repository\//,
   ],
   ci: [

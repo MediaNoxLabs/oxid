@@ -18,6 +18,8 @@ test("documentation, harness, and workflow-only feature changes keep the basic g
     ["scripts/check-pi-devshell.sh", "scripts/lib/dev-loop-runtime.mjs"],
     [".github/workflows/ci.yml", "scripts/ci/target-plan.mjs"],
     ["docs/factory/metrics.md", "scripts/ci/target-plan.mjs"],
+    ["run.sh", "tests/repository/factory-metrics-contract.test.mjs"],
+    ["scripts/factory/metrics.mjs", "docs/factory/work-item-metrics-v1.schema.json"],
   ]) {
     assert.deepEqual(makeTargetPlan(paths).targets, [HostedTarget.BASIC], paths.join(","));
   }

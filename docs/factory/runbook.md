@@ -215,6 +215,22 @@ in a diff.
   `clean-target` require an exact path, expected head SHA, and `--execute`;
   removal additionally requires a clean head merged to `origin/integration`
   and seven days of retention.
+- **Leave one private metrics record per issue/PR/head.** Generate a closed v1
+  template, fill only measured counters, and atomically store it. Audit is
+  read-only and returns aggregate median/p90, SLO violations, and malformed or
+  missing-field counts without a model call:
+  ```bash
+  node scripts/factory/metrics.mjs template \
+    --issue <n> --pr <n> --head "$(git rev-parse HEAD)"
+  node scripts/factory/metrics.mjs write --record /private/path/metrics.json
+  node scripts/factory/metrics.mjs audit --json
+  ```
+  The default store is `.git/oxid-factory/metrics-v1` in the common checkout,
+  shared by linked worktrees but not committed. Raw records are owner-private
+  for 90 days. The Quality Steward runs the audit weekly, after a harness
+  incident, and before monthly tuning. Never paste prompts, transcripts,
+  tokens/credentials, user identifiers, commands/output, or billing details
+  into a record.
 - **Restart after harness changes.** A running Pi process retains its loaded
   extensions and instructions. Stop it, preserve its branch/head, then restart
   after changing `.pi/`, `.devloops`, or their installed pins.

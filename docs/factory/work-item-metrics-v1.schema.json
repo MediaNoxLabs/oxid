@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MediaNoxLabs/oxid/blob/integration/docs/factory/work-item-metrics-v1.schema.json",
+  "title": "Oxid factory work-item metrics v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "repository",
+    "issue",
+    "pr",
+    "headSha",
+    "startedAt",
+    "completedAt",
+    "recordedAt",
+    "phases",
+    "validations",
+    "review",
+    "tokens",
+    "attempts",
+    "ci",
+    "worktree",
+    "routing"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "repository": { "const": "MediaNoxLabs/oxid" },
+    "issue": { "$ref": "#/$defs/positiveInteger" },
+    "pr": {
+      "oneOf": [
+        { "$ref": "#/$defs/positiveInteger" },
+        { "type": "null" }
+      ]
+    },
+    "headSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "startedAt": { "$ref": "#/$defs/timestamp" },
+    "completedAt": { "$ref": "#/$defs/timestamp" },
+    "recordedAt": { "$ref": "#/$defs/timestamp" },
+    "phases": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["developmentMs", "reviewMs", "validationMs", "ciMs", "totalElapsedMs"],
+      "properties": {
+        "developmentMs": { "$ref": "#/$defs/nonNegativeInteger" },
+        "reviewMs": { "$ref": "#/$defs/nonNegativeInteger" },
+        "validationMs": { "$ref": "#/$defs/nonNegativeInteger" },
+        "ciMs": { "$ref": "#/$defs/nonNegativeInteger" },
+        "totalElapsedMs": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "validations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "durationMs", "outcome"],
+        "properties": {
+          "name": { "$ref": "#/$defs/metricName" },
+          "durationMs": { "$ref": "#/$defs/nonNegativeInteger" },
+          "outcome": { "enum": ["passed", "failed", "canceled"] }
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sessions", "turns", "toolCalls", "externalReviewRequired"],
+      "properties": {
+        "sessions": { "$ref": "#/$defs/nonNegativeInteger" },
+        "turns": { "$ref": "#/$defs/nonNegativeInteger" },
+        "toolCalls": { "$ref": "#/$defs/nonNegativeInteger" },
+        "externalReviewRequired": { "type": "boolean" }
+      }
+    },
+    "tokens": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "output", "cacheRead", "cacheWrite"],
+          "properties": {
+            "input": { "$ref": "#/$defs/nonNegativeInteger" },
+            "output": { "$ref": "#/$defs/nonNegativeInteger" },
+            "cacheRead": { "$ref": "#/$defs/nonNegativeInteger" },
+            "cacheWrite": { "$ref": "#/$defs/nonNegativeInteger" }
+          }
+        }
+      ]
+    },
+    "attempts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pushesAfterFirstCi", "canceled", "failed"],
+      "properties": {
+        "pushesAfterFirstCi": { "$ref": "#/$defs/nonNegativeInteger" },
+        "canceled": { "$ref": "#/$defs/nonNegativeInteger" },
+        "failed": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "ci": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wallTimeMs", "requiredChecks", "failedChecks", "canceledRuns"],
+      "properties": {
+        "wallTimeMs": { "$ref": "#/$defs/nonNegativeInteger" },
+        "requiredChecks": { "$ref": "#/$defs/nonNegativeInteger" },
+        "failedChecks": { "$ref": "#/$defs/nonNegativeInteger" },
+        "canceledRuns": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "worktree": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["peakTargetBytes"],
+      "properties": {
+        "peakTargetBytes": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "areas", "targets"],
+      "properties": {
+        "profile": { "enum": ["feature", "integration", "release"] },
+        "areas": { "$ref": "#/$defs/metricNames" },
+        "targets": {
+          "allOf": [
+            { "$ref": "#/$defs/metricNames" },
+            { "minItems": 1 }
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "nonNegativeInteger": { "type": "integer", "minimum": 0, "maximum": 1000000000000000 },
+    "positiveInteger": { "type": "integer", "minimum": 1, "maximum": 1000000000000000 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "metricName": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$" },
+    "metricNames": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/metricName" }
+    }
+  }
+}

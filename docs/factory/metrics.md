@@ -16,6 +16,62 @@ each entry is dated and states its measurement environment.
 - **Per-crate build time** reveals decomposition problems (a crate growing
   into a bottleneck) before they dominate the critical path.
 
+## Work-item record and supervisor audit
+
+The closed [v1 schema](work-item-metrics-v1.schema.json) binds one record to
+`MediaNoxLabs/oxid`, an issue, an optional PR represented explicitly as a
+number or `null`, and an exact 40-character head SHA. It retains canonical
+start/completion/recording timestamps; development, review, validation, CI,
+and elapsed durations; named validation outcomes; review session/turn/tool-call
+counts; exact input/output/cache token counters when the active harness exposes
+them; push/failure/cancellation counts;
+required-check and CI wall-time facts; peak target bytes; and the selected
+profile, areas, and targets.
+
+Create a template outside the checkout, replace counters and durations with
+measured values, then write it atomically. Zero is a measured zero, never a
+stand-in for unknown. `tokens: null` is the sole unavailable-data form and must
+remain `null` unless the active harness exposes exact counters:
+
+```bash
+node scripts/factory/metrics.mjs template \
+  --issue <n> --pr <n> --head "$(git rev-parse HEAD)"
+node scripts/factory/metrics.mjs write --record /private/path/metrics.json
+```
+
+The writer rejects unknown or missing fields, malformed/non-canonical values,
+negative or non-finite counts, inconsistent timestamps/durations, duplicate
+routing entries, secret-bearing strings, the wrong repository, and a head that
+does not equal a clean current checkout. It writes mode `0600` through a
+temporary file plus an atomic no-overwrite link (or atomic rename for an
+explicit correction). The default owner-private store is
+`<git-common-dir>/oxid-factory/metrics-v1`, so linked worktrees share records
+without placing them in the repository.
+
+Use counters emitted by the active harness, not estimates derived from prompt
+or transcript text. Sum parent and child token/turn/tool-call counters exactly
+once according to that harness's accounting boundary; never add a child total
+again when the parent already includes it. Audits report token coverage and
+exclude `null` token telemetry from distributions and totals. Validation
+entries use bounded labels such as `repository-contract`, never raw commands
+or output.
+
+The Quality Steward or periodic supervisor runs this weekly, after a harness
+incident, and before monthly tuning:
+
+```bash
+node scripts/factory/metrics.mjs audit --json
+```
+
+Audit reads records once and performs no model call, retry, merge, branch or
+GitHub mutation, cache/worktree deletion, or process cleanup. It reports valid
+and invalid counts, missing required fields, median/p90 distributions, totals,
+and safe work-item identifiers for SLO violations. Public reports may copy only
+these aggregates. Raw prompts, transcripts, credentials, private identifiers,
+commands/output, and provider cost/account details are forbidden. Owner-private
+raw records are retained for 90 days; deletion is an explicit maintenance task,
+never an audit side effect.
+
 ## Historical baselines — 2026-08-18, `develop` @ `ade6416`
 
 Local, Apple M2 Max (12 cores), warm cargo registry, fresh worktree target:

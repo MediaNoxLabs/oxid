@@ -42,6 +42,7 @@ done
 
 run_repository() {
   require_command node
+  node --test tests/repository/factory-metrics-contract.test.mjs
   node --test tests/repository/integration-delivery-contract.test.mjs
   node --test tests/repository/dev-loop-stability-contract.test.mjs
   node --test tests/repository/docs-link-contract.test.mjs
