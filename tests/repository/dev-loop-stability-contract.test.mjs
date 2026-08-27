@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import test from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import {
   checkAgentToolAllowlists,
@@ -714,26 +714,102 @@ test("handoff envelope cwd normalization uses owned canonical Git topology", asy
   );
 });
 
-async function installPinnedEnvelopeProxy(root, { nestedCore = false } = {}) {
+async function installPinnedEnvelopeFixture(root, { nestedCore = false } = {}) {
   const packageRoot = path.join(root, ".pi", "npm", "node_modules", "dev-loops");
   const corePackageRoot = nestedCore
     ? path.join(packageRoot, "node_modules", "@dev-loops", "core")
     : path.join(root, ".pi", "npm", "node_modules", "@dev-loops", "core");
   const coreRoot = path.join(corePackageRoot, "src", "loop");
-  const actualPackage = path.join(repoRoot, ".pi", "npm", "node_modules", "dev-loops");
   await mkdir(path.join(packageRoot, "cli"), { recursive: true });
   await mkdir(path.join(packageRoot, "scripts", "loop"), { recursive: true });
   await mkdir(path.join(packageRoot, "scripts", "lib"), { recursive: true });
   await mkdir(coreRoot, { recursive: true });
   await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
   await writeFile(path.join(packageRoot, "cli", "index.mjs"), "");
-  for (const relative of [
-    ["scripts/loop/build-handoff-envelope.mjs", "scripts/loop/build-handoff-envelope.mjs"],
-    ["scripts/lib/jq-output.mjs", "scripts/lib/jq-output.mjs"],
-    ["scripts/_core-helpers.mjs", "scripts/_core-helpers.mjs"],
-  ]) {
-    await writeFile(path.join(packageRoot, relative[0]), `export * from ${JSON.stringify(pathToFileURL(path.join(actualPackage, relative[1])).href)};\n`);
-  }
+  await writeFile(path.join(packageRoot, "scripts", "loop", "build-handoff-envelope.mjs"), [
+    'import { readFile } from "node:fs/promises";',
+    'import path from "node:path";',
+    'const USAGE = "Usage: build-handoff-envelope.mjs --input <path>";',
+    'function parseJsonText(source) {',
+    '  try { return JSON.parse(source); } catch (error) { throw new Error(`Invalid JSON: ${error.message}`); }',
+    '}',
+    'function readOption(argv, index, name) {',
+    '  const argument = argv[index];',
+    '  if (argument === name) {',
+    '    if (typeof argv[index + 1] !== "string") throw new Error(`${name} requires a value`);',
+    '    return { value: argv[index + 1], consumed: 2 };',
+    '  }',
+    '  if (argument.startsWith(`${name}=`)) return { value: argument.slice(name.length + 1), consumed: 1 };',
+    '  return null;',
+    '}',
+    'export function parseBuildHandoffEnvelopeCliArgs(argv) {',
+    '  const options = { help: false, inputPath: undefined, gateState: undefined, overrides: undefined, repo: undefined, jq: undefined, silent: false };',
+    '  for (let index = 0; index < argv.length;) {',
+    '    const argument = argv[index];',
+    '    if (argument === "--help" || argument === "-h") { options.help = true; return options; }',
+    '    if (argument === "--silent" || argument === "-s") { options.silent = true; index += 1; continue; }',
+    '    let matched = false;',
+    '    for (const [flag, field] of [["--input", "inputPath"], ["--gate-state", "gateState"], ["--overrides", "overrides"], ["--repo", "repo"], ["--jq", "jq"]]) {',
+    '      const option = readOption(argv, index, flag);',
+    '      if (option) { options[field] = option.value; index += option.consumed; matched = true; break; }',
+    '    }',
+    '    if (!matched) throw new Error(`Unknown argument: ${argument}`);',
+    '  }',
+    '  if (!options.inputPath) throw new Error("--input <path> is required");',
+    '  return options;',
+    '}',
+    'export async function buildHandoffEnvelopeCli(options, { adapter }) {',
+    '  const cwd = adapter.getCwd();',
+    '  const repoRoot = adapter.getRepoRoot();',
+    '  const resolverOutput = parseJsonText(await readFile(path.resolve(cwd, options.inputPath), "utf8"));',
+    '  const bundle = resolverOutput.bundle ?? {};',
+    '  const artifact = bundle.activeArtifact ?? {};',
+    '  const repo = options.repo ?? bundle.repoSlug ?? bundle.repo;',
+    '  if (!repo) throw new Error("Repository slug could not be resolved");',
+    '  const target = { ...artifact, repo };',
+    '  let envelopeCwd = cwd;',
+    '  if (target.kind === "issue") envelopeCwd = path.join(repoRoot, "tmp", "worktrees", "dev-loops", `issue-${target.issue}`);',
+    '  if (target.kind === "pr") envelopeCwd = path.join(repoRoot, "tmp", "worktrees", "dev-loops", `pr-${target.pr}`);',
+    '  let maxCopilotRounds;',
+    '  try {',
+    '    const config = await readFile(path.join(repoRoot, ".devloops"), "utf8");',
+    '    const match = config.match(/^\\s*maxCopilotRounds:\\s*(\\d+)\\s*$/m);',
+    '    if (match) maxCopilotRounds = Number(match[1]);',
+    '  } catch (error) { if (error?.code !== "ENOENT") throw error; }',
+    '  const gateState = options.gateState ? parseJsonText(options.gateState) : {};',
+    '  const overrides = options.overrides ? parseJsonText(options.overrides) : undefined;',
+    '  return {',
+    '    handoffVersion: 1, target, nextAction: bundle.nextAction, requiredReads: [],',
+    '    acceptance: { criteria: [] }, stopRules: [], executionMode: bundle.executionMode,',
+    '    asyncStartMode: "required", asyncStartEffective: "required", cwd: envelopeCwd,',
+    '    ...gateState, overrides, maxCopilotRounds,',
+    '    sanctionedCommands: { createPr: "scripts/dev-loops.mjs pr create" },',
+    '  };',
+    '}',
+    'export async function runCli(argv, { stdout, stderr, adapter }) {',
+    '  try {',
+    '    const options = parseBuildHandoffEnvelopeCliArgs(argv);',
+    '    if (options.help) { stdout.write(`${USAGE}\\n`); return; }',
+    '    const result = await buildHandoffEnvelopeCli(options, { adapter });',
+    '    if (!options.silent) stdout.write(`${JSON.stringify(result)}\\n`);',
+    '  } catch (error) { stderr.write(`${error.message}\\n`); process.exitCode = 1; }',
+    '}',
+  ].join("\n"));
+  await writeFile(path.join(packageRoot, "scripts", "lib", "jq-output.mjs"), [
+    'export function emitResult(result, { jq, silent, stdout, stderr }) {',
+    '  let output = result;',
+    '  if (jq !== undefined) {',
+    '    if (jq !== ".cwd") { stderr.write(`${JSON.stringify({ ok: false, error: `--jq: unsupported filter ${jq}` })}\\n`); return 2; }',
+    '    output = result.cwd;',
+    '  }',
+    '  if (silent) return 0;',
+    '  stdout.write(`${typeof output === "string" ? output : JSON.stringify(output)}\\n`);',
+    '  return 0;',
+    '}',
+  ].join("\n"));
+  await writeFile(path.join(packageRoot, "scripts", "_core-helpers.mjs"), [
+    'export function formatCliError(error) { return error instanceof Error ? error.message : String(error); }',
+  ].join("\n"));
   await writeFile(path.join(corePackageRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.0" }));
   await writeFile(path.join(coreRoot, "handoff-envelope.mjs"), [
     'import path from "node:path";',
@@ -762,7 +838,7 @@ async function makeProspectiveEnvelopeRouteFixture(t, blockedAncestor) {
   execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: root });
   execFileSync("git", ["add", ".pi/settings.json", ".devloops"], { cwd: root });
   execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: root });
-  await installPinnedEnvelopeProxy(root);
+  await installPinnedEnvelopeFixture(root);
   await writeFile(path.join(root, input), JSON.stringify({
     bundle: {
       repoSlug: "owner/repo",
@@ -824,7 +900,7 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: root });
   execFileSync("git", ["worktree", "add", "--quiet", "-b", "fixture-issue-150", issueTarget], { cwd: root });
   await writeFile(path.join(issueTarget, ".devloops"), "version: 1\nrefinement:\n  maxCopilotRounds: 2\n");
-  await installPinnedEnvelopeProxy(root);
+  await installPinnedEnvelopeFixture(root);
   const resolver = {
     bundle: {
       repoSlug: "owner/repo",
@@ -906,8 +982,24 @@ test("tracked pre-flight wrapper reports Pi child dispatch availability determin
     stdout: sink,
     stderr: sink,
   }), /BYPASS is not permitted/);
+  const localManifest = path.join(repoRoot, ".pi", "npm", "node_modules", "dev-loops", "package.json");
+  let exactLocalPin = false;
+  try {
+    const manifest = JSON.parse(await readFile(localManifest, "utf8"));
+    exactLocalPin = manifest.name === "dev-loops" && manifest.version === "0.9.0";
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
   const repositoryCheck = await runRepositoryPreflight(repoRoot);
-  assert.equal(repositoryCheck.ok, true, repositoryCheck.message);
+  if (exactLocalPin) {
+    assert.equal(repositoryCheck.ok, true, repositoryCheck.message);
+  } else {
+    assert.equal(repositoryCheck.ok, false);
+    assert.equal(
+      repositoryCheck.message,
+      `Pi dev-loop preflight environment is not ready: missing exact dev-loops@0.9.0; checked only ${path.join(repoRoot, ".pi", "npm", "node_modules", "dev-loops")}`,
+    );
+  }
 });
 
 test("repository wrapper executes conventional help and delegates watch-ci unchanged", async (t) => {
