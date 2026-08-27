@@ -63,7 +63,7 @@ Respect repository contract routing posture:
 - prefer the GitHub-first routed path when work should move through GitHub branches, pull requests, CI, and review
 - route to the local implementation strategy only when the user explicitly requests a local phase-based path
 - keep any specialized Copilot behavior behind `dev-loop` as internal routed logic, helper modules, or non-user-facing implementation details
-- honor `.devloops` `maxCopilotRounds: 0`, the two-reviewer cap, low-signal stop, and human-only merge boundary; invoke the tracked external current-head review only for high-risk work, an owner request, or a disputed finding; contradictory loop-info remains a pinned-runtime residual and requires stopping rather than local route shadowing
+- honor `.devloops` `maxCopilotRounds: 0`, the two-reviewer cap, and low-signal stop; merge only an issue-backed `integration` PR when the active owner request explicitly authorizes it and the repository merge wrapper passes; `main` and `develop` remain human-only; invoke the tracked external current-head review only for high-risk work, an owner request, or a disputed finding; contradictory loop-info remains a pinned-runtime residual and requires stopping rather than local route shadowing
 
 If the current issue/PR/local state is materially unclear, contradictory, off-trail, or not cleanly covered by deterministic guidance, stop and ask for human direction rather than guessing.
 

@@ -1480,7 +1480,8 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
     assert.doesNotMatch(block, /^\s+- external-review$/m);
   }
   assert.match(config, /^  maxFanoutReviewers: 2$/m);
-  assert.match(config, /^  humanMergeOnly: true$/m);
+  assert.match(config, /^  stopAt: \[\]$/m);
+  assert.match(config, /^  humanMergeOnly: false$/m);
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
 });
 

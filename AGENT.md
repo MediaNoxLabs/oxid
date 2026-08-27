@@ -25,8 +25,10 @@ index points to it; it is not a required read for unrelated work.
 - Use a dedicated worktree based on the fetched integration ref. Never develop
   in a dirty primary checkout and never delete unrelated user files.
 - Target pull requests at `integration`. Start as draft.
-- Automation must stop at merge. `.devloops` fixes
-  `autonomy.humanMergeOnly: true`; a human makes the final delivery decision.
+- With explicit authorization in the active user request, automation may merge
+  an issue-backed `integration` PR only through
+  `scripts/github/merge-integration-pr.mjs` after its exact-head audit passes.
+  `main` and `develop` merges remain human-only.
 - Commit with a GPG signature and DCO sign-off. Before any push, verify both.
 - Do not push, merge, change repository settings, accept an ADR, tag, or release
   without the authority required by the active user request.
@@ -69,7 +71,8 @@ Follow [the productive loop](docs/factory/productive-loop.md):
 5. Run final correctness/security review and hosted CI once.
 6. Invoke independent current-head Claude review only for a high-risk/release-profile
    change, an owner request, or a disputed finding.
-7. Stop at merge for a human.
+7. At merge, either hand off to a human or, when the active request explicitly
+   authorizes it, use the guarded integration-only merge wrapper.
 
 Automatic review is capped at two concurrent reviewers. Low-signal refinement
 stops. Do not add reviewers, retries, retrospective work, or a second gate to

@@ -60,12 +60,13 @@ personas:
       Report concrete findings with file and line references.
     defaultModel: null
 
-# Automation may prepare a merge-ready PR, but the final merge is an explicit
-# owner action. This is a fixed safety boundary, not a per-run suggestion.
+# The active owner may authorize an automated merge only for an issue-backed
+# integration PR after the repository merge wrapper passes. Historical main and
+# develop remain human-only; releases, settings, tags, and ADR acceptance remain
+# human actions.
 autonomy:
-  stopAt:
-    - merge
-  humanMergeOnly: true
+  stopAt: []
+  humanMergeOnly: false
 
 workflow:
   # Permit a small task to stay synchronous. Requiring async start for every

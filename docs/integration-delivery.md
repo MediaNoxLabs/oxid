@@ -81,6 +81,26 @@ git merge-tree --write-tree origin/integration HEAD >/dev/null
 
 Rerun every current-head gate after any integration update.
 
+An agent may perform the squash merge only when the active owner request
+explicitly authorizes automated merges for the current work and only through
+the repository guard:
+
+```bash
+node scripts/github/merge-integration-pr.mjs \
+  --repo MediaNoxLabs/oxid --pr <number> \
+  --authorized-by-owner --execute
+```
+
+Run the command alone after writing and verifying gate evidence. The guard
+accepts only an open, non-draft, issue-backed `integration` PR; rejects
+cross-repository heads and title blockers; refreshes the exact base and head;
+checks ancestry and the merge tree; requires every protected check including
+GPG/DCO; delegates checkpoint and conversation verification to the pinned
+dev-loops gate; re-reads the head and base; and pins the squash merge with
+`--match-head-commit`. Without `--execute` it is a read-only audit. The wrapper
+has no `--admin` bypass. `main` and `develop` are always human-only, as are
+repository settings, tags, releases, and ADR acceptance.
+
 ## Required integration protection
 
 The active `integration` protection policy must apply to administrators,
@@ -89,8 +109,9 @@ require resolved conversations, and require branches to be current. Its review
 settings intentionally use `required_approving_review_count: 0` and
 `require_code_owner_reviews: false`: preserving the historical `main` human or
 code-owner approval policy is not a delivery requirement. The repository-local
-harness nevertheless fixes `autonomy.humanMergeOnly: true`: automation may
-prepare a merge-ready PR, but a human performs the merge. Once
+harness sets `autonomy.humanMergeOnly: false` and `autonomy.stopAt: []` so an
+actively owner-authorized run can reach the integration-only guarded merge.
+This does not authorize `main` or `develop`. Once
 issue #144 has landed and every workflow has emitted an integration context,
 require these exact status checks:
 
@@ -166,5 +187,5 @@ wrapper, fix every accepted finding, and repeat against the new head. See
 shape. Post required high-risk current-head evidence to the pull request before
 merge; that evidence is the local attestation described above. Integration
 branch protection intentionally does not require a hosted human or code-owner
-approval, but the local harness always stops at merge for a human delivery
-decision.
+approval. The local harness either hands off at merge or, under explicit active
+owner authorization, runs the guarded integration-only merge command.

@@ -6,10 +6,10 @@ How to actually run the factory on this repository. The charter says *why*
 ([charter.md](charter.md)), the FSM says *what state work is in*
 ([fsm.md](fsm.md)); this says *what to type* and *what will refuse to work*.
 
-Phase 1 is deliberately narrow: **bounded review, impact-routed validation, and a
-human merge.** Routine changes use two draft lenses and two final lenses;
-independent current-head review is reserved for high-risk work. Nothing routes
-through a coordination server.
+Phase 1 is deliberately narrow: **bounded review, impact-routed validation, and
+a guarded delivery.** Routine changes use two draft lenses and two final
+lenses; independent current-head review is reserved for high-risk work. Nothing
+routes through a coordination server.
 
 ## What is installed, and from where
 
@@ -146,8 +146,13 @@ undetectable later. The check that matters is `gates` parsing.
 
 ## What will refuse to work, by design
 
-- **No automated merge.** `autonomy.humanMergeOnly: true` and `stopAt: [merge]`
-  are fixed boundaries. Automation may prepare a clean PR but cannot merge it.
+- **No unguarded or cross-base automated merge.** `.devloops` permits the loop
+  to reach merge, but `scripts/github/merge-integration-pr.mjs` accepts only an
+  issue-backed `integration` PR and requires an explicit active owner
+  authorization for `--execute`. It fails closed unless the base and head stay
+  unchanged, the merge tree is conflict-free, all required checks (including
+  GPG/DCO) pass, both gate verdicts match, and conversations are resolved.
+  `main` and `develop` remain human-only.
 - **Fan-out must show its work.** `gates.requireFanoutEvidence: true` and
   `requireFanoutProvenance: true` — a gate must record not just that five
   angles reported, but which reviewer produced which finding. Provenance is what
