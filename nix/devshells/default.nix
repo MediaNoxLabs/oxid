@@ -12,6 +12,33 @@
         pkgs.webkitgtk_4_1
         pkgs.xdotool
       ];
+      ciRustPackages = with pkgs; [
+        cargo
+        clippy
+        git
+        nodejs_24
+        pkg-config
+        ripgrep
+        rustc
+        rustfmt
+        sccache
+      ];
+      ciQualityPackages =
+        ciRustPackages
+        ++ (with pkgs; [
+          cargo-audit
+          cargo-deny
+        ]);
+      ciRustShellHook = ''
+        export RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}
+        export RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache
+        # rustc incremental artifacts are target-directory state and cannot be
+        # reused by sccache. CI prefers cross-run object reuse; the interactive
+        # developer shell keeps Cargo's normal incremental behavior.
+        export CARGO_INCREMENTAL="''${CARGO_INCREMENTAL:-0}"
+        export SCCACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/oxid-sccache"
+        export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-2G}"
+      '';
     in
     {
       # Minimal shell for documentation-only checks. It deliberately carries no
@@ -26,6 +53,54 @@
           pkgs.mdbook-mermaid
           pkgs.nodejs_24
         ];
+      };
+
+      # Hosted Rust lanes deliberately avoid the default developer shell's Pi,
+      # Dioxus CLI, Compact toolchain/artifacts, docs, audit, and mobile tools.
+      # Each lane adds only the native closure its command actually needs.
+      devShells.ci-rust = pkgs.mkShell {
+        packages = ciRustPackages;
+        buildInputs = [ pkgs.openssl ];
+        shellHook = ciRustShellHook;
+      };
+
+      devShells.ci-ui = pkgs.mkShell {
+        packages = ciRustPackages;
+        buildInputs = [ pkgs.openssl ] ++ linuxLibraries;
+        shellHook = ''
+          ${ciRustShellHook}
+          ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
+          ''}
+        '';
+      };
+
+      devShells.ci-coverage = pkgs.mkShell {
+        packages = ciRustPackages ++ [
+          pkgs.cargo-llvm-cov
+          pkgs.llvmPackages.llvm
+        ];
+        buildInputs = [ pkgs.openssl ];
+        shellHook = ''
+          ${ciRustShellHook}
+          export LLVM_COV=${pkgs.llvmPackages.llvm}/bin/llvm-cov
+          export LLVM_PROFDATA=${pkgs.llvmPackages.llvm}/bin/llvm-profdata
+        '';
+      };
+
+      # Quality needs audit/deny and rustdoc, but not Pi, Dioxus CLI, Compact
+      # artifacts, mdBook/Lychee, mobile tooling, or the default shell's
+      # environment-exported proof closures. Do not archive that full shell in
+      # GitHub's bounded cache just to run source policy.
+      devShells.ci-quality = pkgs.mkShell {
+        packages = ciQualityPackages;
+        buildInputs = [ pkgs.openssl ] ++ linuxLibraries;
+        shellHook = ''
+          ${ciRustShellHook}
+          ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
+          ''}
+        '';
       };
 
       devShells.default = pkgs.mkShell {
@@ -57,6 +132,7 @@
             rust-analyzer
             rustc
             rustfmt
+            sccache
           ]
           ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.xcodegen ];
 
@@ -70,6 +146,11 @@
           export OXID_PRESENTATION_ARTIFACTS_DIR=${self'.packages.presentation-compact-artifacts}
           export OXID_PASSPORT_VAULT_ARTIFACTS_DIR=${self'.packages.passport-vault-compact-artifacts}
           export OXID_PASSPORT_VAULT_COMPOSER=${self'.packages.passport-vault-call-composer}/bin/oxid-passport-vault-call-composer
+          # Keep one bounded compiler cache across worktrees. Worktree targets
+          # remain isolated for correctness and can be deleted after delivery.
+          export RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache
+          export SCCACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/oxid-sccache"
+          export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-10G}"
           ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
           ''}
@@ -80,6 +161,12 @@
           # CI never needs Pi tooling, and this block performs unpinned network
           # installs, so continuous-integration shells skip it entirely.
           if [ -z "''${CI:-}" ] && [ -f .pi/settings.json ]; then
+            pi_common_git_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+            if [ -n "$pi_common_git_dir" ]; then
+              pi_checkout_root="$(dirname "$pi_common_git_dir")"
+            else
+              pi_checkout_root="$PWD"
+            fi
             if [ -z "''${GITHUB_TOKEN:-}" ]; then
               if [ -n "''${GH_TOKEN:-}" ]; then
                 export GITHUB_TOKEN="''${GH_TOKEN}"
@@ -90,7 +177,7 @@
 
             while IFS=$'\t' read -r pi_spec pi_package pi_version; do
               [ -n "$pi_spec" ] || continue
-              pi_package_json=".pi/npm/node_modules/$pi_package/package.json"
+              pi_package_json="$pi_checkout_root/.pi/npm/node_modules/$pi_package/package.json"
               pi_installed_version=""
               if [ -f "$pi_package_json" ]; then
                 pi_installed_version="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version ?? "")' "$pi_package_json")"
@@ -106,7 +193,7 @@
               fi
 
               echo "Installing project-local Pi package $pi_spec..."
-              pi install "$pi_spec" --local --approve </dev/null
+              (cd "$pi_checkout_root" && pi install "$pi_spec" --local --approve </dev/null)
             done < <(node -e '
               const fs = require("fs");
               const settings = JSON.parse(fs.readFileSync(".pi/settings.json", "utf8"));

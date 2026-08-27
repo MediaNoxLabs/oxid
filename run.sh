@@ -9,7 +9,7 @@ strict=false
 
 usage() {
   cat <<'USAGE'
-Usage: ./run.sh [all|core|ui|headless|coverage|quality|clean|targets] [--light] [--strict]
+Usage: ./run.sh [all|repository|basic|unit|core|ui|ui-release|headless|headless-integration|coverage|quality|clean|targets] [--light] [--strict]
 
   --light   Skip advisory, license, and rustdoc checks.
   --strict  Deny compiler and rustdoc warnings.
@@ -18,7 +18,7 @@ USAGE
 
 while (($# > 0)); do
   case "$1" in
-    all|core|ui|headless|coverage|quality|clean|targets)
+    all|repository|basic|unit|core|ui|ui-release|headless|headless-integration|coverage|quality|clean|targets)
       target="$1"
       ;;
     --light)
@@ -40,15 +40,56 @@ while (($# > 0)); do
   shift
 done
 
+run_repository() {
+  require_command node
+  node --test tests/repository/integration-delivery-contract.test.mjs
+  node --test tests/repository/dev-loop-stability-contract.test.mjs
+  node --test tests/repository/docs-link-contract.test.mjs
+  node --test tests/repository/target-plan-contract.test.mjs
+  node --test tests/repository/worktree-lifecycle-contract.test.mjs
+  node --test tests/repository/managed-child-process-contract.test.mjs
+}
+
+run_basic() {
+  run_repository
+  cargo fmt --all --check
+  ./scripts/check-architecture.sh
+  ./scripts/check-arrayref-source.sh
+  ./scripts/check-midnight-sources.sh
+  # Compile and lint the dependency-light architectural core as the L0 canary.
+  # L1 and component lanes own complete source/test compilation; keeping UI,
+  # adapters, and native libraries out of L0 makes its five-minute cold bound
+  # enforceable instead of aspirational.
+  cargo clippy \
+    -p oxid-foundation \
+    -p oxid-platform-ports \
+    -p oxid-wallet-domain \
+    -p oxid-identity-domain \
+    -p oxid-credential-domain \
+    -p oxid-presentation-domain \
+    -p oxid-protocol-domain \
+    -p oxid-passport-vault-domain \
+    --lib \
+    -- -D warnings
+}
+
+run_unit() {
+  # UI/app feature compilation and tests are owned by the UI lane. Avoid
+  # pulling GTK/WebKit into the single-host core unit lane or running them
+  # twice on shared/core changes.
+  cargo test --workspace \
+    --exclude oxid-ui-dioxus \
+    --exclude oxid-app \
+    --lib \
+    --bins
+}
+
 run_core() {
   local run_workspace_tests=true
   if [[ "${1:-}" == "--skip-workspace-tests" ]]; then
     run_workspace_tests=false
   fi
-  require_command node
-  node --test tests/repository/integration-delivery-contract.test.mjs
-  node --test tests/repository/dev-loop-stability-contract.test.mjs
-  node --test tests/repository/docs-link-contract.test.mjs
+  run_repository
   cargo fmt --all --check
   ./scripts/check-architecture.sh
   ./scripts/check-arrayref-source.sh
@@ -71,7 +112,7 @@ run_ui() {
   ./scripts/check-ui-css-classes.sh
   ./scripts/check-ui-design-tokens.sh
   ./scripts/check-ui-copy-labels.sh
-  ./scripts/check-ui-profile-release.sh
+  ./scripts/check-ui-profile-release.sh --guards
   cargo check -p oxid-ui-dioxus
   # Adapter-only profile builds type-check the profile code itself, so they
   # state app-profile-authority deliberately. An application build must reach
@@ -80,14 +121,30 @@ run_ui() {
   cargo check -p oxid-ui-dioxus --features ui-profile-demo,app-profile-authority
   cargo test -p oxid-ui-dioxus --features ui-profile-demo,app-profile-authority
   cargo check -p oxid-app
+  cargo test -p oxid-app
   cargo check -p oxid-app --no-default-features --features mobile
   cargo check -p oxid-app --no-default-features --features mobile,standalone-development
   cargo check -p oxid-app --no-default-features --features mobile,standalone-development,ui-profile-dev
   cargo check -p oxid-app --no-default-features --features mobile,standalone-development,ui-profile-demo
 }
 
+run_ui_release() {
+  ./scripts/check-ui-profile-release.sh --artifact
+}
+
 run_headless() {
   cargo check -p oxid-headless
+}
+
+run_headless_integration() {
+  # Hermetic black-box tests run here. Live portal/preprod tests remain ignored
+  # until CI has a public, deterministic fixture and credential boundary.
+  # Name integration targets explicitly so this lane does not repeat the
+  # headless unit tests already owned by `unit`.
+  cargo test -p oxid-headless \
+    --test persistent_profile_flow \
+    --test portal_live_flow \
+    --test portal_profile_flow
 }
 
 run_coverage() {
@@ -125,6 +182,7 @@ case "$target" in
   all)
     run_core --skip-workspace-tests
     run_ui
+    run_ui_release
     run_headless
     run_coverage_excluded_tests
     run_coverage
@@ -132,14 +190,29 @@ case "$target" in
       run_quality
     fi
     ;;
+  repository)
+    run_repository
+    ;;
+  basic)
+    run_basic
+    ;;
+  unit)
+    run_unit
+    ;;
   core)
     run_core
     ;;
   ui)
     run_ui
     ;;
+  ui-release)
+    run_ui_release
+    ;;
   headless)
     run_headless
+    ;;
+  headless-integration)
+    run_headless_integration
     ;;
   coverage)
     run_coverage
@@ -151,6 +224,6 @@ case "$target" in
     cargo clean
     ;;
   targets)
-    printf '%s\n' all core ui headless coverage quality clean targets
+    printf '%s\n' all repository basic unit core ui ui-release headless headless-integration coverage quality clean targets
     ;;
 esac

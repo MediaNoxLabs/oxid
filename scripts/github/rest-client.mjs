@@ -2,7 +2,7 @@
 
 import { execFileSync } from "node:child_process";
 
-export const MINIMUM_GH_VERSION = [2, 67, 0];
+export const MINIMUM_GH_VERSION = [2, 97, 0];
 export const GH_REST_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 export const GITHUB_REST_HEADERS = [
   "-H", "Accept: application/vnd.github+json",
@@ -33,7 +33,7 @@ export function assertMinimumGhVersion(version, minimum = MINIMUM_GH_VERSION) {
   for (let index = 0; index < 3; index += 1) {
     if (version[index] > minimum[index]) return version;
     if (version[index] < minimum[index]) {
-      throw new Error(`GitHub CLI ${version.join(".")} is unsupported; require >= ${minimum.join(".")}`);
+      throw new Error(`GitHub CLI ${version.join(".")} is unsupported; require >= ${minimum.join(".")} for sanctioned gate fields. Enter the pinned devshell with \`nix develop\` and retry`);
     }
   }
   return version;

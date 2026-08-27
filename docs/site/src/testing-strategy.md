@@ -19,6 +19,12 @@ construction) and the gaps the 2026-08 independent review closed or scheduled.
 | **Mobile end-to-end** | XCUITest + CDP smoke flows (profile → custody → credential → vault → backup roundtrip) on simulator/emulator | Evidence of the full journey per platform; explicitly *not* physical-device or performance evidence — those are release-gate items. |
 | **Release gates** | `#[ignore]`d real-proving tests (p18 artifacts), `nix flake check` hermetic suite (nightly), physical-device budgets (backlog) | Heavy truth runs on cadence, not per push — but it runs: the nightly executes every flake check daily. |
 
+The executable [CI target matrix](../../factory/ci-target-matrix.md) maps these
+layers to change areas, runner dependencies, branch profiles, parallel lanes,
+and hard time budgets. A skipped unrelated lane is intentional only when the
+planner records it; missing diff information fails closed to the full public
+hosted set.
+
 ## Coverage policy
 
 The strict gate enforces **80% line coverage** via `cargo llvm-cov`

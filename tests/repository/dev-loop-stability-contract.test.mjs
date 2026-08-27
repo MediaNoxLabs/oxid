@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -15,8 +15,10 @@ import {
   parseAgentFrontmatter,
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
-import { normalizeDevLoopsArgs, runDevLoops } from "../../scripts/dev-loops.mjs";
-import { normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
+import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
+import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
+import { inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
+import { normalizeLinkedWorktreeContext, normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import {
   assertMinimumGhVersion,
   assertTimelinePages,
@@ -52,6 +54,12 @@ const supportedTools = [
   "pr_stabilize", "pr_watch", "review_claim", "review_complete", "review_create",
   "review_enrich", "review_list",
 ];
+const handoffCore = {
+  WORKTREE_NAMESPACE: path.join("tmp", "worktrees", "dev-loops"),
+  resolveWorktreePath: ({ repoRoot: root, kind, number }) => path.join(root, "tmp", "worktrees", "dev-loops", `${kind}-${number}`),
+  buildWorktreeSlug: (target) => `phase-${target.issue}-${target.phase}`,
+  validateHandoffEnvelope: (envelope) => ({ ok: typeof envelope.cwd === "string", errors: [] }),
+};
 
 const fixtureClaudeHelp = [
   "  --print",
@@ -68,6 +76,20 @@ const fixtureClaudeAuthHelp = "Usage: claude auth status [options]\n  --json Out
 
 async function realMkdtemp(prefix) {
   return realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
+}
+
+async function installedPi084Root(t) {
+  try {
+    const executable = (execFileSync("which", ["pi"], { encoding: "utf8" })).trim();
+    const root = path.dirname(path.dirname(await realpath(executable)));
+    const packageRoot = path.join(root, "lib", "node_modules", "pi-monorepo");
+    const manifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
+    if (manifest.version !== "0.84.0") throw new Error(`found Pi ${manifest.version}`);
+    return packageRoot;
+  } catch (error) {
+    t.skip(`Pi 0.84 runner fixture unavailable: ${error.message}`);
+    return null;
+  }
 }
 
 async function makeFixture() {
@@ -192,7 +214,7 @@ test("bounded frontmatter parser ignores unrelated YAML and strips inline commen
   });
 });
 
-test("preflight scans all installed pinned package agents, ignores notes, and invalidates its mtime key", async (t) => {
+test("preflight scans all installed pinned package agents and content-invalidates its session key", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const settingsPath = path.join(fixture.root, ".pi", "settings.json");
@@ -233,10 +255,37 @@ test("preflight scans all installed pinned package agents, ignores notes, and in
   assert.equal(developers[0].shadowsPackages, true);
   assert.deepEqual(developers[0].missingTools, []);
 
+  const auditorManifest = path.join(reviewPackage, "agents", "auditor.agent.md");
+  const originalInfo = await stat(auditorManifest);
+  const originalSource = await readFile(auditorManifest, "utf8");
   const firstKey = await devLoopPreflightCacheKey({ resolved, availableTools: supportedTools });
-  await writeFile(path.join(reviewPackage, "agents", "auditor.agent.md"), "---\nname: auditor\ntools: [read]\n---\nupdated\n");
+  const rewrittenSource = originalSource.replace("unavailable-review-tool", "unavailable-review-toom");
+  assert.equal(Buffer.byteLength(rewrittenSource), Buffer.byteLength(originalSource));
+  await writeFile(auditorManifest, rewrittenSource);
+  await utimes(auditorManifest, originalInfo.atime, originalInfo.mtime);
+  const rewrittenInfo = await stat(auditorManifest);
+  assert.equal(rewrittenInfo.size, originalInfo.size);
   const secondKey = await devLoopPreflightCacheKey({ resolved, availableTools: supportedTools });
-  assert.notEqual(firstKey, secondKey, "manifest size/mtime invalidates the per-session result cache");
+  assert.notEqual(firstKey, secondKey, "same-size manifest rewrites with restored mtimes invalidate the session cache");
+
+  const packageManifest = path.join(reviewPackage, "package.json");
+  const packageInfo = await stat(packageManifest);
+  const packageSource = await readFile(packageManifest, "utf8");
+  const packageKey = await devLoopPreflightCacheKey({ resolved, availableTools: supportedTools });
+  const rewrittenPackage = packageSource.replace("0.5.0", "0.5.1");
+  assert.equal(Buffer.byteLength(rewrittenPackage), Buffer.byteLength(packageSource));
+  await writeFile(packageManifest, rewrittenPackage);
+  await utimes(packageManifest, packageInfo.atime, packageInfo.mtime);
+  assert.notEqual(await devLoopPreflightCacheKey({ resolved, availableTools: supportedTools }), packageKey);
+
+  const settingsInfo = await stat(settingsPath);
+  const settingsSource = await readFile(settingsPath, "utf8");
+  const settingsKey = await devLoopPreflightCacheKey({ resolved, availableTools: supportedTools });
+  const rewrittenSettings = settingsSource.replace("git-root", "git-roof");
+  assert.equal(Buffer.byteLength(rewrittenSettings), Buffer.byteLength(settingsSource));
+  await writeFile(settingsPath, rewrittenSettings);
+  await utimes(settingsPath, settingsInfo.atime, settingsInfo.mtime);
+  assert.notEqual(await devLoopPreflightCacheKey({ resolved, availableTools: supportedTools }), settingsKey);
 
   await rm(reviewPackage, { recursive: true, force: true });
   const cliOnly = await resolveDevLoopsPackageRoot({ cwd: fixture.root });
@@ -247,20 +296,55 @@ test("preflight scans all installed pinned package agents, ignores notes, and in
   );
 });
 
-test("tracked extension registers once and blocks invalid allowlists before launch", async (t) => {
+test("selected dev-loop hook validates current provider tools without edit/write false positives", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
-  const settings = JSON.parse(await readFile(path.join(fixture.root, ".pi", "settings.json"), "utf8"));
+  const handlers = new Map();
+  const observedActiveTools = [];
+  let activeTools = ["read", "grep", "find", "ls", "bash", "subagent"];
+  const pi = {
+    getAllTools: () => activeTools.map((name) => ({ name })),
+    getActiveTools: () => [...activeTools],
+    on: (event, handler) => handlers.set(event, handler),
+  };
+  registerDevLoopPreflight(pi, {
+    env: { PI_SUBAGENT_CHILD_AGENT: "dev-loop" },
+    resolve: async () => ({ packageRoot: fixture.packageRoot, gitRoot: fixture.root, settings: { subagents: { projectRootResolution: "git-root" } } }),
+    check: async ({ activeTools: current }) => {
+      observedActiveTools.push([...current]);
+      return { ok: true, agents: [] };
+    },
+    cacheKey: async ({ activeTools: current }) => JSON.stringify(current),
+  });
+  const ctx = { cwd: fixture.root, ui: { notify: assert.fail }, abort: assert.fail };
+
+  await handlers.get("before_provider_request")({}, ctx);
+  activeTools = ["read", "bash"];
+  await handlers.get("before_provider_request")({}, ctx);
+  activeTools = ["read", "bash", "subagent"];
+  await handlers.get("before_provider_request")({}, ctx);
+  await handlers.get("before_agent_start")({ systemPromptOptions: { selectedTools: ["read", "bash"] } }, ctx);
+
+  assert.deepEqual(observedActiveTools, [
+    ["read", "grep", "find", "ls", "bash", "subagent"],
+    ["read", "bash"],
+    ["read", "bash", "subagent"],
+    ["read", "bash"],
+  ]);
+});
+
+test("tracked extension is idempotent and truthfully advisory on invalid allowlists", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const handlers = new Map();
   const notifications = [];
   const pi = {
     getAllTools: () => [{ name: "read" }],
+    getActiveTools: () => ["read"],
     on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
   };
   const runtime = {
-    resolve: async () => ({ packageRoot: fixture.packageRoot, gitRoot: fixture.root, settings }),
-    check: checkAgentToolAllowlists,
-    cacheKey: async () => "fixture-invalid",
+    resolve: async () => { throw new Error("missing exact dev-loops@0.9.0"); },
   };
   registerDevLoopPreflight(pi, runtime);
   registerDevLoopPreflight(pi, runtime);
@@ -269,66 +353,73 @@ test("tracked extension registers once and blocks invalid allowlists before laun
   }
   const ctx = {
     cwd: fixture.root,
-    ui: { notify: (message) => notifications.push(message) },
-    abortCalled: false,
-    abort() { this.abortCalled = true; },
-  };
-  const inputResult = await handlers.get("input")[0]({}, ctx);
-  assert.deepEqual(inputResult, { action: "continue" });
-  assert.match(notifications[0], /unavailable repository\/package agent tools/);
-  assert.match(notifications[0], /interactive input is allowed/);
-  await assert.rejects(handlers.get("before_provider_request")[0]({}, ctx), /unavailable repository\/package agent tools/);
-  assert.equal(ctx.abortCalled, true);
-});
-
-test("unprovisioned package keeps input interactive but blocks agent/provider launch", async () => {
-  const handlers = new Map();
-  const notifications = [];
-  const pi = {
-    getAllTools: () => [{ name: "read" }],
-    on: (event, handler) => handlers.set(event, handler),
-  };
-  registerDevLoopPreflight(pi, {
-    resolve: async () => { throw new Error("missing exact dev-loops@0.9.0"); },
-  });
-  const ctx = {
-    cwd: repoRoot,
     ui: { notify: (message, level) => notifications.push({ message, level }) },
-    abortCalled: false,
-    abort() { this.abortCalled = true; },
+    abort: assert.fail,
   };
-  assert.deepEqual(await handlers.get("input")({}, ctx), { action: "continue" });
-  assert.equal(notifications[0].level, "warning");
-  assert.match(notifications[0].message, /interactive input is allowed.*agent\/provider launch remains blocked/i);
-  await handlers.get("before_agent_start")({}, ctx);
-  assert.equal(ctx.abortCalled, true);
-  await assert.rejects(handlers.get("before_provider_request")({}, ctx), /environment is not ready/);
+  assert.deepEqual(await handlers.get("input")[0]({}, ctx), { action: "continue" });
+  await handlers.get("before_agent_start")[0]({}, ctx);
+  await handlers.get("before_provider_request")[0]({}, ctx);
+  assert.equal(notifications.length, 3);
+  assert.match(notifications[0].message, /hooks cannot cancel agent or provider execution/);
+  assert.match(notifications[1].message, /Advisory only.*no cancellation result/);
+  assert.match(notifications[2].message, /Advisory only.*errors are swallowed/);
 });
 
-test("manifest-shape drift preserves interactive recovery but blocks agent/provider launch", async () => {
-  for (const detail of [
-    "invalid YAML frontmatter in agent manifest package/agent.agent.md: unexpected list item",
-    "agent manifest requires a non-empty name and tools allowlist: package/agent.agent.md",
-  ]) {
-    const handlers = new Map();
-    const notifications = [];
-    const pi = {
-      getAllTools: () => [{ name: "read" }],
-      on: (event, handler) => handlers.set(event, handler),
-    };
-    registerDevLoopPreflight(pi, { resolve: async () => { throw new Error(detail); } });
-    const ctx = {
-      cwd: repoRoot,
-      ui: { notify: (message, level) => notifications.push({ message, level }) },
-      abortCalled: false,
-      abort() { this.abortCalled = true; },
-    };
-    assert.deepEqual(await handlers.get("input")({}, ctx), { action: "continue" });
-    assert.equal(notifications[0].level, "warning");
-    await handlers.get("before_agent_start")({}, ctx);
-    assert.equal(ctx.abortCalled, true);
-    await assert.rejects(handlers.get("before_provider_request")({}, ctx), /environment is not ready/);
-  }
+test("Pi 0.84 runner cannot hard-cancel a local fake provider through these hooks", async (t) => {
+  const piRoot = await installedPi084Root(t);
+  if (!piRoot) return;
+  const [{ Agent }, { createAssistantMessageEventStream }, { fauxAssistantMessage }, extensions, { createEventBus }] = await Promise.all([
+    import(new URL("./node_modules/@earendil-works/pi-agent-core/dist/agent.js", `file://${piRoot}/`)),
+    import(new URL("./node_modules/@earendil-works/pi-ai/dist/utils/event-stream.js", `file://${piRoot}/`)),
+    import(new URL("./node_modules/@earendil-works/pi-ai/dist/providers/faux.js", `file://${piRoot}/`)),
+    import(new URL("./dist/core/extensions/index.js", `file://${piRoot}/`)),
+    import(new URL("./dist/core/event-bus.js", `file://${piRoot}/`)),
+  ]);
+  const runtime = extensions.createExtensionRuntime();
+  const extension = await extensions.loadExtensionFromFactory((pi) => {
+    pi.on("before_agent_start", (_event, ctx) => ctx.abort());
+    pi.on("before_provider_request", (_event, ctx) => {
+      ctx.abort();
+      throw new Error("attempted hard gate");
+    });
+  }, repoRoot, createEventBus(), runtime, "<hard-gate-fixture>");
+  const runner = new extensions.ExtensionRunner([extension], runtime, repoRoot, {}, {});
+  let activeTools = ["read"];
+  let agent;
+  runner.bindCore({
+    getActiveTools: () => [...activeTools],
+    getAllTools: () => [{ name: "read" }],
+  }, {
+    abort: () => agent?.abort(),
+  });
+  const runnerErrors = [];
+  runner.onError((error) => runnerErrors.push(error));
+  await runner.emitBeforeAgentStart("fixture", undefined, "system", { cwd: repoRoot, selectedTools: activeTools });
+
+  let providerInvocations = 0;
+  const streamFn = (model, _context, options) => {
+    const stream = createAssistantMessageEventStream();
+    queueMicrotask(async () => {
+      await options.onPayload?.({ fixture: true }, model);
+      providerInvocations += 1;
+      const message = fauxAssistantMessage("local fake response");
+      stream.push({ type: "done", reason: "stop", message });
+      stream.end(message);
+    });
+    return stream;
+  };
+  agent = new Agent({
+    initialState: {
+      model: { id: "fake", name: "fake", api: "fake", provider: "local", baseUrl: "http://localhost.invalid", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1024, maxTokens: 32 },
+    },
+    streamFn,
+    onPayload: (payload) => runner.emitBeforeProviderRequest(payload),
+  });
+  await agent.prompt("fixture");
+  assert.equal(providerInvocations, 1, "the real runner swallowed the hook throw and invoked the signal-ignoring fake provider");
+  assert.equal(runnerErrors.some(({ event }) => event === "before_provider_request"), true);
+  activeTools = [];
+  assert.deepEqual(runner.getActiveTools(), []);
 });
 
 test("tracked project agents shadow every incompatible packaged dev-loops manifest", async () => {
@@ -368,10 +459,21 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.doesNotMatch(reviewTools, /\b(?:bash|edit|write)\b/, "review shadow exposes only read-only inspection tools");
   const devLoop = await read(".pi/agents/dev-loop.agent.md");
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
-  assert.doesNotMatch(devLoop, /~\/.pi|npm root -g|require\.resolve\(['"]dev-loops|<dev-loops-package-root>\/cli\/index\.mjs/);
+  assert.match(devLoop, /pre-flight-gate\.mjs --check-subagents.*before each later delegation or routed action/s);
+  assert.match(devLoop, /contradictory loop-info remains a pinned-runtime residual/);
+  assert.doesNotMatch(devLoop, /review-routing\.mjs|~\/.pi|npm root -g|require\.resolve\(['"]dev-loops|<dev-loops-package-root>\/cli\/index\.mjs/);
   const review = await read(".pi/agents/review.agent.md");
   assert.doesNotMatch(review, /\bgh api\b|\bgit (?:diff|log)\b/);
   assert.match(review, /gate-context artifact/i);
+  for (const removedShadow of [
+    "scripts/github/watch-ci.mjs",
+    "scripts/lib/ci-check-selection.mjs",
+    "scripts/lib/gate-evidence-repair.mjs",
+    "scripts/lib/review-routing.mjs",
+    "scripts/review/repair-gate-evidence.mjs",
+  ]) {
+    await assert.rejects(readFile(path.join(repoRoot, removedShadow)), { code: "ENOENT" });
+  }
   const notices = await read("THIRD_PARTY_NOTICES.md");
   assert.match(notices, /dev-loops agent compatibility shadows/);
   assert.match(notices, /Copyright \(c\) 2026 mfittko/);
@@ -406,7 +508,38 @@ test("pinned pi-subagents runtime applies git-root project-agent precedence", as
   }
 });
 
+test("pinned core resolution accepts bounded hoisted and nested package layouts", async (t) => {
+  const root = await realMkdtemp("oxid-core-layout-");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const packageRoot = path.join(root, "node_modules", "dev-loops");
+  await mkdir(packageRoot, { recursive: true });
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
+
+  async function installCore(coreRoot, version = "0.9.0") {
+    const moduleRoot = path.join(coreRoot, "src", "loop");
+    await mkdir(moduleRoot, { recursive: true });
+    await writeFile(path.join(coreRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version }));
+    await writeFile(path.join(moduleRoot, "handoff-envelope.mjs"), "export const fixture = true;\n");
+    return path.join(moduleRoot, "handoff-envelope.mjs");
+  }
+
+  const hoistedRoot = path.join(root, "node_modules", "@dev-loops", "core");
+  const hoistedModule = await installCore(hoistedRoot);
+  assert.equal(await resolvePinnedCoreModulePath(packageRoot), hoistedModule);
+
+  await rm(hoistedRoot, { recursive: true, force: true });
+  const nestedRoot = path.join(packageRoot, "node_modules", "@dev-loops", "core");
+  const nestedModule = await installCore(nestedRoot);
+  assert.equal(await resolvePinnedCoreModulePath(packageRoot), nestedModule);
+
+  await writeFile(path.join(nestedRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.1" }));
+  await assert.rejects(resolvePinnedCoreModulePath(packageRoot), /expected @dev-loops\/core@0\.9\.0/);
+});
+
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {
+  assert.deepEqual(normalizeDevLoopsArgs(["--help"]), ["help"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["-h"]), ["help"]);
+  assert.throws(() => normalizeDevLoopsArgs(["--help", "pr", "create"]), /unsupported leading/);
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), ["pr", "create", "--head", "topic", "--base", "integration"]);
   assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic"]), ["--silent", "pr", "create-draft", "--head", "topic", "--base", "integration"]);
   assert.deepEqual(normalizeDevLoopsArgs(["-s", "pr", "create", "--head", "topic"]), ["-s", "pr", "create", "--head", "topic", "--base", "integration"]);
@@ -425,6 +558,453 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--base", "origin/main"]), /must use origin\/integration/);
 });
 
+test("linked worktree context handles issue/PR selectors, equals forms, main roots, and spaces", async (t) => {
+  const root = await realMkdtemp("oxid-worktree-context-");
+  const unusual = path.join(root, "checkout with spaces");
+  const issueTarget = path.join(unusual, "tmp", "worktrees", "dev-loops", "issue-150");
+  const prTarget = path.join(unusual, "tmp", "worktrees", "dev-loops", "pr-153");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(unusual, { recursive: true });
+  execFileSync("git", ["init", "--quiet"], { cwd: unusual });
+  execFileSync("git", ["config", "user.name", "Fixture"], { cwd: unusual });
+  execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: unusual });
+  await writeFile(path.join(unusual, "tracked"), "base\n");
+  execFileSync("git", ["add", "tracked"], { cwd: unusual });
+  execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: unusual });
+  execFileSync("git", ["worktree", "add", "--quiet", "-b", "issue-150", issueTarget], { cwd: unusual });
+  execFileSync("git", ["worktree", "add", "--quiet", "-b", "pr-153", prTarget], { cwd: unusual });
+
+  const issueRewritten = normalizeLinkedWorktreeContext([`--repo-root=${issueTarget}`, "--issue=150"]);
+  assert.equal(optionAfter(issueRewritten, "--repo-root"), await realpath(unusual));
+  assert.equal(optionAfter(issueRewritten, "--issue"), "150");
+  const prRewritten = normalizeLinkedWorktreeContext(["--repo-root", prTarget, "--pr", "153"]);
+  assert.equal(optionAfter(prRewritten, "--repo-root"), await realpath(unusual));
+  assert.equal(optionAfter(prRewritten, "--pr"), "153");
+  const mainRewritten = normalizeLinkedWorktreeContext(["--repo-root", unusual, "--issue", "150"]);
+  assert.equal(optionAfter(mainRewritten, "--repo-root"), await realpath(unusual));
+  assert.throws(
+    () => normalizeLinkedWorktreeContext(["--repo-root", issueTarget, "--issue", "151"]),
+    /refusing nested worktree creation.*canonical target/s,
+  );
+  assert.throws(
+    () => normalizeLinkedWorktreeContext(["--repo-root", issueTarget, "--issue", "150", "--pr", "153"]),
+    /exactly one --issue or --pr/,
+  );
+  assert.throws(() => normalizeLinkedWorktreeContext(["--repo-root", issueTarget, "--issue", "zero"]), /positive integer/);
+  assert.throws(() => normalizeLinkedWorktreeContext(["--repo-root", issueTarget, "--issue"]), /--issue requires a value/);
+  assert.throws(() => normalizeLinkedWorktreeContext(["--repo-root", "--issue", "150"]), /--repo-root requires a value/);
+});
+
+function optionAfter(args, option) {
+  const index = args.indexOf(option);
+  return index >= 0 ? args[index + 1] : args.find((arg) => arg.startsWith(`${option}=`))?.slice(option.length + 1);
+}
+
+function validEnvelope(target, cwd) {
+  return {
+    handoffVersion: 1,
+    target,
+    nextAction: "fixture action",
+    requiredReads: ["fixture.md"],
+    acceptance: { criteria: [{ id: "fixture", must: "pass", severity: "required" }] },
+    stopRules: [],
+    executionMode: "bounded_handoff",
+    asyncStartMode: "required",
+    asyncStartEffective: "required",
+    cwd,
+  };
+}
+
+async function makeEnvelopeGitFixture(t) {
+  const parent = await realMkdtemp("oxid-envelope-topology-");
+  const root = path.join(parent, "checkout with spaces");
+  const namespace = path.join(root, "tmp", "worktrees", "dev-loops");
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  await mkdir(root, { recursive: true });
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Fixture"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: root });
+  await writeFile(path.join(root, "tracked"), "base\n");
+  execFileSync("git", ["add", "tracked"], { cwd: root });
+  execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: root });
+  const worktrees = {
+    issue150: path.join(namespace, "issue-150"),
+    issue151: path.join(namespace, "issue-151"),
+    pr153: path.join(namespace, "pr-153"),
+    phase150: path.join(namespace, "phase-150-issue-150"),
+    phase151: path.join(namespace, "phase-151-other"),
+  };
+  for (const [branch, target] of Object.entries(worktrees)) {
+    execFileSync("git", ["worktree", "add", "--quiet", "-b", `fixture-${branch}`, target], { cwd: root });
+  }
+  return { parent, root: await realpath(root), namespace, worktrees };
+}
+
+test("handoff envelope cwd normalization uses owned canonical Git topology", async (t) => {
+  const fixture = await makeEnvelopeGitFixture(t);
+  const resolve = (gitRoot) => ({ gitRoot, commonRoot: fixture.root });
+  const issue = { kind: "issue", repo: "owner/repo", issue: 150 };
+  const pr = { kind: "pr", repo: "owner/repo", pr: 153 };
+  const phase = { kind: "local_phase", repo: "owner/repo", issue: 150, phase: "issue-150" };
+
+  const mainCwd = handoffCore.resolveWorktreePath({ repoRoot: fixture.root, kind: "issue", number: 999 });
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope({ ...issue, issue: 999 }, mainCwd), resolve(fixture.root), handoffCore,
+  )).cwd, mainCwd);
+  const localBranchCwd = path.join(fixture.namespace, "fixture-topic");
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope({ kind: "local_branch", repo: "owner/repo", branch: "fixture/topic" }, localBranchCwd),
+    resolve(fixture.root), handoffCore,
+  )).cwd, localBranchCwd);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(issue, `${fixture.worktrees.issue150}/tmp/worktrees/dev-loops/issue-150`),
+    resolve(fixture.worktrees.issue150), handoffCore,
+  )).cwd, fixture.worktrees.issue150);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(pr, "ignored"), resolve(fixture.worktrees.pr153), handoffCore,
+  )).cwd, fixture.worktrees.pr153);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(phase, "ignored"), resolve(fixture.worktrees.issue150), handoffCore,
+  )).cwd, fixture.worktrees.issue150);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(phase, "ignored"), resolve(fixture.worktrees.phase150), handoffCore,
+  )).cwd, fixture.worktrees.phase150);
+
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope({ ...issue, issue: 151 }, "ignored"), resolve(fixture.worktrees.issue150), handoffCore),
+    /disagrees with resolver target/,
+  );
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope(pr, "ignored"), resolve(fixture.worktrees.issue150), handoffCore),
+    /disagrees with resolver target/,
+  );
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope({ ...phase, issue: 151, phase: "other" }, "ignored"), resolve(fixture.worktrees.phase150), handoffCore),
+    /disagrees with resolver target/,
+  );
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope(issue, "ignored"), resolve(path.join(fixture.namespace, "issue-999")), handoffCore),
+    /topology is absent/,
+  );
+
+  const alias = path.join(fixture.parent, "issue-150-alias");
+  await symlink(fixture.worktrees.issue150, alias, "dir");
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope(issue, "ignored"), resolve(alias), handoffCore),
+    /symlinked|realpath/,
+  );
+  const symlinkedTarget = path.join(fixture.namespace, "issue-997");
+  await symlink(fixture.worktrees.issue150, symlinkedTarget, "dir");
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope({ ...issue, issue: 997 }, symlinkedTarget), resolve(fixture.root), handoffCore),
+    /symlinked or realpath-mismatched/,
+  );
+  const foreign = path.join(fixture.namespace, "issue-998");
+  await mkdir(foreign, { recursive: true });
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope({ ...issue, issue: 998 }, foreign), resolve(fixture.root), handoffCore),
+    /foreign existing/,
+  );
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(
+      validEnvelope(issue, path.join(fixture.worktrees.issue150, "tmp", "worktrees", "dev-loops", "issue-150")),
+      resolve(fixture.root), handoffCore,
+    ),
+    /non-canonical handoff envelope cwd/,
+  );
+});
+
+async function installPinnedEnvelopeFixture(root, { nestedCore = false } = {}) {
+  const packageRoot = path.join(root, ".pi", "npm", "node_modules", "dev-loops");
+  const corePackageRoot = nestedCore
+    ? path.join(packageRoot, "node_modules", "@dev-loops", "core")
+    : path.join(root, ".pi", "npm", "node_modules", "@dev-loops", "core");
+  const coreRoot = path.join(corePackageRoot, "src", "loop");
+  await mkdir(path.join(packageRoot, "cli"), { recursive: true });
+  await mkdir(path.join(packageRoot, "scripts", "loop"), { recursive: true });
+  await mkdir(path.join(packageRoot, "scripts", "lib"), { recursive: true });
+  await mkdir(coreRoot, { recursive: true });
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
+  await writeFile(path.join(packageRoot, "cli", "index.mjs"), "");
+  await writeFile(path.join(packageRoot, "scripts", "loop", "build-handoff-envelope.mjs"), [
+    'import { readFile } from "node:fs/promises";',
+    'import path from "node:path";',
+    'const USAGE = "Usage: build-handoff-envelope.mjs --input <path>";',
+    'function parseJsonText(source) {',
+    '  try { return JSON.parse(source); } catch (error) { throw new Error(`Invalid JSON: ${error.message}`); }',
+    '}',
+    'function readOption(argv, index, name) {',
+    '  const argument = argv[index];',
+    '  if (argument === name) {',
+    '    if (typeof argv[index + 1] !== "string") throw new Error(`${name} requires a value`);',
+    '    return { value: argv[index + 1], consumed: 2 };',
+    '  }',
+    '  if (argument.startsWith(`${name}=`)) return { value: argument.slice(name.length + 1), consumed: 1 };',
+    '  return null;',
+    '}',
+    'export function parseBuildHandoffEnvelopeCliArgs(argv) {',
+    '  const options = { help: false, inputPath: undefined, gateState: undefined, overrides: undefined, repo: undefined, jq: undefined, silent: false };',
+    '  for (let index = 0; index < argv.length;) {',
+    '    const argument = argv[index];',
+    '    if (argument === "--help" || argument === "-h") { options.help = true; return options; }',
+    '    if (argument === "--silent" || argument === "-s") { options.silent = true; index += 1; continue; }',
+    '    let matched = false;',
+    '    for (const [flag, field] of [["--input", "inputPath"], ["--gate-state", "gateState"], ["--overrides", "overrides"], ["--repo", "repo"], ["--jq", "jq"]]) {',
+    '      const option = readOption(argv, index, flag);',
+    '      if (option) { options[field] = option.value; index += option.consumed; matched = true; break; }',
+    '    }',
+    '    if (!matched) throw new Error(`Unknown argument: ${argument}`);',
+    '  }',
+    '  if (!options.inputPath) throw new Error("--input <path> is required");',
+    '  return options;',
+    '}',
+    'export async function buildHandoffEnvelopeCli(options, { adapter }) {',
+    '  const cwd = adapter.getCwd();',
+    '  const repoRoot = adapter.getRepoRoot();',
+    '  const resolverOutput = parseJsonText(await readFile(path.resolve(cwd, options.inputPath), "utf8"));',
+    '  const bundle = resolverOutput.bundle ?? {};',
+    '  const artifact = bundle.activeArtifact ?? {};',
+    '  const repo = options.repo ?? bundle.repoSlug ?? bundle.repo;',
+    '  if (!repo) throw new Error("Repository slug could not be resolved");',
+    '  const target = { ...artifact, repo };',
+    '  let envelopeCwd = cwd;',
+    '  if (target.kind === "issue") envelopeCwd = path.join(repoRoot, "tmp", "worktrees", "dev-loops", `issue-${target.issue}`);',
+    '  if (target.kind === "pr") envelopeCwd = path.join(repoRoot, "tmp", "worktrees", "dev-loops", `pr-${target.pr}`);',
+    '  let maxCopilotRounds;',
+    '  try {',
+    '    const config = await readFile(path.join(repoRoot, ".devloops"), "utf8");',
+    '    const match = config.match(/^\\s*maxCopilotRounds:\\s*(\\d+)\\s*$/m);',
+    '    if (match) maxCopilotRounds = Number(match[1]);',
+    '  } catch (error) { if (error?.code !== "ENOENT") throw error; }',
+    '  const gateState = options.gateState ? parseJsonText(options.gateState) : {};',
+    '  const overrides = options.overrides ? parseJsonText(options.overrides) : undefined;',
+    '  return {',
+    '    handoffVersion: 1, target, nextAction: bundle.nextAction, requiredReads: [],',
+    '    acceptance: { criteria: [] }, stopRules: [], executionMode: bundle.executionMode,',
+    '    asyncStartMode: "required", asyncStartEffective: "required", cwd: envelopeCwd,',
+    '    ...gateState, overrides, maxCopilotRounds,',
+    '    sanctionedCommands: { createPr: "scripts/dev-loops.mjs pr create" },',
+    '  };',
+    '}',
+    'export async function runCli(argv, { stdout, stderr, adapter }) {',
+    '  try {',
+    '    const options = parseBuildHandoffEnvelopeCliArgs(argv);',
+    '    if (options.help) { stdout.write(`${USAGE}\\n`); return; }',
+    '    const result = await buildHandoffEnvelopeCli(options, { adapter });',
+    '    if (!options.silent) stdout.write(`${JSON.stringify(result)}\\n`);',
+    '  } catch (error) { stderr.write(`${error.message}\\n`); process.exitCode = 1; }',
+    '}',
+  ].join("\n"));
+  await writeFile(path.join(packageRoot, "scripts", "lib", "jq-output.mjs"), [
+    'export function emitResult(result, { jq, silent, stdout, stderr }) {',
+    '  let output = result;',
+    '  if (jq !== undefined) {',
+    '    if (jq !== ".cwd") { stderr.write(`${JSON.stringify({ ok: false, error: `--jq: unsupported filter ${jq}` })}\\n`); return 2; }',
+    '    output = result.cwd;',
+    '  }',
+    '  if (silent) return 0;',
+    '  stdout.write(`${typeof output === "string" ? output : JSON.stringify(output)}\\n`);',
+    '  return 0;',
+    '}',
+  ].join("\n"));
+  await writeFile(path.join(packageRoot, "scripts", "_core-helpers.mjs"), [
+    'export function formatCliError(error) { return error instanceof Error ? error.message : String(error); }',
+  ].join("\n"));
+  await writeFile(path.join(corePackageRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.0" }));
+  await writeFile(path.join(coreRoot, "handoff-envelope.mjs"), [
+    'import path from "node:path";',
+    'export const WORKTREE_NAMESPACE = path.join("tmp", "worktrees", "dev-loops");',
+    'export const resolveWorktreePath = ({ repoRoot, kind, number }) => path.join(repoRoot, WORKTREE_NAMESPACE, `${kind}-${number}`);',
+    'export const buildWorktreeSlug = (target) => `phase-${target.issue}-${target.phase}`;',
+    'export const validateHandoffEnvelope = (envelope) => ({ ok: typeof envelope.cwd === "string", errors: [] });',
+  ].join("\n"));
+  return { packageRoot, corePackageRoot };
+}
+
+function captureSink(chunks) {
+  return new Writable({ write(chunk, _encoding, callback) { chunks.push(chunk.toString()); callback(); } });
+}
+
+async function makeProspectiveEnvelopeRouteFixture(t, blockedAncestor) {
+  const parent = await realMkdtemp("oxid-envelope-prospective-");
+  const root = path.join(parent, "candidate checkout");
+  const input = "resolver.json";
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".pi"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@0.9.0"] }));
+  await writeFile(path.join(root, ".devloops"), "version: 1\n");
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Fixture"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: root });
+  execFileSync("git", ["add", ".pi/settings.json", ".devloops"], { cwd: root });
+  execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: root });
+  await installPinnedEnvelopeFixture(root);
+  await writeFile(path.join(root, input), JSON.stringify({
+    bundle: {
+      repoSlug: "owner/repo",
+      selectedStrategy: "local_implementation",
+      executionMode: "bounded_handoff",
+      nextAction: "fixture action",
+      activeArtifact: { kind: "issue", issue: 999 },
+    },
+  }));
+  if (blockedAncestor === "tmp") {
+    await writeFile(path.join(root, "tmp"), "not a directory\n");
+  } else if (blockedAncestor === "namespace") {
+    await mkdir(path.join(root, "tmp", "worktrees"), { recursive: true });
+    await writeFile(path.join(root, "tmp", "worktrees", "dev-loops"), "not a directory\n");
+  }
+  return { root: await realpath(root), input, target: path.join(root, "tmp", "worktrees", "dev-loops", "issue-999") };
+}
+
+test("tracked build-envelope route rejects non-directory prospective topology before emission", async (t) => {
+  for (const fixtureCase of [
+    { name: "absent prospective path", blockedAncestor: null, accepted: true },
+    { name: "common-root tmp file", blockedAncestor: "tmp", accepted: false },
+    { name: "managed namespace file", blockedAncestor: "namespace", accepted: false },
+  ]) {
+    await t.test(fixtureCase.name, async (subtest) => {
+      const fixture = await makeProspectiveEnvelopeRouteFixture(subtest, fixtureCase.blockedAncestor);
+      const out = [];
+      const err = [];
+      const code = await runDevLoops(["loop", "build-envelope", "--input", fixture.input], {
+        cwd: fixture.root,
+        stdout: captureSink(out),
+        stderr: captureSink(err),
+      });
+      if (fixtureCase.accepted) {
+        assert.equal(code, 0, err.join(""));
+        assert.equal(JSON.parse(out.join("")).cwd, fixture.target);
+        assert.equal(err.join(""), "");
+      } else {
+        assert.equal(code, 1);
+        assert.equal(out.join(""), "");
+        assert.match(err.join(""), /non-directory ancestor/);
+      }
+    });
+  }
+});
+
+test("tracked build-envelope route preserves pinned parser, config, and output contracts", async (t) => {
+  const parent = await realMkdtemp("oxid-envelope-cli-");
+  const root = path.join(parent, "candidate checkout with spaces");
+  const issueTarget = path.join(root, "tmp", "worktrees", "dev-loops", "issue-150");
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".pi"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@0.9.0"] }));
+  await writeFile(path.join(root, ".devloops"), "version: 1\nrefinement:\n  maxCopilotRounds: 9\n");
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Fixture"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: root });
+  execFileSync("git", ["add", ".pi/settings.json", ".devloops"], { cwd: root });
+  execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: root });
+  execFileSync("git", ["worktree", "add", "--quiet", "-b", "fixture-issue-150", issueTarget], { cwd: root });
+  await writeFile(path.join(issueTarget, ".devloops"), "version: 1\nrefinement:\n  maxCopilotRounds: 2\n");
+  await installPinnedEnvelopeFixture(root);
+  const resolver = {
+    bundle: {
+      repoSlug: "owner/repo",
+      selectedStrategy: "local_implementation",
+      executionMode: "bounded_handoff",
+      nextAction: "fixture action",
+      activeArtifact: { kind: "local_phase", issue: 150, phase: "issue-150" },
+    },
+  };
+  const input = "resolver output with spaces.json";
+  await writeFile(path.join(issueTarget, input), JSON.stringify(resolver));
+
+  async function run(args) {
+    const out = [];
+    const err = [];
+    const code = await runDevLoops(args, { cwd: issueTarget, stdout: captureSink(out), stderr: captureSink(err) });
+    return { code, out: out.join(""), err: err.join("") };
+  }
+
+  const split = await run([
+    "--json", "loop", "build-envelope", "--input", input,
+    "--gate-state", '{"currentHeadSha":"fixture-head","ciStatus":"success","unresolvedThreadCount":3}',
+    "--overrides", '{"preferLocal":true}',
+  ]);
+  assert.equal(split.code, 0, split.err);
+  const envelope = JSON.parse(split.out);
+  assert.equal(envelope.cwd, issueTarget);
+  assert.equal(envelope.currentHeadSha, "fixture-head");
+  assert.equal(envelope.ciStatus, "success");
+  assert.equal(envelope.unresolvedThreadCount, 3);
+  assert.equal(envelope.target.repo, "owner/repo");
+  assert.deepEqual(envelope.overrides, { preferLocal: true });
+  assert.equal(envelope.maxCopilotRounds, 2);
+  assert.ok(envelope.sanctionedCommands);
+
+  const equals = await run(["--jq=.cwd", "loop", "build-envelope", `--input=${input}`, "--repo=owner/repo"]);
+  assert.deepEqual(equals, { code: 0, out: `${issueTarget}\n`, err: "" });
+  const silent = await run(["-s", "loop", "build-envelope", `--input=${input}`]);
+  assert.deepEqual(silent, { code: 0, out: "", err: "" });
+  assert.deepEqual(
+    await run(["--silent", "loop", "build-envelope", `--input=${input}`]),
+    { code: 0, out: "", err: "" },
+  );
+  const help = await run(["loop", "build-envelope", "--help"]);
+  assert.equal(help.code, 0);
+  assert.match(help.out, /Usage: build-handoff-envelope/);
+  const badJq = await run(["loop", "build-envelope", `--input=${input}`, "--jq", "unsupported"]);
+  assert.equal(badJq.code, 2);
+  assert.match(badJq.err, /--jq/);
+  await writeFile(path.join(issueTarget, "malformed.json"), "{");
+  const malformed = await run(["loop", "build-envelope", "--input", "malformed.json"]);
+  assert.equal(malformed.code, 1);
+  assert.match(malformed.err, /Invalid JSON/);
+});
+
+test("tracked pre-flight wrapper reports Pi child dispatch availability deterministically", async (t) => {
+  assert.equal(inferSubagentAvailability({ PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "1", PI_SUBAGENT_MAX_DEPTH: "2" }), "1");
+  assert.equal(inferSubagentAvailability({ PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "2", PI_SUBAGENT_MAX_DEPTH: "2" }), "0");
+  assert.equal(inferSubagentAvailability({ DEVLOOPS_SUBAGENT_AVAILABLE: "1", PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "2", PI_SUBAGENT_MAX_DEPTH: "2" }), "0");
+  assert.equal(inferSubagentAvailability({ DEVLOOPS_SUBAGENT_AVAILABLE: "0", PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "1", PI_SUBAGENT_MAX_DEPTH: "2" }), "1");
+  assert.equal(inferSubagentAvailability({ DEVLOOPS_SUBAGENT_AVAILABLE: "1" }), "1");
+  assert.equal(inferSubagentAvailability({ DEVLOOPS_SUBAGENT_AVAILABLE: "invalid" }), "0");
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const script = path.join(fixture.packageRoot, "scripts", "loop", "pre-flight-gate.mjs");
+  await writeFile(script, "process.stdout.write(JSON.stringify({available:process.env.DEVLOOPS_SUBAGENT_AVAILABLE}) + '\\n');\n");
+  const output = [];
+  const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
+  assert.equal(await runPreFlightGate(["--check-subagents"], {
+    cwd: fixture.root,
+    env: { ...process.env, PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "1", PI_SUBAGENT_MAX_DEPTH: "2" },
+    stdout: sink,
+    stderr: sink,
+  }), 0);
+  assert.deepEqual(JSON.parse(output.join("")), { available: "1" });
+  await assert.rejects(runPreFlightGate([], {
+    cwd: fixture.root,
+    env: { ...process.env, DEVLOOPS_PREFLIGHT_BYPASS: "1" },
+    stdout: sink,
+    stderr: sink,
+  }), /BYPASS is not permitted/);
+  const repositoryCheck = await runRepositoryPreflight(repoRoot);
+  if (repositoryCheck.ok) {
+    assert.match(repositoryCheck.resolved.source, /^git-(?:root|common-root)$/);
+  } else {
+    assert.match(repositoryCheck.message, /missing exact dev-loops@0\.9\.0; checked only/);
+  }
+});
+
+test("repository wrapper executes conventional help and delegates watch-ci unchanged", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const cli = path.join(fixture.packageRoot, "cli", "index.mjs");
+  await writeFile(cli, "process.stdout.write(JSON.stringify(process.argv.slice(2)) + '\\n');\n");
+  const output = [];
+  const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
+  assert.equal(await runDevLoops(["--help"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.equal(await runDevLoops(["--silent", "loop", "watch-ci", "--pr", "7"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.deepEqual(output.join("").trim().split("\n").map((line) => JSON.parse(line)), [
+    ["help"],
+    ["--silent", "loop", "watch-ci", "--pr", "7"],
+  ]);
+});
+
 test("repository wrappers await child close and preserve trailing output", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
@@ -440,8 +1020,8 @@ test("repository wrappers await child close and preserve trailing output", async
 
 test("GitHub compatibility enforces the supported CLI floor and REST capabilities", async (t) => {
   assert.deepEqual(parseGhVersion("gh version 2.97.0 (2026-08-14)"), [2, 97, 0]);
-  assert.deepEqual(assertMinimumGhVersion([2, 67, 0]), [2, 67, 0]);
-  assert.throws(() => assertMinimumGhVersion([2, 66, 9]), /unsupported; require >= 2\.67\.0/);
+  assert.deepEqual(assertMinimumGhVersion([2, 97, 0]), [2, 97, 0]);
+  assert.throws(() => assertMinimumGhVersion([2, 96, 9]), /unsupported; require >= 2\.97\.0.*nix develop/);
   assert.throws(() => parseGhVersion("not gh"), /could not parse/);
   const links = normalizeTimelinePullRequests([
     { event: "cross-referenced", source: { issue: { number: 71, html_url: "https://github.com/MediaNoxLabs/oxid/pull/71", pull_request: { url: "https://api.github.com/repos/MediaNoxLabs/oxid/pulls/71" } } } },
@@ -461,14 +1041,14 @@ test("GitHub compatibility enforces the supported CLI floor and REST capabilitie
   const fakeGh = path.join(fixtureRoot, "gh");
   await writeFile(fakeGh, `#!/usr/bin/env node
 const args = process.argv.slice(2);
-if (args[0] === "--version") process.stdout.write("gh version 2.67.0 (fixture)\\n");
+if (args[0] === "--version") process.stdout.write("gh version 2.97.0 (fixture)\\n");
 else if (args.at(-1).endsWith("/timeline")) process.stdout.write(JSON.stringify([[{ event: "cross-referenced" }]]));
 else if (args.at(-1).endsWith("/issues/150")) process.stdout.write(JSON.stringify({ number: 150 }));
 else process.exit(9);
 `);
   await chmod(fakeGh, 0o755);
   const probe = preflightGh({ repository: "MediaNoxLabs/oxid", issue: 150, ghCommand: fakeGh });
-  assert.deepEqual(probe.version, [2, 67, 0]);
+  assert.deepEqual(probe.version, [2, 97, 0]);
   assert.equal(probe.timelinePages, 1);
   await writeFile(fakeGh, (await readFile(fakeGh, "utf8")).replace(
     'JSON.stringify([[{ event: "cross-referenced" }]])',
@@ -890,16 +1470,18 @@ fi
   );
 });
 
-test("manual Claude review and zero Copilot rounds are mandatory gate facts", async () => {
+test("routine gates stay bounded and preserve the explicit high-risk review route", async () => {
   const config = await read(".devloops");
   assert.match(config, /^\s+maxCopilotRounds: 0$/m);
   for (const block of [
     config.slice(config.indexOf("  draft:"), config.indexOf("  preApproval:")),
     config.slice(config.indexOf("  preApproval:"), config.indexOf("  requireFanoutEvidence:")),
   ]) {
-    const mandatory = block.slice(block.indexOf("    mandatoryAngles:"));
-    assert.match(mandatory, /^\s+- external-review$/m);
+    assert.doesNotMatch(block, /^\s+- external-review$/m);
   }
+  assert.match(config, /^  maxFanoutReviewers: 2$/m);
+  assert.match(config, /^  humanMergeOnly: true$/m);
+  assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
 });
 
 test("upstream-only gaps are linked and speculative local patches are forbidden", async () => {
@@ -911,7 +1493,9 @@ test("upstream-only gaps are linked and speculative local patches are forbidden"
     "blob/v0.42.1/src/runs/background/async-resume.ts",
   ]) assert.match(doc, new RegExp(link.replaceAll("/", "\\/")));
   assert.match(doc, /usageBudget/);
+  assert.match(doc, /return\[0\]\.status \.\.\. undefined/);
   assert.match(doc, /upstream-only/i);
+  assert.doesNotMatch(doc, /Before median|86\.4 \/ 89\.3 ms/);
   assert.match(doc, /do not (?:patch|modify|vendor)/i);
 });
 

@@ -1,10 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 const SETTINGS_PATH = path.join(".pi", "settings.json");
 const PROJECT_AGENTS_PATH = path.join(".pi", "agents");
+
+export const PI_BUILTIN_CHILD_TOOLS = Object.freeze([
+  "read", "grep", "find", "ls", "bash", "edit", "write",
+]);
+
+export const DEV_LOOP_SELECTED_TOOLS = Object.freeze([
+  "read", "grep", "find", "ls", "bash", "subagent",
+]);
+
+export const REPOSITORY_CONFIGURED_TOOLS = Object.freeze([
+  ...PI_BUILTIN_CHILD_TOOLS,
+  "subagent",
+  "labels_bootstrap", "pr_approve_dep_upgrade", "pr_expedite", "pr_request_review",
+  "pr_stabilize", "pr_watch", "review_claim", "review_complete", "review_create",
+  "review_enrich", "review_list",
+]);
 
 async function exists(candidate) {
   try {
@@ -193,7 +210,8 @@ function unquoteFrontmatterScalar(value, file) {
 /**
  * Parse only root-level name/tools fields. Other valid YAML fields, including
  * nested lists and folded content, are deliberately ignored. An unmodelled
- * tools shape throws so input can warn while agent/provider launch fails closed.
+ * tools shape throws; Pi hooks report it advisory, while the mandatory tracked
+ * pre-flight wrapper rejects it before routed actions or delegation.
  */
 export function parseAgentFrontmatter(source, file) {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
@@ -277,13 +295,29 @@ async function readAgentDirectory(root, { requireTools = false } = {}) {
 }
 
 /** Check every installed repository-pinned package after project shadows. */
-export async function checkAgentToolAllowlists({ packageRoot, packageRoots, settings, availableTools, projectRoot }) {
+export async function checkAgentToolAllowlists({
+  packageRoot,
+  packageRoots,
+  settings,
+  availableTools,
+  activeAgent,
+  activeTools,
+  futureTools,
+  projectRoot,
+}) {
   const roots = packageRoots ?? (packageRoot ? [{ name: "dev-loops", packageRoot }] : []);
   if (!Array.isArray(roots) || roots.length === 0) throw new Error("at least one pinned packageRoot is required");
   if (!projectRoot) throw new Error("projectRoot is required");
   if (!Array.isArray(availableTools)) throw new Error("availableTools must be an array");
+  if (activeAgent !== undefined && (typeof activeAgent !== "string" || activeAgent.trim() === "")) {
+    throw new Error("activeAgent must be a non-empty string when provided");
+  }
+  if (activeTools !== undefined && !Array.isArray(activeTools)) throw new Error("activeTools must be an array");
+  if (futureTools !== undefined && !Array.isArray(futureTools)) throw new Error("futureTools must be an array");
   assertSupportedProjectSettings(settings);
-  const available = new Set(availableTools);
+  const rootAvailable = new Set(availableTools);
+  const activeAvailable = new Set(activeTools ?? availableTools);
+  const futureAvailable = new Set(futureTools ?? availableTools);
   const packaged = (await Promise.all(roots.map(async ({ name = "unknown", packageRoot: root }) =>
     (await readAgentDirectory(path.join(root, "agents"))).map((agent) => ({ ...agent, packageName: name }))
   ))).flat();
@@ -304,21 +338,27 @@ export async function checkAgentToolAllowlists({ packageRoot, packageRoots, sett
     }
     // Validate every duplicate-named package manifest. Settings order is not
     // assumed to match Pi's package-discovery precedence.
-    const missingTools = packageAgent.tools.filter((tool) => !available.has(tool));
+    const scope = activeAgent === undefined ? "root" : packageAgent.name === activeAgent ? "active" : "future-child";
+    const scopeTools = scope === "active" ? activeAvailable : scope === "future-child" ? futureAvailable : rootAvailable;
+    const missingTools = packageAgent.tools.filter((tool) => !scopeTools.has(tool));
     agents.push({
       name: packageAgent.name,
       file: packageAgent.file,
       source: `package:${packageAgent.packageName}`,
+      scope,
       tools: [...packageAgent.tools],
       missingTools,
     });
   }
   for (const projectAgent of project) {
-    const missingTools = projectAgent.tools.filter((tool) => !available.has(tool));
+    const scope = activeAgent === undefined ? "root" : projectAgent.name === activeAgent ? "active" : "future-child";
+    const scopeTools = scope === "active" ? activeAvailable : scope === "future-child" ? futureAvailable : rootAvailable;
+    const missingTools = projectAgent.tools.filter((tool) => !scopeTools.has(tool));
     agents.push({
       name: projectAgent.name,
       file: projectAgent.file,
       source: "project",
+      scope,
       shadowsPackages: shadowedNames.has(projectAgent.name),
       tools: [...projectAgent.tools],
       missingTools,
@@ -328,27 +368,30 @@ export async function checkAgentToolAllowlists({ packageRoot, packageRoots, sett
   return { ok: agents.every(({ missingTools }) => missingTools.length === 0), agents };
 }
 
+async function contentFingerprint(file) {
+  const source = await readFile(file);
+  return `${file}:sha256:${createHash("sha256").update(source).digest("hex")}`;
+}
+
 async function manifestFingerprints(root) {
   if (!(await exists(root))) return [];
   const files = (await readdir(root)).filter((file) => file.endsWith(".agent.md")).sort();
-  return Promise.all(files.map(async (file) => {
-    const candidate = path.join(root, file);
-    const info = await stat(candidate);
-    return `${candidate}:${info.mtimeMs}:${info.size}`;
-  }));
+  return Promise.all(files.map((file) => contentFingerprint(path.join(root, file))));
 }
 
-/** Cheap cache key: cwd/settings/package/manifest identity plus Pi's tool set. */
-export async function devLoopPreflightCacheKey({ resolved, availableTools }) {
-  const settingsInfo = await stat(resolved.settingsPath);
+/** Content-bound session cache key for the checkout, pins, manifests, and Pi tool scopes. */
+export async function devLoopPreflightCacheKey({ resolved, availableTools, activeAgent, activeTools, futureTools }) {
   const roots = resolved.packageRoots ?? [{ name: "dev-loops", packageRoot: resolved.packageRoot }];
   const fingerprints = [
     `cwd:${resolved.gitRoot}`,
-    `settings:${resolved.settingsPath}:${settingsInfo.mtimeMs}:${settingsInfo.size}`,
-    `tools:${[...availableTools].sort().join(",")}`,
+    `settings:${await contentFingerprint(resolved.settingsPath)}`,
+    `root-tools:${[...availableTools].sort().join(",")}`,
+    `active-agent:${activeAgent ?? "root"}`,
+    `active-tools:${[...(activeTools ?? availableTools)].sort().join(",")}`,
+    `future-tools:${[...(futureTools ?? availableTools)].sort().join(",")}`,
   ];
   for (const { name, version = "", packageRoot: root } of roots) {
-    fingerprints.push(`package:${name}@${version}:${root}`);
+    fingerprints.push(`package:${name}@${version}:${root}:${await contentFingerprint(path.join(root, "package.json"))}`);
     fingerprints.push(...await manifestFingerprints(path.join(root, "agents")));
   }
   fingerprints.push(...await manifestFingerprints(path.join(resolved.gitRoot, PROJECT_AGENTS_PATH)));
@@ -359,6 +402,6 @@ export function formatAgentToolAllowlistFailure(result) {
   const invalid = result.agents.filter(({ missingTools }) => missingTools.length > 0);
   if (invalid.length === 0) return "";
   return `Pi dev-loop preflight failed: unavailable repository/package agent tools: ${invalid
-    .map(({ name, source, missingTools }) => `${name}@${source}=[${missingTools.join(", ")}]`)
+    .map(({ name, source, scope, missingTools }) => `${name}@${source}:${scope ?? "root"}=[${missingTools.join(", ")}]`)
     .join("; ")}. Fix the tracked .pi/agents manifest or exact package installation before model execution. This preflight covers every installed repository-pinned package plus repository-local shadows; separately installed user agents are outside its claim.`;
 }
