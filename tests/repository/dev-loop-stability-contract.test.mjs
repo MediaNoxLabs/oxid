@@ -16,8 +16,7 @@ import {
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
-import { normalizeDevLoopsArgs, runDevLoops } from "../../scripts/dev-loops.mjs";
-import * as handoffCore from "../../.pi/npm/node_modules/@dev-loops/core/src/loop/handoff-envelope.mjs";
+import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
 import { inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
 import { normalizeLinkedWorktreeContext, normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import {
@@ -55,6 +54,12 @@ const supportedTools = [
   "pr_stabilize", "pr_watch", "review_claim", "review_complete", "review_create",
   "review_enrich", "review_list",
 ];
+const handoffCore = {
+  WORKTREE_NAMESPACE: path.join("tmp", "worktrees", "dev-loops"),
+  resolveWorktreePath: ({ repoRoot: root, kind, number }) => path.join(root, "tmp", "worktrees", "dev-loops", `${kind}-${number}`),
+  buildWorktreeSlug: (target) => `phase-${target.issue}-${target.phase}`,
+  validateHandoffEnvelope: (envelope) => ({ ok: typeof envelope.cwd === "string", errors: [] }),
+};
 
 const fixtureClaudeHelp = [
   "  --print",
@@ -503,6 +508,34 @@ test("pinned pi-subagents runtime applies git-root project-agent precedence", as
   }
 });
 
+test("pinned core resolution accepts bounded hoisted and nested package layouts", async (t) => {
+  const root = await realMkdtemp("oxid-core-layout-");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const packageRoot = path.join(root, "node_modules", "dev-loops");
+  await mkdir(packageRoot, { recursive: true });
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
+
+  async function installCore(coreRoot, version = "0.9.0") {
+    const moduleRoot = path.join(coreRoot, "src", "loop");
+    await mkdir(moduleRoot, { recursive: true });
+    await writeFile(path.join(coreRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version }));
+    await writeFile(path.join(moduleRoot, "handoff-envelope.mjs"), "export const fixture = true;\n");
+    return path.join(moduleRoot, "handoff-envelope.mjs");
+  }
+
+  const hoistedRoot = path.join(root, "node_modules", "@dev-loops", "core");
+  const hoistedModule = await installCore(hoistedRoot);
+  assert.equal(await resolvePinnedCoreModulePath(packageRoot), hoistedModule);
+
+  await rm(hoistedRoot, { recursive: true, force: true });
+  const nestedRoot = path.join(packageRoot, "node_modules", "@dev-loops", "core");
+  const nestedModule = await installCore(nestedRoot);
+  assert.equal(await resolvePinnedCoreModulePath(packageRoot), nestedModule);
+
+  await writeFile(path.join(nestedRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.1" }));
+  await assert.rejects(resolvePinnedCoreModulePath(packageRoot), /expected @dev-loops\/core@0\.9\.0/);
+});
+
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {
   assert.deepEqual(normalizeDevLoopsArgs(["--help"]), ["help"]);
   assert.deepEqual(normalizeDevLoopsArgs(["-h"]), ["help"]);
@@ -681,11 +714,13 @@ test("handoff envelope cwd normalization uses owned canonical Git topology", asy
   );
 });
 
-async function installPinnedEnvelopeProxy(root) {
+async function installPinnedEnvelopeProxy(root, { nestedCore = false } = {}) {
   const packageRoot = path.join(root, ".pi", "npm", "node_modules", "dev-loops");
-  const coreRoot = path.join(root, ".pi", "npm", "node_modules", "@dev-loops", "core", "src", "loop");
+  const corePackageRoot = nestedCore
+    ? path.join(packageRoot, "node_modules", "@dev-loops", "core")
+    : path.join(root, ".pi", "npm", "node_modules", "@dev-loops", "core");
+  const coreRoot = path.join(corePackageRoot, "src", "loop");
   const actualPackage = path.join(repoRoot, ".pi", "npm", "node_modules", "dev-loops");
-  const actualCore = path.join(repoRoot, ".pi", "npm", "node_modules", "@dev-loops", "core", "src", "loop", "handoff-envelope.mjs");
   await mkdir(path.join(packageRoot, "cli"), { recursive: true });
   await mkdir(path.join(packageRoot, "scripts", "loop"), { recursive: true });
   await mkdir(path.join(packageRoot, "scripts", "lib"), { recursive: true });
@@ -699,7 +734,15 @@ async function installPinnedEnvelopeProxy(root) {
   ]) {
     await writeFile(path.join(packageRoot, relative[0]), `export * from ${JSON.stringify(pathToFileURL(path.join(actualPackage, relative[1])).href)};\n`);
   }
-  await writeFile(path.join(coreRoot, "handoff-envelope.mjs"), `export * from ${JSON.stringify(pathToFileURL(actualCore).href)};\n`);
+  await writeFile(path.join(corePackageRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.0" }));
+  await writeFile(path.join(coreRoot, "handoff-envelope.mjs"), [
+    'import path from "node:path";',
+    'export const WORKTREE_NAMESPACE = path.join("tmp", "worktrees", "dev-loops");',
+    'export const resolveWorktreePath = ({ repoRoot, kind, number }) => path.join(repoRoot, WORKTREE_NAMESPACE, `${kind}-${number}`);',
+    'export const buildWorktreeSlug = (target) => `phase-${target.issue}-${target.phase}`;',
+    'export const validateHandoffEnvelope = (envelope) => ({ ok: typeof envelope.cwd === "string", errors: [] });',
+  ].join("\n"));
+  return { packageRoot, corePackageRoot };
 }
 
 function captureSink(chunks) {

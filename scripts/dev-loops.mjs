@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
+import { readFile, realpath } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
@@ -43,9 +44,31 @@ function buildEnvelopeArgs(args) {
   return [...leading, ...args.slice(categoryIndex + 2)];
 }
 
+export async function resolvePinnedCoreModulePath(packageRoot) {
+  const packageManifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
+  const candidates = [
+    path.join(packageRoot, "node_modules", "@dev-loops", "core"),
+    path.join(packageRoot, "..", "@dev-loops", "core"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const resolvedRoot = await realpath(candidate);
+      if (resolvedRoot !== path.resolve(candidate)) continue;
+      const manifest = JSON.parse(await readFile(path.join(resolvedRoot, "package.json"), "utf8"));
+      if (manifest.name !== "@dev-loops/core" || manifest.version !== packageManifest.version) continue;
+      const modulePath = path.join(resolvedRoot, "src", "loop", "handoff-envelope.mjs");
+      if (await realpath(modulePath) !== modulePath) continue;
+      return modulePath;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  throw new Error(`expected @dev-loops/core@${packageManifest.version} beneath the resolved dev-loops package installation`);
+}
+
 async function loadPinnedEnvelopeModules(packageRoot) {
   const fromPackage = (relativePath) => import(pathToFileURL(path.join(packageRoot, relativePath)).href);
-  const corePath = path.join(packageRoot, "..", "@dev-loops", "core", "src", "loop", "handoff-envelope.mjs");
+  const corePath = await resolvePinnedCoreModulePath(packageRoot);
   const [cli, output, helpers, core] = await Promise.all([
     fromPackage(path.join("scripts", "loop", "build-handoff-envelope.mjs")),
     fromPackage(path.join("scripts", "lib", "jq-output.mjs")),
