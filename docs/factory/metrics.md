@@ -130,9 +130,11 @@ dropped every attempted write while the repository held 8.8 GB across eight
 cache entries (including three approximately 2 GB immutable quality-devshell
 archives). Minimal CI shells now default `CARGO_INCREMENTAL=0`, every Rust lane
 prints sccache statistics, the unit lane is the single writer, and the other
-Rust lanes are read-only consumers. Quality uses an uncached minimal shell;
-the locked package lane remains the only whole-store GitHub cache while a
-proper signed Nix substituter is unprovisioned.
+Rust lanes are read-only consumers. Pull requests do not write either compiler
+objects or Nix-store archives; only a trusted `integration` push may seed the
+unit compiler cache and locked-package store cache. Quality uses an uncached
+minimal shell; the locked package lane remains the only whole-store GitHub
+cache while a proper signed Nix substituter is unprovisioned.
 
 Local entry-point validation on the same Apple development host and a fresh
 worktree target completed the original `basic` in 1m41 and original `unit`

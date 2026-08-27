@@ -14,6 +14,9 @@ command_status=0
 # Cache telemetry must never hide the command's result. It makes cache misses,
 # non-cacheable incremental crates, and backend errors attributable in each
 # hosted lane without archiving a target directory.
+if [[ "${SCCACHE_GHA_RW_MODE:-READ_WRITE}" == "READ_ONLY" ]]; then
+  echo "sccache remote mode: READ_ONLY (write-error counters are expected for rejected local puts)"
+fi
 sccache --show-stats || true
 
 exit "$command_status"

@@ -142,6 +142,9 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
+            const trustedIntegrationPush = process.env.GITHUB_EVENT_NAME === 'push'
+              && process.env.GITHUB_REF === 'refs/heads/integration';
+            core.exportVariable('SCCACHE_GHA_RW_MODE', trustedIntegrationPush ? 'READ_WRITE' : 'READ_ONLY');
       - name: Compile and run workspace unit tests
         run: nix develop .#ci-rust --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh unit --strict
 
@@ -337,6 +340,7 @@ jobs:
           primary-key: nix7-build-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix', 'Cargo.lock') }}
           restore-prefixes-first-match: nix7-build-${{ runner.os }}-
           gc-max-store-size-linux: 4G
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/integration' }}
           purge: true
           purge-prefixes: nix7-build-${{ runner.os }}-
           purge-created: 0

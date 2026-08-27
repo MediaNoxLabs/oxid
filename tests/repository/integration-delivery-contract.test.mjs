@@ -264,14 +264,19 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.equal((ci.match(/name: Configure object-level compiler cache/g) || []).length, 6);
   assert.equal((ci.match(/core\.exportVariable\('SCCACHE_GHA_ENABLED', 'on'\)/g) || []).length, 6);
   assert.equal((ci.match(/core\.exportVariable\('SCCACHE_GHA_RW_MODE', 'READ_ONLY'\)/g) || []).length, 5);
-  const unitJob = ci.slice(ci.indexOf("  unit_linux:"), ci.indexOf("  headless_linux:"));
-  assert.doesNotMatch(unitJob, /SCCACHE_GHA_RW_MODE/);
+  const unitJob = ci.slice(
+    ci.indexOf("\n  unit_linux:\n    name:"),
+    ci.indexOf("\n  headless_linux:\n    name:"),
+  );
+  assert.match(unitJob, /trustedIntegrationPush[\s\S]*SCCACHE_GHA_RW_MODE[\s\S]*READ_WRITE[\s\S]*READ_ONLY/);
   assert.match(ciShells, /export CARGO_INCREMENTAL="''\$\{CARGO_INCREMENTAL:-0\}"/);
   assert.match(ciShells, /devShells\.ci-quality = pkgs\.mkShell/);
   assert.match(sccacheRunner, /"\$@" \|\| command_status=\$\?/);
   assert.match(sccacheRunner, /sccache --show-stats \|\| true/);
+  assert.match(sccacheRunner, /write-error counters are expected for rejected local puts/);
   assert.doesNotMatch(ci, /path: ~\/\.cache\/oxid-sccache/);
   assert.doesNotMatch(ci, /key: sccache-/);
+  assert.match(ci, /save: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/integration' \}\}/);
   assert.match(ci, /if: always\(\)[\s\S]*?needs: \[plan, basic, unit_linux, headless_linux, ui_linux, ui_release_linux, coverage_linux\]/);
   assert.doesNotMatch(ci, /Run full repository gate/);
   assert.doesNotMatch(ci, /^\s+target$/m);

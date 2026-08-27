@@ -88,14 +88,45 @@ hosted gates prefer cacheable compiler objects and print per-lane sccache
 hit/miss/non-cacheable statistics. The interactive developer shell keeps
 Cargo's normal incremental behavior. Local CI shells use a bounded 2 GiB cache
 and the local default remains a bounded 10 GiB shared cache. Rust
-feedback lanes do not restore the whole Nix store. The unit lane is the sole
-hosted object-cache writer; the other five Rust lanes read only. GitHub's
-cache-service write quota is shared by a workflow run, and concurrent writers
-otherwise lose throttled objects before sccache can reuse them. Quality uses a
-minimal shell without archiving the Nix store, preventing a new roughly 2 GiB
-immutable cache whenever a Nix expression changes. Package/release caches use
-`cache-nix-action` v7 in a new namespace so the noisy v6 archive observed on PR
-#165 cannot be reused.
+feedback lanes do not restore the whole Nix store. Pull requests are read-only
+cache consumers. On a trusted `integration` push, the unit lane is the sole
+hosted object-cache writer; the other five Rust lanes remain read-only.
+GitHub's cache-service write quota is shared by a workflow run, and concurrent
+writers otherwise lose throttled objects before sccache can reuse them.
+Quality uses a minimal shell without archiving the Nix store, preventing a new
+roughly 2 GiB immutable cache whenever a Nix expression changes. The locked
+package lane may update its bounded Nix-store cache only on trusted
+`integration` pushes; PRs restore it without allocating a branch-scoped copy.
+It uses `cache-nix-action` v7 in a new namespace so the noisy v6 archive
+observed on PR #165 cannot be reused.
+
+### Freezing dependency and crate layers
+
+The current Nix packages use `buildRustPackage` with the whole repository as
+one `src`, so any included workspace source change invalidates the final Rust
+derivation. The Cargo vendor derivation can be reused while `Cargo.lock` is
+unchanged, but Nix cannot yet substitute an unchanged Oxid crate independently.
+
+Introduce finer reuse as a separately measured package migration:
+
+1. Filter Nix sources to manifests, Rust sources, required build assets, and
+   fixtures so documentation and harness files cannot alter Rust store paths.
+2. Build third-party dependencies as a lockfile/toolchain/target/profile keyed
+   derivation (for example, Crane `buildDepsOnly` plus `cargoArtifacts`).
+3. Add source-addressed workspace layers in dependency order: foundation and
+   ports; domains; applications; adapters/composition; then UI/headless/apps.
+   A layer changes only when its source, feature set, compiler, native inputs,
+   or an upstream layer changes.
+4. Publish those derivation outputs from trusted `integration`/release builds
+   to a signed Nix binary cache. PRs use it only as a substituter; GitHub cache
+   remains for the Cargo registry and read-mostly compiler objects, never raw
+   `target/` trees.
+
+Do not call a crate frozen merely because its path did not change. Reverse
+dependencies, features, build scripts, compiler flags, target triple, native
+libraries, and toolchain version are part of the cache identity. Promotion
+requires two same-input hosted samples, cache-hit telemetry, and a measured
+storage ceiling before any new layer becomes required.
 
 ## Change ownership
 
