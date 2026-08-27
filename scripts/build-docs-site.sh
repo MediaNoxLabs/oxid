@@ -20,8 +20,12 @@ site_dir="$repo_root/docs/site"
 adr_index="$repo_root/docs/adr/README.md"
 catalog="$site_dir/src/adr-catalog.md"
 blob_base="https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr"
-# The link gate needs a public target before the accepted record reaches integration.
-adr_0104_permalink_base="https://github.com/MediaNoxLabs/oxid/blob/a90b0cb5264ae1160736c555c8e1446b5499e362/docs/adr"
+adr_0104_path="0104-regrow-incoming-adapters-behind-capability-facades.md"
+adr_0104_blob_base="$blob_base"
+if ! git -C "$repo_root" cat-file -e "origin/integration:docs/adr/$adr_0104_path" 2>/dev/null; then
+  # The link gate needs a public target before the accepted record reaches integration.
+  adr_0104_blob_base="https://github.com/MediaNoxLabs/oxid/blob/a90b0cb5264ae1160736c555c8e1446b5499e362/docs/adr"
+fi
 
 {
   echo "# Decision records"
@@ -33,7 +37,7 @@ adr_0104_permalink_base="https://github.com/MediaNoxLabs/oxid/blob/a90b0cb5264ae
   sed -E \
     -e 's/^# /## /' \
     -e "s|\\]\\((([0-9]{4})[A-Za-z0-9./_-]*\\.md)\\)|](${blob_base}/\\1)|g" \
-    -e "s|${blob_base}/(0104-[A-Za-z0-9._/-]*\\.md)|${adr_0104_permalink_base}/\\1|g" \
+    -e "s|${blob_base}/${adr_0104_path}|${adr_0104_blob_base}/${adr_0104_path}|g" \
     "$adr_index"
 } > "$catalog"
 

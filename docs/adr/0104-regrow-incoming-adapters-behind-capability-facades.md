@@ -24,8 +24,11 @@ The crate totals include colocated tests and exclude generated artifacts and
 fixtures. Across the 45 workspace packages with Rust source, the same measure
 has a median of 978 lines. The baseline is reproducible from
 `integration@21ec123ec9edbfbe71b8a04677aab2f43cf6d5f1` by enumerating committed
-`*.rs` paths with `git ls-files`, sorting under `LC_ALL=C`, and counting physical
-records with `awk 'END { print NR }'`. These measurements identify a
+`*.rs` paths with `git ls-files`, removing only paths classified as generated
+sources or fixtures, sorting under `LC_ALL=C`, and counting physical records
+with `awk 'END { print NR }'`. This historical table is a review signal, not the
+future machine-check baseline: each decomposition slice records its own exact
+path inventory in the artifact defined below. These measurements identify a
 source-cohesion problem; they do not show a missing domain boundary or justify
 four rewrites.
 
@@ -76,8 +79,10 @@ The façade total may not exceed its committed maximum. A lower post-slice total
 lowers the maximum. A temporary increase requires a narrow reviewed exception
 in the artifact naming exact paths, an extra-line ceiling, its issue and reason,
 and an ISO-8601 expiry date; the checker rejects an expired or over-limit
-exception. Permanent growth or a broader façade responsibility requires a later
-ADR rather than a baseline refresh. The artifact is a façade ratchet and
+exception against the current UTC date. This deliberate time-sensitive failure
+prevents an exception from surviving silently and requires a reviewed code
+change before the deadline. Permanent growth or a broader façade responsibility
+requires a later ADR rather than a baseline refresh. The artifact is a façade ratchet and
 ownership map, not evidence that a module is cohesive or that capability-module
 lines are acceptably focused: review must still reject dense-line or owned-file
 gaming and confirm that moved code, tests, and boundary mapping belong to the
@@ -181,8 +186,8 @@ protocol, custody, credential, ledger, composition, or UI behavior changes.
   tests without changing crate ownership or the architecture graph.
 - Existing downstream imports and feature-selected builds retain one stable
   façade while internal files can be moved incrementally.
-- Root regrowth has a machine-checked post-decomposition baseline and complete
-  source ownership map; temporary exceptions are narrow and expire.
+- Root regrowth will have a machine-checked post-decomposition baseline and
+  complete source ownership map; temporary exceptions are narrow and expire.
 - Future crate extraction follows demonstrated isolation or multiple real
   consumers; source size remains a review signal rather than a gate.
 - The first work can be validated with headless and desktop-focused checks;
