@@ -235,7 +235,11 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(config, /^  requireRetrospective: false$/m);
   assert.match(config, /^  maxParallel: 1$/m);
   assert.doesNotMatch(config, /humanHandoff|candidatesFrom:\s*\n\s*- codeowners/);
-  const ci = await read(".github/workflows/ci.yml");
+  const [ci, ciShells, sccacheRunner] = await Promise.all([
+    read(".github/workflows/ci.yml"),
+    read("nix/devshells/default.nix"),
+    read("scripts/ci/run-with-sccache-stats.sh"),
+  ]);
   assert.match(ci, /scripts\/ci\/target-plan\.mjs/);
   assert.match(ci, /^  plan:$/m);
   assert.match(ci, /^  basic:$/m);
@@ -250,15 +254,18 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(ci, /name: Unit tests \(Linux host\)[\s\S]*?timeout-minutes: 10/);
   assert.match(ci, /name: Headless integration tests \(Linux host\)[\s\S]*?timeout-minutes: 10/);
   assert.match(ci, /name: Optimized UI release artifact \(Linux host\)[\s\S]*?timeout-minutes: 25/);
-  assert.match(ci, /nix develop \.#ci-rust --command \.\/run\.sh basic --strict/);
-  assert.match(ci, /nix develop \.#ci-rust --command \.\/run\.sh unit --strict/);
-  assert.match(ci, /nix develop \.#ci-rust --command \.\/run\.sh headless-integration --strict/);
-  assert.match(ci, /nix develop \.#ci-ui --command \.\/run\.sh ui --strict/);
-  assert.match(ci, /nix develop \.#ci-ui --command \.\/run\.sh ui-release --strict/);
-  assert.match(ci, /nix develop \.#ci-coverage --command \.\/run\.sh coverage --strict/);
+  assert.match(ci, /nix develop \.#ci-rust --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh basic --strict/);
+  assert.match(ci, /nix develop \.#ci-rust --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh unit --strict/);
+  assert.match(ci, /nix develop \.#ci-rust --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh headless-integration --strict/);
+  assert.match(ci, /nix develop \.#ci-ui --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh ui --strict/);
+  assert.match(ci, /nix develop \.#ci-ui --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh ui-release --strict/);
+  assert.match(ci, /nix develop \.#ci-coverage --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh coverage --strict/);
   assert.doesNotMatch(ci, /run: nix develop --command \.\/run\.sh (?:basic|unit|headless-integration|ui|ui-release|coverage)/);
   assert.equal((ci.match(/name: Configure object-level compiler cache/g) || []).length, 6);
   assert.equal((ci.match(/core\.exportVariable\('SCCACHE_GHA_ENABLED', 'on'\)/g) || []).length, 6);
+  assert.match(ciShells, /export CARGO_INCREMENTAL="''\$\{CARGO_INCREMENTAL:-0\}"/);
+  assert.match(sccacheRunner, /"\$@" \|\| command_status=\$\?/);
+  assert.match(sccacheRunner, /sccache --show-stats \|\| true/);
   assert.doesNotMatch(ci, /path: ~\/\.cache\/oxid-sccache/);
   assert.doesNotMatch(ci, /key: sccache-/);
   assert.match(ci, /if: always\(\)[\s\S]*?needs: \[plan, basic, unit_linux, headless_linux, ui_linux, ui_release_linux, coverage_linux\]/);

@@ -110,7 +110,7 @@ jobs:
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
       - name: Run formatting, architecture, lint, and production compilation
         if: needs.plan.outputs.rust_changed == 'true'
-        run: nix develop .#ci-rust --command ./run.sh basic --strict
+        run: nix develop .#ci-rust --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh basic --strict
 
   unit_linux:
     name: Unit tests (Linux host)
@@ -142,7 +142,7 @@ jobs:
             core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
       - name: Compile and run workspace unit tests
-        run: nix develop .#ci-rust --command ./run.sh unit --strict
+        run: nix develop .#ci-rust --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh unit --strict
 
   headless_linux:
     name: Headless integration tests (Linux host)
@@ -174,7 +174,7 @@ jobs:
             core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
       - name: Run hermetic headless black-box tests
-        run: nix develop .#ci-rust --command ./run.sh headless-integration --strict
+        run: nix develop .#ci-rust --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh headless-integration --strict
 
   ui_linux:
     name: UI and application profiles (Linux host)
@@ -206,7 +206,7 @@ jobs:
             core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
       - name: Compile and test UI/application feature profiles
-        run: nix develop .#ci-ui --command ./run.sh ui --strict
+        run: nix develop .#ci-ui --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh ui --strict
 
   ui_release_linux:
     name: Optimized UI release artifact (Linux host)
@@ -238,7 +238,7 @@ jobs:
             core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
       - name: Build and inspect the production UI artifact
-        run: nix develop .#ci-ui --command ./run.sh ui-release --strict
+        run: nix develop .#ci-ui --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh ui-release --strict
 
   coverage_linux:
     name: Coverage (Linux host)
@@ -270,7 +270,7 @@ jobs:
             core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
       - name: Measure the non-UI workspace once
-        run: nix develop .#ci-coverage --command ./run.sh coverage --strict
+        run: nix develop .#ci-coverage --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh coverage --strict
 
   repository_gate:
     name: Repository gate (fmt, architecture, lint, tests, coverage)

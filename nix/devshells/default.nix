@@ -26,6 +26,10 @@
       ciRustShellHook = ''
         export RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}
         export RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache
+        # rustc incremental artifacts are target-directory state and cannot be
+        # reused by sccache. CI prefers cross-run object reuse; the interactive
+        # developer shell keeps Cargo's normal incremental behavior.
+        export CARGO_INCREMENTAL="''${CARGO_INCREMENTAL:-0}"
         export SCCACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/oxid-sccache"
         export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-2G}"
       '';

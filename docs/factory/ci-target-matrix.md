@@ -82,8 +82,12 @@ quickly without turning every other lane into serial wall time. They all depend
 only on the immutable plan. In hosted CI, `sccache` uses its object-level
 GitHub Actions backend. This lets parallel lanes share compiler objects
 without creating an immutable multi-gigabyte
-archive for every commit. Local CI shells use a bounded 2 GiB cache and the
-local default remains a bounded 10 GiB shared cache. Rust
+archive for every commit. Minimal CI shells default `CARGO_INCREMENTAL=0`:
+rustc incremental state is local `target/` data that sccache cannot store, so
+hosted gates prefer cacheable compiler objects and print per-lane sccache
+hit/miss/non-cacheable statistics. The interactive developer shell keeps
+Cargo's normal incremental behavior. Local CI shells use a bounded 2 GiB cache
+and the local default remains a bounded 10 GiB shared cache. Rust
 feedback lanes do not restore the whole Nix store. Package/release caches use
 `cache-nix-action` v7 in a new namespace so the noisy v6 archive observed on PR
 #165 cannot be reused.
