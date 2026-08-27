@@ -23,6 +23,12 @@
         rustfmt
         sccache
       ];
+      ciQualityPackages =
+        ciRustPackages
+        ++ (with pkgs; [
+          cargo-audit
+          cargo-deny
+        ]);
       ciRustShellHook = ''
         export RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}
         export RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache
@@ -79,6 +85,21 @@
           ${ciRustShellHook}
           export LLVM_COV=${pkgs.llvmPackages.llvm}/bin/llvm-cov
           export LLVM_PROFDATA=${pkgs.llvmPackages.llvm}/bin/llvm-profdata
+        '';
+      };
+
+      # Quality needs audit/deny and rustdoc, but not Pi, Dioxus CLI, Compact
+      # artifacts, mdBook/Lychee, mobile tooling, or the default shell's
+      # environment-exported proof closures. Do not archive that full shell in
+      # GitHub's bounded cache just to run source policy.
+      devShells.ci-quality = pkgs.mkShell {
+        packages = ciQualityPackages;
+        buildInputs = [ pkgs.openssl ] ++ linuxLibraries;
+        shellHook = ''
+          ${ciRustShellHook}
+          ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
+          ''}
         '';
       };
 

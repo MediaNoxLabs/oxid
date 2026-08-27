@@ -108,6 +108,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
+            core.exportVariable('SCCACHE_GHA_RW_MODE', 'READ_ONLY');
       - name: Run formatting, architecture, lint, and production compilation
         if: needs.plan.outputs.rust_changed == 'true'
         run: nix develop .#ci-rust --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh basic --strict
@@ -173,6 +174,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
+            core.exportVariable('SCCACHE_GHA_RW_MODE', 'READ_ONLY');
       - name: Run hermetic headless black-box tests
         run: nix develop .#ci-rust --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh headless-integration --strict
 
@@ -205,6 +207,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
+            core.exportVariable('SCCACHE_GHA_RW_MODE', 'READ_ONLY');
       - name: Compile and test UI/application feature profiles
         run: nix develop .#ci-ui --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh ui --strict
 
@@ -237,6 +240,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
+            core.exportVariable('SCCACHE_GHA_RW_MODE', 'READ_ONLY');
       - name: Build and inspect the production UI artifact
         run: nix develop .#ci-ui --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh ui-release --strict
 
@@ -269,6 +273,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
+            core.exportVariable('SCCACHE_GHA_RW_MODE', 'READ_ONLY');
       - name: Measure the non-UI workspace once
         run: nix develop .#ci-coverage --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh coverage --strict
 

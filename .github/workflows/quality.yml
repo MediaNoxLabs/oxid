@@ -60,15 +60,6 @@ jobs:
         if: steps.plan.outputs.quality == 'true'
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
-      - name: Restore the devshell Nix store
-        if: steps.plan.outputs.quality == 'true'
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
-        with:
-          primary-key: nix7-devshell-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix') }}
-          restore-prefixes-first-match: nix7-devshell-${{ runner.os }}-
-          gc-max-store-size-linux: 6G
-          purge: false
-
       - name: Cache the cargo registry
         if: steps.plan.outputs.quality == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -81,7 +72,7 @@ jobs:
 
       - name: Run quality gate
         if: steps.plan.outputs.quality == 'true'
-        run: nix develop --command ./run.sh quality --strict
+        run: nix develop .#ci-quality --command ./run.sh quality --strict
 
       - name: Run lightweight policy gate
         if: steps.plan.outputs.quality != 'true'

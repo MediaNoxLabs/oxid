@@ -263,7 +263,11 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.doesNotMatch(ci, /run: nix develop --command \.\/run\.sh (?:basic|unit|headless-integration|ui|ui-release|coverage)/);
   assert.equal((ci.match(/name: Configure object-level compiler cache/g) || []).length, 6);
   assert.equal((ci.match(/core\.exportVariable\('SCCACHE_GHA_ENABLED', 'on'\)/g) || []).length, 6);
+  assert.equal((ci.match(/core\.exportVariable\('SCCACHE_GHA_RW_MODE', 'READ_ONLY'\)/g) || []).length, 5);
+  const unitJob = ci.slice(ci.indexOf("  unit_linux:"), ci.indexOf("  headless_linux:"));
+  assert.doesNotMatch(unitJob, /SCCACHE_GHA_RW_MODE/);
   assert.match(ciShells, /export CARGO_INCREMENTAL="''\$\{CARGO_INCREMENTAL:-0\}"/);
+  assert.match(ciShells, /devShells\.ci-quality = pkgs\.mkShell/);
   assert.match(sccacheRunner, /"\$@" \|\| command_status=\$\?/);
   assert.match(sccacheRunner, /sccache --show-stats \|\| true/);
   assert.doesNotMatch(ci, /path: ~\/\.cache\/oxid-sccache/);
@@ -271,6 +275,9 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(ci, /if: always\(\)[\s\S]*?needs: \[plan, basic, unit_linux, headless_linux, ui_linux, ui_release_linux, coverage_linux\]/);
   assert.doesNotMatch(ci, /Run full repository gate/);
   assert.doesNotMatch(ci, /^\s+target$/m);
+  const quality = await read(".github/workflows/quality.yml");
+  assert.match(quality, /nix develop \.#ci-quality --command \.\/run\.sh quality --strict/);
+  assert.doesNotMatch(quality, /cache-nix-action|nix7-devshell/);
   const contractReviewPolicy = await read("docs/integration-delivery.md");
   assert.match(contractReviewPolicy, /required_approving_review_count: 0/);
   assert.match(contractReviewPolicy, /require_code_owner_reviews: false/);

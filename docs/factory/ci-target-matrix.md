@@ -33,7 +33,7 @@ contributor's GPG keyring.
 | `ui-linux` | `./run.sh ui` (profile guards, feature compilation and UI/app tests) | minimal `ci-ui` shell plus Linux GTK/WebKit libraries | shared core, UI, platform, Compact | hard 15 min | Hosted PR lane |
 | `ui-release-linux` | `./run.sh ui-release` (optimized build and forbidden-marker audit) | minimal `ci-ui` shell, release compilation | shared core, UI, platform, Compact | hard 25 min | Hosted PR artifact lane |
 | `coverage-linux` | `./run.sh coverage` | minimal `ci-coverage` shell and `cargo-llvm-cov` | every Rust-affecting area | hard 25 min, 80% line floor | Hosted PR lane |
-| `quality` | `./run.sh quality --strict` | audit/deny/rustdoc toolchain | every Rust-affecting area | hard 20 min; 9m15 on PR #165 | Hosted required context |
+| `quality` | `./run.sh quality --strict` | minimal uncached `ci-quality` audit/deny/rustdoc shell | every Rust-affecting area | hard 20 min; 9m15 on PR #165 | Hosted required context |
 | `nix-package` | `nix build` | x86_64 Linux, locked Nix graph | build and Compact | hard 45 min | Hosted PR lane |
 | `compact-artifacts` | build presentation, Passport Vault artifacts and call composer together | Compact toolchain and locked p18 sources | build and Compact | hard 30 min | Hosted PR lane |
 | `nightly-hermetic` | `nix flake check --print-build-logs` | full Nix sandbox | complete repository | 57–60 min observed | Hosted nightly backstop |
@@ -88,7 +88,12 @@ hosted gates prefer cacheable compiler objects and print per-lane sccache
 hit/miss/non-cacheable statistics. The interactive developer shell keeps
 Cargo's normal incremental behavior. Local CI shells use a bounded 2 GiB cache
 and the local default remains a bounded 10 GiB shared cache. Rust
-feedback lanes do not restore the whole Nix store. Package/release caches use
+feedback lanes do not restore the whole Nix store. The unit lane is the sole
+hosted object-cache writer; the other five Rust lanes read only. GitHub's
+cache-service write quota is shared by a workflow run, and concurrent writers
+otherwise lose throttled objects before sccache can reuse them. Quality uses a
+minimal shell without archiving the Nix store, preventing a new roughly 2 GiB
+immutable cache whenever a Nix expression changes. Package/release caches use
 `cache-nix-action` v7 in a new namespace so the noisy v6 archive observed on PR
 #165 cannot be reused.
 
