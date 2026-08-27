@@ -314,7 +314,7 @@ there are none.
 **One consequence to size before adopting**, flagged rather than resolved: seven
 new crates carrying `compact-runtime`, `midnight-onchain-runtime`, and
 `midnight-base-crypto`, plus a path-mounted `generated.rs` from a Compact flake
-input. Oxid's 14 core crates must have zero external dependencies and
+input. Oxid's 16 core crates must have zero external dependencies and
 `scripts/check-architecture.sh` enforces per-crate allowlists, so these belong
 in an adapter tier with an explicit entry — and the Nix closure cost wants
 measuring against the CI budget first, not after.

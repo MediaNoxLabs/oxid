@@ -93,6 +93,12 @@ jobs:
 
       - name: Check Markdown links
         if: steps.changes.outputs.docs_changed == 'true'
-        # The docs shell carries only lychee: link checking must never realize
-        # the default devshell's compiler and Compact/ZK artifact closure.
-        run: nix develop .#docs --command lychee --config .lychee.toml --no-progress --exclude-path LICENSE './**/*.md'
+        # The docs-only shell carries no compiler or Compact/ZK artifact closure.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            nix develop .#docs --command node scripts/docs/check-links.mjs --candidate
+          else
+            nix develop .#docs --command node scripts/docs/check-links.mjs
+          fi

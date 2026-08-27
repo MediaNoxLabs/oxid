@@ -1,9 +1,11 @@
 # Testing strategy
 
 What "tested" means in this repository, layer by layer, and the policies a
-change is reviewed against. This codifies the practice that already exists
-(≈500 tests, hermetic by construction) and the gaps the 2026-08 independent
-review closed or scheduled.
+change is reviewed against. The
+[quality constitution](quality-constitution.md) is the versioned policy
+authority; this page explains the repository's current
+practice. It codifies the practice that already exists (≈500 tests, hermetic by
+construction) and the gaps the 2026-08 independent review closed or scheduled.
 
 ## The pyramid, as practiced here
 
@@ -16,6 +18,12 @@ review closed or scheduled.
 | **Black-box integration** | The headless binary driven over NDJSON (`persistent_profile_flow`), asserting protocol truthfulness incl. secrets-rejected-without-echo | New headless methods ship with black-box coverage of success, rejection, and restart persistence. |
 | **Mobile end-to-end** | XCUITest + CDP smoke flows (profile → custody → credential → vault → backup roundtrip) on simulator/emulator | Evidence of the full journey per platform; explicitly *not* physical-device or performance evidence — those are release-gate items. |
 | **Release gates** | `#[ignore]`d real-proving tests (p18 artifacts), `nix flake check` hermetic suite (nightly), physical-device budgets (backlog) | Heavy truth runs on cadence, not per push — but it runs: the nightly executes every flake check daily. |
+
+The executable [CI target matrix](../../factory/ci-target-matrix.md) maps these
+layers to change areas, runner dependencies, branch profiles, parallel lanes,
+and hard time budgets. A skipped unrelated lane is intentional only when the
+planner records it; missing diff information fails closed to the full public
+hosted set.
 
 ## Coverage policy
 

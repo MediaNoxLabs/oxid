@@ -77,6 +77,9 @@ test("documentation links always emit a context and skip outbound work safely", 
   for (const eventCase of ["workflow_dispatch)", "pull_request)", "push)"]) assert.match(links, new RegExp(eventCase.replace(/[()]/g, "\\$&")));
   for (const safety of [/fetch-depth: 0/, /valid_sha/, /git cat-file -e/, /git merge-base/, /git diff --quiet/, /running the link check conservatively/]) assert.match(links, safety);
   assert.equal((links.match(/if: steps\.changes\.outputs\.docs_changed == 'true'/g) || []).length, 2);
+  assert.match(links, /if \[\[ "\$EVENT_NAME" == "pull_request" \]\]; then\n\s+nix develop \.#docs --command node scripts\/docs\/check-links\.mjs --candidate\n\s+else\n\s+nix develop \.#docs --command node scripts\/docs\/check-links\.mjs\n\s+fi/);
+  assert.match(links, /EVENT_NAME: \$\{\{ github\.event_name \}\}/);
+  assert.doesNotMatch(links, /--exclude.*blob\/integration/);
 });
 
 test("Pages builds and publishes only from integration", async () => {
@@ -128,7 +131,9 @@ test("repository gate runs architecture and the delivery contract with its decla
   const gate = await read("run.sh");
   assert.match(gate, /\.\/scripts\/check-architecture\.sh/);
   assert.match(gate, /node --test tests\/repository\/integration-delivery-contract\.test\.mjs/);
-  assert.match(await read("nix/devshells/default.nix"), /nodejs_24/);
+  const shells = await read("nix/devshells/default.nix");
+  assert.match(shells, /nodejs_24/);
+  assert.match(shells, /ciRustPackages[\s\S]*ripgrep/);
 });
 
 test("guidance, required contexts, and review configuration agree", async () => {
@@ -175,7 +180,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
     const content = await read(file);
     assert.match(content, pattern, file);
   }
-  const siteBuild = await read("scripts/build-docs-site.sh");
+  const siteBuild = `${await read("scripts/build-docs-site.sh")}\n${await read("scripts/docs/generate-adr-catalog.mjs")}`;
   assert.match(siteBuild, /blob\/integration\/docs\/adr/);
   assert.doesNotMatch(siteBuild, /blob\/(?:develop|main)\/docs\/adr/);
   const contract = await read("docs/integration-delivery.md");
@@ -196,8 +201,12 @@ test("guidance, required contexts, and review configuration agree", async () => 
   const config = await read(".devloops");
   const draftGate = config.slice(config.indexOf("  draft:"), config.indexOf("  preApproval:"));
   const preApprovalGate = config.slice(config.indexOf("  preApproval:"), config.indexOf("  requireFanoutEvidence:"));
-  assert.match(draftGate, /^      - external-review$/m);
-  assert.match(preApprovalGate, /^      - external-review$/m);
+  assert.doesNotMatch(draftGate, /^      - external-review$/m);
+  assert.doesNotMatch(preApprovalGate, /^      - external-review$/m);
+  assert.match(draftGate, /^    requireCi: false$/m);
+  assert.match(config, /^  fanOut: 2$/m);
+  assert.match(config, /^  stopOnLowSignal: true$/m);
+  assert.match(config, /^  maxFanoutReviewers: 2$/m);
   const scan = await read(".github/workflows/scan.yml");
   const scanJobStart = scan.indexOf("  scan:");
   assert.ok(scanJobStart >= 0, "scan.yml: scan job");
@@ -221,19 +230,67 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.doesNotMatch(scanJob, /\bsoft_fail:/);
   assert.doesNotMatch(scanJob, /skip_(?:zizmor|gitleaks|opengrep|trivy)_scan:\s*["']?true/i);
   assert.match(config, /maxCopilotRounds: 0/);
-  assert.match(config, /Claude CLI/);
-  assert.match(config, /current head/i);
-  assert.match(config, /^  stopAt: \[\]$/m);
-  assert.match(config, /^  humanMergeOnly: false$/m);
+  assert.match(config, /^    - merge$/m);
+  assert.match(config, /^  humanMergeOnly: true$/m);
+  assert.match(config, /^  requireRetrospective: false$/m);
+  assert.match(config, /^  maxParallel: 1$/m);
   assert.doesNotMatch(config, /humanHandoff|candidatesFrom:\s*\n\s*- codeowners/);
+  const [ci, ciShells, sccacheRunner] = await Promise.all([
+    read(".github/workflows/ci.yml"),
+    read("nix/devshells/default.nix"),
+    read("scripts/ci/run-with-sccache-stats.sh"),
+  ]);
+  assert.match(ci, /scripts\/ci\/target-plan\.mjs/);
+  assert.match(ci, /^  plan:$/m);
+  assert.match(ci, /^  basic:$/m);
+  assert.match(ci, /^  unit_linux:$/m);
+  assert.match(ci, /^  headless_linux:$/m);
+  assert.match(ci, /^  ui_linux:$/m);
+  assert.match(ci, /^  ui_release_linux:$/m);
+  assert.match(ci, /^  coverage_linux:$/m);
+  assert.match(ci, /^  repository_gate:$/m);
+  assert.match(ci, /^  locked_nix_gate:$/m);
+  assert.match(ci, /name: Basic gate \(policy, lint, compile\)[\s\S]*?timeout-minutes: 5/);
+  assert.match(ci, /name: Unit tests \(Linux host\)[\s\S]*?timeout-minutes: 10/);
+  assert.match(ci, /name: Headless integration tests \(Linux host\)[\s\S]*?timeout-minutes: 10/);
+  assert.match(ci, /name: Optimized UI release artifact \(Linux host\)[\s\S]*?timeout-minutes: 25/);
+  assert.match(ci, /nix develop \.#ci-rust --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh basic --strict/);
+  assert.match(ci, /nix develop \.#ci-rust --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh unit --strict/);
+  assert.match(ci, /nix develop \.#ci-rust --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh headless-integration --strict/);
+  assert.match(ci, /nix develop \.#ci-ui --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh ui --strict/);
+  assert.match(ci, /nix develop \.#ci-ui --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh ui-release --strict/);
+  assert.match(ci, /nix develop \.#ci-coverage --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh coverage --strict/);
+  assert.doesNotMatch(ci, /run: nix develop --command \.\/run\.sh (?:basic|unit|headless-integration|ui|ui-release|coverage)/);
+  assert.equal((ci.match(/name: Configure object-level compiler cache/g) || []).length, 6);
+  assert.equal((ci.match(/core\.exportVariable\('SCCACHE_GHA_ENABLED', 'on'\)/g) || []).length, 6);
+  assert.equal((ci.match(/core\.exportVariable\('SCCACHE_GHA_RW_MODE', 'READ_ONLY'\)/g) || []).length, 5);
+  const unitJob = ci.slice(
+    ci.indexOf("\n  unit_linux:\n    name:"),
+    ci.indexOf("\n  headless_linux:\n    name:"),
+  );
+  assert.match(unitJob, /trustedIntegrationPush[\s\S]*SCCACHE_GHA_RW_MODE[\s\S]*READ_WRITE[\s\S]*READ_ONLY/);
+  assert.match(ciShells, /export CARGO_INCREMENTAL="''\$\{CARGO_INCREMENTAL:-0\}"/);
+  assert.match(ciShells, /devShells\.ci-quality = pkgs\.mkShell/);
+  assert.match(sccacheRunner, /"\$@" \|\| command_status=\$\?/);
+  assert.match(sccacheRunner, /sccache --show-stats \|\| true/);
+  assert.match(sccacheRunner, /write-error counters are expected for rejected local puts/);
+  assert.doesNotMatch(ci, /path: ~\/\.cache\/oxid-sccache/);
+  assert.doesNotMatch(ci, /key: sccache-/);
+  assert.match(ci, /save: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/integration' \}\}/);
+  assert.match(ci, /if: always\(\)[\s\S]*?needs: \[plan, basic, unit_linux, headless_linux, ui_linux, ui_release_linux, coverage_linux\]/);
+  assert.doesNotMatch(ci, /Run full repository gate/);
+  assert.doesNotMatch(ci, /^\s+target$/m);
+  const quality = await read(".github/workflows/quality.yml");
+  assert.match(quality, /nix develop \.#ci-quality --command \.\/run\.sh quality --strict/);
+  assert.doesNotMatch(quality, /cache-nix-action|nix7-devshell/);
   const contractReviewPolicy = await read("docs/integration-delivery.md");
   assert.match(contractReviewPolicy, /required_approving_review_count: 0/);
   assert.match(contractReviewPolicy, /require_code_owner_reviews: false/);
-  assert.match(contractReviewPolicy, /Post the\s+current-head evidence to the pull request before merge/);
+  assert.match(contractReviewPolicy, /humanMergeOnly: true/);
   for (const file of ["docs/integration-delivery.md", "docs/factory/runbook.md"]) {
     const guidance = await read(file);
     assert.match(guidance, /manually invoked/i, file);
     assert.match(guidance, /not a hosted GitHub\s+(?:status\s+)?check/i, file);
-    assert.doesNotMatch(guidance, /humanMergeOnly: true|approval\.humanHandoff/);
+    assert.match(guidance, /high-risk/i, file);
   }
 });

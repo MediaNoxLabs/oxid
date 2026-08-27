@@ -47,20 +47,39 @@ contract without claiming to validate unavailable user-level installations.
 The project extension keeps its runtime-independent logic in
 `scripts/lib/dev-loop-preflight-core.mjs`; `.pi/extensions/dev-loop-preflight.ts`
 is the only auto-loaded Pi registrar. Registration is idempotent. The preflight
-obtains Pi's registered tool names and uses a bounded, dependency-free parser
-for `name` and `tools` in each installed pinned package's top-level
-`agents/*.agent.md` manifests plus repository-local `.pi/agents/*.agent.md`
-shadows. Packages that discover agents from any other location are outside this
-bounded claim. Results are cached per session using the checkout, settings,
-package, manifest mtime and tool-set facts; a changed manifest invalidates the
-cache.
+uses Pi 0.84.0's public `getAllTools()`, `getActiveTools()`, and
+`before_agent_start.systemPromptOptions.selectedTools` contracts. It validates
+the selected agent against that agent's active tools, root execution against
+all configured tools, and future child manifests against Pi's documented child
+built-ins plus registered extension tools. A selected read/bash/subagent
+`dev-loop` therefore does not make `edit` and `write` unavailable to future
+implementation children. Unsupported aliases such as `search`, `execute`, and
+`web_search` still fail closed.
 
-Every preflight failure produces a prominent input warning and leaves the
-interactive turn available for diagnosis or repair. Defense-in-depth hooks
-still abort before every agent or provider request, including unavailable
-declared tools, missing packages, invalid settings, and pinned third-party
-manifest shapes the bounded parser cannot model. Fix the tracked manifest or
-exact installation instead of adding aliases.
+The bounded, dependency-free parser reads `name` and `tools` in each installed
+pinned package's top-level `agents/*.agent.md` manifests plus repository-local
+`.pi/agents/*.agent.md` shadows. Packages that discover agents from any other
+location are outside this bounded claim. Extension results are cached only in
+that extension session. The cache key hashes settings, package manifests, and
+agent manifests and also binds checkout, active-agent identity, and the
+root/active/future tool sets. Same-size rewrites with restored mtimes therefore
+invalidate it, and no cache crosses a working directory or Pi session.
+
+Pi 0.84 has no supported cancellation result for `before_agent_start` or
+`before_provider_request`. Its runner logs and swallows hook errors, and
+`ctx.abort()` before a run has no active run to abort. The extension is therefore
+advisory: failures produce prominent input, agent-start, and provider-time
+warnings, and each provider check derives the current `getActiveTools()` value.
+It never claims to prevent a custom provider that ignores an aborted signal.
+
+Fail-closed enforcement lives at
+`node scripts/loop/pre-flight-gate.mjs --check-subagents`. The selected
+`dev-loop` must run that tracked wrapper from the canonical worktree before
+startup, every routed action, and every delegation, and stop on nonzero status.
+The wrapper rejects `DEVLOOPS_PREFLIGHT_BYPASS`, validates exact package and
+content-bound manifest identity against the repository's pinned Pi tool
+contract, then delegates worktree/branch checking to the exact pinned package.
+Fix the tracked manifest or exact installation instead of adding aliases.
 Separately installed user agents remain outside this repository preflight and
 must be governed by their owning installation.
 
@@ -73,15 +92,70 @@ node scripts/github/resolve-issue-pr-links.mjs \
   --repo MediaNoxLabs/oxid --issue <number>
 ```
 
-Both commands require `gh >= 2.67.0` and use the issue and issue-timeline REST
-endpoints, including pagination. They fail closed on CLI version,
-authentication, capability, or response-shape errors and perform no mutation.
+Both commands require `gh >= 2.97.0`. The same floor applies to the sanctioned
+CI watcher because the pinned dev-loop gate surfaces use the current GraphQL
+field set. An older or malformed CLI fails before GitHub state is interpreted
+and directs the operator to `nix develop`; the default devshell supplies the
+pin. The issue-link commands use the issue and issue-timeline REST endpoints,
+including pagination. They fail closed on CLI version, authentication,
+capability, or response-shape errors and perform no mutation.
+
+When Pi child/depth markers are present, they are authoritative for the pinned
+package's advisory `DEVLOOPS_SUBAGENT_AVAILABLE` input. Depth wins over a stale
+explicit value: max depth is unavailable and remaining depth is available.
+Explicit `0|1` remains bounded to non-Pi callers. Do not invoke a missing
+repository-relative package path or search for a global copy.
+
+`node scripts/dev-loops.mjs --help` and `-h` are exact aliases for `help`.
+Other unknown leading options remain rejected. The tracked `loop build-envelope`
+route is authoritative for handoff construction: it uses the exact pinned parser,
+builder, jq emitter, and validator, loads `.devloops` from the invoking candidate
+checkout, and normalizes only the cwd boundary against Git's common-checkout
+worktree topology. An identity-matching canonical issue, PR, or phase checkout is
+reused; foreign, symlinked, missing invocation, mismatched, ambiguous, or
+nested-namespace checkout topology fails before an envelope is emitted. A
+canonical absent target derived from the main checkout remains a prospective
+path under the common root. `loop watch-ci` is
+delegated unchanged to `dev-loops@0.9.0`; this repository does not intercept CI
+selection.
+Obsolete-attempt selection is an upstream/pin residual because a local watcher
+cannot safely duplicate expected-check rollup, pagination, suite/attempt
+identity, no-check handling, head bracketing, heartbeat/ownership, and global
+output-option semantics.
+
+`.devloops` sets `maxCopilotRounds: 0`, caps automatic gate review at two
+concurrent reviewers, and stops low-signal refinement. Independent external
+review is an explicit high-risk or owner-requested action rather than a
+mandatory angle repeated at both gates. Contradictory loop-info is a pinned
+upstream residual: stop and obtain a consistent authoritative state rather
+than overriding the pinned coordinator locally.
+
+There is no gate-evidence repair command. The sanctioned response to incomplete
+inline evidence is stop, preserve findings, and re-draft/re-run the canonical
+lifecycle. Canonical parser, findings ledger, reviewer identity, mandatory
+angles, artifact hashing, and lifecycle coordination remain pinned-tooling
+responsibilities; comment-only repair is unsupported and must not be described
+as an upgraded gate.
+
+## Local wrapper performance
+
+No portable speed or improvement claim is made. The previous timing table was
+removed because its raw samples, clean-head identities, host facts, and exact
+commands were not retained. The authoritative pre-flight wrapper deliberately
+adds content hashing, exact package identity, and containment checks before the
+pinned worktree gate, so callers should expect integrity overhead rather than a
+speedup. Repeated extension checks use only one content-safe Pi-session cache;
+there is no process-global or cross-checkout cache. Provider, network, hosted,
+`Request aborted`, and WebSocket resume latency remain outside this local
+no-network contract.
 
 ## Independent current-head review
 
-Both draft and pre-approval gates make `external-review` mandatory, while
-`maxCopilotRounds` remains zero. After committing all intended changes and
-fetching `origin/integration`, run the reviewer with a clean worktree. By
+The ordinary draft and pre-approval gates do not invoke an external model.
+For a high-risk `full` change, an explicit owner request, or a disputed
+finding, commit all intended changes, fetch `origin/integration`, and manually
+invoke the reviewer once from a clean worktree. `maxCopilotRounds` remains
+zero. By
 default it writes beneath `${XDG_STATE_HOME:-$HOME/.local/state}/oxid/claude-reviews`.
 The final directory must be a real, invoking-user-owned `0700` directory and
 each artifact is an owned regular `0600` file; a symlink as the final evidence
@@ -140,16 +214,16 @@ continues to fail closed on CLI or account incompatibility.
 
 | Issue #150 acceptance or definition-of-done item | First-slice status | Authority / remaining work |
 | --- | --- | --- |
-| Effective repository agent tool allowlists match installed Pi tools before model execution | Landed in this slice | `.pi/agents/`, `scripts/lib/dev-loop-runtime.mjs`, `scripts/lib/dev-loop-preflight-core.mjs`, and the thin `.pi/extensions/dev-loop-preflight.ts` registrar; `.pi/settings.json` owns only the supported git-root selection |
+| Effective repository agent tool allowlists match installed Pi tools before model execution | Repository pin contract enforced; live-runtime mismatch advisory | The tracked pre-flight wrapper fails closed against exact pinned package/manifests and selected `dev-loop` tools. `.pi/extensions/dev-loop-preflight.ts` reports live `getAllTools()`/`getActiveTools()` mismatch but Pi 0.84 cannot hard-cancel these hooks. |
 | Project-local package discovery works at root and linked worktrees | Landed in this slice | The bounded tracked resolver and wrappers above |
 | Timeout, deadline, `usageBudget`, turn, tool, and control budgets survive resume exactly | Pin-upgrade / upstream-owned | Closed/completed [pi-subagents #985](https://github.com/nicobailon/pi-subagents/issues/985) documents adjacent persisted turn-budget recovery and was fixed by merged [PR #987](https://github.com/nicobailon/pi-subagents/pull/987). The pinned [v0.42.1 async-resume source](https://github.com/nicobailon/pi-subagents/blob/v0.42.1/src/runs/background/async-resume.ts) remains repository authority pending a separately tested upgrade. |
 | Provider payload compaction/checkpointing and streamed-mutation retry idempotency | Deferred / **upstream-only** | No exact upstream issue was established during this bounded slice. File a minimal upstream reproduction before claiming a fix; no repository wrapper can safely reconstruct provider stream state. |
 | `integration` is the worktree, PR, diff, and evidence base | Landed in this slice | `scripts/loop/ensure-worktree.mjs`, `scripts/dev-loops.mjs`, and the Claude runner |
-| Unavailable Copilot review routes to mandatory independent current-head Claude review | Landed in this slice | `.devloops` and the Claude runner; hosted Copilot stays disabled |
+| Unavailable Copilot review has a bounded independent current-head Claude route | Landed, policy right-sized by issue #161 | Hosted Copilot stays disabled; the tracked Claude runner is manually invoked for high-risk work, an owner request, or a disputed finding rather than every ordinary gate. |
 | Valid nested reviewer output cannot be overturned by a late unavailable-tool diagnostic | Deferred / upstream-owned | Closed/completed [pi-subagents #1434](https://github.com/nicobailon/pi-subagents/issues/1434) documents the adjacent final-return serialization failure and was fixed by merged [PR #1448](https://github.com/nicobailon/pi-subagents/pull/1448). The late-diagnostic case still needs its own minimal reproduction and a separately tested repository pin upgrade. |
 | Supported GitHub CLI behavior is deterministic | Landed in this slice | Nix pin plus REST behavior probe and timeline resolver |
 | dev-loops and pi-subagents share authenticated acceptance provenance | Upstream / pin-upgrade only | This slice records explicit local attestational facts and does not claim reviewer authentication. Closed/completed #1434 and #1460 document adjacent defects fixed upstream by merged PRs #1448 and #1461; neither establishes shared authenticated provenance in pinned v0.42.1. |
-| Reproduction coverage | Partial, first slice | Repository tests cover package roots, allowlists, integration normalization, REST normalization, Claude invocation/result contracts, policy, and docs. Resume, WebSocket interruption/idempotency, and upstream finalization reproduction stay upstream-only. |
+| Reproduction coverage | Repository-owned paths landed | Repository tests cover Pi 0.84 runner/provider hook behavior with a local fake provider, current provider-time tool activation/deactivation, root/future tool scopes, content-bound cache invalidation, package roots, issue/PR nested-worktree reuse/refusal, tracked preflight resolution, conventional help, gh old/new/malformed versions, integration normalization, REST normalization, Claude invocation/result contracts, policy, and docs. CI attempt selection, evidence repair, routing contradictions, resume, provider Request-aborted/WebSocket state, and upstream finalization stay upstream/pin-owned. |
 | Bounded issue-backed canary through PR/CI/merge checkpoint | Deferred operational validation | Run only after the repository slice is committed and every current-head gate is available; merge and board mutations remain orchestrator-owned. |
 
 The exact pinned-runtime resume gap is visible in the v0.42.1 recovery
@@ -161,9 +235,11 @@ persisted turn-budget recovery and was fixed by merged PR #987;
 the resumed structured-output contract and was fixed by merged PR #1461; and
 [issue #1434](https://github.com/nicobailon/pi-subagents/issues/1434) documented
 the workflow final-return serialization failure and was fixed by merged PR
-#1448. These are distinct invariants. Their upstream completion does not change
-the repository's pinned v0.42.1 behavior; only a separately tested pin upgrade
-can do that.
+#1448. The preserved upstream evidence includes the observed workflow failure
+`return[0].status ... undefined`; it is not reinterpreted as a repository-local
+success. These are distinct invariants. Their upstream completion does not
+change the repository's pinned v0.42.1 behavior; only a separately tested pin
+upgrade can do that.
 
 Do not patch, modify, or vendor installed `.pi/npm` packages to close an
 upstream/pin-upgrade row. Do not convert a successful side effect into a passed

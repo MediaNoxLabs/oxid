@@ -47,7 +47,7 @@ Failure edges (from any active state):
 | `factory:in-progress` | Draft PR exists | PR links the issue | Gate request, abandon, or lease expiry |
 | `factory:gate-draft` | Fan-out review of the draft | Implementer request | Pass → pre-approval; findings → in-progress |
 | `factory:gate-preapproval` | Final delivery gate | Draft gate passed | Pass → merge-ready; findings → in-progress |
-| `factory:merge-ready` | Delivery evidence complete | Both gates, CI green, and fresh Claude current-head evidence posted | Owner-authorized clean merge or remediation |
+| `factory:merge-ready` | Delivery evidence complete | Both gates, CI green, and any risk-required current-head evidence posted | Human merge or remediation |
 | `factory:blocked` | Cannot proceed | Blocking comment | Planner triage |
 
 ## Ready-check
@@ -66,16 +66,18 @@ An item may be labeled `factory:ready` only if all of the following hold:
 ## Gate conditions
 
 Gates reuse the `.devloops` policy verbatim — angles, mandatory angles,
-`requireCi: true`, `maxFanoutReviewers`, and the mandatory `external-review`
-angle are the source of truth. The FSM only adds the label transitions and the
+draft `requireCi: false`, final CI, and `maxFanoutReviewers` are the source of
+truth. The FSM only adds the label transitions and the
 rule that **gate evidence is a PR comment** containing: angle name, reviewer
 identity/harness, findings (or "No findings"), and the CI run link. The owner
-policy sets `humanMergeOnly: false`; branch protection intentionally requires
-zero hosted approvals, so fresh posted Claude current-head evidence is the
-review control before an authorized clean merge.
+policy sets `humanMergeOnly: true`; branch protection intentionally requires
+zero hosted approvals, so the operator's final merge action is the human
+control. Fresh Claude current-head evidence is added for high-risk `full` work,
+an owner request, or a disputed finding.
 
 ## Retrospective
 
-After merge, the implementer (or steward) posts a short retrospective
-comment: what the gates caught, wall-clock and CI time consumed, and any
-protocol friction. The metrics loop aggregates these into metrics.md.
+Retrospectives are optional for routine work. After an incident, an SLO miss,
+or a high-risk delivery, the implementer (or steward) records what the gates
+caught, wall-clock and CI time consumed, and any protocol friction. The metrics
+loop aggregates these into metrics.md.

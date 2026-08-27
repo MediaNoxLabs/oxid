@@ -88,8 +88,9 @@ reject force pushes and deletion, require pull requests and signed commits,
 require resolved conversations, and require branches to be current. Its review
 settings intentionally use `required_approving_review_count: 0` and
 `require_code_owner_reviews: false`: preserving the historical `main` human or
-code-owner approval policy is not a delivery requirement. The mandatory
-manually invoked Claude review described below is the review control. Once
+code-owner approval policy is not a delivery requirement. The repository-local
+harness nevertheless fixes `autonomy.humanMergeOnly: true`: automation may
+prepare a merge-ready PR, but a human performs the merge. Once
 issue #144 has landed and every workflow has emitted an integration context,
 require these exact status checks:
 
@@ -102,6 +103,13 @@ require these exact status checks:
 - `scan`
 - `Check documentation links`
 
+Candidate pull requests may introduce same-repository links whose durable
+`blob/integration/` destination does not exist on the base yet. The documentation
+link wrapper validates only that exact URL prefix against tracked regular files
+in the candidate checkout, rejects ambiguous or escaping paths, and remaps those
+targets to local files for Lychee. This is a candidate substitution, not an
+exclusion: every other URL retains Lychee's normal validation.
+
 The workflow-contract test protects these names and trigger semantics in the
 repository; branch rules are owner-managed GitHub state and must be verified
 separately after changes. Ruleset `21481544` must continue to prohibit updates,
@@ -113,14 +121,32 @@ custom deployment branch policy `58259903`, whose only allowed branch is
 Verify both owner controls after any settings change. Do not widen workflow
 permissions to make a check required.
 
+The two CI job names above are stable branch-protection aggregators, not a
+promise that every diff runs the same command. `scripts/ci/target-plan.mjs`
+maps the exact base-to-head paths to component lanes under one of three
+profiles:
+
+| Profile | Repository event | Required work |
+| --- | --- | --- |
+| `feature` | pull request | L0 basic plus the affected host, integration, quality, package, and artifact lanes |
+| `integration` | delivery push | every deterministic public hosted lane, in parallel |
+| `release` | explicit manual run | every deterministic public hosted lane; device/private release evidence remains explicit |
+
+Documentation, harness, and CI-only feature changes run the basic contracts
+without realizing the Rust/Nix graph. Shared core and unknown paths remain
+conservative. Missing refs or an empty diff fail closed to the complete public
+hosted set. The scheduled nightly still runs the complete hermetic flake check.
+The commands, budgets, dependencies, mobile/live gaps, and promotion criteria
+are versioned in [the CI target matrix](factory/ci-target-matrix.md).
+
 ## Independent current-head review
 
 Copilot review is unavailable and remains disabled with
-`refinement.maxCopilotRounds: 0`. The `external-review` angle is configured in
-both local `draft` and `preApproval` gates. It requires a manually invoked fresh
-independent Claude CLI review and records a local attestation in the local gate;
-it is not a hosted GitHub status check or authenticated reviewer identity. The
-attestation is usable only when it records:
+`refinement.maxCopilotRounds: 0`. A manually invoked fresh independent Claude
+CLI review is reserved for release-profile/high-risk changes, an explicit owner request,
+or a disputed finding; it is not repeated at both ordinary gates. It records a
+local attestation, not a hosted GitHub status check or authenticated reviewer
+identity. The attestation is usable only when it records:
 
 - `claude --version`;
 - the exact reviewed head SHA and integration merge-base SHA;
@@ -128,7 +154,7 @@ attestation is usable only when it records:
 - findings (or an explicit `No findings` verdict);
 - a review timestamp after the last push.
 
-Any push makes the evidence stale. Run the tracked
+When this high-risk review is required, any push makes the evidence stale. Run the tracked
 `scripts/review/claude-current-head.mjs` wrapper with a clean checkout and a
 private XDG state directory (or an equally hardened explicit directory). It
 invokes the CLI from outside the checkout in safe mode with no tools, supplies
@@ -137,8 +163,8 @@ state or malformed output. Findings are persisted as structured attestational
 evidence before the gate fails. Verify only a saved clean artifact with the same
 wrapper, fix every accepted finding, and repeat against the new head. See
 `docs/dev-loop-stability.md` for the exact command, limitations, and evidence
-shape. Post the current-head evidence to the pull request before merge; that
-evidence is the local attestation described above.
-Integration branch protection intentionally does not require a hosted
-human or code-owner approval; the owner has authorized clean integration
-merges only after this review control and every other current-head gate pass.
+shape. Post required high-risk current-head evidence to the pull request before
+merge; that evidence is the local attestation described above. Integration
+branch protection intentionally does not require a hosted human or code-owner
+approval, but the local harness always stops at merge for a human delivery
+decision.

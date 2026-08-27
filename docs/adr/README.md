@@ -1,11 +1,13 @@
 # Architecture decision records
 
 ADRs record consequential technical decisions for Oxid. Use four-digit,
-monotonically increasing filenames. Each record describes its status, context,
-decision, consequences, and any superseded decisions.
+monotonically increasing filenames; the sequence need not be contiguous. Each
+record describes its status, context, decision, consequences, and any superseded
+decisions.
 
-Accepted ADRs are changed only by a later ADR that explicitly supersedes them.
-The root blueprint remains the broader product and engineering constitution.
+Accepted ADRs are changed only by a later ADR that explicitly amends or
+supersedes them. The root blueprint remains the broader product and engineering
+constitution.
 
 ## How to read status
 
@@ -125,6 +127,7 @@ ADR status and delivery state answer different questions:
 | [0101](0101-gate-laceid-portal-interoperability-on-final-openid4vci.md) Gate LaceID Portal interoperability on Final OpenID4VCI | Accepted | ADR-0039/0097; issue #124; LaceID Portal `804de0a9e58cf48ece3cc6c24b2245bb70bc80f1` | Source-derived negative contract evidence only: strict Final offer/metadata/request/response boundaries reject the pinned Portal shapes; no live HTTP, trust-manifest consumption, or headless/simulator/device/tailnet interoperability evidence |
 | [0102](0102-admit-pinned-portal-final-in-headless-development.md) Admit pinned Portal Final issuance in headless development | Accepted | ADR-0039/0101; issue #124; Portal `integration@22ae536` | Strict authenticated native-headless Portal HTTP issuance, exact three-part verification/import, encrypted persistence, and new-process restore |
 | [0103](0103-compose-portal-final-for-physical-android.md) Compose Portal Final for physical Android | Accepted | ADR-0039/0097/0102; issue #124; Portal `integration@22ae536` | Compile-gated physical Android issuance, encrypted restart/reverification, runtime-discovered device and tailnet identity, and receipt-exact temporary HTTPS cleanup |
+| [0104](0104-regrow-incoming-adapters-behind-capability-facades.md) Regrow oversized adapters behind capability façades | Accepted | §§3, 6, 13–14, 18–19; issue #145 | Governing policy and source-size baseline recorded; headless then desktop Dioxus source-module decomposition is first, composition and Midnight remain later, and no crate extraction is authorized |
 
 ## Current boundaries
 
@@ -513,3 +516,9 @@ repository/headless/Dioxus path, public PreProd manifest/read-only observer,
 test-only signed Midnight profile, and amount-observed ignored live harness are
 implemented; the funded write, mobile, restart, and physical-device acceptance
 evidence remain in progress.
+
+ADR-0104 governs behavior-preserving source decomposition of the four oversized
+crate roots without changing their dependency or public capability boundaries.
+Headless and desktop Dioxus move first behind stable crate-root re-exports;
+composition and Midnight retain that later order. Source modules must establish
+cohesion before a separately approved, measured crate boundary can be proposed.
