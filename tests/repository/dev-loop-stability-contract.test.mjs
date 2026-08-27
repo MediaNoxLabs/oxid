@@ -706,6 +706,66 @@ function captureSink(chunks) {
   return new Writable({ write(chunk, _encoding, callback) { chunks.push(chunk.toString()); callback(); } });
 }
 
+async function makeProspectiveEnvelopeRouteFixture(t, blockedAncestor) {
+  const parent = await realMkdtemp("oxid-envelope-prospective-");
+  const root = path.join(parent, "candidate checkout");
+  const input = "resolver.json";
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".pi"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@0.9.0"] }));
+  await writeFile(path.join(root, ".devloops"), "version: 1\n");
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Fixture"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: root });
+  execFileSync("git", ["add", ".pi/settings.json", ".devloops"], { cwd: root });
+  execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: root });
+  await installPinnedEnvelopeProxy(root);
+  await writeFile(path.join(root, input), JSON.stringify({
+    bundle: {
+      repoSlug: "owner/repo",
+      selectedStrategy: "local_implementation",
+      executionMode: "bounded_handoff",
+      nextAction: "fixture action",
+      activeArtifact: { kind: "issue", issue: 999 },
+    },
+  }));
+  if (blockedAncestor === "tmp") {
+    await writeFile(path.join(root, "tmp"), "not a directory\n");
+  } else if (blockedAncestor === "namespace") {
+    await mkdir(path.join(root, "tmp", "worktrees"), { recursive: true });
+    await writeFile(path.join(root, "tmp", "worktrees", "dev-loops"), "not a directory\n");
+  }
+  return { root: await realpath(root), input, target: path.join(root, "tmp", "worktrees", "dev-loops", "issue-999") };
+}
+
+test("tracked build-envelope route rejects non-directory prospective topology before emission", async (t) => {
+  for (const fixtureCase of [
+    { name: "absent prospective path", blockedAncestor: null, accepted: true },
+    { name: "common-root tmp file", blockedAncestor: "tmp", accepted: false },
+    { name: "managed namespace file", blockedAncestor: "namespace", accepted: false },
+  ]) {
+    await t.test(fixtureCase.name, async (subtest) => {
+      const fixture = await makeProspectiveEnvelopeRouteFixture(subtest, fixtureCase.blockedAncestor);
+      const out = [];
+      const err = [];
+      const code = await runDevLoops(["loop", "build-envelope", "--input", fixture.input], {
+        cwd: fixture.root,
+        stdout: captureSink(out),
+        stderr: captureSink(err),
+      });
+      if (fixtureCase.accepted) {
+        assert.equal(code, 0, err.join(""));
+        assert.equal(JSON.parse(out.join("")).cwd, fixture.target);
+        assert.equal(err.join(""), "");
+      } else {
+        assert.equal(code, 1);
+        assert.equal(out.join(""), "");
+        assert.match(err.join(""), /non-directory ancestor/);
+      }
+    });
+  }
+});
+
 test("tracked build-envelope route preserves pinned parser, config, and output contracts", async (t) => {
   const parent = await realMkdtemp("oxid-envelope-cli-");
   const root = path.join(parent, "candidate checkout with spaces");

@@ -23,13 +23,17 @@ function countWorktreeNamespaces(candidate) {
 }
 
 async function pathState(candidate) {
+  let entry;
   try {
-    const entry = await lstat(candidate);
-    return { exists: true, entry, real: await realpath(candidate) };
+    entry = await lstat(candidate);
   } catch (error) {
-    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return { exists: false, entry: null, real: null };
+    if (error?.code === "ENOENT") return { exists: false, entry: null, real: null };
+    if (error?.code === "ENOTDIR") {
+      throw new Error(`handoff envelope topology contains a non-directory ancestor: ${candidate}`, { cause: error });
+    }
     throw error;
   }
+  return { exists: true, entry, real: await realpath(candidate) };
 }
 
 async function listedWorktrees(commonRoot) {
@@ -70,6 +74,9 @@ async function assertProspectiveAncestors(candidate, commonRoot) {
       if (state.entry.isSymbolicLink() || state.real !== current) {
         throw new Error(`refusing prospective handoff envelope cwd beneath symlinked topology: ${candidate}`);
       }
+      if (!state.entry.isDirectory()) {
+        throw new Error(`refusing prospective handoff envelope cwd beneath non-directory topology: ${candidate}`);
+      }
     }
     if (current === commonRoot) return;
     current = path.dirname(current);
@@ -92,6 +99,9 @@ async function assertOwnedOrProspective(candidate, { commonRoot, canonical, work
   }
   if (state.entry.isSymbolicLink() || state.real !== candidate) {
     throw new Error(`refusing symlinked or realpath-mismatched handoff envelope cwd: ${candidate}`);
+  }
+  if (!state.entry.isDirectory()) {
+    throw new Error(`refusing non-directory handoff envelope cwd: ${candidate}`);
   }
   if (!worktrees.includes(candidate)) {
     throw new Error(`refusing foreign existing handoff envelope cwd: ${candidate}`);
