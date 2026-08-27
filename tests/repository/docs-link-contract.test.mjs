@@ -119,7 +119,7 @@ test("candidate scanning ignores code examples and trims prose punctuation", () 
 });
 
 test("Lychee remaps only the same-repository integration prefix and still checks all Markdown", () => {
-  const args = buildLycheeArgs(repoRoot);
+  const args = buildLycheeArgs(repoRoot, { candidate: true });
   const remapIndex = args.indexOf("--remap");
   assert.notEqual(remapIndex, -1);
   assert.match(args[remapIndex + 1], /^\^https:\/\/github\\\.com\/MediaNoxLabs\/oxid\/blob\/integration\/ file:\/\//);
@@ -131,6 +131,9 @@ test("Lychee remaps only the same-repository integration prefix and still checks
   assert.equal(args.includes("--include-verbatim=false"), true);
   assert.equal(args.includes("--offline"), false);
   assert.equal(args.includes("--exclude"), false);
+  const integrationArgs = buildLycheeArgs(repoRoot);
+  assert.equal(integrationArgs.includes("--remap"), false);
+  assert.equal(integrationArgs.includes("--include-fragments=none"), false);
 });
 
 test("the renderer keeps durable integration URLs for candidate-only ADRs", () => {

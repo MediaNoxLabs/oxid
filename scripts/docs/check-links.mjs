@@ -48,16 +48,20 @@ export function candidatePath(rawUrl) {
   return suffix;
 }
 
-export function buildLycheeArgs(repoRoot) {
-  return [
+export function buildLycheeArgs(repoRoot, { candidate = false } = {}) {
+  const args = [
     "--config", ".lychee.toml",
     "--no-progress",
     "--exclude-path", "LICENSE",
-    "--include-fragments=none",
-    "--include-verbatim=false",
-    "--remap", `${INTEGRATION_BLOB_REMAP_PATTERN} ${pathToFileURL(`${repoRoot}${path.sep}`).href}`,
-    "./**/*.md",
   ];
+  if (candidate) {
+    args.push(
+      "--include-fragments=none",
+      "--include-verbatim=false",
+      "--remap", `${INTEGRATION_BLOB_REMAP_PATTERN} ${pathToFileURL(`${repoRoot}${path.sep}`).href}`,
+    );
+  }
+  return [...args, "./**/*.md"];
 }
 
 async function trackedFiles(repoRoot) {
@@ -96,10 +100,14 @@ export async function validateCandidateLinks(repoRoot, markdownPaths = undefined
   }
 }
 
-export async function main() {
+export async function main(argv = process.argv.slice(2)) {
+  if (argv.some((argument) => argument !== "--candidate") || argv.length > 1) {
+    throw new Error("usage: check-links.mjs [--candidate]");
+  }
+  const candidate = argv[0] === "--candidate";
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-  await validateCandidateLinks(repoRoot);
-  const result = spawnSync("lychee", buildLycheeArgs(repoRoot), { cwd: repoRoot, stdio: "inherit" });
+  if (candidate) await validateCandidateLinks(repoRoot);
+  const result = spawnSync("lychee", buildLycheeArgs(repoRoot, { candidate }), { cwd: repoRoot, stdio: "inherit" });
   if (result.error) throw result.error;
   if (result.signal) throw new Error(`lychee terminated by ${result.signal}`);
   process.exitCode = result.status ?? 1;
