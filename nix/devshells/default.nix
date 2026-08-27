@@ -18,6 +18,7 @@
         git
         nodejs_24
         pkg-config
+        ripgrep
         rustc
         rustfmt
         sccache

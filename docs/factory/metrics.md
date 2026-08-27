@@ -119,6 +119,9 @@ UI shape hit its 15-minute ceiling while combining profile/type checks with a
 full optimized release artifact, so those now run as independent UI and
 `ui-release-linux` lanes. The separated Nix package completed in 18m19. Do
 not raise the old monolith or L0 timeout as a substitute for isolating phases.
+The first minimal-shell run then failed in about one minute because `rg` was
+implicit on the development host but absent from the hosted image; `ripgrep`
+is now an explicit shared CI-shell dependency.
 
 Local entry-point validation on the same Apple development host and a fresh
 worktree target completed the original `basic` in 1m41 and original `unit`

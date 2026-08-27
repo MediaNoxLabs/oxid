@@ -131,7 +131,9 @@ test("repository gate runs architecture and the delivery contract with its decla
   const gate = await read("run.sh");
   assert.match(gate, /\.\/scripts\/check-architecture\.sh/);
   assert.match(gate, /node --test tests\/repository\/integration-delivery-contract\.test\.mjs/);
-  assert.match(await read("nix/devshells/default.nix"), /nodejs_24/);
+  const shells = await read("nix/devshells/default.nix");
+  assert.match(shells, /nodejs_24/);
+  assert.match(shells, /ciRustPackages[\s\S]*ripgrep/);
 });
 
 test("guidance, required contexts, and review configuration agree", async () => {
