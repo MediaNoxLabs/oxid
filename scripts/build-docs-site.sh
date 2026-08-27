@@ -20,6 +20,7 @@ site_dir="$repo_root/docs/site"
 adr_index="$repo_root/docs/adr/README.md"
 catalog="$site_dir/src/adr-catalog.md"
 blob_base="https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr"
+adr_0104_permalink_base="https://github.com/MediaNoxLabs/oxid/blob/233eda9d6c80e8554d83b4b1160b224da5a5ed65/docs/adr"
 
 {
   echo "# Decision records"
@@ -31,6 +32,7 @@ blob_base="https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr"
   sed -E \
     -e 's/^# /## /' \
     -e "s|\\]\\((([0-9]{4})[A-Za-z0-9./_-]*\\.md)\\)|](${blob_base}/\\1)|g" \
+    -e "s|${blob_base}/(0104-[A-Za-z0-9._/-]*\\.md)|${adr_0104_permalink_base}/\\1|g" \
     "$adr_index"
 } > "$catalog"
 
