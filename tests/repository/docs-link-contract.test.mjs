@@ -127,13 +127,16 @@ test("Lychee remaps only the same-repository integration prefix and still checks
   assert.equal(remap.test(INTEGRATION_BLOB_PREFIX), true);
   assert.equal(remap.test("https://githubXcom/MediaNoxLabs/oxid/blob/integration/docs/adr/0104.md"), false);
   assert.equal(args.at(-1), "./**/*.md");
-  assert.equal(args.includes("--include-fragments=none"), true);
-  assert.equal(args.includes("--include-verbatim=false"), true);
+  assert.equal(args.includes("--include-fragments=none"), false);
+  assert.equal(args.includes("--include-verbatim=false"), false);
   assert.equal(args.includes("--offline"), false);
   assert.equal(args.includes("--exclude"), false);
   const integrationArgs = buildLycheeArgs(repoRoot);
   assert.equal(integrationArgs.includes("--remap"), false);
   assert.equal(integrationArgs.includes("--include-fragments=none"), false);
+  const config = readFileSync(path.join(repoRoot, ".lychee.toml"), "utf8");
+  assert.match(config, /^include_fragments = "none"$/m);
+  assert.match(config, /^include_verbatim = false$/m);
 });
 
 test("the renderer keeps durable integration URLs for candidate-only ADRs", () => {

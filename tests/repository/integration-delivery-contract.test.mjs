@@ -77,7 +77,8 @@ test("documentation links always emit a context and skip outbound work safely", 
   for (const eventCase of ["workflow_dispatch)", "pull_request)", "push)"]) assert.match(links, new RegExp(eventCase.replace(/[()]/g, "\\$&")));
   for (const safety of [/fetch-depth: 0/, /valid_sha/, /git cat-file -e/, /git merge-base/, /git diff --quiet/, /running the link check conservatively/]) assert.match(links, safety);
   assert.equal((links.match(/if: steps\.changes\.outputs\.docs_changed == 'true'/g) || []).length, 2);
-  assert.match(links, /nix develop \.#docs --command node scripts\/docs\/check-links\.mjs/);
+  assert.match(links, /if \[\[ "\$EVENT_NAME" == "pull_request" \]\]; then\n\s+nix develop \.#docs --command node scripts\/docs\/check-links\.mjs --candidate\n\s+else\n\s+nix develop \.#docs --command node scripts\/docs\/check-links\.mjs\n\s+fi/);
+  assert.match(links, /EVENT_NAME: \$\{\{ github\.event_name \}\}/);
   assert.doesNotMatch(links, /--exclude.*blob\/integration/);
 });
 

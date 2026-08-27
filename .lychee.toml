@@ -2,6 +2,8 @@
 # and allow slow responders.
 max_retries = 3
 timeout = 45
+include_fragments = "none"
+include_verbatim = false
 
 # The workflow badge returns 404 until the CI workflow exists on `integration`.
 # Keep checking its destination link while allowing the generated badge image.

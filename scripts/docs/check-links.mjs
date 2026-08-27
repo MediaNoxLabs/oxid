@@ -55,11 +55,7 @@ export function buildLycheeArgs(repoRoot, { candidate = false } = {}) {
     "--exclude-path", "LICENSE",
   ];
   if (candidate) {
-    args.push(
-      "--include-fragments=none",
-      "--include-verbatim=false",
-      "--remap", `${INTEGRATION_BLOB_REMAP_PATTERN} ${pathToFileURL(`${repoRoot}${path.sep}`).href}`,
-    );
+    args.push("--remap", `${INTEGRATION_BLOB_REMAP_PATTERN} ${pathToFileURL(`${repoRoot}${path.sep}`).href}`);
   }
   return [...args, "./**/*.md"];
 }

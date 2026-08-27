@@ -93,8 +93,7 @@ jobs:
 
       - name: Check Markdown links
         if: steps.changes.outputs.docs_changed == 'true'
-        # The docs shell carries only Lychee, Git, and its bounded Node wrapper:
-        # link checking must never realize the compiler or Compact/ZK closure.
+        # The docs-only shell carries no compiler or Compact/ZK artifact closure.
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: |
