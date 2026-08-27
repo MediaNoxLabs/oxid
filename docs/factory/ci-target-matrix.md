@@ -142,6 +142,9 @@ storage ceiling before any new layer becomes required.
   consumers because their dependency fan-out is cross-cutting.
 - Build/toolchain/lockfile changes and an unavailable or empty diff fail closed
   to every hosted public target.
+- Root `run.sh` is the repository-wide gate driver rather than a harness-only
+  helper. An edit can change the command owned by every lane, so it is a global
+  build input and deliberately selects the full hosted matrix.
 - `--targets` adds known hosted lanes on demand; unknown or private target names
   are rejected rather than silently accepted.
 

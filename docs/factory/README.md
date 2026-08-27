@@ -12,6 +12,7 @@ current-head review evidence are the delivery gates.
 | [fsm.md](fsm.md) | The work-item finite state machine: states, transitions, gate conditions, failure edges. |
 | [claim-protocol.md](claim-protocol.md) | Decentralized claim/lease protocol so agents on different machines never double-work an item. |
 | [metrics.md](metrics.md) | The measurements the factory watches and the current baselines. |
+| [work-item-metrics-v1.schema.json](work-item-metrics-v1.schema.json) | Closed, machine-readable per-issue/PR/head telemetry contract. |
 | [ci-target-matrix.md](ci-target-matrix.md) | Assurance levels, component routing, branch profiles, target dependencies, budgets, and promotion gaps. |
 | [runbook.md](runbook.md) | Phase 1 operations: what is installed, the three concurrency mechanisms, the label profile, and what refuses to work by design. |
 | [productive-loop.md](productive-loop.md) | Time-to-main SLOs, target routing, review limits, and worktree/disk lifecycle. |

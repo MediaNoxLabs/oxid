@@ -38,7 +38,7 @@ const AREA_PATTERNS = Object.freeze({
     /^\.pi\//,
     /^AGENT\.md$/,
     /^scripts\/check-pi-devshell\.sh$/,
-    /^scripts\/(?:dev-loops\.mjs|github\/|loop\/|lib\/(?:dev-loop|handoff-envelope)|review\/|worktree-lifecycle\.mjs)/,
+    /^scripts\/(?:dev-loops\.mjs|factory\/|github\/|loop\/|lib\/(?:dev-loop|handoff-envelope)|review\/|worktree-lifecycle\.mjs)/,
     /^tests\/repository\//,
   ],
   ci: [
@@ -47,7 +47,7 @@ const AREA_PATTERNS = Object.freeze({
   ],
   build: [
     /^\.cargo\//,
-    /^(?:Cargo\.toml|Cargo\.lock|flake\.nix|flake\.lock|rust-toolchain(?:\.toml)?|deny\.toml)$/,
+    /^(?:Cargo\.toml|Cargo\.lock|flake\.nix|flake\.lock|run\.sh|rust-toolchain(?:\.toml)?|deny\.toml)$/,
     /^nix\//,
   ],
   compact: [
