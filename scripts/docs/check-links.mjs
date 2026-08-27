@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const INTEGRATION_BLOB_PREFIX = "https://github.com/MediaNoxLabs/oxid/blob/integration/";
+export const INTEGRATION_BLOB_REMAP_PATTERN = String.raw`https://github\.com/MediaNoxLabs/oxid/blob/integration/`;
 
 function markdownWithoutCode(markdown) {
   let fence = null;
@@ -51,7 +52,7 @@ export function buildLycheeArgs(repoRoot) {
     "--config", ".lychee.toml",
     "--no-progress",
     "--exclude-path", "LICENSE",
-    "--remap", `${INTEGRATION_BLOB_PREFIX} ${pathToFileURL(`${repoRoot}${path.sep}`).href}`,
+    "--remap", `${INTEGRATION_BLOB_REMAP_PATTERN} ${pathToFileURL(`${repoRoot}${path.sep}`).href}`,
     "./**/*.md",
   ];
 }

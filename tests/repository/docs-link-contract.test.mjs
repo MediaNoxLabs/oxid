@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   INTEGRATION_BLOB_PREFIX,
+  INTEGRATION_BLOB_REMAP_PATTERN,
   buildLycheeArgs,
   candidateIntegrationUrls,
   candidatePath,
@@ -91,7 +92,10 @@ test("Lychee remaps only the same-repository integration prefix and still checks
   const args = buildLycheeArgs(repoRoot);
   const remapIndex = args.indexOf("--remap");
   assert.notEqual(remapIndex, -1);
-  assert.match(args[remapIndex + 1], /^https:\/\/github\.com\/MediaNoxLabs\/oxid\/blob\/integration\/ file:\/\//);
+  assert.match(args[remapIndex + 1], /^https:\/\/github\\\.com\/MediaNoxLabs\/oxid\/blob\/integration\/ file:\/\//);
+  const remap = new RegExp(`^${INTEGRATION_BLOB_REMAP_PATTERN}`);
+  assert.equal(remap.test(INTEGRATION_BLOB_PREFIX), true);
+  assert.equal(remap.test("https://githubXcom/MediaNoxLabs/oxid/blob/integration/docs/adr/0104.md"), false);
   assert.equal(args.at(-1), "./**/*.md");
   assert.equal(args.includes("--offline"), false);
   assert.equal(args.includes("--exclude"), false);
