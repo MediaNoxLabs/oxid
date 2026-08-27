@@ -4,11 +4,14 @@ Thank you for helping build a free and reusable identity wallet foundation.
 
 ## Before you begin
 
-Read `AGENT.md`, `OXID_IDENTITY_WALLET_BLUEPRINT.md`, and
-`docs/integration-delivery.md`. Architectural work
-must preserve inward dependencies and include an ADR. Open an issue before a
-large feature or dependency migration so its capability boundary and security
-impact can be agreed first.
+Read `AGENT.md`, `OXID_IDENTITY_WALLET_BLUEPRINT.md`, the
+[`RUST_MONOREPO_QUALITY.md`](RUST_MONOREPO_QUALITY.md) non-functional north
+star, its
+[versioned quality constitution](docs/site/src/quality-constitution.md),
+and `docs/integration-delivery.md`. Architectural work must preserve inward
+dependencies and include an ADR. Open an issue before a large feature or
+dependency migration so its capability boundary and security impact can be
+agreed first.
 
 ## Development environment
 

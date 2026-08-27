@@ -1,9 +1,11 @@
 # Testing strategy
 
 What "tested" means in this repository, layer by layer, and the policies a
-change is reviewed against. This codifies the practice that already exists
-(≈500 tests, hermetic by construction) and the gaps the 2026-08 independent
-review closed or scheduled.
+change is reviewed against. The
+[quality constitution](quality-constitution.md) is the versioned policy
+authority; this page explains the repository's current
+practice. It codifies the practice that already exists (≈500 tests, hermetic by
+construction) and the gaps the 2026-08 independent review closed or scheduled.
 
 ## The pyramid, as practiced here
 
