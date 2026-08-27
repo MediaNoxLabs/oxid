@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -34,30 +35,46 @@ async function exists(candidate) {
 }
 
 async function findGitRoot(cwd) {
-  let current = path.resolve(cwd);
-  while (true) {
-    if (await exists(path.join(current, ".git"))) return current;
-    const parent = path.dirname(current);
-    if (parent === current) throw new Error(`not inside a Git checkout: ${cwd}`);
-    current = parent;
+  const requested = await realpath(path.resolve(cwd));
+  let reported;
+  try {
+    reported = execFileSync("git", ["-C", requested, "rev-parse", "--path-format=absolute", "--show-toplevel"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch (error) {
+    throw new Error(`not inside a registered Git checkout: ${cwd}: ${(error.stderr ?? error.message).toString().trim()}`, { cause: error });
   }
+  const gitRoot = await realpath(reported);
+  if (!isContained(gitRoot, requested)) throw new Error(`Git checkout root ${gitRoot} does not contain requested path ${requested}`);
+  return gitRoot;
 }
 
 async function resolveCommonCheckoutRoot(gitRoot) {
-  const dotGit = path.join(gitRoot, ".git");
-  const dotGitStat = await stat(dotGit);
-  if (dotGitStat.isDirectory()) return gitRoot;
-  if (!dotGitStat.isFile()) throw new Error(`unsupported Git metadata at ${dotGit}`);
-
-  const marker = (await readFile(dotGit, "utf8")).trim().match(/^gitdir:\s*(.+)$/i);
-  if (!marker) throw new Error(`could not parse linked-worktree metadata at ${dotGit}`);
-  const gitDir = path.resolve(gitRoot, marker[1]);
-  const normalized = path.normalize(gitDir);
-  const worktreesParent = path.dirname(path.dirname(normalized));
-  if (path.basename(worktreesParent) !== ".git" || path.basename(path.dirname(normalized)) !== "worktrees") {
-    throw new Error(`linked worktree does not identify a bounded common checkout: ${dotGit}`);
+  let porcelain;
+  try {
+    porcelain = execFileSync("git", ["-C", gitRoot, "worktree", "list", "--porcelain"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    throw new Error(`could not verify registered Git worktrees for ${gitRoot}: ${(error.stderr ?? error.message).toString().trim()}`, { cause: error });
   }
-  return path.dirname(worktreesParent);
+  const registered = porcelain.split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length));
+  if (registered.length === 0) throw new Error(`Git did not report a common checkout for ${gitRoot}`);
+  const resolved = await Promise.all(registered.map(async (candidate) => {
+    try {
+      return await realpath(candidate);
+    } catch {
+      return null;
+    }
+  }));
+  if (!resolved.includes(gitRoot)) throw new Error(`Git checkout is not registered in its common worktree list: ${gitRoot}`);
+  const commonRoot = resolved[0];
+  if (commonRoot === null) throw new Error(`registered common checkout is unavailable: ${registered[0]}`);
+  return commonRoot;
 }
 
 const EXACT_SEMVER = "(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";

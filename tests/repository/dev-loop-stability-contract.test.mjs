@@ -94,13 +94,26 @@ async function installedPi084Root(t) {
 
 async function makeFixture() {
   const root = await realMkdtemp("oxid-dev-loop-root-");
-  await mkdir(path.join(root, ".git", "worktrees", "fixture"), { recursive: true });
-  await mkdir(path.join(root, ".pi", "npm", "node_modules", "dev-loops", "agents"), { recursive: true });
   await mkdir(path.join(root, ".pi", "agents"), { recursive: true });
+  await writeFile(path.join(root, ".gitignore"), "/.pi/npm/\n/tmp/\n");
   await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
     packages: ["npm:dev-loops@0.9.0"],
     subagents: { projectRootResolution: "git-root" },
   }));
+  await writeFile(path.join(root, ".pi", "agents", "developer.agent.md"), [
+    "---", "name: developer", "description: fixture", "tools:", "  - read", "  - grep", "  - find", "  - ls", "  - bash", "  - edit", "  - write", "---", "fixture",
+  ].join("\n"));
+  execFileSync("git", ["init", "--initial-branch", "integration"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["add", ".gitignore", ".pi/settings.json", ".pi/agents/developer.agent.md"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["-c", "user.name=Oxid Test", "-c", "user.email=oxid-test@example.invalid", "commit", "-m", "fixture"], {
+    cwd: root,
+    stdio: "ignore",
+  });
+  const worktree = path.join(root, "tmp", "worktrees", "dev-loops", "issue-150");
+  await mkdir(path.dirname(worktree), { recursive: true });
+  execFileSync("git", ["worktree", "add", "-b", "issue-150", worktree, "HEAD"], { cwd: root, stdio: "ignore" });
+
+  await mkdir(path.join(root, ".pi", "npm", "node_modules", "dev-loops", "agents"), { recursive: true });
   const packageRoot = path.join(root, ".pi", "npm", "node_modules", "dev-loops");
   await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
   await mkdir(path.join(packageRoot, "cli"));
@@ -110,15 +123,6 @@ async function makeFixture() {
   await writeFile(path.join(packageRoot, "agents", "developer.agent.md"), [
     "---", "name: developer", "description: fixture", "tools: read, search, execute, bash, edit, write", "---", "fixture",
   ].join("\n"));
-  await writeFile(path.join(root, ".pi", "agents", "developer.agent.md"), [
-    "---", "name: developer", "description: fixture", "tools:", "  - read", "  - grep", "  - find", "  - ls", "  - bash", "  - edit", "  - write", "---", "fixture",
-  ].join("\n"));
-  const worktree = path.join(root, "tmp", "worktrees", "dev-loops", "issue-150");
-  await mkdir(worktree, { recursive: true });
-  await writeFile(path.join(worktree, ".git"), `gitdir: ${path.join(root, ".git", "worktrees", "fixture")}\n`);
-  await mkdir(path.join(worktree, ".pi", "agents"), { recursive: true });
-  await writeFile(path.join(worktree, ".pi", "settings.json"), await readFile(path.join(root, ".pi", "settings.json")));
-  await writeFile(path.join(worktree, ".pi", "agents", "developer.agent.md"), await readFile(path.join(root, ".pi", "agents", "developer.agent.md")));
   return { root, worktree, packageRoot };
 }
 
@@ -190,6 +194,15 @@ test("package resolution rejects mismatched identities and symlink escapes", asy
   await writeFile(path.join(outside, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
   await symlink(outside, fixture.packageRoot, "dir");
   await assert.rejects(resolveDevLoopsPackageRoot({ cwd: fixture.root }), /escapes allowed project roots/);
+});
+
+test("package resolution rejects an unregistered path with borrowed worktree metadata", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const foreign = path.join(fixture.root, "tmp", "unregistered");
+  await mkdir(foreign, { recursive: true });
+  await writeFile(path.join(foreign, ".git"), await readFile(path.join(fixture.worktree, ".git")));
+  await assert.rejects(resolveDevLoopsPackageRoot({ cwd: foreign }), /does not contain requested path|not registered/);
 });
 
 test("effective packaged agent allowlists use self-contained project shadows, not ineffective settings overrides", async (t) => {
