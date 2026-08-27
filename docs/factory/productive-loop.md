@@ -30,12 +30,13 @@ that phase.
 2. Make a bounded change and run the narrowest meaningful local test.
 3. Run the draft gate for scope and correctness. It does not wait for hosted
    CI. Fix accepted direction findings together.
-4. Run the tier command locally against the intended base and head:
+4. Run the target planner locally against the intended base and head:
 
    ```bash
-   node scripts/ci/change-tier.mjs \
+   node scripts/ci/target-plan.mjs \
      --base "$(git merge-base HEAD origin/integration)" \
-     --head HEAD
+     --head HEAD \
+     --event pull_request
    ```
 
 5. Run the matching local gate, commit once, and push one coherent candidate.
@@ -43,32 +44,34 @@ that phase.
    evidence.
 6. Pre-approval runs correctness/security review against that candidate and
    waits for the protected contexts once.
-7. For a `full` high-risk change, an owner request, or a disputed finding, run
+7. For a release-profile/high-risk change, an owner request, or a disputed finding, run
    the manually invoked current-head Claude review once after the last edit.
 8. Stop at merge. The human operator checks current-head freshness and merges
    or returns the PR for remediation.
 
-## Validation tiers
+## Assurance levels and target routing
 
-The classifier is conservative and based only on changed paths. The workflow
-keeps existing required context names so no branch-protection migration is
-needed.
+The planner is conservative and based on changed paths plus an explicit
+`feature`, `integration`, or `release` profile. L0 basic evidence is emitted
+for every PR within five minutes. L1 unit and L2 headless integration have
+ten-minute bounds on the Linux host. L3 UI, coverage, quality, Nix package, and
+Compact artifact lanes run independently when their component or profile
+selects them. The complete target/dependency inventory and missing platform
+gates live in [the CI target matrix](ci-target-matrix.md).
 
-| Tier | Local command | Hosted behavior |
-| --- | --- | --- |
-| `docs` | focused docs check | no Nix, Rust build, or package build |
-| `harness` | `./run.sh repository --strict` | hermetic Node contract tests; no ignored local Pi installation |
-| `rust` | `nix develop --command ./run.sh core --strict` | workspace contracts, clippy/tests, and quality |
-| `full` | `nix develop --command ./run.sh --light --strict` | full gate, coverage, locked packages/artifacts, and quality |
+The workflow keeps the existing required context names as aggregators, so
+branch protection never treats an intentionally skipped lane as missing and no
+one-step ruleset migration is needed.
 
 The existing required scanner context remains path-independent because a
 secret can be committed in any file. It is already a short parallel check and
 is not on the Rust/Nix critical path.
 
-Workflow, toolchain, Nix, lockfile, Compact contract, identity, protocol,
-wallet, and custody changes are `full`. Unknown or unavailable diff state also
-selects `full`. The nightly is the backstop for complete hermetic validation,
-not an excuse to weaken a change-relevant PR gate.
+Build/toolchain/lockfile changes and unknown or unavailable diff state select
+every public hosted target. Shared core changes select both headless and UI
+consumers; focused components do not pay for unrelated consumers. The nightly
+is the backstop for complete hermetic validation, not an excuse to weaken a
+change-relevant PR gate.
 
 ## State and disk lifecycle
 
@@ -77,7 +80,7 @@ linked worktrees. A running Pi process must be restarted after `.pi/`,
 `.devloops`, or package-pin changes because already-loaded instructions and
 extensions do not update in place.
 
-Rust targets stay worktree-local. Compilation is reused through one 10 GiB
+Rust targets stay worktree-local. Compilation is reused through one bounded 10 GiB
 `sccache`, so an old target can be deleted without paying the entire historical
 compile cost again.
 
@@ -120,7 +123,7 @@ Preserve dirty/untracked files and open PR heads first.
 
 ## Metrics to retain
 
-For each delivered PR, retain: changed-path tier, draft review duration,
+For each delivered PR, retain: selected profile/areas/targets, draft review duration,
 pre-approval duration, hosted CI wall time, number of pushes after first CI,
 automatic reviewer sessions, canceled runs, peak worktree target size, and
 whether external review was required. Review the aggregate monthly. Raw token

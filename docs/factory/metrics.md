@@ -8,9 +8,9 @@ each entry is dated and states its measurement environment.
 
 - **Local gate time** is the agent/engineer inner loop; when it grows, every
   work item slows down.
-- **CI wall time** is tiered. Documentation and harness changes should not
-  realize the Rust/Nix closure; only sensitive `full` changes retain the cold
-  path that historically consumed ~59 minutes.
+- **CI wall time** is target-based. Documentation, harness, and CI-only feature
+  changes should not realize the Rust/Nix closure; affected targets fan out in
+  parallel and `integration` remains the complete hosted backstop.
 - **Time to merge-ready** captures review, canceled runs, and repeated pushes
   that a single job duration hides.
 - **Per-crate build time** reveals decomposition problems (a crate growing
@@ -71,9 +71,10 @@ the flake checks previously ran nowhere.
 | --- | --- | --- | --- |
 | Warm local strict-light gate | ≤ 2 min | 2–5 min | > 5 min |
 | Cold `cargo check --workspace` | ≤ 2 min | 2–5 min | > 5 min |
-| `docs` / `harness` required contexts | ≤ 5 min | 5–10 min | > 10 min |
-| `rust` required contexts | ≤ 15 min | 15–25 min | > 25 min |
-| `full` required contexts, warm | ≤ 30 min | 30–45 min | > 45 min |
+| L0 basic envelope | ≤ 5 min | 5–7 min | > 7 min |
+| L1 unit / L2 headless host lane | ≤ 10 min | 10–15 min | > 15 min |
+| L3 UI lane | ≤ 15 min | 15–20 min | > 20 min |
+| L3 coverage / quality / artifact lane | ≤ 25 min | 25–35 min | > 35 min |
 | Routine PR to merge-ready | ≤ 60 min | 60–90 min | > 90 min |
 | Automatic review sessions per routine PR | ≤ 4 | 5–6 | > 6 |
 | Pushes after first hosted CI starts | 0 | 1 | > 1 |
@@ -92,3 +93,24 @@ not a current delivery instruction.
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-18 | ade6416 | 74 s | 119 s | 44–67 min | First baseline; CI long pole is the locked Nix package build (~26 min) + uncached repository gate (~16 min). |
 | 2026-08-20 | 319ca5d | 74 s | 119 s | 21–39 min | Caching, job parallelism, single test execution, and the nightly hermetic split all landed. Local targets unchanged — the win was entirely in pipeline shape, not compile time. |
+
+## Current incident baseline — 2026-08-27, PR #165
+
+The exact-head monolithic repository gate reached its 45-minute timeout and
+was canceled by GitHub seconds after coverage printed its table. Its command
+ran serially for 44m09; the instrumented coverage compile alone took 6m12. In
+the same run, Quality completed in 9m15 and the combined locked Nix
+package/Compact job completed in 21m30. The repository log also emitted about
+100 MB of failed Nix-store tar extraction diagnostics before compilation.
+
+The staged workflow removes whole-store restoration from Rust feedback lanes,
+upgrades `actions/cache` to v6.1 and `cache-nix-action` to v7, and starts the v7
+Nix cache in a fresh namespace. This is the baseline for the new per-lane
+timers; do not raise the old monolith's timeout as a substitute for isolating
+its phases.
+
+Local entry-point validation on the same Apple development host and a fresh
+worktree target completed `basic` in 1m41 and `unit` (compile plus all unit
+tests) in 3m11. The headless integration target completed in 49 s after the
+unit lane had populated dependency outputs. These are local command-shape
+measurements, not substitutes for three hosted samples.

@@ -64,10 +64,10 @@ Follow [the productive loop](docs/factory/productive-loop.md):
    worktrees.
 2. Run the narrowest meaningful check while editing.
 3. Use the bounded draft review for direction; it does not wait for CI.
-4. Batch accepted findings, run the change tier locally, then push one coherent
+4. Batch accepted findings, run the target plan locally, then push one coherent
    current-head candidate.
 5. Run final correctness/security review and hosted CI once.
-6. Invoke independent current-head Claude review only for a high-risk `full`
+6. Invoke independent current-head Claude review only for a high-risk/release-profile
    change, an owner request, or a disputed finding.
 7. Stop at merge for a human.
 
@@ -82,23 +82,28 @@ the configuration visible in its worktree.
 
 ## Validation
 
-Run focused checks first. The path classifier chooses the proportional gate:
+Run focused checks first. The path planner chooses proportional target lanes:
 
 ```bash
-node scripts/ci/change-tier.mjs \
+node scripts/ci/target-plan.mjs \
   --base "$(git merge-base HEAD origin/integration)" \
-  --head HEAD
+  --head HEAD \
+  --event pull_request
 ```
 
-- `docs`: focused documentation validation.
-- `harness`: `./run.sh repository --strict`.
-- `rust`: `nix develop --command ./run.sh core --strict`.
-- `full`: `nix develop --command ./run.sh --light --strict`.
+- L0 `basic`: policy, formatting, architecture, lint, and production compilation
+  within five minutes; non-Rust changes avoid the Rust/Nix closure.
+- L1 `unit-linux`: workspace unit tests on one target within ten minutes.
+- L2 `headless-linux`: hermetic black-box integration within ten minutes.
+- L3 lanes: UI profiles, coverage, quality, Nix package, and Compact artifacts
+  run independently when selected.
 
-Workflow, Nix/toolchain/lockfile, Compact contract, identity, protocol, wallet,
-and custody changes are always `full`. Unknown diff state also fails closed to
-`full`. Quality/scanner schedules and the nightly hermetic flake check remain
-backstops.
+Build/toolchain/lockfile changes and unknown diff state fail closed to every
+public hosted target. Pull requests use affected lanes; each `integration`
+delivery and release-profile run executes the complete hosted set. Platform,
+Docker, cross-repository, and owner-private dependencies are inventoried in
+`docs/factory/ci-target-matrix.md`. Quality/scanner schedules and the nightly
+hermetic flake check remain backstops.
 
 ## Process, disk, and worktree ownership
 

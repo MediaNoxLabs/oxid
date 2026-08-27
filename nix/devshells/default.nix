@@ -75,7 +75,7 @@
           # remain isolated for correctness and can be deleted after delivery.
           export RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache
           export SCCACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/oxid-sccache"
-          export SCCACHE_CACHE_SIZE=10G
+          export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-10G}"
           ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
           ''}

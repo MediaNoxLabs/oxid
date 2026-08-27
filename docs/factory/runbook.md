@@ -6,7 +6,7 @@ How to actually run the factory on this repository. The charter says *why*
 ([charter.md](charter.md)), the FSM says *what state work is in*
 ([fsm.md](fsm.md)); this says *what to type* and *what will refuse to work*.
 
-Phase 1 is deliberately narrow: **bounded review, risk-tiered validation, and a
+Phase 1 is deliberately narrow: **bounded review, impact-routed validation, and a
 human merge.** Routine changes use two draft lenses and two final lenses;
 independent current-head review is reserved for high-risk work. Nothing routes
 through a coordination server.

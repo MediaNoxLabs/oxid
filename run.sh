@@ -9,7 +9,7 @@ strict=false
 
 usage() {
   cat <<'USAGE'
-Usage: ./run.sh [all|repository|core|ui|headless|coverage|quality|clean|targets] [--light] [--strict]
+Usage: ./run.sh [all|repository|basic|unit|core|ui|headless|headless-integration|coverage|quality|clean|targets] [--light] [--strict]
 
   --light   Skip advisory, license, and rustdoc checks.
   --strict  Deny compiler and rustdoc warnings.
@@ -18,7 +18,7 @@ USAGE
 
 while (($# > 0)); do
   case "$1" in
-    all|repository|core|ui|headless|coverage|quality|clean|targets)
+    all|repository|basic|unit|core|ui|headless|headless-integration|coverage|quality|clean|targets)
       target="$1"
       ;;
     --light)
@@ -45,9 +45,24 @@ run_repository() {
   node --test tests/repository/integration-delivery-contract.test.mjs
   node --test tests/repository/dev-loop-stability-contract.test.mjs
   node --test tests/repository/docs-link-contract.test.mjs
-  node --test tests/repository/change-tier-contract.test.mjs
+  node --test tests/repository/target-plan-contract.test.mjs
   node --test tests/repository/worktree-lifecycle-contract.test.mjs
   node --test tests/repository/managed-child-process-contract.test.mjs
+}
+
+run_basic() {
+  run_repository
+  cargo fmt --all --check
+  ./scripts/check-architecture.sh
+  ./scripts/check-arrayref-source.sh
+  ./scripts/check-midnight-sources.sh
+  # Compile production targets and lint them without compiling every test
+  # binary. Unit and component lanes own test-target compilation.
+  cargo clippy --workspace --lib --bins -- -D warnings
+}
+
+run_unit() {
+  cargo test --workspace --lib --bins
 }
 
 run_core() {
@@ -97,6 +112,17 @@ run_headless() {
   cargo check -p oxid-headless
 }
 
+run_headless_integration() {
+  # Hermetic black-box tests run here. Live portal/preprod tests remain ignored
+  # until CI has a public, deterministic fixture and credential boundary.
+  # Name integration targets explicitly so this lane does not repeat the
+  # headless unit tests already owned by `unit`.
+  cargo test -p oxid-headless \
+    --test persistent_profile_flow \
+    --test portal_live_flow \
+    --test portal_profile_flow
+}
+
 run_coverage() {
   require_command cargo-llvm-cov
   cargo llvm-cov \
@@ -142,6 +168,12 @@ case "$target" in
   repository)
     run_repository
     ;;
+  basic)
+    run_basic
+    ;;
+  unit)
+    run_unit
+    ;;
   core)
     run_core
     ;;
@@ -150,6 +182,9 @@ case "$target" in
     ;;
   headless)
     run_headless
+    ;;
+  headless-integration)
+    run_headless_integration
     ;;
   coverage)
     run_coverage
@@ -161,6 +196,6 @@ case "$target" in
     cargo clean
     ;;
   targets)
-    printf '%s\n' all repository core ui headless coverage quality clean targets
+    printf '%s\n' all repository basic unit core ui headless headless-integration coverage quality clean targets
     ;;
 esac

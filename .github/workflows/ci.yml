@@ -5,7 +5,18 @@ on:
     branches: [integration, develop, main]
   pull_request:
     branches: [integration, develop, main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Assurance profile to run
+        required: true
+        default: feature
+        type: choice
+        options: [feature, integration, release]
+      targets:
+        description: Extra hosted targets (comma-separated)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -14,13 +25,26 @@ concurrency:
   group: oxid-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  SCCACHE_CACHE_SIZE: 2G
+
 jobs:
-  gate:
-    name: Repository gate (fmt, architecture, lint, tests, coverage)
+  plan:
+    name: Plan change-relevant CI targets
     runs-on: ubuntu-24.04
-    # The gate compiles and tests the workspace inside the devshell. Warm
-    # caches finish well under 20 minutes; the bound covers cold-cache runs.
-    timeout-minutes: 45
+    timeout-minutes: 2
+    outputs:
+      profile: ${{ steps.plan.outputs.profile }}
+      areas: ${{ steps.plan.outputs.areas }}
+      targets: ${{ steps.plan.outputs.targets }}
+      rust_changed: ${{ steps.plan.outputs.rust_changed }}
+      basic: ${{ steps.plan.outputs.basic }}
+      unit_linux: ${{ steps.plan.outputs.unit_linux }}
+      headless_linux: ${{ steps.plan.outputs.headless_linux }}
+      ui_linux: ${{ steps.plan.outputs.ui_linux }}
+      coverage_linux: ${{ steps.plan.outputs.coverage_linux }}
+      nix_package: ${{ steps.plan.outputs.nix_package }}
+      compact_artifacts: ${{ steps.plan.outputs.compact_artifacts }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -28,110 +52,296 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Classify changed paths
-        id: risk
+      - name: Select profile and target lanes
+        id: plan
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/integration' }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_PROFILE: ${{ inputs.profile || 'auto' }}
+          EXTRA_TARGETS: ${{ inputs.targets || '' }}
         run: |
-          tier="$(node scripts/ci/change-tier.mjs --base "$BASE_SHA" --head "$HEAD_SHA")"
-          printf 'tier=%s\n' "$tier" >> "$GITHUB_OUTPUT"
-          printf 'Selected CI tier: %s\n' "$tier"
+          node scripts/ci/target-plan.mjs \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --event "$EVENT_NAME" \
+            --profile "$REQUESTED_PROFILE" \
+            --targets "$EXTRA_TARGETS" \
+            --format github >> "$GITHUB_OUTPUT"
+          node scripts/ci/target-plan.mjs \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --event "$EVENT_NAME" \
+            --profile "$REQUESTED_PROFILE" \
+            --targets "$EXTRA_TARGETS"
 
-      - name: Install Nix
-        if: steps.risk.outputs.tier == 'rust' || steps.risk.outputs.tier == 'full'
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache the devshell Nix store
-        if: steps.risk.outputs.tier == 'rust' || steps.risk.outputs.tier == 'full'
-        uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6.1.3
+  basic:
+    name: Basic gate (policy, lint, compile)
+    needs: plan
+    if: needs.plan.outputs.basic == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          primary-key: nix-devshell-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix') }}
-          restore-prefixes-first-match: nix-devshell-${{ runner.os }}-
-          gc-max-store-size-linux: 6G
-          purge: true
-          purge-prefixes: nix-devshell-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
+          persist-credentials: false
+      - name: Run policy and harness contracts
+        if: needs.plan.outputs.rust_changed != 'true'
+        run: ./run.sh repository --strict
+      - name: Install Nix for a Rust-affecting change
+        if: needs.plan.outputs.rust_changed == 'true'
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
       - name: Cache cargo registry
-        if: steps.risk.outputs.tier == 'rust' || steps.risk.outputs.tier == 'full'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        if: needs.plan.outputs.rust_changed == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
           key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Cache the bounded compiler outputs
+        if: needs.plan.outputs.rust_changed == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/oxid-sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+      - name: Run formatting, architecture, lint, and production compilation
+        if: needs.plan.outputs.rust_changed == 'true'
+        run: nix develop --command ./run.sh basic --strict
 
-      - name: Run documentation smoke gate
-        if: steps.risk.outputs.tier == 'docs'
-        run: node --test tests/repository/change-tier-contract.test.mjs
-
-      - name: Run hermetic repository harness gate
-        if: steps.risk.outputs.tier == 'harness'
-        run: ./run.sh repository --strict
-
-      - name: Run Rust gate
-        if: steps.risk.outputs.tier == 'rust'
-        run: nix develop --command ./run.sh core --strict
-
-      - name: Run full repository gate
-        if: steps.risk.outputs.tier == 'full'
-        run: nix develop --command ./run.sh --light --strict
-
-  nix-build:
-    name: Locked Nix package and Compact artifacts
+  unit_linux:
+    name: Unit tests (Linux host)
+    needs: plan
+    if: needs.plan.outputs.unit_linux == 'true'
     runs-on: ubuntu-24.04
-    # The per-push package build proves the locked package and Compact
-    # artifacts still build; its sandboxed test re-run (doCheck) moved to the
-    # checked variants exercised by the nightly `nix flake check` workflow,
-    # because the repository gate already executes every test on each push.
-    # This job runs in parallel with the gate, so the workflow's wall time is
-    # the slower of the two rather than their sum. Cold caches have reached
-    # ~40 minutes; keep bounded headroom for download throttling.
-    timeout-minutes: 60
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          fetch-depth: 0
           persist-credentials: false
-
-      - name: Classify changed paths
-        id: risk
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          tier="$(node scripts/ci/change-tier.mjs --base "$BASE_SHA" --head "$HEAD_SHA")"
-          printf 'tier=%s\n' "$tier" >> "$GITHUB_OUTPUT"
-          printf 'Selected CI tier: %s\n' "$tier"
-
       - name: Install Nix
-        if: steps.risk.outputs.tier == 'full'
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache the package-build Nix store
-        if: steps.risk.outputs.tier == 'full'
-        uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6.1.3
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          primary-key: nix-build-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix', 'Cargo.lock') }}
-          restore-prefixes-first-match: nix-build-${{ runner.os }}-
-          gc-max-store-size-linux: 6G
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Restore bounded compiler outputs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/oxid-sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+      - name: Compile and run workspace unit tests
+        run: nix develop --command ./run.sh unit --strict
+
+  headless_linux:
+    name: Headless integration tests (Linux host)
+    needs: plan
+    if: needs.plan.outputs.headless_linux == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Restore bounded compiler outputs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/oxid-sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+      - name: Run hermetic headless black-box tests
+        run: nix develop --command ./run.sh headless-integration --strict
+
+  ui_linux:
+    name: UI and application profiles (Linux host)
+    needs: plan
+    if: needs.plan.outputs.ui_linux == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Restore bounded compiler outputs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/oxid-sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+      - name: Compile and test UI/application feature profiles
+        run: nix develop --command ./run.sh ui --strict
+
+  coverage_linux:
+    name: Coverage (Linux host)
+    needs: plan
+    if: needs.plan.outputs.coverage_linux == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Restore bounded compiler outputs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/oxid-sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+      - name: Measure the non-UI workspace once
+        run: nix develop --command ./run.sh coverage --strict
+
+  repository_gate:
+    name: Repository gate (fmt, architecture, lint, tests, coverage)
+    if: always()
+    needs: [plan, basic, unit_linux, headless_linux, ui_linux, coverage_linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every selected repository lane
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          BASIC_SELECTED: ${{ needs.plan.outputs.basic }}
+          BASIC_RESULT: ${{ needs.basic.result }}
+          UNIT_SELECTED: ${{ needs.plan.outputs.unit_linux }}
+          UNIT_RESULT: ${{ needs.unit_linux.result }}
+          HEADLESS_SELECTED: ${{ needs.plan.outputs.headless_linux }}
+          HEADLESS_RESULT: ${{ needs.headless_linux.result }}
+          UI_SELECTED: ${{ needs.plan.outputs.ui_linux }}
+          UI_RESULT: ${{ needs.ui_linux.result }}
+          COVERAGE_SELECTED: ${{ needs.plan.outputs.coverage_linux }}
+          COVERAGE_RESULT: ${{ needs.coverage_linux.result }}
+        run: |
+          failed=0
+          if [[ "$PLAN_RESULT" != success ]]; then
+            printf 'Target planning did not succeed: %s\n' "$PLAN_RESULT"
+            failed=1
+          fi
+          check_lane() {
+            local name="$1" selected="$2" result="$3"
+            printf '%-20s selected=%-5s result=%s\n' "$name" "$selected" "$result"
+            if [[ "$selected" == true && "$result" != success ]]; then failed=1; fi
+          }
+          check_lane basic "$BASIC_SELECTED" "$BASIC_RESULT"
+          check_lane unit-linux "$UNIT_SELECTED" "$UNIT_RESULT"
+          check_lane headless-linux "$HEADLESS_SELECTED" "$HEADLESS_RESULT"
+          check_lane ui-linux "$UI_SELECTED" "$UI_RESULT"
+          check_lane coverage-linux "$COVERAGE_SELECTED" "$COVERAGE_RESULT"
+          exit "$failed"
+
+  nix_package:
+    name: Locked Nix application package
+    needs: plan
+    if: needs.plan.outputs.nix_package == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore and update the package-build Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix7-build-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix', 'Cargo.lock') }}
+          restore-prefixes-first-match: nix7-build-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
           purge: true
-          purge-prefixes: nix-build-${{ runner.os }}-
+          purge-prefixes: nix7-build-${{ runner.os }}-
           purge-created: 0
           purge-primary-key: never
-
       - name: Build the locked Nix package
-        if: steps.risk.outputs.tier == 'full'
         run: nix build --print-build-logs
 
-      - name: Build Digital Passport presentation artifacts
-        if: steps.risk.outputs.tier == 'full'
-        run: nix build .#presentation-compact-artifacts --print-build-logs
+  compact_artifacts:
+    name: Locked Compact artifacts
+    needs: plan
+    if: needs.plan.outputs.compact_artifacts == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore the package-build Nix store without another upload
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix7-build-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix', 'Cargo.lock') }}
+          restore-prefixes-first-match: nix7-build-${{ runner.os }}-
+          save: false
+      - name: Build all locked Compact deliverables
+        run: >-
+          nix build
+          .#presentation-compact-artifacts
+          .#passport-vault-compact-artifacts
+          .#passport-vault-call-composer
+          --print-build-logs
 
-      - name: Record skipped package build
-        if: steps.risk.outputs.tier != 'full'
-        run: printf 'Locked package build is not required for the %s tier.\n' '${{ steps.risk.outputs.tier }}'
+  locked_nix_gate:
+    name: Locked Nix package and Compact artifacts
+    if: always()
+    needs: [plan, nix_package, compact_artifacts]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every selected Nix lane
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          PACKAGE_SELECTED: ${{ needs.plan.outputs.nix_package }}
+          PACKAGE_RESULT: ${{ needs.nix_package.result }}
+          COMPACT_SELECTED: ${{ needs.plan.outputs.compact_artifacts }}
+          COMPACT_RESULT: ${{ needs.compact_artifacts.result }}
+        run: |
+          failed=0
+          if [[ "$PLAN_RESULT" != success ]]; then failed=1; fi
+          if [[ "$PACKAGE_SELECTED" == true && "$PACKAGE_RESULT" != success ]]; then failed=1; fi
+          if [[ "$COMPACT_SELECTED" == true && "$COMPACT_RESULT" != success ]]; then failed=1; fi
+          printf 'nix-package selected=%s result=%s\n' "$PACKAGE_SELECTED" "$PACKAGE_RESULT"
+          printf 'compact-artifacts selected=%s result=%s\n' "$COMPACT_SELECTED" "$COMPACT_RESULT"
+          exit "$failed"

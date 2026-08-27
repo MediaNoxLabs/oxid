@@ -121,26 +121,29 @@ custom deployment branch policy `58259903`, whose only allowed branch is
 Verify both owner controls after any settings change. Do not widen workflow
 permissions to make a check required.
 
-The two CI job names above are stable branch-protection contexts, not a promise
-that every diff runs the same command. `scripts/ci/change-tier.mjs` selects the
-cheapest conservative tier from the exact base-to-head path set:
+The two CI job names above are stable branch-protection aggregators, not a
+promise that every diff runs the same command. `scripts/ci/target-plan.mjs`
+maps the exact base-to-head paths to component lanes under one of three
+profiles:
 
-| Tier | Typical change | Required work |
+| Profile | Repository event | Required work |
 | --- | --- | --- |
-| `docs` | Markdown and documentation metadata only | classifier contract and the separate link check; the required secret/security scan remains independent |
-| `harness` | `.devloops`, Pi wrappers, loop tests, or factory guidance | hermetic repository contract tests; no Nix or Rust build; the required secret/security scan remains independent |
-| `rust` | ordinary non-sensitive source | repository contracts, architecture checks, workspace clippy/tests, and quality gate |
-| `full` | workflows, Nix/toolchain/lockfiles, Compact contracts, identity/protocol/wallet/custody surfaces | the complete strict gate, locked Nix builds, and quality |
+| `feature` | pull request | L0 basic plus the affected host, integration, quality, package, and artifact lanes |
+| `integration` | delivery push | every deterministic public hosted lane, in parallel |
+| `release` | explicit manual run | every deterministic public hosted lane; device/private release evidence remains explicit |
 
-Missing refs, an empty diff, or an unclassified invocation fail closed to
-`full`. The scheduled nightly still runs the complete hermetic flake check.
-Changing tier rules is itself a workflow-sensitive `full` change.
+Documentation, harness, and CI-only feature changes run the basic contracts
+without realizing the Rust/Nix graph. Shared core and unknown paths remain
+conservative. Missing refs or an empty diff fail closed to the complete public
+hosted set. The scheduled nightly still runs the complete hermetic flake check.
+The commands, budgets, dependencies, mobile/live gaps, and promotion criteria
+are versioned in [the CI target matrix](factory/ci-target-matrix.md).
 
 ## Independent current-head review
 
 Copilot review is unavailable and remains disabled with
 `refinement.maxCopilotRounds: 0`. A manually invoked fresh independent Claude
-CLI review is reserved for `full` high-risk changes, an explicit owner request,
+CLI review is reserved for release-profile/high-risk changes, an explicit owner request,
 or a disputed finding; it is not repeated at both ordinary gates. It records a
 local attestation, not a hosted GitHub status check or authenticated reviewer
 identity. The attestation is usable only when it records:
