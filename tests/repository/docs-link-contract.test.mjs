@@ -127,6 +127,8 @@ test("Lychee remaps only the same-repository integration prefix and still checks
   assert.equal(remap.test(INTEGRATION_BLOB_PREFIX), true);
   assert.equal(remap.test("https://githubXcom/MediaNoxLabs/oxid/blob/integration/docs/adr/0104.md"), false);
   assert.equal(args.at(-1), "./**/*.md");
+  assert.equal(args.includes("--include-fragments=none"), true);
+  assert.equal(args.includes("--include-verbatim=false"), true);
   assert.equal(args.includes("--offline"), false);
   assert.equal(args.includes("--exclude"), false);
 });

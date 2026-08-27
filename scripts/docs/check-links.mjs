@@ -53,6 +53,8 @@ export function buildLycheeArgs(repoRoot) {
     "--config", ".lychee.toml",
     "--no-progress",
     "--exclude-path", "LICENSE",
+    "--include-fragments=none",
+    "--include-verbatim=false",
     "--remap", `${INTEGRATION_BLOB_REMAP_PATTERN} ${pathToFileURL(`${repoRoot}${path.sep}`).href}`,
     "./**/*.md",
   ];
@@ -75,16 +77,20 @@ export async function validateCandidateLinks(repoRoot, markdownPaths = undefined
   for (const document of documents) {
     const markdown = await readFile(path.join(repoRoot, document), "utf8");
     for (const rawUrl of candidateIntegrationUrls(markdown)) {
-      const candidate = candidatePath(rawUrl);
-      if (!tracked.has(candidate)) throw new Error(`candidate integration link target is not tracked: ${candidate}`);
-      const target = path.resolve(repoRoot, candidate);
-      const relative = path.relative(repoRoot, target);
-      if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
-        throw new Error(`candidate integration link escapes the repository: ${candidate}`);
-      }
-      const metadata = await lstat(target);
-      if (!metadata.isFile() || metadata.isSymbolicLink()) {
-        throw new Error(`candidate integration link target is not a regular file: ${candidate}`);
+      try {
+        const candidate = candidatePath(rawUrl);
+        if (!tracked.has(candidate)) throw new Error(`candidate integration link target is not tracked: ${candidate}`);
+        const target = path.resolve(repoRoot, candidate);
+        const relative = path.relative(repoRoot, target);
+        if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+          throw new Error(`candidate integration link escapes the repository: ${candidate}`);
+        }
+        const metadata = await lstat(target);
+        if (!metadata.isFile() || metadata.isSymbolicLink()) {
+          throw new Error(`candidate integration link target is not a regular file: ${candidate}`);
+        }
+      } catch (error) {
+        throw new Error(`${document}: ${error.message}`, { cause: error });
       }
     }
   }
