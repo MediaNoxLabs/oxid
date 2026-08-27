@@ -23,6 +23,7 @@
           pkgs.lychee
           pkgs.mdbook
           pkgs.mdbook-mermaid
+          pkgs.nodejs_24
         ];
       };
 

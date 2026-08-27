@@ -93,6 +93,6 @@ jobs:
 
       - name: Check Markdown links
         if: steps.changes.outputs.docs_changed == 'true'
-        # The docs shell carries only lychee: link checking must never realize
-        # the default devshell's compiler and Compact/ZK artifact closure.
+        # The docs shell carries only Lychee and its bounded Node wrapper:
+        # link checking must never realize the compiler or Compact/ZK closure.
         run: nix develop .#docs --command node scripts/docs/check-links.mjs

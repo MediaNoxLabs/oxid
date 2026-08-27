@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   INTEGRATION_BLOB_PREFIX,
   buildLycheeArgs,
+  candidateIntegrationUrls,
   candidatePath,
   validateCandidateLinks,
 } from "../../scripts/docs/check-links.mjs";
@@ -24,7 +25,11 @@ function tempDir() {
 }
 
 function git(cwd, ...args) {
-  execFileSync("git", args, { cwd, stdio: "pipe" });
+  execFileSync("git", args, {
+    cwd,
+    stdio: "pipe",
+    env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+  });
 }
 
 test("ADR catalog generation is identical without remotes and across arbitrary refs", () => {
@@ -70,9 +75,16 @@ test("candidate integration blob validation fails for missing and ambiguous targ
     await assert.rejects(validateCandidateLinks(root), /not tracked/);
     assert.throws(() => candidatePath(`${INTEGRATION_BLOB_PREFIX}docs/%2e%2e/secret.md`), /ambiguous/);
     assert.throws(() => candidatePath(`${INTEGRATION_BLOB_PREFIX}docs/../secret.md`), /unsafe/);
+    assert.equal(candidatePath(`${INTEGRATION_BLOB_PREFIX}docs/adr/0104-example.md?plain=1#decision`), "docs/adr/0104-example.md");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("candidate scanning ignores code examples and trims prose punctuation", () => {
+  const live = `${INTEGRATION_BLOB_PREFIX}docs/adr/0104-example.md#decision`;
+  const markdown = `A live URL ${live}.\n\n\`inline ${INTEGRATION_BLOB_PREFIX}secret.md\`\n\n\`\`\`text\n${INTEGRATION_BLOB_PREFIX}fenced.md\n\`\`\``;
+  assert.deepEqual(candidateIntegrationUrls(markdown), [live]);
 });
 
 test("Lychee remaps only the same-repository integration prefix and still checks all Markdown", () => {
@@ -87,5 +99,11 @@ test("Lychee remaps only the same-repository integration prefix and still checks
 
 test("the renderer keeps durable integration URLs for candidate-only ADRs", () => {
   const rendered = renderAdrCatalog("# ADRs\n\n| [0104](0104-example.md) Example | Accepted |\n");
-  assert.match(rendered, new RegExp(`${INTEGRATION_BLOB_PREFIX.replaceAll("/", "\\/")}docs\\/adr\\/0104-example\\.md`));
+  assert.ok(rendered.includes(`${INTEGRATION_BLOB_PREFIX}docs/adr/0104-example.md`));
+});
+
+test("the committed ADR catalog is the exact hermetic renderer output", () => {
+  const index = readFileSync(path.join(repoRoot, "docs/adr/README.md"), "utf8");
+  const catalog = readFileSync(path.join(repoRoot, "docs/site/src/adr-catalog.md"), "utf8");
+  assert.equal(catalog, renderAdrCatalog(index));
 });

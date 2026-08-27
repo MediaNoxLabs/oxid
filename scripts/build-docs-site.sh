@@ -10,10 +10,12 @@
 
 set -euo pipefail
 
-if ! command -v mdbook >/dev/null 2>&1; then
-  echo "mdbook is required; run this target from 'nix develop .#docs' (or the default shell)." >&2
-  exit 1
-fi
+for command in mdbook node; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "$command is required; run this target from 'nix develop .#docs' (or the default shell)." >&2
+    exit 1
+  fi
+done
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 site_dir="$repo_root/docs/site"

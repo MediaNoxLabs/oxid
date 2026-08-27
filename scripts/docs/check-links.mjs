@@ -9,15 +9,33 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const INTEGRATION_BLOB_PREFIX = "https://github.com/MediaNoxLabs/oxid/blob/integration/";
 
+function markdownWithoutCode(markdown) {
+  let fence = null;
+  const lines = [];
+  for (const line of markdown.split("\n")) {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/u)?.[1];
+    if (marker && !fence) {
+      fence = marker;
+      lines.push("");
+    } else if (marker && fence && marker[0] === fence[0] && marker.length >= fence.length) {
+      fence = null;
+      lines.push("");
+    } else {
+      lines.push(fence ? "" : line.replace(/(`+)[^`\n]*\1/gu, ""));
+    }
+  }
+  return lines.join("\n");
+}
+
 export function candidateIntegrationUrls(markdown) {
   const pattern = /https:\/\/github\.com\/MediaNoxLabs\/oxid\/blob\/integration\/[^\s<>"'`)\]]+/g;
-  return markdown.match(pattern) ?? [];
+  return (markdownWithoutCode(markdown).match(pattern) ?? []).map((url) => url.replace(/[.,;:!]+$/u, ""));
 }
 
 export function candidatePath(rawUrl) {
   if (!rawUrl.startsWith(INTEGRATION_BLOB_PREFIX)) throw new Error(`not a candidate integration URL: ${rawUrl}`);
-  const suffix = rawUrl.slice(INTEGRATION_BLOB_PREFIX.length);
-  if (!suffix || suffix.includes("%") || suffix.includes("\\") || suffix.includes("?") || suffix.includes("#")) {
+  const suffix = rawUrl.slice(INTEGRATION_BLOB_PREFIX.length).split(/[?#]/u, 1)[0];
+  if (!suffix || suffix.includes("%") || suffix.includes("\\")) {
     throw new Error(`ambiguous candidate integration URL: ${rawUrl}`);
   }
   const segments = suffix.split("/");
@@ -43,7 +61,7 @@ async function trackedFiles(repoRoot) {
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
   });
-  if (result.status !== 0) throw new Error(`git ls-files failed: ${result.stderr.trim()}`);
+  if (result.status !== 0) throw new Error(`git ls-files failed: ${result.stderr?.trim() ?? "unknown error"}`);
   return result.stdout.split("\0").filter(Boolean);
 }
 
