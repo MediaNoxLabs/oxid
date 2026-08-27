@@ -22,8 +22,12 @@ source measures as follows:
 
 The crate totals include colocated tests and exclude generated artifacts and
 fixtures. Across the 45 workspace packages with Rust source, the same measure
-has a median of 978 lines. These measurements identify a source-cohesion
-problem; they do not show a missing domain boundary or justify four rewrites.
+has a median of 978 lines. The baseline is reproducible from
+`integration@21ec123ec9edbfbe71b8a04677aab2f43cf6d5f1` by enumerating committed
+`*.rs` paths with `git ls-files`, sorting under `LC_ALL=C`, and counting physical
+records with `awk 'END { print NR }'`. These measurements identify a
+source-cohesion problem; they do not show a missing domain boundary or justify
+four rewrites.
 
 The first delivery targets are the headless and Dioxus incoming adapters.
 Composition remains third and the Midnight adapter fourth because changing
@@ -60,21 +64,24 @@ their non-overlapping module path prefixes, exact exclusions classified as
 
 Measurement is deterministic: under `LC_ALL=C`, the checker enumerates
 committed `*.rs` paths below each recorded source root with `git ls-files`, sorts
-them by repository-relative path, and counts physical lines as newline bytes.
-Only exact paths recorded as generated sources or fixtures are excluded; an
-exclusion glob or an unclassified exclusion fails. Every other Rust source path
-must be either an exact façade file or fall under exactly one capability-owned
-module prefix. This makes an unowned sibling file, overlapping ownership, or a
-move out of the measured façade into an unclassified file a check failure.
+them by repository-relative path, and counts physical records with
+`awk 'END { print NR }'`, including a final line without a newline. Only exact
+paths recorded as generated sources or fixtures are excluded; an exclusion glob
+or an unclassified exclusion fails. Every other Rust source path must be either
+an exact façade file or fall under exactly one capability-owned module prefix.
+This makes an unowned sibling file, overlapping ownership, or a move out of the
+measured façade into an unclassified file a check failure.
 
 The façade total may not exceed its committed maximum. A lower post-slice total
 lowers the maximum. A temporary increase requires a narrow reviewed exception
 in the artifact naming exact paths, an extra-line ceiling, its issue and reason,
 and an ISO-8601 expiry date; the checker rejects an expired or over-limit
 exception. Permanent growth or a broader façade responsibility requires a later
-ADR rather than a baseline refresh. The artifact is a ratchet and ownership
-map, not evidence that a module is cohesive: review must still confirm that
-moved code, tests, and boundary mapping belong to the named capability.
+ADR rather than a baseline refresh. The artifact is a façade ratchet and
+ownership map, not evidence that a module is cohesive or that capability-module
+lines are acceptably focused: review must still reject dense-line or owned-file
+gaming and confirm that moved code, tests, and boundary mapping belong to the
+named capability.
 
 The stable public paths are unchanged:
 
@@ -158,10 +165,10 @@ slice, so any slice can be reverted without reverting another capability.
 
 Delivery order is:
 
-1. `apps/oxid-headless/src/lib.rs`;
-2. `crates/ui-dioxus/src/lib.rs`, with desktop-focused evidence;
-3. `crates/composition/src/lib.rs` in a later delivery;
-4. `crates/adapters/midnight/src/lib.rs` in a later delivery.
+1. `apps/oxid-headless/src/lib.rs` under issue #146;
+2. `crates/ui-dioxus/src/lib.rs` under issue #49, with desktop-focused evidence;
+3. `crates/composition/src/lib.rs` under issue #147 in a later delivery;
+4. `crates/adapters/midnight/src/lib.rs` under issue #148 in a later delivery.
 
 Android, iOS, simulator, emulator, physical-device, and private-credential work
 is explicitly deferred. Shared Dioxus `cfg` boundaries must remain intact, but

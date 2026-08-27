@@ -20,6 +20,7 @@ site_dir="$repo_root/docs/site"
 adr_index="$repo_root/docs/adr/README.md"
 catalog="$site_dir/src/adr-catalog.md"
 blob_base="https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr"
+# The link gate needs a public target before the accepted record reaches integration.
 adr_0104_permalink_base="https://github.com/MediaNoxLabs/oxid/blob/a90b0cb5264ae1160736c555c8e1446b5499e362/docs/adr"
 
 {
