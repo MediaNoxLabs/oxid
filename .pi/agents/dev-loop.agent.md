@@ -32,15 +32,16 @@ The envelope is the primary handoff artifact — it is derived from resolver out
 <!-- pi-only -->
 **Repository wrapper mandate:** resolve the checkout with `git rev-parse --show-toplevel`, then invoke dev-loops only through `node <git-root>/scripts/dev-loops.mjs <verb...>`. The wrapper validates the exact repository-local `dev-loops` pin from the Git root or its bounded common checkout, and it forces public PR creation to `integration`. Managed worktrees use `node <git-root>/scripts/loop/ensure-worktree.mjs ...`, which forces `origin/integration`.
 
-Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global npm, Node module-search, package-relative, arbitrary-ancestor, or filesystem-search fallbacks. If the tracked wrapper cannot resolve the exact project pin, stop at its diagnostic; interactive repair is allowed, but agent/provider execution remains blocked by preflight.
+Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global npm, Node module-search, package-relative, arbitrary-ancestor, or filesystem-search fallbacks. If the tracked wrapper cannot resolve the exact project pin, stop at its diagnostic. Pi 0.84 extension hooks are advisory and cannot cancel provider execution.
 <!-- /pi-only -->
 
-1. Run the deterministic startup resolver to produce the authoritative state bundle: `node <git-root>/scripts/dev-loops.mjs loop startup --issue <n>` for issues, or `node <git-root>/scripts/dev-loops.mjs loop startup --pr <n>` for PRs. When already inside the canonical linked worktree, reuse it; any ensure-worktree call must pass the main checkout as `--repo-root`, never the linked worktree itself.
-2. Pass the resolver output, resolved settings (merged from `.devloops` and `.pi/dev-loop/defaults.yaml`), and current gate state to `buildDevLoopHandoffEnvelope()`.
-3. **Validate the envelope** with `validateHandoffEnvelope()` before consuming any field. If validation returns `ok: false`, reject the handoff with the structured error — do not load requiredReads, do not execute nextAction, do not delegate.
-4. Read the envelope as the first artifact.
-5. Load every path listed in `requiredReads` (in order).
-6. Execute `nextAction` constrained by `stopRules` and `acceptance`.
+1. Before startup, routing, tools that act on routed state, or delegation, run `node <git-root>/scripts/loop/pre-flight-gate.mjs --check-subagents` from the canonical worktree. Stop on any nonzero result. Run it again immediately before each later delegation or routed action; `DEVLOOPS_PREFLIGHT_BYPASS` is forbidden.
+2. Run the deterministic startup resolver to produce the authoritative state bundle: `node <git-root>/scripts/dev-loops.mjs loop startup --issue <n>` for issues, or `node <git-root>/scripts/dev-loops.mjs loop startup --pr <n>` for PRs. When already inside the canonical linked worktree, reuse it; any ensure-worktree call must pass the main checkout as `--repo-root`, never the linked worktree itself.
+3. Pass the resolver output, resolved settings (merged from `.devloops` and `.pi/dev-loop/defaults.yaml`), and current gate state to `buildDevLoopHandoffEnvelope()`.
+4. **Validate the envelope** with `validateHandoffEnvelope()` before consuming any field. If validation returns `ok: false`, reject the handoff with the structured error — do not load requiredReads, do not execute nextAction, do not delegate.
+5. Read the envelope as the first artifact.
+6. Load every path listed in `requiredReads` (in order).
+7. Execute `nextAction` constrained by `stopRules` and `acceptance`.
 
 **The agent MUST NOT load skills, route packs, or delegate work before the envelope is built and read.** The derivation contract is Workflow Handoff Contract (pinned package path `.pi/npm/node_modules/dev-loops/skills/docs/workflow-handoff-contract.md`).
 
@@ -62,7 +63,7 @@ Respect repository contract routing posture:
 - prefer the GitHub-first routed path when work should move through GitHub branches, pull requests, CI, and review
 - route to the local implementation strategy only when the user explicitly requests a local phase-based path
 - keep any specialized Copilot behavior behind `dev-loop` as internal routed logic, helper modules, or non-user-facing implementation details
-- resolve review routing with `<git-root>/scripts/lib/review-routing.mjs`; this repository sets `maxCopilotRounds: 0`, so never request or await Copilot and route to the mandatory `external-review` current-head gate instead
+- honor `.devloops` `maxCopilotRounds: 0` and its mandatory `external-review` current-head gate; contradictory loop-info remains a pinned-runtime residual and requires stopping rather than local route shadowing
 
 If the current issue/PR/local state is materially unclear, contradictory, off-trail, or not cleanly covered by deterministic guidance, stop and ask for human direction rather than guessing.
 

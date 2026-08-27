@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
-import { enforceSingleBase } from "../lib/pinned-dev-loops-args.mjs";
+import { enforceSingleBase, readLongOptionValues } from "../lib/pinned-dev-loops-args.mjs";
 
 const INTEGRATION_BASE = "origin/integration";
 
@@ -20,10 +20,20 @@ export function normalizeWorktreeArgs(argv) {
 }
 
 function optionValue(args, name) {
-  const index = args.indexOf(name);
-  if (index >= 0) return args[index + 1];
-  const prefix = `${name}=`;
-  return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
+  const values = readLongOptionValues(args, name);
+  if (values.length > 1) throw new Error(`${name} accepts exactly one value`);
+  return values[0];
+}
+
+function selectorValue(args) {
+  const issue = optionValue(args, "--issue");
+  const pr = optionValue(args, "--pr");
+  if ((issue === undefined) === (pr === undefined)) {
+    throw new Error("worktree context requires exactly one --issue or --pr selector");
+  }
+  const value = issue ?? pr;
+  if (!/^[1-9]\d*$/.test(value)) throw new Error(`${issue === undefined ? "--pr" : "--issue"} must be a positive integer`);
+  return issue === undefined ? `pr-${value}` : `issue-${value}`;
 }
 
 function replaceOption(args, name, value) {
@@ -40,7 +50,8 @@ function replaceOption(args, name, value) {
 
 export function normalizeLinkedWorktreeContext(argv, { gitCommand = "git" } = {}) {
   const repoRootValue = optionValue(argv, "--repo-root");
-  if (!repoRootValue) return [...argv];
+  if (repoRootValue === undefined) return [...argv];
+  const selector = selectorValue(argv);
   const requestedRoot = realpathSync(path.resolve(repoRootValue));
   const topLevel = realpathSync(execFileSync(gitCommand, ["-C", requestedRoot, "rev-parse", "--show-toplevel"], {
     encoding: "utf8",
@@ -55,10 +66,6 @@ export function normalizeLinkedWorktreeContext(argv, { gitCommand = "git" } = {}
   const mainRoot = realpathSync(mainLine.slice("worktree ".length));
   if (topLevel === mainRoot) return replaceOption(argv, "--repo-root", mainRoot);
 
-  const issue = optionValue(argv, "--issue");
-  const pr = optionValue(argv, "--pr");
-  const selector = issue ? `issue-${issue}` : pr ? `pr-${pr}` : null;
-  if (!selector) throw new Error("linked-worktree reuse requires exactly one --issue or --pr selector");
   const canonicalTarget = path.join(mainRoot, "tmp", "worktrees", "dev-loops", selector);
   if (topLevel !== canonicalTarget) {
     throw new Error(

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -8,6 +9,18 @@ const PROJECT_AGENTS_PATH = path.join(".pi", "agents");
 
 export const PI_BUILTIN_CHILD_TOOLS = Object.freeze([
   "read", "grep", "find", "ls", "bash", "edit", "write",
+]);
+
+export const DEV_LOOP_SELECTED_TOOLS = Object.freeze([
+  "read", "grep", "find", "ls", "bash", "subagent",
+]);
+
+export const REPOSITORY_CONFIGURED_TOOLS = Object.freeze([
+  ...PI_BUILTIN_CHILD_TOOLS,
+  "subagent",
+  "labels_bootstrap", "pr_approve_dep_upgrade", "pr_expedite", "pr_request_review",
+  "pr_stabilize", "pr_watch", "review_claim", "review_complete", "review_create",
+  "review_enrich", "review_list",
 ]);
 
 async function exists(candidate) {
@@ -354,30 +367,30 @@ export async function checkAgentToolAllowlists({
   return { ok: agents.every(({ missingTools }) => missingTools.length === 0), agents };
 }
 
+async function contentFingerprint(file) {
+  const source = await readFile(file);
+  return `${file}:sha256:${createHash("sha256").update(source).digest("hex")}`;
+}
+
 async function manifestFingerprints(root) {
   if (!(await exists(root))) return [];
   const files = (await readdir(root)).filter((file) => file.endsWith(".agent.md")).sort();
-  return Promise.all(files.map(async (file) => {
-    const candidate = path.join(root, file);
-    const info = await stat(candidate);
-    return `${candidate}:${info.mtimeMs}:${info.size}`;
-  }));
+  return Promise.all(files.map((file) => contentFingerprint(path.join(root, file))));
 }
 
-/** Cheap cache key: cwd/settings/package/manifest identity plus Pi's tool scopes. */
+/** Content-bound session cache key for the checkout, pins, manifests, and Pi tool scopes. */
 export async function devLoopPreflightCacheKey({ resolved, availableTools, activeAgent, activeTools, futureTools }) {
-  const settingsInfo = await stat(resolved.settingsPath);
   const roots = resolved.packageRoots ?? [{ name: "dev-loops", packageRoot: resolved.packageRoot }];
   const fingerprints = [
     `cwd:${resolved.gitRoot}`,
-    `settings:${resolved.settingsPath}:${settingsInfo.mtimeMs}:${settingsInfo.size}`,
+    `settings:${await contentFingerprint(resolved.settingsPath)}`,
     `root-tools:${[...availableTools].sort().join(",")}`,
     `active-agent:${activeAgent ?? "root"}`,
     `active-tools:${[...(activeTools ?? availableTools)].sort().join(",")}`,
     `future-tools:${[...(futureTools ?? availableTools)].sort().join(",")}`,
   ];
   for (const { name, version = "", packageRoot: root } of roots) {
-    fingerprints.push(`package:${name}@${version}:${root}`);
+    fingerprints.push(`package:${name}@${version}:${root}:${await contentFingerprint(path.join(root, "package.json"))}`);
     fingerprints.push(...await manifestFingerprints(path.join(root, "agents")));
   }
   fingerprints.push(...await manifestFingerprints(path.join(resolved.gitRoot, PROJECT_AGENTS_PATH)));

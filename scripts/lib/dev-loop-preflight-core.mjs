@@ -58,8 +58,6 @@ export async function runDevLoopPreflight(pi, cwd, runtime = {}) {
     return checked;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    // Any environment/manifest failure leaves input interactive for diagnosis;
-    // agent and provider launch still fail closed below.
     return {
       ok: false,
       message: `Pi dev-loop preflight environment is not ready: ${detail}`,
@@ -73,28 +71,22 @@ export default function devLoopPreflight(pi, runtime = {}) {
   if (registeredApis.has(pi)) return;
   registeredApis.add(pi);
   const cache = runtime.cache ?? new Map();
-  let providerScopes;
   const check = (cwd, scopes = {}) => runDevLoopPreflight(pi, cwd, { ...runtime, ...scopes, cache });
 
   pi.on("input", async (_event, ctx) => {
     const result = await check(ctx.cwd);
     if (result.ok) return { action: "continue" };
-    ctx.ui.notify(`${result.message}. This interactive input is allowed so you can diagnose or repair the repository; agent/provider launch remains blocked until preflight succeeds.`, "warning");
+    ctx.ui.notify(`${result.message}. Pi 0.84 hooks cannot cancel agent or provider execution; diagnose here, then run the tracked pre-flight wrapper before any routed action or delegation.`, "warning");
     return { action: "continue" };
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
-    providerScopes = { activeTools: event?.systemPromptOptions?.selectedTools };
-    const result = await check(ctx.cwd, providerScopes);
-    if (result.ok) return;
-    ctx.ui.notify(result.message, "error");
-    ctx.abort();
+    const result = await check(ctx.cwd, { activeTools: event?.systemPromptOptions?.selectedTools });
+    if (!result.ok) ctx.ui.notify(`${result.message}. Advisory only: Pi 0.84 before_agent_start has no cancellation result.`, "error");
   });
 
   pi.on("before_provider_request", async (_event, ctx) => {
-    const result = await check(ctx.cwd, providerScopes);
-    if (result.ok) return;
-    ctx.abort();
-    throw new Error(result.message);
+    const result = await check(ctx.cwd, { activeTools: toolNames(pi.getActiveTools?.() ?? []) });
+    if (!result.ok) ctx.ui.notify(`${result.message}. Advisory only: Pi 0.84 before_provider_request errors are swallowed by the runner.`, "error");
   });
 }
