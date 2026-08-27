@@ -107,8 +107,17 @@ Explicit `0|1` remains bounded to non-Pi callers. Do not invoke a missing
 repository-relative package path or search for a global copy.
 
 `node scripts/dev-loops.mjs --help` and `-h` are exact aliases for `help`.
-Other unknown leading options remain rejected. `loop watch-ci` is delegated
-unchanged to `dev-loops@0.9.0`; this repository does not intercept CI selection.
+Other unknown leading options remain rejected. The tracked `loop build-envelope`
+route is authoritative for handoff construction: it uses the exact pinned parser,
+builder, jq emitter, and validator, loads `.devloops` from the invoking candidate
+checkout, and normalizes only the cwd boundary against Git's common-checkout
+worktree topology. An identity-matching canonical issue, PR, or phase checkout is
+reused; foreign, symlinked, missing invocation, mismatched, ambiguous, or
+nested-namespace checkout topology fails before an envelope is emitted. A
+canonical absent target derived from the main checkout remains a prospective
+path under the common root. `loop watch-ci` is
+delegated unchanged to `dev-loops@0.9.0`; this repository does not intercept CI
+selection.
 Obsolete-attempt selection is an upstream/pin residual because a local watcher
 cannot safely duplicate expected-check rollup, pagination, suite/attempt
 identity, no-check handling, head bracketing, heartbeat/ownership, and global

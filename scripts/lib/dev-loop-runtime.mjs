@@ -210,7 +210,8 @@ function unquoteFrontmatterScalar(value, file) {
 /**
  * Parse only root-level name/tools fields. Other valid YAML fields, including
  * nested lists and folded content, are deliberately ignored. An unmodelled
- * tools shape throws so input can warn while agent/provider launch fails closed.
+ * tools shape throws; Pi hooks report it advisory, while the mandatory tracked
+ * pre-flight wrapper rejects it before routed actions or delegation.
  */
 export function parseAgentFrontmatter(source, file) {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);

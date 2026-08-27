@@ -19,7 +19,7 @@ Your job is to provide the callable `dev-loop` public façade and route to the c
 
 ## Handoff envelope mandate (first action)
 
-The agent's first action after resolving authoritative state MUST be to build the handoff envelope via `buildDevLoopHandoffEnvelope()` from `@dev-loops/core`.
+The agent's first action after resolving authoritative state MUST be to build the handoff envelope via the tracked `node <git-root>/scripts/dev-loops.mjs loop build-envelope` route. That route calls the exact pinned `buildDevLoopHandoffEnvelope()` CLI and owns the fail-closed checkout-boundary normalization.
 
 The envelope is the primary handoff artifact — it is derived from resolver output, settings, and gate state, and it determines:
 - `requiredReads` — the canonical ordered list of files to load
@@ -37,8 +37,8 @@ Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global n
 
 1. Before startup, routing, tools that act on routed state, or delegation, run `node <git-root>/scripts/loop/pre-flight-gate.mjs --check-subagents` from the canonical worktree. Stop on any nonzero result. Run it again immediately before each later delegation or routed action; `DEVLOOPS_PREFLIGHT_BYPASS` is forbidden.
 2. Run the deterministic startup resolver to produce the authoritative state bundle: `node <git-root>/scripts/dev-loops.mjs loop startup --issue <n>` for issues, or `node <git-root>/scripts/dev-loops.mjs loop startup --pr <n>` for PRs. When already inside the canonical linked worktree, reuse it; any ensure-worktree call must pass the main checkout as `--repo-root`, never the linked worktree itself.
-3. Pass the resolver output, resolved settings (merged from `.devloops` and `.pi/dev-loop/defaults.yaml`), and current gate state to `buildDevLoopHandoffEnvelope()`.
-4. **Validate the envelope** with `validateHandoffEnvelope()` before consuming any field. If validation returns `ok: false`, reject the handoff with the structured error — do not load requiredReads, do not execute nextAction, do not delegate.
+3. Pass the resolver output file and current gate state to `node <git-root>/scripts/dev-loops.mjs loop build-envelope --input <resolver-output> --gate-state <json>`. Do not call the package builder directly. The tracked route loads the candidate checkout's `.devloops`, preserves pinned derivation, reuses an identity-matching existing canonical managed worktree, rejects ambiguous/foreign/nested topology, and validates the normalized envelope with the exact pinned core validator before emission.
+4. **Validate the emitted envelope** with `validateHandoffEnvelope()` before consuming any field. If validation returns `ok: false`, reject the handoff with the structured error — do not load requiredReads, do not execute nextAction, do not delegate.
 5. Read the envelope as the first artifact.
 6. Load every path listed in `requiredReads` (in order).
 7. Execute `nextAction` constrained by `stopRules` and `acceptance`.

@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
+import { normalizeHandoffEnvelopeCwd } from "./lib/handoff-envelope-cwd.mjs";
 import { resolveDevLoopsPackageRoot } from "./lib/dev-loop-runtime.mjs";
 import { enforceSingleBase, pinnedPublicRoute } from "./lib/pinned-dev-loops-args.mjs";
 
@@ -22,6 +23,71 @@ export function normalizeDevLoopsArgs(argv) {
   });
 }
 
+function buildEnvelopeArgs(args) {
+  const route = pinnedPublicRoute(args);
+  if (route.category !== "loop" || route.command !== "build-envelope") return null;
+  let categoryIndex = 0;
+  while (categoryIndex < args.length) {
+    const argument = args[categoryIndex];
+    if (["--silent", "-s", "--json"].includes(argument)) {
+      categoryIndex += 1;
+    } else if (["--jq", "--repo", "--cwd", "--config"].includes(argument)) {
+      categoryIndex += 2;
+    } else if (["--jq", "--repo", "--cwd", "--config"].some((option) => argument.startsWith(`${option}=`))) {
+      categoryIndex += 1;
+    } else {
+      break;
+    }
+  }
+  const leading = args.slice(0, categoryIndex).filter((argument) => argument !== "--json");
+  return [...leading, ...args.slice(categoryIndex + 2)];
+}
+
+async function loadPinnedEnvelopeModules(packageRoot) {
+  const fromPackage = (relativePath) => import(pathToFileURL(path.join(packageRoot, relativePath)).href);
+  const corePath = path.join(packageRoot, "..", "@dev-loops", "core", "src", "loop", "handoff-envelope.mjs");
+  const [cli, output, helpers, core] = await Promise.all([
+    fromPackage(path.join("scripts", "loop", "build-handoff-envelope.mjs")),
+    fromPackage(path.join("scripts", "lib", "jq-output.mjs")),
+    fromPackage(path.join("scripts", "_core-helpers.mjs")),
+    import(pathToFileURL(corePath).href),
+  ]);
+  return { cli, output, helpers, core };
+}
+
+async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
+  const { cli, output, helpers, core } = await loadPinnedEnvelopeModules(resolved.packageRoot);
+  let options;
+  try {
+    options = cli.parseBuildHandoffEnvelopeCliArgs(args);
+  } catch (error) {
+    stderr.write(`${helpers.formatCliError(error)}\n`);
+    return 1;
+  }
+  if (options.help) {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    await cli.runCli(args, {
+      stdout,
+      stderr,
+      adapter: { getCwd: () => cwd, getRepoRoot: () => resolved.gitRoot },
+    });
+    const code = process.exitCode ?? 0;
+    process.exitCode = previousExitCode;
+    return code;
+  }
+  try {
+    const candidate = await cli.buildHandoffEnvelopeCli(options, {
+      adapter: { getCwd: () => cwd, getRepoRoot: () => resolved.gitRoot },
+    });
+    const envelope = await normalizeHandoffEnvelopeCwd(candidate, resolved, core);
+    return output.emitResult(envelope, { jq: options.jq, silent: options.silent, stdout, stderr });
+  } catch (error) {
+    stderr.write(`${helpers.formatCliError(error)}\n`);
+    return 1;
+  }
+}
+
 export async function runDevLoops(argv = process.argv.slice(2), {
   cwd = process.cwd(),
   stdout = process.stdout,
@@ -29,6 +95,9 @@ export async function runDevLoops(argv = process.argv.slice(2), {
 } = {}) {
   const args = normalizeDevLoopsArgs(argv);
   const resolved = await resolveDevLoopsPackageRoot({ cwd });
+  const envelopeArgs = buildEnvelopeArgs(args);
+  if (envelopeArgs) return runBuildEnvelope(envelopeArgs, { cwd, stdout, stderr, resolved });
+
   const cli = path.join(resolved.packageRoot, "cli", "index.mjs");
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cli, ...args], { cwd, stdio: ["inherit", "pipe", "pipe"] });

@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   checkAgentToolAllowlists,
@@ -15,7 +15,9 @@ import {
   parseAgentFrontmatter,
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
+import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
 import { normalizeDevLoopsArgs, runDevLoops } from "../../scripts/dev-loops.mjs";
+import * as handoffCore from "../../.pi/npm/node_modules/@dev-loops/core/src/loop/handoff-envelope.mjs";
 import { inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
 import { normalizeLinkedWorktreeContext, normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import {
@@ -564,6 +566,216 @@ function optionAfter(args, option) {
   const index = args.indexOf(option);
   return index >= 0 ? args[index + 1] : args.find((arg) => arg.startsWith(`${option}=`))?.slice(option.length + 1);
 }
+
+function validEnvelope(target, cwd) {
+  return {
+    handoffVersion: 1,
+    target,
+    nextAction: "fixture action",
+    requiredReads: ["fixture.md"],
+    acceptance: { criteria: [{ id: "fixture", must: "pass", severity: "required" }] },
+    stopRules: [],
+    executionMode: "bounded_handoff",
+    asyncStartMode: "required",
+    asyncStartEffective: "required",
+    cwd,
+  };
+}
+
+async function makeEnvelopeGitFixture(t) {
+  const parent = await realMkdtemp("oxid-envelope-topology-");
+  const root = path.join(parent, "checkout with spaces");
+  const namespace = path.join(root, "tmp", "worktrees", "dev-loops");
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  await mkdir(root, { recursive: true });
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Fixture"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: root });
+  await writeFile(path.join(root, "tracked"), "base\n");
+  execFileSync("git", ["add", "tracked"], { cwd: root });
+  execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: root });
+  const worktrees = {
+    issue150: path.join(namespace, "issue-150"),
+    issue151: path.join(namespace, "issue-151"),
+    pr153: path.join(namespace, "pr-153"),
+    phase150: path.join(namespace, "phase-150-issue-150"),
+    phase151: path.join(namespace, "phase-151-other"),
+  };
+  for (const [branch, target] of Object.entries(worktrees)) {
+    execFileSync("git", ["worktree", "add", "--quiet", "-b", `fixture-${branch}`, target], { cwd: root });
+  }
+  return { parent, root: await realpath(root), namespace, worktrees };
+}
+
+test("handoff envelope cwd normalization uses owned canonical Git topology", async (t) => {
+  const fixture = await makeEnvelopeGitFixture(t);
+  const resolve = (gitRoot) => ({ gitRoot, commonRoot: fixture.root });
+  const issue = { kind: "issue", repo: "owner/repo", issue: 150 };
+  const pr = { kind: "pr", repo: "owner/repo", pr: 153 };
+  const phase = { kind: "local_phase", repo: "owner/repo", issue: 150, phase: "issue-150" };
+
+  const mainCwd = handoffCore.resolveWorktreePath({ repoRoot: fixture.root, kind: "issue", number: 999 });
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope({ ...issue, issue: 999 }, mainCwd), resolve(fixture.root), handoffCore,
+  )).cwd, mainCwd);
+  const localBranchCwd = path.join(fixture.namespace, "fixture-topic");
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope({ kind: "local_branch", repo: "owner/repo", branch: "fixture/topic" }, localBranchCwd),
+    resolve(fixture.root), handoffCore,
+  )).cwd, localBranchCwd);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(issue, `${fixture.worktrees.issue150}/tmp/worktrees/dev-loops/issue-150`),
+    resolve(fixture.worktrees.issue150), handoffCore,
+  )).cwd, fixture.worktrees.issue150);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(pr, "ignored"), resolve(fixture.worktrees.pr153), handoffCore,
+  )).cwd, fixture.worktrees.pr153);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(phase, "ignored"), resolve(fixture.worktrees.issue150), handoffCore,
+  )).cwd, fixture.worktrees.issue150);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(phase, "ignored"), resolve(fixture.worktrees.phase150), handoffCore,
+  )).cwd, fixture.worktrees.phase150);
+
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope({ ...issue, issue: 151 }, "ignored"), resolve(fixture.worktrees.issue150), handoffCore),
+    /disagrees with resolver target/,
+  );
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope(pr, "ignored"), resolve(fixture.worktrees.issue150), handoffCore),
+    /disagrees with resolver target/,
+  );
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope({ ...phase, issue: 151, phase: "other" }, "ignored"), resolve(fixture.worktrees.phase150), handoffCore),
+    /disagrees with resolver target/,
+  );
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope(issue, "ignored"), resolve(path.join(fixture.namespace, "issue-999")), handoffCore),
+    /topology is absent/,
+  );
+
+  const alias = path.join(fixture.parent, "issue-150-alias");
+  await symlink(fixture.worktrees.issue150, alias, "dir");
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope(issue, "ignored"), resolve(alias), handoffCore),
+    /symlinked|realpath/,
+  );
+  const symlinkedTarget = path.join(fixture.namespace, "issue-997");
+  await symlink(fixture.worktrees.issue150, symlinkedTarget, "dir");
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope({ ...issue, issue: 997 }, symlinkedTarget), resolve(fixture.root), handoffCore),
+    /symlinked or realpath-mismatched/,
+  );
+  const foreign = path.join(fixture.namespace, "issue-998");
+  await mkdir(foreign, { recursive: true });
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(validEnvelope({ ...issue, issue: 998 }, foreign), resolve(fixture.root), handoffCore),
+    /foreign existing/,
+  );
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(
+      validEnvelope(issue, path.join(fixture.worktrees.issue150, "tmp", "worktrees", "dev-loops", "issue-150")),
+      resolve(fixture.root), handoffCore,
+    ),
+    /non-canonical handoff envelope cwd/,
+  );
+});
+
+async function installPinnedEnvelopeProxy(root) {
+  const packageRoot = path.join(root, ".pi", "npm", "node_modules", "dev-loops");
+  const coreRoot = path.join(root, ".pi", "npm", "node_modules", "@dev-loops", "core", "src", "loop");
+  const actualPackage = path.join(repoRoot, ".pi", "npm", "node_modules", "dev-loops");
+  const actualCore = path.join(repoRoot, ".pi", "npm", "node_modules", "@dev-loops", "core", "src", "loop", "handoff-envelope.mjs");
+  await mkdir(path.join(packageRoot, "cli"), { recursive: true });
+  await mkdir(path.join(packageRoot, "scripts", "loop"), { recursive: true });
+  await mkdir(path.join(packageRoot, "scripts", "lib"), { recursive: true });
+  await mkdir(coreRoot, { recursive: true });
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
+  await writeFile(path.join(packageRoot, "cli", "index.mjs"), "");
+  for (const relative of [
+    ["scripts/loop/build-handoff-envelope.mjs", "scripts/loop/build-handoff-envelope.mjs"],
+    ["scripts/lib/jq-output.mjs", "scripts/lib/jq-output.mjs"],
+    ["scripts/_core-helpers.mjs", "scripts/_core-helpers.mjs"],
+  ]) {
+    await writeFile(path.join(packageRoot, relative[0]), `export * from ${JSON.stringify(pathToFileURL(path.join(actualPackage, relative[1])).href)};\n`);
+  }
+  await writeFile(path.join(coreRoot, "handoff-envelope.mjs"), `export * from ${JSON.stringify(pathToFileURL(actualCore).href)};\n`);
+}
+
+function captureSink(chunks) {
+  return new Writable({ write(chunk, _encoding, callback) { chunks.push(chunk.toString()); callback(); } });
+}
+
+test("tracked build-envelope route preserves pinned parser, config, and output contracts", async (t) => {
+  const parent = await realMkdtemp("oxid-envelope-cli-");
+  const root = path.join(parent, "candidate checkout with spaces");
+  const issueTarget = path.join(root, "tmp", "worktrees", "dev-loops", "issue-150");
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".pi"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@0.9.0"] }));
+  await writeFile(path.join(root, ".devloops"), "version: 1\nrefinement:\n  maxCopilotRounds: 9\n");
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Fixture"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: root });
+  execFileSync("git", ["add", ".pi/settings.json", ".devloops"], { cwd: root });
+  execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: root });
+  execFileSync("git", ["worktree", "add", "--quiet", "-b", "fixture-issue-150", issueTarget], { cwd: root });
+  await writeFile(path.join(issueTarget, ".devloops"), "version: 1\nrefinement:\n  maxCopilotRounds: 2\n");
+  await installPinnedEnvelopeProxy(root);
+  const resolver = {
+    bundle: {
+      repoSlug: "owner/repo",
+      selectedStrategy: "local_implementation",
+      executionMode: "bounded_handoff",
+      nextAction: "fixture action",
+      activeArtifact: { kind: "local_phase", issue: 150, phase: "issue-150" },
+    },
+  };
+  const input = "resolver output with spaces.json";
+  await writeFile(path.join(issueTarget, input), JSON.stringify(resolver));
+
+  async function run(args) {
+    const out = [];
+    const err = [];
+    const code = await runDevLoops(args, { cwd: issueTarget, stdout: captureSink(out), stderr: captureSink(err) });
+    return { code, out: out.join(""), err: err.join("") };
+  }
+
+  const split = await run([
+    "--json", "loop", "build-envelope", "--input", input,
+    "--gate-state", '{"currentHeadSha":"fixture-head","ciStatus":"success","unresolvedThreadCount":3}',
+    "--overrides", '{"preferLocal":true}',
+  ]);
+  assert.equal(split.code, 0, split.err);
+  const envelope = JSON.parse(split.out);
+  assert.equal(envelope.cwd, issueTarget);
+  assert.equal(envelope.currentHeadSha, "fixture-head");
+  assert.equal(envelope.ciStatus, "success");
+  assert.equal(envelope.unresolvedThreadCount, 3);
+  assert.equal(envelope.target.repo, "owner/repo");
+  assert.deepEqual(envelope.overrides, { preferLocal: true });
+  assert.equal(envelope.maxCopilotRounds, 2);
+  assert.ok(envelope.sanctionedCommands);
+
+  const equals = await run(["--jq=.cwd", "loop", "build-envelope", `--input=${input}`, "--repo=owner/repo"]);
+  assert.deepEqual(equals, { code: 0, out: `${issueTarget}\n`, err: "" });
+  const silent = await run(["-s", "loop", "build-envelope", `--input=${input}`]);
+  assert.deepEqual(silent, { code: 0, out: "", err: "" });
+  assert.deepEqual(
+    await run(["--silent", "loop", "build-envelope", `--input=${input}`]),
+    { code: 0, out: "", err: "" },
+  );
+  const help = await run(["loop", "build-envelope", "--help"]);
+  assert.equal(help.code, 0);
+  assert.match(help.out, /Usage: build-handoff-envelope/);
+  const badJq = await run(["loop", "build-envelope", `--input=${input}`, "--jq", "unsupported"]);
+  assert.equal(badJq.code, 2);
+  assert.match(badJq.err, /--jq/);
+  await writeFile(path.join(issueTarget, "malformed.json"), "{");
+  const malformed = await run(["loop", "build-envelope", "--input", "malformed.json"]);
+  assert.equal(malformed.code, 1);
+  assert.match(malformed.err, /Invalid JSON/);
+});
 
 test("tracked pre-flight wrapper reports Pi child dispatch availability deterministically", async (t) => {
   assert.equal(inferSubagentAvailability({ PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "1", PI_SUBAGENT_MAX_DEPTH: "2" }), "1");
