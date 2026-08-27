@@ -25,9 +25,6 @@ concurrency:
   group: oxid-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  SCCACHE_CACHE_SIZE: 2G
-
 jobs:
   plan:
     name: Plan change-relevant CI targets
@@ -42,6 +39,7 @@ jobs:
       unit_linux: ${{ steps.plan.outputs.unit_linux }}
       headless_linux: ${{ steps.plan.outputs.headless_linux }}
       ui_linux: ${{ steps.plan.outputs.ui_linux }}
+      ui_release_linux: ${{ steps.plan.outputs.ui_release_linux }}
       coverage_linux: ${{ steps.plan.outputs.coverage_linux }}
       nix_package: ${{ steps.plan.outputs.nix_package }}
       compact_artifacts: ${{ steps.plan.outputs.compact_artifacts }}
@@ -101,16 +99,18 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
           key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-      - name: Cache the bounded compiler outputs
+      - name: Configure object-level compiler cache
         if: needs.plan.outputs.rust_changed == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          path: ~/.cache/oxid-sccache
-          key: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
-          restore-keys: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
+            core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
       - name: Run formatting, architecture, lint, and production compilation
         if: needs.plan.outputs.rust_changed == 'true'
-        run: nix develop --command ./run.sh basic --strict
+        run: nix develop .#ci-rust --command ./run.sh basic --strict
 
   unit_linux:
     name: Unit tests (Linux host)
@@ -133,14 +133,16 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
           key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-      - name: Restore bounded compiler outputs
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Configure object-level compiler cache
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          path: ~/.cache/oxid-sccache
-          key: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
-          restore-keys: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
+            core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
       - name: Compile and run workspace unit tests
-        run: nix develop --command ./run.sh unit --strict
+        run: nix develop .#ci-rust --command ./run.sh unit --strict
 
   headless_linux:
     name: Headless integration tests (Linux host)
@@ -163,14 +165,16 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
           key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-      - name: Restore bounded compiler outputs
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Configure object-level compiler cache
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          path: ~/.cache/oxid-sccache
-          key: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
-          restore-keys: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
+            core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
       - name: Run hermetic headless black-box tests
-        run: nix develop --command ./run.sh headless-integration --strict
+        run: nix develop .#ci-rust --command ./run.sh headless-integration --strict
 
   ui_linux:
     name: UI and application profiles (Linux host)
@@ -193,14 +197,48 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
           key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-      - name: Restore bounded compiler outputs
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Configure object-level compiler cache
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          path: ~/.cache/oxid-sccache
-          key: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
-          restore-keys: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
+            core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
       - name: Compile and test UI/application feature profiles
-        run: nix develop --command ./run.sh ui --strict
+        run: nix develop .#ci-ui --command ./run.sh ui --strict
+
+  ui_release_linux:
+    name: Optimized UI release artifact (Linux host)
+    needs: plan
+    if: needs.plan.outputs.ui_release_linux == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Configure object-level compiler cache
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
+            core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
+      - name: Build and inspect the production UI artifact
+        run: nix develop .#ci-ui --command ./run.sh ui-release --strict
 
   coverage_linux:
     name: Coverage (Linux host)
@@ -223,19 +261,21 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
           key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-      - name: Restore bounded compiler outputs
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Configure object-level compiler cache
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          path: ~/.cache/oxid-sccache
-          key: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
-          restore-keys: sccache-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
+            core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
       - name: Measure the non-UI workspace once
-        run: nix develop --command ./run.sh coverage --strict
+        run: nix develop .#ci-coverage --command ./run.sh coverage --strict
 
   repository_gate:
     name: Repository gate (fmt, architecture, lint, tests, coverage)
     if: always()
-    needs: [plan, basic, unit_linux, headless_linux, ui_linux, coverage_linux]
+    needs: [plan, basic, unit_linux, headless_linux, ui_linux, ui_release_linux, coverage_linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -250,6 +290,8 @@ jobs:
           HEADLESS_RESULT: ${{ needs.headless_linux.result }}
           UI_SELECTED: ${{ needs.plan.outputs.ui_linux }}
           UI_RESULT: ${{ needs.ui_linux.result }}
+          UI_RELEASE_SELECTED: ${{ needs.plan.outputs.ui_release_linux }}
+          UI_RELEASE_RESULT: ${{ needs.ui_release_linux.result }}
           COVERAGE_SELECTED: ${{ needs.plan.outputs.coverage_linux }}
           COVERAGE_RESULT: ${{ needs.coverage_linux.result }}
         run: |
@@ -267,6 +309,7 @@ jobs:
           check_lane unit-linux "$UNIT_SELECTED" "$UNIT_RESULT"
           check_lane headless-linux "$HEADLESS_SELECTED" "$HEADLESS_RESULT"
           check_lane ui-linux "$UI_SELECTED" "$UI_RESULT"
+          check_lane ui-release-linux "$UI_RELEASE_SELECTED" "$UI_RELEASE_RESULT"
           check_lane coverage-linux "$COVERAGE_SELECTED" "$COVERAGE_RESULT"
           exit "$failed"
 

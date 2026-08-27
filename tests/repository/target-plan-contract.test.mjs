@@ -39,6 +39,7 @@ test("focused application changes select their component lanes", () => {
       HostedTarget.BASIC,
       HostedTarget.UNIT_LINUX,
       HostedTarget.UI_LINUX,
+      HostedTarget.UI_RELEASE_LINUX,
       HostedTarget.COVERAGE_LINUX,
       HostedTarget.QUALITY,
     ],
@@ -53,6 +54,7 @@ test("shared core fans out to both public host consumers", () => {
     HostedTarget.UNIT_LINUX,
     HostedTarget.HEADLESS_LINUX,
     HostedTarget.UI_LINUX,
+    HostedTarget.UI_RELEASE_LINUX,
     HostedTarget.COVERAGE_LINUX,
     HostedTarget.QUALITY,
   ]);
@@ -72,6 +74,7 @@ test("Compact changes include artifacts and their host consumers", () => {
   assert.equal(plan.targets.includes(HostedTarget.COMPACT_ARTIFACTS), true);
   assert.equal(plan.targets.includes(HostedTarget.HEADLESS_LINUX), true);
   assert.equal(plan.targets.includes(HostedTarget.UI_LINUX), true);
+  assert.equal(plan.targets.includes(HostedTarget.UI_RELEASE_LINUX), true);
 });
 
 test("integration and release profiles are complete backstops", () => {
@@ -99,4 +102,26 @@ test("the headless lane owns every integration target without repeating unit tes
   for (const entry of entries.filter((candidate) => candidate.endsWith(".rs"))) {
     assert.match(runScript, new RegExp(`--test ${entry.replace(/\.rs$/, "")}`), entry);
   }
+});
+
+test("unit and UI commands have non-overlapping native test ownership", async () => {
+  const runScript = await readFile(new URL("../../run.sh", import.meta.url), "utf8");
+  const unitBlock = runScript.slice(runScript.indexOf("run_unit()"), runScript.indexOf("run_core()"));
+  const uiBlock = runScript.slice(runScript.indexOf("run_ui()"), runScript.indexOf("run_headless()"));
+  assert.match(unitBlock, /cargo test --workspace/);
+  assert.match(unitBlock, /--exclude oxid-ui-dioxus/);
+  assert.match(unitBlock, /--exclude oxid-app/);
+  assert.doesNotMatch(unitBlock, /cargo test -p oxid-(?:ui-dioxus|app)/);
+  assert.match(uiBlock, /cargo test -p oxid-ui-dioxus --features ui-profile-demo,app-profile-authority/);
+  assert.match(uiBlock, /cargo test -p oxid-app/);
+});
+
+test("UI profile guards and optimized release evidence are independently runnable", async () => {
+  const [runScript, releaseScript] = await Promise.all([
+    readFile(new URL("../../run.sh", import.meta.url), "utf8"),
+    readFile(new URL("../../scripts/check-ui-profile-release.sh", import.meta.url), "utf8"),
+  ]);
+  assert.match(runScript, /check-ui-profile-release\.sh --guards/);
+  assert.match(runScript, /run_ui_release\(\)[\s\S]*check-ui-profile-release\.sh --artifact/);
+  assert.match(releaseScript, /all\|--guards\|--artifact/);
 });

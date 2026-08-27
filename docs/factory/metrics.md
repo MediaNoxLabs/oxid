@@ -105,12 +105,25 @@ package/Compact job completed in 21m30. The repository log also emitted about
 
 The staged workflow removes whole-store restoration from Rust feedback lanes,
 upgrades `actions/cache` to v6.1 and `cache-nix-action` to v7, and starts the v7
-Nix cache in a fresh namespace. This is the baseline for the new per-lane
-timers; do not raise the old monolith's timeout as a substitute for isolating
-its phases.
+Nix cache in a fresh namespace. The first staged run then proved that the full
+developer shell plus workspace-wide clippy could not satisfy L0: it was still
+compiling at the five-minute bound. L0 therefore uses a minimal `ci-rust`
+shell and compiles/lints the dependency-light architecture/domain canary; L1
+and component lanes remain authoritative for complete source and test
+compilation. UI/app tests belong only to the UI lane, removing their native
+GTK/WebKit closure and duplicate execution from L1. On that first hosted run,
+the already-separated lanes completed Compact artifacts in 3m13, headless in
+7m57, Quality in 9m56, and coverage in 10m11. The old full-shell unit shape
+hit its 10-minute ceiling, directly motivating the ownership split. The old
+UI shape hit its 15-minute ceiling while combining profile/type checks with a
+full optimized release artifact, so those now run as independent UI and
+`ui-release-linux` lanes. The separated Nix package completed in 18m19. Do
+not raise the old monolith or L0 timeout as a substitute for isolating phases.
 
 Local entry-point validation on the same Apple development host and a fresh
-worktree target completed `basic` in 1m41 and `unit` (compile plus all unit
-tests) in 3m11. The headless integration target completed in 49 s after the
-unit lane had populated dependency outputs. These are local command-shape
-measurements, not substitutes for three hosted samples.
+worktree target completed the original `basic` in 1m41 and original `unit`
+(compile plus all unit tests) in 3m11. After isolation, the minimal-shell L0
+completed warm in 12 s and L1 completed cold in 1m46. The headless integration
+target completed in 49 s after the unit lane had populated dependency outputs.
+These are local command-shape measurements, not substitutes for three hosted
+samples.

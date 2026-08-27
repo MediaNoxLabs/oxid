@@ -12,6 +12,22 @@
         pkgs.webkitgtk_4_1
         pkgs.xdotool
       ];
+      ciRustPackages = with pkgs; [
+        cargo
+        clippy
+        git
+        nodejs_24
+        pkg-config
+        rustc
+        rustfmt
+        sccache
+      ];
+      ciRustShellHook = ''
+        export RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}
+        export RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache
+        export SCCACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/oxid-sccache"
+        export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-2G}"
+      '';
     in
     {
       # Minimal shell for documentation-only checks. It deliberately carries no
@@ -26,6 +42,39 @@
           pkgs.mdbook-mermaid
           pkgs.nodejs_24
         ];
+      };
+
+      # Hosted Rust lanes deliberately avoid the default developer shell's Pi,
+      # Dioxus CLI, Compact toolchain/artifacts, docs, audit, and mobile tools.
+      # Each lane adds only the native closure its command actually needs.
+      devShells.ci-rust = pkgs.mkShell {
+        packages = ciRustPackages;
+        buildInputs = [ pkgs.openssl ];
+        shellHook = ciRustShellHook;
+      };
+
+      devShells.ci-ui = pkgs.mkShell {
+        packages = ciRustPackages;
+        buildInputs = [ pkgs.openssl ] ++ linuxLibraries;
+        shellHook = ''
+          ${ciRustShellHook}
+          ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
+          ''}
+        '';
+      };
+
+      devShells.ci-coverage = pkgs.mkShell {
+        packages = ciRustPackages ++ [
+          pkgs.cargo-llvm-cov
+          pkgs.llvmPackages.llvm
+        ];
+        buildInputs = [ pkgs.openssl ];
+        shellHook = ''
+          ${ciRustShellHook}
+          export LLVM_COV=${pkgs.llvmPackages.llvm}/bin/llvm-cov
+          export LLVM_PROFDATA=${pkgs.llvmPackages.llvm}/bin/llvm-profdata
+        '';
       };
 
       devShells.default = pkgs.mkShell {

@@ -6,8 +6,18 @@ set -euo pipefail
 failure_log="$(mktemp)"
 trap 'rm -f "$failure_log"' EXIT
 
+mode="${1:-all}"
+case "$mode" in
+  all|--guards|--artifact) ;;
+  *)
+    echo "usage: $0 [--guards|--artifact]" >&2
+    exit 64
+    ;;
+esac
+
 # The incoming profile is presentation-only but still must never be selectable
 # against the fail-closed production composition.
+if [[ "$mode" != "--artifact" ]]; then
 if cargo check -p oxid-app --no-default-features \
   --features desktop,ui-profile-dev >"$failure_log" 2>&1; then
   echo "ui-profile-dev compiled without an explicit standalone composition" >&2
@@ -165,10 +175,12 @@ if ! rg -q \
   sed -n '1,120p' "$failure_log" >&2
   exit 1
 fi
+fi
 
 # Inspect the actual normal release binary, not only Cargo feature metadata.
 # The stable marker is emitted into every developer-profile UI and must be
 # absent from a distributed default artifact.
+if [[ "$mode" != "--guards" ]]; then
 cargo build -p oxid-app --release
 release_binary="target/release/oxid-app"
 if [[ ! -f "$release_binary" ]]; then
@@ -207,5 +219,10 @@ if rg -a -q \
   echo "normal release binary contains the preprod registration funding harness" >&2
   exit 1
 fi
+fi
 
-echo "UI profile compile guards and dev/demo/local/tailnet release exclusion passed."
+case "$mode" in
+  --guards) echo "UI profile compile guards passed." ;;
+  --artifact) echo "UI dev/demo/local/tailnet release exclusion passed." ;;
+  all) echo "UI profile compile guards and dev/demo/local/tailnet release exclusion passed." ;;
+esac

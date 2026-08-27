@@ -16,6 +16,7 @@ export const HostedTarget = Object.freeze({
   UNIT_LINUX: "unit-linux",
   HEADLESS_LINUX: "headless-linux",
   UI_LINUX: "ui-linux",
+  UI_RELEASE_LINUX: "ui-release-linux",
   COVERAGE_LINUX: "coverage-linux",
   QUALITY: "quality",
   NIX_PACKAGE: "nix-package",
@@ -134,9 +135,13 @@ function featureTargets(areas) {
   if (areas.includes("core") || areas.includes("platform") || areas.includes("compact")) {
     targets.add(HostedTarget.HEADLESS_LINUX);
     targets.add(HostedTarget.UI_LINUX);
+    targets.add(HostedTarget.UI_RELEASE_LINUX);
   }
   if (areas.includes("headless")) targets.add(HostedTarget.HEADLESS_LINUX);
-  if (areas.includes("ui")) targets.add(HostedTarget.UI_LINUX);
+  if (areas.includes("ui")) {
+    targets.add(HostedTarget.UI_LINUX);
+    targets.add(HostedTarget.UI_RELEASE_LINUX);
+  }
   if (areas.includes("compact")) {
     targets.add(HostedTarget.NIX_PACKAGE);
     targets.add(HostedTarget.COMPACT_ARTIFACTS);

@@ -14,7 +14,7 @@ devices, and a separate repository remain explicit owner evidence.
 | L0 basic | PR title/body, DCO, GitHub-verified commit signature, repository contracts, formatting, architecture, lint, production compilation | 0–5 min | Every PR. Rust compilation is omitted only when the impact plan proves no Rust/build surface changed. |
 | L1 host | Workspace unit tests on one Linux host | 5–10 min | Rust, UI, headless, platform, Compact, or build changes; on demand for any PR. |
 | L2 component integration | Hermetic headless black-box tests, then deterministic Docker integration when its fixture is ready | 5–10 min for the current hermetic lane; Docker budget pending measurement | Affected host/component changes and on demand. |
-| L3 extended | UI feature profiles, coverage, quality, locked Nix package, Compact artifacts | 10–30 min per parallel lane | Affected high-risk/build changes; every `integration` delivery; release profile. |
+| L3 extended | UI feature profiles, optimized UI release audit, coverage, quality, locked Nix package, Compact artifacts | 10–30 min per parallel lane | Affected high-risk/build changes; every `integration` delivery; release profile. |
 | L4 platform/release | WASM, Android, iOS, Portal, standalone Midnight, PreProd, physical-device and real-proof evidence | Target-specific | Scheduled, on demand, or owner-private until each row below has a hermetic hosted runner. |
 
 L0 is an envelope of existing required contexts rather than one serial job.
@@ -27,11 +27,12 @@ contributor's GPG keyring.
 
 | Target | Command/evidence | Dependencies | Trigger areas | Budget/evidence | State |
 | --- | --- | --- | --- | --- | --- |
-| `basic` | `./run.sh repository`; for Rust-affecting changes `./run.sh basic` | Node; pinned Nix/Rust only for Rust | all | hard 5 min | Hosted PR gate |
-| `unit-linux` | `./run.sh unit` | x86_64 Linux, Nix, Rust, sccache | core, UI, headless, mobile/platform, Compact, build | hard 10 min; historical cold workspace tests 119 s locally | Hosted PR lane |
+| `basic` | `./run.sh repository`; for Rust-affecting changes `./run.sh basic` compiles/lints the dependency-light architectural/domain canary | Node; minimal `ci-rust` shell only for Rust | all | hard 5 min | Hosted PR gate |
+| `unit-linux` | `./run.sh unit` (workspace core/headless/MCP units; UI/app excluded to their lane) | x86_64 Linux, minimal `ci-rust` shell, sccache | core, UI, headless, mobile/platform, Compact, build | hard 10 min; historical cold workspace tests 119 s locally | Hosted PR lane |
 | `headless-linux` | `./run.sh headless-integration` | same Linux host; no live services | core, headless, platform, Compact | hard 10 min | Hosted PR lane |
-| `ui-linux` | `./run.sh ui` | Linux, Dioxus/native libraries | shared core, UI, platform, Compact | hard 15 min | Hosted PR lane |
-| `coverage-linux` | `./run.sh coverage` | Linux, `cargo-llvm-cov` | every Rust-affecting area | hard 25 min, 80% line floor | Hosted PR lane |
+| `ui-linux` | `./run.sh ui` (profile guards, feature compilation and UI/app tests) | minimal `ci-ui` shell plus Linux GTK/WebKit libraries | shared core, UI, platform, Compact | hard 15 min | Hosted PR lane |
+| `ui-release-linux` | `./run.sh ui-release` (optimized build and forbidden-marker audit) | minimal `ci-ui` shell, release compilation | shared core, UI, platform, Compact | hard 25 min | Hosted PR artifact lane |
+| `coverage-linux` | `./run.sh coverage` | minimal `ci-coverage` shell and `cargo-llvm-cov` | every Rust-affecting area | hard 25 min, 80% line floor | Hosted PR lane |
 | `quality` | `./run.sh quality --strict` | audit/deny/rustdoc toolchain | every Rust-affecting area | hard 20 min; 9m15 on PR #165 | Hosted required context |
 | `nix-package` | `nix build` | x86_64 Linux, locked Nix graph | build and Compact | hard 45 min | Hosted PR lane |
 | `compact-artifacts` | build presentation, Passport Vault artifacts and call composer together | Compact toolchain and locked p18 sources | build and Compact | hard 30 min | Hosted PR lane |
@@ -65,6 +66,7 @@ changed paths + profile
           +--> unit-linux -------------------------+--> repository aggregator
           +--> headless-linux ---------------------+
           +--> ui-linux ---------------------------+
+          +--> ui-release-linux -------------------+
           +--> coverage-linux ---------------------+
           |
           +--> quality (independent stable context)
@@ -77,9 +79,11 @@ changed paths + profile
 
 The target jobs do not depend on `basic`, so a five-minute failure is visible
 quickly without turning every other lane into serial wall time. They all depend
-only on the immutable plan. `sccache` is capped at 2 GiB in hosted CI and only
-the basic lane updates it; sibling lanes restore but do not upload duplicate
-compiler caches. The local default remains a bounded 10 GiB shared cache. Rust
+only on the immutable plan. In hosted CI, `sccache` uses its object-level
+GitHub Actions backend. This lets parallel lanes share compiler objects
+without creating an immutable multi-gigabyte
+archive for every commit. Local CI shells use a bounded 2 GiB cache and the
+local default remains a bounded 10 GiB shared cache. Rust
 feedback lanes do not restore the whole Nix store. Package/release caches use
 `cache-nix-action` v7 in a new namespace so the noisy v6 archive observed on PR
 #165 cannot be reused.
@@ -92,7 +96,8 @@ feedback lanes do not restore the whole Nix store. Package/release caches use
 - Documentation, harness, and CI-only feature changes run L0 and their
   independent policy/scanner contexts without realizing the Rust/Nix build
   graph.
-- UI and headless changes select their own host consumer rather than both.
+- UI and headless changes select their own consumer lanes rather than both;
+  the UI's optimized artifact audit remains separate from its profile/tests.
 - Shared core, platform, and Compact changes select both UI and headless
   consumers because their dependency fan-out is cross-cutting.
 - Build/toolchain/lockfile changes and an unavailable or empty diff fail closed

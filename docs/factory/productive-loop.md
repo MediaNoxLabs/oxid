@@ -54,9 +54,9 @@ that phase.
 The planner is conservative and based on changed paths plus an explicit
 `feature`, `integration`, or `release` profile. L0 basic evidence is emitted
 for every PR within five minutes. L1 unit and L2 headless integration have
-ten-minute bounds on the Linux host. L3 UI, coverage, quality, Nix package, and
-Compact artifact lanes run independently when their component or profile
-selects them. The complete target/dependency inventory and missing platform
+ten-minute bounds on the Linux host. L3 UI profiles/tests, the optimized UI
+release audit, coverage, quality, Nix package, and Compact artifact lanes run
+independently when their component or profile selects them. The complete target/dependency inventory and missing platform
 gates live in [the CI target matrix](ci-target-matrix.md).
 
 The workflow keeps the existing required context names as aggregators, so
