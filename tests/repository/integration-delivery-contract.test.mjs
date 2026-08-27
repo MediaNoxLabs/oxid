@@ -77,6 +77,9 @@ test("documentation links always emit a context and skip outbound work safely", 
   for (const eventCase of ["workflow_dispatch)", "pull_request)", "push)"]) assert.match(links, new RegExp(eventCase.replace(/[()]/g, "\\$&")));
   for (const safety of [/fetch-depth: 0/, /valid_sha/, /git cat-file -e/, /git merge-base/, /git diff --quiet/, /running the link check conservatively/]) assert.match(links, safety);
   assert.equal((links.match(/if: steps\.changes\.outputs\.docs_changed == 'true'/g) || []).length, 2);
+  assert.match(links, /if \[\[ "\$EVENT_NAME" == "pull_request" \]\]; then\n\s+nix develop \.#docs --command node scripts\/docs\/check-links\.mjs --candidate\n\s+else\n\s+nix develop \.#docs --command node scripts\/docs\/check-links\.mjs\n\s+fi/);
+  assert.match(links, /EVENT_NAME: \$\{\{ github\.event_name \}\}/);
+  assert.doesNotMatch(links, /--exclude.*blob\/integration/);
 });
 
 test("Pages builds and publishes only from integration", async () => {
@@ -175,7 +178,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
     const content = await read(file);
     assert.match(content, pattern, file);
   }
-  const siteBuild = await read("scripts/build-docs-site.sh");
+  const siteBuild = `${await read("scripts/build-docs-site.sh")}\n${await read("scripts/docs/generate-adr-catalog.mjs")}`;
   assert.match(siteBuild, /blob\/integration\/docs\/adr/);
   assert.doesNotMatch(siteBuild, /blob\/(?:develop|main)\/docs\/adr/);
   const contract = await read("docs/integration-delivery.md");

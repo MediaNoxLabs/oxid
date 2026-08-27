@@ -20,9 +20,11 @@
       # pay for prover-key builds.
       devShells.docs = pkgs.mkShell {
         packages = [
+          pkgs.git
           pkgs.lychee
           pkgs.mdbook
           pkgs.mdbook-mermaid
+          pkgs.nodejs_24
         ];
       };
 

@@ -5,11 +5,13 @@
 ## Architecture decision records
 
 ADRs record consequential technical decisions for Oxid. Use four-digit,
-monotonically increasing filenames. Each record describes its status, context,
-decision, consequences, and any superseded decisions.
+monotonically increasing filenames; the sequence need not be contiguous. Each
+record describes its status, context, decision, consequences, and any superseded
+decisions.
 
-Accepted ADRs are changed only by a later ADR that explicitly supersedes them.
-The root blueprint remains the broader product and engineering constitution.
+Accepted ADRs are changed only by a later ADR that explicitly amends or
+supersedes them. The root blueprint remains the broader product and engineering
+constitution.
 
 ## How to read status
 
@@ -128,6 +130,7 @@ ADR status and delivery state answer different questions:
 | [0100](https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr/0100-register-protected-dust-keys-before-fresh-wallet-submission.md) Register protected DUST keys before fresh-wallet submission | Accepted | §§3–8, 12–13, 16–18, 21; prototype onboarding plan; ledger registration semantics; issues #2/#92 | Implemented in repository/headless/Dioxus with guarded public PreProd funding-manifest/read-only-observation foundations and an amount-observed one-output/one-note acceptance harness: a distinct prepare/consent/authorize/submit port registers only current owned NIGHT inputs through protected role-0/role-2 custody; a fresh wallet intentionally starts with zero DUST, and authoritative generated-DUST observation remains a separate spend-readiness gate |
 | [0101](https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr/0101-gate-laceid-portal-interoperability-on-final-openid4vci.md) Gate LaceID Portal interoperability on Final OpenID4VCI | Accepted | ADR-0039/0097; issue #124; LaceID Portal `804de0a9e58cf48ece3cc6c24b2245bb70bc80f1` | Source-derived negative contract evidence only: strict Final offer/metadata/request/response boundaries reject the pinned Portal shapes; no live HTTP, trust-manifest consumption, or headless/simulator/device/tailnet interoperability evidence |
 | [0102](https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr/0102-admit-pinned-portal-final-in-headless-development.md) Admit pinned Portal Final issuance in headless development | Accepted | ADR-0039/0101; issue #124; Portal PR #17 / `integration@925ec8d` | Strict authenticated native-headless Portal HTTP issuance, exact three-part verification/import, encrypted persistence, and new-process restore; production/mobile Portal HTTP and physical/tailnet evidence remain unavailable |
+| [0104](https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr/0104-regrow-incoming-adapters-behind-capability-facades.md) Regrow oversized adapters behind capability façades | Accepted | §§3, 6, 13–14, 18–19; issue #145 | Governing policy and source-size baseline recorded; headless then desktop Dioxus source-module decomposition is first, composition and Midnight remain later, and no crate extraction is authorized |
 
 ## Current boundaries
 
@@ -516,3 +519,9 @@ repository/headless/Dioxus path, public PreProd manifest/read-only observer,
 test-only signed Midnight profile, and amount-observed ignored live harness are
 implemented; the funded write, mobile, restart, and physical-device acceptance
 evidence remain in progress.
+
+ADR-0104 governs behavior-preserving source decomposition of the four oversized
+crate roots without changing their dependency or public capability boundaries.
+Headless and desktop Dioxus move first behind stable crate-root re-exports;
+composition and Midnight retain that later order. Source modules must establish
+cohesion before a separately approved, measured crate boundary can be proposed.

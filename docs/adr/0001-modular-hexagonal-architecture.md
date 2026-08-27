@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 3 and 6
 - Implementation state: Enforced for the M0 dependency graph
+- Amended by: ADR-0104
 
 ## Context
 
