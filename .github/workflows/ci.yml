@@ -186,7 +186,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.ui_linux == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # A read-only PR with no trusted sccache seed needed more than 15 minutes
+    # to compile every desktop/mobile feature profile. Keep the cold fallback
+    # bounded without making an empty cache a false correctness failure.
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

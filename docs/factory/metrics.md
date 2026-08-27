@@ -136,6 +136,13 @@ unit compiler cache and locked-package store cache. Quality uses an uncached
 minimal shell; the locked package lane remains the only whole-store GitHub
 cache while a proper signed Nix substituter is unprovisioned.
 
+The first fully read-only PR sample also exposed an optimistic UI budget rather
+than a product failure: its UI/app tests passed, then GitHub canceled remaining
+mobile feature-profile compilation at 15m18. The L3 ceiling is 20 minutes so a
+cold cache remains a supported fallback. L0, L1, and L2 keep their 5/10/10
+minute bounds; the trusted seed and layered-cache work must reduce actual time
+rather than hiding it behind a larger fast-gate budget.
+
 Local entry-point validation on the same Apple development host and a fresh
 worktree target completed the original `basic` in 1m41 and original `unit`
 (compile plus all unit tests) in 3m11. After isolation, the minimal-shell L0
