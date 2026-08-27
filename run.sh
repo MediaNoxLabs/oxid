@@ -48,6 +48,7 @@ run_core() {
   require_command node
   node --test tests/repository/integration-delivery-contract.test.mjs
   node --test tests/repository/dev-loop-stability-contract.test.mjs
+  node --test tests/repository/docs-link-contract.test.mjs
   cargo fmt --all --check
   ./scripts/check-architecture.sh
   ./scripts/check-arrayref-source.sh
