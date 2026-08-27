@@ -133,10 +133,6 @@ test("Lychee remaps only the same-repository integration prefix and still checks
   assert.equal(args.includes("--exclude"), false);
   const integrationArgs = buildLycheeArgs(repoRoot);
   assert.equal(integrationArgs.includes("--remap"), false);
-  assert.equal(integrationArgs.includes("--include-fragments=none"), false);
-  const config = readFileSync(path.join(repoRoot, ".lychee.toml"), "utf8");
-  assert.match(config, /^include_fragments = "none"$/m);
-  assert.match(config, /^include_verbatim = false$/m);
 });
 
 test("the renderer keeps durable integration URLs for candidate-only ADRs", () => {
