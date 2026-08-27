@@ -55,6 +55,12 @@ mutation:
 ./bootstrap.sh --check
 ```
 
+The smoke uses the same bounded resolver as the tracked dev-loop wrappers: it
+checks the active Git root first and, for a registered linked worktree only,
+the common checkout second. Every configured npm package must match its exact
+name and version and remain contained by one of those roots. The smoke does not
+copy, link, or install a second package tree in the worktree.
+
 From a plain checkout, `./bootstrap.sh --pi` starts Pi inside the same pinned
 shell. `./bootstrap.sh -- <command>` runs any other one-off repository command
 there. The wrapper delegates package provisioning to `nix develop` and never

@@ -15,6 +15,7 @@ test("documentation, harness, and workflow-only feature changes keep the basic g
   for (const paths of [
     ["README.md", "docs/factory/runbook.md"],
     [".devloops", "scripts/loop/pre-flight-gate.mjs"],
+    ["scripts/check-pi-devshell.sh", "scripts/lib/dev-loop-runtime.mjs"],
     [".github/workflows/ci.yml", "scripts/ci/target-plan.mjs"],
     ["docs/factory/metrics.md", "scripts/ci/target-plan.mjs"],
   ]) {
