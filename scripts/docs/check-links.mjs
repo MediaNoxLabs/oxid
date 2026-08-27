@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
+import { realpathSync } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -63,6 +64,7 @@ async function trackedFiles(repoRoot) {
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
   });
+  if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`git ls-files failed: ${result.stderr?.trim() ?? "unknown error"}`);
   return result.stdout.split("\0").filter(Boolean);
 }
@@ -97,7 +99,7 @@ export async function main() {
   process.exitCode = result.status ?? 1;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
   main().catch((error) => {
     process.stderr.write(`[docs-links] ${error.message}\n`);
     process.exitCode = 1;

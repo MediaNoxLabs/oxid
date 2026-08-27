@@ -53,6 +53,21 @@ test("ADR catalog generation is identical without remotes and across arbitrary r
   assert.match(outputs[0], /blob\/integration\/docs\/adr\/0104-example\.md/);
 });
 
+test("catalog generation executes when the script path traverses a symlink", () => {
+  const root = tempDir();
+  try {
+    const link = path.join(root, "generate.mjs");
+    const index = path.join(root, "README.md");
+    const output = path.join(root, "catalog.md");
+    symlinkSync(generator, link);
+    writeFileSync(index, "# ADRs\n");
+    execFileSync(process.execPath, [link, "--index", index, "--output", output], { cwd: root });
+    assert.equal(readFileSync(output, "utf8"), renderAdrCatalog("# ADRs\n"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("candidate integration blob links resolve to tracked local files before Lychee", async () => {
   const root = tempDir();
   try {
