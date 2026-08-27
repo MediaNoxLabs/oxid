@@ -49,12 +49,15 @@ oxid_emulator_command_matches() {
 
 oxid_emulator_job_owned() {
   local pid="$1" expected_parent="$2" executable="$3" avd="$4" port="$5"
-  local snapshot parent comm command_line
+  local snapshot parent command_line
   oxid_job_is_running "$pid" || return 1
   snapshot="$(oxid_direct_child_snapshot "$pid")" || return 1
-  read -r parent comm command_line <<<"$snapshot"
+  # `comm` is process-controlled and is not a portable executable identity:
+  # Node reports `MainThread` on Linux, and emulator launchers may rename their
+  # main task. Ownership instead binds the live shell job, its direct parent,
+  # and the exact executable/AVD/port/safety arguments from the command line.
+  read -r parent _ command_line <<<"$snapshot"
   [ "$parent" = "$expected_parent" ] || return 1
-  [ "$comm" = "${executable##*/}" ] || [ "$comm" = "$executable" ] || return 1
   oxid_emulator_command_matches "$command_line" "$executable" "$avd" "$port"
 }
 
