@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { runDevLoopPreflight } from "../lib/dev-loop-preflight-core.mjs";
+import { runManagedChild } from "../lib/managed-child-process.mjs";
 import {
   DEV_LOOP_SELECTED_TOOLS,
   REPOSITORY_CONFIGURED_TOOLS,
@@ -57,19 +57,12 @@ export async function runPreFlightGate(argv = process.argv.slice(2), {
   if (!repositoryCheck.ok) throw new Error(repositoryCheck.message);
   const script = path.join(repositoryCheck.resolved.packageRoot, "scripts", "loop", "pre-flight-gate.mjs");
   const childEnv = { ...env, DEVLOOPS_SUBAGENT_AVAILABLE: inferSubagentAvailability(env) };
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, ...argv], {
-      cwd,
-      env: childEnv,
-      stdio: ["inherit", "pipe", "pipe"],
-    });
-    child.stdout.pipe(stdout, { end: false });
-    child.stderr.pipe(stderr, { end: false });
-    child.once("error", reject);
-    child.once("close", (code, signal) => {
-      if (signal) reject(new Error(`pre-flight gate terminated by ${signal}`));
-      else resolve(code ?? 1);
-    });
+  return runManagedChild(process.execPath, [script, ...argv], {
+    cwd,
+    env: childEnv,
+    stdout,
+    stderr,
+    label: "pre-flight gate",
   });
 }
 

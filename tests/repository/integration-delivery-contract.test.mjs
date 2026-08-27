@@ -199,8 +199,12 @@ test("guidance, required contexts, and review configuration agree", async () => 
   const config = await read(".devloops");
   const draftGate = config.slice(config.indexOf("  draft:"), config.indexOf("  preApproval:"));
   const preApprovalGate = config.slice(config.indexOf("  preApproval:"), config.indexOf("  requireFanoutEvidence:"));
-  assert.match(draftGate, /^      - external-review$/m);
-  assert.match(preApprovalGate, /^      - external-review$/m);
+  assert.doesNotMatch(draftGate, /^      - external-review$/m);
+  assert.doesNotMatch(preApprovalGate, /^      - external-review$/m);
+  assert.match(draftGate, /^    requireCi: false$/m);
+  assert.match(config, /^  fanOut: 2$/m);
+  assert.match(config, /^  stopOnLowSignal: true$/m);
+  assert.match(config, /^  maxFanoutReviewers: 2$/m);
   const scan = await read(".github/workflows/scan.yml");
   const scanJobStart = scan.indexOf("  scan:");
   assert.ok(scanJobStart >= 0, "scan.yml: scan job");
@@ -224,19 +228,24 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.doesNotMatch(scanJob, /\bsoft_fail:/);
   assert.doesNotMatch(scanJob, /skip_(?:zizmor|gitleaks|opengrep|trivy)_scan:\s*["']?true/i);
   assert.match(config, /maxCopilotRounds: 0/);
-  assert.match(config, /Claude CLI/);
-  assert.match(config, /current head/i);
-  assert.match(config, /^  stopAt: \[\]$/m);
-  assert.match(config, /^  humanMergeOnly: false$/m);
+  assert.match(config, /^    - merge$/m);
+  assert.match(config, /^  humanMergeOnly: true$/m);
+  assert.match(config, /^  requireRetrospective: false$/m);
+  assert.match(config, /^  maxParallel: 1$/m);
   assert.doesNotMatch(config, /humanHandoff|candidatesFrom:\s*\n\s*- codeowners/);
+  const ci = await read(".github/workflows/ci.yml");
+  assert.match(ci, /scripts\/ci\/change-tier\.mjs/);
+  assert.match(ci, /Run hermetic repository harness gate/);
+  assert.match(ci, /Run full repository gate/);
+  assert.doesNotMatch(ci, /^\s+target$/m);
   const contractReviewPolicy = await read("docs/integration-delivery.md");
   assert.match(contractReviewPolicy, /required_approving_review_count: 0/);
   assert.match(contractReviewPolicy, /require_code_owner_reviews: false/);
-  assert.match(contractReviewPolicy, /Post the\s+current-head evidence to the pull request before merge/);
+  assert.match(contractReviewPolicy, /humanMergeOnly: true/);
   for (const file of ["docs/integration-delivery.md", "docs/factory/runbook.md"]) {
     const guidance = await read(file);
     assert.match(guidance, /manually invoked/i, file);
     assert.match(guidance, /not a hosted GitHub\s+(?:status\s+)?check/i, file);
-    assert.doesNotMatch(guidance, /humanMergeOnly: true|approval\.humanHandoff/);
+    assert.match(guidance, /high-risk/i, file);
   }
 });

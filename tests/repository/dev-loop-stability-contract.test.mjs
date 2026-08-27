@@ -982,23 +982,11 @@ test("tracked pre-flight wrapper reports Pi child dispatch availability determin
     stdout: sink,
     stderr: sink,
   }), /BYPASS is not permitted/);
-  const localManifest = path.join(repoRoot, ".pi", "npm", "node_modules", "dev-loops", "package.json");
-  let exactLocalPin = false;
-  try {
-    const manifest = JSON.parse(await readFile(localManifest, "utf8"));
-    exactLocalPin = manifest.name === "dev-loops" && manifest.version === "0.9.0";
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
   const repositoryCheck = await runRepositoryPreflight(repoRoot);
-  if (exactLocalPin) {
-    assert.equal(repositoryCheck.ok, true, repositoryCheck.message);
+  if (repositoryCheck.ok) {
+    assert.match(repositoryCheck.resolved.source, /^git-(?:root|common-root)$/);
   } else {
-    assert.equal(repositoryCheck.ok, false);
-    assert.equal(
-      repositoryCheck.message,
-      `Pi dev-loop preflight environment is not ready: missing exact dev-loops@0.9.0; checked only ${path.join(repoRoot, ".pi", "npm", "node_modules", "dev-loops")}`,
-    );
+    assert.match(repositoryCheck.message, /missing exact dev-loops@0\.9\.0; checked only/);
   }
 });
 
@@ -1482,16 +1470,18 @@ fi
   );
 });
 
-test("manual Claude review and zero Copilot rounds are mandatory gate facts", async () => {
+test("routine gates stay bounded and preserve the explicit high-risk review route", async () => {
   const config = await read(".devloops");
   assert.match(config, /^\s+maxCopilotRounds: 0$/m);
   for (const block of [
     config.slice(config.indexOf("  draft:"), config.indexOf("  preApproval:")),
     config.slice(config.indexOf("  preApproval:"), config.indexOf("  requireFanoutEvidence:")),
   ]) {
-    const mandatory = block.slice(block.indexOf("    mandatoryAngles:"));
-    assert.match(mandatory, /^\s+- external-review$/m);
+    assert.doesNotMatch(block, /^\s+- external-review$/m);
   }
+  assert.match(config, /^  maxFanoutReviewers: 2$/m);
+  assert.match(config, /^  humanMergeOnly: true$/m);
+  assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
 });
 
 test("upstream-only gaps are linked and speculative local patches are forbidden", async () => {

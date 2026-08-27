@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
 import { readFile, realpath } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 import { normalizeHandoffEnvelopeCwd } from "./lib/handoff-envelope-cwd.mjs";
+import { runManagedChild } from "./lib/managed-child-process.mjs";
 import { resolveDevLoopsPackageRoot } from "./lib/dev-loop-runtime.mjs";
 import { enforceSingleBase, pinnedPublicRoute } from "./lib/pinned-dev-loops-args.mjs";
 
@@ -122,15 +122,11 @@ export async function runDevLoops(argv = process.argv.slice(2), {
   if (envelopeArgs) return runBuildEnvelope(envelopeArgs, { cwd, stdout, stderr, resolved });
 
   const cli = path.join(resolved.packageRoot, "cli", "index.mjs");
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cli, ...args], { cwd, stdio: ["inherit", "pipe", "pipe"] });
-    child.stdout.pipe(stdout, { end: false });
-    child.stderr.pipe(stderr, { end: false });
-    child.once("error", reject);
-    child.once("close", (code, signal) => {
-      if (signal) reject(new Error(`dev-loops terminated by ${signal}`));
-      else resolve(code ?? 1);
-    });
+  return runManagedChild(process.execPath, [cli, ...args], {
+    cwd,
+    stdout,
+    stderr,
+    label: "dev-loops",
   });
 }
 

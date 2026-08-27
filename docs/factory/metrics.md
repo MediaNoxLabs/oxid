@@ -8,9 +8,11 @@ each entry is dated and states its measurement environment.
 
 - **Local gate time** is the agent/engineer inner loop; when it grows, every
   work item slows down.
-- **CI wall time** is bounded at 75 minutes (see AGENT.md); the cold gate has
-  already consumed ~59 minutes once. Approaching the bound cancels
-  otherwise-green runs.
+- **CI wall time** is tiered. Documentation and harness changes should not
+  realize the Rust/Nix closure; only sensitive `full` changes retain the cold
+  path that historically consumed ~59 minutes.
+- **Time to merge-ready** captures review, canceled runs, and repeated pushes
+  that a single job duration hides.
 - **Per-crate build time** reveals decomposition problems (a crate growing
   into a bottleneck) before they dominate the critical path.
 
@@ -63,14 +65,19 @@ lychee-only devshell instead of realizing the compiler and Compact artifact
 closure. The nightly is the one that changed character rather than duration:
 the flake checks previously ran nowhere.
 
-## Budgets (proposed)
+## Active budgets
 
 | Measurement | Green | Amber | Red |
 | --- | --- | --- | --- |
 | Warm local strict-light gate | ≤ 2 min | 2–5 min | > 5 min |
 | Cold `cargo check --workspace` | ≤ 2 min | 2–5 min | > 5 min |
-| CI job wall time | ≤ 45 min | 45–60 min | > 60 min |
-| CI headroom to bound | ≥ 25 min | 10–25 min | < 10 min |
+| `docs` / `harness` required contexts | ≤ 5 min | 5–10 min | > 10 min |
+| `rust` required contexts | ≤ 15 min | 15–25 min | > 25 min |
+| `full` required contexts, warm | ≤ 30 min | 30–45 min | > 45 min |
+| Routine PR to merge-ready | ≤ 60 min | 60–90 min | > 90 min |
+| Automatic review sessions per routine PR | ≤ 4 | 5–6 | > 6 |
+| Pushes after first hosted CI starts | 0 | 1 | > 1 |
+| Active managed delivery worktrees | ≤ 2 | 3 | > 3 |
 
 Amber requires a backlog item; red blocks new `factory:ready` labels until a
 mitigation item is claimed.

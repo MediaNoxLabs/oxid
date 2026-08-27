@@ -25,12 +25,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          fetch-depth: 0
           persist-credentials: false
 
+      - name: Classify changed paths
+        id: risk
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          tier="$(node scripts/ci/change-tier.mjs --base "$BASE_SHA" --head "$HEAD_SHA")"
+          printf 'tier=%s\n' "$tier" >> "$GITHUB_OUTPUT"
+          printf 'Selected CI tier: %s\n' "$tier"
+
       - name: Install Nix
+        if: steps.risk.outputs.tier == 'rust' || steps.risk.outputs.tier == 'full'
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Restore the devshell Nix store
+        if: steps.risk.outputs.tier == 'rust' || steps.risk.outputs.tier == 'full'
         uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6.1.3
         with:
           primary-key: nix-devshell-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix') }}
@@ -39,6 +52,7 @@ jobs:
           purge: false
 
       - name: Cache the cargo registry
+        if: steps.risk.outputs.tier == 'rust' || steps.risk.outputs.tier == 'full'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -48,4 +62,11 @@ jobs:
           key: cargo-quality-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
 
       - name: Run quality gate
+        if: steps.risk.outputs.tier == 'rust' || steps.risk.outputs.tier == 'full'
         run: nix develop --command ./run.sh quality --strict
+
+      - name: Run lightweight policy gate
+        if: steps.risk.outputs.tier == 'docs' || steps.risk.outputs.tier == 'harness'
+        run: |
+          ./scripts/check-adr-links.sh
+          node --test tests/repository/change-tier-contract.test.mjs

@@ -123,8 +123,10 @@ cannot safely duplicate expected-check rollup, pagination, suite/attempt
 identity, no-check handling, head bracketing, heartbeat/ownership, and global
 output-option semantics.
 
-`.devloops` sets `maxCopilotRounds: 0` and makes `external-review` mandatory.
-There is no repository-local routing shadow. Contradictory loop-info is a pinned
+`.devloops` sets `maxCopilotRounds: 0`, caps automatic gate review at two
+concurrent reviewers, and stops low-signal refinement. Independent external
+review is an explicit high-risk or owner-requested action rather than a
+mandatory angle repeated at both gates. Contradictory loop-info is a pinned
 upstream residual: stop and obtain a consistent authoritative state rather
 than overriding the pinned coordinator locally.
 
@@ -149,9 +151,11 @@ no-network contract.
 
 ## Independent current-head review
 
-Both draft and pre-approval gates make `external-review` mandatory, while
-`maxCopilotRounds` remains zero. After committing all intended changes and
-fetching `origin/integration`, run the reviewer with a clean worktree. By
+The ordinary draft and pre-approval gates do not invoke an external model.
+For a high-risk `full` change, an explicit owner request, or a disputed
+finding, commit all intended changes, fetch `origin/integration`, and manually
+invoke the reviewer once from a clean worktree. `maxCopilotRounds` remains
+zero. By
 default it writes beneath `${XDG_STATE_HOME:-$HOME/.local/state}/oxid/claude-reviews`.
 The final directory must be a real, invoking-user-owned `0700` directory and
 each artifact is an owned regular `0600` file; a symlink as the final evidence
@@ -215,7 +219,7 @@ continues to fail closed on CLI or account incompatibility.
 | Timeout, deadline, `usageBudget`, turn, tool, and control budgets survive resume exactly | Pin-upgrade / upstream-owned | Closed/completed [pi-subagents #985](https://github.com/nicobailon/pi-subagents/issues/985) documents adjacent persisted turn-budget recovery and was fixed by merged [PR #987](https://github.com/nicobailon/pi-subagents/pull/987). The pinned [v0.42.1 async-resume source](https://github.com/nicobailon/pi-subagents/blob/v0.42.1/src/runs/background/async-resume.ts) remains repository authority pending a separately tested upgrade. |
 | Provider payload compaction/checkpointing and streamed-mutation retry idempotency | Deferred / **upstream-only** | No exact upstream issue was established during this bounded slice. File a minimal upstream reproduction before claiming a fix; no repository wrapper can safely reconstruct provider stream state. |
 | `integration` is the worktree, PR, diff, and evidence base | Landed in this slice | `scripts/loop/ensure-worktree.mjs`, `scripts/dev-loops.mjs`, and the Claude runner |
-| Unavailable Copilot review routes to mandatory independent current-head Claude review | Landed in this slice | `.devloops` and the Claude runner; hosted Copilot stays disabled |
+| Unavailable Copilot review has a bounded independent current-head Claude route | Landed, policy right-sized by issue #161 | Hosted Copilot stays disabled; the tracked Claude runner is manually invoked for high-risk work, an owner request, or a disputed finding rather than every ordinary gate. |
 | Valid nested reviewer output cannot be overturned by a late unavailable-tool diagnostic | Deferred / upstream-owned | Closed/completed [pi-subagents #1434](https://github.com/nicobailon/pi-subagents/issues/1434) documents the adjacent final-return serialization failure and was fixed by merged [PR #1448](https://github.com/nicobailon/pi-subagents/pull/1448). The late-diagnostic case still needs its own minimal reproduction and a separately tested repository pin upgrade. |
 | Supported GitHub CLI behavior is deterministic | Landed in this slice | Nix pin plus REST behavior probe and timeline resolver |
 | dev-loops and pi-subagents share authenticated acceptance provenance | Upstream / pin-upgrade only | This slice records explicit local attestational facts and does not claim reviewer authentication. Closed/completed #1434 and #1460 document adjacent defects fixed upstream by merged PRs #1448 and #1461; neither establishes shared authenticated provenance in pinned v0.42.1. |

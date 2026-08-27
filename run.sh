@@ -9,7 +9,7 @@ strict=false
 
 usage() {
   cat <<'USAGE'
-Usage: ./run.sh [all|core|ui|headless|coverage|quality|clean|targets] [--light] [--strict]
+Usage: ./run.sh [all|repository|core|ui|headless|coverage|quality|clean|targets] [--light] [--strict]
 
   --light   Skip advisory, license, and rustdoc checks.
   --strict  Deny compiler and rustdoc warnings.
@@ -18,7 +18,7 @@ USAGE
 
 while (($# > 0)); do
   case "$1" in
-    all|core|ui|headless|coverage|quality|clean|targets)
+    all|repository|core|ui|headless|coverage|quality|clean|targets)
       target="$1"
       ;;
     --light)
@@ -40,15 +40,22 @@ while (($# > 0)); do
   shift
 done
 
+run_repository() {
+  require_command node
+  node --test tests/repository/integration-delivery-contract.test.mjs
+  node --test tests/repository/dev-loop-stability-contract.test.mjs
+  node --test tests/repository/docs-link-contract.test.mjs
+  node --test tests/repository/change-tier-contract.test.mjs
+  node --test tests/repository/worktree-lifecycle-contract.test.mjs
+  node --test tests/repository/managed-child-process-contract.test.mjs
+}
+
 run_core() {
   local run_workspace_tests=true
   if [[ "${1:-}" == "--skip-workspace-tests" ]]; then
     run_workspace_tests=false
   fi
-  require_command node
-  node --test tests/repository/integration-delivery-contract.test.mjs
-  node --test tests/repository/dev-loop-stability-contract.test.mjs
-  node --test tests/repository/docs-link-contract.test.mjs
+  run_repository
   cargo fmt --all --check
   ./scripts/check-architecture.sh
   ./scripts/check-arrayref-source.sh
@@ -132,6 +139,9 @@ case "$target" in
       run_quality
     fi
     ;;
+  repository)
+    run_repository
+    ;;
   core)
     run_core
     ;;
@@ -151,6 +161,6 @@ case "$target" in
     cargo clean
     ;;
   targets)
-    printf '%s\n' all core ui headless coverage quality clean targets
+    printf '%s\n' all repository core ui headless coverage quality clean targets
     ;;
 esac

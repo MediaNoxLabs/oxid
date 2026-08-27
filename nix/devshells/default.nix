@@ -57,6 +57,7 @@
             rust-analyzer
             rustc
             rustfmt
+            sccache
           ]
           ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.xcodegen ];
 
@@ -70,6 +71,11 @@
           export OXID_PRESENTATION_ARTIFACTS_DIR=${self'.packages.presentation-compact-artifacts}
           export OXID_PASSPORT_VAULT_ARTIFACTS_DIR=${self'.packages.passport-vault-compact-artifacts}
           export OXID_PASSPORT_VAULT_COMPOSER=${self'.packages.passport-vault-call-composer}/bin/oxid-passport-vault-call-composer
+          # Keep one bounded compiler cache across worktrees. Worktree targets
+          # remain isolated for correctness and can be deleted after delivery.
+          export RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache
+          export SCCACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/oxid-sccache"
+          export SCCACHE_CACHE_SIZE=10G
           ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
           ''}
@@ -80,6 +86,12 @@
           # CI never needs Pi tooling, and this block performs unpinned network
           # installs, so continuous-integration shells skip it entirely.
           if [ -z "''${CI:-}" ] && [ -f .pi/settings.json ]; then
+            pi_common_git_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+            if [ -n "$pi_common_git_dir" ]; then
+              pi_checkout_root="$(dirname "$pi_common_git_dir")"
+            else
+              pi_checkout_root="$PWD"
+            fi
             if [ -z "''${GITHUB_TOKEN:-}" ]; then
               if [ -n "''${GH_TOKEN:-}" ]; then
                 export GITHUB_TOKEN="''${GH_TOKEN}"
@@ -90,7 +102,7 @@
 
             while IFS=$'\t' read -r pi_spec pi_package pi_version; do
               [ -n "$pi_spec" ] || continue
-              pi_package_json=".pi/npm/node_modules/$pi_package/package.json"
+              pi_package_json="$pi_checkout_root/.pi/npm/node_modules/$pi_package/package.json"
               pi_installed_version=""
               if [ -f "$pi_package_json" ]; then
                 pi_installed_version="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version ?? "")' "$pi_package_json")"
@@ -106,7 +118,7 @@
               fi
 
               echo "Installing project-local Pi package $pi_spec..."
-              pi install "$pi_spec" --local --approve </dev/null
+              (cd "$pi_checkout_root" && pi install "$pi_spec" --local --approve </dev/null)
             done < <(node -e '
               const fs = require("fs");
               const settings = JSON.parse(fs.readFileSync(".pi/settings.json", "utf8"));

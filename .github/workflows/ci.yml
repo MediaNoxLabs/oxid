@@ -28,10 +28,22 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Classify changed paths
+        id: risk
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          tier="$(node scripts/ci/change-tier.mjs --base "$BASE_SHA" --head "$HEAD_SHA")"
+          printf 'tier=%s\n' "$tier" >> "$GITHUB_OUTPUT"
+          printf 'Selected CI tier: %s\n' "$tier"
+
       - name: Install Nix
+        if: steps.risk.outputs.tier == 'rust' || steps.risk.outputs.tier == 'full'
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Cache the devshell Nix store
+        if: steps.risk.outputs.tier == 'rust' || steps.risk.outputs.tier == 'full'
         uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6.1.3
         with:
           primary-key: nix-devshell-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix') }}
@@ -42,20 +54,30 @@ jobs:
           purge-created: 0
           purge-primary-key: never
 
-      - name: Cache cargo registry and build artifacts
+      - name: Cache cargo registry
+        if: steps.risk.outputs.tier == 'rust' || steps.risk.outputs.tier == 'full'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            target
-          key: cargo-gate-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
-          restore-keys: |
-            cargo-gate-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
-            cargo-gate-${{ runner.os }}-
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
 
-      - name: Run repository gate
+      - name: Run documentation smoke gate
+        if: steps.risk.outputs.tier == 'docs'
+        run: node --test tests/repository/change-tier-contract.test.mjs
+
+      - name: Run hermetic repository harness gate
+        if: steps.risk.outputs.tier == 'harness'
+        run: ./run.sh repository --strict
+
+      - name: Run Rust gate
+        if: steps.risk.outputs.tier == 'rust'
+        run: nix develop --command ./run.sh core --strict
+
+      - name: Run full repository gate
+        if: steps.risk.outputs.tier == 'full'
         run: nix develop --command ./run.sh --light --strict
 
   nix-build:
@@ -76,10 +98,22 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Classify changed paths
+        id: risk
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          tier="$(node scripts/ci/change-tier.mjs --base "$BASE_SHA" --head "$HEAD_SHA")"
+          printf 'tier=%s\n' "$tier" >> "$GITHUB_OUTPUT"
+          printf 'Selected CI tier: %s\n' "$tier"
+
       - name: Install Nix
+        if: steps.risk.outputs.tier == 'full'
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Cache the package-build Nix store
+        if: steps.risk.outputs.tier == 'full'
         uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6.1.3
         with:
           primary-key: nix-build-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix', 'Cargo.lock') }}
@@ -91,7 +125,13 @@ jobs:
           purge-primary-key: never
 
       - name: Build the locked Nix package
+        if: steps.risk.outputs.tier == 'full'
         run: nix build --print-build-logs
 
       - name: Build Digital Passport presentation artifacts
+        if: steps.risk.outputs.tier == 'full'
         run: nix build .#presentation-compact-artifacts --print-build-logs
+
+      - name: Record skipped package build
+        if: steps.risk.outputs.tier != 'full'
+        run: printf 'Locked package build is not required for the %s tier.\n' '${{ steps.risk.outputs.tier }}'

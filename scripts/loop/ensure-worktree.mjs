@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
+import { runManagedChild } from "../lib/managed-child-process.mjs";
 import { enforceSingleBase, readLongOptionValues } from "../lib/pinned-dev-loops-args.mjs";
 
 const INTEGRATION_BASE = "origin/integration";
@@ -83,15 +84,11 @@ export async function runEnsureWorktree(argv = process.argv.slice(2), {
   const args = normalizeLinkedWorktreeContext(normalizeWorktreeArgs(argv));
   const resolved = await resolveDevLoopsPackageRoot({ cwd });
   const script = path.join(resolved.packageRoot, "scripts", "loop", "ensure-worktree.mjs");
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, ...args], { cwd, stdio: ["inherit", "pipe", "pipe"] });
-    child.stdout.pipe(stdout, { end: false });
-    child.stderr.pipe(stderr, { end: false });
-    child.once("error", reject);
-    child.once("close", (code, signal) => {
-      if (signal) reject(new Error(`ensure-worktree terminated by ${signal}`));
-      else resolve(code ?? 1);
-    });
+  return runManagedChild(process.execPath, [script, ...args], {
+    cwd,
+    stdout,
+    stderr,
+    label: "ensure-worktree",
   });
 }
 

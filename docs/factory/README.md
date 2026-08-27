@@ -13,6 +13,7 @@ current-head review evidence are the delivery gates.
 | [claim-protocol.md](claim-protocol.md) | Decentralized claim/lease protocol so agents on different machines never double-work an item. |
 | [metrics.md](metrics.md) | The measurements the factory watches and the current baselines. |
 | [runbook.md](runbook.md) | Phase 1 operations: what is installed, the three concurrency mechanisms, the label profile, and what refuses to work by design. |
+| [productive-loop.md](productive-loop.md) | Time-to-main SLOs, validation tiers, review limits, and worktree/disk lifecycle. |
 
 Tooling lives in [`.pi/extensions/factory.ts`](../../.pi/extensions/factory.ts)
 (a [pi](https://pi.dev) repo-local extension) so any engineer or agent with the
@@ -29,10 +30,11 @@ any LLM provider.
 3. **Provider-agnostic.** Roles reference capabilities, never a specific LLM.
    Model selection is configuration (`.pi/settings.json`, `.devloops`
    persona `defaultModel`), not process.
-4. **Evidence before merge.** The owner authorizes clean `integration` merges
-   after all gates pass and fresh independent Claude CLI current-head evidence
-   is posted. `.devloops` deliberately requires neither human nor CODEOWNERS
-   approval; release, settings, and ADR authority remain human.
+4. **Proportional evidence before a human merge.** Stable required contexts run
+   a conservative docs/harness/Rust/full tier. Independent Claude CLI
+   current-head evidence is added for high-risk work, an owner request, or a
+   disputed finding. `.devloops` always stops at merge; release, settings, and
+   ADR authority remain human.
 
 ## Historical field experience, 2026-08-18 to 2026-08-20
 

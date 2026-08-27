@@ -6,10 +6,10 @@ How to actually run the factory on this repository. The charter says *why*
 ([charter.md](charter.md)), the FSM says *what state work is in*
 ([fsm.md](fsm.md)); this says *what to type* and *what will refuse to work*.
 
-Phase 1 is deliberately narrow: **many agents review, and only clean,
-evidence-complete changes merge.** The owner authorizes clean `integration`
-merges after the mandatory independent current-head review and all other gates;
-nothing routes through a coordination server.
+Phase 1 is deliberately narrow: **bounded review, risk-tiered validation, and a
+human merge.** Routine changes use two draft lenses and two final lenses;
+independent current-head review is reserved for high-risk work. Nothing routes
+through a coordination server.
 
 ## What is installed, and from where
 
@@ -21,13 +21,12 @@ nothing routes through a coordination server.
 | `@input-output-hk/agent-review-pi` | `0.5.0` | same, **GitHub Packages — needs a token** |
 | `agent-review` loader skill | repository | `.pi/skills/agent-review/SKILL.md` |
 
-The devshell's `shellHook` reads `.pi/settings.json`, compares each pinned
-version against `.pi/npm/node_modules/<pkg>/package.json`, and installs only
-what is missing or mismatched. Two properties worth knowing: it is skipped
-entirely when `CI` is set, because CI never needs Pi tooling and the block
-performs unpinned network installs; and the private review package is skipped
-with a printed notice when no token is present, so the shell still works
-without one.
+The devshell's `shellHook` reads `.pi/settings.json`, compares each exact pin
+against the common checkout's `.pi/npm/node_modules/<pkg>/package.json`, and
+installs only what is missing or mismatched. Linked worktrees reuse that one
+installation instead of creating a mutable package tree each. CI skips Pi
+tooling entirely. The private review package is skipped with a printed notice
+when no token is present, so the shell still works without one.
 
 **To get the review package**, export a GitHub token with `read:packages`
 before entering the shell — `GITHUB_TOKEN`, `GH_TOKEN`, or `GH_TOKENS` are all
@@ -68,13 +67,15 @@ This is the part most likely to be misread, because all three look like
 
 | | What fans out | Configured in | Who decides |
 | --- | --- | --- | --- |
-| **Gate fan-out** | Review **angles** over one diff — `scope`, `correctness`, `coverage`, `architecture`, `security` | `.devloops` → `refinement.fanOut: 3`, `mode: parallel`, `roles` | dev-loops, automatically at a gate |
+| **Gate fan-out** | Review **angles** over one diff — draft `scope`/`correctness`, final `correctness`/`security` | `.devloops` → `refinement.fanOut: 2`, `mode: parallel`, `roles` | dev-loops, automatically at a gate |
 | **Sub-agent delegation** | Child **pi sessions** with their own jobs | `pi-subagents`, prompt-driven — no config file | the agent, when asked |
 | **Panel review** | Multiple **requested reviewers** on a PR | GitHub review requests + the `ai-review` label | a human, by requesting review |
 
 **Gate fan-out** is the one that runs without being asked. `refinement.fanOut`
 is how many angle reviews run concurrently; `roles` is the pool they are drawn
-from. `gates.maxFanoutReviewers: 8` caps it.
+from. Both refinement and gate concurrency are capped at two. Low-signal
+refinement stops after two quiet rounds instead of spending a third round to
+rediscover the same result.
 
 **Sub-agent delegation** ships six builtins — `scout` (codebase recon),
 `researcher` (external facts with sources), `worker` (implementation),
@@ -145,11 +146,8 @@ undetectable later. The check that matters is `gates` parsing.
 
 ## What will refuse to work, by design
 
-- **No unevidenced merge.** `autonomy.humanMergeOnly: false` and `stopAt: []`
-  explicitly override local-first's human-only defaults because the owner has
-  authorized clean `integration` merges. There is no human handoff or
-  CODEOWNERS approval requirement. Authorization remains conditional on every
-  current-head gate passing and its evidence being posted before merge.
+- **No automated merge.** `autonomy.humanMergeOnly: true` and `stopAt: [merge]`
+  are fixed boundaries. Automation may prepare a clean PR but cannot merge it.
 - **Fan-out must show its work.** `gates.requireFanoutEvidence: true` and
   `requireFanoutProvenance: true` — a gate must record not just that five
   angles reported, but which reviewer produced which finding. Provenance is what
@@ -157,19 +155,14 @@ undetectable later. The check that matters is `gates` parsing.
   under several angle names.
 - **Foreign angles are rejected.** `gates.rejectForeignAngles: true`, so an
   angle name not in the configured set cannot smuggle itself into evidence.
-- **Draft first.** `workflow.requireDraftFirst: true`, and
-  `requireRetrospective: true`.
+- **Draft first, without a CI stall.** `workflow.requireDraftFirst: true`, but
+  the draft gate uses `requireCi: false`; hosted CI is required once at
+  pre-approval. Routine work does not require a retrospective.
 - **No Copilot gate.** `refinement.maxCopilotRounds: 0` keeps unavailable
-  Copilot review disabled. `external-review` is nevertheless configured as an
-  angle in both `gates.draft` and `gates.preApproval`. That angle requires a
-  manually invoked independent Claude CLI review pinned to the exact current
-  head and records a local attestation in the local gate; it is not a hosted GitHub
-  check. It also does not authenticate reviewer identity or provide
-  dev-loops-native provenance.
-  Run `scripts/review/claude-current-head.mjs` from a clean worktree as
-  documented in `docs/dev-loop-stability.md`. Any push invalidates that
-  attestation, and the fresh attestation must be posted to the pull request
-  before merge. See `docs/integration-delivery.md`.
+  Copilot review disabled. A manually invoked Claude CLI review is reserved for
+  high-risk `full` changes, an owner request, or a disputed finding. It is not a hosted GitHub check and does not authenticate reviewer identity. Run
+  `scripts/review/claude-current-head.mjs` once on the final clean head as
+  documented in `docs/dev-loop-stability.md`.
 
 ## One decision still needed from the owner
 
@@ -181,7 +174,7 @@ provider-agnostic goal — a cheap model for mechanical angles, a strong one for
 It is unset because `dev-loops@0.9.0` ships **no defaults for it and documents
 no model-identifier format**, so any value written here would be a guess that
 fails at dispatch rather than at load. Closing it needs one decision naming real
-identifiers for the conductor and for each of the five roles. Until then every
+identifiers for the conductor and for the bounded roles. Until then every
 angle runs on whatever the session's default model is, which works but wastes
 the cheapest available saving.
 
@@ -192,17 +185,28 @@ the same pass.
 
 `copyOnInit` / `linkOnInit` provision **gitignored** files into a fresh
 worktree. Oxid needs neither: the Compact and ZK artifact closures arrive as
-devshell environment exports rather than files, `.envrc` is tracked, and
-`target/` and `.direnv/` must not be shared between worktrees — `.direnv`
-carries absolute paths and `target` is both huge and machine-specific. The only
-remaining candidate is `.pi/npm/node_modules`, which the schema explicitly warns
-against targeting.
+devshell environment exports rather than files, `.envrc` is tracked, and raw
+`target/` and `.direnv/` trees must not be shared. The devshell instead points
+every worktree at one bounded 10 GiB `sccache`; disposable worktree targets stay
+isolated. The Pi runtime resolver and devshell both reuse the common checkout's
+single `.pi/npm` installation without symlinking it into worktrees.
 
 Recorded here because an empty section and a considered absence look identical
 in a diff.
 
 ## Operating notes
 
+- **Keep one remote candidate active.** `.devloops` sets `queue.maxParallel: 1`.
+  Batch accepted findings locally and push a coherent candidate instead of
+  invalidating CI and exact-head evidence after every small edit.
+- **Audit before creating another worktree.** `node scripts/worktree-lifecycle.mjs
+  audit` lists target size, cleanliness, merge state, and age. `remove` and
+  `clean-target` require an exact path, expected head SHA, and `--execute`;
+  removal additionally requires a clean head merged to `origin/integration`
+  and seven days of retention.
+- **Restart after harness changes.** A running Pi process retains its loaded
+  extensions and instructions. Stop it, preserve its branch/head, then restart
+  after changing `.pi/`, `.devloops`, or their installed pins.
 - **Space out merges.** CI uses `cancel-in-progress`, so several merges in quick
   succession cancel intermediate `integration` runs and leave only the tip verified.
   Either pace them or state explicitly that verification is tip-only.
