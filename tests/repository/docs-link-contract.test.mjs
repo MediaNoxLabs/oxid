@@ -83,7 +83,7 @@ test("candidate integration blob validation fails for missing and ambiguous targ
 
 test("candidate scanning ignores code examples and trims prose punctuation", () => {
   const live = `${INTEGRATION_BLOB_PREFIX}docs/adr/0104-example.md#decision`;
-  const markdown = `A live URL ${live}.\n\n\`inline ${INTEGRATION_BLOB_PREFIX}secret.md\`\n\n\`\`\`text\n${INTEGRATION_BLOB_PREFIX}fenced.md\n\`\`\``;
+  const markdown = `A live URL ${live}.\n\n\`inline ${INTEGRATION_BLOB_PREFIX}secret.md\`\n\n    ${INTEGRATION_BLOB_PREFIX}indented.md\n\n\`\`\`text\n${INTEGRATION_BLOB_PREFIX}fenced.md\n\`\`\`\n\n~~~text\n${INTEGRATION_BLOB_PREFIX}unclosed.md`;
   assert.deepEqual(candidateIntegrationUrls(markdown), [live]);
 });
 

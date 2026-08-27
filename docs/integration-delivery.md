@@ -102,6 +102,13 @@ require these exact status checks:
 - `scan`
 - `Check documentation links`
 
+Candidate pull requests may introduce same-repository links whose durable
+`blob/integration/` destination does not exist on the base yet. The documentation
+link wrapper validates only that exact URL prefix against tracked regular files
+in the candidate checkout, rejects ambiguous or escaping paths, and remaps those
+targets to local files for Lychee. This is a candidate substitution, not an
+exclusion: every other URL retains Lychee's normal validation.
+
 The workflow-contract test protects these names and trigger semantics in the
 repository; branch rules are owner-managed GitHub state and must be verified
 separately after changes. Ruleset `21481544` must continue to prohibit updates,

@@ -21,7 +21,8 @@ function markdownWithoutCode(markdown) {
       fence = null;
       lines.push("");
     } else {
-      lines.push(fence ? "" : line.replace(/(`+)[^`\n]*\1/gu, ""));
+      const indentedCode = !fence && /^(?: {4}|\t)/u.test(line);
+      lines.push(fence || indentedCode ? "" : line.replace(/(`+)[^`\n]*\1/gu, ""));
     }
   }
   return lines.join("\n");
