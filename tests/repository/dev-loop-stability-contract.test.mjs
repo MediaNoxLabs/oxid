@@ -16,7 +16,11 @@ import {
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeDevLoopsArgs, runDevLoops } from "../../scripts/dev-loops.mjs";
-import { normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
+import { inferSubagentAvailability, runPreFlightGate } from "../../scripts/loop/pre-flight-gate.mjs";
+import { normalizeLinkedWorktreeContext, normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
+import { summarizeCurrentCi } from "../../scripts/lib/ci-check-selection.mjs";
+import { validateFanoutRepairEvidence } from "../../scripts/lib/gate-evidence-repair.mjs";
+import { resolveCanonicalReviewRoute } from "../../scripts/lib/review-routing.mjs";
 import {
   assertMinimumGhVersion,
   assertTimelinePages,
@@ -247,6 +251,40 @@ test("preflight scans all installed pinned package agents, ignores notes, and in
   );
 });
 
+test("selected dev-loop hook validates active and future-child tool scopes without the edit/write false positive", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  await writeFile(path.join(fixture.root, ".pi", "agents", "dev-loop.agent.md"), [
+    "---", "name: dev-loop", "tools: read, grep, find, ls, bash, subagent", "---", "fixture",
+  ].join("\n"));
+  await writeFile(path.join(fixture.packageRoot, "agents", "dev-loop.agent.md"), [
+    "---", "name: dev-loop", "tools: read, search, execute, bash, subagent", "---", "fixture",
+  ].join("\n"));
+  const settings = JSON.parse(await readFile(path.join(fixture.root, ".pi", "settings.json"), "utf8"));
+  const handlers = new Map();
+  const pi = {
+    getAllTools: () => ["read", "grep", "find", "ls", "bash", "subagent"].map((name) => ({ name })),
+    getActiveTools: () => ["read", "grep", "find", "ls", "bash", "subagent"],
+    on: (event, handler) => handlers.set(event, handler),
+  };
+  let manifestRevision = 0;
+  registerDevLoopPreflight(pi, {
+    env: { PI_SUBAGENT_CHILD_AGENT: "dev-loop" },
+    resolve: async () => ({ packageRoot: fixture.packageRoot, gitRoot: fixture.root, settings }),
+    check: checkAgentToolAllowlists,
+    cacheKey: async ({ activeAgent, activeTools, futureTools }) => JSON.stringify({ activeAgent, activeTools, futureTools, manifestRevision }),
+  });
+  const ctx = { cwd: fixture.root, ui: { notify: assert.fail }, abort() {} };
+  await handlers.get("before_agent_start")({
+    systemPromptOptions: { selectedTools: ["read", "grep", "find", "ls", "bash", "subagent"] },
+  }, ctx);
+  await handlers.get("before_provider_request")({}, ctx);
+
+  await writeFile(path.join(fixture.packageRoot, "agents", "auditor.agent.md"), "---\nname: auditor\ntools: [read, web_search]\n---\n");
+  manifestRevision += 1;
+  await assert.rejects(handlers.get("before_provider_request")({}, ctx), /auditor@package:dev-loops:future-child=\[web_search\]/);
+});
+
 test("tracked extension registers once and blocks invalid allowlists before launch", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
@@ -258,6 +296,7 @@ test("tracked extension registers once and blocks invalid allowlists before laun
     on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
   };
   const runtime = {
+    env: { PI_SUBAGENT_CHILD_AGENT: "developer" },
     resolve: async () => ({ packageRoot: fixture.packageRoot, gitRoot: fixture.root, settings }),
     check: checkAgentToolAllowlists,
     cacheKey: async () => "fixture-invalid",
@@ -368,6 +407,7 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.doesNotMatch(reviewTools, /\b(?:bash|edit|write)\b/, "review shadow exposes only read-only inspection tools");
   const devLoop = await read(".pi/agents/dev-loop.agent.md");
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
+  assert.match(devLoop, /review-routing\.mjs.*never request or await Copilot/s);
   assert.doesNotMatch(devLoop, /~\/.pi|npm root -g|require\.resolve\(['"]dev-loops|<dev-loops-package-root>\/cli\/index\.mjs/);
   const review = await read(".pi/agents/review.agent.md");
   assert.doesNotMatch(review, /\bgh api\b|\bgit (?:diff|log)\b/);
@@ -407,6 +447,9 @@ test("pinned pi-subagents runtime applies git-root project-agent precedence", as
 });
 
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {
+  assert.deepEqual(normalizeDevLoopsArgs(["--help"]), ["help"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["-h"]), ["help"]);
+  assert.throws(() => normalizeDevLoopsArgs(["--help", "pr", "create"]), /unsupported leading/);
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), ["pr", "create", "--head", "topic", "--base", "integration"]);
   assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic"]), ["--silent", "pr", "create-draft", "--head", "topic", "--base", "integration"]);
   assert.deepEqual(normalizeDevLoopsArgs(["-s", "pr", "create", "--head", "topic"]), ["-s", "pr", "create", "--head", "topic", "--base", "integration"]);
@@ -425,6 +468,181 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--base", "origin/main"]), /must use origin\/integration/);
 });
 
+test("linked worktree context is rewritten to the main checkout and rejects nested targets", async (t) => {
+  const root = await realMkdtemp("oxid-worktree-context-");
+  const unusual = path.join(root, "checkout with spaces");
+  const target = path.join(unusual, "tmp", "worktrees", "dev-loops", "issue-150");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(unusual, { recursive: true });
+  execFileSync("git", ["init", "--quiet"], { cwd: unusual });
+  execFileSync("git", ["config", "user.name", "Fixture"], { cwd: unusual });
+  execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: unusual });
+  await writeFile(path.join(unusual, "tracked"), "base\n");
+  execFileSync("git", ["add", "tracked"], { cwd: unusual });
+  execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: unusual });
+  execFileSync("git", ["worktree", "add", "--quiet", "-b", "issue-150", target], { cwd: unusual });
+
+  const rewritten = normalizeLinkedWorktreeContext(["--repo-root", target, "--issue", "150"]);
+  assert.equal(optionAfter(rewritten, "--repo-root"), await realpath(unusual));
+  assert.equal(optionAfter(rewritten, "--issue"), "150");
+  assert.throws(
+    () => normalizeLinkedWorktreeContext(["--repo-root", target, "--issue", "151"]),
+    /refusing nested worktree creation.*canonical target/s,
+  );
+});
+
+function optionAfter(args, option) {
+  const index = args.indexOf(option);
+  return index >= 0 ? args[index + 1] : args.find((arg) => arg.startsWith(`${option}=`))?.slice(option.length + 1);
+}
+
+test("tracked pre-flight wrapper reports Pi child dispatch availability deterministically", async (t) => {
+  assert.equal(inferSubagentAvailability({ PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "1", PI_SUBAGENT_MAX_DEPTH: "2" }), "1");
+  assert.equal(inferSubagentAvailability({ PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "2", PI_SUBAGENT_MAX_DEPTH: "2" }), "0");
+  assert.equal(inferSubagentAvailability({ DEVLOOPS_SUBAGENT_AVAILABLE: "0", PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "1", PI_SUBAGENT_MAX_DEPTH: "2" }), "0");
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const script = path.join(fixture.packageRoot, "scripts", "loop", "pre-flight-gate.mjs");
+  await writeFile(script, "process.stdout.write(JSON.stringify({available:process.env.DEVLOOPS_SUBAGENT_AVAILABLE}) + '\\n');\n");
+  const output = [];
+  const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
+  assert.equal(await runPreFlightGate(["--check-subagents"], {
+    cwd: fixture.root,
+    env: { ...process.env, PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "1", PI_SUBAGENT_MAX_DEPTH: "2" },
+    stdout: sink,
+    stderr: sink,
+  }), 0);
+  assert.deepEqual(JSON.parse(output.join("")), { available: "1" });
+});
+
+test("attempt-aware CI selection makes the newest same-name attempt authoritative", () => {
+  const check = (id, status, conclusion) => ({ id, name: "PR title", app: { id: 1 }, status, conclusion, started_at: `2026-08-20T00:00:0${id}Z` });
+  assert.equal(summarizeCurrentCi({ checkRuns: [check(1, "completed", "failure"), check(2, "completed", "success")], statuses: [] }).ciStatus, "success");
+  assert.deepEqual(summarizeCurrentCi({ checkRuns: [check(1, "completed", "success"), check(2, "completed", "failure")], statuses: [] }), {
+    ciStatus: "failure",
+    failedChecks: [{ name: "PR title", conclusion: "failure" }],
+  });
+  assert.equal(summarizeCurrentCi({ checkRuns: [check(1, "completed", "failure"), check(2, "in_progress", null)], statuses: [] }).ciStatus, "pending");
+  assert.equal(summarizeCurrentCi({
+    checkRuns: [check(1, "completed", "failure"), check(2, "in_progress", null), { ...check(3, "completed", "failure"), name: "security" }],
+    statuses: [],
+  }).ciStatus, "failure", "a different current failure is not hidden by a retry");
+});
+
+test("repository watch-ci route applies attempt-aware selection end to end", async (t) => {
+  const root = await realMkdtemp("oxid-watch-ci-");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fakeGh = path.join(root, "gh");
+  await writeFile(fakeGh, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "--version") process.stdout.write("gh version 2.97.0 (fixture)\\n");
+else if (args[0] === "pr") process.stdout.write(JSON.stringify({headRefOid:"${"a".repeat(40)}"}));
+else if (args.at(-1).includes("check-runs")) process.stdout.write(JSON.stringify({check_runs:[
+  {id:1,name:"PR title",app:{id:1},status:"completed",conclusion:"failure"},
+  {id:2,name:"PR title",app:{id:1},status:"completed",conclusion:"success"}
+]}));
+else if (args.at(-1).includes("/status?")) process.stdout.write(JSON.stringify({statuses:[]}));
+else process.exit(9);
+`);
+  await chmod(fakeGh, 0o755);
+  const output = [];
+  const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
+  const priorPath = process.env.PATH;
+  process.env.PATH = `${root}${path.delimiter}${priorPath ?? ""}`;
+  try {
+    assert.equal(await runDevLoops(["loop", "watch-ci", "--repo", "owner/repo", "--pr", "1", "--timeout-ms", "0"], {
+      cwd: repoRoot,
+      stdout: sink,
+      stderr: sink,
+    }), 0);
+  } finally {
+    if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath;
+  }
+  assert.equal(JSON.parse(output.join("")).status, "success");
+});
+
+test("current-head inline evidence upgrade preserves findings and validates provenance", () => {
+  const nowMs = Date.parse("2026-08-20T00:10:00Z");
+  const headSha = "a".repeat(40);
+  const existing = {
+    visible: true,
+    contractComplete: true,
+    headSha,
+    verdict: "clean",
+    executionMode: "inline_single_agent",
+    commentId: 42,
+  };
+  const reviewer = (reviewerId, angle, verdict = "clean", findings = []) => ({
+    reviewerId,
+    angle,
+    verdict,
+    findings,
+    artifactSha256: reviewerId === "one" ? "1".repeat(64) : "2".repeat(64),
+    completedAt: "2026-08-20T00:08:00Z",
+  });
+  const provenance = {
+    schemaVersion: 1,
+    gate: "draft_gate",
+    headSha,
+    generatedAt: "2026-08-20T00:09:00Z",
+    reviewers: [reviewer("one", "scope"), reviewer("two", "security")],
+  };
+  assert.equal(validateFanoutRepairEvidence({
+    existing,
+    requested: { gate: "draft_gate", headSha, verdict: "clean" },
+    provenance,
+    nowMs,
+  }).action, "upgrade");
+  const findingsProvenance = {
+    ...provenance,
+    reviewers: [reviewer("one", "scope", "findings", [{ severity: "must-fix", summary: "bad" }]), reviewer("two", "security")],
+  };
+  assert.equal(validateFanoutRepairEvidence({
+    existing,
+    requested: { gate: "draft_gate", headSha, verdict: "findings" },
+    provenance: findingsProvenance,
+    nowMs,
+  }).findingCount, 1);
+  assert.throws(() => validateFanoutRepairEvidence({
+    existing,
+    requested: { gate: "draft_gate", headSha: "b".repeat(40), verdict: "clean" },
+    provenance,
+    nowMs,
+  }), /exact current.*head SHA/);
+  assert.throws(() => validateFanoutRepairEvidence({
+    existing,
+    requested: { gate: "draft_gate", headSha, verdict: "clean" },
+    provenance: { ...provenance, reviewers: [reviewer("one", "scope"), reviewer("one", "security")] },
+    nowMs,
+  }), /identities.*distinct/);
+  assert.equal(validateFanoutRepairEvidence({
+    existing: { ...existing, executionMode: "fanout_fanin" },
+    requested: { gate: "draft_gate", headSha, verdict: "clean" },
+    provenance,
+    nowMs,
+  }).action, "noop");
+  assert.throws(() => validateFanoutRepairEvidence({
+    existing: { ...existing, verdict: "findings" },
+    requested: { gate: "draft_gate", headSha, verdict: "clean" },
+    provenance,
+    nowMs,
+  }), /cannot turn findings into clean/);
+});
+
+test("review routing has one canonical zero-round fallback and preserves required review", () => {
+  assert.deepEqual(resolveCanonicalReviewRoute({ maxCopilotRounds: 0, mandatoryAngles: ["external-review"], copilotAvailable: false }), {
+    route: "external-review",
+    action: "run_independent_current_head_review",
+    preservesRequiredReview: true,
+  });
+  assert.equal(resolveCanonicalReviewRoute({ maxCopilotRounds: 2, mandatoryAngles: ["external-review"], copilotAvailable: true }).route, "copilot");
+  assert.throws(
+    () => resolveCanonicalReviewRoute({ maxCopilotRounds: 0, mandatoryAngles: [], copilotAvailable: false }),
+    /external-review is not mandatory/,
+  );
+});
+
 test("repository wrappers await child close and preserve trailing output", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
@@ -440,8 +658,8 @@ test("repository wrappers await child close and preserve trailing output", async
 
 test("GitHub compatibility enforces the supported CLI floor and REST capabilities", async (t) => {
   assert.deepEqual(parseGhVersion("gh version 2.97.0 (2026-08-14)"), [2, 97, 0]);
-  assert.deepEqual(assertMinimumGhVersion([2, 67, 0]), [2, 67, 0]);
-  assert.throws(() => assertMinimumGhVersion([2, 66, 9]), /unsupported; require >= 2\.67\.0/);
+  assert.deepEqual(assertMinimumGhVersion([2, 97, 0]), [2, 97, 0]);
+  assert.throws(() => assertMinimumGhVersion([2, 96, 9]), /unsupported; require >= 2\.97\.0.*nix develop/);
   assert.throws(() => parseGhVersion("not gh"), /could not parse/);
   const links = normalizeTimelinePullRequests([
     { event: "cross-referenced", source: { issue: { number: 71, html_url: "https://github.com/MediaNoxLabs/oxid/pull/71", pull_request: { url: "https://api.github.com/repos/MediaNoxLabs/oxid/pulls/71" } } } },
@@ -461,14 +679,14 @@ test("GitHub compatibility enforces the supported CLI floor and REST capabilitie
   const fakeGh = path.join(fixtureRoot, "gh");
   await writeFile(fakeGh, `#!/usr/bin/env node
 const args = process.argv.slice(2);
-if (args[0] === "--version") process.stdout.write("gh version 2.67.0 (fixture)\\n");
+if (args[0] === "--version") process.stdout.write("gh version 2.97.0 (fixture)\\n");
 else if (args.at(-1).endsWith("/timeline")) process.stdout.write(JSON.stringify([[{ event: "cross-referenced" }]]));
 else if (args.at(-1).endsWith("/issues/150")) process.stdout.write(JSON.stringify({ number: 150 }));
 else process.exit(9);
 `);
   await chmod(fakeGh, 0o755);
   const probe = preflightGh({ repository: "MediaNoxLabs/oxid", issue: 150, ghCommand: fakeGh });
-  assert.deepEqual(probe.version, [2, 67, 0]);
+  assert.deepEqual(probe.version, [2, 97, 0]);
   assert.equal(probe.timelinePages, 1);
   await writeFile(fakeGh, (await readFile(fakeGh, "utf8")).replace(
     'JSON.stringify([[{ event: "cross-referenced" }]])',

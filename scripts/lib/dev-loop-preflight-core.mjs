@@ -4,10 +4,32 @@ import {
   checkAgentToolAllowlists,
   devLoopPreflightCacheKey,
   formatAgentToolAllowlistFailure,
+  PI_BUILTIN_CHILD_TOOLS,
   resolveDevLoopsPackageRoot,
 } from "./dev-loop-runtime.mjs";
 
 const registeredApis = new WeakSet();
+
+function toolNames(tools) {
+  if (!Array.isArray(tools)) return [];
+  return tools.flatMap((tool) => {
+    if (typeof tool === "string") return tool.trim() ? [tool.trim()] : [];
+    return typeof tool?.name === "string" && tool.name.trim() ? [tool.name.trim()] : [];
+  });
+}
+
+function resolveToolScopes(pi, runtime) {
+  const availableTools = toolNames(pi.getAllTools());
+  const env = runtime.env ?? process.env;
+  const activeAgent = runtime.activeAgent ?? env.PI_SUBAGENT_CHILD_AGENT;
+  const activeTools = toolNames(runtime.activeTools ?? pi.getActiveTools?.() ?? availableTools);
+  const depth = Number(env.PI_SUBAGENT_DEPTH);
+  const maximumDepth = Number(env.PI_SUBAGENT_MAX_DEPTH);
+  const canDispatchChild = availableTools.includes("subagent")
+    || (env.PI_SUBAGENT_CHILD === "1" && Number.isInteger(depth) && Number.isInteger(maximumDepth) && depth < maximumDepth);
+  const futureTools = [...new Set([...PI_BUILTIN_CHILD_TOOLS, ...availableTools, ...(canDispatchChild ? ["subagent"] : [])])];
+  return { availableTools, activeAgent, activeTools, futureTools };
+}
 
 export async function runDevLoopPreflight(pi, cwd, runtime = {}) {
   try {
@@ -16,15 +38,15 @@ export async function runDevLoopPreflight(pi, cwd, runtime = {}) {
     const cacheKey = runtime.cacheKey ?? devLoopPreflightCacheKey;
     const cache = runtime.cache;
     const resolved = await resolve({ cwd, includeAllPinnedPackages: true });
-    const availableTools = pi.getAllTools().map((tool) => tool.name);
-    const key = cache ? await cacheKey({ resolved, availableTools }) : undefined;
+    const scopes = resolveToolScopes(pi, runtime);
+    const key = cache ? await cacheKey({ resolved, ...scopes }) : undefined;
     if (key !== undefined && cache.has(key)) return cache.get(key);
     const result = await checkAllowlists({
       packageRoot: resolved.packageRoot,
       packageRoots: resolved.packageRoots,
       projectRoot: resolved.gitRoot,
       settings: resolved.settings,
-      availableTools,
+      ...scopes,
     });
     const checked = result.ok
       ? { ok: true }
@@ -51,7 +73,8 @@ export default function devLoopPreflight(pi, runtime = {}) {
   if (registeredApis.has(pi)) return;
   registeredApis.add(pi);
   const cache = runtime.cache ?? new Map();
-  const check = (cwd) => runDevLoopPreflight(pi, cwd, { ...runtime, cache });
+  let providerScopes;
+  const check = (cwd, scopes = {}) => runDevLoopPreflight(pi, cwd, { ...runtime, ...scopes, cache });
 
   pi.on("input", async (_event, ctx) => {
     const result = await check(ctx.cwd);
@@ -60,15 +83,16 @@ export default function devLoopPreflight(pi, runtime = {}) {
     return { action: "continue" };
   });
 
-  pi.on("before_agent_start", async (_event, ctx) => {
-    const result = await check(ctx.cwd);
+  pi.on("before_agent_start", async (event, ctx) => {
+    providerScopes = { activeTools: event?.systemPromptOptions?.selectedTools };
+    const result = await check(ctx.cwd, providerScopes);
     if (result.ok) return;
     ctx.ui.notify(result.message, "error");
     ctx.abort();
   });
 
   pi.on("before_provider_request", async (_event, ctx) => {
-    const result = await check(ctx.cwd);
+    const result = await check(ctx.cwd, providerScopes);
     if (result.ok) return;
     ctx.abort();
     throw new Error(result.message);

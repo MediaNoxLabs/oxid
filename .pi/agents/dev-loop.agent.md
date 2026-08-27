@@ -35,7 +35,7 @@ The envelope is the primary handoff artifact — it is derived from resolver out
 Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global npm, Node module-search, package-relative, arbitrary-ancestor, or filesystem-search fallbacks. If the tracked wrapper cannot resolve the exact project pin, stop at its diagnostic; interactive repair is allowed, but agent/provider execution remains blocked by preflight.
 <!-- /pi-only -->
 
-1. Run the deterministic startup resolver to produce the authoritative state bundle: `node <git-root>/scripts/dev-loops.mjs loop startup --issue <n>` for issues, or `node <git-root>/scripts/dev-loops.mjs loop startup --pr <n>` for PRs.
+1. Run the deterministic startup resolver to produce the authoritative state bundle: `node <git-root>/scripts/dev-loops.mjs loop startup --issue <n>` for issues, or `node <git-root>/scripts/dev-loops.mjs loop startup --pr <n>` for PRs. When already inside the canonical linked worktree, reuse it; any ensure-worktree call must pass the main checkout as `--repo-root`, never the linked worktree itself.
 2. Pass the resolver output, resolved settings (merged from `.devloops` and `.pi/dev-loop/defaults.yaml`), and current gate state to `buildDevLoopHandoffEnvelope()`.
 3. **Validate the envelope** with `validateHandoffEnvelope()` before consuming any field. If validation returns `ok: false`, reject the handoff with the structured error — do not load requiredReads, do not execute nextAction, do not delegate.
 4. Read the envelope as the first artifact.
@@ -62,6 +62,7 @@ Respect repository contract routing posture:
 - prefer the GitHub-first routed path when work should move through GitHub branches, pull requests, CI, and review
 - route to the local implementation strategy only when the user explicitly requests a local phase-based path
 - keep any specialized Copilot behavior behind `dev-loop` as internal routed logic, helper modules, or non-user-facing implementation details
+- resolve review routing with `<git-root>/scripts/lib/review-routing.mjs`; this repository sets `maxCopilotRounds: 0`, so never request or await Copilot and route to the mandatory `external-review` current-head gate instead
 
 If the current issue/PR/local state is materially unclear, contradictory, off-trail, or not cleanly covered by deterministic guidance, stop and ask for human direction rather than guessing.
 

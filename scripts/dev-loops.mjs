@@ -12,6 +12,7 @@ const INTEGRATION_BASE = "integration";
 
 /** Force the base on dev-loops' public PR create route and deprecated alias. */
 export function normalizeDevLoopsArgs(argv) {
+  if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) return ["help"];
   const args = [...argv];
   const route = pinnedPublicRoute(args);
   const isPrCreate = route.category === "pr" && (route.command === "create" || route.command === "create-draft");
@@ -27,10 +28,20 @@ export async function runDevLoops(argv = process.argv.slice(2), {
   stderr = process.stderr,
 } = {}) {
   const args = normalizeDevLoopsArgs(argv);
-  const resolved = await resolveDevLoopsPackageRoot({ cwd });
-  const cli = path.join(resolved.packageRoot, "cli", "index.mjs");
+  const route = pinnedPublicRoute(args);
+  let cli;
+  let childArgs;
+  if (route.category === "loop" && route.command === "watch-ci") {
+    cli = fileURLToPath(new URL("./github/watch-ci.mjs", import.meta.url));
+    const routeIndex = args.findIndex((argument, index) => argument === "loop" && args[index + 1] === "watch-ci");
+    childArgs = [...args.slice(0, routeIndex), ...args.slice(routeIndex + 2)];
+  } else {
+    const resolved = await resolveDevLoopsPackageRoot({ cwd });
+    cli = path.join(resolved.packageRoot, "cli", "index.mjs");
+    childArgs = args;
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cli, ...args], { cwd, stdio: ["inherit", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [cli, ...childArgs], { cwd, stdio: ["inherit", "pipe", "pipe"] });
     child.stdout.pipe(stdout, { end: false });
     child.stderr.pipe(stderr, { end: false });
     child.once("error", reject);
