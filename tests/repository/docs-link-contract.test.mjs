@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -82,6 +82,21 @@ test("candidate integration blob validation fails for missing and ambiguous targ
   }
 });
 
+test("candidate integration blob validation rejects tracked symlink targets", async () => {
+  const root = tempDir();
+  try {
+    git(root, "init", "-q", "-b", "candidate");
+    mkdirSync(path.join(root, "docs"), { recursive: true });
+    writeFileSync(path.join(root, "README.md"), `[link](${INTEGRATION_BLOB_PREFIX}docs/link.md)\n`);
+    writeFileSync(path.join(root, "outside.md"), "# Outside\n");
+    symlinkSync("../outside.md", path.join(root, "docs", "link.md"));
+    git(root, "add", "README.md", "outside.md", "docs/link.md");
+    await assert.rejects(validateCandidateLinks(root), /not a regular file/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("candidate scanning ignores code examples and trims prose punctuation", () => {
   const live = `${INTEGRATION_BLOB_PREFIX}docs/adr/0104-example.md#decision`;
   const markdown = `A live URL ${live}.\n\n\`inline ${INTEGRATION_BLOB_PREFIX}secret.md\`\n\n    ${INTEGRATION_BLOB_PREFIX}indented.md\n\n\`\`\`text\n${INTEGRATION_BLOB_PREFIX}fenced.md\n\`\`\`\n\n~~~text\n${INTEGRATION_BLOB_PREFIX}unclosed.md`;
@@ -92,8 +107,8 @@ test("Lychee remaps only the same-repository integration prefix and still checks
   const args = buildLycheeArgs(repoRoot);
   const remapIndex = args.indexOf("--remap");
   assert.notEqual(remapIndex, -1);
-  assert.match(args[remapIndex + 1], /^https:\/\/github\\\.com\/MediaNoxLabs\/oxid\/blob\/integration\/ file:\/\//);
-  const remap = new RegExp(`^${INTEGRATION_BLOB_REMAP_PATTERN}`);
+  assert.match(args[remapIndex + 1], /^\^https:\/\/github\\\.com\/MediaNoxLabs\/oxid\/blob\/integration\/ file:\/\//);
+  const remap = new RegExp(INTEGRATION_BLOB_REMAP_PATTERN);
   assert.equal(remap.test(INTEGRATION_BLOB_PREFIX), true);
   assert.equal(remap.test("https://githubXcom/MediaNoxLabs/oxid/blob/integration/docs/adr/0104.md"), false);
   assert.equal(args.at(-1), "./**/*.md");

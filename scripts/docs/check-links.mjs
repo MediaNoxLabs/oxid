@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const INTEGRATION_BLOB_PREFIX = "https://github.com/MediaNoxLabs/oxid/blob/integration/";
-export const INTEGRATION_BLOB_REMAP_PATTERN = String.raw`https://github\.com/MediaNoxLabs/oxid/blob/integration/`;
+export const INTEGRATION_BLOB_REMAP_PATTERN = String.raw`^https://github\.com/MediaNoxLabs/oxid/blob/integration/`;
 
 function markdownWithoutCode(markdown) {
   let fence = null;
