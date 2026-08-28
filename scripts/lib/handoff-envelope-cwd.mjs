@@ -54,6 +54,11 @@ function canonicalTargets(target, commonRoot, core) {
   if (target?.kind === "pr") {
     return [core.resolveWorktreePath({ repoRoot: commonRoot, kind: "pr", number: target.pr })];
   }
+  if (target?.kind === "local_branch") {
+    const slug = core.buildWorktreeSlug(target, target.kind);
+    if (!slug) throw new Error("handoff envelope local_branch target has no canonical worktree identity");
+    return [path.join(commonRoot, core.WORKTREE_NAMESPACE, slug)];
+  }
   if (target?.kind === "local_phase") {
     const slug = core.buildWorktreeSlug(target, target.kind);
     if (!slug) throw new Error("handoff envelope local_phase target has no canonical worktree identity");
@@ -119,13 +124,21 @@ export async function normalizeHandoffEnvelopeCwd(envelope, resolved, core) {
     throw new Error("handoff envelope checkout path does not match its realpath");
   }
 
+  const isMainCheckout = gitRoot === commonRoot;
+  if (isMainCheckout && (typeof envelope.cwd !== "string" || envelope.cwd.trim() === "")) {
+    throw new Error("handoff envelope cwd is required for a main-checkout invocation");
+  }
+  if (isMainCheckout && !path.isAbsolute(envelope.cwd)) {
+    throw new Error(`handoff envelope cwd must be absolute: ${envelope.cwd}`);
+  }
+
   const worktrees = await listedWorktrees(commonRoot);
+  const canonical = canonicalTargets(envelope.target, commonRoot, core);
   let cwd;
-  if (gitRoot === commonRoot) {
-    cwd = path.resolve(envelope.cwd ?? "");
-    await assertOwnedOrProspective(cwd, { commonRoot, canonical: [cwd], worktrees });
+  if (isMainCheckout) {
+    cwd = path.resolve(envelope.cwd);
+    await assertOwnedOrProspective(cwd, { commonRoot, canonical, worktrees });
   } else {
-    const canonical = canonicalTargets(envelope.target, commonRoot, core);
     if (!worktrees.includes(gitRoot)) throw new Error(`invocation checkout is not an owned Git worktree: ${gitRoot}`);
     if (!canonical.includes(gitRoot)) {
       throw new Error(`invocation worktree disagrees with resolver target: ${gitRoot}`);

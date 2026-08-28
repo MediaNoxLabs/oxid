@@ -115,10 +115,16 @@ Other unknown leading options remain rejected. The tracked `loop build-envelope`
 route is authoritative for handoff construction: it uses the exact pinned parser,
 builder, jq emitter, and validator, loads `.devloops` from the invoking candidate
 checkout, and normalizes only the cwd boundary against Git's common-checkout
-worktree topology. An identity-matching canonical issue, PR, or phase checkout is
-reused; foreign, symlinked, missing invocation, mismatched, ambiguous, or
-nested-namespace checkout topology fails before an envelope is emitted. A
-canonical absent target derived from the main checkout remains a prospective
+worktree topology. Main-checkout and linked-worktree invocations both derive
+authorized paths from the resolver's issue, PR, local-branch, or phase target; a
+candidate cwd never authorizes itself. An identity-matching canonical checkout
+is reused;
+`local_branch` retains the pinned core's flattened canonical slug, while target
+kinds that the repository adapter does not model fail closed. Foreign,
+symlinked, missing/relative cwd, mismatched, ambiguous, or nested-namespace
+checkout topology fails before an envelope is emitted.
+
+A canonical absent target derived from the main checkout remains a prospective
 path under the common root. `loop watch-ci` is
 delegated unchanged to `dev-loops@0.9.0`; this repository does not intercept CI
 selection.
