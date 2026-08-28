@@ -78,6 +78,22 @@ git commit -S --signoff -m "feat(wallet): add profile creation"
 ./scripts/check-dco.sh "$(git merge-base HEAD origin/integration)" HEAD
 ```
 
+Install the repository-scoped local hooks once per clone:
+
+```bash
+git config user.signingkey "YOUR_OPENPGP_KEY_ID"
+./bootstrap.sh --configure-git
+./bootstrap.sh --check
+```
+
+The hooks check signing configuration before a commit, reject an invalid
+Conventional Commit or missing exact DCO trailer in `commit-msg`, and
+cryptographically verify the complete outgoing issue-branch range in
+`pre-push` before any objects are transferred. They never add the legal DCO
+attestation automatically: continue to use `--signoff`/`-s`. Local hooks are
+developer feedback, not a trust boundary; the hosted gate still verifies the
+exact PR range and GitHub's OpenPGP result.
+
 By adding the `Signed-off-by` trailer, you certify the contribution under the
 [Developer Certificate of Origin 1.1](https://developercertificate.org/).
 

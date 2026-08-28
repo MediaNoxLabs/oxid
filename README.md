@@ -105,13 +105,18 @@ The bootstrap wrapper also starts the pinned Pi installation, validates its
 project-local review integration, or runs a one-off command in the shell:
 
 ```bash
+./bootstrap.sh --configure-pi
+./bootstrap.sh --configure-git
 ./bootstrap.sh --pi
 ./bootstrap.sh --check
 ./bootstrap.sh -- cargo test --workspace
 ```
 
-It does not read, print, or persist credentials. The Nix shell remains the
-single package-provisioning boundary; `nix develop` continues to work directly.
+The Git-hook installer requires an already configured author identity and
+OpenPGP signing-key selection; it never reads or generates the key. The
+bootstrap does not read, print, or persist credentials. The Nix shell remains
+the single package-provisioning boundary; `nix develop` continues to work
+directly.
 
 Launch the desktop shell:
 

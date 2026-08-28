@@ -43,6 +43,7 @@ done
 run_repository() {
   require_command node
   node --test tests/repository/contribution-policy-contract.test.mjs
+  node --test tests/repository/local-git-hooks-contract.test.mjs
   node --test tests/repository/factory-metrics-contract.test.mjs
   node --test tests/repository/pi-factory-policy-contract.test.mjs
   node --test tests/repository/integration-delivery-contract.test.mjs

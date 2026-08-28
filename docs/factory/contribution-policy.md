@@ -74,6 +74,31 @@ the OpenPGP envelope in the Git object and GitHub's cryptographic verification
 result. An SSH or S/MIME “Verified” badge does not satisfy this repository's
 OpenPGP rule.
 
+### Local enforcement
+
+`./bootstrap.sh --configure-git` installs the tracked `pre-commit`,
+`commit-msg`, and `pre-push` dispatchers into private Git-common state and sets
+repository-local `commit.gpgSign=true` plus `gpg.format=openpgp`. The common
+installation is stable when a linked worktree is removed and carries a
+version-checked copy of the tracked policy, so old and new worktrees do not
+load different hook logic. Existing foreign `core.hooksPath` configuration is
+never overwritten. Re-run the configuration command after a tracked hook or
+policy update; `./bootstrap.sh --check` reports a stale installed bundle.
+
+The commit hook checks signing configuration, Git itself aborts a normal commit
+when OpenPGP signing fails, and the message hook rejects a non-conventional
+subject or missing exact DCO trailer. The push hook permits issue branches
+only, derives their complete range from the locally fetched
+`<remote>/integration`, checks every commit, and runs `git verify-commit` before
+Git transfers objects. It ignores deletions and rejects tag, protected-branch,
+stale-base, malformed, empty, or oversized ranges. Run `git fetch origin
+integration` before pushing.
+
+Hooks can be bypassed with Git's `--no-verify` and a command-line
+`--no-gpg-sign` can override the signing default. Therefore hooks are early
+feedback, never merge evidence. The trusted hosted workflow remains the final
+authority for the exact PR head and GitHub account/key association.
+
 Dependabot and Renovate are exempt only from DCO certification, and only when
 both the PR actor and commit author match the closed bot policy. Their commits
 still require conventional subjects and GitHub-verified OpenPGP signatures. A

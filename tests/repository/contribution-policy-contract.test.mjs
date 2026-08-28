@@ -9,6 +9,7 @@ import {
   labelsForSubject,
   parseConventionalSubject,
   validateBranchName,
+  validateCommitMessage,
   validateCommitEvidence,
   validateHostedCommits,
   validatePullRequest,
@@ -106,6 +107,20 @@ test("commit evidence requires exact DCO identity and an OpenPGP envelope", () =
     authorEmail: "bot@example.com",
     actor: "dependabot[bot]",
   }).ok, true);
+});
+
+test("local message policy validates DCO and subject before a signature object exists", () => {
+  const result = validateCommitMessage({
+    message: "feat(factory): enforce local hooks\n\nSigned-off-by: Factory Agent <agent@example.com>\n",
+    authorName: "Factory Agent",
+    authorEmail: "agent@example.com",
+  });
+  assert.equal(result.ok, true);
+  assert.equal(validateCommitMessage({
+    message: "feat: missing scope",
+    authorName: "Factory Agent",
+    authorEmail: "agent@example.com",
+  }).ok, false);
 });
 
 test("hosted commit evidence is exact-head, unique, and GitHub-verified OpenPGP", () => {
