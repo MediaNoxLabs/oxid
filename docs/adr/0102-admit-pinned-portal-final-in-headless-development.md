@@ -123,3 +123,42 @@ profile and is bounded by the strict offer router, explicit holder consent, and
 full issuer DID/method/JWK trust, credential-proof, and holder-binding
 verification before encrypted storage. ADR-0103 separately governs the
 HTTPS-authenticated physical Android conformance profile.
+
+## Corrective amendment — 2026-08-28
+
+The original Evidence section above is historical and is superseded for
+`just portal-headless-e2e`. That target no longer checks out or starts the
+Portal repository, a Portal service, a production issuer, Smocker, or DIDIT.
+It now uses an Oxid-owned ephemeral HTTP mock implementing only the strict
+issuer metadata, authorization metadata, token, nonce, credential, and issuer
+resolution contract. The mock creates valid signed credential bytes and a
+detached proof with Oxid's `StandaloneBoundCompactCredentialIssuer`; DIDIT is
+not a live or transitive service dependency of the test profile.
+
+One native `oxid-headless` process is admitted to combine the authenticated
+Portal-shaped issuer profile with only the exact local standalone bundle:
+network `undeployed`, canonical `127.0.0.1` indexer v4 WebSocket/HTTP, node and
+proof-server routes, and the public standalone placeholder address. The
+ordinary environment constructor remains fail-closed for this combination, so
+desktop and production composition are unchanged. Partial, alternate,
+read-only, remote, resolver-overridden, checkpointed, locally proving,
+submission-journal, Passport Vault, and presentation-artifact combinations are
+rejected.
+
+The journey proves explicit consent and zero token/nonce/credential calls when
+consent is false, then preserves the pending issuance while that same process
+synchronizes through the local indexer. Its numeric live height is compared
+with an independent indexer-v4 query within a bounded advancing-tip delta.
+After consent it requires a managed authentication method, a separate managed
+Jubjub binding, valid import, encrypted persistence, process restart, listing,
+and fresh reverification. Docker container/service/image identity must be
+unchanged before evidence is published.
+
+The resulting evidence proves `indexer-sync` only. Node and proof-server
+readiness checks are prerequisites, not observations of headless node or prover
+use, and those interactions remain explicitly unproven. It is not evidence of
+real Portal interoperability, DIDIT or KYC, production discovery/trust, an
+on-chain issuer DID, chain writes, proving, submission, desktop behavior,
+mobile/emulator/physical flows, tailnet behavior, issue #162, Lace changes, or
+release readiness. Existing mobile Portal lifecycle and stack ownership remain
+unchanged.

@@ -175,6 +175,17 @@ impl MidnightStandaloneConfig {
         &self.indexer_http_url
     }
 
+    /// Includes the current indexer block height in public-account sync results.
+    ///
+    /// The additional read uses only the already validated indexer HTTP route.
+    #[must_use]
+    pub fn with_account_chain_tip_observation(mut self) -> Self {
+        self.indexer = self
+            .indexer
+            .with_validated_chain_tip_http_url(self.indexer_http_url.clone());
+        self
+    }
+
     #[must_use]
     pub fn node_websocket_url(&self) -> &str {
         &self.node_websocket_url

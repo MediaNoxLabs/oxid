@@ -3,38 +3,61 @@
 #![forbid(unsafe_code)]
 
 use std::{
+    collections::BTreeMap,
     fs,
     io::{BufRead as _, BufReader, Read as _, Write as _},
-    net::{SocketAddr, TcpListener, TcpStream},
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use base64::{Engine as _, engine::general_purpose};
 use futures::executor::block_on;
-use oxid_adapter_did_midnight::{HttpDidResolver, HttpDidResolverConfig};
-use oxid_adapter_platform_system::SystemClock;
-use oxid_adapter_vc_midnight::{
-    DigitalPassportIssuerTrustAnchor, MidnightCredentialVerifier, convert_portal_private_parts,
+use oxid_adapter_did_midnight::{
+    STANDALONE_COMPACT_PASSPORT_ISSUER_DID, StandaloneDidResolver, resolution_to_json_value,
 };
-use oxid_credential_application::CredentialVerificationPort as _;
+use oxid_adapter_platform_system::SystemClock;
+use oxid_adapter_vc_midnight::StandaloneBoundCompactCredentialIssuer;
+use oxid_credential_application::{BoundCredentialIssuerPort as _, BoundCredentialRequest};
 use oxid_identity_application::DidResolutionPort as _;
 use oxid_identity_domain::MidnightDid;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 
-const PORTAL_INTEGRATION_COMMIT: &str = "22ae5369b6f939e6b20648f4b85dd993527748ef";
-const PORTAL_INTEGRATION_TREE: &str = "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10";
-const PORTAL_PROVENANCE_SHA256: &str =
-    "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87";
-const PORTAL_ISSUER_RESOLVER: &str = "http://127.0.0.1:9092";
+const ISSUER_METHOD: &str = "did:midnight:undeployed:a4c9483a0c7cdd808056a93334ab97207b38b4363d1da5cbfb78ad256cd689f0#issuer-key-1";
+const ISSUER_X: &str = "r3S3KuAV2Y2wviagxqTsKNuUFmqHlVjfWwQvZaV_pQA";
+const ISSUER_Y: &str = "b8GewrvMw5hldx4dBHZSAqBhYb_p7bVdcVqC2FU08mM";
+const PRE_AUTHORIZED_CODE: &str = "OXID_PHASE1_PRE_AUTHORIZED_CODE";
+const ACCESS_TOKEN: &str = "OXID_PHASE1_ACCESS_TOKEN";
+const NONCE: &str = "OXID_PHASE1_NONCE";
+const INDEXER_WS: &str = "ws://127.0.0.1:8088/api/v4/graphql/ws";
+const INDEXER_HTTP: &str = "http://127.0.0.1:8088/api/v4/graphql";
+const NODE_WS: &str = "ws://127.0.0.1:9944";
+const PROOF_SERVER: &str = "http://127.0.0.1:6300";
+const STANDALONE_ADDRESS: &str =
+    "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
+const MAX_HEADERS_BYTES: usize = 64 * 1024;
+const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+const MAX_HEIGHT_DELTA: u64 = 4;
+const EXCLUDED_ENVIRONMENT: [&str; 10] = [
+    "OXID_MIDNIGHT_PROVING_CACHE_DIR",
+    "OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH",
+    "OXID_MIDNIGHT_DUST_CHECKPOINT_PATH",
+    "OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH",
+    "OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH",
+    "OXID_MIDNIGHT_DID_RESOLVER_URL",
+    "OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT",
+    "OXID_PASSPORT_VAULT_COMPOSER",
+    "OXID_PASSPORT_VAULT_STORE_PATH",
+    "OXID_PRESENTATION_ARTIFACTS_DIR",
+];
 
 struct RuntimeCleanup(PathBuf);
 
@@ -45,14 +68,16 @@ impl Drop for RuntimeCleanup {
 }
 
 struct ProcessHarness {
-    child: Child,
+    child: Option<Child>,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
+    error: BufReader<ChildStderr>,
 }
 
 impl ProcessHarness {
-    fn spawn(root: &Path, manifest: &Path, digest: &str) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_oxid-headless"))
+    fn spawn(root: &Path, manifest: &Path, manifest_digest: &str) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        command
             .env("OXID_PROFILE_STORE_PATH", root.join("profiles.json"))
             .env("OXID_DID_STORE_PATH", root.join("private/did-records.json"))
             .env(
@@ -64,32 +89,28 @@ impl ProcessHarness {
                 root.join("private/credentials.key"),
             )
             .env("OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH", manifest)
-            .env("OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256", digest)
-            .env_remove("OXID_MIDNIGHT_NETWORK_ID")
-            .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
-            .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
-            .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
-            .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
-            .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
-            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
-            .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
-            .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
-            .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
-            .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
-            .env_remove("OXID_MIDNIGHT_DID_RESOLVER_URL")
-            .env_remove("OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT")
-            .env_remove("OXID_PASSPORT_VAULT_COMPOSER")
-            .env_remove("OXID_PASSPORT_VAULT_STORE_PATH")
-            .env_remove("OXID_PRESENTATION_ARTIFACTS_DIR")
+            .env(
+                "OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256",
+                manifest_digest,
+            )
+            .env("OXID_MIDNIGHT_NETWORK_ID", "undeployed")
+            .env("OXID_MIDNIGHT_INDEXER_WS_URL", INDEXER_WS)
+            .env("OXID_MIDNIGHT_INDEXER_HTTP_URL", INDEXER_HTTP)
+            .env("OXID_MIDNIGHT_NODE_WS_URL", NODE_WS)
+            .env("OXID_MIDNIGHT_PROOF_SERVER_URL", PROOF_SERVER)
+            .env("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", STANDALONE_ADDRESS)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("headless process");
+            .stderr(Stdio::piped());
+        for key in EXCLUDED_ENVIRONMENT {
+            command.env_remove(key);
+        }
+        let mut child = command.spawn().expect("headless process should start");
         Self {
-            input: child.stdin.take().expect("stdin"),
-            output: BufReader::new(child.stdout.take().expect("stdout")),
-            child,
+            input: child.stdin.take().expect("headless stdin"),
+            output: BufReader::new(child.stdout.take().expect("headless stdout")),
+            error: BufReader::new(child.stderr.take().expect("headless stderr")),
+            child: Some(child),
         }
     }
 
@@ -99,292 +120,180 @@ impl ProcessHarness {
             &json!({"protocol":"oxid.headless.v1","id":id,"method":method,"params":params}),
         )
         .expect("request JSON");
-        self.input.write_all(b"\n").expect("newline");
-        self.input.flush().expect("flush");
+        self.input.write_all(b"\n").expect("request newline");
+        self.input.flush().expect("request flush");
         let mut line = String::new();
-        self.output.read_line(&mut line).expect("response");
-        assert!(!line.is_empty(), "headless process exited");
+        self.output.read_line(&mut line).expect("response read");
+        assert!(
+            !line.is_empty(),
+            "headless process exited before responding"
+        );
         serde_json::from_str(&line).expect("response JSON")
     }
 
-    fn quit(mut self) {
+    fn quit(mut self) -> String {
         assert_eq!(self.request("quit", "system.quit", json!({}))["ok"], true);
-        assert!(self.child.wait().expect("wait").success());
+        let mut child = self.child.take().expect("running child");
+        assert!(child.wait().expect("headless wait").success());
+        let mut stderr = String::new();
+        self.error.read_to_string(&mut stderr).expect("stderr read");
+        stderr
     }
 }
 
-struct PortalLifecycle {
-    script: PathBuf,
-    source: PathBuf,
-    state: PathBuf,
-}
-
-impl PortalLifecycle {
-    fn start(script: PathBuf, source: PathBuf, state: PathBuf, issuer: &str, holder: &str) -> Self {
-        let status = Command::new(&script)
-            .arg("up")
-            .env("PORTAL_INTEGRATION_CHECKOUT", &source)
-            .env("OXID_PORTAL_CONSUMER_STATE_DIR", &state)
-            .env("PORTAL_ISSUER_URL", issuer)
-            .env("PORTAL_HOLDER_RESOLVER_URL", holder)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("Portal consumer lifecycle");
-        assert!(status.success(), "Portal consumer lifecycle failed");
-        Self {
-            script,
-            source,
-            state,
-        }
-    }
-}
-
-impl Drop for PortalLifecycle {
+impl Drop for ProcessHarness {
     fn drop(&mut self) {
-        let status = Command::new(&self.script)
-            .arg("down")
-            .env("PORTAL_INTEGRATION_CHECKOUT", &self.source)
-            .env("OXID_PORTAL_CONSUMER_STATE_DIR", &self.state)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        if !std::thread::panicking() {
-            assert!(status.is_ok_and(|status| status.success()));
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }
 
-struct PortalProxy {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MockCounters {
+    issuer_metadata: u8,
+    authorization_metadata: u8,
+    token: u8,
+    nonce: u8,
+    credential: u8,
+    issuer_resolution: u8,
+}
+
+impl MockCounters {
+    fn increment(value: &mut u8) {
+        *value = value.checked_add(1).expect("mock call counter is bounded");
+        assert!(*value <= 8, "mock call counter exceeded its bound");
+    }
+}
+
+struct MockIssuer {
     origin: String,
-    captured_credential_response: Arc<Mutex<Option<Value>>>,
-    stop: Arc<AtomicBool>,
-    completion: Option<mpsc::Receiver<()>>,
-    thread: Option<thread::JoinHandle<()>>,
-}
-
-impl PortalProxy {
-    fn spawn() -> Self {
-        Self::spawn_with_upstream(SocketAddr::from(([127, 0, 0, 1], 8090)))
-    }
-
-    fn spawn_with_upstream(upstream_address: SocketAddr) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("Portal observation proxy");
-        listener.set_nonblocking(true).expect("nonblocking proxy");
-        let port = listener.local_addr().expect("proxy address").port();
-        let captured_credential_response: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
-        let thread_capture = Arc::clone(&captured_credential_response);
-        let stop = Arc::new(AtomicBool::new(false));
-        let thread_stop = Arc::clone(&stop);
-        let (completion_sender, completion_receiver) = mpsc::sync_channel(1);
-        let handle = thread::spawn(move || {
-            while !thread_stop.load(Ordering::Relaxed) {
-                let (mut incoming, _) = match listener.accept() {
-                    Ok(value) => value,
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(5));
-                        continue;
-                    }
-                    Err(error) => panic!("Portal proxy accept: {error}"),
-                };
-                if thread_stop.load(Ordering::Relaxed) {
-                    break;
-                }
-                incoming
-                    .set_nonblocking(false)
-                    .expect("blocking proxy stream");
-                set_stream_timeouts(&incoming);
-                let (path, _, raw_request) = read_raw_request(&mut incoming);
-                let mut upstream = TcpStream::connect(upstream_address).expect("Portal upstream");
-                set_stream_timeouts(&upstream);
-                upstream
-                    .write_all(&raw_request)
-                    .expect("Portal proxy request");
-                let raw_response = read_http_response(&mut upstream, 4 * 1024 * 1024);
-                if path == "/api/issuer/credentials"
-                    && let Some(split) = raw_response
-                        .windows(4)
-                        .position(|value| value == b"\r\n\r\n")
-                        .map(|index| index + 4)
-                    && std::str::from_utf8(&raw_response[..split])
-                        .is_ok_and(|headers| headers.starts_with("HTTP/1.1 200"))
-                    && let Ok(value) = serde_json::from_slice(&raw_response[split..])
-                {
-                    *thread_capture.lock().expect("capture") = Some(value);
-                }
-                incoming
-                    .write_all(&raw_response)
-                    .expect("Portal proxy downstream");
-            }
-            let _ = completion_sender.send(());
-        });
-        Self {
-            origin: format!("http://localhost:{port}"),
-            captured_credential_response,
-            stop,
-            completion: Some(completion_receiver),
-            thread: Some(handle),
-        }
-    }
-}
-
-impl Drop for PortalProxy {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        let port = self
-            .origin
-            .rsplit(':')
-            .next()
-            .and_then(|value| value.parse::<u16>().ok())
-            .unwrap_or(0);
-        let _ = TcpStream::connect(("127.0.0.1", port));
-        let completed = self
-            .completion
-            .take()
-            .is_some_and(|completion| completion.recv_timeout(Duration::from_secs(2)).is_ok());
-        if completed && let Some(handle) = self.thread.take() {
-            let joined = handle.join();
-            if !thread::panicking() {
-                joined.expect("Portal proxy thread");
-            }
-        }
-        // A timed-out worker is detached rather than blocking unwinding. Its
-        // bounded socket read/write timeout will release it independently.
-        let _ = self.thread.take();
-    }
-}
-
-struct HolderResolver {
-    origin_for_container: String,
-    document: Arc<Mutex<Option<Value>>>,
+    counters: Arc<Mutex<MockCounters>>,
+    holder_sender: mpsc::SyncSender<BoundCredentialRequest>,
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
-impl HolderResolver {
+impl MockIssuer {
     fn spawn() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("holder resolver");
-        listener.set_nonblocking(true).expect("nonblocking");
-        let port = listener.local_addr().expect("address").port();
-        let document: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("mock issuer listener");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let origin = format!(
+            "http://{}",
+            listener.local_addr().expect("listener address")
+        );
+        let counters = Arc::new(Mutex::new(MockCounters::default()));
+        let thread_counters = Arc::clone(&counters);
         let stop = Arc::new(AtomicBool::new(false));
-        let thread_document = Arc::clone(&document);
         let thread_stop = Arc::clone(&stop);
-        let handle = thread::spawn(move || {
+        let thread_origin = origin.clone();
+        let (holder_sender, holder_receiver) = mpsc::sync_channel(1);
+        let thread = thread::spawn(move || {
             while !thread_stop.load(Ordering::Relaxed) {
                 let (mut stream, _) = match listener.accept() {
                     Ok(value) => value,
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(5));
+                        thread::sleep(Duration::from_millis(2));
                         continue;
                     }
-                    Err(error) => panic!("holder resolver accept: {error}"),
+                    Err(error) => panic!("mock issuer accept failed: {error}"),
                 };
                 if thread_stop.load(Ordering::Relaxed) {
                     break;
                 }
-                stream.set_nonblocking(false).expect("blocking stream");
+                stream
+                    .set_nonblocking(false)
+                    .expect("blocking mock issuer stream");
                 set_stream_timeouts(&stream);
-                let (path, body) = read_request(&mut stream);
-                let (status, response) = if path == "/health" {
-                    (200, json!({"ok":true}).to_string())
-                } else if path == "/resolve" {
-                    let requested: Value = serde_json::from_str(&body).expect("resolver body");
-                    let document = thread_document.lock().expect("document").clone();
-                    match document {
-                        Some(document) if requested["did"] == document["id"] => (
-                            200,
-                            json!({
-                                "didDocument":document,
-                                "didDocumentMetadata":{"deactivated":false},
-                                "didResolutionMetadata":{"contentType":"application/did+ld+json"}
-                            })
-                            .to_string(),
-                        ),
-                        _ => (
-                            404,
-                            json!({
-                                "didDocument":null,
-                                "didDocumentMetadata":{"deactivated":false},
-                                "didResolutionMetadata":{"error":"notFound"}
-                            })
-                            .to_string(),
-                        ),
-                    }
-                } else {
-                    (404, json!({"error":"not_found"}).to_string())
-                };
-                write!(
-                    stream,
-                    "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    if status == 200 { "OK" } else { "Not Found" },
-                    response.len(),
-                    response
-                )
-                .expect("holder resolver response");
+                let request = read_http_request(&mut stream);
+                let response =
+                    mock_response(request, &thread_origin, &thread_counters, &holder_receiver);
+                write_json_response(&mut stream, &response);
             }
         });
         Self {
-            origin_for_container: format!("http://host.docker.internal:{port}"),
-            document,
+            origin,
+            counters,
+            holder_sender,
             stop,
-            thread: Some(handle),
+            thread: Some(thread),
         }
     }
 
-    fn install(&self, headless_document: &Value) {
-        let methods = headless_document["verificationMethods"]
-            .as_array()
-            .expect("verification methods")
-            .iter()
-            .map(|method| {
-                json!({
-                    "id":method["id"],
-                    "type":"JsonWebKey",
-                    "controller":method["controller"],
-                    "publicKeyJwk":method["publicKeyJwk"]
-                })
-            })
-            .collect::<Vec<_>>();
-        let mut relationships = serde_json::Map::new();
-        for relationship in headless_document["relationships"]
-            .as_array()
-            .expect("relationships")
-        {
-            relationships.insert(
-                relationship["relationship"]
-                    .as_str()
-                    .expect("relationship name")
-                    .to_owned(),
-                relationship["methodIds"].clone(),
-            );
+    fn offer(&self) -> String {
+        let offer = json!({
+            "credential_issuer":self.origin,
+            "credential_configuration_ids":["digital_passport_v1"],
+            "grants":{
+                "urn:ietf:params:oauth:grant-type:pre-authorized_code":{
+                    "pre-authorized_code":PRE_AUTHORIZED_CODE
+                }
+            }
+        });
+        let mut url = url::Url::parse("openid-credential-offer://").expect("offer URL");
+        url.query_pairs_mut()
+            .append_pair("credential_offer", &offer.to_string());
+        url.into()
+    }
+
+    fn write_manifest(&self, path: &Path) -> String {
+        let jwk = json!({"crv":"Jubjub","kty":"EC","x":ISSUER_X,"y":ISSUER_Y});
+        let jwk_digest = hex::encode(Sha256::digest(serde_json::to_vec(&jwk).expect("JWK")));
+        let manifest = json!({
+            "integrationCommit":"22ae5369b6f939e6b20648f4b85dd993527748ef",
+            "integrationTree":"74d8d1a5b87c160ea554006e47d5f3edc3cd3e10",
+            "issuerDid":STANDALONE_COMPACT_PASSPORT_ISSUER_DID,
+            "issuerJubjubJwk":jwk,
+            "issuerJubjubJwkSha256":jwk_digest,
+            "issuerMethod":ISSUER_METHOD,
+            "issuerOrigin":self.origin,
+            "issuerResolverOrigin":self.origin,
+            "provenanceSha256":"cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87",
+            "schema":"oxid-portal-deployment-v3"
+        });
+        let bytes = serde_json::to_vec(&manifest).expect("manifest JSON");
+        fs::write(path, &bytes).expect("manifest file");
+        hex::encode(Sha256::digest(bytes))
+    }
+
+    fn provide_holder(&self, holder: BoundCredentialRequest) {
+        self.holder_sender
+            .send(holder)
+            .expect("one bounded holder response");
+    }
+
+    fn counters(&self) -> MockCounters {
+        *self.counters.lock().expect("mock counters")
+    }
+
+    fn stop(mut self) -> MockCounters {
+        self.stop.store(true, Ordering::Relaxed);
+        let _ = TcpStream::connect(self.origin.trim_start_matches("http://"));
+        if let Some(thread) = self.thread.take() {
+            thread.join().expect("mock issuer thread");
         }
-        let mut document = serde_json::Map::from_iter([
-            ("id".to_owned(), headless_document["id"].clone()),
-            ("verificationMethod".to_owned(), Value::Array(methods)),
-        ]);
-        document.extend(relationships);
-        *self.document.lock().expect("document") = Some(Value::Object(document));
+        self.counters()
     }
 }
 
-impl Drop for HolderResolver {
+impl Drop for MockIssuer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        let port = self
-            .origin_for_container
-            .rsplit(':')
-            .next()
-            .and_then(|value| value.parse::<u16>().ok())
-            .unwrap_or(0);
-        let _ = TcpStream::connect(("127.0.0.1", port));
-        if let Some(handle) = self.thread.take() {
-            let joined = handle.join();
-            if !thread::panicking() {
-                joined.expect("holder resolver thread");
-            }
+        let _ = TcpStream::connect(self.origin.trim_start_matches("http://"));
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
     }
+}
+
+struct HttpRequest {
+    method: String,
+    path: String,
+    headers: BTreeMap<String, String>,
+    body: Vec<u8>,
 }
 
 fn set_stream_timeouts(stream: &TcpStream) {
@@ -396,6 +305,276 @@ fn set_stream_timeouts(stream: &TcpStream) {
         .expect("write timeout");
 }
 
+fn read_http_request(stream: &mut TcpStream) -> HttpRequest {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    let header_end = loop {
+        let read = stream.read(&mut buffer).expect("request header read");
+        assert_ne!(read, 0, "complete request headers");
+        bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_HEADERS_BYTES,
+            "request headers too large"
+        );
+        if let Some(position) = bytes.windows(4).position(|value| value == b"\r\n\r\n") {
+            break position + 4;
+        }
+    };
+    let headers_text = std::str::from_utf8(&bytes[..header_end]).expect("request headers UTF-8");
+    let mut lines = headers_text.split("\r\n");
+    let mut request_line = lines.next().expect("request line").split_whitespace();
+    let method = request_line.next().expect("request method").to_owned();
+    let path = request_line.next().expect("request path").to_owned();
+    assert_eq!(request_line.next(), Some("HTTP/1.1"));
+    assert!(request_line.next().is_none());
+    let mut headers = BTreeMap::new();
+    for line in lines.filter(|line| !line.is_empty()) {
+        let (name, value) = line.split_once(':').expect("bounded HTTP header");
+        let name = name.to_ascii_lowercase();
+        assert!(headers.insert(name, value.trim().to_owned()).is_none());
+        assert!(headers.len() <= 32, "too many request headers");
+    }
+    assert!(!headers.contains_key("transfer-encoding"));
+    let content_length = headers
+        .get("content-length")
+        .map_or(0, |value| value.parse::<usize>().expect("Content-Length"));
+    assert!(
+        content_length <= MAX_REQUEST_BYTES,
+        "request body too large"
+    );
+    let target = header_end
+        .checked_add(content_length)
+        .expect("bounded request length");
+    assert!(bytes.len() <= target, "request exceeds Content-Length");
+    while bytes.len() < target {
+        let remaining = target - bytes.len();
+        let chunk_length = remaining.min(buffer.len());
+        let read = stream
+            .read(&mut buffer[..chunk_length])
+            .expect("request body read");
+        assert_ne!(read, 0, "complete request body");
+        bytes.extend_from_slice(&buffer[..read]);
+    }
+    HttpRequest {
+        method,
+        path,
+        headers,
+        body: bytes[header_end..target].to_vec(),
+    }
+}
+
+fn write_json_response(stream: &mut TcpStream, body: &str) {
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    )
+    .expect("mock issuer response");
+}
+
+fn exact_keys(object: &Map<String, Value>, expected: &[&str]) {
+    let actual = object.keys().map(String::as_str).collect::<Vec<_>>();
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    assert_eq!(actual, expected);
+}
+
+fn increment_counter(
+    counters: &Arc<Mutex<MockCounters>>,
+    select: impl FnOnce(&mut MockCounters) -> &mut u8,
+) {
+    let mut counters = counters.lock().expect("mock counters");
+    MockCounters::increment(select(&mut counters));
+}
+
+fn require_method_and_empty_body(request: &HttpRequest, method: &str) {
+    assert_eq!(request.method, method);
+    assert!(request.body.is_empty());
+}
+
+fn require_json_content_type(request: &HttpRequest) {
+    assert_eq!(
+        request.headers.get("content-type").map(String::as_str),
+        Some("application/json")
+    );
+}
+
+fn mock_response(
+    request: HttpRequest,
+    origin: &str,
+    counters: &Arc<Mutex<MockCounters>>,
+    holder_receiver: &mpsc::Receiver<BoundCredentialRequest>,
+) -> String {
+    match request.path.as_str() {
+        "/.well-known/openid-credential-issuer" => {
+            require_method_and_empty_body(&request, "GET");
+            increment_counter(counters, |value| &mut value.issuer_metadata);
+            json!({
+                "authorization_servers":[origin],
+                "credential_configurations_supported":{
+                    "digital_passport_v1":{
+                        "credential_metadata":{"display":[{"locale":"en","name":"Digital Passport"}]},
+                        "cryptographic_binding_methods_supported":["did"],
+                        "format":"midnight_cbor_phase1",
+                        "proof_types_supported":{"jwt":{"proof_signing_alg_values_supported":["EdDSA","ES256"]}},
+                        "scope":"digital-passport"
+                    }
+                },
+                "credential_endpoint":format!("{origin}/api/issuer/credentials"),
+                "credential_issuer":origin,
+                "nonce_endpoint":format!("{origin}/api/issuer/nonce")
+            })
+            .to_string()
+        }
+        "/.well-known/oauth-authorization-server" => {
+            require_method_and_empty_body(&request, "GET");
+            increment_counter(counters, |value| &mut value.authorization_metadata);
+            json!({
+                "grant_types_supported":["urn:ietf:params:oauth:grant-type:pre-authorized_code"],
+                "issuer":origin,
+                "pre-authorized_grant_anonymous_access_supported":true,
+                "token_endpoint":format!("{origin}/api/issuer/token")
+            })
+            .to_string()
+        }
+        "/api/issuer/token" => {
+            assert_eq!(request.method, "POST");
+            assert_eq!(
+                request.headers.get("content-type").map(String::as_str),
+                Some("application/x-www-form-urlencoded")
+            );
+            let fields = url::form_urlencoded::parse(&request.body)
+                .map(|(key, value)| (key.into_owned(), value.into_owned()))
+                .collect::<Vec<_>>();
+            assert_eq!(fields.len(), 2);
+            let fields = fields.into_iter().collect::<BTreeMap<_, _>>();
+            assert_eq!(fields.len(), 2);
+            assert_eq!(
+                fields.get("grant_type").map(String::as_str),
+                Some("urn:ietf:params:oauth:grant-type:pre-authorized_code")
+            );
+            assert_eq!(
+                fields.get("pre-authorized_code").map(String::as_str),
+                Some(PRE_AUTHORIZED_CODE)
+            );
+            increment_counter(counters, |value| &mut value.token);
+            json!({"access_token":ACCESS_TOKEN,"expires_in":300,"token_type":"Bearer"}).to_string()
+        }
+        "/api/issuer/nonce" => {
+            require_method_and_empty_body(&request, "POST");
+            increment_counter(counters, |value| &mut value.nonce);
+            json!({"c_nonce":NONCE,"c_nonce_expires_in":300}).to_string()
+        }
+        "/api/issuer/credentials" => {
+            assert_eq!(request.method, "POST");
+            require_json_content_type(&request);
+            assert_eq!(
+                request.headers.get("authorization").map(String::as_str),
+                Some("Bearer OXID_PHASE1_ACCESS_TOKEN")
+            );
+            let body: Value =
+                serde_json::from_slice(&request.body).expect("credential request JSON");
+            let root = body.as_object().expect("credential request object");
+            exact_keys(root, &["credential_configuration_id", "midnight", "proofs"]);
+            assert_eq!(body["credential_configuration_id"], "digital_passport_v1");
+            let midnight = body["midnight"]
+                .as_object()
+                .expect("Midnight request object");
+            exact_keys(midnight, &["holderBindingMethod"]);
+            let proofs = body["proofs"].as_object().expect("proofs object");
+            exact_keys(proofs, &["jwt"]);
+            let proof = body["proofs"]["jwt"]
+                .as_array()
+                .filter(|proofs| proofs.len() == 1)
+                .and_then(|proofs| proofs[0].as_str())
+                .expect("one proof JWT");
+            assert_eq!(proof.split('.').count(), 3);
+            let holder = holder_receiver
+                .recv_timeout(Duration::from_secs(10))
+                .expect("one transient holder response");
+            assert_eq!(
+                body["midnight"]["holderBindingMethod"],
+                holder.holder_binding_method_id
+            );
+            let bundle = block_on(
+                StandaloneBoundCompactCredentialIssuer::new(Arc::new(SystemClock))
+                    .issue(holder.clone()),
+            )
+            .expect("valid signed credential bundle");
+            increment_counter(counters, |value| &mut value.credential);
+            json!({
+                "credentials":[{
+                    "credential":general_purpose::URL_SAFE_NO_PAD.encode(bundle.signed_bytes),
+                    "midnight":{
+                        "credentialFamily":"digital-passport",
+                        "credentialPrivateParts":portal_private_parts(),
+                        "credentialProof":{
+                            "encoding":"compact-value-v1.base64url",
+                            "payload":general_purpose::URL_SAFE_NO_PAD.encode(bundle.detached_proof.expect("detached proof"))
+                        },
+                        "encoding":"compact-value-v1.base64url",
+                        "expiresAt":"2099-01-01T00:00:00Z",
+                        "hasExpiration":true,
+                        "holderBinding":{
+                            "challenge":NONCE,
+                            "holderDidMethod":{
+                                "did":holder.holder_did,
+                                "keyType":"jubjub",
+                                "methodId":holder.holder_binding_method_id
+                            },
+                            "method":"explicit_did_method"
+                        },
+                        "schemaId":"digital-passport:v1",
+                        "schemaVersion":"1.0"
+                    }
+                }]
+            })
+            .to_string()
+        }
+        "/resolve" => {
+            assert_eq!(request.method, "POST");
+            require_json_content_type(&request);
+            let body: Value = serde_json::from_slice(&request.body).expect("resolver request JSON");
+            let root = body.as_object().expect("resolver request object");
+            exact_keys(root, &["did"]);
+            assert_eq!(body["did"], STANDALONE_COMPACT_PASSPORT_ISSUER_DID);
+            let did =
+                MidnightDid::parse(STANDALONE_COMPACT_PASSPORT_ISSUER_DID).expect("issuer DID");
+            let resolution =
+                block_on(StandaloneDidResolver.resolve(&did)).expect("issuer resolution");
+            increment_counter(counters, |value| &mut value.issuer_resolution);
+            resolution_to_json_value(&resolution).to_string()
+        }
+        _ => panic!("unexpected mock issuer route"),
+    }
+}
+
+fn portal_private_parts() -> Value {
+    fn padded<const N: usize>(value: &[u8]) -> [u8; N] {
+        let mut output = [0_u8; N];
+        output[..value.len()].copy_from_slice(value);
+        output
+    }
+    let opening = |label: &[u8]| general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(label));
+    json!({
+        "claimValues":{
+            "firstNameValuePadded":general_purpose::URL_SAFE_NO_PAD.encode(padded::<64>(b"Alice")),
+            "lastNameValuePadded":general_purpose::URL_SAFE_NO_PAD.encode(padded::<64>(b"Example")),
+            "dateOfBirthDays":3650,
+            "documentNumberValue":general_purpose::URL_SAFE_NO_PAD.encode(padded::<32>(b"AB1234567")),
+            "issuingStateValue":general_purpose::URL_SAFE_NO_PAD.encode(padded::<32>(b"US"))
+        },
+        "openings":{
+            "firstNameOpening":opening(b"opening:first-name"),
+            "lastNameOpening":opening(b"opening:last-name"),
+            "dateOfBirthOpening":opening(b"opening:date-of-birth"),
+            "documentNumberOpening":opening(b"opening:document-number"),
+            "issuingStateOpening":opening(b"opening:issuing-state")
+        }
+    })
+}
+
 fn read_http_response(stream: &mut TcpStream, maximum_body_bytes: usize) -> Vec<u8> {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 4096];
@@ -403,13 +582,18 @@ fn read_http_response(stream: &mut TcpStream, maximum_body_bytes: usize) -> Vec<
         let read = stream.read(&mut buffer).expect("response header read");
         assert_ne!(read, 0, "complete response headers");
         bytes.extend_from_slice(&buffer[..read]);
-        assert!(bytes.len() <= 64 * 1024, "response headers too large");
+        assert!(
+            bytes.len() <= MAX_HEADERS_BYTES,
+            "response headers too large"
+        );
         if let Some(position) = bytes.windows(4).position(|value| value == b"\r\n\r\n") {
             break position + 4;
         }
     };
     let headers = std::str::from_utf8(&bytes[..header_end]).expect("response headers UTF-8");
-    let content_lengths = headers
+    assert!(headers.starts_with("HTTP/1.1 200"));
+    assert!(!headers.to_ascii_lowercase().contains("transfer-encoding:"));
+    let lengths = headers
         .lines()
         .filter_map(|line| {
             line.to_ascii_lowercase()
@@ -417,422 +601,177 @@ fn read_http_response(stream: &mut TcpStream, maximum_body_bytes: usize) -> Vec<
                 .and_then(|value| value.parse::<usize>().ok())
         })
         .collect::<Vec<_>>();
-    assert_eq!(content_lengths.len(), 1, "one Content-Length is required");
-    assert!(
-        !headers.to_ascii_lowercase().contains("transfer-encoding:"),
-        "ambiguous transfer framing is rejected"
-    );
-    let content_length = content_lengths[0];
-    assert!(
-        content_length <= maximum_body_bytes,
-        "response body too large"
-    );
+    assert_eq!(lengths.len(), 1);
+    let length = lengths[0];
+    assert!(length <= maximum_body_bytes, "response body too large");
     let target = header_end
-        .checked_add(content_length)
+        .checked_add(length)
         .expect("bounded response length");
     assert!(bytes.len() <= target, "response exceeds Content-Length");
     while bytes.len() < target {
         let remaining = target - bytes.len();
+        let chunk_length = remaining.min(buffer.len());
         let read = stream
-            .read({
-                let chunk_length = remaining.min(buffer.len());
-                &mut buffer[..chunk_length]
-            })
+            .read(&mut buffer[..chunk_length])
             .expect("response body read");
         assert_ne!(read, 0, "complete response body");
         bytes.extend_from_slice(&buffer[..read]);
     }
-    bytes
+    bytes[header_end..target].to_vec()
 }
 
-fn read_raw_request(stream: &mut TcpStream) -> (String, String, Vec<u8>) {
-    let mut bytes = Vec::new();
-    let mut buffer = [0_u8; 4096];
-    let header_end = loop {
-        let read = stream.read(&mut buffer).expect("request read");
-        assert_ne!(read, 0, "complete headers");
-        bytes.extend_from_slice(&buffer[..read]);
-        if let Some(position) = bytes.windows(4).position(|value| value == b"\r\n\r\n") {
-            break position + 4;
-        }
-    };
-    let headers = std::str::from_utf8(&bytes[..header_end])
-        .expect("headers")
-        .to_owned();
-    let length = headers
-        .lines()
-        .find_map(|line| {
-            line.to_ascii_lowercase()
-                .strip_prefix("content-length: ")
-                .and_then(|value| value.parse::<usize>().ok())
-        })
-        .unwrap_or(0);
-    while bytes.len() - header_end < length {
-        let read = stream.read(&mut buffer).expect("body read");
-        assert_ne!(read, 0, "complete body");
-        bytes.extend_from_slice(&buffer[..read]);
-    }
-    bytes.truncate(header_end + length);
-    let path = headers
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .expect("path")
-        .to_owned();
-    let body = String::from_utf8(bytes[header_end..].to_vec()).expect("body");
-    (path, body, bytes)
-}
-
-fn read_request(stream: &mut TcpStream) -> (String, String) {
-    let (path, body, _) = read_raw_request(stream);
-    (path, body)
-}
-
-fn portal_request(origin: &str, method: &str, path: &str, body: Option<&str>) -> Value {
-    let port = origin
-        .rsplit(':')
-        .next()
-        .and_then(|value| value.parse::<u16>().ok())
-        .expect("Portal proxy port");
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("Portal issuer connection");
+fn independent_indexer_height() -> u64 {
+    let mut stream = TcpStream::connect(("127.0.0.1", 8088)).expect("local indexer v4");
     set_stream_timeouts(&stream);
-    let body = body.unwrap_or("");
+    let body = br#"{"query":"query OxidPhase1Evidence { block { height } }"}"#;
     write!(
         stream,
-        "{method} {path} HTTP/1.1\r\nHost: localhost:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
+        "POST /api/v4/graphql HTTP/1.1\r\nHost: 127.0.0.1:8088\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
     )
-    .expect("Portal request");
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response).expect("Portal response");
-    let split = response
-        .windows(4)
-        .position(|value| value == b"\r\n\r\n")
-        .map(|index| index + 4)
-        .expect("Portal response headers");
+    .expect("indexer request headers");
+    stream.write_all(body).expect("indexer request body");
+    let response = read_http_response(&mut stream, 64 * 1024);
+    let value: Value = serde_json::from_slice(&response).expect("indexer response JSON");
     assert!(
-        std::str::from_utf8(&response[..split])
-            .expect("headers")
-            .starts_with("HTTP/1.1 200"),
-        "Portal request failed"
+        value
+            .get("errors")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
     );
-    serde_json::from_slice(&response[split..]).expect("Portal JSON")
+    value["data"]["block"]["height"]
+        .as_u64()
+        .expect("numeric indexer block height")
 }
 
-fn issuer_public_facts() -> (String, String, Value) {
-    let containers = Command::new("docker")
-        .args([
-            "ps",
-            "--quiet",
-            "--filter",
-            "label=com.docker.compose.project=oxid-portal-consumer",
-            "--filter",
-            "label=com.docker.compose.service=issuer",
-        ])
-        .output()
-        .expect("issuer container");
-    assert!(containers.status.success());
-    let container = String::from_utf8(containers.stdout)
-        .expect("container UTF-8")
-        .trim()
-        .to_owned();
-    assert!(!container.is_empty() && !container.contains(char::is_whitespace));
-    let output = Command::new("docker")
-        .args([
-            "exec",
-            &container,
-            "sh",
-            "-c",
-            r#"IFS= read -r value < /bootstrap/issuer-key-id; printf %s "$value""#,
-        ])
-        .output()
-        .expect("issuer key id");
-    assert!(output.status.success());
-    let method = String::from_utf8(output.stdout)
-        .expect("method UTF-8")
-        .trim()
-        .to_owned();
-    let did = method.split_once('#').expect("full method").0.to_owned();
-    let resolver = resolver_request(&did);
-    let methods = resolver["didDocument"]["verificationMethod"]
+fn authentication_and_binding(document: &Value) -> (String, String, BoundCredentialRequest) {
+    let holder_did = document["id"].as_str().expect("holder DID").to_owned();
+    let authentication = document["relationships"]
         .as_array()
-        .expect("issuer methods");
-    let jwk = methods
+        .expect("DID relationships")
         .iter()
-        .find(|value| value["id"] == method)
-        .and_then(|value| value.get("publicKeyJwk"))
-        .cloned()
-        .expect("issuer JWK");
-    (did, method, jwk)
-}
-
-fn resolver_request(did: &str) -> Value {
-    let mut stream = TcpStream::connect(("127.0.0.1", 9092)).expect("Portal resolver");
-    set_stream_timeouts(&stream);
-    let body = json!({"did":did}).to_string();
-    write!(
-        stream,
-        "POST /resolve HTTP/1.1\r\nHost: 127.0.0.1:9092\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    )
-    .expect("resolver request");
-    let response = read_http_response(&mut stream, 512 * 1024);
-    let split = response
-        .windows(4)
-        .position(|value| value == b"\r\n\r\n")
-        .map(|index| index + 4)
-        .expect("resolver headers");
-    serde_json::from_slice(&response[split..]).expect("resolver JSON")
-}
-
-fn write_manifest(
-    path: &Path,
-    issuer_origin: &str,
-    issuer_did: &str,
-    issuer_method: &str,
-    jwk: &Value,
-) -> String {
-    let jwk_digest = hex::encode(Sha256::digest(serde_json::to_vec(jwk).expect("JWK")));
-    let manifest = json!({
-        "integrationCommit":PORTAL_INTEGRATION_COMMIT,
-        "integrationTree":PORTAL_INTEGRATION_TREE,
-        "issuerDid":issuer_did,
-        "issuerJubjubJwk":jwk,
-        "issuerJubjubJwkSha256":jwk_digest,
-        "issuerMethod":issuer_method,
-        "issuerOrigin":issuer_origin,
-        "issuerResolverOrigin":PORTAL_ISSUER_RESOLVER,
-        "provenanceSha256":PORTAL_PROVENANCE_SHA256,
-        "schema":"oxid-portal-deployment-v3"
-    });
-    let bytes = serde_json::to_vec(&manifest).expect("manifest");
-    fs::write(path, &bytes).expect("manifest file");
-    hex::encode(Sha256::digest(bytes))
-}
-
-fn resolver_shape(value: &Value) -> String {
-    let keys = |value: &Value| {
-        value
-            .as_object()
-            .map(|object| object.keys().cloned().collect::<Vec<_>>().join("+"))
-            .unwrap_or_else(|| "non_object".to_owned())
-    };
-    let document = &value["didDocument"];
-    let first_method = document["verificationMethod"]
+        .find(|value| value["relationship"] == "authentication")
+        .and_then(|value| value["methodIds"][0].as_str())
+        .expect("managed authentication method")
+        .to_owned();
+    let binding = document["verificationMethods"]
         .as_array()
-        .and_then(|methods| methods.first());
-    let method_shape = first_method.map_or_else(|| "none".to_owned(), keys);
-    let method_type = first_method
-        .and_then(|method| method["type"].as_str())
-        .unwrap_or("none");
-    let key_type = first_method
-        .and_then(|method| method["publicKeyJwk"]["kty"].as_str())
-        .unwrap_or("none");
-    let curve = first_method
-        .and_then(|method| method["publicKeyJwk"]["crv"].as_str())
-        .unwrap_or("none");
-    let controller_kind = if document["controller"].is_string() {
-        "string"
-    } else if document["controller"].is_array() {
-        "array"
-    } else {
-        "other"
-    };
-    let kind = |value: &Value| match value {
-        Value::Null => "null",
-        Value::Bool(_) => "bool",
-        Value::Number(_) => "number",
-        Value::String(value) if value.is_empty() => "empty_string",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    };
-    format!(
-        "root={};document={};resolution_meta={};document_meta={};context={};method={};method_type={method_type};kty={key_type};crv={curve};controller_kind={controller_kind};assertion_count={};assertion_first={};service_count={};created={};updated={};version={};resolution_error={};content_type={}",
-        keys(value),
-        keys(document),
-        keys(&value["didResolutionMetadata"]),
-        keys(&value["didDocumentMetadata"]),
-        document["@context"].as_array().map_or(0, Vec::len),
-        method_shape,
-        document["assertionMethod"].as_array().map_or(0, Vec::len),
-        document["assertionMethod"]
-            .as_array()
-            .and_then(|values| values.first())
-            .map_or("missing", &kind),
-        document["service"].as_array().map_or(0, Vec::len),
-        kind(&value["didDocumentMetadata"]["created"]),
-        kind(&value["didDocumentMetadata"]["updated"]),
-        kind(&value["didDocumentMetadata"]["versionId"]),
-        kind(&value["didResolutionMetadata"]["error"]),
-        kind(&value["didResolutionMetadata"]["contentType"])
-    )
-}
-
-fn diagnose_captured_response(
-    response: &Value,
-    issuer_did: &str,
-    issuer_method: &str,
-    issuer_jwk: &Value,
-) -> String {
-    let item = &response["credentials"][0];
-    let decode = |value: &Value| {
-        value
+        .expect("verification methods")
+        .iter()
+        .find(|value| value["publicKeyJwk"]["crv"] == "Jubjub")
+        .expect("managed Jubjub method");
+    let binding_method = binding["id"].as_str().expect("binding method").to_owned();
+    assert_ne!(authentication, binding_method);
+    let holder = BoundCredentialRequest {
+        holder_did,
+        holder_binding_method_id: binding_method.clone(),
+        public_key_x: binding["publicKeyJwk"]["x"]
             .as_str()
-            .and_then(|value| general_purpose::URL_SAFE_NO_PAD.decode(value).ok())
+            .expect("binding x")
+            .to_owned(),
+        public_key_y: binding["publicKeyJwk"]["y"]
+            .as_str()
+            .expect("binding y")
+            .to_owned(),
     };
-    let Some(signed) = decode(&item["credential"]) else {
-        return "response:invalid_signed_encoding".to_owned();
-    };
-    let Some(proof) = decode(&item["midnight"]["credentialProof"]["payload"]) else {
-        return "response:invalid_proof_encoding".to_owned();
-    };
-    let private_json = match serde_json::to_vec(&item["midnight"]["credentialPrivateParts"]) {
-        Ok(value) => value,
-        Err(_) => return "response:invalid_private_json".to_owned(),
-    };
-    let private = match convert_portal_private_parts(&signed, &private_json) {
-        Ok(value) => value,
-        Err(_) => return "response:private_conversion_failed".to_owned(),
-    };
-    if private.is_empty() {
-        return "response:private_conversion_empty".to_owned();
-    }
-    let jwk_digest = hex::encode(Sha256::digest(
-        serde_json::to_vec(issuer_jwk).expect("diagnostic JWK"),
-    ));
-    let anchor = match DigitalPassportIssuerTrustAnchor::from_portal_jubjub(
-        issuer_did,
-        issuer_method,
-        issuer_jwk["x"].as_str().unwrap_or_default(),
-        issuer_jwk["y"].as_str().unwrap_or_default(),
-        &jwk_digest,
-    ) {
-        Ok(value) => value,
-        Err(_) => return "response:trust_anchor_failed".to_owned(),
-    };
-    let resolver = match HttpDidResolverConfig::new(PORTAL_ISSUER_RESOLVER) {
-        Ok(value) => Arc::new(HttpDidResolver::new(value)),
-        Err(_) => return "response:resolver_config_failed".to_owned(),
-    };
-    let issuer = match MidnightDid::parse(issuer_did.to_owned()) {
-        Ok(value) => value,
-        Err(_) => return "response:issuer_did_parse_failed".to_owned(),
-    };
-    if let Err(error) = block_on(resolver.resolve(&issuer)) {
-        let shape = resolver_shape(&resolver_request(issuer_did));
-        return format!("response:resolver_{error:?}:{shape}");
-    }
-    let verifier = MidnightCredentialVerifier::with_compact_policy(
-        resolver.clone(),
-        resolver,
-        Arc::new(SystemClock),
-        anchor,
-    );
-    match block_on(verifier.inspect(&signed, Some(&proof))) {
-        Ok(inspection) => inspection
-            .verification
-            .stages()
-            .iter()
-            .map(|stage| {
-                format!(
-                    "{}:{}:{}",
-                    stage.name().as_str(),
-                    stage.status().as_str(),
-                    stage.reason_code().unwrap_or("none")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(","),
-        Err(_) => "response:verification_error".to_owned(),
+    (authentication, binding_method, holder)
+}
+
+fn assert_valid_verification(value: &Value) {
+    assert_eq!(value["verification"]["outcome"], "valid");
+    let stages = value["verification"]["stages"]
+        .as_array()
+        .expect("verification stages");
+    for name in [
+        "structural",
+        "issuer",
+        "proof",
+        "temporal",
+        "schema",
+        "trust",
+    ] {
+        assert!(
+            stages
+                .iter()
+                .any(|stage| stage["name"] == name && stage["status"] == "passed")
+        );
     }
 }
 
-fn wait_for_portal() {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", 8090)).is_ok() {
-            return;
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    panic!("Portal issuer did not become ready");
+fn write_journey(path: &Path, headless_height: u64, independent_height: u64) {
+    let journey = json!({
+        "acceptance":{
+            "encryptedPersistence":true,
+            "explicitConsent":true,
+            "issuerCallsBlockedBeforeConsent":true,
+            "listing":true,
+            "managedAuthentication":true,
+            "pendingIssuancePreservedAcrossSync":true,
+            "restartRestoration":true,
+            "reverification":true,
+            "sameProcessIssuanceAndSync":true,
+            "separateJubjubBinding":true,
+            "verifiedImport":true
+        },
+        "headlessIndexerHeight":headless_height,
+        "independentIndexerHeight":independent_height,
+        "schema":"oxid-phase1-local-headless-journey-v1"
+    });
+    let bytes = serde_json::to_vec(&journey).expect("journey JSON");
+    fs::create_dir_all(path.parent().expect("journey parent")).expect("journey parent");
+    let temporary = path.with_extension("tmp");
+    fs::write(&temporary, bytes).expect("temporary journey");
+    fs::rename(temporary, path).expect("atomic journey publication");
 }
 
 #[test]
-#[ignore = "requires authenticated Portal integration checkout plus Docker/Nix compose stack"]
-fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
-    let portal_tree = PathBuf::from(
-        std::env::var_os("PORTAL_INTEGRATION_TREE")
-            .expect("PORTAL_INTEGRATION_TREE")
-            .into_string()
-            .expect("Portal path UTF-8"),
-    );
-    let lifecycle_script = PathBuf::from(
-        std::env::var_os("PORTAL_CONSUMER_LIFECYCLE")
-            .expect("PORTAL_CONSUMER_LIFECYCLE")
-            .into_string()
-            .expect("lifecycle path UTF-8"),
-    );
-    let oxid_head = std::env::var("OXID_PORTAL_EVIDENCE_HEAD").expect("OXID_PORTAL_EVIDENCE_HEAD");
+#[ignore = "requires the existing local oxid-standalone node, indexer, and proof-server containers"]
+fn local_mock_issuer_and_same_headless_process_use_standalone_indexer() {
+    let candidate_head = std::env::var("OXID_PHASE1_CANDIDATE_HEAD").expect("candidate head");
     assert!(
-        oxid_head.len() == 40 && oxid_head.bytes().all(|byte| byte.is_ascii_hexdigit()),
-        "Oxid evidence head must be a commit SHA"
+        candidate_head.len() == 40
+            && candidate_head
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     );
-    let evidence_path = PathBuf::from(
-        std::env::var_os("OXID_PORTAL_EVIDENCE_PATH")
-            .expect("OXID_PORTAL_EVIDENCE_PATH")
+    let journey_path = PathBuf::from(
+        std::env::var_os("OXID_PHASE1_JOURNEY_PATH")
+            .expect("journey path")
             .into_string()
-            .expect("evidence path UTF-8"),
+            .expect("journey path UTF-8"),
     );
-    assert!(portal_tree.is_absolute());
-    let run_root = evidence_path
+    assert!(journey_path.is_absolute());
+    let runtime_root = journey_path
         .parent()
-        .expect("evidence parent")
+        .expect("journey parent")
         .join("runtime");
-    let _ = fs::remove_dir_all(&run_root);
-    fs::create_dir_all(&run_root).expect("runtime root");
-    let _runtime_cleanup = RuntimeCleanup(run_root.clone());
+    let _ = fs::remove_dir_all(&runtime_root);
+    fs::create_dir_all(&runtime_root).expect("runtime root");
+    let _runtime_cleanup = RuntimeCleanup(runtime_root.clone());
+    let _ = fs::remove_file(&journey_path);
 
-    let portal_proxy = PortalProxy::spawn();
-    let holder_resolver = HolderResolver::spawn();
-    let _portal_lifecycle = PortalLifecycle::start(
-        lifecycle_script,
-        portal_tree,
-        run_root.join("portal-state"),
-        &portal_proxy.origin,
-        &holder_resolver.origin_for_container,
-    );
-    wait_for_portal();
-
-    let (issuer_did, issuer_method, issuer_jwk) = issuer_public_facts();
-    let manifest_path = run_root.join("deployment.json");
-    let manifest_digest = write_manifest(
-        &manifest_path,
-        &portal_proxy.origin,
-        &issuer_did,
-        &issuer_method,
-        &issuer_jwk,
-    );
-    let wallet_root = run_root.join("wallet");
+    let mock = MockIssuer::spawn();
+    let manifest = runtime_root.join("deployment.json");
+    let manifest_digest = mock.write_manifest(&manifest);
+    let offer = mock.offer();
+    let wallet_root = runtime_root.join("wallet");
     fs::create_dir_all(&wallet_root).expect("wallet root");
-    let mut first = ProcessHarness::spawn(&wallet_root, &manifest_path, &manifest_digest);
+    let mut first = ProcessHarness::spawn(&wallet_root, &manifest, &manifest_digest);
+
     let created = first.request(
         "profile-create",
         "wallet.profile.create",
-        json!({"displayName":"Portal integration"}),
+        json!({"displayName":"Phase 1 local headless"}),
     );
-    let profile = created["result"]["profile"]["id"]
+    let profile_id = created["result"]["profile"]["id"]
         .as_str()
-        .expect("profile")
+        .expect("profile id")
         .to_owned();
     assert_eq!(
         first.request(
             "profile-select",
             "wallet.profile.select",
-            json!({"profileId":profile})
+            json!({"profileId":profile_id})
         )["ok"],
         true
     );
@@ -840,232 +779,138 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         first.request("security", "wallet.security.initialize", json!({}))["ok"],
         true
     );
-    let did = first.request("did", "did.create", json!({}));
+    let derived = first.request("account-derive", "wallet.account.derive", json!({}));
+    assert_eq!(derived["result"]["account"]["networkId"], "undeployed");
+    let did = first.request("did-create", "did.create", json!({}));
     let document = &did["result"]["didRecord"]["document"];
-    holder_resolver.install(document);
-    let holder_did = document["id"].as_str().expect("holder DID").to_owned();
-    let authentication = document["relationships"]
-        .as_array()
-        .expect("relationships")
-        .iter()
-        .find(|value| value["relationship"] == "authentication")
-        .and_then(|value| value["methodIds"][0].as_str())
-        .expect("authentication")
-        .to_owned();
-    let binding = document["verificationMethods"]
-        .as_array()
-        .expect("methods")
-        .iter()
-        .find(|value| value["publicKeyJwk"]["crv"] == "Jubjub")
-        .and_then(|value| value["id"].as_str())
-        .expect("binding")
-        .to_owned();
-    assert_ne!(authentication, binding);
+    let (authentication, binding, holder) = authentication_and_binding(document);
 
-    let kyc = portal_request(
-        &portal_proxy.origin,
-        "POST",
-        "/api/issuer/kyc-sessions",
-        Some("{}"),
-    );
-    let session_id = kyc["sessionId"].as_str().expect("KYC session id");
-    let status = portal_request(
-        &portal_proxy.origin,
-        "GET",
-        &format!("/api/issuer/kyc-sessions/{session_id}/status"),
-        None,
-    );
-    assert_eq!(
-        status["status"].as_str().map(str::to_ascii_lowercase),
-        Some("approved".to_owned())
-    );
-    let offer = kyc["credentialOfferUri"]
-        .as_str()
-        .expect("real Portal offer")
-        .to_owned();
-    let routed = first.request(
-        "route",
-        "identity.request.route",
-        json!({"requestUri":offer}),
-    );
-    assert_eq!(routed["result"]["route"]["kind"], "credential_issuance");
     let prepared = first.request(
         "prepare",
         "credential.issuance.prepare",
         json!({"offer":offer}),
     );
     assert_eq!(prepared["result"]["issuance"]["state"], "awaiting_consent");
-    let issuance = prepared["result"]["issuance"]["id"]
+    let issuance_id = prepared["result"]["issuance"]["id"]
         .as_str()
-        .expect("issuance")
+        .expect("issuance id")
         .to_owned();
+    let blocked = first.request(
+        "blocked-accept",
+        "credential.issuance.accept",
+        json!({
+            "issuanceId":issuance_id,
+            "holderDid":holder.holder_did,
+            "methodId":authentication,
+            "holderBindingMethodId":binding,
+            "confirmed":false,
+            "intent":"ACCEPT_CREDENTIAL_ISSUANCE"
+        }),
+    );
+    assert_eq!(blocked["error"]["code"], "confirmation_required");
+    let before_consent = mock.counters();
+    assert_eq!(before_consent.token, 0);
+    assert_eq!(before_consent.nonce, 0);
+    assert_eq!(before_consent.credential, 0);
+
+    let connected = first.request("connect", "wallet.connect", json!({}));
+    assert_eq!(connected["ok"], true, "unexpected sync response");
+    let account = &connected["result"]["account"];
+    assert_eq!(account["source"], "live");
+    assert_eq!(account["networkId"], "undeployed");
+    assert_eq!(account["sync"]["state"], "synced");
+    let headless_height = account["sync"]["chainTipHeight"]
+        .as_u64()
+        .expect("headless reports a numeric indexer height");
+    let independent_height = independent_indexer_height();
+    assert!(
+        headless_height.abs_diff(independent_height) <= MAX_HEIGHT_DELTA,
+        "headless and independent indexer heights exceed the advancing-tip bound"
+    );
+    let still_pending = first.request(
+        "pending-after-sync",
+        "credential.issuance.get",
+        json!({"issuanceId":issuance_id}),
+    );
+    assert_eq!(
+        still_pending["result"]["issuance"]["state"],
+        "awaiting_consent"
+    );
+
+    mock.provide_holder(holder.clone());
     let accepted = first.request(
         "accept",
         "credential.issuance.accept",
         json!({
-            "issuanceId":issuance,
-            "holderDid":holder_did,
+            "issuanceId":issuance_id,
+            "holderDid":holder.holder_did,
             "methodId":authentication,
             "holderBindingMethodId":binding,
             "confirmed":true,
             "intent":"ACCEPT_CREDENTIAL_ISSUANCE"
         }),
     );
-    if accepted["result"]["issuance"]["state"] != "succeeded" {
-        let captured = portal_proxy
-            .captured_credential_response
-            .lock()
-            .expect("captured response")
-            .clone();
-        let diagnosis = captured.as_ref().map_or_else(
-            || "response:not_captured".to_owned(),
-            |response| {
-                diagnose_captured_response(response, &issuer_did, &issuer_method, &issuer_jwk)
-            },
-        );
-        panic!("payload-free acceptance result: {accepted}; diagnosis={diagnosis}");
-    }
+    assert_eq!(accepted["result"]["issuance"]["state"], "succeeded");
+    let after_accept = mock.counters();
+    assert_eq!(after_accept.token, 1);
+    assert_eq!(after_accept.nonce, 1);
+    assert_eq!(after_accept.credential, 1);
     let credential_id = accepted["result"]["issuance"]["credentialId"]
         .as_str()
-        .expect("credential")
+        .expect("credential id")
         .to_owned();
-    let verification = first.request(
+    let reverified = first.request(
         "reverify",
         "credential.reverify",
         json!({"credentialId":credential_id}),
     );
-    assert_eq!(
-        verification["result"]["credential"]["verification"]["outcome"],
-        "valid"
-    );
-    first.quit();
-
-    let mut second = ProcessHarness::spawn(&wallet_root, &manifest_path, &manifest_digest);
-    let restored = second.request("list", "credential.list", json!({}));
-    assert_eq!(
-        restored["result"]["credentials"].as_array().map(Vec::len),
-        Some(1)
-    );
-    let restored_id = restored["result"]["credentials"][0]["id"]
-        .as_str()
-        .expect("restored credential");
-    let reverified = second.request(
-        "restore-reverify",
-        "credential.reverify",
-        json!({"credentialId":restored_id}),
-    );
-    assert_eq!(
-        reverified["result"]["credential"]["verification"]["outcome"],
-        "valid"
-    );
-    second.quit();
+    assert_valid_verification(&reverified["result"]["credential"]);
+    let first_stderr = first.quit();
+    assert!(first_stderr.is_empty(), "unexpected first-process stderr");
 
     let encrypted = fs::read(wallet_root.join("private/credentials.enc")).expect("encrypted store");
     for plaintext in [
-        b"John".as_slice(),
-        b"Doe".as_slice(),
+        b"Alice".as_slice(),
+        b"Example".as_slice(),
         b"AB1234567".as_slice(),
+        PRE_AUTHORIZED_CODE.as_bytes(),
+        ACCESS_TOKEN.as_bytes(),
+        NONCE.as_bytes(),
     ] {
         assert!(
             !encrypted
                 .windows(plaintext.len())
-                .any(|value| value == plaintext)
+                .any(|window| window == plaintext)
         );
     }
-    let evidence = json!({
-        "acceptance":{
-            "encryptedPersistence":true,
-            "exactBundleImported":true,
-            "managedAuthenticationProof":true,
-            "mockKycApproved":true,
-            "newProcessRestore":true,
-            "reverified":true,
-            "separateJubjubAssertionBinding":true
-        },
-        "oxid":{"head":oxid_head},
-        "portal":{
-            "integrationCommit":PORTAL_INTEGRATION_COMMIT,
-            "integrationTree":PORTAL_INTEGRATION_TREE,
-            "provenanceSha256":PORTAL_PROVENANCE_SHA256
-        },
-        "schema":"oxid-portal-headless-evidence-v1"
-    });
-    let bytes = serde_json::to_vec(&evidence).expect("evidence");
-    fs::create_dir_all(evidence_path.parent().expect("evidence parent")).expect("evidence parent");
-    let temporary = evidence_path.with_extension("tmp");
-    fs::write(&temporary, &bytes).expect("temporary evidence");
-    fs::rename(&temporary, &evidence_path).expect("atomic evidence");
-}
 
-#[test]
-fn observation_proxy_reads_content_length_without_waiting_for_eof_and_drops_bounded() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("persistent upstream");
-    let upstream_address = listener.local_addr().expect("upstream address");
-    let (served_sender, served_receiver) = mpsc::sync_channel(1);
-    let (release_sender, release_receiver) = mpsc::sync_channel(1);
-    let upstream = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("upstream accept");
-        set_stream_timeouts(&stream);
-        let _ = read_raw_request(&mut stream);
-        let body = br#"{"ok":true}"#;
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
-            body.len()
-        )
-        .expect("upstream headers");
-        stream.write_all(body).expect("upstream body");
-        served_sender.send(()).expect("served signal");
-        // Deliberately keep the HTTP/1.1 connection open. A proxy that waits
-        // for EOF deadlocks here instead of honoring Content-Length.
-        let _ = release_receiver.recv_timeout(Duration::from_secs(5));
-    });
-    let proxy = PortalProxy::spawn_with_upstream(upstream_address);
-    let port = proxy
-        .origin
-        .rsplit(':')
-        .next()
-        .and_then(|value| value.parse::<u16>().ok())
-        .expect("proxy port");
-    let mut client = TcpStream::connect(("127.0.0.1", port)).expect("proxy client");
-    set_stream_timeouts(&client);
-    client
-        .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-        .expect("proxy request");
-    let response = read_http_response(&mut client, 1024);
-    assert!(response.ends_with(br#"{"ok":true}"#));
-    served_receiver
-        .recv_timeout(Duration::from_secs(1))
-        .expect("upstream served");
-    let started = Instant::now();
-    drop(proxy);
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "proxy drop must not wait for persistent upstream EOF"
+    let mut second = ProcessHarness::spawn(&wallet_root, &manifest, &manifest_digest);
+    let listed = second.request("restored-list", "credential.list", json!({}));
+    assert_eq!(
+        listed["result"]["credentials"].as_array().map(Vec::len),
+        Some(1)
     );
-    release_sender.send(()).expect("release upstream");
-    upstream.join().expect("upstream thread");
-}
+    let restored_id = listed["result"]["credentials"][0]["id"]
+        .as_str()
+        .expect("restored credential id");
+    let restored = second.request(
+        "restored-reverify",
+        "credential.reverify",
+        json!({"credentialId":restored_id}),
+    );
+    assert_valid_verification(&restored["result"]["credential"]);
+    let second_stderr = second.quit();
+    assert!(second_stderr.is_empty(), "unexpected second-process stderr");
 
-#[test]
-fn runtime_cleanup_removes_encrypted_store_and_wrapping_key_during_unwind() {
-    let root = std::env::temp_dir().join(format!(
-        "oxid-portal-runtime-cleanup-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&root);
-    let result = std::panic::catch_unwind({
-        let root = root.clone();
-        move || {
-            fs::create_dir_all(root.join("wallet/private")).expect("private root");
-            let _cleanup = RuntimeCleanup(root.clone());
-            fs::write(root.join("wallet/private/credentials.enc"), b"ciphertext")
-                .expect("encrypted store");
-            fs::write(root.join("wallet/private/credentials.key"), b"wrapping key")
-                .expect("wrapping key");
-            panic!("synthetic live-flow failure");
-        }
-    });
-    assert!(result.is_err());
-    assert!(!root.exists(), "sensitive runtime root must be removed");
+    let final_counters = mock.stop();
+    assert_eq!(final_counters.token, 1);
+    assert_eq!(final_counters.nonce, 1);
+    assert_eq!(final_counters.credential, 1);
+    assert!(final_counters.issuer_metadata >= 1 && final_counters.issuer_metadata <= 2);
+    assert!(
+        final_counters.authorization_metadata >= 1 && final_counters.authorization_metadata <= 2
+    );
+    assert!(final_counters.issuer_resolution >= 3 && final_counters.issuer_resolution <= 4);
+
+    write_journey(&journey_path, headless_height, independent_height);
 }

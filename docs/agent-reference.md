@@ -592,7 +592,16 @@ as source-derived negative contract evidence only. ADR-0102 pins merged Portal
 `integration` commit `22ae5369b6f939e6b20648f4b85dd993527748ef`, tree
 `74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`, and the existing Final-profile
 provenance digest. Native desktop/headless development selects the strict HTTP
-adapter through an absolute manifest path plus exact digest. ADR-0103 additionally
+adapter through an absolute manifest path plus exact digest. The
+`portal-headless-e2e` target uses an Oxid-owned strict HTTP mock issuer rather
+than the Portal service or DIDIT. Only the native `oxid-headless` executable may
+combine that profile with the exact `undeployed` `127.0.0.1` standalone bundle;
+the general constructor and desktop behavior remain fail-closed. The same child
+must preserve pending issuance while `wallet.connect` reports live indexer sync,
+and its numeric height is checked against an independent indexer-v4 query. This
+is indexer-sync evidence only: node and proof-server use are explicitly
+unproven. It is not KYC, production, on-chain issuer-DID, chain-write, proving,
+submission, or real Portal interoperability evidence. ADR-0103 additionally
 permits one compile-gated physical Android tailnet conformance profile. Oxid owns
 consumer composition, lifecycle, mobile automation, and evidence; Portal input
 is only its merged public source and generic Tailscale HTTPS profile. Runtime

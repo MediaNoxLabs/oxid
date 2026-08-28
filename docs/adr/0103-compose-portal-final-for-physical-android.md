@@ -94,8 +94,12 @@ published. Oxid does not call `tailscale serve reset` for this flow.
 
 ## Evidence
 
-`just portal-headless-e2e` proves real issuance followed by a second headless
-process restoring, listing, and freshly reverifying the encrypted credential.
+`just portal-headless-e2e` is separate localhost-only evidence. It uses an
+Oxid-owned mock issuer—not the Portal service or DIDIT—and one headless process
+configured with the existing local standalone routes. It proves strict issuance,
+explicit consent, encrypted persistence, restart listing/reverification, and
+indexer synchronization only; node and proof-server use remain unproven. It is
+not physical Android or real Portal interoperability evidence.
 
 `just android-portal-tailnet-physical-smoke` proves physical Android warm and
 cold ingress, refusal before consent with zero secret endpoint calls, strict

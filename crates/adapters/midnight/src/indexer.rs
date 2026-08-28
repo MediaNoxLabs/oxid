@@ -64,6 +64,7 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MAX_ENDPOINT_CHARACTERS: usize = 2_048;
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 const MAX_FRAME_BYTES: usize = 256 * 1024;
+const MAX_HEIGHT_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_EVENTS: usize = 100_000;
 const MAX_UTXO_RECORDS: usize = 100_000;
 const NATIVE_NIGHT_TOKEN_TYPE: &str =
@@ -75,6 +76,7 @@ pub struct MidnightIndexerConfig {
     network_id: ChainNetworkId,
     websocket_url: String,
     unshielded_address: ChainAddress,
+    chain_tip_http_url: Option<String>,
 }
 
 impl MidnightIndexerConfig {
@@ -101,6 +103,7 @@ impl MidnightIndexerConfig {
             network_id,
             websocket_url,
             unshielded_address,
+            chain_tip_http_url: None,
         })
     }
 
@@ -117,6 +120,11 @@ impl MidnightIndexerConfig {
     #[must_use]
     pub const fn unshielded_address(&self) -> &ChainAddress {
         &self.unshielded_address
+    }
+
+    pub(crate) fn with_validated_chain_tip_http_url(mut self, endpoint: String) -> Self {
+        self.chain_tip_http_url = Some(endpoint);
+        self
     }
 }
 
@@ -296,8 +304,10 @@ pub struct LiveMidnightAccountSource<C> {
 
 impl<C> LiveMidnightAccountSource<C> {
     pub(crate) fn new(config: MidnightIndexerConfig, clock: std::sync::Arc<C>) -> Self {
-        let transport =
-            std::sync::Arc::new(WebSocketMidnightIndexerTransport::new(config.websocket_url));
+        let transport = std::sync::Arc::new(WebSocketMidnightIndexerTransport::new(
+            config.websocket_url,
+            config.chain_tip_http_url,
+        ));
         Self::with_transport_and_checkpoints(
             config.network_id,
             config.unshielded_address,
@@ -312,8 +322,10 @@ impl<C> LiveMidnightAccountSource<C> {
         checkpoints: MidnightAccountCheckpointConfig,
         clock: std::sync::Arc<C>,
     ) -> Self {
-        let transport =
-            std::sync::Arc::new(WebSocketMidnightIndexerTransport::new(config.websocket_url));
+        let transport = std::sync::Arc::new(WebSocketMidnightIndexerTransport::new(
+            config.websocket_url,
+            config.chain_tip_http_url,
+        ));
         Self::with_transport_and_checkpoints(
             config.network_id,
             config.unshielded_address,
@@ -748,11 +760,15 @@ trait MidnightIndexerTransport: Send + Sync {
 
 struct WebSocketMidnightIndexerTransport {
     endpoint: String,
+    chain_tip_http_url: Option<String>,
 }
 
 impl WebSocketMidnightIndexerTransport {
-    fn new(endpoint: String) -> Self {
-        Self { endpoint }
+    fn new(endpoint: String, chain_tip_http_url: Option<String>) -> Self {
+        Self {
+            endpoint,
+            chain_tip_http_url,
+        }
     }
 }
 
@@ -763,6 +779,7 @@ impl MidnightIndexerTransport for WebSocketMidnightIndexerTransport {
         checkpoint: Option<IndexerSnapshot>,
     ) -> BoxFuture<'a, Result<IndexerSnapshot, IndexerTransportError>> {
         let endpoint = self.endpoint.clone();
+        let chain_tip_http_url = self.chain_tip_http_url.clone();
         let address = address.to_owned();
         Box::pin(async move {
             let (sender, receiver) = oneshot::channel();
@@ -775,7 +792,21 @@ impl MidnightIndexerTransport for WebSocketMidnightIndexerTransport {
                         .build()
                         .map_err(|_| IndexerTransportError::Runtime)
                         .and_then(|runtime| {
-                            runtime.block_on(indexer_snapshot(&endpoint, &address, checkpoint))
+                            runtime.block_on(async {
+                                let mut snapshot =
+                                    indexer_snapshot(&endpoint, &address, checkpoint).await?;
+                                if let Some(endpoint) = chain_tip_http_url {
+                                    let observed_height = fetch_indexer_height(&endpoint).await?;
+                                    if snapshot
+                                        .chain_tip_height
+                                        .is_some_and(|height| height > observed_height)
+                                    {
+                                        return Err(IndexerTransportError::InvalidData);
+                                    }
+                                    snapshot.chain_tip_height = Some(observed_height);
+                                }
+                                Ok(snapshot)
+                            })
                         });
                     let _ = sender.send(result);
                 })
@@ -804,6 +835,57 @@ impl IndexerTransportError {
             }
         }
     }
+}
+
+async fn fetch_indexer_height(endpoint: &str) -> Result<u64, IndexerTransportError> {
+    ensure_tls_provider()?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(CONNECT_TIMEOUT)
+        .build()
+        .map_err(|_| IndexerTransportError::Runtime)?;
+    let response = client
+        .post(endpoint)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(r#"{"query":"query OxidAccountTip { block { height } }"}"#)
+        .send()
+        .await
+        .map_err(|_| IndexerTransportError::Connect)?;
+    if !response.status().is_success()
+        || response
+            .content_length()
+            .is_some_and(|length| length > MAX_HEIGHT_RESPONSE_BYTES as u64)
+    {
+        return Err(IndexerTransportError::Protocol);
+    }
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| IndexerTransportError::Connect)?;
+        if body
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > MAX_HEIGHT_RESPONSE_BYTES)
+        {
+            return Err(IndexerTransportError::LimitExceeded);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let root: Value =
+        serde_json::from_slice(&body).map_err(|_| IndexerTransportError::InvalidData)?;
+    if root
+        .get("errors")
+        .and_then(Value::as_array)
+        .is_some_and(|errors| !errors.is_empty())
+    {
+        return Err(IndexerTransportError::Protocol);
+    }
+    root.get("data")
+        .and_then(|data| data.get("block"))
+        .and_then(|block| block.get("height"))
+        .and_then(Value::as_u64)
+        .ok_or(IndexerTransportError::InvalidData)
 }
 
 async fn indexer_snapshot(

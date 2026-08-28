@@ -431,27 +431,34 @@ the strict Final profile, disables redirects/proxies/retries, keeps plaintext
 loopback-only, converts private parts through the exact Digital Passport
 commitment boundary, and reuses the existing valid-only encrypted import.
 Normal `compose()` remains unavailable and iOS/Android/WASM graphs cannot name
-the Portal client. To reproduce the real landed-service flow, including mock
-KYC, encrypted persistence, process restart, and reverification:
+the Portal client. The localhost Phase 1 journey uses a valid Oxid-owned HTTP
+mock issuer and the already running standalone stack:
 
 ```bash
 just standalone-up
 just portal-headless-e2e
 ```
 
-The headless command requires Nix, Docker Compose v2, the exact fetchable Portal
-commits, and the pre-existing repository `oxid-standalone` project created by
-`just standalone-up`. Before building Portal it validates exactly three running
-`node`, `indexer`, and `proof-server` services plus node health, both required
-indexer GraphQL versions, and proof-server readiness. It attaches to that
-shared project but never creates or removes it. A missing or drifted prerequisite
-fails as `shared-midnight-prerequisite`.
+The second command requires a clean one-commit candidate atop its pinned base
+and exactly the three running `oxid-standalone` services created by the first
+command. It probes node health, indexer v3/v4, and proof-server readiness, then
+runs issuance and `wallet.connect` through the same `oxid-headless` process.
+The issuer mock exercises strict metadata, token, nonce, credential, and issuer
+resolution shapes; it has no live DIDIT dependency. The harness independently
+queries indexer v4 and bounds its observed height against the process's live
+sync height. Explicit consent, blocked issuer calls before consent, distinct
+managed authentication and Jubjub methods, verified import, encrypted
+persistence, restart restoration, listing, and fresh reverification remain
+required.
 
-The command tears down only its uniquely named Portal project and retains one
-allow-listed secret-free evidence JSON, bound to the clean tested Oxid commit,
-under `target/portal-headless-e2e/`. Portal harnesses intentionally share one
-ownership-validated Compose project and must run sequentially on a host; never
-run the headless and physical Android suites concurrently.
+The command only inspects the existing Docker resources. It requires identical
+container/service/image snapshots before and after and publishes one closed,
+secret-free evidence JSON under `target/portal-headless-e2e/`. The evidence
+proves **indexer synchronization only**. Readiness probes do not prove that the
+headless process used the node or proof server, and both interactions are
+reported as unproven. This is not real Portal-service interoperability, DIDIT,
+KYC, production or on-chain issuer-DID evidence, a chain write, or proving and
+submission evidence.
 
 The `standalone-portal` iOS Simulator/Android QEMU profile has one
 repository-owned stack command. With the validated `oxid-standalone`
