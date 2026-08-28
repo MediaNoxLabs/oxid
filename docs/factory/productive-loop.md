@@ -96,8 +96,18 @@ node scripts/worktree-lifecycle.mjs audit --json
 
 Mutation is intentionally awkward and single-target. It requires an exact
 registered path, the expected head, and `--execute`. Worktree removal also
-requires a clean head already merged into `origin/integration` and at least
-seven days old:
+requires a clean head already integrated into `origin/integration` and at least
+seven days old. The audit accepts direct Git ancestry first. For a squash merge,
+it uses one exact merged GitHub PR head/base/merge-commit match and verifies that
+merge commit against a remotely observed, current `origin/integration`. Stale,
+unavailable, malformed, or ambiguous hosted evidence fails closed and is shown
+in the `mergeProof` field. `audit` remains mutation-free but is no longer purely
+local: non-ancestor heads make bounded read-only `git ls-remote` and authenticated
+`gh api graphql` calls. Without network access, a logged-in `gh`, or a current
+local integration ref, those heads report `unavailable`; direct ancestry and the
+rest of the inventory remain usable. The human table appends `proof` as its last
+column so the pre-existing column positions remain stable; prefer `--json` for
+automation:
 
 ```bash
 node scripts/worktree-lifecycle.mjs clean-target \

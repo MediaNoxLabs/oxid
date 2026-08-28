@@ -221,9 +221,16 @@ in a diff.
   Batch accepted findings locally and push a coherent candidate instead of
   invalidating CI and exact-head evidence after every small edit.
 - **Audit before creating another worktree.** `node scripts/worktree-lifecycle.mjs
-  audit` lists target size, cleanliness, merge state, and age. `remove` and
+  audit` lists target size, cleanliness, merge state/proof, and age. Direct
+  ancestry is preferred; squash-merged heads require one exact merged GitHub PR
+  with an `integration` base and a merge commit present on a remotely observed,
+  current `origin/integration`. Unavailable, stale, malformed, or ambiguous
+  evidence fails closed. The audit remains mutation-free, but non-ancestor heads
+  require network access plus an installed, logged-in `gh`; offline runs retain
+  local ancestry and mark hosted proof `unavailable`. Its human table appends
+  the proof column, while automation should use the additive JSON shape. `remove` and
   `clean-target` require an exact path, expected head SHA, and `--execute`;
-  removal additionally requires a clean head merged to `origin/integration`
+  removal additionally requires a clean head integrated into `origin/integration`
   and seven days of retention.
 - **Leave one private metrics record per issue/PR/head.** Generate a closed v1
   template, replace every required `null`/empty target with measured values,
