@@ -1259,6 +1259,10 @@ fn live_target_requires_the_lace_service_and_supported_mock_mode() {
     assert!(consumer.contains("DIDIT_API_BASE_URL: http://smocker:8080"));
     assert!(!script.contains("oxid-owned-http-mock"));
     assert!(!script.contains("portalServiceExercised == false"));
+    assert!(
+        !script.contains("CORRECTION_PARENT") && !script.contains("correction-parent"),
+        "the live target must remain runnable after integration changes the commit parent"
+    );
 }
 
 #[test]

@@ -5,7 +5,6 @@ set -euo pipefail
 export LC_ALL=C
 CDPATH=
 
-readonly CORRECTION_PARENT="3335ff21f3e90560b0fd5360fa664435ddc880ce"
 readonly PORTAL_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
 readonly PORTAL_COMMIT="22ae5369b6f939e6b20648f4b85dd993527748ef"
 readonly PORTAL_TREE="74d8d1a5b87c160ea554006e47d5f3edc3cd3e10"
@@ -50,7 +49,6 @@ readonly OXID_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 readonly OXID_TREE="$(git -C "$REPO_ROOT" rev-parse HEAD^{tree})"
 [[ "$OXID_HEAD" =~ ^[0-9a-f]{40}$ ]] || fail oxid-head
 [[ "$OXID_TREE" =~ ^[0-9a-f]{40}$ ]] || fail oxid-tree
-[ "$(git -C "$REPO_ROOT" rev-parse HEAD^)" = "$CORRECTION_PARENT" ] || fail correction-parent
 
 umask 077
 : >"$RAW_LOG"
