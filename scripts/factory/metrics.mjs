@@ -78,6 +78,10 @@ function nonNegativeInteger(value, pathName, errors) {
   return true;
 }
 
+function nullableNonNegativeInteger(value, pathName, errors) {
+  return value === null || nonNegativeInteger(value, pathName, errors);
+}
+
 function positiveInteger(value, pathName, errors) {
   if (!Number.isSafeInteger(value) || value < 1 || value > MAX_SAFE_COUNT) {
     error(errors, pathName, "range", "must be a positive safe integer");
@@ -172,7 +176,7 @@ export function validateMetricRecord(candidate, { nowMs = Date.now() } = {}) {
 
   const review = objectAt(record.review, "$.review", METRIC_KEYS.review, errors);
   if (review) {
-    for (const key of ["sessions", "turns", "toolCalls"]) nonNegativeInteger(review[key], `$.review.${key}`, errors);
+    for (const key of ["sessions", "turns", "toolCalls"]) nullableNonNegativeInteger(review[key], `$.review.${key}`, errors);
     if (typeof review.externalReviewRequired !== "boolean") error(errors, "$.review.externalReviewRequired", "type", "must be boolean");
   }
 
@@ -372,6 +376,10 @@ export function aggregateMetricRecords(records, invalidRecords = [], { nowMs = D
         available: records.filter((record) => record.tokens !== null).length,
         unavailable: records.filter((record) => record.tokens === null).length,
       },
+      review: Object.fromEntries(["sessions", "turns", "toolCalls"].map((key) => [key, {
+        available: records.filter((record) => record.review[key] !== null).length,
+        unavailable: records.filter((record) => record.review[key] === null).length,
+      }])),
     },
     distributions: {
       totalTokens: distribution(availableValues(totalTokens)),
@@ -384,9 +392,9 @@ export function aggregateMetricRecords(records, invalidRecords = [], { nowMs = D
       reviewMs: distribution(values((record) => record.phases.reviewMs)),
       validationMs: distribution(values((record) => record.phases.validationMs)),
       ciWallTimeMs: distribution(values((record) => record.ci.wallTimeMs)),
-      reviewSessions: distribution(values((record) => record.review.sessions)),
-      reviewTurns: distribution(values((record) => record.review.turns)),
-      toolCalls: distribution(values((record) => record.review.toolCalls)),
+      reviewSessions: distribution(availableValues((record) => record.review.sessions)),
+      reviewTurns: distribution(availableValues((record) => record.review.turns)),
+      toolCalls: distribution(availableValues((record) => record.review.toolCalls)),
       pushesAfterFirstCi: distribution(values((record) => record.attempts.pushesAfterFirstCi)),
       peakTargetBytes: distribution(values((record) => record.worktree.peakTargetBytes)),
       peakWorktreeBytes: distribution(values((record) => record.worktree.peakWorktreeBytes)),
@@ -409,7 +417,7 @@ export function aggregateMetricRecords(records, invalidRecords = [], { nowMs = D
     sloViolations: {
       routineOver60Minutes: violationIds((record) => record.routing.profile === "feature" && record.phases.totalElapsedMs > 60 * 60_000),
       ciTargetOverBudget: violationIds(targetCheckOverBudget),
-      reviewSessionsOver4: violationIds((record) => record.review.sessions > 4),
+      reviewSessionsOver4: violationIds((record) => Number.isSafeInteger(record.review.sessions) && record.review.sessions > 4),
       pushesAfterFirstCi: violationIds((record) => record.attempts.pushesAfterFirstCi > 0),
       failedOrCanceledAttempts: violationIds((record) => record.attempts.failed > 0 || record.attempts.canceled > 0 || record.ci.canceledRuns > 0),
       targetOver10GiB: violationIds((record) => record.worktree.peakTargetBytes > 10 * 1024 ** 3),
@@ -549,7 +557,7 @@ export function metricTemplate({ issue, pr = null, headSha, now = new Date().toI
     recordedAt: draft ? null : now,
     phases: { developmentMs: measured, reviewMs: measured, validationMs: measured, ciMs: measured, totalElapsedMs: measured },
     validations: [],
-    review: { sessions: measured, turns: measured, toolCalls: measured, externalReviewRequired: draft ? null : false },
+    review: { sessions: null, turns: null, toolCalls: null, externalReviewRequired: draft ? null : false },
     tokens: null,
     attempts: { pushesAfterFirstCi: measured, canceled: measured, failed: measured },
     ci: { wallTimeMs: measured, requiredChecks: measured, failedChecks: measured, canceledRuns: measured, checks: [] },

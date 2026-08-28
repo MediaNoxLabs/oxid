@@ -28,14 +28,16 @@ them; push/failure/cancellation counts;
 required-check wall time plus per-check queue/execution outcomes; peak target
 and whole-worktree bytes; and the selected profile, areas, and targets.
 
-Create a template outside the checkout, replace every `null` measurement and
-the empty routing target list with measured values, then write it atomically.
+Create a template outside the checkout, replace every non-nullable `null`
+placeholder and the empty routing target list with measured values, then write
+it atomically.
 All three draft timestamps are `null`; the template cannot guess when work
 started. The draft intentionally fails validation until measurements are
 supplied, so an untouched template cannot turn unknown work into a row of
-zeroes. Zero is a measured zero, never a stand-in for unknown. `tokens: null`
-is the sole nullable measurement that may remain in the final record, and must
-remain `null` unless the active harness exposes exact counters:
+zeroes. Zero is a measured zero, never a stand-in for unknown. Fill review
+counters when the active harness exposes exact values; otherwise individual
+`review.sessions`, `review.turns`, or `review.toolCalls` values must remain
+`null`, never `0`. The same rule applies to the aggregate `tokens: null` value:
 
 ```bash
 node scripts/factory/metrics.mjs template \
@@ -93,8 +95,13 @@ without placing them in the repository.
 Use counters emitted by the active harness, not estimates derived from prompt
 or transcript text. Sum parent and child token/turn/tool-call counters exactly
 once according to that harness's accounting boundary; never add a child total
-again when the parent already includes it. Audits report token coverage and
-exclude `null` token telemetry from distributions and totals. Validation
+again when the parent already includes it. An unavailable review counter stays
+`null` independently of the other review counters; do not infer it from gate
+comments, transcript length, or elapsed time. Audits report token and
+per-review-counter coverage and exclude unavailable values from distributions
+and totals. The committed schema governs work-item inputs; aggregate audit
+output is produced and contract-tested directly rather than accepted as a raw
+record. Validation
 entries use bounded labels such as `repository-contract`, never raw commands
 or output.
 

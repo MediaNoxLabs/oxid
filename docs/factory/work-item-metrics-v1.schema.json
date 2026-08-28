@@ -63,13 +63,14 @@
       }
     },
     "review": {
+      "description": "Exact harness review counters; each counter is null when the active harness does not expose it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["sessions", "turns", "toolCalls", "externalReviewRequired"],
       "properties": {
-        "sessions": { "$ref": "#/$defs/nonNegativeInteger" },
-        "turns": { "$ref": "#/$defs/nonNegativeInteger" },
-        "toolCalls": { "$ref": "#/$defs/nonNegativeInteger" },
+        "sessions": { "$ref": "#/$defs/nullableNonNegativeInteger" },
+        "turns": { "$ref": "#/$defs/nullableNonNegativeInteger" },
+        "toolCalls": { "$ref": "#/$defs/nullableNonNegativeInteger" },
         "externalReviewRequired": { "type": "boolean" }
       }
     },
@@ -152,6 +153,12 @@
   },
   "$defs": {
     "nonNegativeInteger": { "type": "integer", "minimum": 0, "maximum": 1000000000000000 },
+    "nullableNonNegativeInteger": {
+      "oneOf": [
+        { "$ref": "#/$defs/nonNegativeInteger" },
+        { "type": "null" }
+      ]
+    },
     "positiveInteger": { "type": "integer", "minimum": 1, "maximum": 1000000000000000 },
     "timestamp": {
       "type": "string",
