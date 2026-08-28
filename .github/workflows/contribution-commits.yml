@@ -1,0 +1,101 @@
+name: Contribution commits
+
+on:
+  # Trusted base workflow. Candidate commits are fetched through the GitHub API
+  # and parsed as data; no candidate file is checked out or executed.
+  # zizmor: ignore[dangerous-triggers] trusted-base metadata only; candidate code is never executed
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: contribution-commits-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  signoff:
+    name: Enforce commit policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Mark exact-head commit policy pending
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.payload.pull_request.head.sha,
+              state: 'pending',
+              context: 'Verify commit sign-offs',
+              description: 'Commit contribution policy is running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+      - name: Checkout trusted contribution policy
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: policy
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Collect candidate commit metadata as data
+        id: collect
+        if: steps.checkout.outcome == 'success'
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          COMMITS_FILE: ${{ runner.temp }}/pull-request-commits.json
+        with:
+          script: |
+            const fs = require('node:fs');
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+            const records = commits.map((candidate) => ({
+              sha: candidate.sha,
+              message: candidate.commit.message,
+              authorName: candidate.commit.author?.name,
+              authorEmail: candidate.commit.author?.email,
+              verification: candidate.commit.verification,
+            }));
+            fs.writeFileSync(process.env.COMMITS_FILE, JSON.stringify(records), { encoding: 'utf8', mode: 0o600 });
+
+      - name: Verify Conventional Commits, DCO, and OpenPGP
+        id: verify
+        if: steps.collect.outcome == 'success'
+        continue-on-error: true
+        env:
+          COMMITS_FILE: ${{ runner.temp }}/pull-request-commits.json
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_ACTOR: ${{ github.event.pull_request.user.login }}
+        run: node policy/scripts/ci/contribution-policy.mjs hosted-commits
+
+      - name: Publish exact-head required status
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          POLICY_PASSED: ${{ steps.checkout.outcome == 'success' && steps.collect.outcome == 'success' && steps.verify.outcome == 'success' }}
+        with:
+          script: |
+            const passed = process.env.POLICY_PASSED === 'true';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.payload.pull_request.head.sha,
+              state: passed ? 'success' : 'failure',
+              context: 'Verify commit sign-offs',
+              description: passed ? 'Conventional Commits, DCO, and OpenPGP passed' : 'Commit contribution policy failed',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+            if (!passed) core.setFailed('Commit contribution policy failed; inspect prior steps.');

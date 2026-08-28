@@ -124,6 +124,18 @@ require these exact status checks:
 - `scan`
 - `Check documentation links`
 
+The three authorship/metadata contexts keep these stable names but are emitted
+as commit statuses by trusted `pull_request_target` workflows onto the exact PR
+head SHA. Those workflows execute only base-commit policy code, treat PR fields
+and commit API responses as untrusted data, and never check out candidate
+files. This avoids granting a candidate workflow authority to weaken the gate
+that judges its own commits.
+
+The migration is intentionally two-phase because GitHub resolves the two pull
+request event types from different refs. Issue
+[#193](https://github.com/MediaNoxLabs/oxid/issues/193) removes the legacy
+bootstrap workflows immediately after the trusted workflows land.
+
 Candidate pull requests may introduce same-repository links whose durable
 `blob/integration/` destination does not exist on the base yet. The documentation
 link wrapper validates only that exact URL prefix against tracked regular files

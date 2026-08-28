@@ -897,8 +897,9 @@ custody real assets or externally issued credentials. See
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENT.md](AGENT.md) before making
-changes. Contributions require DCO sign-off, and repository-facing commits must
-be GPG signed.
+changes. The [contribution policy](docs/factory/contribution-policy.md) defines
+the closed Conventional Commit vocabulary, issue-branch grammar, exact DCO
+sign-off, and GitHub-verifiable OpenPGP requirements.
 
 Oxid is licensed under the [Apache License 2.0](LICENSE). Retained icon notices
 are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -23,7 +23,8 @@ See `docs/integration-delivery.md`.
 - [ ] Public docs and ADRs are updated where relevant
 - [ ] Significant dependencies have a review in `docs/dependencies`
 - [ ] No secrets, claims, private identifiers, local paths, or generated state are committed
-- [ ] Commits are GPG signed and include DCO `Signed-off-by` trailers
+- [ ] Branch, PR title, and every commit follow `docs/factory/contribution-policy.md`
+- [ ] Commits are OpenPGP signed, GitHub-verifiable, and include exact DCO `Signed-off-by` trailers
 - [ ] The diff was self-reviewed and the PR remains a draft until gates pass
 
 ## Links

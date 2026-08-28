@@ -24,12 +24,18 @@ index points to it; it is not a required read for unrelated work.
 - Fetch `origin/integration` before starting. It is the only writable delivery and Pages publishing branch. Historical `main` and `develop` are read-only.
 - Use a dedicated worktree based on the fetched integration ref. Never develop
   in a dirty primary checkout and never delete unrelated user files.
+- Name issue-backed branches `<type>/issue-<number>`, where `type` is the
+  Conventional Commit type that will lead the pull-request title. Do not add a
+  descriptive suffix.
 - Target pull requests at `integration`. Start as draft.
 - With explicit authorization in the active user request, automation may merge
   an issue-backed `integration` PR only through
   `scripts/github/merge-integration-pr.mjs` after its exact-head audit passes.
   `main` and `develop` merges remain human-only.
-- Commit with a GPG signature and DCO sign-off. Before any push, verify both.
+- Every commit and pull-request title follows the repository contribution
+  policy: allowed Conventional Commit type and mandatory scope, exact DCO
+  sign-off, and a GitHub-verifiable OpenPGP signature. Before any push, verify
+  the full local commit range.
 - Do not push, merge, change repository settings, accept an ADR, tag, or release
   without the authority required by the active user request.
 

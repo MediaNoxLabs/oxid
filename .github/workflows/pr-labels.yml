@@ -1,0 +1,70 @@
+name: Classify PR
+
+on:
+  # This workflow writes labels but never checks out or executes candidate
+  # code. The trusted base policy parses only pull-request event metadata.
+  # zizmor: ignore[dangerous-triggers] trusted-base metadata only; candidate code is never executed
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: contribution-labels-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: Apply contribution labels
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted contribution policy
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: policy
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Derive labels from the conventional title
+        id: derive
+        continue-on-error: true
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          LABELS_FILE: ${{ runner.temp }}/contribution-labels.json
+        run: node policy/scripts/ci/contribution-policy.mjs labels > "$LABELS_FILE"
+
+      - name: Replace contribution classification labels
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DERIVATION_PASSED: ${{ steps.derive.outcome == 'success' }}
+          LABELS_FILE: ${{ runner.temp }}/contribution-labels.json
+          POLICY_FILE: ${{ github.workspace }}/policy/.github/contribution-policy.json
+        with:
+          script: |
+            const fs = require('node:fs');
+            const passed = process.env.DERIVATION_PASSED === 'true';
+            const desired = passed ? JSON.parse(fs.readFileSync(process.env.LABELS_FILE, 'utf8')) : [];
+            const policy = JSON.parse(fs.readFileSync(process.env.POLICY_FILE, 'utf8'));
+            const prefixes = [policy.labels.typePrefix, policy.labels.scopePrefix];
+            const current = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const retained = current
+              .map((label) => label.name)
+              .filter((name) => !prefixes.some((prefix) => name.startsWith(prefix)));
+            await github.rest.issues.setLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: [...retained, ...desired],
+            });
+            if (!passed) core.setFailed('Contribution labels were removed because the PR title is invalid.');
