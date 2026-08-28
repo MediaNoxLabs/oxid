@@ -73,6 +73,9 @@ workflow:
   # change created extra sessions even when no useful parallel work existed.
   asyncStartMode: allowed
   requireDraftFirst: true
+  # The repository requires a deterministic, no-model closeout comment and
+  # private metric record on the final head. Model-driven retrospectives stay
+  # conditional on incidents, SLO misses, high-risk work, or owner request.
   requireRetrospective: false
   devModeDefault: false
 
@@ -84,19 +87,21 @@ localImplementation:
     maxCopilotRounds: 0
 
 queue:
-  # One delivery candidate at a time keeps exact-head evidence and hosted CI
-  # useful. Additional work may be developed locally, but is not auto-driven.
+  # One delivery candidate per conductor keeps exact-head evidence and hosted
+  # CI useful. Other parent sessions may auto-drive different issue worktrees;
+  # GitHub claim leases (after #197) and the guarded merge wrapper coordinate
+  # repository state across hosts; until then, humans assign distinct issues.
   maxParallel: 1
   maxAutoFiledIssues: 0
   reDispatchMaxRetries: 0
 
 # Deliberately absent, recorded so the gaps are not mistaken for oversights.
 #
-# models: — per-role model assignment (`models.conductor`, `models.roles`) is
-#   the mechanism behind the factory's provider-agnostic goal, but the package
-#   ships no defaults and documents no model-identifier format, so any value
-#   written here would be a guess that fails at dispatch. Needs one owner
-#   decision naming real identifiers; see docs/factory/runbook.md.
+# models: — `.pi/settings.json` now supplies the balanced routine parent and
+#   subagent default. Per-role `models.conductor` / `models.roles` remains
+#   absent because dev-loops@0.9.0 documents no accepted identifier schema;
+#   do not invent a value that can fail only after dispatch. Canary a future
+#   documented package surface before adding role-specific overrides.
 #
 # worktree: — copyOnInit/linkOnInit provision *gitignored* files into a fresh
 #   worktree. Oxid needs none: the Compact and ZK artifact closures arrive as

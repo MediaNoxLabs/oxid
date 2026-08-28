@@ -6,6 +6,8 @@ argument-hint: "Review-fix task, PR number or branch, target reviewer/thread/fil
 systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
+timeoutMs: 1200000
+turnBudget: {"maxTurns":16,"graceTurns":2}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/fixer.agent.md (Copyright (c) 2026 mfittko). -->

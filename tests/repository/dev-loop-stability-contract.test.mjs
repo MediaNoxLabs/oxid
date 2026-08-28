@@ -19,7 +19,7 @@ import {
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
 import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
-import { normalizeLinkedWorktreeContext, normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
+import { enforceFactoryAdmissionForCreation, normalizeLinkedWorktreeContext, normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import { assertReviewedWorktreePin, oxidConsumerProvision } from "../../scripts/loop/ensure-worktree-consumer.mjs";
 import {
   assertMinimumGhVersion,
@@ -727,6 +727,29 @@ test("Oxid worktree creation applies zero consumer provisioning despite a dirty 
   });
   assert.doesNotMatch(stderr.join(""), /provision-worktree|packages\/core|WARN/);
   assert.equal(await lstat(path.join(fixture.worktree, "node_modules")).catch(() => null), null);
+});
+
+test("new managed worktrees fail closed when factory admission is red", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const existing = await enforceFactoryAdmissionForCreation([
+    "--repo-root", fixture.root, "--issue", "150", "--base", "origin/integration",
+  ], {
+    admissionAudit: async () => { throw new Error("audit must not run for an existing canonical worktree"); },
+  });
+  assert.equal(existing.reused, true);
+
+  await assert.rejects(enforceFactoryAdmissionForCreation([
+    "--repo-root", fixture.root, "--issue", "151", "--base", "origin/integration",
+  ], {
+    admissionAudit: async () => ({
+      admissionReady: false,
+      checks: [
+        { id: "worktree-admission", status: "fail" },
+        { id: "metrics-coverage", status: "fail" },
+      ],
+    }),
+  }), /factory admission is blocked \(worktree-admission, metrics-coverage\).*--audit-pi/su);
 });
 
 test("Oxid worktree consumer preserves help, parse-error, conflict, jq, and silent output contracts", async (t) => {

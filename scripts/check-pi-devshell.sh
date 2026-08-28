@@ -13,6 +13,14 @@ for required_command in pi node jq; do
   fi
 done
 
+expected_pi_version="0.84.0"
+pi_version="$(pi --version)"
+if [[ "$pi_version" != "$expected_pi_version" ]]; then
+  echo "unexpected Pi version: expected $expected_pi_version, found $pi_version" >&2
+  echo "start Pi only through ./bootstrap.sh --pi" >&2
+  exit 1
+fi
+
 review_package_root="$(node --input-type=module <<'NODE'
 import { resolveDevLoopsPackageRoot } from "./scripts/lib/dev-loop-runtime.mjs";
 
@@ -108,5 +116,4 @@ if ! jq -s -e --arg loader_path "$loader_path" '
   exit 1
 fi
 
-pi_version="$(pi --version)"
 echo "Pi devshell smoke passed: pi $pi_version, agent-review-pi 0.5.0 extension and skill available."

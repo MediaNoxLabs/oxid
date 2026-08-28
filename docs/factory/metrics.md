@@ -187,7 +187,8 @@ the flake checks previously ran nowhere.
 | Routine PR to merge-ready | ≤ 60 min | 60–90 min | > 90 min |
 | Automatic review sessions per routine PR | ≤ 4 | 5–6 | > 6 |
 | Pushes after first hosted CI starts | 0 | 1 | > 1 |
-| Active managed delivery worktrees | ≤ 2 | 3 | > 3 |
+| Active managed delivery worktrees per Git common checkout/host | ≤ 2 | 3 | > 3 |
+| Worktree-local target usage | ≤ 100 GiB | 100–200 GiB | > 200 GiB |
 
 Amber requires a backlog item; red blocks new `factory:ready` labels until a
 mitigation item is claimed.

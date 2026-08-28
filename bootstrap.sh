@@ -7,10 +7,14 @@ usage() {
   printf '%s\n' \
     "Usage: ./bootstrap.sh [--pi [PI_ARGS...]]" \
     "       ./bootstrap.sh --check" \
+    "       ./bootstrap.sh --audit-pi" \
+    "       ./bootstrap.sh --configure-pi" \
     "       ./bootstrap.sh -- COMMAND [ARGS...]" \
     "" \
     "With no arguments, enter the pinned Nix development shell." \
-    "Use --pi to start Pi, --check to validate the Pi integration, or" \
+    "Use --pi to start Pi, --check to validate the Pi integration," \
+    "--audit-pi to inspect constitutional readiness, --configure-pi to" \
+    "install the bounded user-level pi-subagents policy, or" \
     "-- to run one command inside the development shell."
 }
 
@@ -25,6 +29,7 @@ case "${1:-}" in
     ;;
   --pi)
     shift
+    nix develop --command node scripts/factory/audit-pi.mjs --config-only --enforce-config
     exec nix develop --command pi "$@"
     ;;
   --check)
@@ -35,6 +40,24 @@ case "${1:-}" in
       exit 2
     fi
     exec nix develop --command just pi-smoke
+    ;;
+  --audit-pi)
+    shift
+    if (( $# != 0 )); then
+      echo "--audit-pi does not accept additional arguments" >&2
+      usage >&2
+      exit 2
+    fi
+    exec nix develop --command node scripts/factory/audit-pi.mjs
+    ;;
+  --configure-pi)
+    shift
+    if (( $# != 0 )); then
+      echo "--configure-pi does not accept additional arguments" >&2
+      usage >&2
+      exit 2
+    fi
+    exec nix develop --command node scripts/factory/pi-policy.mjs apply --execute
     ;;
   --help|-h)
     usage

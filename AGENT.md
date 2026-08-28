@@ -68,8 +68,9 @@ platform boundaries.
 
 Follow [the productive loop](docs/factory/productive-loop.md):
 
-1. Keep one remotely driven candidate and at most two active managed delivery
-   worktrees.
+1. Keep one remotely driven candidate per parent session and at most two active
+   managed delivery worktrees per Git common checkout on a host. Parallel
+   parents own different issue worktrees.
 2. Run the narrowest meaningful check while editing.
 3. Use the bounded draft review for direction; it does not wait for CI. When
    aggregate CI is red on a draft, follow gate coordination if it permits
@@ -119,6 +120,9 @@ hermetic flake check remain backstops.
 
 ## Process, disk, and worktree ownership
 
+- One mutating parent session owns one issue worktree. Never attach two writers
+  to the same worktree, target directory, branch, or Pi session file. See the
+  [worker topology](docs/factory/worker-topology.md) for local and cloud lanes.
 - A parent that spawns a process owns its process group and must clean it in an
   exit/signal path. Tests put cleanup in a trap, not after happy-path assertions.
 - Rust targets remain worktree-local; compilation reuse comes from the bounded

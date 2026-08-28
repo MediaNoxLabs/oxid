@@ -3,6 +3,8 @@
 
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import { Writable } from "node:stream";
 
 import { runDevLoopPreflight } from "../lib/dev-loop-preflight-core.mjs";
 import { runManagedChild } from "../lib/managed-child-process.mjs";
@@ -32,6 +34,46 @@ export function assertNoPreflightBypass(env = process.env) {
   if (value !== undefined && String(value).trim() !== "") {
     throw new Error("DEVLOOPS_PREFLIGHT_BYPASS is not permitted by the repository pre-flight wrapper");
   }
+}
+
+const PACKAGE_DELIVERY_BRANCH = "origin/main";
+const REPOSITORY_DELIVERY_BRANCH = "origin/integration";
+
+/**
+ * The pinned generic package describes its own main-based repository. Oxid's
+ * wrapper is authoritative for this consumer and must never surface that base
+ * as recovery guidance. Keep the rewrite at the package-output boundary so no
+ * installed package is patched in place.
+ */
+export function createDeliveryBranchRewriteSink(destination) {
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  let flushed = false;
+  const keep = PACKAGE_DELIVERY_BRANCH.length - 1;
+  const rewrite = (value) => value.replaceAll(PACKAGE_DELIVERY_BRANCH, REPOSITORY_DELIVERY_BRANCH);
+  const emitStablePrefix = () => {
+    pending = rewrite(pending);
+    if (pending.length <= keep) return;
+    destination.write(pending.slice(0, pending.length - keep));
+    pending = pending.slice(pending.length - keep);
+  };
+  const sink = new Writable({
+    write(chunk, encoding, callback) {
+      pending += decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
+      emitStablePrefix();
+      callback();
+    },
+  });
+  return {
+    sink,
+    flush() {
+      if (flushed) return;
+      flushed = true;
+      pending += decoder.end();
+      destination.write(rewrite(pending));
+      pending = "";
+    },
+  };
 }
 
 export async function runRepositoryPreflight(cwd, env = process.env) {
@@ -64,13 +106,20 @@ export async function runPreFlightGate(argv = process.argv.slice(2), {
   const script = path.join(repositoryCheck.resolved.packageRoot, "scripts", "loop", "pre-flight-gate.mjs");
   const childEnv = { ...env, DEVLOOPS_SUBAGENT_AVAILABLE: inferSubagentAvailability(env) };
   delete childEnv.DEVLOOPS_PREFLIGHT_BYPASS;
-  return runManagedChild(process.execPath, [script, ...argv], {
-    cwd,
-    env: childEnv,
-    stdout,
-    stderr,
-    label: "pre-flight gate",
-  });
+  const rewrittenStdout = createDeliveryBranchRewriteSink(stdout);
+  const rewrittenStderr = createDeliveryBranchRewriteSink(stderr);
+  try {
+    return await runManagedChild(process.execPath, [script, ...argv], {
+      cwd,
+      env: childEnv,
+      stdout: rewrittenStdout.sink,
+      stderr: rewrittenStderr.sink,
+      label: "pre-flight gate",
+    });
+  } finally {
+    rewrittenStdout.flush();
+    rewrittenStderr.flush();
+  }
 }
 
 function isDirectRun(metaUrl) {

@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { runManagedChild } from "../lib/managed-child-process.mjs";
 import { enforceSingleBase, readLongOptionValues } from "../lib/pinned-dev-loops-args.mjs";
+import { auditPi } from "../factory/audit-pi.mjs";
 
 const INTEGRATION_BASE = "origin/integration";
 
@@ -75,12 +76,32 @@ export function normalizeLinkedWorktreeContext(argv, { gitCommand = "git" } = {}
   return replaceOption(argv, "--repo-root", mainRoot);
 }
 
+export async function enforceFactoryAdmissionForCreation(args, { admissionAudit = auditPi } = {}) {
+  if (args.includes("--help") || args.includes("-h")) return { skipped: true };
+  const repoRootValue = optionValue(args, "--repo-root");
+  // Preserve the pinned package's parse-error contract for incomplete input.
+  if (repoRootValue === undefined) return { skipped: true };
+  const mainRoot = realpathSync(path.resolve(repoRootValue));
+  const target = path.join(mainRoot, "tmp", "worktrees", "dev-loops", selectorValue(args));
+  if (existsSync(target)) return { reused: true, target };
+  const audit = await admissionAudit({ repoRoot: mainRoot, includeOperational: true });
+  if (!audit.admissionReady) {
+    const failures = audit.checks.filter((item) => item.status === "fail").map((item) => item.id);
+    throw new Error(
+      `factory admission is blocked (${failures.join(", ")}); run ./bootstrap.sh --audit-pi and resolve red controls before creating ${target}`,
+    );
+  }
+  return { reused: false, target };
+}
+
 export async function runEnsureWorktree(argv = process.argv.slice(2), {
   cwd = process.cwd(),
   stdout = process.stdout,
   stderr = process.stderr,
+  admissionAudit = auditPi,
 } = {}) {
   const args = normalizeLinkedWorktreeContext(normalizeWorktreeArgs(argv));
+  await enforceFactoryAdmissionForCreation(args, { admissionAudit });
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "ensure-worktree-consumer.mjs");
   return runManagedChild(process.execPath, [script, ...args], {
     cwd,

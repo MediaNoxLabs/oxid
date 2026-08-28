@@ -15,7 +15,7 @@ routes through a coordination server.
 
 | Piece | Version | Source |
 | --- | --- | --- |
-| `pi-coding-agent` | nixpkgs pin | `nix/devshells/default.nix`, `devShells.default` |
+| `pi-coding-agent` | `0.84.0` | nixpkgs pin in `nix/devshells/default.nix`, `devShells.default` |
 | `dev-loops` | `0.9.0` | `.pi/settings.json` → project-local `.pi/npm` |
 | `pi-subagents` | `0.42.1` | same |
 | `@input-output-hk/agent-review-pi` | `0.5.0` | same, **GitHub Packages — needs a token** |
@@ -66,10 +66,23 @@ the common checkout second. Every configured npm package must match its exact
 name and version and remain contained by one of those roots. The smoke does not
 copy, link, or install a second package tree in the worktree.
 
-From a plain checkout, `./bootstrap.sh --pi` starts Pi inside the same pinned
-shell. `./bootstrap.sh -- <command>` runs any other one-off repository command
-there. The wrapper delegates package provisioning to `nix develop` and never
-reads, prints, or persists credentials.
+Configure and audit the bounded package policy before the first start:
+
+```bash
+./bootstrap.sh --configure-pi
+./bootstrap.sh --check
+./bootstrap.sh --audit-pi
+./bootstrap.sh --pi
+```
+
+The default routine model is `openai-codex/gpt-5.6-terra:medium`; select a
+stronger or different provider explicitly for a session when the issue risk
+justifies it. `--pi` starts inside the pinned shell and refuses configuration
+drift. `./bootstrap.sh -- <command>` runs another one-off repository command
+there. See [pi-runtime-audit.md](pi-runtime-audit.md) for the exact budgets,
+global-package config boundary, measured storage, and upgrade canaries. See
+[worker-topology.md](worker-topology.md) before starting a second local session
+or attaching a worker from another engineer or cloud host.
 
 ## Three concurrency mechanisms, which are easy to confuse
 
@@ -79,7 +92,7 @@ This is the part most likely to be misread, because all three look like
 | | What fans out | Configured in | Who decides |
 | --- | --- | --- | --- |
 | **Gate fan-out** | Review **angles** over one diff — draft `scope`/`correctness`, final `correctness`/`security` | `.devloops` → `refinement.fanOut: 2`, `mode: parallel`, `roles` | dev-loops, automatically at a gate |
-| **Sub-agent delegation** | Child **pi sessions** with their own jobs | `pi-subagents`, prompt-driven — no config file | the agent, when asked |
+| **Sub-agent delegation** | Child **pi sessions** with their own jobs | `.pi/subagent-policy.json`, installed to the package's user-level config | the agent, when asked |
 | **Panel review** | Multiple **requested reviewers** on a PR | GitHub review requests + the `ai-review` label | a human, by requesting review |
 
 **Gate fan-out** is the one that runs without being asked. `refinement.fanOut`
@@ -88,7 +101,9 @@ from. Both refinement and gate concurrency are capped at two. Low-signal
 refinement stops after two quiet rounds instead of spending a third round to
 rediscover the same result.
 
-**Sub-agent delegation** ships six builtins — `scout` (codebase recon),
+**Sub-agent delegation** is foreground by default, caps concurrency at two,
+session spawns at eight, and requires explicit async intent. It ships builtins
+including `scout` (codebase recon),
 `researcher` (external facts with sources), `worker` (implementation),
 `reviewer` (review and small fixes), `oracle` (second opinion, edits nothing),
 `delegate` (general). Installing the extension **does not** start a background
@@ -105,6 +120,17 @@ second opinion after the primary lands. That ordering is what stops five agents
 posting five overlapping reviews.
 
 ## The label profile
+
+The seven `factory:*` FSM labels are synchronized from the tracked,
+dry-run-by-default definition:
+
+```bash
+node scripts/github/sync-factory-labels.mjs
+node scripts/github/sync-factory-labels.mjs --execute
+```
+
+Creating the labels does not move an issue into the factory. While admission is
+red, no issue may receive `factory:ready`.
 
 `agent-peer-review` treats **GitHub as the source of truth**, so routing is
 labels plus native review requests — not a queue we operate. The profile is
@@ -145,7 +171,7 @@ agent tool allowlists before model dispatch. See
 forced integration-base wrappers, exact-head Claude command, and the explicit
 upstream-only gap table.
 
-`gates` is the authoritative config validator — it exercises the real loader,
+`gates` is the authoritative dev-loop config validator — it exercises the real loader,
 so a `.devloops` that `gates` parses is a `.devloops` that will run. Prefer it
 over a YAML lint.
 
@@ -177,29 +203,28 @@ undetectable later. The check that matters is `gates` parsing.
   the authority for progression: if it permits `run_draft_gate`, continue the
   draft loop and keep the PR draft. Commit authenticity remains required before
   pre-approval or merge; metadata and classification findings are advisory.
-  Routine work does not require a retrospective.
+  Routine work requires the deterministic final-head metrics and closeout
+  comment, not a separate model-driven retrospective.
 - **No Copilot gate.** `refinement.maxCopilotRounds: 0` keeps unavailable
   Copilot review disabled. A manually invoked Claude CLI review is reserved for
   high-risk `full` changes, an owner request, or a disputed finding. It is not a hosted GitHub check and does not authenticate reviewer identity. Run
   `scripts/review/claude-current-head.mjs` once on the final clean head as
   documented in `docs/dev-loop-stability.md`.
 
-## One decision still needed from the owner
+## Model policy
 
 **`models:` is deliberately absent.** Per-role model assignment
 (`models.conductor`, `models.roles`) is the mechanism behind the factory's
-provider-agnostic goal — a cheap model for mechanical angles, a strong one for
-`security` and `architecture` — and it is where the cost/quality tuning lives.
+provider-agnostic goal, but `dev-loops@0.9.0` documents no accepted identifier
+schema for that field.
 
-It is unset because `dev-loops@0.9.0` ships **no defaults for it and documents
-no model-identifier format**, so any value written here would be a guess that
-fails at dispatch rather than at load. Closing it needs one decision naming real
-identifiers for the conductor and for the bounded roles. Until then every
-angle runs on whatever the session's default model is, which works but wastes
-the cheapest available saving.
+The project-level Pi parent and subagent defaults are instead pinned to
+`openai-codex/gpt-5.6-terra:medium`. Every gate therefore has a balanced default
+without inventing an unvalidated dev-loops field. Explicit session and agent
+overrides remain available. Add per-role dev-loops values only after a package
+canary proves the schema and identifiers before dispatch.
 
-`personas.*.defaultModel` is `null` for the same reason, and should be filled in
-the same pass.
+`personas.*.defaultModel` remains `null` for the same reason.
 
 ## Why there is no `worktree:` section
 
@@ -221,7 +246,9 @@ in a diff.
 
 ## Operating notes
 
-- **Keep one remote candidate active.** `.devloops` sets `queue.maxParallel: 1`.
+- **Keep one remote candidate active per parent session.** `.devloops` sets
+  `queue.maxParallel: 1` for one conductor; it is not a repository-wide mutex.
+  Another parent may own another issue worktree locally or on a different host.
   Batch accepted findings locally and push a coherent candidate instead of
   invalidating CI and exact-head evidence after every small edit.
 - **Audit before creating another worktree.** `node scripts/worktree-lifecycle.mjs
@@ -235,7 +262,11 @@ in a diff.
   the proof column, while automation should use the additive JSON shape. `remove` and
   `clean-target` require an exact path, expected head SHA, and `--execute`;
   removal additionally requires a clean head integrated into `origin/integration`
-  and seven days of retention.
+  and seven days of retention. The tracked ensure-worktree wrapper also runs
+  the constitutional Pi audit for that Git common checkout before creating a
+  new canonical worktree and
+  refuses while worktree/storage/metrics admission is red; reuse of an existing
+  canonical worktree remains available so in-flight work can be recovered.
 - **Leave one private metrics record per issue/PR/head.** Generate a closed v1
   template, replace every required `null`/empty target with measured values,
   and atomically store it. An untouched template is invalid. Audit is
@@ -254,7 +285,10 @@ in a diff.
   for 90 days. The Quality Steward runs the audit weekly, after a harness
   incident, and before monthly tuning. Never paste prompts, transcripts,
   tokens/credentials, user identifiers, commands/output, or billing details
-  into a record.
+  into a record. Capture the final-head record before merge-ready and leave one
+  bounded PR closeout comment with capture status, SLO/incident status, and any
+  follow-up issue. That is the routine retrospective; deeper retrospectives
+  remain conditional on an incident, SLO miss, high-risk change, or owner request.
 - **Restart after harness changes.** A running Pi process retains its loaded
   extensions and instructions. Stop it, preserve its branch/head, then restart
   after changing `.pi/`, `.devloops`, or their installed pins.
@@ -273,10 +307,10 @@ in a diff.
 
 ## Phase 2 candidates, not built
 
-- `models:` per-role assignment (above) — the only blocking one.
+- `models:` per-role assignment after the package documents and validates it.
 - CI-built review references so the private package is not a per-machine
   install.
 - Wiring `.pi/settings.json`'s `skills` key once a repository skill tree exists;
   it is absent today, so there is nothing to point at.
-- Raising `pi-subagents` from `0.42.1` toward `0.52.1`; ten minor versions have
-  shipped, and the pin is deliberate but ageing.
+- Canarying `pi-subagents@0.58.0` under issue #195 and
+  `agent-review-pi@0.6.0` under issue #196.

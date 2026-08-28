@@ -7,7 +7,9 @@ systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: true
 user-invocable: true
-maxSubagentDepth: 3
+maxSubagentDepth: 2
+timeoutMs: 3600000
+turnBudget: {"maxTurns":32,"graceTurns":2}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/dev-loop.agent.md (Copyright (c) 2026 mfittko). -->

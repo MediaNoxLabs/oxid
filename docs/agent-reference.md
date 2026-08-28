@@ -1967,7 +1967,8 @@ duplicating versions across manifests.
 3. Read this file and the blueprint before changing code.
 4. Change tests and public documentation with behavior.
 5. Run focused checks first, then `./run.sh --light --strict`.
-6. Run `npx dev-loops@0.9.0 doctor` and `npx dev-loops@0.9.0 gates`
+6. Run `node scripts/dev-loops.mjs doctor` and
+   `node scripts/dev-loops.mjs gates`
    before a PR loop. Configuration failures are blockers.
 7. Create pull requests as drafts. Do not mark them ready until validation and
    review evidence are recorded.
@@ -1975,7 +1976,7 @@ duplicating versions across manifests.
 9. Commit repository-facing work with DCO and GPG:
 
    ```bash
-   git commit -S --signoff -m "<type>: <subject>"
+   git commit -S --signoff -m "<type>(<scope>): <subject>"
    ```
 
 10. Before pushing, verify both the signature and trailer:
@@ -1985,7 +1986,8 @@ duplicating versions across manifests.
     ```
 
 Use conventional commit and PR titles such as `feat(wallet): create profiles`
-or `ci: add Rust quality gates`.
+or `ci(harness): add Rust quality gates`. The scope is mandatory and must come
+from `docs/factory/contribution-policy.md`.
 
 `dev-loops@0.9.0 doctor` currently reports 3/4 from a plain shell because it
 looks for a standalone `subagent` executable. `pi-subagents@0.42.1` exposes
