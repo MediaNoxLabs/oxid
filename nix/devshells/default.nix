@@ -158,15 +158,15 @@
           # Provision pinned project-local Pi packages. Public packages install
           # without credentials; the optional review package is attempted only
           # when a GitHub token is already available in the user's environment.
-          # CI never needs Pi tooling, and this block performs unpinned network
+          # CI never needs Pi tooling, and this block performs network package
           # installs, so continuous-integration shells skip it entirely.
           if [ -z "''${CI:-}" ] && [ -f .pi/settings.json ]; then
-            pi_common_git_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-            if [ -n "$pi_common_git_dir" ]; then
-              pi_checkout_root="$(dirname "$pi_common_git_dir")"
-            else
-              pi_checkout_root="$PWD"
-            fi
+            pi_checkout_root="$(node --input-type=module <<'NODE'
+              import { ensureSharedPiPackageStore } from "./scripts/lib/dev-loop-runtime.mjs";
+              const prepared = await ensureSharedPiPackageStore({ cwd: process.cwd() });
+              process.stdout.write(prepared.commonRoot);
+NODE
+            )" || exit 1
             if [ -z "''${GITHUB_TOKEN:-}" ]; then
               if [ -n "''${GH_TOKEN:-}" ]; then
                 export GITHUB_TOKEN="''${GH_TOKEN}"
@@ -206,6 +206,10 @@
                 console.log([spec, name, version].join("\t"));
               }
             ')
+            # Exact pins were reconciled above. Keep Pi startup itself offline
+            # so it cannot race that authority or retry an unavailable optional
+            # private package. Operators can explicitly unset this for package maintenance.
+            export PI_OFFLINE="''${PI_OFFLINE:-1}"
           fi
         '';
       };
