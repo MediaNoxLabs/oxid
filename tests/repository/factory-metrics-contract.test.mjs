@@ -45,10 +45,16 @@ function record(overrides = {}) {
 test("v1 rejects unknown, ambiguous, negative, revision, chronology, and secret-bearing data", () => {
   assert.equal(validateMetricRecord(record()).ok, true);
   assert.equal(validateMetricRecord(record({ tokens: null })).ok, true);
+  assert.equal(validateMetricRecord(record({
+    review: { sessions: null, turns: null, toolCalls: null, externalReviewRequired: true },
+  })).ok, true);
   for (const mutate of [
     (value) => { value.extra = "unknown"; },
     (value) => { value.tokens.input = -1; },
     (value) => { value.tokens.input = Number.POSITIVE_INFINITY; },
+    (value) => { value.review.sessions = -1; },
+    (value) => { value.review.turns = 1.5; },
+    (value) => { value.review.toolCalls = Number.POSITIVE_INFINITY; },
     (value) => { value.headSha = "abc"; },
     (value) => { value.completedAt = "2026-08-27T23:59:00.000Z"; },
     (value) => { value.recordedAt = "9999-12-31T23:59:59.999Z"; },
@@ -93,8 +99,26 @@ test("generated templates cannot turn unknown measurements into zero", () => {
   assert.equal(draft.startedAt, null);
   assert.equal(draft.phases.developmentMs, null);
   assert.equal(draft.completedAt, null);
+  assert.deepEqual(draft.review, {
+    sessions: null,
+    turns: null,
+    toolCalls: null,
+    externalReviewRequired: null,
+  });
   assert.equal(draft.routing.targets.length, 0);
   assert.equal(validateMetricRecord(draft).ok, false);
+  const programmatic = metricTemplate({
+    issue: 167,
+    headSha: HEAD,
+    now: "2026-08-28T00:00:00.000Z",
+    draft: false,
+  });
+  assert.deepEqual(programmatic.review, {
+    sessions: null,
+    turns: null,
+    toolCalls: null,
+    externalReviewRequired: false,
+  });
 });
 
 test("records are written atomically with private mode and exact-head binding", async () => {
@@ -160,6 +184,11 @@ test("aggregate reports medians, p90, and tuning SLO violations without raw reco
   assert.equal(aggregate.totals.tokens, 390);
   assert.equal(aggregate.totals.externalReviewsRequired, 1);
   assert.deepEqual(aggregate.coverage.tokens, { available: 2, unavailable: 0 });
+  assert.deepEqual(aggregate.coverage.review, {
+    sessions: { available: 2, unavailable: 0 },
+    turns: { available: 2, unavailable: 0 },
+    toolCalls: { available: 2, unavailable: 0 },
+  });
   assert.deepEqual(aggregate.ciChecks.basic, {
     records: 2,
     queueMs: { median: 30_500, p90: 60_000 },
@@ -186,6 +215,37 @@ test("aggregate excludes unavailable token telemetry instead of treating it as z
   assert.deepEqual(aggregate.coverage.tokens, { available: 1, unavailable: 1 });
   assert.deepEqual(aggregate.distributions.totalTokens, { median: 130, p90: 130 });
   assert.equal(aggregate.totals.tokens, 130);
+});
+
+test("aggregate excludes each unavailable review counter instead of treating it as zero", () => {
+  const unavailable = record({
+    issue: 171,
+    review: { sessions: null, turns: null, toolCalls: 7, externalReviewRequired: true },
+  });
+  const aggregate = aggregateMetricRecords([unavailable, record()]);
+  assert.deepEqual(aggregate.coverage.review, {
+    sessions: { available: 1, unavailable: 1 },
+    turns: { available: 1, unavailable: 1 },
+    toolCalls: { available: 2, unavailable: 0 },
+  });
+  assert.deepEqual(aggregate.distributions.reviewSessions, { median: 2, p90: 2 });
+  assert.deepEqual(aggregate.distributions.reviewTurns, { median: 8, p90: 8 });
+  assert.deepEqual(aggregate.distributions.toolCalls, { median: 9.5, p90: 12 });
+  assert.deepEqual(aggregate.sloViolations.reviewSessionsOver4, []);
+
+  const allUnavailable = aggregateMetricRecords([record({
+    issue: 172,
+    review: { sessions: null, turns: null, toolCalls: null, externalReviewRequired: false },
+  })]);
+  assert.deepEqual(allUnavailable.coverage.review, {
+    sessions: { available: 0, unavailable: 1 },
+    turns: { available: 0, unavailable: 1 },
+    toolCalls: { available: 0, unavailable: 1 },
+  });
+  assert.deepEqual(allUnavailable.distributions.reviewSessions, { median: null, p90: null });
+  assert.deepEqual(allUnavailable.distributions.reviewTurns, { median: null, p90: null });
+  assert.deepEqual(allUnavailable.distributions.toolCalls, { median: null, p90: null });
+  assert.deepEqual(allUnavailable.sloViolations.reviewSessionsOver4, []);
 });
 
 test("per-target CI SLO still catches a slow basic lane beside a high-budget lane", () => {
@@ -386,6 +446,9 @@ test("committed schema advertises the same closed v1 contract", async () => {
   assert.match(schema.$id, /^https:\/\/raw\.githubusercontent\.com\/MediaNoxLabs\/oxid\/integration\//);
   assert.equal(schema.additionalProperties, false);
   assert.deepEqual(schema.properties.tokens.oneOf[0], { type: "null" });
+  for (const key of ["sessions", "turns", "toolCalls"]) {
+    assert.equal(schema.properties.review.properties[key].$ref, "#/$defs/nullableNonNegativeInteger");
+  }
   assert.deepEqual(schema.properties.ci.required, ["wallTimeMs", "requiredChecks", "failedChecks", "canceledRuns", "checks"]);
   assert.equal(schema.properties.validations.maxItems, 64);
   assert.equal(schema.properties.ci.properties.checks.maxItems, 64);
