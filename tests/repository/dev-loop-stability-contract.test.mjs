@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import {
   checkAgentToolAllowlists,
   devLoopPreflightCacheKey,
+  ensureSharedPiPackageStore,
   parseAgentFrontmatter,
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
@@ -95,7 +96,7 @@ async function installedPi084Root(t) {
 async function makeFixture() {
   const root = await realMkdtemp("oxid-dev-loop-root-");
   await mkdir(path.join(root, ".pi", "agents"), { recursive: true });
-  await writeFile(path.join(root, ".gitignore"), "/.pi/npm/\n/tmp/\n");
+  await writeFile(path.join(root, ".gitignore"), "/.pi/npm\n/tmp/\n");
   await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
     packages: ["npm:dev-loops@0.9.0"],
     subagents: { projectRootResolution: "git-root" },
@@ -138,6 +139,29 @@ test("project-local dev-loops resolution is exact from roots and linked worktree
   }
 });
 
+test("registered linked worktrees use one fail-closed Pi package store", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+
+  assert.equal((await ensureSharedPiPackageStore({ cwd: fixture.root })).mode, "primary");
+  const linked = await ensureSharedPiPackageStore({ cwd: fixture.worktree });
+  assert.equal(linked.mode, "linked");
+  assert.equal((await lstat(path.join(fixture.worktree, ".pi", "npm"))).isSymbolicLink(), true);
+  assert.equal(await realpath(path.join(fixture.worktree, ".pi", "npm")), await realpath(path.join(fixture.root, ".pi", "npm")));
+  assert.equal((await ensureSharedPiPackageStore({ cwd: fixture.worktree })).mode, "linked");
+  assert.equal(execFileSync("git", ["status", "--porcelain", "--", ".pi/npm"], { cwd: fixture.worktree, encoding: "utf8" }), "");
+  assert.equal((await resolveDevLoopsPackageRoot({ cwd: fixture.worktree })).source, "git-common-root");
+
+  await rm(path.join(fixture.worktree, ".pi", "npm"));
+  await mkdir(path.join(fixture.worktree, ".pi", "npm"));
+  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /absent or a managed symlink/);
+  await rm(path.join(fixture.worktree, ".pi", "npm"), { recursive: true });
+  const outside = await realMkdtemp("oxid-pi-store-outside-");
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  await symlink(outside, path.join(fixture.worktree, ".pi", "npm"), "dir");
+  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /outside the registered common checkout/);
+});
+
 test("Pi smoke resolution reuses every exact common-checkout package from a linked worktree", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
@@ -173,10 +197,13 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
 
 test("Pi devshell smoke delegates package authority to the bounded exact-pin resolver", async () => {
   const smoke = await read("scripts/check-pi-devshell.sh");
+  const devshell = await read("nix/devshells/default.nix");
   assert.match(smoke, /resolveDevLoopsPackageRoot/);
   assert.match(smoke, /includeAllPinnedPackages:\s*true/);
   assert.doesNotMatch(smoke, /review_package_root=["']\.pi\/npm/);
   assert.doesNotMatch(smoke, /(?:HOME|global|node_modules\/\.\.\/)/);
+  assert.match(devshell, /ensureSharedPiPackageStore/);
+  assert.match(devshell, /export PI_OFFLINE=.*PI_OFFLINE:-1/);
 });
 
 test("package resolution rejects mismatched identities and symlink escapes", async (t) => {

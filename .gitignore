@@ -24,7 +24,7 @@ local.properties
 /.oxid/
 
 # Project-local agent package installs and transient state
-/.pi/npm/
+/.pi/npm
 /.pi/runner-coordination/
 /.pi-subagents/
 

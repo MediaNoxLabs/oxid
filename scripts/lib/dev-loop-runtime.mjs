@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, stat, symlink } from "node:fs/promises";
 import path from "node:path";
 
 const SETTINGS_PATH = path.join(".pi", "settings.json");
@@ -77,6 +77,55 @@ async function resolveCommonCheckoutRoot(gitRoot) {
   return commonRoot;
 }
 
+async function lstatIfPresent(candidate) {
+  try {
+    return await lstat(candidate);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+export async function ensureSharedPiPackageStore({ cwd = process.cwd() } = {}) {
+  const gitRoot = await findGitRoot(cwd);
+  const commonRoot = await resolveCommonCheckoutRoot(gitRoot);
+  for (const piRoot of new Set([path.join(gitRoot, ".pi"), path.join(commonRoot, ".pi")])) {
+    const info = await lstat(piRoot);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`Pi project root must be a real directory: ${piRoot}`);
+  }
+  const commonStore = path.join(commonRoot, ".pi", "npm");
+  await mkdir(commonStore, { recursive: true });
+  const commonInfo = await lstat(commonStore);
+  if (!commonInfo.isDirectory() || commonInfo.isSymbolicLink()) {
+    throw new Error(`common Pi package store must be a real directory: ${commonStore}`);
+  }
+  if (gitRoot === commonRoot) return { mode: "primary", gitRoot, commonRoot, store: commonStore };
+
+  const localStore = path.join(gitRoot, ".pi", "npm");
+  let localInfo = await lstatIfPresent(localStore);
+  if (localInfo === null) {
+    try {
+      await symlink(commonStore, localStore, "dir");
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+    }
+    localInfo = await lstatIfPresent(localStore);
+  }
+  if (!localInfo?.isSymbolicLink()) {
+    throw new Error(`linked worktree Pi package store must be absent or a managed symlink: ${localStore}`);
+  }
+  let resolvedLocal;
+  try {
+    resolvedLocal = await realpath(localStore);
+  } catch (error) {
+    throw new Error(`linked worktree Pi package store is a broken symlink: ${localStore}`, { cause: error });
+  }
+  if (resolvedLocal !== await realpath(commonStore)) {
+    throw new Error(`linked worktree Pi package store points outside the registered common checkout: ${localStore}`);
+  }
+  return { mode: "linked", gitRoot, commonRoot, store: commonStore, link: localStore };
+}
+
 const EXACT_SEMVER = "(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
 const EXACT_NPM_PIN = new RegExp(`^npm:((?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+)@(${EXACT_SEMVER})$`);
 
@@ -124,13 +173,15 @@ async function readJson(file, description) {
 
 async function resolveInstalledPinnedPackages({ candidates, pins }) {
   const installed = [];
+  const candidateRoots = await Promise.all(candidates.map(({ root }) => realpath(root)));
   for (const pin of pins) {
     let found = false;
     for (const candidate of candidates) {
       const requestedRoot = npmPackagePath(candidate.root, pin.name);
       if (!(await exists(requestedRoot))) continue;
-      const [realCandidateRoot, packageRoot] = await Promise.all([realpath(candidate.root), realpath(requestedRoot)]);
-      if (!isContained(realCandidateRoot, packageRoot)) {
+      const packageRoot = await realpath(requestedRoot);
+      const ownerIndex = candidateRoots.findIndex((root) => isContained(root, packageRoot));
+      if (ownerIndex === -1) {
         throw new Error(`${pin.name} package escapes allowed project roots: ${requestedRoot}`);
       }
       const manifest = await readJson(path.join(packageRoot, "package.json"), `${pin.name} package manifest`);
@@ -139,7 +190,7 @@ async function resolveInstalledPinnedPackages({ candidates, pins }) {
           `expected ${pin.name}@${pin.version} at ${requestedRoot}, found ${manifest.name ?? "unknown"}@${manifest.version ?? "unknown"}`,
         );
       }
-      installed.push({ ...pin, packageRoot, source: candidate.source });
+      installed.push({ ...pin, packageRoot, source: candidates[ownerIndex].source });
       found = true;
       break;
     }

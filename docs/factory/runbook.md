@@ -24,9 +24,14 @@ routes through a coordination server.
 The devshell's `shellHook` reads `.pi/settings.json`, compares each exact pin
 against the common checkout's `.pi/npm/node_modules/<pkg>/package.json`, and
 installs only what is missing or mismatched. Linked worktrees reuse that one
-installation instead of creating a mutable package tree each. CI skips Pi
+installation through one topology-checked `.pi/npm` link instead of creating a
+second mutable package tree each. A pre-existing real directory or foreign link
+is rejected for manual inspection, never deleted by shell entry. CI skips Pi
 tooling entirely. The private review package is skipped with a printed notice
 when no token is present, so the shell still works without one.
+After exact-pin reconciliation, shell entry defaults Pi startup to offline mode;
+this prevents Pi's own package manager from racing the common-store authority or
+retrying a missing optional package. Explicit package maintenance may unset it.
 
 **To get the review package**, export a GitHub token with `read:packages`
 before entering the shell — `GITHUB_TOKEN`, `GH_TOKEN`, or `GH_TOKENS` are all
@@ -200,7 +205,8 @@ devshell environment exports rather than files, `.envrc` is tracked, and raw
 `target/` and `.direnv/` trees must not be shared. The devshell instead points
 every worktree at one bounded 10 GiB `sccache`; disposable worktree targets stay
 isolated. The Pi runtime resolver and devshell both reuse the common checkout's
-single `.pi/npm` installation without symlinking it into worktrees.
+single `.pi/npm` installation through the managed package-store link; other
+mutable state is not linked into worktrees.
 
 Recorded here because an empty section and a considered absence look identical
 in a diff.
