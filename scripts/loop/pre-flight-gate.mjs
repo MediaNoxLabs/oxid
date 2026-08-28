@@ -27,13 +27,22 @@ export function inferSubagentAvailability(env = process.env) {
   return explicit === "1" ? "1" : "0";
 }
 
-export async function runRepositoryPreflight(cwd) {
+export function assertNoPreflightBypass(env = process.env) {
+  const value = env.DEVLOOPS_PREFLIGHT_BYPASS;
+  if (value !== undefined && String(value).trim() !== "") {
+    throw new Error("DEVLOOPS_PREFLIGHT_BYPASS is not permitted by the repository pre-flight wrapper");
+  }
+}
+
+export async function runRepositoryPreflight(cwd, env = process.env) {
+  assertNoPreflightBypass(env);
   const pi = {
     getAllTools: () => REPOSITORY_CONFIGURED_TOOLS,
     getActiveTools: () => DEV_LOOP_SELECTED_TOOLS,
   };
   let resolved;
   const result = await runDevLoopPreflight(pi, cwd, {
+    env,
     activeAgent: "dev-loop",
     activeTools: DEV_LOOP_SELECTED_TOOLS,
     resolve: async (options) => {
@@ -50,13 +59,11 @@ export async function runPreFlightGate(argv = process.argv.slice(2), {
   stdout = process.stdout,
   stderr = process.stderr,
 } = {}) {
-  if (env.DEVLOOPS_PREFLIGHT_BYPASS?.trim() === "1") {
-    throw new Error("DEVLOOPS_PREFLIGHT_BYPASS is not permitted by the repository pre-flight wrapper");
-  }
-  const repositoryCheck = await runRepositoryPreflight(cwd);
+  const repositoryCheck = await runRepositoryPreflight(cwd, env);
   if (!repositoryCheck.ok) throw new Error(repositoryCheck.message);
   const script = path.join(repositoryCheck.resolved.packageRoot, "scripts", "loop", "pre-flight-gate.mjs");
   const childEnv = { ...env, DEVLOOPS_SUBAGENT_AVAILABLE: inferSubagentAvailability(env) };
+  delete childEnv.DEVLOOPS_PREFLIGHT_BYPASS;
   return runManagedChild(process.execPath, [script, ...argv], {
     cwd,
     env: childEnv,
