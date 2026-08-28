@@ -20,6 +20,7 @@ import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-
 import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
 import { inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
 import { normalizeLinkedWorktreeContext, normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
+import { assertReviewedWorktreePin, oxidConsumerProvision } from "../../scripts/loop/ensure-worktree-consumer.mjs";
 import {
   assertMinimumGhVersion,
   assertTimelinePages,
@@ -97,6 +98,7 @@ async function makeFixture() {
   const root = await realMkdtemp("oxid-dev-loop-root-");
   await mkdir(path.join(root, ".pi", "agents"), { recursive: true });
   await writeFile(path.join(root, ".gitignore"), "/.pi/npm\n/tmp/\n");
+  await writeFile(path.join(root, ".devloops"), "version: 1\n");
   await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
     packages: ["npm:dev-loops@0.9.0"],
     subagents: { projectRootResolution: "git-root" },
@@ -105,7 +107,7 @@ async function makeFixture() {
     "---", "name: developer", "description: fixture", "tools:", "  - read", "  - grep", "  - find", "  - ls", "  - bash", "  - edit", "  - write", "---", "fixture",
   ].join("\n"));
   execFileSync("git", ["init", "--initial-branch", "integration"], { cwd: root, stdio: "ignore" });
-  execFileSync("git", ["add", ".gitignore", ".pi/settings.json", ".pi/agents/developer.agent.md"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["add", ".devloops", ".gitignore", ".pi/settings.json", ".pi/agents/developer.agent.md"], { cwd: root, stdio: "ignore" });
   execFileSync("git", ["-c", "user.name=Oxid Test", "-c", "user.email=oxid-test@example.invalid", "commit", "-m", "fixture"], {
     cwd: root,
     stdio: "ignore",
@@ -120,7 +122,25 @@ async function makeFixture() {
   await mkdir(path.join(packageRoot, "cli"));
   await writeFile(path.join(packageRoot, "cli", "index.mjs"), 'process.stdout.write("dev-loop-out\\n"); process.stderr.write("dev-loop-err\\n");\n');
   await mkdir(path.join(packageRoot, "scripts", "loop"), { recursive: true });
-  await writeFile(path.join(packageRoot, "scripts", "loop", "ensure-worktree.mjs"), 'process.stdout.write("worktree-out\\n"); process.stderr.write("worktree-err\\n");\n');
+  await writeFile(path.join(packageRoot, "scripts", "loop", "ensure-worktree.mjs"), [
+    'import { mkdir } from "node:fs/promises";',
+    'import path from "node:path";',
+    'function value(argv, name) { const index = argv.indexOf(name); if (index >= 0) return argv[index + 1]; const prefix = `${name}=`; return argv.find((arg) => arg.startsWith(prefix))?.slice(prefix.length); }',
+    'async function genericProvision({ worktreePath }) { process.stderr.write("[provision-worktree] WARN fixture generic provisioning ran\\n"); await mkdir(path.join(worktreePath, "node_modules", "@dev-loops"), { recursive: true }); return { ok: true, actions: [{ mode: "link" }], summary: { copied: 0, linked: 1, skipped: 0, rejected: 0, warnings: 1 } }; }',
+    'export function parseEnsureWorktreeCliArgs(argv) { const help = argv.includes("--help") || argv.includes("-h"); const repoRoot = value(argv, "--repo-root"); if (!help && !repoRoot) throw new Error("Missing required --repo-root"); return { help, repoRoot, issue: Number(value(argv, "--issue")), pr: Number(value(argv, "--pr")), branch: value(argv, "--branch"), base: value(argv, "--base"), jq: value(argv, "--jq"), silent: argv.includes("--silent") || argv.includes("-s") }; }',
+    'export async function ensureWorktree(options, { provision = genericProvision } = {}) { if (options.branch === "conflict") throw new Error("fixture branch conflict"); const kind = Number.isInteger(options.issue) && options.issue > 0 ? "issue" : "pr"; const number = kind === "issue" ? options.issue : options.pr; const worktreePath = path.join(options.repoRoot, "tmp", "worktrees", "dev-loops", `${kind}-${number}`); const provisionResult = await provision({ worktreePath, repoRoot: options.repoRoot }); if (options.branch === "trailing") await new Promise((resolve) => setTimeout(() => { process.stdout.write("worktree-out\\n"); process.stderr.write("worktree-err\\n"); resolve(); }, 10)); return { ok: true, path: worktreePath, created: false, reused: true, provision: provisionResult }; }',
+    'export async function runCli(_argv, { stdout }) { stdout.write("fixture help\\n"); }',
+  ].join("\n"));
+  await mkdir(path.join(packageRoot, "scripts", "lib"), { recursive: true });
+  await writeFile(path.join(packageRoot, "scripts", "lib", "jq-output.mjs"), [
+    'export function emitResult(result, { jq, silent, stdout }) {',
+    '  if (silent) return result.ok ? 0 : 1;',
+    '  const value = jq === undefined ? result : jq === ".ok" ? result.ok : result;',
+    '  stdout.write(`${JSON.stringify(value)}\\n`);',
+    '  return 0;',
+    '}',
+  ].join("\n"));
+  await writeFile(path.join(packageRoot, "scripts", "_core-helpers.mjs"), 'export function formatCliError(error) { return error.message; }\n');
   await writeFile(path.join(packageRoot, "agents", "developer.agent.md"), [
     "---", "name: developer", "description: fixture", "tools: read, search, execute, bash, edit, write", "---", "fixture",
   ].join("\n"));
@@ -637,6 +657,9 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.throws(() => normalizeDevLoopsArgs(["pr", "create-draft", "--base=develop"]), /must use integration/);
   assert.deepEqual(normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150"]), ["--repo-root", "/repo", "--issue", "150", "--base", "origin/integration"]);
   assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--base", "origin/main"]), /must use origin\/integration/);
+  assert.doesNotThrow(() => assertReviewedWorktreePin("0.9.0"));
+  assert.throws(() => assertReviewedWorktreePin("0.9.1"), /supports only reviewed dev-loops@0\.9\.0/);
+  assert.notStrictEqual(oxidConsumerProvision(), oxidConsumerProvision());
 });
 
 test("linked worktree context handles issue/PR selectors, equals forms, main roots, and spaces", async (t) => {
@@ -674,6 +697,55 @@ test("linked worktree context handles issue/PR selectors, equals forms, main roo
   assert.throws(() => normalizeLinkedWorktreeContext(["--repo-root", issueTarget, "--issue", "zero"]), /positive integer/);
   assert.throws(() => normalizeLinkedWorktreeContext(["--repo-root", issueTarget, "--issue"]), /--issue requires a value/);
   assert.throws(() => normalizeLinkedWorktreeContext(["--repo-root", "--issue", "150"]), /--repo-root requires a value/);
+});
+
+test("Oxid worktree creation applies zero consumer provisioning despite a dirty invalid primary config", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  await writeFile(path.join(fixture.root, ".devloops"), "invalid: [\n");
+  assert.notEqual(execFileSync("git", ["status", "--porcelain", "--", ".devloops"], { cwd: fixture.root, encoding: "utf8" }), "");
+  assert.equal(await readFile(path.join(fixture.worktree, ".devloops"), "utf8"), "version: 1\n");
+
+  const stdout = [];
+  const stderr = [];
+  const stdoutSink = new Writable({ write(chunk, _encoding, callback) { stdout.push(chunk.toString()); callback(); } });
+  const stderrSink = new Writable({ write(chunk, _encoding, callback) { stderr.push(chunk.toString()); callback(); } });
+  assert.equal(await runEnsureWorktree(["--repo-root", fixture.root, "--issue", "150"], {
+    cwd: fixture.worktree,
+    stdout: stdoutSink,
+    stderr: stderrSink,
+  }), 0);
+  const result = JSON.parse(stdout.join("").trim().split("\n").at(-1));
+  assert.deepEqual(result.provision, {
+    ok: true,
+    actions: [],
+    summary: { copied: 0, linked: 0, skipped: 0, rejected: 0, warnings: 0 },
+  });
+  assert.doesNotMatch(stderr.join(""), /provision-worktree|packages\/core|WARN/);
+  assert.equal(await lstat(path.join(fixture.worktree, "node_modules")).catch(() => null), null);
+});
+
+test("Oxid worktree consumer preserves help, parse-error, conflict, jq, and silent output contracts", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const invoke = async (args) => {
+    const stdout = [];
+    const stderr = [];
+    const stdoutSink = new Writable({ write(chunk, _encoding, callback) { stdout.push(chunk.toString()); callback(); } });
+    const stderrSink = new Writable({ write(chunk, _encoding, callback) { stderr.push(chunk.toString()); callback(); } });
+    const code = await runEnsureWorktree(args, { cwd: fixture.root, stdout: stdoutSink, stderr: stderrSink });
+    return { code, stdout: stdout.join(""), stderr: stderr.join("") };
+  };
+
+  assert.deepEqual(await invoke(["--help"]), { code: 0, stdout: "fixture help\n", stderr: "" });
+  assert.deepEqual(await invoke(["--issue", "150"]), { code: 1, stdout: "", stderr: "Missing required --repo-root\n" });
+  assert.deepEqual(await invoke(["--repo-root", fixture.root, "--issue", "150", "--branch", "conflict"]), { code: 1, stdout: "", stderr: "fixture branch conflict\n" });
+  assert.deepEqual(await invoke(["--repo-root", fixture.root, "--issue", "150", "--jq", ".ok"]), { code: 0, stdout: "true\n", stderr: "" });
+  assert.deepEqual(await invoke(["--repo-root", fixture.root, "--issue", "150", "--silent"]), { code: 0, stdout: "", stderr: "" });
+
+  const helperLink = path.join(fixture.root, "tmp", "ensure-worktree-consumer-link.mjs");
+  await symlink(path.join(repoRoot, "scripts", "loop", "ensure-worktree-consumer.mjs"), helperLink);
+  assert.equal(execFileSync(process.execPath, [helperLink, "--help"], { cwd: fixture.root, encoding: "utf8" }), "fixture help\n");
 });
 
 function optionAfter(args, option) {
@@ -1092,7 +1164,7 @@ test("repository wrappers await child close and preserve trailing output", async
   const output = [];
   const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
   assert.equal(await runDevLoops(["gates"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
-  assert.equal(await runEnsureWorktree(["--issue", "150"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.equal(await runEnsureWorktree(["--repo-root", fixture.root, "--issue", "150", "--branch", "trailing"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
   assert.match(output.join(""), /dev-loop-out/);
   assert.match(output.join(""), /dev-loop-err/);
   assert.match(output.join(""), /worktree-out/);

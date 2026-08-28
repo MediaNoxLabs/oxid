@@ -102,5 +102,9 @@ queue:
 #   worktree. Oxid needs none: the Compact and ZK artifact closures arrive as
 #   devshell environment exports rather than files, `.envrc` is tracked, and
 #   raw `target/` and `.direnv/` must not be shared between worktrees. The
-#   runtime resolver reuses the common checkout's `.pi/npm` directly, without
-#   copyOnInit/linkOnInit. An empty section would be a no-op, so there is none.
+#   repository worktree wrapper injects an explicit zero-action consumer
+#   provisioning policy before the generic provisioning phase can read
+#   primary-checkout config or create its dev-loops-monorepo `packages/core`
+#   self-link. The runtime resolver reuses the common checkout's `.pi/npm`
+#   directly. An empty section would not disable that generic self-link, so
+#   there is none.

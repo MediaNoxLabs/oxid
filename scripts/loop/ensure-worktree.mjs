@@ -6,7 +6,6 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 import { runManagedChild } from "../lib/managed-child-process.mjs";
 import { enforceSingleBase, readLongOptionValues } from "../lib/pinned-dev-loops-args.mjs";
 
@@ -82,8 +81,7 @@ export async function runEnsureWorktree(argv = process.argv.slice(2), {
   stderr = process.stderr,
 } = {}) {
   const args = normalizeLinkedWorktreeContext(normalizeWorktreeArgs(argv));
-  const resolved = await resolveDevLoopsPackageRoot({ cwd });
-  const script = path.join(resolved.packageRoot, "scripts", "loop", "ensure-worktree.mjs");
+  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "ensure-worktree-consumer.mjs");
   return runManagedChild(process.execPath, [script, ...args], {
     cwd,
     stdout,
