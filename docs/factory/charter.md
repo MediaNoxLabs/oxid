@@ -45,6 +45,9 @@ A standing role, independent of any single work item. Duties:
   architecture/security/testing claims against the actual code.
 - Measure local target and CI durations against the budgets in metrics.md;
   flag regressions before they hit the CI time bound.
+- Run the read-only metrics audit weekly and after a harness incident. Review
+  median/p90 and SLO violations monthly; file one bounded issue for each
+  confirmed regression instead of tuning the harness inline.
 - File confirmed findings as factory work items; never fix-and-push directly.
 
 ### Release Manager (human)

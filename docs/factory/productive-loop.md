@@ -126,8 +126,21 @@ Preserve dirty/untracked files and open PR heads first.
 
 ## Metrics to retain
 
-For each delivered PR, retain: selected profile/areas/targets, draft review duration,
-pre-approval duration, hosted CI wall time, number of pushes after first CI,
-automatic reviewer sessions, canceled runs, peak worktree target size, and
-whether external review was required. Review the aggregate monthly. Raw token
-or cost data belongs in private operational telemetry, not public PR comments.
+For each issue/PR/head, leave one v1 record through
+`scripts/factory/metrics.mjs`. Retain routing, phase and validation durations,
+hosted CI wall time, review sessions/turns/tool calls, harness token counters,
+per-required-check queue/execution time, pushes after first CI, failed/canceled
+attempts, and peak target/worktree size. A zero
+means a measured zero, never “unknown.” When the active harness exposes no
+exact token counters, record `tokens: null`; the audit reports that coverage
+gap and excludes it from token distributions and totals rather than inviting
+an estimate. Token buckets must be non-overlapping; cached input cannot also be
+counted as ordinary input.
+
+Raw records live owner-private beneath the common Git directory and may contain
+usage counts, but never prompts, transcripts, credentials, identifiers, raw
+commands/output, or provider billing/account details. PR comments and committed
+reports contain aggregates only. The Quality Steward audits weekly and after an
+incident, reviews median/p90 and SLO violations monthly, and files bounded
+findings. Keep raw records for 90 days, then remove them only through an
+explicit owner maintenance action; the audit command is read-only.
