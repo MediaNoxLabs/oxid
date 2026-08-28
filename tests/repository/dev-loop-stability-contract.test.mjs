@@ -18,7 +18,7 @@ import {
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
 import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
-import { inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
+import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
 import { normalizeLinkedWorktreeContext, normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import { assertReviewedWorktreePin, oxidConsumerProvision } from "../../scripts/loop/ensure-worktree-consumer.mjs";
 import {
@@ -45,7 +45,7 @@ import {
   runClaudeCurrentHeadReview,
   verifyClaudeReviewEvidence,
 } from "../../scripts/review/claude-current-head.mjs";
-import registerDevLoopPreflight from "../../scripts/lib/dev-loop-preflight-core.mjs";
+import registerDevLoopPreflight, { runDevLoopPreflight } from "../../scripts/lib/dev-loop-preflight-core.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relativePath) => readFile(path.join(repoRoot, relativePath), "utf8");
@@ -1116,25 +1116,64 @@ test("tracked pre-flight wrapper reports Pi child dispatch availability determin
   assert.equal(inferSubagentAvailability({ DEVLOOPS_SUBAGENT_AVAILABLE: "0", PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "1", PI_SUBAGENT_MAX_DEPTH: "2" }), "1");
   assert.equal(inferSubagentAvailability({ DEVLOOPS_SUBAGENT_AVAILABLE: "1" }), "1");
   assert.equal(inferSubagentAvailability({ DEVLOOPS_SUBAGENT_AVAILABLE: "invalid" }), "0");
+  for (const value of ["1", "0", "true", "false", "yes", " \t0 "]) {
+    assert.throws(() => assertNoPreflightBypass({ DEVLOOPS_PREFLIGHT_BYPASS: value }), /BYPASS is not permitted/);
+  }
+  for (const value of [undefined, "", " \t "]) {
+    assert.doesNotThrow(() => assertNoPreflightBypass({ DEVLOOPS_PREFLIGHT_BYPASS: value }));
+  }
+
+  await assert.rejects(
+    runRepositoryPreflight("/unused", { DEVLOOPS_PREFLIGHT_BYPASS: "true" }),
+    /BYPASS is not permitted/,
+  );
+
+  const injectedEnv = {
+    PI_SUBAGENT_CHILD_AGENT: "injected",
+    PI_SUBAGENT_CHILD: "1",
+    PI_SUBAGENT_DEPTH: "0",
+    PI_SUBAGENT_MAX_DEPTH: "1",
+  };
+  let observedScopes;
+  const injectedCheck = await runDevLoopPreflight({
+    getAllTools: () => ["read"],
+    getActiveTools: () => ["read"],
+  }, "/unused", {
+    env: injectedEnv,
+    resolve: async () => ({ packageRoot: "/unused", packageRoots: ["/unused"], gitRoot: "/unused", settings: {} }),
+    check: async (scopes) => {
+      observedScopes = scopes;
+      return { ok: true };
+    },
+  });
+  assert.equal(injectedCheck.ok, true);
+  assert.equal(observedScopes.activeAgent, "injected");
+  assert.ok(observedScopes.futureTools.includes("subagent"));
+
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const script = path.join(fixture.packageRoot, "scripts", "loop", "pre-flight-gate.mjs");
-  await writeFile(script, "process.stdout.write(JSON.stringify({available:process.env.DEVLOOPS_SUBAGENT_AVAILABLE}) + '\\n');\n");
+  await writeFile(script, "process.stdout.write(JSON.stringify({available:process.env.DEVLOOPS_SUBAGENT_AVAILABLE,bypass:Object.hasOwn(process.env,'DEVLOOPS_PREFLIGHT_BYPASS')}) + '\\n');\n");
   const output = [];
   const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
   assert.equal(await runPreFlightGate(["--check-subagents"], {
     cwd: fixture.root,
-    env: { ...process.env, PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "1", PI_SUBAGENT_MAX_DEPTH: "2" },
+    env: { ...process.env, DEVLOOPS_PREFLIGHT_BYPASS: " \t ", PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_DEPTH: "1", PI_SUBAGENT_MAX_DEPTH: "2" },
     stdout: sink,
     stderr: sink,
   }), 0);
-  assert.deepEqual(JSON.parse(output.join("")), { available: "1" });
+  assert.deepEqual(JSON.parse(output.join("")), { available: "1", bypass: false });
   await assert.rejects(runPreFlightGate([], {
     cwd: fixture.root,
-    env: { ...process.env, DEVLOOPS_PREFLIGHT_BYPASS: "1" },
+    env: { ...process.env, DEVLOOPS_PREFLIGHT_BYPASS: "0" },
     stdout: sink,
     stderr: sink,
   }), /BYPASS is not permitted/);
+  const trackedMode = execFileSync("git", ["ls-files", "--stage", "--", "scripts/loop/pre-flight-gate.mjs"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }).trim().split(/\s+/, 1)[0];
+  assert.equal(trackedMode, "100755");
   const repositoryCheck = await runRepositoryPreflight(repoRoot);
   if (repositoryCheck.ok) {
     assert.match(repositoryCheck.resolved.source, /^git-(?:root|common-root)$/);

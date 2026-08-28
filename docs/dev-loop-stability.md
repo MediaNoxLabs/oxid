@@ -76,9 +76,13 @@ Fail-closed enforcement lives at
 `node scripts/loop/pre-flight-gate.mjs --check-subagents`. The selected
 `dev-loop` must run that tracked wrapper from the canonical worktree before
 startup, every routed action, and every delegation, and stop on nonzero status.
-The wrapper rejects `DEVLOOPS_PREFLIGHT_BYPASS`, validates exact package and
-content-bound manifest identity against the repository's pinned Pi tool
-contract, then delegates worktree/branch checking to the exact pinned package.
+The wrapper rejects every non-empty `DEVLOOPS_PREFLIGHT_BYPASS` value and strips
+an empty or whitespace-only value before child delegation. The same
+caller-injected environment is used for repository scope validation and child
+dispatch. The wrapper then
+validates exact package and content-bound manifest identity against the
+repository's pinned Pi tool contract and delegates worktree/branch checking to
+the exact pinned package.
 Fix the tracked manifest or exact installation instead of adding aliases.
 Separately installed user agents remain outside this repository preflight and
 must be governed by their owning installation.
