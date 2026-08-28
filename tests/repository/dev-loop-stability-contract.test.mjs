@@ -59,7 +59,9 @@ const supportedTools = [
 const handoffCore = {
   WORKTREE_NAMESPACE: path.join("tmp", "worktrees", "dev-loops"),
   resolveWorktreePath: ({ repoRoot: root, kind, number }) => path.join(root, "tmp", "worktrees", "dev-loops", `${kind}-${number}`),
-  buildWorktreeSlug: (target) => `phase-${target.issue}-${target.phase}`,
+  buildWorktreeSlug: (target) => target.kind === "local_branch"
+    ? target.branch.replaceAll("/", "-")
+    : `phase-${target.issue}-${target.phase}`,
   validateHandoffEnvelope: (envelope) => ({ ok: typeof envelope.cwd === "string", errors: [] }),
 };
 
@@ -800,15 +802,16 @@ test("handoff envelope cwd normalization uses owned canonical Git topology", asy
   const pr = { kind: "pr", repo: "owner/repo", pr: 153 };
   const phase = { kind: "local_phase", repo: "owner/repo", issue: 150, phase: "issue-150" };
 
-  const mainCwd = handoffCore.resolveWorktreePath({ repoRoot: fixture.root, kind: "issue", number: 999 });
+  const prospectiveIssueCwd = handoffCore.resolveWorktreePath({ repoRoot: fixture.root, kind: "issue", number: 999 });
   assert.equal((await normalizeHandoffEnvelopeCwd(
-    validEnvelope({ ...issue, issue: 999 }, mainCwd), resolve(fixture.root), handoffCore,
-  )).cwd, mainCwd);
-  const localBranchCwd = path.join(fixture.namespace, "fixture-topic");
+    validEnvelope({ ...issue, issue: 999 }, prospectiveIssueCwd), resolve(fixture.root), handoffCore,
+  )).cwd, prospectiveIssueCwd);
   assert.equal((await normalizeHandoffEnvelopeCwd(
-    validEnvelope({ kind: "local_branch", repo: "owner/repo", branch: "fixture/topic" }, localBranchCwd),
-    resolve(fixture.root), handoffCore,
-  )).cwd, localBranchCwd);
+    validEnvelope(pr, fixture.worktrees.pr153), resolve(fixture.root), handoffCore,
+  )).cwd, fixture.worktrees.pr153);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(phase, fixture.worktrees.phase150), resolve(fixture.root), handoffCore,
+  )).cwd, fixture.worktrees.phase150);
   assert.equal((await normalizeHandoffEnvelopeCwd(
     validEnvelope(issue, `${fixture.worktrees.issue150}/tmp/worktrees/dev-loops/issue-150`),
     resolve(fixture.worktrees.issue150), handoffCore,
@@ -865,6 +868,51 @@ test("handoff envelope cwd normalization uses owned canonical Git topology", asy
     ),
     /non-canonical handoff envelope cwd/,
   );
+});
+
+test("main-checkout handoff envelopes require target-derived authorization", async (t) => {
+  const fixture = await makeEnvelopeGitFixture(t);
+  const resolve = { gitRoot: fixture.root, commonRoot: fixture.root };
+  const issue = { kind: "issue", repo: "owner/repo", issue: 150 };
+  const prospectiveIssueCwd = handoffCore.resolveWorktreePath({ repoRoot: fixture.root, kind: "issue", number: 999 });
+  const localBranchCwd = path.join(fixture.namespace, "fixture-topic");
+
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope({ kind: "local_branch", repo: "owner/repo", branch: "fixture/topic" }, localBranchCwd),
+    resolve,
+    handoffCore,
+  )).cwd, localBranchCwd);
+
+  const cases = [
+    { name: "missing target", envelope: validEnvelope(undefined, prospectiveIssueCwd), error: /target kind 'missing'/ },
+    { name: "absent cwd", envelope: validEnvelope(issue, undefined), error: /cwd is required/ },
+    { name: "empty cwd", envelope: validEnvelope(issue, ""), error: /cwd is required/ },
+    { name: "whitespace cwd", envelope: validEnvelope(issue, " \t "), error: /cwd is required/ },
+    { name: "relative cwd", envelope: validEnvelope(issue, "tmp/worktrees/dev-loops/issue-150"), error: /cwd must be absolute/ },
+    {
+      name: "target disagreement",
+      envelope: validEnvelope({ ...issue, issue: 999 }, fixture.worktrees.issue150),
+      error: /does not match the resolver target/,
+    },
+    {
+      name: "outside common root",
+      envelope: validEnvelope(issue, path.join(fixture.parent, "outside-common-root")),
+      error: /non-canonical handoff envelope cwd/,
+    },
+    {
+      name: "unmodelled target",
+      envelope: validEnvelope({ kind: "future_kind", repo: "owner/repo" }, path.join(fixture.namespace, "future")),
+      error: /target kind 'future_kind'/,
+    },
+  ];
+  for (const fixtureCase of cases) {
+    await t.test(fixtureCase.name, async () => {
+      await assert.rejects(
+        normalizeHandoffEnvelopeCwd(fixtureCase.envelope, resolve, handoffCore),
+        fixtureCase.error,
+      );
+    });
+  }
 });
 
 async function installPinnedEnvelopeFixture(root, { nestedCore = false } = {}) {
@@ -968,7 +1016,7 @@ async function installPinnedEnvelopeFixture(root, { nestedCore = false } = {}) {
     'import path from "node:path";',
     'export const WORKTREE_NAMESPACE = path.join("tmp", "worktrees", "dev-loops");',
     'export const resolveWorktreePath = ({ repoRoot, kind, number }) => path.join(repoRoot, WORKTREE_NAMESPACE, `${kind}-${number}`);',
-    'export const buildWorktreeSlug = (target) => `phase-${target.issue}-${target.phase}`;',
+    'export const buildWorktreeSlug = (target) => target.kind === "local_branch" ? target.branch.replaceAll("/", "-") : `phase-${target.issue}-${target.phase}`;',
     'export const validateHandoffEnvelope = (envelope) => ({ ok: typeof envelope.cwd === "string", errors: [] });',
   ].join("\n"));
   return { packageRoot, corePackageRoot };
