@@ -31,11 +31,12 @@ any LLM provider.
 3. **Provider-agnostic.** Roles reference capabilities, never a specific LLM.
    Model selection is configuration (`.pi/settings.json`, `.devloops`
    persona `defaultModel`), not process.
-4. **Proportional evidence before a human merge.** Stable required aggregators
+4. **Proportional evidence before delivery.** Stable required aggregators
    run the impact-planned hosted targets. Independent Claude CLI
    current-head evidence is added for high-risk work, an owner request, or a
-   disputed finding. `.devloops` always stops at merge; release, settings, and
-   ADR authority remain human.
+   disputed finding. An active owner request may authorize the guarded wrapper
+   to merge an issue-backed `integration` PR; `main`, `develop`, release,
+   settings, tag, and ADR authority remain human.
 
 ## Historical field experience, 2026-08-18 to 2026-08-20
 

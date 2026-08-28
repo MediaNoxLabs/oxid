@@ -16,8 +16,9 @@ not.
 - Only one PR candidate is auto-driven remotely at a time.
 - Keep at most two active managed delivery worktrees. An experiment may use a
   temporary third worktree only when its owner and deletion date are recorded.
-- The final merge is always human. A clean gate is evidence, not permission to
-  mutate the delivery branch.
+- A clean gate is evidence, not permission to mutate the delivery branch. An
+  agent may merge only an issue-backed `integration` PR when the active owner
+  request explicitly authorizes it and the guarded merge audit passes.
 
 An SLO miss is a process finding. Do not answer it by adding retries, reviewers,
 or a second implementation path. Record which phase consumed the time and fix
@@ -46,8 +47,10 @@ that phase.
    waits for the protected contexts once.
 7. For a release-profile/high-risk change, an owner request, or a disputed finding, run
    the manually invoked current-head Claude review once after the last edit.
-8. Stop at merge. The human operator checks current-head freshness and merges
-   or returns the PR for remediation.
+8. Recheck current-head freshness. Hand off to the human operator, or use the
+   guarded integration-only merge wrapper when the active owner request
+   explicitly authorizes automated merge. Return any failed audit to
+   remediation.
 
 ## Assurance levels and target routing
 

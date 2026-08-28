@@ -5,8 +5,92 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import {
+  closingIssueNumber,
+  parseMergeIntegrationArgs,
+  validatePrForIntegrationMerge,
+  validateRequiredChecks,
+} from "../../scripts/github/merge-integration-pr.mjs";
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relativePath) => readFile(path.join(repoRoot, relativePath), "utf8");
+
+function eligibleIntegrationPr(overrides = {}) {
+  return {
+    state: "OPEN",
+    baseRefName: "integration",
+    baseRefOid: "a".repeat(40),
+    headRefOid: "b".repeat(40),
+    isDraft: false,
+    isCrossRepository: false,
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    title: "chore: stabilize delivery",
+    body: "Closes #168",
+    ...overrides,
+  };
+}
+
+test("integration merge execution requires explicit active owner authorization", () => {
+  assert.throws(
+    () => parseMergeIntegrationArgs(["--repo", "someone/else", "--pr", "168"]),
+    /must be MediaNoxLabs\/oxid/,
+  );
+  assert.throws(
+    () => parseMergeIntegrationArgs(["--repo", "MediaNoxLabs/oxid", "--pr", "168", "--execute"]),
+    /requires --authorized-by-owner/,
+  );
+  assert.deepEqual(
+    parseMergeIntegrationArgs(["--repo", "MediaNoxLabs/oxid", "--pr", "168", "--execute", "--authorized-by-owner"]),
+    { help: false, repo: "MediaNoxLabs/oxid", pr: 168, execute: true, authorizedByOwner: true },
+  );
+});
+
+test("only issue-backed integration pull requests are eligible for automated merge", () => {
+  assert.equal(closingIssueNumber("Fixes #168"), 168);
+  assert.equal(closingIssueNumber("Refs #168"), null);
+  assert.equal(validatePrForIntegrationMerge(eligibleIntegrationPr()).ok, true);
+  for (const baseRefName of ["main", "develop"]) {
+    const result = validatePrForIntegrationMerge(eligibleIntegrationPr({ baseRefName }));
+    assert.equal(result.ok, false);
+    assert.match(result.failures.join("; "), /human-only/);
+  }
+  for (const overrides of [
+    { state: "CLOSED" },
+    { isDraft: true },
+    { isCrossRepository: true },
+    { mergeable: "UNKNOWN" },
+    { mergeStateStatus: "BEHIND" },
+    { title: "WIP: not ready" },
+    { body: "Refs #168" },
+  ]) assert.equal(validatePrForIntegrationMerge(eligibleIntegrationPr(overrides)).ok, false);
+});
+
+test("required checks include a passing signature and DCO gate", () => {
+  const passing = [
+    { name: "Verify commit sign-offs", bucket: "pass", state: "SUCCESS" },
+    { name: "Repository gate", bucket: "pass", state: "SUCCESS" },
+  ];
+  assert.equal(validateRequiredChecks(passing).ok, true);
+  assert.equal(validateRequiredChecks([]).ok, false);
+  assert.equal(validateRequiredChecks(passing.map((check) => ({ ...check, bucket: "pending" }))).ok, false);
+  assert.equal(validateRequiredChecks([{ name: "Repository gate", bucket: "pass", state: "SUCCESS" }]).ok, false);
+});
+
+test("integration merge wrapper pins a guarded squash merge to the audited head", async () => {
+  const source = await read("scripts/github/merge-integration-pr.mjs");
+  for (const required of [
+    /git[\s\S]*fetch/,
+    /merge-base[\s\S]*--is-ancestor/,
+    /merge-tree[\s\S]*--write-tree/,
+    /pr[\s\S]*checks[\s\S]*--required/,
+    /devLoops, "gates"/,
+    /gate[\s\S]*detect-evidence/,
+    /--match-head-commit/,
+    /--squash/,
+  ]) assert.match(source, required);
+  assert.doesNotMatch(source, /--admin/);
+});
 
 async function markdownFilesUnder(relativeRoot) {
   return (await readdir(path.join(repoRoot, relativeRoot), { recursive: true }))
@@ -230,8 +314,8 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.doesNotMatch(scanJob, /\bsoft_fail:/);
   assert.doesNotMatch(scanJob, /skip_(?:zizmor|gitleaks|opengrep|trivy)_scan:\s*["']?true/i);
   assert.match(config, /maxCopilotRounds: 0/);
-  assert.match(config, /^    - merge$/m);
-  assert.match(config, /^  humanMergeOnly: true$/m);
+  assert.match(config, /^  stopAt: \[\]$/m);
+  assert.match(config, /^  humanMergeOnly: false$/m);
   assert.match(config, /^  requireRetrospective: false$/m);
   assert.match(config, /^  maxParallel: 1$/m);
   assert.doesNotMatch(config, /humanHandoff|candidatesFrom:\s*\n\s*- codeowners/);
@@ -286,7 +370,9 @@ test("guidance, required contexts, and review configuration agree", async () => 
   const contractReviewPolicy = await read("docs/integration-delivery.md");
   assert.match(contractReviewPolicy, /required_approving_review_count: 0/);
   assert.match(contractReviewPolicy, /require_code_owner_reviews: false/);
-  assert.match(contractReviewPolicy, /humanMergeOnly: true/);
+  assert.match(contractReviewPolicy, /humanMergeOnly: false/);
+  assert.match(contractReviewPolicy, /main.*develop.*human-only/is);
+  assert.match(contractReviewPolicy, /merge-integration-pr\.mjs/);
   for (const file of ["docs/integration-delivery.md", "docs/factory/runbook.md"]) {
     const guidance = await read(file);
     assert.match(guidance, /manually invoked/i, file);

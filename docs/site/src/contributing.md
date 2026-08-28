@@ -42,8 +42,10 @@ Open a draft pull request against `integration`, the only writable delivery and
 Pages publishing branch. Historical `main` and `develop` are read-only. Let the
 CI gate run (it is the same `just check` you ran locally, plus the locked Nix
 package build), mark it ready when green, and expect review findings with
-file/line references. Merges are squash merges; a human holds final merge
-authority.
+file/line references. Merges are squash merges. A human may merge; an agent may
+merge only an issue-backed `integration` PR through the exact-head guard when
+the active owner request explicitly authorizes it. `main` and `develop` remain
+human-only.
 
 Good first contributions: issues labeled
 [`enhancement`](https://github.com/MediaNoxLabs/oxid/issues?q=is%3Aissue+is%3Aopen+label%3Aenhancement)

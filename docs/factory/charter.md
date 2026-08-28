@@ -26,9 +26,11 @@ Claims a `factory:ready` item and delivers a draft PR. Duties:
 - Respect AGENT.md architecture rules and every accepted ADR.
 - Deliver through the `.devloops` `draft` gate with fan-out evidence, then the
   `preApproval` gate with CI green.
-- Never push to `integration` directly. Stop at merge for a human. A separate
-  fresh Claude current-head review is required only for high-risk `full` work,
-  an owner request, or a disputed finding.
+- Never push to `integration` directly. Merge only through the guarded
+  integration wrapper when the active owner request explicitly authorizes it;
+  otherwise stop for a human. A separate fresh Claude current-head review is
+  required only for high-risk `full` work, an owner request, or a disputed
+  finding.
 
 ### Reviewer (fan-out)
 The bounded `.devloops` fan-out uses scope/correctness at draft and
@@ -46,9 +48,10 @@ A standing role, independent of any single work item. Duties:
 - File confirmed findings as factory work items; never fix-and-push directly.
 
 ### Release Manager (human)
-Owns tags, releases, ADR acceptance, repository settings, and the final merge
-decision. Clean `integration` PRs may be merged after all current-head gates
-and any risk-required independent review evidence are posted.
+Owns tags, releases, ADR acceptance, repository settings, and every `main` or
+`develop` merge decision. Clean `integration` PRs may be merged by a human, or
+by an agent under explicit active owner authorization, after all current-head
+gates and any risk-required independent review evidence are posted.
 
 ## Authority boundaries
 
@@ -57,7 +60,8 @@ and any risk-required independent review evidence are posted.
 | Create/refine/order work items | Planner, Quality Steward |
 | Claim work, push a `factory/*` branch, open a draft PR | Implementer holding a valid lease |
 | Post gate findings | Reviewers |
-| Merge a clean `integration` PR | Human delivery operator, after all current-head evidence is posted |
+| Merge a clean `integration` PR | Human delivery operator, or an explicitly owner-authorized agent through the guarded wrapper, after all current-head evidence is posted |
+| Merge to `main` or `develop` | Human delivery operator only |
 | Tag, release, change repo settings, accept ADRs | Release Manager (human) only |
 | Modify factory protocol docs | Via a normal factory work item and the same delivery gates |
 
