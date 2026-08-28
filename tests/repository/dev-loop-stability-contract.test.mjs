@@ -134,6 +134,47 @@ test("project-local dev-loops resolution is exact from roots and linked worktree
   }
 });
 
+test("Pi smoke resolution reuses every exact common-checkout package from a linked worktree", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+
+  const pins = [
+    ["pi-subagents", "0.42.1"],
+    ["@input-output-hk/agent-review-pi", "0.5.0"],
+  ];
+  const settings = {
+    packages: ["npm:dev-loops@0.9.0", ...pins.map(([name, version]) => `npm:${name}@${version}`)],
+    subagents: { projectRootResolution: "git-root" },
+  };
+  for (const settingsRoot of [fixture.root, fixture.worktree]) {
+    await writeFile(path.join(settingsRoot, ".pi", "settings.json"), JSON.stringify(settings));
+  }
+  for (const [name, version] of pins) {
+    const packageRoot = path.join(fixture.root, ".pi", "npm", "node_modules", ...name.split("/"));
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name, version }));
+  }
+
+  const resolved = await resolveDevLoopsPackageRoot({
+    cwd: fixture.worktree,
+    includeAllPinnedPackages: true,
+  });
+  assert.deepEqual(resolved.packageRoots.map(({ name, source }) => [name, source]), [
+    ["dev-loops", "git-common-root"],
+    ["pi-subagents", "git-common-root"],
+    ["@input-output-hk/agent-review-pi", "git-common-root"],
+  ]);
+  assert.equal(await lstat(path.join(fixture.worktree, ".pi", "npm")).catch(() => null), null);
+});
+
+test("Pi devshell smoke delegates package authority to the bounded exact-pin resolver", async () => {
+  const smoke = await read("scripts/check-pi-devshell.sh");
+  assert.match(smoke, /resolveDevLoopsPackageRoot/);
+  assert.match(smoke, /includeAllPinnedPackages:\s*true/);
+  assert.doesNotMatch(smoke, /review_package_root=["']\.pi\/npm/);
+  assert.doesNotMatch(smoke, /(?:HOME|global|node_modules\/\.\.\/)/);
+});
+
 test("package resolution rejects mismatched identities and symlink escapes", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));

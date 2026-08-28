@@ -13,10 +13,24 @@ for required_command in pi node jq; do
   fi
 done
 
-review_package_root=".pi/npm/node_modules/@input-output-hk/agent-review-pi"
+review_package_root="$(node --input-type=module <<'NODE'
+import { resolveDevLoopsPackageRoot } from "./scripts/lib/dev-loop-runtime.mjs";
+
+const expectedName = "@input-output-hk/agent-review-pi";
+const resolved = await resolveDevLoopsPackageRoot({
+  cwd: process.cwd(),
+  includeAllPinnedPackages: true,
+});
+const reviewPackage = resolved.packageRoots.find(({ name }) => name === expectedName);
+if (!reviewPackage) {
+  throw new Error(`project Pi settings do not pin ${expectedName}`);
+}
+process.stdout.write(reviewPackage.packageRoot);
+NODE
+)"
 review_package_json="$review_package_root/package.json"
 if [[ ! -f "$review_package_json" ]]; then
-  echo "missing project-local @input-output-hk/agent-review-pi@0.5.0" >&2
+  echo "missing exact project @input-output-hk/agent-review-pi@0.5.0" >&2
   echo "enter nix develop with a GitHub token that can read packages" >&2
   exit 1
 fi
