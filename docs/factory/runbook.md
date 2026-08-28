@@ -202,11 +202,15 @@ the same pass.
 `copyOnInit` / `linkOnInit` provision **gitignored** files into a fresh
 worktree. Oxid needs neither: the Compact and ZK artifact closures arrive as
 devshell environment exports rather than files, `.envrc` is tracked, and raw
-`target/` and `.direnv/` trees must not be shared. The devshell instead points
-every worktree at one bounded 10 GiB `sccache`; disposable worktree targets stay
-isolated. The Pi runtime resolver and devshell both reuse the common checkout's
-single `.pi/npm` installation through the managed package-store link; other
-mutable state is not linked into worktrees.
+`target/` and `.direnv/` trees must not be shared. The repository wrapper keeps
+the pinned generic worktree topology and branch logic but injects a zero-action
+consumer provisioning callback. It therefore neither reads provisioning config
+from a dirty primary checkout nor tries the generic package's own
+`packages/core` workspace self-link. The devshell instead points every worktree
+at one bounded 10 GiB `sccache`; disposable worktree targets stay isolated. The
+Pi runtime resolver and devshell both reuse the common checkout's single
+`.pi/npm` installation through the managed package-store link; other mutable
+state is not linked into worktrees.
 
 Recorded here because an empty section and a considered absence look identical
 in a diff.
