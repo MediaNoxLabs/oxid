@@ -431,34 +431,48 @@ the strict Final profile, disables redirects/proxies/retries, keeps plaintext
 loopback-only, converts private parts through the exact Digital Passport
 commitment boundary, and reuses the existing valid-only encrypted import.
 Normal `compose()` remains unavailable and iOS/Android/WASM graphs cannot name
-the Portal client. The localhost Phase 1 journey uses a valid Oxid-owned HTTP
-mock issuer and the already running standalone stack:
+the Portal client. The TypeScript prototypes in
+`midnight-identity-solution-examples` remain behavioral/protocol references;
+this Phase 1 path does not run or copy their issuer. It runs the production-ready
+Rust issuer from the fetched Lace `origin/integration` tree in Lace's supported
+local Smocker configuration against the already running standalone stack:
 
 ```bash
 just standalone-up
 just portal-headless-e2e
 ```
 
-The second command requires a clean one-commit candidate atop its pinned base
-and exactly the three running `oxid-standalone` services created by the first
-command. It probes node health, indexer v3/v4, and proof-server readiness, then
-runs issuance and `wallet.connect` through the same `oxid-headless` process.
-The issuer mock exercises strict metadata, token, nonce, credential, and issuer
-resolution shapes; it has no live DIDIT dependency. The harness independently
-queries indexer v4 and bounds its observed height against the process's live
-sync height. Explicit consent, blocked issuer calls before consent, distinct
-managed authentication and Jubjub methods, verified import, encrypted
-persistence, restart restoration, listing, and fresh reverification remain
-required.
+The second command requires the exact correction head and exactly the three
+healthy `oxid-standalone` services created by the first command. It fetches and
+authenticates Lace integration commit `22ae5369` / tree `74d8d1a5`, builds the
+Lace resolver, did-manager, and default Rust issuer images, and loads Lace's
+`mock/didit.yml` into the in-stack Smocker. The Rust `DiditHttpAdapter` is
+runtime-bound to `http://smocker:8080`; no live DIDIT endpoint or external KYC
+provider is called. The adapted consumer compose omits Lace's duplicate
+node/indexer/proof-server services and points its resolver and did-manager at
+the existing `oxid-standalone` project. Lace's bootstrap job creates the issuer
+DID and Jubjub assertion key, while the issuer retains signing custody behind
+the Lace did-manager service.
 
-The command only inspects the existing Docker resources. It requires identical
-container/service/image snapshots before and after and publishes one closed,
-secret-free evidence JSON under `target/portal-headless-e2e/`. The evidence
-proves **indexer synchronization only**. Readiness probes do not prove that the
-headless process used the node or proof server, and both interactions are
-reported as unproven. This is not real Portal-service interoperability, DIDIT,
-KYC, production or on-chain issuer-DID evidence, a chain write, or proving and
-submission evidence.
+The test asks the running Lace KYC flow for the exact `credentialOfferUri` that
+its completion page stores and represents as the QR/copy offer, routes that same
+URL to Oxid, rejects once before consent with zero token/nonce/credential calls,
+and then explicitly accepts. The same `oxid-headless` process also derives its
+account and runs `wallet.connect` against local indexer v4; its live height is
+bounded against an independent indexer query. Digital-passport verification,
+encrypted persistence, listing, restart restoration, and fresh reverification
+are required.
+
+Docker cleanup is receipt-scoped to the `oxid-portal-consumer` project and never
+prunes or removes `oxid-standalone`. The command publishes one closed,
+secret-free exact-head JSON under `target/portal-headless-e2e/` with
+`portalServiceExercised:true`, the Lace commit/tree/provenance identities, and
+the supported mock mode. The evidence proves the Oxid process's **indexer
+synchronization only**. Standalone node and proof-server readiness do not prove
+that Oxid used either service, so both interactions remain explicitly false.
+The resolver-observed issuer bootstrap is not a direct node/prover interaction
+claim, and this is not live DIDIT, real-person KYC, production discovery,
+release evidence, or Oxid proving/submission evidence.
 
 The `standalone-portal` iOS Simulator/Android QEMU profile has one
 repository-owned stack command. With the validated `oxid-standalone`

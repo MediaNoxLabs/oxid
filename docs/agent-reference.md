@@ -593,15 +593,22 @@ as source-derived negative contract evidence only. ADR-0102 pins merged Portal
 `74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`, and the existing Final-profile
 provenance digest. Native desktop/headless development selects the strict HTTP
 adapter through an absolute manifest path plus exact digest. The
-`portal-headless-e2e` target uses an Oxid-owned strict HTTP mock issuer rather
-than the Portal service or DIDIT. Only the native `oxid-headless` executable may
+`portal-headless-e2e` target fetches that exact Lace integration tree and runs
+its production-ready Rust issuer with Lace's supported Smocker Didit seam; it
+does not run the TypeScript reference issuer from
+`midnight-identity-solution-examples`. Lace's did-manager bootstraps the issuer
+DID and key against the existing local stack, and the Lace resolver observes it
+through local indexed state. Only the native `oxid-headless` executable may
 combine that profile with the exact `undeployed` `127.0.0.1` standalone bundle;
 the general constructor and desktop behavior remain fail-closed. The same child
 must preserve pending issuance while `wallet.connect` reports live indexer sync,
-and its numeric height is checked against an independent indexer-v4 query. This
-is indexer-sync evidence only: node and proof-server use are explicitly
-unproven. It is not KYC, production, on-chain issuer-DID, chain-write, proving,
-submission, or real Portal interoperability evidence. ADR-0103 additionally
+and its numeric height is checked against an independent indexer-v4 query. The
+running Lace KYC flow supplies the exact QR/copy offer URL; Oxid rejects before
+consent with no token/nonce/credential calls, then explicitly accepts. This is
+Oxid indexer-sync evidence only: Oxid node and proof-server use are explicitly
+unproven. It is supported mock KYC through the Lace service, not live DIDIT,
+real-person KYC, production discovery, Oxid chain-write/proving/submission, or
+release evidence. ADR-0103 additionally
 permits one compile-gated physical Android tailnet conformance profile. Oxid owns
 consumer composition, lifecycle, mobile automation, and evidence; Portal input
 is only its merged public source and generic Tailscale HTTPS profile. Runtime

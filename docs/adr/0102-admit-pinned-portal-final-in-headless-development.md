@@ -126,18 +126,35 @@ HTTPS-authenticated physical Android conformance profile.
 
 ## Corrective amendment — 2026-08-28
 
-The original Evidence section above is historical and is superseded for
-`just portal-headless-e2e`. That target no longer checks out or starts the
-Portal repository, a Portal service, a production issuer, Smocker, or DIDIT.
-It now uses an Oxid-owned ephemeral HTTP mock implementing only the strict
-issuer metadata, authorization metadata, token, nonce, credential, and issuer
-resolution contract. The mock creates valid signed credential bytes and a
-detached proof with Oxid's `StandaloneBoundCompactCredentialIssuer`; DIDIT is
-not a live or transitive service dependency of the test profile.
+The Phase 1 live target must exercise the production-ready Rust implementation
+from Lace `origin/integration`; an Oxid-owned issuer mock is not acceptable live
+evidence. The TypeScript prototypes in `midnight-identity-solution-examples`
+remain behavioral/protocol references and are neither copied nor run by
+`just portal-headless-e2e`.
+
+The target fetches and authenticates Portal integration commit
+`22ae5369b6f939e6b20648f4b85dd993527748ef`, tree
+`74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`, and the retained Final-profile
+provenance. It builds the Lace resolver, did-manager, and default Rust issuer
+images. The Oxid-owned consumer compose preserves Lace's production Rust
+composition and supported local mock seam while omitting only the duplicate
+Midnight services: the Rust issuer's `DiditHttpAdapter` targets the in-stack
+Smocker, and the exact Lace `mock/didit.yml` is loaded through Smocker's admin
+API. No live DIDIT endpoint or external KYC provider is called. Oxid's Rust
+holder-resolver helper is limited to resolving the process-local holder DID for
+the client test; it does not replace the issuer service.
+
+Lace's did-manager and resolver use the existing healthy `oxid-standalone`
+node, indexer, and proof-server routes. The Lace bootstrap job creates the
+issuer DID with a Jubjub assertion key and hands its method to the Rust issuer;
+the issuer signs through Lace's did-manager custody service. Resolving that DID
+through the Lace resolver proves that the bootstrap reached indexed local
+state. This does not claim direct observation of node or prover interaction by
+Oxid.
 
 One native `oxid-headless` process is admitted to combine the authenticated
-Portal-shaped issuer profile with only the exact local standalone bundle:
-network `undeployed`, canonical `127.0.0.1` indexer v4 WebSocket/HTTP, node and
+Portal profile with only the exact local standalone bundle: network
+`undeployed`, canonical `127.0.0.1` indexer v4 WebSocket/HTTP, node and
 proof-server routes, and the public standalone placeholder address. The
 ordinary environment constructor remains fail-closed for this combination, so
 desktop and production composition are unchanged. Partial, alternate,
@@ -145,20 +162,22 @@ read-only, remote, resolver-overridden, checkpointed, locally proving,
 submission-journal, Passport Vault, and presentation-artifact combinations are
 rejected.
 
-The journey proves explicit consent and zero token/nonce/credential calls when
-consent is false, then preserves the pending issuance while that same process
-synchronizes through the local indexer. Its numeric live height is compared
-with an independent indexer-v4 query within a bounded advancing-tip delta.
-After consent it requires a managed authentication method, a separate managed
-Jubjub binding, valid import, encrypted persistence, process restart, listing,
-and fresh reverification. Docker container/service/image identity must be
-unchanged before evidence is published.
+The running Lace KYC flow returns the same exact `credentialOfferUri` that its
+completion UI stores for QR and copy-link representation. The journey routes
+that URL to Oxid, prepares issuance, rejects acceptance once with consent false,
+and observes zero token, nonce, and credential calls before explicitly
+accepting. While issuance remains pending, that same process derives an account
+and synchronizes through local indexer v4; its numeric height is compared with
+an independent query within a bounded advancing-tip delta. The accepted
+Digital Passport must pass every required verification stage, encrypted
+persistence, listing, process restart, restoration, and fresh reverification.
 
-The resulting evidence proves `indexer-sync` only. Node and proof-server
-readiness checks are prerequisites, not observations of headless node or prover
-use, and those interactions remain explicitly unproven. It is not evidence of
-real Portal interoperability, DIDIT or KYC, production discovery/trust, an
-on-chain issuer DID, chain writes, proving, submission, desktop behavior,
-mobile/emulator/physical flows, tailnet behavior, issue #162, Lace changes, or
-release readiness. Existing mobile Portal lifecycle and stack ownership remain
-unchanged.
+Cleanup is receipt-scoped to the `oxid-portal-consumer` Compose project and
+never globally prunes or removes `oxid-standalone`. Exact-head secret-free
+evidence records `portalServiceExercised:true`, the Lace integration
+commit/tree/provenance, and `diditProviderMode:"lace-smocker"`. It reports only
+`oxid-headless-indexer-sync` as proven Midnight interaction; node and
+proof-server interactions remain explicitly false. This is not live DIDIT,
+real-person KYC, production discovery/trust, release evidence, Oxid proving or
+submission evidence, desktop/mobile/tailnet evidence, issue #162, or a Lace
+source change.
