@@ -147,7 +147,6 @@ guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
 }
 let candidates = windows.compactMap { window -> CGRect? in
     guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
-          (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
           let dictionary = window[kCGWindowBounds as String] as? NSDictionary,
           let bounds = CGRect(dictionaryRepresentation: dictionary),
           bounds.width >= 320,
@@ -172,7 +171,7 @@ capture_app_window() {
   IFS=, read -r x y width height <<EOF_BOUNDS
 $bounds
 EOF_BOUNDS
-  [[ "$x" =~ ^[0-9]+$ && "$y" =~ ^[0-9]+$ && "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || return 1
+  [[ "$x" =~ ^-?[0-9]+$ && "$y" =~ ^-?[0-9]+$ && "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || return 1
   [ "$width" -ge 320 ] && [ "$height" -ge 480 ] || return 1
   /usr/sbin/screencapture -x -R"$x,$y,$width,$height" "$output"
   [ -s "$output" ]
@@ -257,7 +256,7 @@ jq -e '.token == 1 and .nonce == 1 and .credential == 1 and .issuerResolutionSuc
   "$RUNTIME/counters-after-consent.json" >/dev/null || fail issuer-call-counts
 control_curl "$CONTROL_ORIGIN/handoff-status" >"$RUNTIME/handoff-status.json" \
   || fail handoff-status
-jq -e '.state == "consumed"' "$RUNTIME/handoff-status.json" >/dev/null || fail handoff-not-consumed
+jq -e '.state == "empty"' "$RUNTIME/handoff-status.json" >/dev/null || fail handoff-not-empty
 [ ! -e "$APP_SUPPORT_ROOT/portal-offer.capability" ] || fail capability-not-burned
 [ -s "$WALLET_ROOT/private/credentials.enc" ] || fail encrypted-store
 if grep -aEqi 'Alice|Example|John|Doe|AB1234567|pre-authorized|access[_-]?token|c_nonce|openid-credential-offer' \
@@ -268,6 +267,7 @@ kill "$app_pid" >/dev/null 2>&1 || fail first-app-stop
 wait "$app_pid" || fail first-app-status
 app_pid=""
 [ ! -s "$RUNTIME/app-first.log" ] || fail first-app-log
+rm -f -- "$CONTROL_ROOT/driver-admitted"
 
 printf 'ok\n' >"$CONTROL_ROOT/restart"
 chmod 600 "$CONTROL_ROOT/restart"

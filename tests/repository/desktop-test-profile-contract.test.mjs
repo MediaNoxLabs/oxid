@@ -17,10 +17,16 @@ test("ARM64 Darwin desktop Portal remains owner-invoked and outside HostedTarget
   assert.match(harness, /target\/debug\/oxid-app/);
   assert.match(harness, /Mach-O 64-bit arm64/);
   assert.match(harness, /CGWindowListCopyWindowInfo/);
+  assert.match(harness, /kCGWindowOwnerPID/);
+  assert.doesNotMatch(harness, /kCGWindowLayer/);
+  assert.match(harness, /"\$x" =~ \^-\?\[0-9\]\+\$ && "\$y" =~ \^-\?\[0-9\]\+\$/);
   assert.match(harness, /\/Applications\/Xcode\.app\/Contents\/Developer/);
   assert.match(harness, /\/usr\/bin\/xcrun --sdk macosx swiftc/);
   assert.doesNotMatch(harness, /System Events|osascript|xcode-select -p/);
   assert.doesNotMatch(harness, /Xvfb|Openbox|xdotool|WebKitGTK|x86_64-linux/i);
+  assert.match(harness, /\.state == "empty"/);
+  assert.doesNotMatch(harness, /\.state == "consumed"/);
+  assert.match(harness, /rm -f -- "\$CONTROL_ROOT\/driver-admitted"/);
 });
 
 test("desktop test feature is exact and its rendered-control driver has no direct capability calls", async () => {
