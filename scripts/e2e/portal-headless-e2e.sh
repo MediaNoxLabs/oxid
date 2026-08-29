@@ -125,7 +125,8 @@ jq -e \
   keys == [
     "acceptance",
     "diditProviderMode",
-    "headlessIndexerHeight",
+    "headlessIndexerCurrentCursor",
+    "headlessIndexerTargetCursor",
     "issuerImplementation",
     "midnightInteractionProven",
     "nodeInteractionProven",
@@ -133,8 +134,7 @@ jq -e \
     "portal",
     "portalServiceExercised",
     "proofServerInteractionProven",
-    "schema",
-    "separatelyQueriedIndexerHeight"
+    "schema"
   ]
   and .schema == "oxid-phase1-lace-portal-journey-v1"
   and .oxid == {head:$head,tree:$oxid_tree}
@@ -149,10 +149,9 @@ jq -e \
   and .midnightInteractionProven == "oxid-headless-indexer-sync"
   and .nodeInteractionProven == false
   and .proofServerInteractionProven == false
-  and (.headlessIndexerHeight | numbers)
-  and (.separatelyQueriedIndexerHeight | numbers)
-  and (([.headlessIndexerHeight - .separatelyQueriedIndexerHeight,
-          .separatelyQueriedIndexerHeight - .headlessIndexerHeight] | max) <= 4)
+  and (.headlessIndexerCurrentCursor | numbers)
+  and (.headlessIndexerTargetCursor | numbers)
+  and .headlessIndexerCurrentCursor == .headlessIndexerTargetCursor
   and (.acceptance | keys) == [
     "digitalPassportVerified",
     "encryptedPersistence",

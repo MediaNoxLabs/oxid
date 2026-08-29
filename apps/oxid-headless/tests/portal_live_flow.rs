@@ -41,7 +41,6 @@ const NODE_WS: &str = "ws://127.0.0.1:9944";
 const PROOF_SERVER: &str = "http://127.0.0.1:6300";
 const STANDALONE_ADDRESS: &str =
     "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
-const MAX_HEIGHT_DELTA: u64 = 4;
 const MOCK_SESSION_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
 const EXCLUDED_ENVIRONMENT: [&str; 10] = [
     "OXID_MIDNIGHT_PROVING_CACHE_DIR",
@@ -693,35 +692,6 @@ fn resolver_request(did: &str) -> Value {
     serde_json::from_slice(&response[split..]).expect("resolver JSON")
 }
 
-fn separately_queried_indexer_height() -> u64 {
-    let mut stream = TcpStream::connect(("127.0.0.1", 8088)).expect("local indexer v4");
-    set_stream_timeouts(&stream);
-    let body = br#"{"query":"query OxidPhase1Evidence { block { height } }"}"#;
-    write!(
-        stream,
-        "POST /api/v4/graphql HTTP/1.1\r\nHost: 127.0.0.1:8088\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    )
-    .expect("indexer request headers");
-    stream.write_all(body).expect("indexer request body");
-    let response = read_http_response(&mut stream, 64 * 1024);
-    let split = response
-        .windows(4)
-        .position(|value| value == b"\r\n\r\n")
-        .map(|index| index + 4)
-        .expect("indexer response headers");
-    let value: Value = serde_json::from_slice(&response[split..]).expect("indexer response JSON");
-    assert!(
-        value
-            .get("errors")
-            .and_then(Value::as_array)
-            .is_none_or(Vec::is_empty)
-    );
-    value["data"]["block"]["height"]
-        .as_u64()
-        .expect("numeric indexer block height")
-}
-
 fn write_manifest(
     path: &Path,
     issuer_origin: &str,
@@ -1106,13 +1076,15 @@ fn lace_portal_mock_flow_issues_to_same_headless_process_and_restores() {
     assert_eq!(account["source"], "live");
     assert_eq!(account["networkId"], "undeployed");
     assert_eq!(account["sync"]["state"], "synced");
-    let headless_height = account["sync"]["chainTipHeight"]
+    let current_cursor = account["sync"]["currentCursor"]
         .as_u64()
-        .expect("headless reports a numeric indexer height");
-    let separately_queried_height = separately_queried_indexer_height();
-    assert!(
-        headless_height.abs_diff(separately_queried_height) <= MAX_HEIGHT_DELTA,
-        "headless and separately queried same-endpoint indexer heights exceed the advancing-tip bound"
+        .expect("headless reports a numeric indexer current cursor");
+    let target_cursor = account["sync"]["targetCursor"]
+        .as_u64()
+        .expect("headless reports a numeric indexer target cursor");
+    assert_eq!(
+        current_cursor, target_cursor,
+        "headless websocket replay must reach its advertised target cursor"
     );
     let still_pending = first.request(
         "pending-after-sync",
@@ -1221,8 +1193,8 @@ fn lace_portal_mock_flow_issues_to_same_headless_process_and_restores() {
             "separateJubjubBinding":true
         },
         "diditProviderMode":"lace-smocker",
-        "headlessIndexerHeight":headless_height,
-        "separatelyQueriedIndexerHeight":separately_queried_height,
+        "headlessIndexerCurrentCursor":current_cursor,
+        "headlessIndexerTargetCursor":target_cursor,
         "issuerImplementation":"lace-id-portal-rust",
         "midnightInteractionProven":"oxid-headless-indexer-sync",
         "nodeInteractionProven":false,

@@ -458,8 +458,7 @@ The test asks the running Lace KYC flow for the exact `credentialOfferUri` that
 its completion page stores and represents as the QR/copy offer, routes that same
 URL to Oxid, rejects once before consent with zero token/nonce/credential calls,
 and then explicitly accepts. The same `oxid-headless` process also derives its
-account and runs `wallet.connect` against local indexer v4; its live height is
-bounded against a separate direct query to the same local indexer endpoint.
+account and runs `wallet.connect` against local indexer v4; its websocket replay reports equal numeric current and target cursors.
 Digital-passport verification,
 encrypted persistence, listing, restart restoration, and fresh reverification
 are required.

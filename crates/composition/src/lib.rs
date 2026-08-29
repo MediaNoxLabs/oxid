@@ -1607,6 +1607,7 @@ impl std::error::Error for HeadlessCompositionError {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HeadlessEnvironmentPolicy {
     General,
+    #[cfg(feature = "headless-portal-local")]
     NativeHeadlessProcess,
 }
 
@@ -1642,7 +1643,7 @@ impl PortalAdjacentEnvironmentSettings {
             || self.passport_vault_store
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "headless-portal-local"))]
     fn each_conflict() -> [Self; 9] {
         [
             Self {
@@ -1699,29 +1700,34 @@ fn validate_portal_environment_combination(
             Ok(())
         };
     }
-    if policy == HeadlessEnvironmentPolicy::General || adjacent.any() {
+    if matches!(policy, HeadlessEnvironmentPolicy::General) || adjacent.any() {
         return Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation);
     }
-    let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
-        .map_err(|_| HeadlessCompositionError::PortalRequiresStandaloneSimulation)?;
-    let expected = [
-        Some("undeployed"),
-        Some("ws://127.0.0.1:8088/api/v4/graphql/ws"),
-        Some("http://127.0.0.1:8088/api/v4/graphql"),
-        Some("ws://127.0.0.1:9944"),
-        Some("http://127.0.0.1:6300"),
-        Some(placeholder.value()),
-        None,
-    ];
-    if midnight_values
-        .iter()
-        .map(|value| value.as_deref())
-        .eq(expected)
+    #[cfg(feature = "headless-portal-local")]
     {
-        Ok(())
-    } else {
-        Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
+        let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
+            .map_err(|_| HeadlessCompositionError::PortalRequiresStandaloneSimulation)?;
+        let expected = [
+            Some("undeployed"),
+            Some("ws://127.0.0.1:8088/api/v4/graphql/ws"),
+            Some("http://127.0.0.1:8088/api/v4/graphql"),
+            Some("ws://127.0.0.1:9944"),
+            Some("http://127.0.0.1:6300"),
+            Some(placeholder.value()),
+            None,
+        ];
+        if midnight_values
+            .iter()
+            .map(|value| value.as_deref())
+            .eq(expected)
+        {
+            Ok(())
+        } else {
+            Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
+        }
     }
+    #[cfg(not(feature = "headless-portal-local"))]
+    Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
 }
 
 /// Selects deterministic simulation when no live variables are present, a
@@ -1736,7 +1742,7 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
 /// Selects the ordinary headless environment composition while admitting one
 /// exact Portal-plus-local-standalone bundle for the native `oxid-headless`
 /// process. Other incoming adapters retain [`compose_headless_from_environment`].
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "headless-portal-local"))]
 pub fn compose_native_headless_process_from_environment()
 -> Result<ApplicationServices, HeadlessCompositionError> {
     compose_headless_from_environment_with_policy(HeadlessEnvironmentPolicy::NativeHeadlessProcess)
@@ -1859,7 +1865,7 @@ fn compose_headless_from_environment_with_policy(
             #[cfg(all(not(target_os = "ios"), not(target_os = "android")))]
             if let Some(portal) = portal {
                 return Ok(compose_development_portal_from_config(
-                    config.with_account_chain_tip_observation(),
+                    config,
                     portal,
                     credential_presentation,
                 ));
@@ -4575,7 +4581,7 @@ mod tests {
         drop(compose_headless());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "headless-portal-local"))]
     #[test]
     fn headless_process_portal_policy_accepts_only_the_canonical_standalone_bundle() {
         let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()

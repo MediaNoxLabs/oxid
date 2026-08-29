@@ -167,9 +167,7 @@ completion UI stores for QR and copy-link representation. The journey routes
 that URL to Oxid, prepares issuance, rejects acceptance once with consent false,
 and observes zero token, nonce, and credential calls before explicitly
 accepting. While issuance remains pending, that same process derives an account
-and synchronizes through local indexer v4; its numeric height is compared with
-a separate direct query to the same local indexer endpoint within a bounded
-advancing-tip delta. The accepted
+and synchronizes through local indexer v4; its websocket replay reports equal numeric current and target cursors. The accepted
 Digital Passport must pass every required verification stage, encrypted
 persistence, listing, process restart, restoration, and fresh reverification.
 
