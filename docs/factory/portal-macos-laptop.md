@@ -34,7 +34,13 @@ that the combined run is faster overall; its duration is unmeasured.
 Before starting, record whether any standalone containers already exist:
 
 ```bash
-mkdir -p tmp/portal-macos-laptop
+ownership_file=tmp/portal-macos-laptop/ownership.txt
+if ! mkdir -p tmp/portal-macos-laptop ||
+   ! rm -f -- "$ownership_file" ||
+   [ -e "$ownership_file" ] || [ -L "$ownership_file" ]; then
+  printf '%s\n' 'standalone ownership invalidation failed; no ownership recorded and no stack command run' >&2
+  exit 1
+fi
 if ! standalone_before="$(docker ps -a \
   --filter label=com.docker.compose.project=oxid-standalone \
   --format '{{.ID}}' 2>/dev/null)"; then
@@ -42,7 +48,7 @@ if ! standalone_before="$(docker ps -a \
   exit 1
 fi
 printf 'standalone_preexisting=%s\n' "$([ -n "$standalone_before" ] && echo true || echo false)" \
-  > tmp/portal-macos-laptop/ownership.txt
+  > "$ownership_file"
 test -z "$(git status --porcelain --untracked-files=no)"
 just standalone-up
 just portal-macos-laptop-e2e

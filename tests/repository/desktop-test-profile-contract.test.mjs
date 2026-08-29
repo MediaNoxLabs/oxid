@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 const root = new URL("../../", import.meta.url);
@@ -56,13 +59,44 @@ test("canonical macOS laptop lane runs headless before desktop and validates bot
   assert.match(runner.match(/run_repository\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "", new RegExp(registration.replaceAll(".", "\\.")));
 });
 
-test("macOS runbook fails closed before inferring standalone ownership", async () => {
+test("macOS runbook invalidates stale standalone ownership before a fail-closed query", async () => {
   const runbook = await text("docs/factory/portal-macos-laptop.md");
   const commands = runbook.match(/Before starting,[\s\S]*?```bash\n([\s\S]*?)\n```/)?.[1];
   assert.ok(commands, "missing owner-safe command block");
 
+  const sandbox = await mkdtemp(path.join(tmpdir(), "oxid-portal-ownership-"));
+  const ownershipFile = path.join(sandbox, "tmp/portal-macos-laptop/ownership.txt");
+  const bin = path.join(sandbox, "bin");
+  const justMarker = path.join(sandbox, "just-invoked");
+  try {
+    await mkdir(path.dirname(ownershipFile), { recursive: true });
+    await mkdir(bin);
+    await writeFile(ownershipFile, "standalone_preexisting=false\n");
+    await writeFile(path.join(bin, "docker"), "#!/bin/sh\nexit 23\n");
+    await writeFile(path.join(bin, "just"), "#!/bin/sh\n: > \"$JUST_MARKER\"\nexit 97\n");
+    await Promise.all([chmod(path.join(bin, "docker"), 0o755), chmod(path.join(bin, "just"), 0o755)]);
+
+    const result = spawnSync("/bin/bash", ["-c", commands], {
+      cwd: sandbox,
+      encoding: "utf8",
+      env: { ...process.env, JUST_MARKER: justMarker, PATH: `${bin}:${process.env.PATH ?? ""}` },
+    });
+    assert.equal(result.status, 1, `Docker query failure must exit 1: ${result.stderr}`);
+    assert.match(result.stderr, /standalone ownership query failed; no ownership recorded and no stack command run/);
+    await assert.rejects(access(ownershipFile), { code: "ENOENT" }, "Docker query failure must remove the stale ownership record");
+    await assert.rejects(access(justMarker), { code: "ENOENT" }, "Docker query failure must not invoke any just target");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+
   const failClosedPrefix = [
-    "mkdir -p tmp/portal-macos-laptop",
+    "ownership_file=tmp/portal-macos-laptop/ownership.txt",
+    "if ! mkdir -p tmp/portal-macos-laptop ||",
+    '   ! rm -f -- "$ownership_file" ||',
+    '   [ -e "$ownership_file" ] || [ -L "$ownership_file" ]; then',
+    "  printf '%s\\n' 'standalone ownership invalidation failed; no ownership recorded and no stack command run' >&2",
+    "  exit 1",
+    "fi",
     'if ! standalone_before="$(docker ps -a \\',
     "  --filter label=com.docker.compose.project=oxid-standalone \\",
     "  --format '{{.ID}}' 2>/dev/null)\"; then",
@@ -70,12 +104,8 @@ test("macOS runbook fails closed before inferring standalone ownership", async (
     "  exit 1",
     "fi",
   ].join("\n");
-  assert.equal(commands.slice(0, failClosedPrefix.length), failClosedPrefix, "ownership query must use the exact fail-closed guard");
-
-  const guardEnd = commands.indexOf("\nfi\n") + "\nfi".length;
-  const inference = commands.indexOf("standalone_preexisting=");
-  assert.ok(guardEnd > 0 && guardEnd < inference, "ownership inference must follow the successful query guard");
-  assert.doesNotMatch(commands.slice(0, guardEnd), /ownership\.txt|standalone-(?:up|down)/);
+  assert.equal(commands.slice(0, failClosedPrefix.length), failClosedPrefix, "ownership setup and query must use the exact fail-closed guards");
+  assert.match(commands.slice(failClosedPrefix.length), /printf 'standalone_preexisting=%s\\n' "\$\(\[ -n "\$standalone_before" \] && echo true \|\| echo false\)" \\\n  > "\$ownership_file"/);
 });
 
 test("desktop test feature is exact and its rendered-control driver has no direct capability calls", async () => {
