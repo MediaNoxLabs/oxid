@@ -807,7 +807,7 @@ impl MidnightIndexerTransport for WebSocketMidnightIndexerTransport {
                                 // replay that follows; a later included account transaction may
                                 // safely raise it without changing checkpoint provenance.
                                 let observed_chain_tip_height = match chain_tip_http_url {
-                                    Some(endpoint) => Some(fetch_indexer_height(&endpoint).await?),
+                                    Some(endpoint) => fetch_indexer_height(&endpoint).await.ok(),
                                     None => None,
                                 };
                                 let snapshot =
