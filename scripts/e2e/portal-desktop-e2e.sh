@@ -73,7 +73,8 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 wait_for_file() {
-  local wanted="$1" failure="${2:-}" maximum="${3:-900}" deadline=$((SECONDS + maximum))
+  local wanted="$1" failure="${2:-}" maximum="${3:-900}" deadline
+  deadline=$((SECONDS + maximum))
   while [ "$SECONDS" -lt "$deadline" ]; do
     [ -n "$failure" ] && [ -f "$failure" ] && return 2
     [ -f "$wanted" ] && return 0
