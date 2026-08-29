@@ -31,7 +31,12 @@ app_pid=""
 cleanup_running=0
 
 fail() {
-  printf 'portal-desktop-e2e: FAIL phase=%s\n' "$1" >&2
+  local driver_failure=""
+  if [ -f "$CONTROL_ROOT/driver-failed" ]; then
+    driver_failure="$(cat "$CONTROL_ROOT/driver-failed")"
+    [[ "$driver_failure" =~ ^failed:[a-z-]+$ ]] || driver_failure="failed:invalid-marker"
+  fi
+  printf 'portal-desktop-e2e: FAIL phase=%s driver=%s\n' "$1" "${driver_failure:-none}" >&2
   exit 1
 }
 

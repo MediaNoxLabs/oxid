@@ -34,24 +34,35 @@ const FIRST_STAGE: &str = r##"
     target.click();
   };
   const hasText = (value) => text(document.body).includes(value);
+  let phase = "create-wallet";
   try {
     await click("Create new wallet");
+    phase = "profile-name";
     const input = await wait(() => document.querySelector("#profile-name"));
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
     setter.call(input, "Oxid Desktop Test");
     input.dispatchEvent(new Event("input", { bubbles: true }));
+    phase = "create-profile";
     await click("Create and continue");
+    phase = "protect-wallet";
     await click("Enable device protection");
+    phase = "open-wallet";
     await click("Wallet");
+    phase = "activate-account";
     await click("Activate development wallet");
+    phase = "live-sync";
     await wait(() => hasText("Synced") && hasText("Live source"));
+    phase = "open-documents";
     await click("Documents");
+    phase = "manage-identities";
     await click("Manage identities");
+    phase = "create-did";
     await click("Create standalone DID");
+    phase = "did-ready";
     await wait(() => hasText("A protected managed DID is ready for credential issuance."));
     dioxus.send("ok");
   } catch (_) {
-    dioxus.send("failed");
+    dioxus.send(`failed:${phase}`);
   }
 })();
 "##;
@@ -181,12 +192,27 @@ async fn wait_for_marker(root: &Path, name: &str) -> bool {
     false
 }
 
-async fn run_stage(script: &'static str) -> bool {
+async fn run_stage(script: &'static str) -> Result<(), String> {
     let mut evaluator = dioxus_document::eval(script);
-    evaluator
-        .recv::<String>()
-        .await
-        .is_ok_and(|result| result == "ok")
+    match evaluator.recv::<String>().await {
+        Ok(result) if result == "ok" => Ok(()),
+        Ok(result) if result.starts_with("failed:") && result.len() <= 64 => Err(result),
+        Ok(_) | Err(_) => Err("failed:document-eval".to_owned()),
+    }
+}
+
+fn write_failure(root: &Path, failure: String) {
+    let safe_failure = if failure.starts_with("failed:")
+        && failure
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || matches!(byte, b':' | b'-'))
+    {
+        failure
+    } else {
+        "failed:unknown".to_owned()
+    };
+    let _ = fs::create_dir_all(root);
+    let _ = fs::write(marker(root, "driver-failed"), safe_failure);
 }
 
 async fn run_driver() {
@@ -194,32 +220,35 @@ async fn run_driver() {
         return;
     };
     if marker(&root, "restart").is_file() {
-        let completed = run_stage(RESTART_REVERIFY_STAGE).await;
-        let _ = write_marker(
-            &root,
-            if completed {
-                "restart-complete"
-            } else {
-                "driver-failed"
-            },
-        );
+        match run_stage(RESTART_REVERIFY_STAGE).await {
+            Ok(()) => {
+                let _ = write_marker(&root, "restart-complete");
+            }
+            Err(failure) => write_failure(&root, failure),
+        }
         return;
     }
 
-    if !run_stage(FIRST_STAGE).await {
-        let _ = write_marker(&root, "driver-failed");
+    if let Err(failure) = run_stage(FIRST_STAGE).await {
+        write_failure(&root, failure);
         return;
     }
     let _ = write_marker(&root, "sync-and-holder-visible");
-    if !wait_for_marker(&root, "holder-ready").await || !run_stage(SCAN_AND_PREVIEW_STAGE).await {
-        let _ = write_marker(&root, "driver-failed");
+    if !wait_for_marker(&root, "holder-ready").await {
+        write_failure(&root, "failed:holder-ready".to_owned());
+        return;
+    }
+    if let Err(failure) = run_stage(SCAN_AND_PREVIEW_STAGE).await {
+        write_failure(&root, failure);
         return;
     }
     let _ = write_marker(&root, "consent-visible");
-    if !wait_for_marker(&root, "consent-approved").await
-        || !run_stage(CONSENT_AND_REVERIFY_STAGE).await
-    {
-        let _ = write_marker(&root, "driver-failed");
+    if !wait_for_marker(&root, "consent-approved").await {
+        write_failure(&root, "failed:consent-approved".to_owned());
+        return;
+    }
+    if let Err(failure) = run_stage(CONSENT_AND_REVERIFY_STAGE).await {
+        write_failure(&root, failure);
         return;
     }
     let _ = write_marker(&root, "first-complete");
