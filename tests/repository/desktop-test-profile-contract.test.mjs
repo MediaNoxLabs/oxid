@@ -29,6 +29,33 @@ test("ARM64 Darwin desktop Portal remains owner-invoked and outside HostedTarget
   assert.match(harness, /rm -f -- "\$CONTROL_ROOT\/driver-admitted"/);
 });
 
+test("canonical macOS laptop lane runs headless before desktop and validates both exact-head records", async () => {
+  const [justfile, runner] = await Promise.all([text("Justfile"), text("run.sh")]);
+  const match = justfile.match(/^portal-macos-laptop-e2e:\n((?:    .*\n)+)/m);
+  assert.ok(match, "missing no-argument portal-macos-laptop-e2e recipe");
+
+  const recipe = match[1];
+  const headless = [...recipe.matchAll(/just portal-headless-e2e/g)];
+  const desktop = [...recipe.matchAll(/just portal-desktop-e2e/g)];
+  assert.equal(headless.length, 1);
+  assert.equal(desktop.length, 1);
+  assert.ok(headless[0].index < desktop[0].index, "headless must precede desktop");
+  const aggregateStart = recipe.indexOf("jq -s -e");
+  assert.ok(desktop[0].index < aggregateStart, "both harnesses must precede aggregation");
+  const aggregate = recipe.slice(aggregateStart, recipe.indexOf("\n    echo"));
+  assert.equal([...aggregate.matchAll(/\bjq /g)].length, 1);
+  assert.match(aggregate, /--arg head "\$\(git rev-parse HEAD\)"/);
+  assert.match(aggregate, /--arg tree "\$\(git rev-parse 'HEAD\^\{tree\}'\)"/);
+  assert.match(aggregate, /length == 2 and all\(\.\[\]; \.oxid == \{head:\$head,tree:\$tree\}\)/);
+  assert.match(aggregate, /target\/portal-headless-e2e\/evidence\.json/);
+  assert.match(aggregate, /target\/portal-desktop-e2e\/evidence\.json/);
+  assert.match(recipe, /portal-macos-laptop-e2e: PASS evidence=target\/portal-headless-e2e\/evidence\.json,target\/portal-desktop-e2e\/evidence\.json/);
+
+  const registration = "node --test tests/repository/desktop-test-profile-contract.test.mjs";
+  assert.equal(runner.split(registration).length - 1, 1, "desktop contract must be registered exactly once");
+  assert.match(runner.match(/run_repository\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "", new RegExp(registration.replaceAll(".", "\\.")));
+});
+
 test("desktop test feature is exact and its rendered-control driver has no direct capability calls", async () => {
   const [appManifest, compositionManifest, ingressManifest, driver, ui, main] = await Promise.all([
     text("apps/oxid/Cargo.toml"),

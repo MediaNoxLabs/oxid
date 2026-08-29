@@ -441,15 +441,24 @@ Portal client. WebAssembly and ordinary desktop/mobile graphs cannot. The TypeSc
 `midnight-identity-solution-examples` remain behavioral/protocol references;
 this Phase 1 path does not run or copy their issuer. It runs the production-ready
 Rust issuer from the fetched Lace `origin/integration` tree in Lace's supported
-local Smocker configuration against the already running standalone stack:
+local Smocker configuration. The
+[Portal macOS laptop runbook](docs/factory/portal-macos-laptop.md) defines the
+owner-safe prerequisites, cleanup, and evidence contract for the canonical
+sequence:
 
 ```bash
 just standalone-up
-just portal-headless-e2e
+just portal-macos-laptop-e2e
 ```
 
-The second command requires the exact correction head and exactly the three
-healthy `oxid-standalone` services created by the first command. It fetches and
+The aggregate command requires a tracked-clean committed head and exactly three
+healthy `oxid-standalone` services validated by the first command. It runs the
+existing headless harness before the native desktop harness, then requires both
+evidence records to identify that same head and tree. The headless-first order
+localizes protocol/composition failures before desktop prequalification and
+avoids entering mobile-specific build/deployment lanes until shared behavior
+passes; the combined L4 duration is unmeasured and no overall speedup is
+claimed. The headless harness fetches and
 authenticates Lace integration commit `22ae5369` / tree `74d8d1a5`, builds the
 Lace resolver, did-manager, and default Rust issuer images, and loads Lace's
 `mock/didit.yml` into the in-stack Smocker. The Rust `DiditHttpAdapter` is
@@ -480,24 +489,18 @@ The resolver-observed issuer bootstrap is not a direct node/prover interaction
 claim, and this is not live DIDIT, real-person KYC, production discovery,
 release evidence, or Oxid proving/submission evidence.
 
-Apple-silicon owners may run the same actual Dioxus `oxid-app` as a simple
-release-absent desktop test target:
-
-```bash
-just standalone-up
-just portal-desktop-e2e
-```
-
-`desktop-portal-test` is compile-gated to ARM64 macOS and remains an owner-invoked
+The second stage runs the same actual Dioxus `oxid-app` on Apple silicon as a
+release-absent desktop prequalification target. `desktop-portal-test` is
+compile-gated to ARM64 macOS and remains an owner-invoked
 L4 target, not a primary product target or a member of the public `HostedTarget`
 matrix. It reuses the authenticated Lace/Smocker/local-standalone profile and a
 one-shot `QrScannerPort` adapter. The adapter reads and burns the fixed
 app-private capability only after the rendered **Scan** action invokes
 `scan()`; the exact offer then follows the normal strict route, preview,
 consent, verification, and encrypted-storage path. No offer or capability is
-accepted through argv or environment. If macOS Accessibility cannot traverse
-the WKWebView, the profile's release-absent in-process driver calls `.click()`
-only on rendered Dioxus controls; it has no scanner, router, or use-case API.
+accepted through argv or environment. The release-absent in-process driver
+calls `.click()` only on rendered Dioxus controls; it has no scanner, router,
+or use-case API and requires no Accessibility/System Events authority.
 The target launches a clean second process for visible listing/reverification,
 records only closed exact-head evidence, and captures protocol-redacted native
 window crops under ignored `target/portal-desktop-e2e/`. It proves Oxid app
