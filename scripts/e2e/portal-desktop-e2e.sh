@@ -9,6 +9,7 @@ readonly REPOSITORY_ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd -P)"
 readonly EVIDENCE_ROOT="$REPOSITORY_ROOT/target/portal-desktop-e2e"
 readonly RUNTIME="$EVIDENCE_ROOT/runtime"
 readonly WINDOW_BOUNDS_HELPER="$RUNTIME/window-bounds"
+readonly XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 readonly HOME_ROOT="$RUNTIME/home"
 readonly CONTROL_ROOT="$HOME_ROOT/Library/Application Support/io.medianox.oxid/desktop-test"
 readonly APP_SUPPORT_ROOT="$HOME_ROOT/Library/Application Support/io.medianox.oxid"
@@ -119,9 +120,10 @@ launch_app() {
 }
 
 build_window_bounds_helper() {
-  local source="$RUNTIME/window-bounds.swift" developer_dir sdk_root
-  developer_dir="$(xcode-select -p)" || return 1
-  sdk_root="$(DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-path)" || return 1
+  local source="$RUNTIME/window-bounds.swift" sdk_root
+  [ -d "$XCODE_DEVELOPER_DIR" ] && [ -x /usr/bin/xcrun ] || return 1
+  sdk_root="$(env -u SDKROOT DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" \
+    /usr/bin/xcrun --sdk macosx --show-sdk-path)" || return 1
   cat >"$source" <<'SWIFT'
 import AppKit
 import CoreGraphics
@@ -159,8 +161,8 @@ guard let bounds = candidates.max(by: { $0.width * $0.height < $1.width * $1.hei
 }
 print("\(Int(bounds.origin.x)),\(Int(bounds.origin.y)),\(Int(bounds.width)),\(Int(bounds.height))")
 SWIFT
-  env -u SDKROOT DEVELOPER_DIR="$developer_dir" SDKROOT="$sdk_root" \
-    xcrun --sdk macosx swiftc "$source" -o "$WINDOW_BOUNDS_HELPER" || return 1
+  env -u SDKROOT DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" SDKROOT="$sdk_root" \
+    /usr/bin/xcrun --sdk macosx swiftc "$source" -o "$WINDOW_BOUNDS_HELPER" || return 1
   chmod 700 "$WINDOW_BOUNDS_HELPER"
 }
 
@@ -176,7 +178,7 @@ EOF_BOUNDS
   [ -s "$output" ]
 }
 
-for command_name in cargo curl docker file git jq node screencapture shasum xcode-select xcrun; do
+for command_name in cargo curl docker file git jq node screencapture shasum; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
 [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] || fail arm64-darwin-required
