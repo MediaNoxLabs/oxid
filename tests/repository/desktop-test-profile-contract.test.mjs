@@ -56,6 +56,28 @@ test("canonical macOS laptop lane runs headless before desktop and validates bot
   assert.match(runner.match(/run_repository\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "", new RegExp(registration.replaceAll(".", "\\.")));
 });
 
+test("macOS runbook fails closed before inferring standalone ownership", async () => {
+  const runbook = await text("docs/factory/portal-macos-laptop.md");
+  const commands = runbook.match(/Before starting,[\s\S]*?```bash\n([\s\S]*?)\n```/)?.[1];
+  assert.ok(commands, "missing owner-safe command block");
+
+  const failClosedPrefix = [
+    "mkdir -p tmp/portal-macos-laptop",
+    'if ! standalone_before="$(docker ps -a \\',
+    "  --filter label=com.docker.compose.project=oxid-standalone \\",
+    "  --format '{{.ID}}' 2>/dev/null)\"; then",
+    "  printf '%s\\n' 'standalone ownership query failed; no ownership recorded and no stack command run' >&2",
+    "  exit 1",
+    "fi",
+  ].join("\n");
+  assert.equal(commands.slice(0, failClosedPrefix.length), failClosedPrefix, "ownership query must use the exact fail-closed guard");
+
+  const guardEnd = commands.indexOf("\nfi\n") + "\nfi".length;
+  const inference = commands.indexOf("standalone_preexisting=");
+  assert.ok(guardEnd > 0 && guardEnd < inference, "ownership inference must follow the successful query guard");
+  assert.doesNotMatch(commands.slice(0, guardEnd), /ownership\.txt|standalone-(?:up|down)/);
+});
+
 test("desktop test feature is exact and its rendered-control driver has no direct capability calls", async () => {
   const [appManifest, compositionManifest, ingressManifest, driver, ui, main] = await Promise.all([
     text("apps/oxid/Cargo.toml"),

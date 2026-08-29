@@ -35,9 +35,12 @@ Before starting, record whether any standalone containers already exist:
 
 ```bash
 mkdir -p tmp/portal-macos-laptop
-standalone_before="$(docker ps -a \
+if ! standalone_before="$(docker ps -a \
   --filter label=com.docker.compose.project=oxid-standalone \
-  --format '{{.ID}}')"
+  --format '{{.ID}}' 2>/dev/null)"; then
+  printf '%s\n' 'standalone ownership query failed; no ownership recorded and no stack command run' >&2
+  exit 1
+fi
 printf 'standalone_preexisting=%s\n' "$([ -n "$standalone_before" ] && echo true || echo false)" \
   > tmp/portal-macos-laptop/ownership.txt
 test -z "$(git status --porcelain --untracked-files=no)"
