@@ -20,17 +20,20 @@ test("ARM64 Darwin desktop Portal remains owner-invoked and outside HostedTarget
 });
 
 test("desktop test feature is exact and its rendered-control driver has no direct capability calls", async () => {
-  const [appManifest, compositionManifest, ingressManifest, driver, main] = await Promise.all([
+  const [appManifest, compositionManifest, ingressManifest, driver, ui, main] = await Promise.all([
     text("apps/oxid/Cargo.toml"),
     text("crates/composition/Cargo.toml"),
     text("crates/adapters/identity-ingress/Cargo.toml"),
     text("crates/ui-dioxus/src/desktop_test_driver.rs"),
+    text("crates/ui-dioxus/src/lib.rs"),
     text("apps/oxid/src/main.rs"),
   ]);
   assert.match(appManifest, /desktop-portal-test = \[[\s\S]*"desktop"[\s\S]*"standalone-development"[\s\S]*"oxid-composition\/desktop-portal-test"[\s\S]*"oxid-ui-dioxus\/desktop-test-click-driver"[\s\S]*\]/);
   assert.match(compositionManifest, /desktop-portal-test = \["oxid-adapter-identity-ingress\/desktop-test-qr-scanner"\]/);
   assert.match(ingressManifest, /desktop-test-qr-scanner = \["dep:zeroize"\]/);
   assert.match(main, /OXID_DESKTOP_PORTAL_TEST_PROFILE/);
+  assert.match(ui, /desktop_test_driver::use_desktop_test_driver\(\);/);
+  assert.match(driver, /pub\(super\) fn use_desktop_test_driver\(\)/);
   assert.match(driver, /\.click\(\)/);
   assert.match(driver, /dioxus_document::eval/);
   assert.doesNotMatch(driver, /qr_scanner|route_identity_request|UseCase|\.execute\(/);

@@ -265,14 +265,10 @@ async fn run_driver() {
     let _ = write_marker(&root, "first-complete");
 }
 
-#[component]
-pub(super) fn DesktopTestDriver() -> Element {
+pub(super) fn use_desktop_test_driver() {
     use_effect(move || {
         spawn(async move { run_driver().await });
     });
-    rsx! {
-        span { style: "display: none", aria_hidden: "true", "Desktop test control driver" }
-    }
 }
 
 #[cfg(test)]

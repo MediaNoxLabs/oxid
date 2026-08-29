@@ -3338,9 +3338,7 @@ pub fn App() -> Element {
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
     #[cfg(feature = "desktop-test-click-driver")]
-    let desktop_test_driver = rsx! { desktop_test_driver::DesktopTestDriver {} };
-    #[cfg(not(feature = "desktop-test-click-driver"))]
-    let desktop_test_driver = rsx! {};
+    desktop_test_driver::use_desktop_test_driver();
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
     let mut navigation = use_signal(RouteStack::default);
     let mut profile_menu_open = use_signal(|| false);
@@ -3479,7 +3477,6 @@ pub fn App() -> Element {
     let demo_gateway_inert = false;
     let ProfileSessionState::Active(active_profile) = session else {
         return rsx! {
-            {desktop_test_driver}
             style { {brand.style_sheet()} }
             style { {BASE_STYLES} }
             {demo_gateway_drawer}
@@ -3585,7 +3582,6 @@ pub fn App() -> Element {
     let demo_shell_inert = false;
 
     rsx! {
-        {desktop_test_driver}
         style { {brand.style_sheet()} }
         style { {BASE_STYLES} }
         {demo_shell_drawer}
