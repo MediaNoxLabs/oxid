@@ -1864,6 +1864,10 @@ fn compose_headless_from_environment_with_policy(
         Some(HeadlessMidnightConfig::Standalone(config)) => {
             #[cfg(all(not(target_os = "ios"), not(target_os = "android")))]
             if let Some(portal) = portal {
+                // This bounded branch changes only the Midnight and Portal adapters.
+                // The shared headless profile, DID, and encrypted credential repository
+                // constructors below still resolve their validated environment paths;
+                // every vault/checkpoint/journal override was rejected above.
                 return Ok(compose_development_portal_from_config(
                     config,
                     portal,

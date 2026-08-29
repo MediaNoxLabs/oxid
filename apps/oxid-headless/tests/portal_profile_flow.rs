@@ -461,7 +461,7 @@ fn request(process: &mut ProcessHarness, id: &str, method: &str, params: Value) 
 }
 
 #[test]
-fn portal_profile_issues_encrypts_restores_and_reverifies_in_a_new_process() {
+fn portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_process() {
     let store = TestStore::new();
     let server = PortalServer::spawn();
     let manifest_digest = server.write_manifest(&store.manifest());
@@ -628,6 +628,18 @@ fn portal_profile_issues_encrypts_restores_and_reverifies_in_a_new_process() {
     let first_stderr = first.quit();
     assert!(first_stderr.is_empty(), "unexpected first-process stderr");
 
+    assert!(
+        store.profiles().is_file(),
+        "configured profile store must be used"
+    );
+    assert!(
+        store.root.join("private/did-records.json").is_file(),
+        "configured DID store must be used"
+    );
+    assert!(
+        store.root.join("private/credentials.key").is_file(),
+        "configured credential wrapping-key path must be used"
+    );
     let encrypted = fs::read(store.root.join("private/credentials.enc")).expect("encrypted store");
     for plaintext in [
         b"Alice".as_slice(),
