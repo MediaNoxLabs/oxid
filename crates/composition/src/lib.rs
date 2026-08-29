@@ -41,6 +41,8 @@ use oxid_adapter_did_midnight::{
     HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
 };
 use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
+#[cfg(feature = "desktop-portal-test")]
+use oxid_adapter_identity_ingress::DesktopPortalTestQrScanner;
 use oxid_adapter_identity_ingress::StrictIdentityRequestRouter;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_identity_ingress::{NativeIdentityLinkIngress, NativeQrScanner};
@@ -1607,7 +1609,7 @@ impl std::error::Error for HeadlessCompositionError {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HeadlessEnvironmentPolicy {
     General,
-    #[cfg(feature = "headless-portal-local")]
+    #[cfg(any(feature = "headless-portal-local", feature = "desktop-portal-test"))]
     NativeHeadlessProcess,
 }
 
@@ -1746,6 +1748,19 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
 pub fn compose_native_headless_process_from_environment()
 -> Result<ApplicationServices, HeadlessCompositionError> {
     compose_headless_from_environment_with_policy(HeadlessEnvironmentPolicy::NativeHeadlessProcess)
+}
+
+/// Selects the exact Phase 1 Portal + local-standalone policy for the
+/// owner-invoked native Dioxus desktop test and replaces only its unavailable
+/// desktop scanner with the one-shot test adapter.
+#[cfg(all(not(target_arch = "wasm32"), feature = "desktop-portal-test"))]
+pub fn compose_native_desktop_test_from_environment()
+-> Result<ApplicationServices, HeadlessCompositionError> {
+    let mut services = compose_headless_from_environment_with_policy(
+        HeadlessEnvironmentPolicy::NativeHeadlessProcess,
+    )?;
+    services.qr_scanner = Arc::new(DesktopPortalTestQrScanner::default());
+    Ok(services)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

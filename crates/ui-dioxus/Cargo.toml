@@ -17,9 +17,13 @@ mobile = ["dioxus/mobile"]
 app-profile-authority = []
 ui-profile-dev = ["dep:oxid-capabilities-application"]
 ui-profile-demo = []
+# Strictly test-only in-process driver for environments where WKWebView does
+# not expose rendered controls through macOS Accessibility.
+desktop-test-click-driver = ["dep:dioxus-document"]
 
 [dependencies]
 dioxus = { workspace = true, features = ["minimal"] }
+dioxus-document = { version = "=0.7.10", optional = true }
 oxid-capabilities-application = { workspace = true, optional = true }
 oxid-wallet-application.workspace = true
 oxid-credential-application.workspace = true

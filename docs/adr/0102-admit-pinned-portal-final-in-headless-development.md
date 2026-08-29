@@ -180,3 +180,31 @@ proof-server interactions remain explicitly false. This is not live DIDIT,
 real-person KYC, production discovery/trust, release evidence, Oxid proving or
 submission evidence, desktop/mobile/tailnet evidence, issue #162, or a Lace
 source change.
+
+## Test-only ARM64-Darwin amendment — 2026-08-29
+
+One owner-invoked `desktop-portal-test` profile may reuse the exact native
+Portal plus local-standalone policy in the real Dioxus `oxid-app` on ARM64
+macOS. This is a simple test target for faster desktop/simulator feedback, not
+a primary desktop product target, hosted graphical lane, or release profile.
+It is absent from normal desktop/mobile/web composition and from the public
+`HostedTarget` matrix.
+
+The profile adds one compile-gated `QrScannerPort` adapter over the existing
+owner-private port-18091 handoff. A single admission is burned when the visible
+rendered Scan action calls `scan()`; only then may the adapter unlink the fixed
+app-private capability and fetch the exact bounded offer. The offer and
+capability cannot enter argv, environment, logs, retained JSON, or screenshots.
+Malformed, unauthenticated, replayed, concurrent, second, and late requests
+fail closed, and UI admission cannot replace a pending identity request. The
+result remains the unchanged `ScannedQrPayload`; the normal strict router,
+offer preview, explicit consent, verifier, and encrypted store retain authority.
+
+macOS Accessibility is tried first. If WKWebView traversal is unavailable or
+TCC-blocked, the compile-gated in-process Dioxus document driver may call
+`.click()` only on rendered controls. It has no scanner, router, or use-case
+surface and is excluded from normal release binaries. Live evidence must use
+the Lace Rust issuer with supported Smocker, launch a clean second app process,
+show fresh Reverify, retain only closed exact-head JSON and protocol-redacted
+native window crops, and describe only app-observed indexer sync. Node and
+proof-server interaction remain unproven unless directly observed.

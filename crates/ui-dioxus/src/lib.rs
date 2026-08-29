@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 
 mod brand;
+#[cfg(feature = "desktop-test-click-driver")]
+mod desktop_test_driver;
 mod labels;
 mod profile_guard;
 
@@ -3335,6 +3337,10 @@ fn developer_profile_banner() -> Element {
 pub fn App() -> Element {
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
+    #[cfg(feature = "desktop-test-click-driver")]
+    let desktop_test_driver = rsx! { desktop_test_driver::DesktopTestDriver {} };
+    #[cfg(not(feature = "desktop-test-click-driver"))]
+    let desktop_test_driver = rsx! {};
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
     let mut navigation = use_signal(RouteStack::default);
     let mut profile_menu_open = use_signal(|| false);
@@ -3473,6 +3479,7 @@ pub fn App() -> Element {
     let demo_gateway_inert = false;
     let ProfileSessionState::Active(active_profile) = session else {
         return rsx! {
+            {desktop_test_driver}
             style { {brand.style_sheet()} }
             style { {BASE_STYLES} }
             {demo_gateway_drawer}
@@ -3578,6 +3585,7 @@ pub fn App() -> Element {
     let demo_shell_inert = false;
 
     rsx! {
+        {desktop_test_driver}
         style { {brand.style_sheet()} }
         style { {BASE_STYLES} }
         {demo_shell_drawer}
@@ -3888,6 +3896,10 @@ fn PrimaryNavigationButton(
     }
 }
 
+const fn identity_scan_is_admitted(scan_busy: bool, request_pending: bool) -> bool {
+    !scan_busy && !request_pending
+}
+
 fn start_identity_scan(
     scanner: Arc<dyn QrScannerPort>,
     router: Arc<dyn RouteIdentityRequestUseCase>,
@@ -3897,7 +3909,7 @@ fn start_identity_scan(
     mut navigation: Signal<RouteStack>,
     mut profile_menu_open: Signal<bool>,
 ) {
-    if busy() {
+    if !identity_scan_is_admitted(busy(), pending_request.read().is_some()) {
         return;
     }
     busy.set(true);
@@ -3906,6 +3918,10 @@ fn start_identity_scan(
     spawn(async move {
         match scanner.scan().await {
             Ok(payload) => {
+                if !identity_scan_is_admitted(false, pending_request.read().is_some()) {
+                    busy.set(false);
+                    return;
+                }
                 let request_uri = payload.into_inner();
                 match router.execute(RouteIdentityRequestCommand {
                     request_uri: request_uri.clone(),
@@ -12912,6 +12928,14 @@ mod tests {
             UiBlockingTaskError::WorkerFailed.to_string(),
             "background wallet operation failed"
         );
+    }
+
+    #[test]
+    fn identity_scan_admission_rejects_busy_pending_and_late_results() {
+        assert!(identity_scan_is_admitted(false, false));
+        assert!(!identity_scan_is_admitted(true, false));
+        assert!(!identity_scan_is_admitted(false, true));
+        assert!(!identity_scan_is_admitted(true, true));
     }
 
     #[test]

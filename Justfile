@@ -42,6 +42,10 @@ headless:
 portal-headless-e2e:
     ./scripts/e2e/portal-headless-e2e.sh
 
+# Run the owner-invoked ARM64-Darwin Dioxus Portal journey.
+portal-desktop-e2e:
+    ./scripts/e2e/portal-desktop-e2e.sh
+
 # Start the virtual-mobile Portal issuer, resolver, offer endpoint, and authenticated manifest.
 portal-virtual-mobile-stack:
     ./scripts/e2e/portal-virtual-mobile-stack.sh

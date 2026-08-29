@@ -17,6 +17,28 @@ fn startup_failure(error: impl std::fmt::Display) -> ! {
 
 fn main() {
     #[cfg(all(
+        feature = "desktop-portal-test",
+        not(all(target_os = "macos", target_arch = "aarch64"))
+    ))]
+    compile_error!("desktop-portal-test is available only on ARM64 macOS");
+
+    #[cfg(all(
+        feature = "desktop-portal-test",
+        any(
+            feature = "mobile",
+            feature = "web",
+            feature = "standalone-local",
+            feature = "standalone-tailnet",
+            feature = "standalone-portal",
+            feature = "standalone-portal-tailnet",
+            feature = "standalone-native-custody",
+            feature = "ui-profile-dev",
+            feature = "ui-profile-demo"
+        )
+    ))]
+    compile_error!("desktop-portal-test is an isolated test-only desktop profile");
+
+    #[cfg(all(
         feature = "android-jni-exception-recovery-test",
         not(target_os = "android")
     ))]
@@ -130,6 +152,14 @@ fn main() {
     oxid_composition::verify_android_portal_virtual_device_profile()
         .unwrap_or_else(|error| startup_failure(error));
 
+    #[cfg(feature = "desktop-portal-test")]
+    let application = {
+        const OXID_DESKTOP_PORTAL_TEST_PROFILE: &str = "OXID_DESKTOP_PORTAL_TEST_PROFILE";
+        let _ = OXID_DESKTOP_PORTAL_TEST_PROFILE;
+        oxid_composition::compose_native_desktop_test_from_environment()
+            .unwrap_or_else(|error| panic!("desktop Portal test configuration is invalid: {error}"))
+    };
+
     #[cfg(all(
         feature = "standalone-portal",
         feature = "standalone-development",
@@ -235,6 +265,7 @@ fn main() {
         not(feature = "standalone-tailnet"),
         not(feature = "standalone-local"),
         not(feature = "standalone-portal-tailnet"),
+        not(feature = "desktop-portal-test"),
         not(target_arch = "wasm32")
     ))]
     let application = oxid_composition::compose_headless_from_environment()
@@ -256,10 +287,12 @@ fn main() {
             feature = "standalone-native-custody"
         ),
         not(feature = "standalone-portal"),
-        not(feature = "standalone-portal-tailnet")
+        not(feature = "standalone-portal-tailnet"),
+        not(feature = "desktop-portal-test")
     ))]
     let standalone_credential_offer = Some(oxid_composition::standalone_oid4vci_offer());
     #[cfg(any(
+        feature = "desktop-portal-test",
         feature = "standalone-portal",
         feature = "standalone-portal-tailnet",
         not(any(

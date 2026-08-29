@@ -435,8 +435,9 @@ digest retained as a compatibility boundary. The HTTP client accepts only
 the strict Final profile, disables redirects/proxies/retries, keeps plaintext
 loopback-only, converts private parts through the exact Digital Passport
 commitment boundary, and reuses the existing valid-only encrypted import.
-Normal `compose()` remains unavailable and iOS/Android/WASM graphs cannot name
-the Portal client. The TypeScript prototypes in
+Normal `compose()` remains unavailable; only the explicit virtual-mobile,
+physical-Android, native-headless, and ARM64-Darwin test profiles can name the
+Portal client. WebAssembly and ordinary desktop/mobile graphs cannot. The TypeScript prototypes in
 `midnight-identity-solution-examples` remain behavioral/protocol references;
 this Phase 1 path does not run or copy their issuer. It runs the production-ready
 Rust issuer from the fetched Lace `origin/integration` tree in Lace's supported
@@ -478,6 +479,30 @@ that Oxid used either service, so both interactions remain explicitly false.
 The resolver-observed issuer bootstrap is not a direct node/prover interaction
 claim, and this is not live DIDIT, real-person KYC, production discovery,
 release evidence, or Oxid proving/submission evidence.
+
+Apple-silicon owners may run the same actual Dioxus `oxid-app` as a simple
+release-absent desktop test target:
+
+```bash
+just standalone-up
+just portal-desktop-e2e
+```
+
+`desktop-portal-test` is compile-gated to ARM64 macOS and remains an owner-invoked
+L4 target, not a primary product target or a member of the public `HostedTarget`
+matrix. It reuses the authenticated Lace/Smocker/local-standalone profile and a
+one-shot `QrScannerPort` adapter. The adapter reads and burns the fixed
+app-private capability only after the rendered **Scan** action invokes
+`scan()`; the exact offer then follows the normal strict route, preview,
+consent, verification, and encrypted-storage path. No offer or capability is
+accepted through argv or environment. If macOS Accessibility cannot traverse
+the WKWebView, the profile's release-absent in-process driver calls `.click()`
+only on rendered Dioxus controls; it has no scanner, router, or use-case API.
+The target launches a clean second process for visible listing/reverification,
+records only closed exact-head evidence, and captures protocol-redacted native
+window crops under ignored `target/portal-desktop-e2e/`. It proves Oxid app
+indexer synchronization only; node and proof-server use remain false unless
+separately observed.
 
 The `standalone-portal` iOS Simulator/Android QEMU profile has one
 repository-owned stack command. With the validated `oxid-standalone`
