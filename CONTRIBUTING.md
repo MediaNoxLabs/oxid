@@ -52,17 +52,30 @@ outgoing adapters. Run it directly with `./run.sh coverage --strict`.
   pre-production keys, wallet seeds, or generated proof artifacts.
 - Complete the pull request checklist and record commands actually run.
 
-Use conventional commit and PR titles such as `feat(wallet): create profiles`,
-`fix(ui): preserve validation feedback`, or `ci: pin Nix setup action`.
+Use Conventional Commit and PR titles with a mandatory repository scope, such
+as `feat(wallet): create profiles`, `fix(ui): preserve validation feedback`,
+or `ci(nix): pin the setup action`. Branches use
+`<type>/issue-<positive-number>` with no descriptive suffix, and the branch
+type must equal the PR-title type. The closed type/scope vocabulary and
+breaking-change rules are defined in
+[`docs/factory/contribution-policy.md`](docs/factory/contribution-policy.md).
 
 ## DCO and signed commits
 
-Every commit must include a Developer Certificate of Origin trailer and a valid
-GPG signature:
+Every non-exempt commit must include an exact Developer Certificate of Origin
+trailer matching its author identity. Every commit, including generated bot
+commits, must carry an OpenPGP signature that GitHub verifies:
 
 ```bash
-git commit -S --signoff -m "<type>: <subject>"
+git commit -S --signoff -m "<type>(<scope>): <description>"
 git log -1 --show-signature --pretty=fuller
+```
+
+Use the mandatory scope in real commands, for example:
+
+```bash
+git commit -S --signoff -m "feat(wallet): add profile creation"
+./scripts/check-dco.sh "$(git merge-base HEAD origin/integration)" HEAD
 ```
 
 By adding the `Signed-off-by` trailer, you certify the contribution under the

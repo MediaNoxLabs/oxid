@@ -178,11 +178,18 @@ test("Pages builds and publishes only from integration", async () => {
   assert.match(contract, /only allowed branch is\s+`integration`/);
 });
 
-test("required PR contexts remain attached to pull_request head SHAs", async () => {
-  assert.equal(eventBranches(await read(".github/workflows/dco.yml"), "pull_request"), null);
-  const prCheck = await read(".github/workflows/pr-check.yml");
-  assert.equal(eventBranches(prCheck, "pull_request"), null);
-  assert.doesNotMatch(prCheck, /^  pull_request_target:/m);
+test("trusted policy workflows publish required contexts on exact PR head SHAs", async () => {
+  const dco = await read(".github/workflows/contribution-commits.yml");
+  assert.equal(eventBranches(dco, "pull_request_target"), null);
+  const prCheck = await read(".github/workflows/contribution-metadata.yml");
+  assert.equal(eventBranches(prCheck, "pull_request_target"), null);
+  for (const workflow of [dco, prCheck]) {
+    assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/);
+    assert.match(workflow, /statuses: write/);
+    assert.match(workflow, /createCommitStatus/);
+    assert.match(workflow, /sha: context\.payload\.pull_request\.head\.sha/);
+    assert.doesNotMatch(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+  }
 });
 
 test("cross-base authority stays in the owner ruleset, not a dangerous advisory workflow", async () => {
@@ -214,6 +221,7 @@ test("dependency automation inherits integration from default-branch authority",
 test("repository gate runs architecture and the delivery contract with its declared Node", async () => {
   const gate = await read("run.sh");
   assert.match(gate, /\.\/scripts\/check-architecture\.sh/);
+  assert.match(gate, /node --test tests\/repository\/contribution-policy-contract\.test\.mjs/);
   assert.match(gate, /node --test tests\/repository\/integration-delivery-contract\.test\.mjs/);
   const shells = await read("nix/devshells/default.nix");
   assert.match(shells, /nodejs_24/);
@@ -270,8 +278,6 @@ test("guidance, required contexts, and review configuration agree", async () => 
   const contract = await read("docs/integration-delivery.md");
   for (const pattern of [/default branch/, /--base origin\/integration/, /--base integration/, /git merge-base HEAD origin\/integration/, /git merge-base --is-ancestor origin\/integration HEAD/, /git merge-tree --write-tree origin\/integration HEAD/, /no `integration -> main` release-promotion exception/i, /separate tracked issue/, /owner ruleset change/, /21481544/, /Pages workflow must trigger and deploy only from\s+`integration`/]) assert.match(contract, pattern);
   const expectedNames = {
-    "pr-check.yml": ["Validate PR title", "Validate PR body"],
-    "dco.yml": ["Verify commit sign-offs"],
     "ci.yml": ["Repository gate (fmt, architecture, lint, tests, coverage)", "Locked Nix package and Compact artifacts"],
     "quality.yml": ["Audit, Licenses, Sources, and Documentation"],
     "docs-link-check.yml": ["Check documentation links"],
@@ -280,8 +286,14 @@ test("guidance, required contexts, and review configuration agree", async () => 
     const workflow = await read(`.github/workflows/${file}`);
     for (const name of names) assert.ok(workflow.split("\n").some((line) => line === `    name: ${name}`), `${file}: ${name}`);
   }
-  const prCheck = await read(".github/workflows/pr-check.yml");
-  assert.doesNotMatch(prCheck, /actions\/checkout/);
+  const contributionContexts = `${await read(".github/workflows/contribution-metadata.yml")}\n${await read(".github/workflows/contribution-commits.yml")}`;
+  for (const context of ["Validate PR title", "Validate PR body", "Verify commit sign-offs"]) {
+    assert.match(contributionContexts, new RegExp(`context: '${context}'`), context);
+  }
+  const prCheck = await read(".github/workflows/contribution-metadata.yml");
+  assert.match(prCheck, /actions\/checkout@[0-9a-f]{40}/);
+  assert.match(prCheck, /Checkout trusted contribution policy/);
+  assert.match(prCheck, /persist-credentials: false/);
   const config = await read(".devloops");
   const draftGate = config.slice(config.indexOf("  draft:"), config.indexOf("  preApproval:"));
   const preApprovalGate = config.slice(config.indexOf("  preApproval:"), config.indexOf("  requireFanoutEvidence:"));

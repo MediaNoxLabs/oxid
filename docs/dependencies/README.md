@@ -61,10 +61,11 @@ PRs after the default-branch change lands and allow Dependabot to recreate any
 update that remains applicable; do not use the old PRs as delivery
 or validation evidence.
 
-Neither bot can satisfy this repository's contribution gates — they cannot add
-a DCO `Signed-off-by` trailer to generated commits, nor author a title and body
-matching the conventional-commit scopes and pull-request template. The DCO and
-pull-request validation workflows therefore skip pull requests authored by
-`dependabot[bot]` and `renovate[bot]`. Every other gate (CI, Quality, Scan) runs
-unchanged: the checks that verify the *change* still apply in full, and only the
-checks that verify *authorship formalities* are skipped.
+Both bots are configured to produce a conventional type and the `deps` scope.
+Their GitHub-controlled branch names are exempt from the issue-branch grammar,
+and their generated commits are exempt from DCO certification only when both
+the PR actor and commit author match the closed bot policy. PR title/body,
+scope, contribution labels, and GitHub-verified OpenPGP rules still apply. A
+generated update that cannot meet them must be recreated as a signed,
+issue-backed human or agent contribution; the gate is not waived. Every product
+gate (CI, Quality, Scan) continues to run unchanged.

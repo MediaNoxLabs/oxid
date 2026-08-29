@@ -12,11 +12,9 @@ jobs:
     name: Verify commit sign-offs
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Dependabot and Renovate cannot add a Signed-off-by trailer to the
-    # commits they generate, so this gate can never pass on their branches.
-    # Their pull requests are machine-generated from repository configuration
-    # rather than contributed work, so the certification the DCO records does
-    # not apply. Human-authored pull requests are unaffected.
+    # Bootstrap workflow retained for the PR that installs the trusted
+    # pull_request_target replacement. It is deleted by the tracked rollout
+    # follow-up as soon as that replacement exists on integration.
     if: >-
       github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.user.login != 'renovate[bot]'
@@ -27,7 +25,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify DCO trailers
+      - name: Verify contribution policy
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}

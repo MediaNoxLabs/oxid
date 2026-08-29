@@ -25,7 +25,7 @@ factory-lease:
   worker: "<harness>/<host-or-handle>"     # e.g. "pi/ysh-mbp", "claude-code/runner-3"
   claimed_at: "2026-08-18T09:00:00Z"       # ISO-8601 UTC
   expires_at: "2026-08-18T13:00:00Z"       # claimed_at + TTL
-  branch: "factory/35-claim-protocol"      # branch the worker will push
+  branch: "feat/issue-35"                  # branch the worker will push
   renewal: 0                               # increments on each renewal
 ```
 

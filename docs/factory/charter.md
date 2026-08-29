@@ -22,7 +22,8 @@ factory work items. Duties:
 Claims a `factory:ready` item and delivers a draft PR. Duties:
 
 - Follow the claim/lease protocol (claim-protocol.md) before touching code.
-- Work on a branch named `factory/<issue-number>-<slug>`.
+- Work on a branch named `<type>/issue-<number>`, using the Conventional
+  Commit type that leads the pull-request title and no descriptive suffix.
 - Respect AGENT.md architecture rules and every accepted ADR.
 - Deliver through the `.devloops` `draft` gate with fan-out evidence, then the
   `preApproval` gate with CI green.
@@ -61,7 +62,7 @@ gates and any risk-required independent review evidence are posted.
 | Action | Who may do it |
 | --- | --- |
 | Create/refine/order work items | Planner, Quality Steward |
-| Claim work, push a `factory/*` branch, open a draft PR | Implementer holding a valid lease |
+| Claim work, push a `<type>/issue-<number>` branch, open a draft PR | Implementer holding a valid lease |
 | Post gate findings | Reviewers |
 | Merge a clean `integration` PR | Human delivery operator, or an explicitly owner-authorized agent through the guarded wrapper, after all current-head evidence is posted |
 | Merge to `main` or `develop` | Human delivery operator only |

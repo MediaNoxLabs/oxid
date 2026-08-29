@@ -1,9 +1,9 @@
 name: Check PR
 
 on:
-  # Keep title/body validation on the unprivileged PR-head event so required
-  # contexts attach to the reviewed commit. Cross-base enforcement is owned by
-  # the repository ruleset, not by this workflow.
+  # Bootstrap workflow retained for the PR that installs the trusted
+  # pull_request_target replacement. It is deleted by the tracked rollout
+  # follow-up as soon as that replacement exists on integration.
   pull_request:
     types: [opened, edited, synchronize, reopened]
 
@@ -15,12 +15,6 @@ jobs:
   validate-pr-title:
     name: Validate PR title
     runs-on: ubuntu-24.04
-    # Dependabot and Renovate generate their own title and body from
-    # repository configuration and cannot be taught this repository's
-    # conventional-commit scopes or body template, so these gates can never
-    # pass on their branches. Leaving them red on every dependency pull
-    # request trains reviewers to ignore red checks, which is the opposite of
-    # what an all-green merge culture needs.
     if: >-
       github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.user.login != 'renovate[bot]'
@@ -65,12 +59,6 @@ jobs:
   validate-pr-body:
     name: Validate PR body
     runs-on: ubuntu-24.04
-    # Dependabot and Renovate generate their own title and body from
-    # repository configuration and cannot be taught this repository's
-    # conventional-commit scopes or body template, so these gates can never
-    # pass on their branches. Leaving them red on every dependency pull
-    # request trains reviewers to ignore red checks, which is the opposite of
-    # what an all-green merge culture needs.
     if: >-
       github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.user.login != 'renovate[bot]'

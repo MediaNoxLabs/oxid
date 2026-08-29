@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "types": [
+    "build",
+    "chore",
+    "ci",
+    "docs",
+    "feat",
+    "fix",
+    "perf",
+    "refactor",
+    "revert",
+    "style",
+    "test"
+  ],
+  "scopes": [
+    "architecture",
+    "ci",
+    "compact",
+    "composition",
+    "credential",
+    "deps",
+    "diagnostics",
+    "docs",
+    "factory",
+    "harness",
+    "headless",
+    "identity",
+    "mcp",
+    "midnight",
+    "mobile",
+    "nix",
+    "openid",
+    "platform",
+    "portal",
+    "presentation",
+    "protocol",
+    "repo",
+    "security",
+    "storage",
+    "test",
+    "ui",
+    "vault",
+    "wallet"
+  ],
+  "branch": {
+    "format": "{type}/issue-{positive-integer}",
+    "protected": ["develop", "main"]
+  },
+  "commit": {
+    "maxSubjectLength": 100,
+    "requireScope": true,
+    "requireDco": true,
+    "requireOpenPgp": true,
+    "requireBreakingChangeFooter": true
+  },
+  "labels": {
+    "typePrefix": "type:",
+    "scopePrefix": "scope:"
+  },
+  "bots": {
+    "dependabot[bot]": {
+      "branchExempt": true,
+      "dcoAuthorNames": ["dependabot[bot]"]
+    },
+    "renovate[bot]": {
+      "branchExempt": true,
+      "dcoAuthorNames": ["renovate[bot]"]
+    }
+  }
+}
