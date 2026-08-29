@@ -126,7 +126,6 @@ jq -e \
     "acceptance",
     "diditProviderMode",
     "headlessIndexerHeight",
-    "separatelyQueriedIndexerHeight",
     "issuerImplementation",
     "midnightInteractionProven",
     "nodeInteractionProven",
@@ -134,7 +133,8 @@ jq -e \
     "portal",
     "portalServiceExercised",
     "proofServerInteractionProven",
-    "schema"
+    "schema",
+    "separatelyQueriedIndexerHeight"
   ]
   and .schema == "oxid-phase1-lace-portal-journey-v1"
   and .oxid == {head:$head,tree:$oxid_tree}
