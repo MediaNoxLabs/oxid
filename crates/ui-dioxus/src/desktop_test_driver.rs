@@ -15,7 +15,7 @@ use std::{
 use dioxus::prelude::*;
 
 const FIRST_STAGE: &str = r##"
-(async () => {
+return await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const text = (node) => (node.textContent || "").replace(/\s+/g, " ").trim();
   const visible = (node) => !!(node && node.getClientRects().length && !node.disabled);
@@ -61,15 +61,15 @@ const FIRST_STAGE: &str = r##"
     await click("Create standalone DID");
     phase = "did-ready";
     await wait(() => hasText("A protected managed DID is ready for credential issuance."));
-    dioxus.send("ok");
+    return "ok";
   } catch (_) {
-    dioxus.send(`failed:${phase}`);
+    return `failed:${phase}`;
   }
 })();
 "##;
 
 const SCAN_AND_PREVIEW_STAGE: &str = r##"
-(async () => {
+return await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const text = (node) => (node.textContent || "").replace(/\s+/g, " ").trim();
   const visible = (node) => !!(node && node.getClientRects().length && !node.disabled);
@@ -96,15 +96,15 @@ const SCAN_AND_PREVIEW_STAGE: &str = r##"
     for (const sensitive of document.querySelectorAll("textarea, code, .privacy-value, .privacy-qr")) {
       sensitive.style.visibility = "hidden";
     }
-    dioxus.send("ok");
+    return "ok";
   } catch (_) {
-    dioxus.send("failed");
+    return "failed:rendered-stage";
   }
 })();
 "##;
 
 const CONSENT_AND_REVERIFY_STAGE: &str = r##"
-(async () => {
+return await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const text = (node) => (node.textContent || "").replace(/\s+/g, " ").trim();
   const visible = (node) => !!(node && node.getClientRects().length && !node.disabled);
@@ -129,15 +129,15 @@ const CONSENT_AND_REVERIFY_STAGE: &str = r##"
     reverify.scrollIntoView({ block: "center" });
     reverify.click();
     await wait(() => text(document.body).includes("Credential reverification applied"));
-    dioxus.send("ok");
+    return "ok";
   } catch (_) {
-    dioxus.send("failed");
+    return "failed:rendered-stage";
   }
 })();
 "##;
 
 const RESTART_REVERIFY_STAGE: &str = r##"
-(async () => {
+return await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const text = (node) => (node.textContent || "").replace(/\s+/g, " ").trim();
   const visible = (node) => !!(node && node.getClientRects().length && !node.disabled);
@@ -162,9 +162,9 @@ const RESTART_REVERIFY_STAGE: &str = r##"
     reverify.scrollIntoView({ block: "center" });
     reverify.click();
     await wait(() => text(document.body).includes("Credential reverification applied"));
-    dioxus.send("ok");
+    return "ok";
   } catch (_) {
-    dioxus.send("failed");
+    return "failed:rendered-stage";
   }
 })();
 "##;
@@ -194,8 +194,8 @@ async fn wait_for_marker(root: &Path, name: &str) -> bool {
 }
 
 async fn run_stage(script: &'static str) -> Result<(), String> {
-    let mut evaluator = dioxus_document::eval(script);
-    match evaluator.recv::<String>().await {
+    let evaluator = dioxus_document::eval(script);
+    match evaluator.join::<String>().await {
         Ok(result) if result == "ok" => Ok(()),
         Ok(result) if result.starts_with("failed:") && result.len() <= 64 => Err(result),
         Ok(_) | Err(_) => Err("failed:document-eval".to_owned()),
@@ -287,6 +287,8 @@ mod tests {
             CONSENT_AND_REVERIFY_STAGE,
             RESTART_REVERIFY_STAGE,
         ] {
+            assert!(script.trim_start().starts_with("return await (async () =>"));
+            assert!(script.contains("return \"ok\";"));
             assert!(script.contains(".click()"));
             assert!(!script.contains("openid-credential-offer"));
             assert!(!script.contains("pre-authorized"));
