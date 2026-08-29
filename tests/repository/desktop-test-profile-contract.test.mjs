@@ -16,6 +16,8 @@ test("ARM64 Darwin desktop Portal remains owner-invoked and outside HostedTarget
   assert.doesNotMatch(planner, /darwin|macos|desktop-portal/i);
   assert.match(harness, /target\/debug\/oxid-app/);
   assert.match(harness, /Mach-O 64-bit arm64/);
+  assert.match(harness, /CGWindowListCopyWindowInfo/);
+  assert.doesNotMatch(harness, /System Events|osascript/);
   assert.doesNotMatch(harness, /Xvfb|Openbox|xdotool|WebKitGTK|x86_64-linux/i);
 });
 

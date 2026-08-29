@@ -8,6 +8,7 @@ CDPATH=
 readonly REPOSITORY_ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd -P)"
 readonly EVIDENCE_ROOT="$REPOSITORY_ROOT/target/portal-desktop-e2e"
 readonly RUNTIME="$EVIDENCE_ROOT/runtime"
+readonly WINDOW_BOUNDS_HELPER="$RUNTIME/window-bounds"
 readonly HOME_ROOT="$RUNTIME/home"
 readonly CONTROL_ROOT="$HOME_ROOT/Library/Application Support/io.medianox.oxid/desktop-test"
 readonly APP_SUPPORT_ROOT="$HOME_ROOT/Library/Application Support/io.medianox.oxid"
@@ -117,22 +118,55 @@ launch_app() {
   app_pid=$!
 }
 
+build_window_bounds_helper() {
+  local source="$RUNTIME/window-bounds.swift" developer_dir sdk_root
+  developer_dir="$(xcode-select -p)" || return 1
+  sdk_root="$(DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-path)" || return 1
+  cat >"$source" <<'SWIFT'
+import AppKit
+import CoreGraphics
+import Foundation
+
+func fail() -> Never {
+    exit(1)
+}
+
+guard CommandLine.arguments.count == 2,
+      let rawPid = Int32(CommandLine.arguments[1]) else {
+    fail()
+}
+let pid = pid_t(rawPid)
+NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateAllWindows])
+Thread.sleep(forTimeInterval: 0.2)
+let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+        as? [[String: Any]] else {
+    fail()
+}
+let candidates = windows.compactMap { window -> CGRect? in
+    guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+          (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+          let dictionary = window[kCGWindowBounds as String] as? NSDictionary,
+          let bounds = CGRect(dictionaryRepresentation: dictionary),
+          bounds.width >= 320,
+          bounds.height >= 480 else {
+        return nil
+    }
+    return bounds
+}
+guard let bounds = candidates.max(by: { $0.width * $0.height < $1.width * $1.height }) else {
+    fail()
+}
+print("\(Int(bounds.origin.x)),\(Int(bounds.origin.y)),\(Int(bounds.width)),\(Int(bounds.height))")
+SWIFT
+  env -u SDKROOT DEVELOPER_DIR="$developer_dir" SDKROOT="$sdk_root" \
+    xcrun --sdk macosx swiftc "$source" -o "$WINDOW_BOUNDS_HELPER" || return 1
+  chmod 700 "$WINDOW_BOUNDS_HELPER"
+}
+
 capture_app_window() {
   local output="$1" bounds x y width height
-  bounds="$(/usr/bin/osascript - "$app_pid" <<'APPLESCRIPT'
-on run argv
-  set targetPid to (item 1 of argv) as integer
-  tell application "System Events"
-    tell first process whose unix id is targetPid
-      set frontmost to true
-      set windowPosition to position of window 1
-      set windowSize to size of window 1
-      return ((item 1 of windowPosition) as text) & "," & ((item 2 of windowPosition) as text) & "," & ((item 1 of windowSize) as text) & "," & ((item 2 of windowSize) as text)
-    end tell
-  end tell
-end run
-APPLESCRIPT
-)" || return 1
+  bounds="$("$WINDOW_BOUNDS_HELPER" "$app_pid")" || return 1
   IFS=, read -r x y width height <<EOF_BOUNDS
 $bounds
 EOF_BOUNDS
@@ -142,7 +176,7 @@ EOF_BOUNDS
   [ -s "$output" ]
 }
 
-for command_name in cargo curl docker file git jq node osascript screencapture shasum; do
+for command_name in cargo curl docker file git jq node screencapture shasum xcode-select xcrun; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
 [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] || fail arm64-darwin-required
@@ -155,6 +189,7 @@ rm -rf -- "$RUNTIME"
 mkdir -p -- "$CONTROL_ROOT" "$WALLET_ROOT/private" "$EVIDENCE_ROOT/screenshots"
 chmod 700 "$RUNTIME" "$HOME_ROOT" "$APP_SUPPORT_ROOT" "$CONTROL_ROOT" "$WALLET_ROOT" "$WALLET_ROOT/private"
 rm -f -- "$EVIDENCE_ROOT/evidence.json" "$EVIDENCE_ROOT/screenshots/consent.png" "$EVIDENCE_ROOT/screenshots/restart.png"
+build_window_bounds_helper || fail window-bounds-helper
 
 node "$REPOSITORY_ROOT/scripts/e2e/portal-virtual-mobile-offer-harness.mjs" --contract-test >/dev/null
 cargo test --manifest-path "$REPOSITORY_ROOT/Cargo.toml" \
