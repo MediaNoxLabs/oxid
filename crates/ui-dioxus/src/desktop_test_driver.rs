@@ -7,6 +7,7 @@
 
 use std::{
     env, fs,
+    fs::OpenOptions,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -219,6 +220,15 @@ async fn run_driver() {
     let Some(root) = control_root() else {
         return;
     };
+    let _ = fs::create_dir_all(&root);
+    if OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(marker(&root, "driver-admitted"))
+        .is_err()
+    {
+        return;
+    }
     let _ = write_marker(&root, "driver-started");
     if marker(&root, "restart").is_file() {
         match run_stage(RESTART_REVERIFY_STAGE).await {
@@ -257,8 +267,12 @@ async fn run_driver() {
 
 #[component]
 pub(super) fn DesktopTestDriver() -> Element {
-    let _driver = use_future(move || async move { run_driver().await });
-    rsx! {}
+    use_effect(move || {
+        spawn(async move { run_driver().await });
+    });
+    rsx! {
+        span { style: "display: none", aria_hidden: "true", "Desktop test control driver" }
+    }
 }
 
 #[cfg(test)]
