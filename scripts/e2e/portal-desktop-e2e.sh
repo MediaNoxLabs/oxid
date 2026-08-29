@@ -73,7 +73,7 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 wait_for_file() {
-  local wanted="$1" failure="${2:-}" deadline=$((SECONDS + 900))
+  local wanted="$1" failure="${2:-}" maximum="${3:-900}" deadline=$((SECONDS + maximum))
   while [ "$SECONDS" -lt "$deadline" ]; do
     [ -n "$failure" ] && [ -f "$failure" ] && return 2
     [ -f "$wanted" ] && return 0
@@ -178,6 +178,8 @@ source "$STACK_BUILD_ENV"
 [[ "$OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail manifest-digest
 
 launch_app "$RUNTIME/app-first.log"
+wait_for_file "$CONTROL_ROOT/driver-started" "$CONTROL_ROOT/driver-failed" 60 \
+  || fail driver-not-started
 wait_for_file "$CONTROL_ROOT/sync-and-holder-visible" "$CONTROL_ROOT/driver-failed" \
   || fail first-rendered-setup
 kill -0 "$app_pid" 2>/dev/null || fail first-app-exited

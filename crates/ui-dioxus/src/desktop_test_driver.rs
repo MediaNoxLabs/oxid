@@ -219,6 +219,7 @@ async fn run_driver() {
     let Some(root) = control_root() else {
         return;
     };
+    let _ = write_marker(&root, "driver-started");
     if marker(&root, "restart").is_file() {
         match run_stage(RESTART_REVERIFY_STAGE).await {
             Ok(()) => {
@@ -256,7 +257,7 @@ async fn run_driver() {
 
 #[component]
 pub(super) fn DesktopTestDriver() -> Element {
-    use_future(run_driver);
+    let _driver = use_future(move || async move { run_driver().await });
     rsx! {}
 }
 
