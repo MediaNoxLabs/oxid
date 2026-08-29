@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -59,53 +59,124 @@ test("canonical macOS laptop lane runs headless before desktop and validates bot
   assert.match(runner.match(/run_repository\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "", new RegExp(registration.replaceAll(".", "\\.")));
 });
 
-test("macOS runbook invalidates stale standalone ownership before a fail-closed query", async () => {
+test("macOS runbook keeps standalone cleanup authority process-local and fail-scoped", async () => {
   const runbook = await text("docs/factory/portal-macos-laptop.md");
-  const commands = runbook.match(/Before starting,[\s\S]*?```bash\n([\s\S]*?)\n```/)?.[1];
+  const commands = runbook.match(/## Owner-safe execution[\s\S]*?```bash\n([\s\S]*?)\n```/)?.[1];
   assert.ok(commands, "missing owner-safe command block");
 
-  const sandbox = await mkdtemp(path.join(tmpdir(), "oxid-portal-ownership-"));
-  const ownershipFile = path.join(sandbox, "tmp/portal-macos-laptop/ownership.txt");
-  const bin = path.join(sandbox, "bin");
-  const justMarker = path.join(sandbox, "just-invoked");
-  try {
-    await mkdir(path.dirname(ownershipFile), { recursive: true });
-    await mkdir(bin);
-    await writeFile(ownershipFile, "standalone_preexisting=false\n");
-    await writeFile(path.join(bin, "docker"), "#!/bin/sh\nexit 23\n");
-    await writeFile(path.join(bin, "just"), "#!/bin/sh\n: > \"$JUST_MARKER\"\nexit 97\n");
-    await Promise.all([chmod(path.join(bin, "docker"), 0o755), chmod(path.join(bin, "just"), 0o755)]);
+  const execute = async ({ dockerOutput = "", dockerStatus = 0, scenarioStatus = 0, downStatus = 0 }) => {
+    const sandbox = await mkdtemp(path.join(tmpdir(), "oxid-portal-ownership-"));
+    const ownershipFile = path.join(sandbox, "tmp/portal-macos-laptop/ownership.txt");
+    const bin = path.join(sandbox, "bin");
+    const justLog = path.join(sandbox, "just.log");
+    const dockerLog = path.join(sandbox, "docker.log");
+    try {
+      await mkdir(path.dirname(ownershipFile), { recursive: true });
+      await mkdir(bin);
+      await writeFile(ownershipFile, "standalone_preexisting=false\n");
+      await writeFile(path.join(bin, "docker"), `#!/bin/sh
+printf '%s\\n' "$*" >> "$DOCKER_LOG"
+if [ "$DOCKER_STATUS" -eq 0 ]; then
+  printf '%s' "$DOCKER_OUTPUT"
+fi
+exit "$DOCKER_STATUS"
+`);
+      await writeFile(path.join(bin, "just"), `#!/bin/sh
+printf '%s\\n' "$1" >> "$JUST_LOG"
+[ "$#" -eq 1 ] || exit 96
+case "$1" in
+  standalone-up) exit 0 ;;
+  portal-macos-laptop-e2e) exit "$SCENARIO_STATUS" ;;
+  standalone-down) exit "$DOWN_STATUS" ;;
+  *) exit 97 ;;
+esac
+`);
+      await writeFile(path.join(bin, "git"), `#!/bin/sh
+if [ "$#" -eq 3 ] && [ "$1" = status ] && [ "$2" = --porcelain ] && [ "$3" = --untracked-files=no ]; then
+  exit 0
+fi
+if [ "$#" -eq 2 ] && [ "$1" = rev-parse ] && [ "$2" = HEAD ]; then
+  printf '%040d\\n' 0
+  exit 0
+fi
+if [ "$#" -eq 2 ] && [ "$1" = rev-parse ] && [ "$2" = 'HEAD^{tree}' ]; then
+  printf '%040d\\n' 1
+  exit 0
+fi
+exit 98
+`);
+      await writeFile(path.join(bin, "jq"), "#!/bin/sh\nexit 0\n");
+      await Promise.all(["docker", "just", "git", "jq"].map((name) => chmod(path.join(bin, name), 0o755)));
 
-    const result = spawnSync("/bin/bash", ["-c", commands], {
-      cwd: sandbox,
-      encoding: "utf8",
-      env: { ...process.env, JUST_MARKER: justMarker, PATH: `${bin}:${process.env.PATH ?? ""}` },
-    });
-    assert.equal(result.status, 1, `Docker query failure must exit 1: ${result.stderr}`);
-    assert.match(result.stderr, /standalone ownership query failed; no ownership recorded and no stack command run/);
-    await assert.rejects(access(ownershipFile), { code: "ENOENT" }, "Docker query failure must remove the stale ownership record");
-    await assert.rejects(access(justMarker), { code: "ENOENT" }, "Docker query failure must not invoke any just target");
-  } finally {
-    await rm(sandbox, { recursive: true, force: true });
-  }
+      const result = spawnSync("/bin/bash", ["-x", "-c", commands], {
+        cwd: sandbox,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DOCKER_LOG: dockerLog,
+          DOCKER_OUTPUT: dockerOutput,
+          DOCKER_STATUS: String(dockerStatus),
+          DOWN_STATUS: String(downStatus),
+          JUST_LOG: justLog,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          SCENARIO_STATUS: String(scenarioStatus),
+        },
+      });
+      const optionalText = async (file) => {
+        try {
+          return await readFile(file, "utf8");
+        } catch (error) {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        }
+      };
+      const logLines = async (file) => (await optionalText(file))?.trim().split("\n").filter(Boolean) ?? [];
+      return {
+        dockerCalls: await logLines(dockerLog),
+        justTargets: await logLines(justLog),
+        legacyOwnership: await optionalText(ownershipFile),
+        result,
+      };
+    } finally {
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  };
 
-  const failClosedPrefix = [
-    "ownership_file=tmp/portal-macos-laptop/ownership.txt",
-    "if ! mkdir -p tmp/portal-macos-laptop ||",
-    '   ! rm -f -- "$ownership_file" ||',
-    '   [ -e "$ownership_file" ] || [ -L "$ownership_file" ]; then',
-    "  printf '%s\\n' 'standalone ownership invalidation failed; no ownership recorded and no stack command run' >&2",
-    "  exit 1",
-    "fi",
-    'if ! standalone_before="$(docker ps -a \\',
-    "  --filter label=com.docker.compose.project=oxid-standalone \\",
-    "  --format '{{.ID}}' 2>/dev/null)\"; then",
-    "  printf '%s\\n' 'standalone ownership query failed; no ownership recorded and no stack command run' >&2",
-    "  exit 1",
-    "fi",
-  ].join("\n");
-  assert.equal(commands.slice(0, failClosedPrefix.length), failClosedPrefix, "ownership setup and query must use the exact fail-closed guards");
-  assert.match(commands.slice(failClosedPrefix.length), /printf 'standalone_preexisting=%s\\n' "\$\(\[ -n "\$standalone_before" \] && echo true \|\| echo false\)" \\\n  > "\$ownership_file"/);
+  const queryFailure = await execute({ dockerStatus: 23 });
+  assert.equal(queryFailure.result.status, 1, `Docker query failure must exit 1: ${queryFailure.result.stderr}`);
+  assert.deepEqual(queryFailure.justTargets, [], "Docker query failure must not invoke any just target");
+  assert.equal(queryFailure.legacyOwnership, "standalone_preexisting=false\n", "legacy ownership state must remain untouched and untrusted");
+  assert.match(queryFailure.result.stderr, /standalone ownership query failed; no cleanup authority installed and no stack command run/);
+
+  const ownedFailure = await execute({ scenarioStatus: 42 });
+  assert.equal(ownedFailure.result.status, 42, `scenario status must survive owned cleanup: ${ownedFailure.result.stderr}`);
+  assert.deepEqual(ownedFailure.justTargets, ["standalone-up", "portal-macos-laptop-e2e", "standalone-down"]);
+
+  const preexistingFailure = await execute({ dockerOutput: "preexisting-container", scenarioStatus: 42 });
+  assert.equal(preexistingFailure.result.status, 42, `pre-existing scenario failure must be preserved: ${preexistingFailure.result.stderr}`);
+  assert.deepEqual(preexistingFailure.justTargets, ["standalone-up", "portal-macos-laptop-e2e"]);
+
+  const success = await execute({ dockerOutput: "" });
+  assert.equal(success.result.status, 0, success.result.stderr);
+  assert.deepEqual(success.justTargets, ["standalone-up", "portal-macos-laptop-e2e"]);
+  assert.match(success.result.stderr, /\+ trap - EXIT/, "successful execution must disarm the EXIT trap");
+
+  const cleanupFailure = await execute({ scenarioStatus: 42, downStatus: 43 });
+  assert.equal(cleanupFailure.result.status, 42, "cleanup failure must not hide the scenario failure");
+  assert.deepEqual(cleanupFailure.justTargets, ["standalone-up", "portal-macos-laptop-e2e", "standalone-down"]);
+  assert.match(cleanupFailure.result.stderr, /owned standalone cleanup failed \(exit 43\); preserving stack state for owner review; no force deletion attempted/);
+
+  assert.equal(queryFailure.dockerCalls.length, 1);
+  assert.doesNotMatch(commands, /ownership\.txt|ownership_file/, "the command block must not use persisted ownership state");
+  const queryEnd = commands.indexOf("fi", commands.indexOf("docker ps"));
+  const ownershipAssignment = commands.indexOf("standalone_owned=false");
+  const trapInstall = commands.indexOf("trap cleanup_owned_standalone_on_failure EXIT");
+  const trapDisarm = commands.lastIndexOf("trap - EXIT");
+  assert.ok(queryEnd >= 0 && queryEnd < ownershipAssignment, "the Docker baseline must succeed before ownership is established");
+  assert.ok(ownershipAssignment < trapInstall, "ownership must be established before installing the failure trap");
+  assert.ok(trapInstall < trapDisarm, "the success path must disarm the installed failure trap");
+  assert.match(runbook, /legacy `tmp\/portal-macos-laptop\/ownership\.txt` files? (?:is|are) untrusted\s+historical state/i);
+  assert.match(runbook, /(?:it|they)\s+never authorize cleanup/i);
 });
 
 test("desktop test feature is exact and its rendered-control driver has no direct capability calls", async () => {

@@ -31,55 +31,80 @@ that the combined run is faster overall; its duration is unmeasured.
 
 ## Owner-safe execution
 
-Before starting, record whether any standalone containers already exist:
+Before starting, run this complete parenthesized block in Bash. It grants
+cleanup authority only from a successful, process-local Docker baseline:
 
 ```bash
-ownership_file=tmp/portal-macos-laptop/ownership.txt
-if ! mkdir -p tmp/portal-macos-laptop ||
-   ! rm -f -- "$ownership_file" ||
-   [ -e "$ownership_file" ] || [ -L "$ownership_file" ]; then
-  printf '%s\n' 'standalone ownership invalidation failed; no ownership recorded and no stack command run' >&2
-  exit 1
-fi
-if ! standalone_before="$(docker ps -a \
-  --filter label=com.docker.compose.project=oxid-standalone \
-  --format '{{.ID}}' 2>/dev/null)"; then
-  printf '%s\n' 'standalone ownership query failed; no ownership recorded and no stack command run' >&2
-  exit 1
-fi
-printf 'standalone_preexisting=%s\n' "$([ -n "$standalone_before" ] && echo true || echo false)" \
-  > "$ownership_file"
-test -z "$(git status --porcelain --untracked-files=no)"
-just standalone-up
-just portal-macos-laptop-e2e
-jq -s -e \
-  --arg head "$(git rev-parse HEAD)" \
-  --arg tree "$(git rev-parse 'HEAD^{tree}')" \
-  'length == 2 and all(.[]; .oxid == {head:$head,tree:$tree})' \
-  target/portal-headless-e2e/evidence.json \
-  target/portal-desktop-e2e/evidence.json
+(
+  set -e
+  test -z "$(git status --porcelain --untracked-files=no)"
+  if ! standalone_before="$(docker ps -a \
+    --filter label=com.docker.compose.project=oxid-standalone \
+    --format '{{.ID}}' 2>/dev/null)"; then
+    printf '%s\n' 'standalone ownership query failed; no cleanup authority installed and no stack command run' >&2
+    exit 1
+  fi
+
+  standalone_owned=false
+  if [ -z "$standalone_before" ]; then
+    standalone_owned=true
+  fi
+
+  cleanup_owned_standalone_on_failure() {
+    failure_status=$?
+    trap - EXIT
+    if [ "$failure_status" -ne 0 ] && [ "$standalone_owned" = true ]; then
+      if just standalone-down; then
+        :
+      else
+        cleanup_status=$?
+        printf 'owned standalone cleanup failed (exit %s); preserving stack state for owner review; no force deletion attempted\n' \
+          "$cleanup_status" >&2
+      fi
+    fi
+    exit "$failure_status"
+  }
+  trap cleanup_owned_standalone_on_failure EXIT
+
+  just standalone-up
+  just portal-macos-laptop-e2e
+  jq -s -e \
+    --arg head "$(git rev-parse HEAD)" \
+    --arg tree "$(git rev-parse 'HEAD^{tree}')" \
+    'length == 2 and all(.[]; .oxid == {head:$head,tree:$tree})' \
+    target/portal-headless-e2e/evidence.json \
+    target/portal-desktop-e2e/evidence.json
+  trap - EXIT
+)
 ```
 
-Run those commands in that order. `just standalone-up` must validate exactly
-three healthy standalone services whether the stack is new or pre-existing.
-`just portal-macos-laptop-e2e` accepts no arguments, runs headless then desktop
-exactly once, stops at the first failure, and performs the same slurped
-aggregate check. Its final success line is:
+Run the block as one invocation, not as separate commands. A failed Docker
+query exits before the local ownership boolean and failure trap exist.
+`just standalone-up` must validate exactly three healthy standalone services
+whether the stack is new or pre-existing. `just portal-macos-laptop-e2e`
+accepts no arguments, runs headless then desktop exactly once, stops at the
+first failure, and performs the same slurped aggregate check. Its final success
+line is:
 
 ```text
 portal-macos-laptop-e2e: PASS evidence=target/portal-headless-e2e/evidence.json,target/portal-desktop-e2e/evidence.json
 ```
 
-If no standalone containers existed before `just standalone-up`, this session
-owns the stack. On success, leave an owned stack running for deliberate
-inner-loop reuse; run `just standalone-down` later only for that owned stack.
-On failure, run `just standalone-down` only when this session owns it. Never
-remove a pre-existing stack.
+If the successful baseline was empty, only this Bash process may treat the
+stack as owned. A later failure invokes `just standalone-down` through the EXIT
+trap; if cleanup fails, the trap reports it, preserves the original failure,
+and does not force-delete anything. A nonempty baseline never authorizes
+standalone cleanup. On success, the block disarms the trap and leaves a stack
+started by this invocation running for deliberate inner-loop reuse.
+
+Any legacy `tmp/portal-macos-laptop/ownership.txt` files are untrusted
+historical state. This method never reads, writes, or removes them, and they
+never authorize cleanup.
 
 Harness cleanup is receipt-scoped to `oxid-portal-consumer`; it never prunes
 Docker or removes `oxid-standalone`. If a receipt or lock cannot prove ownership
 and restoration, preserve the containers, state, and lock for owner review.
-Never force-delete them.
+Report cleanup failures and never force-delete containers, state, or locks.
 
 ## Pass evidence and exact-head rule
 
