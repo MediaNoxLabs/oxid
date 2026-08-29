@@ -459,7 +459,8 @@ its completion page stores and represents as the QR/copy offer, routes that same
 URL to Oxid, rejects once before consent with zero token/nonce/credential calls,
 and then explicitly accepts. The same `oxid-headless` process also derives its
 account and runs `wallet.connect` against local indexer v4; its live height is
-bounded against an independent indexer query. Digital-passport verification,
+bounded against a separate direct query to the same local indexer endpoint.
+Digital-passport verification,
 encrypted persistence, listing, restart restoration, and fresh reverification
 are required.
 

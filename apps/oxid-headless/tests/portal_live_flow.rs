@@ -693,7 +693,7 @@ fn resolver_request(did: &str) -> Value {
     serde_json::from_slice(&response[split..]).expect("resolver JSON")
 }
 
-fn independent_indexer_height() -> u64 {
+fn separately_queried_indexer_height() -> u64 {
     let mut stream = TcpStream::connect(("127.0.0.1", 8088)).expect("local indexer v4");
     set_stream_timeouts(&stream);
     let body = br#"{"query":"query OxidPhase1Evidence { block { height } }"}"#;
@@ -1109,10 +1109,10 @@ fn lace_portal_mock_flow_issues_to_same_headless_process_and_restores() {
     let headless_height = account["sync"]["chainTipHeight"]
         .as_u64()
         .expect("headless reports a numeric indexer height");
-    let independent_height = independent_indexer_height();
+    let separately_queried_height = separately_queried_indexer_height();
     assert!(
-        headless_height.abs_diff(independent_height) <= MAX_HEIGHT_DELTA,
-        "headless and independent indexer heights exceed the advancing-tip bound"
+        headless_height.abs_diff(separately_queried_height) <= MAX_HEIGHT_DELTA,
+        "headless and separately queried same-endpoint indexer heights exceed the advancing-tip bound"
     );
     let still_pending = first.request(
         "pending-after-sync",
@@ -1222,7 +1222,7 @@ fn lace_portal_mock_flow_issues_to_same_headless_process_and_restores() {
         },
         "diditProviderMode":"lace-smocker",
         "headlessIndexerHeight":headless_height,
-        "independentIndexerHeight":independent_height,
+        "separatelyQueriedIndexerHeight":separately_queried_height,
         "issuerImplementation":"lace-id-portal-rust",
         "midnightInteractionProven":"oxid-headless-indexer-sync",
         "nodeInteractionProven":false,

@@ -182,7 +182,7 @@ impl MidnightStandaloneConfig {
     pub fn with_account_chain_tip_observation(mut self) -> Self {
         self.indexer = self
             .indexer
-            .with_validated_chain_tip_http_url(self.indexer_http_url.clone());
+            .with_chain_tip_http_observation(self.indexer_http_url.clone());
         self
     }
 

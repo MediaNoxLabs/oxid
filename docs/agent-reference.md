@@ -602,7 +602,8 @@ through local indexed state. Only the native `oxid-headless` executable may
 combine that profile with the exact `undeployed` `127.0.0.1` standalone bundle;
 the general constructor and desktop behavior remain fail-closed. The same child
 must preserve pending issuance while `wallet.connect` reports live indexer sync,
-and its numeric height is checked against an independent indexer-v4 query. The
+and its numeric height is checked against a separate direct query to the same
+local indexer-v4 endpoint. The
 running Lace KYC flow supplies the exact QR/copy offer URL; Oxid rejects before
 consent with no token/nonce/credential calls, then explicitly accepts. This is
 Oxid indexer-sync evidence only: Oxid node and proof-server use are explicitly

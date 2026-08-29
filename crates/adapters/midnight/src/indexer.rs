@@ -122,7 +122,7 @@ impl MidnightIndexerConfig {
         &self.unshielded_address
     }
 
-    pub(crate) fn with_validated_chain_tip_http_url(mut self, endpoint: String) -> Self {
+    pub(crate) fn with_chain_tip_http_observation(mut self, endpoint: String) -> Self {
         self.chain_tip_http_url = Some(endpoint);
         self
     }
@@ -624,17 +624,17 @@ where
                 .map_err(|_| WalletAccountPortError::Unavailable)?
                 .get(profile_id)
                 .cloned();
-            let indexer = match self
+            let observation = match self
                 .transport
                 .snapshot(address.value(), checkpoint.clone())
                 .await
             {
-                Ok(indexer) => indexer,
+                Ok(observation) => observation,
                 Err(IndexerTransportError::Protocol | IndexerTransportError::InvalidData)
                     if checkpoint.is_some() =>
                 {
                     match self.transport.snapshot(address.value(), None).await {
-                        Ok(indexer) => indexer,
+                        Ok(observation) => observation,
                         Err(error) => {
                             self.store_stalled(profile_id, &previous)?;
                             return Err(error.wallet_error());
@@ -646,6 +646,10 @@ where
                     return Err(error.wallet_error());
                 }
             };
+            let IndexerObservation {
+                snapshot: indexer,
+                observed_chain_tip_height,
+            } = observation;
             let (balances, transactions) = match map_indexer_snapshot(&indexer) {
                 Ok(mapped) => mapped,
                 Err(error) => {
@@ -664,7 +668,7 @@ where
                 WalletSyncState::Synced,
                 Some(indexer.current_cursor),
                 Some(indexer.target_cursor),
-                indexer.chain_tip_height,
+                indexer.chain_tip_height.max(observed_chain_tip_height),
                 Some(updated_at),
             );
             let live = WalletAccountSnapshot::new(
@@ -750,12 +754,17 @@ fn map_spendable_utxo(utxo: &IndexerUtxo) -> Result<MidnightSpendableUtxo, Walle
     })
 }
 
+struct IndexerObservation {
+    snapshot: IndexerSnapshot,
+    observed_chain_tip_height: Option<u64>,
+}
+
 trait MidnightIndexerTransport: Send + Sync {
     fn snapshot<'a>(
         &'a self,
         address: &'a str,
         checkpoint: Option<IndexerSnapshot>,
-    ) -> BoxFuture<'a, Result<IndexerSnapshot, IndexerTransportError>>;
+    ) -> BoxFuture<'a, Result<IndexerObservation, IndexerTransportError>>;
 }
 
 struct WebSocketMidnightIndexerTransport {
@@ -777,7 +786,7 @@ impl MidnightIndexerTransport for WebSocketMidnightIndexerTransport {
         &'a self,
         address: &'a str,
         checkpoint: Option<IndexerSnapshot>,
-    ) -> BoxFuture<'a, Result<IndexerSnapshot, IndexerTransportError>> {
+    ) -> BoxFuture<'a, Result<IndexerObservation, IndexerTransportError>> {
         let endpoint = self.endpoint.clone();
         let chain_tip_http_url = self.chain_tip_http_url.clone();
         let address = address.to_owned();
@@ -793,19 +802,20 @@ impl MidnightIndexerTransport for WebSocketMidnightIndexerTransport {
                         .map_err(|_| IndexerTransportError::Runtime)
                         .and_then(|runtime| {
                             runtime.block_on(async {
-                                let mut snapshot =
+                                // Observe the same indexer before opening the account
+                                // snapshot. The published height therefore cannot outrun the
+                                // replay that follows; a later included account transaction may
+                                // safely raise it without changing checkpoint provenance.
+                                let observed_chain_tip_height = match chain_tip_http_url {
+                                    Some(endpoint) => Some(fetch_indexer_height(&endpoint).await?),
+                                    None => None,
+                                };
+                                let snapshot =
                                     indexer_snapshot(&endpoint, &address, checkpoint).await?;
-                                if let Some(endpoint) = chain_tip_http_url {
-                                    let observed_height = fetch_indexer_height(&endpoint).await?;
-                                    if snapshot
-                                        .chain_tip_height
-                                        .is_some_and(|height| height > observed_height)
-                                    {
-                                        return Err(IndexerTransportError::InvalidData);
-                                    }
-                                    snapshot.chain_tip_height = Some(observed_height);
-                                }
-                                Ok(snapshot)
+                                Ok(IndexerObservation {
+                                    snapshot,
+                                    observed_chain_tip_height,
+                                })
                             })
                         });
                     let _ = sender.send(result);
@@ -841,6 +851,7 @@ async fn fetch_indexer_height(endpoint: &str) -> Result<u64, IndexerTransportErr
     ensure_tls_provider()?;
     let client = reqwest::Client::builder()
         .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(CONNECT_TIMEOUT)
         .build()
@@ -872,8 +883,12 @@ async fn fetch_indexer_height(endpoint: &str) -> Result<u64, IndexerTransportErr
         }
         body.extend_from_slice(&chunk);
     }
+    parse_indexer_height_response(&body)
+}
+
+fn parse_indexer_height_response(body: &[u8]) -> Result<u64, IndexerTransportError> {
     let root: Value =
-        serde_json::from_slice(&body).map_err(|_| IndexerTransportError::InvalidData)?;
+        serde_json::from_slice(body).map_err(|_| IndexerTransportError::InvalidData)?;
     if root
         .get("errors")
         .and_then(Value::as_array)
@@ -1771,7 +1786,7 @@ mod tests {
     }
 
     struct ScriptedTransport {
-        results: Mutex<VecDeque<Result<IndexerSnapshot, IndexerTransportError>>>,
+        results: Mutex<VecDeque<Result<IndexerObservation, IndexerTransportError>>>,
         addresses: Mutex<Vec<String>>,
         starting_cursors: Mutex<Vec<u64>>,
     }
@@ -1781,7 +1796,7 @@ mod tests {
             &'a self,
             address: &'a str,
             checkpoint: Option<IndexerSnapshot>,
-        ) -> BoxFuture<'a, Result<IndexerSnapshot, IndexerTransportError>> {
+        ) -> BoxFuture<'a, Result<IndexerObservation, IndexerTransportError>> {
             Box::pin(async move {
                 self.addresses
                     .lock()
@@ -1859,6 +1874,16 @@ mod tests {
             output_index,
             created_at_seconds: Some(1_700_000_000),
             registered_for_dust_generation: false,
+        }
+    }
+
+    fn indexer_observation(
+        snapshot: IndexerSnapshot,
+        observed_chain_tip_height: Option<u64>,
+    ) -> IndexerObservation {
+        IndexerObservation {
+            snapshot,
+            observed_chain_tip_height,
         }
     }
 
@@ -1965,6 +1990,26 @@ mod tests {
     fn native_transport_installs_a_tls_crypto_provider() {
         ensure_tls_provider().expect("the pinned ring provider should install");
         assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+    }
+
+    #[test]
+    fn chain_tip_response_parser_accepts_only_a_numeric_success_height() {
+        assert_eq!(
+            parse_indexer_height_response(br#"{"data":{"block":{"height":42}}}"#),
+            Ok(42)
+        );
+        assert_eq!(
+            parse_indexer_height_response(br#"{"data":{"block":{"height":"42"}}}"#),
+            Err(IndexerTransportError::InvalidData)
+        );
+        assert_eq!(
+            parse_indexer_height_response(br#"{"errors":[{"message":"closed"}]}"#),
+            Err(IndexerTransportError::Protocol)
+        );
+        assert_eq!(
+            parse_indexer_height_response(b"not-json"),
+            Err(IndexerTransportError::InvalidData)
+        );
     }
 
     #[test]
@@ -2265,7 +2310,10 @@ mod tests {
     #[test]
     fn live_source_returns_live_then_cached_exact_account_state() {
         let transport = Arc::new(ScriptedTransport {
-            results: Mutex::new(VecDeque::from([Ok(live_snapshot())])),
+            results: Mutex::new(VecDeque::from([Ok(indexer_observation(
+                live_snapshot(),
+                Some(80),
+            ))])),
             addresses: Mutex::new(Vec::new()),
             starting_cursors: Mutex::new(Vec::new()),
         });
@@ -2284,6 +2332,7 @@ mod tests {
         let live = resolve(source.sync(&profile(), &network())).expect("sync succeeds");
         assert_eq!(live.source(), WalletAccountSource::Live);
         assert_eq!(live.sync().state(), WalletSyncState::Synced);
+        assert_eq!(live.sync().chain_tip_height(), Some(80));
         assert_eq!(live.balances()[0].asset().symbol().as_str(), "NIGHT");
         assert_eq!(live.balances()[0].atomic_units(), 2_500_000);
         assert_eq!(live.balances()[1].atomic_units(), u128::MAX - 1);
@@ -2311,7 +2360,7 @@ mod tests {
     fn failed_refresh_preserves_cached_values_and_marks_them_stalled() {
         let transport = Arc::new(ScriptedTransport {
             results: Mutex::new(VecDeque::from([
-                Ok(live_snapshot()),
+                Ok(indexer_observation(live_snapshot(), None)),
                 Err(IndexerTransportError::Connect),
             ])),
             addresses: Mutex::new(Vec::new()),
@@ -2342,9 +2391,9 @@ mod tests {
     fn incompatible_delta_replays_once_from_zero() {
         let transport = Arc::new(ScriptedTransport {
             results: Mutex::new(VecDeque::from([
-                Ok(live_snapshot()),
+                Ok(indexer_observation(live_snapshot(), None)),
                 Err(IndexerTransportError::InvalidData),
-                Ok(live_snapshot()),
+                Ok(indexer_observation(live_snapshot(), None)),
             ])),
             addresses: Mutex::new(Vec::new()),
             starting_cursors: Mutex::new(Vec::new()),
@@ -2391,7 +2440,10 @@ mod tests {
             )
             .expect("checkpoint fixture should save");
         let transport = Arc::new(ScriptedTransport {
-            results: Mutex::new(VecDeque::from([Ok(live_snapshot())])),
+            results: Mutex::new(VecDeque::from([Ok(indexer_observation(
+                live_snapshot(),
+                None,
+            ))])),
             addresses: Mutex::new(Vec::new()),
             starting_cursors: Mutex::new(Vec::new()),
         });
@@ -2436,7 +2488,10 @@ mod tests {
     #[test]
     fn binding_a_derived_account_resets_cache_and_scopes_the_next_sync() {
         let transport = Arc::new(ScriptedTransport {
-            results: Mutex::new(VecDeque::from([Ok(live_snapshot()), Ok(live_snapshot())])),
+            results: Mutex::new(VecDeque::from([
+                Ok(indexer_observation(live_snapshot(), None)),
+                Ok(indexer_observation(live_snapshot(), None)),
+            ])),
             addresses: Mutex::new(Vec::new()),
             starting_cursors: Mutex::new(Vec::new()),
         });

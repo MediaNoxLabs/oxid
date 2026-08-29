@@ -126,7 +126,7 @@ jq -e \
     "acceptance",
     "diditProviderMode",
     "headlessIndexerHeight",
-    "independentIndexerHeight",
+    "separatelyQueriedIndexerHeight",
     "issuerImplementation",
     "midnightInteractionProven",
     "nodeInteractionProven",
@@ -150,9 +150,9 @@ jq -e \
   and .nodeInteractionProven == false
   and .proofServerInteractionProven == false
   and (.headlessIndexerHeight | numbers)
-  and (.independentIndexerHeight | numbers)
-  and (([.headlessIndexerHeight - .independentIndexerHeight,
-          .independentIndexerHeight - .headlessIndexerHeight] | max) <= 4)
+  and (.separatelyQueriedIndexerHeight | numbers)
+  and (([.headlessIndexerHeight - .separatelyQueriedIndexerHeight,
+          .separatelyQueriedIndexerHeight - .headlessIndexerHeight] | max) <= 4)
   and (.acceptance | keys) == [
     "digitalPassportVerified",
     "encryptedPersistence",
