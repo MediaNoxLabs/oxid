@@ -1645,7 +1645,10 @@ impl PortalAdjacentEnvironmentSettings {
             || self.passport_vault_store
     }
 
-    #[cfg(all(test, feature = "headless-portal-local"))]
+    #[cfg(all(
+        test,
+        any(feature = "headless-portal-local", feature = "desktop-portal-test")
+    ))]
     fn each_conflict() -> [Self; 9] {
         [
             Self {
@@ -1705,7 +1708,7 @@ fn validate_portal_environment_combination(
     if matches!(policy, HeadlessEnvironmentPolicy::General) || adjacent.any() {
         return Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation);
     }
-    #[cfg(feature = "headless-portal-local")]
+    #[cfg(any(feature = "headless-portal-local", feature = "desktop-portal-test"))]
     {
         let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
             .map_err(|_| HeadlessCompositionError::PortalRequiresStandaloneSimulation)?;
@@ -1728,7 +1731,7 @@ fn validate_portal_environment_combination(
             Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
         }
     }
-    #[cfg(not(feature = "headless-portal-local"))]
+    #[cfg(not(any(feature = "headless-portal-local", feature = "desktop-portal-test")))]
     Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
 }
 
@@ -4600,7 +4603,10 @@ mod tests {
         drop(compose_headless());
     }
 
-    #[cfg(all(not(target_arch = "wasm32"), feature = "headless-portal-local"))]
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        any(feature = "headless-portal-local", feature = "desktop-portal-test")
+    ))]
     #[test]
     fn headless_process_portal_policy_accepts_only_the_canonical_standalone_bundle() {
         let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
