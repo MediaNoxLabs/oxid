@@ -94,8 +94,14 @@ published. Oxid does not call `tailscale serve reset` for this flow.
 
 ## Evidence
 
-`just portal-headless-e2e` proves real issuance followed by a second headless
-process restoring, listing, and freshly reverifying the encrypted credential.
+`just portal-headless-e2e` is separate localhost-only evidence. It runs the
+pinned Lace integration Rust issuer through Lace's supported in-stack Smocker
+Didit configuration and points Lace's resolver/did-manager at the existing local
+standalone routes. One headless process routes the exact Lace QR/offer URL,
+rejects before consent, explicitly accepts, verifies and encrypts the Digital
+Passport, restores/lists/reverifies after restart, and observably synchronizes
+through the indexer. Oxid node and proof-server use remain unproven. It is not
+physical Android, live DIDIT, real-person KYC, production, or release evidence.
 
 `just android-portal-tailnet-physical-smoke` proves physical Android warm and
 cold ingress, refusal before consent with zero secret endpoint calls, strict

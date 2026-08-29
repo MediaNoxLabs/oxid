@@ -7,7 +7,7 @@ use std::{
     io::{BufRead as _, BufReader, Read as _, Write as _},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -35,6 +35,25 @@ const PORTAL_INTEGRATION_TREE: &str = "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10"
 const PORTAL_PROVENANCE_SHA256: &str =
     "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87";
 const PORTAL_ISSUER_RESOLVER: &str = "http://127.0.0.1:9092";
+const INDEXER_WS: &str = "ws://127.0.0.1:8088/api/v4/graphql/ws";
+const INDEXER_HTTP: &str = "http://127.0.0.1:8088/api/v4/graphql";
+const NODE_WS: &str = "ws://127.0.0.1:9944";
+const PROOF_SERVER: &str = "http://127.0.0.1:6300";
+const STANDALONE_ADDRESS: &str =
+    "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
+const MOCK_SESSION_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+const EXCLUDED_ENVIRONMENT: [&str; 10] = [
+    "OXID_MIDNIGHT_PROVING_CACHE_DIR",
+    "OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH",
+    "OXID_MIDNIGHT_DUST_CHECKPOINT_PATH",
+    "OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH",
+    "OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH",
+    "OXID_MIDNIGHT_DID_RESOLVER_URL",
+    "OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT",
+    "OXID_PASSPORT_VAULT_COMPOSER",
+    "OXID_PASSPORT_VAULT_STORE_PATH",
+    "OXID_PRESENTATION_ARTIFACTS_DIR",
+];
 
 struct RuntimeCleanup(PathBuf);
 
@@ -45,14 +64,16 @@ impl Drop for RuntimeCleanup {
 }
 
 struct ProcessHarness {
-    child: Child,
+    child: Option<Child>,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
+    error: BufReader<ChildStderr>,
 }
 
 impl ProcessHarness {
     fn spawn(root: &Path, manifest: &Path, digest: &str) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_oxid-headless"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        command
             .env("OXID_PROFILE_STORE_PATH", root.join("profiles.json"))
             .env("OXID_DID_STORE_PATH", root.join("private/did-records.json"))
             .env(
@@ -65,31 +86,24 @@ impl ProcessHarness {
             )
             .env("OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH", manifest)
             .env("OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256", digest)
-            .env_remove("OXID_MIDNIGHT_NETWORK_ID")
-            .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
-            .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
-            .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
-            .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
-            .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
-            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
-            .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
-            .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
-            .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
-            .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
-            .env_remove("OXID_MIDNIGHT_DID_RESOLVER_URL")
-            .env_remove("OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT")
-            .env_remove("OXID_PASSPORT_VAULT_COMPOSER")
-            .env_remove("OXID_PASSPORT_VAULT_STORE_PATH")
-            .env_remove("OXID_PRESENTATION_ARTIFACTS_DIR")
+            .env("OXID_MIDNIGHT_NETWORK_ID", "undeployed")
+            .env("OXID_MIDNIGHT_INDEXER_WS_URL", INDEXER_WS)
+            .env("OXID_MIDNIGHT_INDEXER_HTTP_URL", INDEXER_HTTP)
+            .env("OXID_MIDNIGHT_NODE_WS_URL", NODE_WS)
+            .env("OXID_MIDNIGHT_PROOF_SERVER_URL", PROOF_SERVER)
+            .env("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", STANDALONE_ADDRESS)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("headless process");
+            .stderr(Stdio::piped());
+        for key in EXCLUDED_ENVIRONMENT {
+            command.env_remove(key);
+        }
+        let mut child = command.spawn().expect("headless process");
         Self {
             input: child.stdin.take().expect("stdin"),
             output: BufReader::new(child.stdout.take().expect("stdout")),
-            child,
+            error: BufReader::new(child.stderr.take().expect("stderr")),
+            child: Some(child),
         }
     }
 
@@ -107,9 +121,22 @@ impl ProcessHarness {
         serde_json::from_str(&line).expect("response JSON")
     }
 
-    fn quit(mut self) {
+    fn quit(mut self) -> String {
         assert_eq!(self.request("quit", "system.quit", json!({}))["ok"], true);
-        assert!(self.child.wait().expect("wait").success());
+        let mut child = self.child.take().expect("running child");
+        assert!(child.wait().expect("wait").success());
+        let mut stderr = String::new();
+        self.error.read_to_string(&mut stderr).expect("stderr");
+        stderr
+    }
+}
+
+impl Drop for ProcessHarness {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 
@@ -155,8 +182,18 @@ impl Drop for PortalLifecycle {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PortalRequests {
+    kyc_sessions: u8,
+    kyc_status: u8,
+    token: u8,
+    nonce: u8,
+    credentials: u8,
+}
+
 struct PortalProxy {
     origin: String,
+    requests: Arc<Mutex<PortalRequests>>,
     captured_credential_response: Arc<Mutex<Option<Value>>>,
     stop: Arc<AtomicBool>,
     completion: Option<mpsc::Receiver<()>>,
@@ -172,6 +209,8 @@ impl PortalProxy {
         let listener = TcpListener::bind("127.0.0.1:0").expect("Portal observation proxy");
         listener.set_nonblocking(true).expect("nonblocking proxy");
         let port = listener.local_addr().expect("proxy address").port();
+        let requests = Arc::new(Mutex::new(PortalRequests::default()));
+        let thread_requests = Arc::clone(&requests);
         let captured_credential_response: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
         let thread_capture = Arc::clone(&captured_credential_response);
         let stop = Arc::new(AtomicBool::new(false));
@@ -195,6 +234,25 @@ impl PortalProxy {
                     .expect("blocking proxy stream");
                 set_stream_timeouts(&incoming);
                 let (path, _, raw_request) = read_raw_request(&mut incoming);
+                {
+                    let mut requests = thread_requests.lock().expect("Portal request counters");
+                    let counter = match path.as_str() {
+                        "/api/issuer/kyc-sessions" => Some(&mut requests.kyc_sessions),
+                        value
+                            if value.starts_with("/api/issuer/kyc-sessions/")
+                                && value.ends_with("/status") =>
+                        {
+                            Some(&mut requests.kyc_status)
+                        }
+                        "/api/issuer/token" => Some(&mut requests.token),
+                        "/api/issuer/nonce" => Some(&mut requests.nonce),
+                        "/api/issuer/credentials" => Some(&mut requests.credentials),
+                        _ => None,
+                    };
+                    if let Some(counter) = counter {
+                        *counter = counter.checked_add(1).expect("bounded Portal requests");
+                    }
+                }
                 let mut upstream = TcpStream::connect(upstream_address).expect("Portal upstream");
                 set_stream_timeouts(&upstream);
                 upstream
@@ -220,11 +278,16 @@ impl PortalProxy {
         });
         Self {
             origin: format!("http://localhost:{port}"),
+            requests,
             captured_credential_response,
             stop,
             completion: Some(completion_receiver),
             thread: Some(handle),
         }
+    }
+
+    fn requests(&self) -> PortalRequests {
+        *self.requests.lock().expect("Portal request counters")
     }
 }
 
@@ -567,6 +630,48 @@ fn issuer_public_facts() -> (String, String, Value) {
     (did, method, jwk)
 }
 
+fn issuer_uses_supported_didit_mock() -> bool {
+    let containers = Command::new("docker")
+        .args([
+            "ps",
+            "--quiet",
+            "--filter",
+            "label=com.docker.compose.project=oxid-portal-consumer",
+            "--filter",
+            "label=com.docker.compose.service=issuer",
+        ])
+        .output()
+        .expect("issuer container");
+    if !containers.status.success() {
+        return false;
+    }
+    let container = String::from_utf8(containers.stdout)
+        .expect("container UTF-8")
+        .trim()
+        .to_owned();
+    if container.is_empty() || container.contains(char::is_whitespace) {
+        return false;
+    }
+    let inspected = Command::new("docker")
+        .args([
+            "inspect",
+            "--format",
+            "{{range .Config.Env}}{{println .}}{{end}}",
+            &container,
+        ])
+        .output()
+        .expect("issuer environment inspection");
+    if !inspected.status.success() {
+        return false;
+    }
+    let environment = String::from_utf8(inspected.stdout).expect("issuer environment UTF-8");
+    environment
+        .lines()
+        .filter(|line| line.starts_with("DIDIT_API_BASE_URL="))
+        .eq(["DIDIT_API_BASE_URL=http://smocker:8080"])
+        && !environment.contains("verification.didit.me")
+}
+
 fn resolver_request(did: &str) -> Value {
     let mut stream = TcpStream::connect(("127.0.0.1", 9092)).expect("Portal resolver");
     set_stream_timeouts(&stream);
@@ -750,6 +855,27 @@ fn diagnose_captured_response(
     }
 }
 
+fn assert_valid_verification(value: &Value) {
+    assert_eq!(value["verification"]["outcome"], "valid");
+    let stages = value["verification"]["stages"]
+        .as_array()
+        .expect("verification stages");
+    for name in [
+        "structural",
+        "issuer",
+        "proof",
+        "temporal",
+        "schema",
+        "trust",
+    ] {
+        assert!(
+            stages
+                .iter()
+                .any(|stage| stage["name"] == name && stage["status"] == "passed")
+        );
+    }
+}
+
 fn wait_for_portal() {
     let deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < deadline {
@@ -762,8 +888,8 @@ fn wait_for_portal() {
 }
 
 #[test]
-#[ignore = "requires authenticated Portal integration checkout plus Docker/Nix compose stack"]
-fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
+#[ignore = "requires the pinned Lace integration service in its supported Smocker configuration plus the local oxid-standalone stack"]
+fn lace_portal_mock_flow_issues_to_same_headless_process_and_restores() {
     let portal_tree = PathBuf::from(
         std::env::var_os("PORTAL_INTEGRATION_TREE")
             .expect("PORTAL_INTEGRATION_TREE")
@@ -777,10 +903,16 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
             .expect("lifecycle path UTF-8"),
     );
     let oxid_head = std::env::var("OXID_PORTAL_EVIDENCE_HEAD").expect("OXID_PORTAL_EVIDENCE_HEAD");
-    assert!(
-        oxid_head.len() == 40 && oxid_head.bytes().all(|byte| byte.is_ascii_hexdigit()),
-        "Oxid evidence head must be a commit SHA"
-    );
+    let oxid_tree = std::env::var("OXID_PORTAL_EVIDENCE_TREE").expect("OXID_PORTAL_EVIDENCE_TREE");
+    for (name, value) in [("head", &oxid_head), ("tree", &oxid_tree)] {
+        assert!(
+            value.len() == 40
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+            "Oxid evidence {name} must be a lowercase commit identity"
+        );
+    }
     let evidence_path = PathBuf::from(
         std::env::var_os("OXID_PORTAL_EVIDENCE_PATH")
             .expect("OXID_PORTAL_EVIDENCE_PATH")
@@ -806,8 +938,18 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         &holder_resolver.origin_for_container,
     );
     wait_for_portal();
+    assert!(
+        issuer_uses_supported_didit_mock(),
+        "Lace issuer must target its supported in-stack Smocker seam"
+    );
 
     let (issuer_did, issuer_method, issuer_jwk) = issuer_public_facts();
+    assert!(issuer_did.starts_with("did:midnight:undeployed:"));
+    assert!(issuer_method.starts_with(&format!("{issuer_did}#")));
+    assert_eq!(
+        resolver_request(&issuer_did)["didDocument"]["id"],
+        issuer_did
+    );
     let manifest_path = run_root.join("deployment.json");
     let manifest_digest = write_manifest(
         &manifest_path,
@@ -840,6 +982,8 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         first.request("security", "wallet.security.initialize", json!({}))["ok"],
         true
     );
+    let derived = first.request("account-derive", "wallet.account.derive", json!({}));
+    assert_eq!(derived["result"]["account"]["networkId"], "undeployed");
     let did = first.request("did", "did.create", json!({}));
     let document = &did["result"]["didRecord"]["document"];
     holder_resolver.install(document);
@@ -869,6 +1013,7 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         Some("{}"),
     );
     let session_id = kyc["sessionId"].as_str().expect("KYC session id");
+    assert_eq!(session_id, MOCK_SESSION_ID);
     let status = portal_request(
         &portal_proxy.origin,
         "GET",
@@ -879,9 +1024,17 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         status["status"].as_str().map(str::to_ascii_lowercase),
         Some("approved".to_owned())
     );
+    assert_eq!(
+        portal_proxy.requests(),
+        PortalRequests {
+            kyc_sessions: 1,
+            kyc_status: 1,
+            ..PortalRequests::default()
+        }
+    );
     let offer = kyc["credentialOfferUri"]
         .as_str()
-        .expect("real Portal offer")
+        .expect("exact Lace QR/offer URL")
         .to_owned();
     let routed = first.request(
         "route",
@@ -899,6 +1052,50 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         .as_str()
         .expect("issuance")
         .to_owned();
+    let rejected = first.request(
+        "reject-before-consent",
+        "credential.issuance.accept",
+        json!({
+            "issuanceId":issuance,
+            "holderDid":holder_did,
+            "methodId":authentication,
+            "holderBindingMethodId":binding,
+            "confirmed":false,
+            "intent":"ACCEPT_CREDENTIAL_ISSUANCE"
+        }),
+    );
+    assert_eq!(rejected["error"]["code"], "confirmation_required");
+    let before_consent = portal_proxy.requests();
+    assert_eq!(before_consent.token, 0);
+    assert_eq!(before_consent.nonce, 0);
+    assert_eq!(before_consent.credentials, 0);
+
+    let connected = first.request("connect", "wallet.connect", json!({}));
+    assert_eq!(connected["ok"], true, "unexpected sync response");
+    let account = &connected["result"]["account"];
+    assert_eq!(account["source"], "live");
+    assert_eq!(account["networkId"], "undeployed");
+    assert_eq!(account["sync"]["state"], "synced");
+    let current_cursor = account["sync"]["currentCursor"]
+        .as_u64()
+        .expect("headless reports a numeric indexer current cursor");
+    let target_cursor = account["sync"]["targetCursor"]
+        .as_u64()
+        .expect("headless reports a numeric indexer target cursor");
+    assert_eq!(
+        current_cursor, target_cursor,
+        "headless websocket replay must reach its advertised target cursor"
+    );
+    let still_pending = first.request(
+        "pending-after-sync",
+        "credential.issuance.get",
+        json!({"issuanceId":issuance}),
+    );
+    assert_eq!(
+        still_pending["result"]["issuance"]["state"],
+        "awaiting_consent"
+    );
+
     let accepted = first.request(
         "accept",
         "credential.issuance.accept",
@@ -929,16 +1126,23 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         .as_str()
         .expect("credential")
         .to_owned();
+    let after_accept = portal_proxy.requests();
+    assert_eq!(after_accept.token, 1);
+    assert_eq!(after_accept.nonce, 1);
+    assert_eq!(after_accept.credentials, 1);
+    let listed = first.request("list", "credential.list", json!({}));
+    assert_eq!(
+        listed["result"]["credentials"].as_array().map(Vec::len),
+        Some(1)
+    );
     let verification = first.request(
         "reverify",
         "credential.reverify",
         json!({"credentialId":credential_id}),
     );
-    assert_eq!(
-        verification["result"]["credential"]["verification"]["outcome"],
-        "valid"
-    );
-    first.quit();
+    assert_valid_verification(&verification["result"]["credential"]);
+    let first_stderr = first.quit();
+    assert!(first_stderr.is_empty(), "unexpected first-process stderr");
 
     let mut second = ProcessHarness::spawn(&wallet_root, &manifest_path, &manifest_digest);
     let restored = second.request("list", "credential.list", json!({}));
@@ -954,11 +1158,9 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
         "credential.reverify",
         json!({"credentialId":restored_id}),
     );
-    assert_eq!(
-        reverified["result"]["credential"]["verification"]["outcome"],
-        "valid"
-    );
-    second.quit();
+    assert_valid_verification(&reverified["result"]["credential"]);
+    let second_stderr = second.quit();
+    assert!(second_stderr.is_empty(), "unexpected second-process stderr");
 
     let encrypted = fs::read(wallet_root.join("private/credentials.enc")).expect("encrypted store");
     for plaintext in [
@@ -974,27 +1176,65 @@ fn landed_portal_service_issues_to_headless_and_restores_in_new_process() {
     }
     let evidence = json!({
         "acceptance":{
+            "digitalPassportVerified":true,
             "encryptedPersistence":true,
-            "exactBundleImported":true,
-            "managedAuthenticationProof":true,
-            "mockKycApproved":true,
-            "newProcessRestore":true,
-            "reverified":true,
-            "separateJubjubAssertionBinding":true
+            "exactQrOfferUrlRouted":true,
+            "explicitConsent":true,
+            "freshReverification":true,
+            "issuerCallsBlockedBeforeConsent":true,
+            "issuerDidBootstrappedAndResolved":true,
+            "laceDiditMockExercised":true,
+            "listing":true,
+            "managedAuthentication":true,
+            "noExternalProviderCall":true,
+            "pendingIssuancePreservedAcrossSync":true,
+            "restartRestoration":true,
+            "sameProcessIssuanceAndSync":true,
+            "separateJubjubBinding":true
         },
-        "oxid":{"head":oxid_head},
+        "diditProviderMode":"lace-smocker",
+        "headlessIndexerCurrentCursor":current_cursor,
+        "headlessIndexerTargetCursor":target_cursor,
+        "issuerImplementation":"lace-id-portal-rust",
+        "midnightInteractionProven":"oxid-headless-indexer-sync",
+        "nodeInteractionProven":false,
+        "oxid":{"head":oxid_head,"tree":oxid_tree},
         "portal":{
             "integrationCommit":PORTAL_INTEGRATION_COMMIT,
             "integrationTree":PORTAL_INTEGRATION_TREE,
             "provenanceSha256":PORTAL_PROVENANCE_SHA256
         },
-        "schema":"oxid-portal-headless-evidence-v1"
+        "portalServiceExercised":true,
+        "proofServerInteractionProven":false,
+        "schema":"oxid-phase1-lace-portal-journey-v1"
     });
     let bytes = serde_json::to_vec(&evidence).expect("evidence");
     fs::create_dir_all(evidence_path.parent().expect("evidence parent")).expect("evidence parent");
     let temporary = evidence_path.with_extension("tmp");
     fs::write(&temporary, &bytes).expect("temporary evidence");
     fs::rename(&temporary, &evidence_path).expect("atomic evidence");
+}
+
+#[test]
+fn live_target_requires_the_lace_service_and_supported_mock_mode() {
+    let script = include_str!("../../../scripts/e2e/portal-headless-e2e.sh");
+    let consumer = include_str!("../../../scripts/portal-consumer-stack.yml");
+    for required in [
+        "git -C \"$RUN_TREE\" fetch origin integration",
+        "lace_portal_mock_flow_issues_to_same_headless_process_and_restores",
+        ".portalServiceExercised == true",
+        ".issuerImplementation == \"lace-id-portal-rust\"",
+        ".diditProviderMode == \"lace-smocker\"",
+    ] {
+        assert!(script.contains(required), "missing live target guard");
+    }
+    assert!(consumer.contains("DIDIT_API_BASE_URL: http://smocker:8080"));
+    assert!(!script.contains("oxid-owned-http-mock"));
+    assert!(!script.contains("portalServiceExercised == false"));
+    assert!(
+        !script.contains("CORRECTION_PARENT") && !script.contains("correction-parent"),
+        "the live target must remain runnable after integration changes the commit parent"
+    );
 }
 
 #[test]

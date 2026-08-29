@@ -7,7 +7,7 @@ use std::{io, process::ExitCode};
 use oxid_headless::HeadlessWallet;
 
 fn main() -> ExitCode {
-    let application = match oxid_composition::compose_headless_from_environment() {
+    let application = match oxid_composition::compose_native_headless_process_from_environment() {
         Ok(application) => application,
         Err(error) => {
             eprintln!("oxid-headless startup failed: {error}");

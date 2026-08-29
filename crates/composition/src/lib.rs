@@ -1603,12 +1603,155 @@ impl std::fmt::Display for HeadlessCompositionError {
 #[cfg(not(target_arch = "wasm32"))]
 impl std::error::Error for HeadlessCompositionError {}
 
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeadlessEnvironmentPolicy {
+    General,
+    #[cfg(feature = "headless-portal-local")]
+    NativeHeadlessProcess,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PortalAdjacentEnvironmentSettings {
+    presentation_artifacts: bool,
+    midnight_did_resolver: bool,
+    account_checkpoint: bool,
+    dust_checkpoint: bool,
+    shielded_checkpoint: bool,
+    submission_journal: bool,
+    passport_vault_deployment_height: bool,
+    passport_vault_composer: bool,
+    passport_vault_store: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PortalAdjacentEnvironmentSettings {
+    fn conflicts_with_general_policy(self) -> bool {
+        self.midnight_did_resolver
+            || self.account_checkpoint
+            || self.dust_checkpoint
+            || self.shielded_checkpoint
+            || self.submission_journal
+            || self.passport_vault_deployment_height
+            || self.passport_vault_composer
+    }
+
+    fn any(self) -> bool {
+        self.presentation_artifacts
+            || self.conflicts_with_general_policy()
+            || self.passport_vault_store
+    }
+
+    #[cfg(all(test, feature = "headless-portal-local"))]
+    fn each_conflict() -> [Self; 9] {
+        [
+            Self {
+                presentation_artifacts: true,
+                ..Self::default()
+            },
+            Self {
+                midnight_did_resolver: true,
+                ..Self::default()
+            },
+            Self {
+                account_checkpoint: true,
+                ..Self::default()
+            },
+            Self {
+                dust_checkpoint: true,
+                ..Self::default()
+            },
+            Self {
+                shielded_checkpoint: true,
+                ..Self::default()
+            },
+            Self {
+                submission_journal: true,
+                ..Self::default()
+            },
+            Self {
+                passport_vault_deployment_height: true,
+                ..Self::default()
+            },
+            Self {
+                passport_vault_composer: true,
+                ..Self::default()
+            },
+            Self {
+                passport_vault_store: true,
+                ..Self::default()
+            },
+        ]
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_portal_environment_combination(
+    policy: HeadlessEnvironmentPolicy,
+    midnight_values: &[Option<String>; 7],
+    adjacent: &PortalAdjacentEnvironmentSettings,
+) -> Result<(), HeadlessCompositionError> {
+    let no_midnight = midnight_values.iter().all(Option::is_none);
+    if no_midnight {
+        return if adjacent.conflicts_with_general_policy() {
+            Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
+        } else {
+            Ok(())
+        };
+    }
+    if matches!(policy, HeadlessEnvironmentPolicy::General) || adjacent.any() {
+        return Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation);
+    }
+    #[cfg(feature = "headless-portal-local")]
+    {
+        let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
+            .map_err(|_| HeadlessCompositionError::PortalRequiresStandaloneSimulation)?;
+        let expected = [
+            Some("undeployed"),
+            Some("ws://127.0.0.1:8088/api/v4/graphql/ws"),
+            Some("http://127.0.0.1:8088/api/v4/graphql"),
+            Some("ws://127.0.0.1:9944"),
+            Some("http://127.0.0.1:6300"),
+            Some(placeholder.value()),
+            None,
+        ];
+        if midnight_values
+            .iter()
+            .map(|value| value.as_deref())
+            .eq(expected)
+        {
+            Ok(())
+        } else {
+            Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
+        }
+    }
+    #[cfg(not(feature = "headless-portal-local"))]
+    Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
+}
+
 /// Selects deterministic simulation when no live variables are present, a
 /// read-only indexer when the three read values are present, or complete
 /// standalone submission when every route and exactly one proving mode are valid.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn compose_headless_from_environment() -> Result<ApplicationServices, HeadlessCompositionError>
 {
+    compose_headless_from_environment_with_policy(HeadlessEnvironmentPolicy::General)
+}
+
+/// Selects the ordinary headless environment composition while admitting one
+/// exact Portal-plus-local-standalone bundle for the native `oxid-headless`
+/// process. Other incoming adapters retain [`compose_headless_from_environment`].
+#[cfg(all(not(target_arch = "wasm32"), feature = "headless-portal-local"))]
+pub fn compose_native_headless_process_from_environment()
+-> Result<ApplicationServices, HeadlessCompositionError> {
+    compose_headless_from_environment_with_policy(HeadlessEnvironmentPolicy::NativeHeadlessProcess)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compose_headless_from_environment_with_policy(
+    policy: HeadlessEnvironmentPolicy,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
     #[cfg(any(target_os = "ios", target_os = "android"))]
     if std::env::var_os(OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH_ENV).is_some()
         || std::env::var_os(OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256_ENV).is_some()
@@ -1617,18 +1760,19 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
     }
     #[cfg(all(not(target_os = "ios"), not(target_os = "android")))]
     let portal = parse_optional_portal_configuration()?;
-    let credential_presentation =
-        read_optional_environment(PRESENTATION_COMPACT_ARTIFACTS_DIR_ENV)?
-            .map(|root| {
-                CompactPresentationArtifactsConfig::new(root)
-                    .and_then(|config| NativeCompactPresentationRuntime::load(&config))
-                    .map(Arc::new)
-            })
-            .transpose()
-            .map_err(HeadlessCompositionError::InvalidCompactPresentationRuntime)?
-            .map_or(CredentialPresentationComposition::Standalone, |runtime| {
-                CredentialPresentationComposition::StandaloneZk(runtime)
-            });
+    let presentation_artifacts = read_optional_environment(PRESENTATION_COMPACT_ARTIFACTS_DIR_ENV)?;
+    let credential_presentation = presentation_artifacts
+        .as_deref()
+        .map(|root| {
+            CompactPresentationArtifactsConfig::new(root)
+                .and_then(|config| NativeCompactPresentationRuntime::load(&config))
+                .map(Arc::new)
+        })
+        .transpose()
+        .map_err(HeadlessCompositionError::InvalidCompactPresentationRuntime)?
+        .map_or(CredentialPresentationComposition::Standalone, |runtime| {
+            CredentialPresentationComposition::StandaloneZk(runtime)
+        });
     let credential_paths = (
         read_optional_environment(CREDENTIAL_STORE_PATH_ENV)?,
         read_optional_environment(CREDENTIAL_KEY_PATH_ENV)?,
@@ -1636,7 +1780,9 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
     if matches!(credential_paths, (Some(_), None) | (None, Some(_))) {
         return Err(HeadlessCompositionError::IncompleteCredentialStoreConfiguration);
     }
-    read_optional_environment(PASSPORT_VAULT_STORE_PATH_ENV)?
+    let passport_vault_store = read_optional_environment(PASSPORT_VAULT_STORE_PATH_ENV)?;
+    passport_vault_store
+        .as_deref()
         .map(PassportVaultStoreConfig::new)
         .transpose()
         .map_err(HeadlessCompositionError::InvalidPassportVaultStoreConfiguration)?;
@@ -1675,20 +1821,25 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
         read_optional_environment(PASSPORT_VAULT_DEPLOYMENT_HEIGHT_ENV)?,
     )?;
     let passport_vault_composer = read_optional_environment(PASSPORT_VAULT_COMPOSER_ENV)?;
-    let midnight_config = parse_optional_midnight_config(values)?;
     #[cfg(all(not(target_os = "ios"), not(target_os = "android")))]
-    if portal.is_some()
-        && (midnight_config.is_some()
-            || midnight_did_resolver.is_some()
-            || checkpoints.is_some()
-            || dust_checkpoints.is_some()
-            || shielded_checkpoints.is_some()
-            || submission_journal.is_some()
-            || passport_vault_deployment_height.is_some()
-            || passport_vault_composer.is_some())
-    {
-        return Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation);
+    if portal.is_some() {
+        validate_portal_environment_combination(
+            policy,
+            &values,
+            &PortalAdjacentEnvironmentSettings {
+                presentation_artifacts: presentation_artifacts.is_some(),
+                midnight_did_resolver: midnight_did_resolver.is_some(),
+                account_checkpoint: checkpoints.is_some(),
+                dust_checkpoint: dust_checkpoints.is_some(),
+                shielded_checkpoint: shielded_checkpoints.is_some(),
+                submission_journal: submission_journal.is_some(),
+                passport_vault_deployment_height: passport_vault_deployment_height.is_some(),
+                passport_vault_composer: passport_vault_composer.is_some(),
+                passport_vault_store: passport_vault_store.is_some(),
+            },
+        )?;
     }
+    let midnight_config = parse_optional_midnight_config(values)?;
     if passport_vault_deployment_height.is_some()
         && !matches!(
             &midnight_config,
@@ -1711,6 +1862,18 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
             )
         }
         Some(HeadlessMidnightConfig::Standalone(config)) => {
+            #[cfg(all(not(target_os = "ios"), not(target_os = "android")))]
+            if let Some(portal) = portal {
+                // This bounded branch changes only the Midnight and Portal adapters.
+                // The shared headless profile, DID, and encrypted credential repository
+                // constructors below still resolve their validated environment paths;
+                // every vault/checkpoint/journal override was rejected above.
+                return Ok(compose_development_portal_from_config(
+                    config,
+                    portal,
+                    credential_presentation,
+                ));
+            }
             let passport_vault_source = passport_vault_deployment_height
                 .map(|height| {
                     AuthenticatedPassportVaultStateSource::new_with_indexer(
@@ -2022,7 +2185,11 @@ pub fn compose_mobile_development_portal_standalone_from_routes(
     let portal =
         PortalIdentityConfiguration::from_bytes(deployment_manifest, deployment_manifest_sha256)
             .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
-    compose_mobile_development_portal_from_config(config, portal)
+    Ok(compose_development_portal_from_config(
+        config,
+        portal,
+        CredentialPresentationComposition::Standalone,
+    ))
 }
 
 /// Wires Portal issuance into the authenticated physical Android tailnet profile.
@@ -2052,18 +2219,28 @@ pub fn compose_mobile_development_portal_tailnet_from_routes(
         public_origin,
     )
     .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
-    compose_mobile_development_portal_from_config(config, portal)
+    Ok(compose_development_portal_from_config(
+        config,
+        portal,
+        CredentialPresentationComposition::Standalone,
+    ))
 }
 
 #[cfg(all(
-    feature = "mobile-portal",
-    any(target_os = "ios", target_os = "android"),
-    not(target_arch = "wasm32")
+    not(target_arch = "wasm32"),
+    any(
+        all(not(target_os = "ios"), not(target_os = "android")),
+        all(
+            feature = "mobile-portal",
+            any(target_os = "ios", target_os = "android")
+        )
+    )
 ))]
-fn compose_mobile_development_portal_from_config(
+fn compose_development_portal_from_config(
     config: MidnightStandaloneConfig,
     portal: PortalIdentityConfiguration,
-) -> Result<ApplicationServices, HeadlessCompositionError> {
+    credential_presentation: CredentialPresentationComposition,
+) -> ApplicationServices {
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
@@ -2077,13 +2254,10 @@ fn compose_mobile_development_portal_from_config(
         profiles,
         security,
         midnight,
-        CredentialPresentationComposition::Standalone,
+        credential_presentation,
         HeadlessCredentialProfile::Portal(Box::new(portal)),
     );
-    Ok(with_passport_vault_state_source(
-        services,
-        passport_vault_state_source,
-    ))
+    with_passport_vault_state_source(services, passport_vault_state_source)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -4409,6 +4583,117 @@ mod tests {
 
         drop(compose());
         drop(compose_headless());
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "headless-portal-local"))]
+    #[test]
+    fn headless_process_portal_policy_accepts_only_the_canonical_standalone_bundle() {
+        let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
+            .expect("public standalone placeholder")
+            .value()
+            .to_owned();
+        let canonical = [
+            Some("undeployed".to_owned()),
+            Some("ws://127.0.0.1:8088/api/v4/graphql/ws".to_owned()),
+            Some("http://127.0.0.1:8088/api/v4/graphql".to_owned()),
+            Some("ws://127.0.0.1:9944".to_owned()),
+            Some("http://127.0.0.1:6300".to_owned()),
+            Some(placeholder),
+            None,
+        ];
+        let no_adjacent_settings = PortalAdjacentEnvironmentSettings::default();
+
+        assert_eq!(
+            validate_portal_environment_combination(
+                HeadlessEnvironmentPolicy::General,
+                &canonical,
+                &no_adjacent_settings,
+            ),
+            Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
+        );
+        assert_eq!(
+            validate_portal_environment_combination(
+                HeadlessEnvironmentPolicy::NativeHeadlessProcess,
+                &canonical,
+                &no_adjacent_settings,
+            ),
+            Ok(())
+        );
+        for policy in [
+            HeadlessEnvironmentPolicy::General,
+            HeadlessEnvironmentPolicy::NativeHeadlessProcess,
+        ] {
+            assert_eq!(
+                validate_portal_environment_combination(
+                    policy,
+                    &[None, None, None, None, None, None, None],
+                    &no_adjacent_settings,
+                ),
+                Ok(())
+            );
+        }
+
+        let replacements = [
+            (0, "devnet"),
+            (1, "ws://localhost:8088/api/v4/graphql/ws"),
+            (1, "ws://127.0.0.1:8088/api/v3/graphql/ws"),
+            (2, "http://127.0.0.1:8089/api/v4/graphql"),
+            (3, "ws://127.0.0.1:9945"),
+            (4, "http://127.0.0.1:6301"),
+            (5, "mn_addr_undeployed1alternate"),
+        ];
+        for (index, replacement) in replacements {
+            let mut values = canonical.clone();
+            values[index] = Some(replacement.to_owned());
+            assert_eq!(
+                validate_portal_environment_combination(
+                    HeadlessEnvironmentPolicy::NativeHeadlessProcess,
+                    &values,
+                    &no_adjacent_settings,
+                ),
+                Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
+            );
+        }
+        for index in 0..6 {
+            let mut values = canonical.clone();
+            values[index] = None;
+            assert_eq!(
+                validate_portal_environment_combination(
+                    HeadlessEnvironmentPolicy::NativeHeadlessProcess,
+                    &values,
+                    &no_adjacent_settings,
+                ),
+                Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
+            );
+        }
+        let read_only = [
+            canonical[0].clone(),
+            canonical[1].clone(),
+            None,
+            None,
+            None,
+            canonical[5].clone(),
+            None,
+        ];
+        assert_eq!(
+            validate_portal_environment_combination(
+                HeadlessEnvironmentPolicy::NativeHeadlessProcess,
+                &read_only,
+                &no_adjacent_settings,
+            ),
+            Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
+        );
+
+        for adjacent in PortalAdjacentEnvironmentSettings::each_conflict() {
+            assert_eq!(
+                validate_portal_environment_combination(
+                    HeadlessEnvironmentPolicy::NativeHeadlessProcess,
+                    &canonical,
+                    &adjacent,
+                ),
+                Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
+            );
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

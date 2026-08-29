@@ -36,6 +36,37 @@ const ISSUER_Y: &str = "b8GewrvMw5hldx4dBHZSAqBhYb_p7bVdcVqC2FU08mM";
 const SECRET_CODE: &str = "PORTAL_TEST_PRE_AUTHORIZED_CODE";
 const ACCESS_TOKEN: &str = "PORTAL_TEST_ACCESS_TOKEN";
 const NONCE: &str = "PORTAL_TEST_NONCE";
+const INDEXER_WS: &str = "ws://127.0.0.1:8088/api/v4/graphql/ws";
+const INDEXER_HTTP: &str = "http://127.0.0.1:8088/api/v4/graphql";
+const NODE_WS: &str = "ws://127.0.0.1:9944";
+const PROOF_SERVER: &str = "http://127.0.0.1:6300";
+const STANDALONE_ADDRESS: &str =
+    "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
+const PORTAL_STANDALONE_EXCLUDED_ENV: [&str; 10] = [
+    "OXID_MIDNIGHT_PROVING_CACHE_DIR",
+    "OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH",
+    "OXID_MIDNIGHT_DUST_CHECKPOINT_PATH",
+    "OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH",
+    "OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH",
+    "OXID_MIDNIGHT_DID_RESOLVER_URL",
+    "OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT",
+    "OXID_PASSPORT_VAULT_COMPOSER",
+    "OXID_PASSPORT_VAULT_STORE_PATH",
+    "OXID_PRESENTATION_ARTIFACTS_DIR",
+];
+
+fn configure_canonical_standalone(command: &mut Command) {
+    for key in PORTAL_STANDALONE_EXCLUDED_ENV {
+        command.env_remove(key);
+    }
+    command
+        .env("OXID_MIDNIGHT_NETWORK_ID", "undeployed")
+        .env("OXID_MIDNIGHT_INDEXER_WS_URL", INDEXER_WS)
+        .env("OXID_MIDNIGHT_INDEXER_HTTP_URL", INDEXER_HTTP)
+        .env("OXID_MIDNIGHT_NODE_WS_URL", NODE_WS)
+        .env("OXID_MIDNIGHT_PROOF_SERVER_URL", PROOF_SERVER)
+        .env("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", STANDALONE_ADDRESS);
+}
 
 struct TestStore {
     root: PathBuf,
@@ -99,12 +130,6 @@ impl ProcessHarness {
                 "OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256",
                 manifest_digest,
             )
-            .env_remove("OXID_MIDNIGHT_NETWORK_ID")
-            .env_remove("OXID_MIDNIGHT_INDEXER_WS_URL")
-            .env_remove("OXID_MIDNIGHT_UNSHIELDED_ADDRESS")
-            .env_remove("OXID_MIDNIGHT_INDEXER_HTTP_URL")
-            .env_remove("OXID_MIDNIGHT_NODE_WS_URL")
-            .env_remove("OXID_MIDNIGHT_PROOF_SERVER_URL")
             .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
             .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
             .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
@@ -118,6 +143,7 @@ impl ProcessHarness {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        configure_canonical_standalone(&mut command);
         let mut child = command.spawn().expect("headless wallet should start");
         Self {
             input: child.stdin.take().expect("stdin"),
@@ -435,7 +461,7 @@ fn request(process: &mut ProcessHarness, id: &str, method: &str, params: Value) 
 }
 
 #[test]
-fn portal_profile_issues_encrypts_restores_and_reverifies_in_a_new_process() {
+fn portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_process() {
     let store = TestStore::new();
     let server = PortalServer::spawn();
     let manifest_digest = server.write_manifest(&store.manifest());
@@ -602,6 +628,18 @@ fn portal_profile_issues_encrypts_restores_and_reverifies_in_a_new_process() {
     let first_stderr = first.quit();
     assert!(first_stderr.is_empty(), "unexpected first-process stderr");
 
+    assert!(
+        store.profiles().is_file(),
+        "configured profile store must be used"
+    );
+    assert!(
+        store.root.join("private/did-records.json").is_file(),
+        "configured DID store must be used"
+    );
+    assert!(
+        store.root.join("private/credentials.key").is_file(),
+        "configured credential wrapping-key path must be used"
+    );
     let encrypted = fs::read(store.root.join("private/credentials.enc")).expect("encrypted store");
     for plaintext in [
         b"Alice".as_slice(),
@@ -659,6 +697,142 @@ fn portal_profile_issues_encrypts_restores_and_reverifies_in_a_new_process() {
     );
     let second_stderr = second.quit();
     assert!(second_stderr.is_empty(), "unexpected second-process stderr");
+}
+
+#[test]
+fn portal_startup_accepts_only_the_exact_local_standalone_bundle() {
+    let store = TestStore::new();
+    let server = PortalServer::spawn();
+    let digest = server.write_manifest(&store.manifest());
+    let cases = [
+        ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+        (
+            "OXID_MIDNIGHT_INDEXER_WS_URL",
+            "ws://localhost:8088/api/v4/graphql/ws",
+        ),
+        (
+            "OXID_MIDNIGHT_INDEXER_HTTP_URL",
+            "http://127.0.0.1:8089/api/v4/graphql",
+        ),
+        ("OXID_MIDNIGHT_NODE_WS_URL", "ws://127.0.0.1:9945"),
+        ("OXID_MIDNIGHT_PROOF_SERVER_URL", "http://127.0.0.1:6301"),
+        (
+            "OXID_MIDNIGHT_UNSHIELDED_ADDRESS",
+            "mn_addr_undeployed1noncanonical",
+        ),
+    ];
+    let mut accepted = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+    accepted
+        .env("OXID_PROFILE_STORE_PATH", store.profiles())
+        .env(
+            "OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH",
+            store.manifest(),
+        )
+        .env("OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256", &digest)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_canonical_standalone(&mut accepted);
+    let output = accepted
+        .output()
+        .expect("canonical headless startup result");
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+
+    for (key, value) in cases {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        command
+            .env("OXID_PROFILE_STORE_PATH", store.profiles())
+            .env(
+                "OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH",
+                store.manifest(),
+            )
+            .env("OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256", &digest)
+            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+            .env_remove("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH")
+            .env_remove("OXID_MIDNIGHT_DUST_CHECKPOINT_PATH")
+            .env_remove("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH")
+            .env_remove("OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH")
+            .env_remove("OXID_MIDNIGHT_DID_RESOLVER_URL")
+            .env_remove("OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT")
+            .env_remove("OXID_PASSPORT_VAULT_COMPOSER")
+            .env_remove("OXID_PASSPORT_VAULT_STORE_PATH")
+            .env_remove("OXID_PRESENTATION_ARTIFACTS_DIR")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        configure_canonical_standalone(&mut command);
+        command.env(key, value);
+        let output = command.output().expect("headless startup result");
+        assert!(!output.status.success(), "noncanonical {key} must fail");
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).expect("stderr UTF-8");
+        assert!(!stderr.contains(value), "startup must not echo {key}");
+    }
+
+    for removed in [
+        "OXID_MIDNIGHT_NETWORK_ID",
+        "OXID_MIDNIGHT_INDEXER_WS_URL",
+        "OXID_MIDNIGHT_INDEXER_HTTP_URL",
+        "OXID_MIDNIGHT_NODE_WS_URL",
+        "OXID_MIDNIGHT_PROOF_SERVER_URL",
+        "OXID_MIDNIGHT_UNSHIELDED_ADDRESS",
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        command
+            .env("OXID_PROFILE_STORE_PATH", store.profiles())
+            .env(
+                "OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH",
+                store.manifest(),
+            )
+            .env("OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256", &digest)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        configure_canonical_standalone(&mut command);
+        command.env_remove(removed);
+        let output = command.output().expect("headless startup result");
+        assert!(!output.status.success(), "partial bundle missing {removed}");
+        assert!(output.stdout.is_empty());
+    }
+
+    for extra in [
+        "OXID_MIDNIGHT_PROVING_CACHE_DIR",
+        "OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH",
+        "OXID_MIDNIGHT_DUST_CHECKPOINT_PATH",
+        "OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH",
+        "OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH",
+        "OXID_MIDNIGHT_DID_RESOLVER_URL",
+        "OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT",
+        "OXID_PASSPORT_VAULT_COMPOSER",
+        "OXID_PASSPORT_VAULT_STORE_PATH",
+        "OXID_PRESENTATION_ARTIFACTS_DIR",
+    ] {
+        let marker = if extra == "OXID_PASSPORT_VAULT_DEPLOYMENT_HEIGHT" {
+            "42"
+        } else {
+            "/tmp/oxid-do-not-echo-local-setting"
+        };
+        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        command
+            .env("OXID_PROFILE_STORE_PATH", store.profiles())
+            .env(
+                "OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH",
+                store.manifest(),
+            )
+            .env("OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256", &digest)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        configure_canonical_standalone(&mut command);
+        command.env(extra, marker);
+        let output = command.output().expect("headless startup result");
+        assert!(!output.status.success(), "extra setting {extra} must fail");
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).expect("stderr UTF-8");
+        assert!(!stderr.contains(marker), "startup must not echo {extra}");
+    }
 }
 
 #[test]

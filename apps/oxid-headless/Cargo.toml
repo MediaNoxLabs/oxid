@@ -11,7 +11,7 @@ publish = false
 [dependencies]
 futures.workspace = true
 oxid-capabilities-application.workspace = true
-oxid-composition.workspace = true
+oxid-composition = { workspace = true, features = ["headless-portal-local"] }
 oxid-credential-application.workspace = true
 oxid-diagnostics-application.workspace = true
 oxid-identity-application.workspace = true
