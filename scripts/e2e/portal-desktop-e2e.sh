@@ -179,8 +179,15 @@ source "$STACK_BUILD_ENV"
 [[ "$OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail manifest-digest
 
 launch_app "$RUNTIME/app-first.log"
-wait_for_file "$CONTROL_ROOT/driver-started" "$CONTROL_ROOT/driver-failed" 60 \
-  || fail driver-not-started
+if ! wait_for_file "$CONTROL_ROOT/driver-started" "$CONTROL_ROOT/driver-failed" 60; then
+  if kill -0 "$app_pid" 2>/dev/null; then
+    fail driver-not-started-app-running
+  elif grep -q 'desktop Portal test configuration is invalid' "$RUNTIME/app-first.log"; then
+    fail desktop-profile-startup
+  else
+    fail first-app-exited-before-driver
+  fi
+fi
 wait_for_file "$CONTROL_ROOT/sync-and-holder-visible" "$CONTROL_ROOT/driver-failed" \
   || fail first-rendered-setup
 kill -0 "$app_pid" 2>/dev/null || fail first-app-exited
