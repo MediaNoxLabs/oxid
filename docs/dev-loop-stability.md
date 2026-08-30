@@ -136,8 +136,11 @@ output-option semantics.
 `.devloops` sets `maxCopilotRounds: 0`, caps automatic gate review at two
 concurrent reviewers, and stops low-signal refinement. Independent external
 review is an explicit high-risk or owner-requested action rather than a
-mandatory angle repeated at both gates. Contradictory loop-info is a pinned
-upstream residual: stop and obtain a consistent authoritative state rather
+mandatory angle repeated at both gates. Contradictory aggregate loop-info is a
+pinned upstream residual. For a draft PR, the pinned gate coordinator remains
+the authority: when it explicitly permits `run_draft_gate` under
+`requireCi: false`, continue bounded review and keep the PR draft. Stop and
+obtain a consistent authoritative state for every other contradiction rather
 than overriding the pinned coordinator locally.
 
 There is no gate-evidence repair command. The sanctioned response to incomplete
