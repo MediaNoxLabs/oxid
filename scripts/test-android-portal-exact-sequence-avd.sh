@@ -49,7 +49,7 @@ portal_ready=0
 build_owned=0
 launcher_mutation_owned=0
 journey_status="not_started"
-failure_phase="none"
+failure_phase="unreported-timeout-or-abort"
 head=""
 tree=""
 apk_sha256=""
@@ -347,7 +347,6 @@ cleanup() {
   fi
   if [ "$cleanup_ok" != true ]; then
     incoming=1
-    [ "$failure_phase" = none ] && failure_phase=cleanup
     printf 'android-portal-exact-sequence-avd: cleanup could not prove owned-state restoration\n' >&2
   elif [ "$evidence_published" -eq 1 ]; then
     printf 'android-portal-exact-sequence-avd: PASS evidence=target/android-portal-exact-sequence-avd/evidence.json\n'
