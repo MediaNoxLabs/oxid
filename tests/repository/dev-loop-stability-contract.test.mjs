@@ -667,8 +667,17 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.notStrictEqual(oxidConsumerProvision(), oxidConsumerProvision());
 });
 
-test("repository recovery path stays aligned with the real pinned dev-loops core", async () => {
-  const resolved = await resolveDevLoopsPackageRoot({ cwd: repoRoot });
+test("repository recovery path stays aligned with the real pinned dev-loops core", async (t) => {
+  let resolved;
+  try {
+    resolved = await resolveDevLoopsPackageRoot({ cwd: repoRoot });
+  } catch (error) {
+    if (/missing exact dev-loops@/u.test(error.message)) {
+      t.skip("project-local Pi packages are intentionally absent from public CI");
+      return;
+    }
+    throw error;
+  }
   const corePath = await resolvePinnedCoreModulePath(resolved.packageRoot);
   const core = await import(pathToFileURL(corePath).href);
   const packagePreflight = await readFile(path.join(resolved.packageRoot, "scripts", "loop", "pre-flight-gate.mjs"), "utf8");
