@@ -162,6 +162,25 @@ function issuanceCompletionExpression() {
   })()`;
 }
 
+function issuanceDiagnosticExpression() {
+  return `(() => {
+    const statuses = Array.from(document.querySelectorAll('[role="status"]'))
+      .map((element) => element.textContent.trim());
+    const validRecord = Array.from(document.querySelectorAll(".credential-record")).some((record) =>
+      Array.from(record.querySelectorAll(".status-pill.success"))
+        .some((element) => element.textContent.trim() === "Valid")
+    );
+    return {
+      acceptReady: Boolean(${button("Accept and issue credential")}),
+      issuanceBusy: Boolean(${button("Issuing credential…")}),
+      reviewVisible: document.body.innerText.includes("Credential offer preview"),
+      successNotice: document.body.innerText.includes("Credential issued, verified, and stored in the protected inventory."),
+      validRecord,
+      failureStatus: statuses.some((text) => /credential|issuer|protocol|session|unavailable|failed|error/iu.test(text))
+    };
+  })()`;
+}
+
 async function click(label, timeoutMs = 20_000) {
   await waitFor(
     `(() => { const element = ${button(label)}; return Boolean(element && !element.disabled && !element.closest("[inert]")); })()`,
@@ -469,7 +488,8 @@ try {
       await waitFor(issuanceCompletionExpression(), "Portal issuance", 90_000);
     } catch (error) {
       const diagnosticCounts = await counters();
-      throw new Error(`Portal issuance failed with payload-free counters ${JSON.stringify(diagnosticCounts)}: ${error.message}`);
+      const diagnosticState = await evaluate(issuanceDiagnosticExpression());
+      throw new Error(`Portal issuance failed with payload-free counters ${JSON.stringify(diagnosticCounts)} and state ${JSON.stringify(diagnosticState)}: ${error.message}`);
     }
     const result = await evaluate(`({
       valid: Array.from(document.querySelectorAll(".credential-record")).length === 1
