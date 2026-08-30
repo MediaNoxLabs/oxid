@@ -71,7 +71,10 @@ Follow [the productive loop](docs/factory/productive-loop.md):
 1. Keep one remotely driven candidate and at most two active managed delivery
    worktrees.
 2. Run the narrowest meaningful check while editing.
-3. Use the bounded draft review for direction; it does not wait for CI.
+3. Use the bounded draft review for direction; it does not wait for CI. When
+   aggregate CI is red on a draft, follow gate coordination if it permits
+   `run_draft_gate`, keep the PR draft, and repair required evidence before
+   pre-approval.
 4. Batch accepted findings, run the target plan locally, then push one coherent
    current-head candidate.
 5. Run final correctness/security review and hosted CI once.

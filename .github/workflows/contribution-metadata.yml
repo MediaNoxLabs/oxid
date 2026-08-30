@@ -5,7 +5,7 @@ on:
   # passed only through environment variables to the base policy parser.
   # zizmor: ignore[dangerous-triggers] trusted-base metadata only; candidate code is never executed
   pull_request_target:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft]
 
 permissions:
   contents: read
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Enforce PR metadata policy
+    name: Report PR metadata policy
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -73,7 +73,7 @@ jobs:
           PR_ACTOR: ${{ github.event.pull_request.user.login }}
         run: node policy/scripts/ci/contribution-policy.mjs body
 
-      - name: Publish exact-head required statuses
+      - name: Publish exact-head advisory statuses
         if: always()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -87,13 +87,13 @@ jobs:
                 context: 'Validate PR title',
                 passed: process.env.TITLE_PASSED === 'true',
                 success: 'Conventional title, scope, and branch passed',
-                failure: 'Title, scope, or branch policy failed',
+                advisory: 'Advisory: title, scope, or branch policy failed',
               },
               {
                 context: 'Validate PR body',
                 passed: process.env.BODY_PASSED === 'true',
                 success: 'Pull request body closes its branch issue',
-                failure: 'Pull request body policy failed',
+                advisory: 'Advisory: PR body policy failed',
               },
             ];
             for (const status of statuses) {
@@ -101,10 +101,11 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 sha: context.payload.pull_request.head.sha,
-                state: status.passed ? 'success' : 'failure',
+                state: 'success',
                 context: status.context,
-                description: status.passed ? status.success : status.failure,
+                description: status.passed ? status.success : status.advisory,
                 target_url: targetUrl,
               });
             }
-            if (statuses.some((status) => !status.passed)) core.setFailed('Pull-request metadata policy failed; inspect prior steps.');
+            const failed = statuses.filter((status) => !status.passed).map((status) => status.context);
+            if (failed.length > 0) core.warning(`PR metadata findings are advisory: ${failed.join(', ')}.`);

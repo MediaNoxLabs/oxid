@@ -173,7 +173,11 @@ undetectable later. The check that matters is `gates` parsing.
   angle name not in the configured set cannot smuggle itself into evidence.
 - **Draft first, without a CI stall.** `workflow.requireDraftFirst: true`, but
   the draft gate uses `requireCi: false`; hosted CI is required once at
-  pre-approval. Routine work does not require a retrospective.
+  pre-approval. When aggregate CI is red on a draft, use gate coordination as
+  the authority for progression: if it permits `run_draft_gate`, continue the
+  draft loop and keep the PR draft. Commit authenticity remains required before
+  pre-approval or merge; metadata and classification findings are advisory.
+  Routine work does not require a retrospective.
 - **No Copilot gate.** `refinement.maxCopilotRounds: 0` keeps unavailable
   Copilot review disabled. A manually invoked Claude CLI review is reserved for
   high-risk `full` changes, an owner request, or a disputed finding. It is not a hosted GitHub check and does not authenticate reviewer identity. Run

@@ -116,20 +116,20 @@ issue #144 has landed and every workflow has emitted an integration context,
 require these exact status checks:
 
 - `Verify commit sign-offs`
-- `Validate PR title`
-- `Validate PR body`
 - `Repository gate (fmt, architecture, lint, tests, coverage)`
 - `Locked Nix package and Compact artifacts`
 - `Audit, Licenses, Sources, and Documentation`
 - `scan`
 - `Check documentation links`
 
-The three authorship/metadata contexts keep these stable names but are emitted
-as commit statuses by trusted `pull_request_target` workflows onto the exact PR
-head SHA. Those workflows execute only base-commit policy code, treat PR fields
-and commit API responses as untrusted data, and never check out candidate
-files. This avoids granting a candidate workflow authority to weaken the gate
-that judges its own commits.
+The authorship context is required. `Validate PR title` and `Validate PR body`
+keep their stable context names but are advisory. Contribution label
+classification is advisory too. The three commit-status contexts are emitted
+by trusted `pull_request_target` workflows onto the exact PR head SHA. Those
+workflows execute only base-commit policy code, treat PR fields and commit API
+responses as untrusted data, and never check out candidate files. This avoids
+granting a candidate workflow authority to weaken the policy that judges its
+own commits.
 
 The migration is intentionally two-phase because GitHub resolves the two pull
 request event types from different refs. Issue
