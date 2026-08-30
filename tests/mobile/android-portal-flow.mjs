@@ -401,8 +401,12 @@ try {
     await click("Accept and issue credential");
     await waitFor(
       `(() => {
+        const consent = document.querySelector("#credential-issuance-consent");
+        const issue = ${button("Accept and issue credential")};
         const leave = ${button("Leave credential review")};
-        return Boolean(leave && !leave.disabled)
+        return Boolean(consent) && !consent.checked
+          && Boolean(issue && issue.disabled)
+          && Boolean(leave && !leave.disabled)
           && Array.from(document.querySelectorAll('[role="status"]')).some((element) => {
             const text = element.textContent.trim();
             return text.length > 0 && text.length <= 512

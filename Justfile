@@ -87,6 +87,10 @@ portal-tailnet-origin-contract:
 portal-android-evidence-contract:
     node --test ./scripts/e2e/portal-android-evidence.test.mjs
 
+# Verify Android issue-error waits for its post-failure review state before proxy restoration.
+portal-android-flow-contract:
+    node --test ./tests/mobile/android-portal-flow.test.mjs
+
 # Run strict Portal issuance, encrypted restart, and fresh reverification on a discovered physical Android device.
 android-portal-tailnet-physical-smoke:
     ./scripts/test-android-portal-tailnet-physical.sh
