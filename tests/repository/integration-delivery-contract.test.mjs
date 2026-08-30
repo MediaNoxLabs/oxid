@@ -77,6 +77,22 @@ test("required checks include a passing signature and DCO gate", () => {
   assert.equal(validateRequiredChecks([{ name: "Repository gate", bucket: "pass", state: "SUCCESS" }]).ok, false);
 });
 
+test("advisory failures do not expand the required integration merge gate", () => {
+  const passingRequired = [
+    { name: "Verify commit sign-offs", bucket: "pass", state: "SUCCESS" },
+    { name: "Repository gate", bucket: "pass", state: "SUCCESS" },
+  ];
+  assert.equal(validatePrForIntegrationMerge(eligibleIntegrationPr({ mergeStateStatus: "UNSTABLE" })).ok, true);
+  assert.equal(validateRequiredChecks(passingRequired).ok, true);
+  assert.equal(validateRequiredChecks([
+    ...passingRequired,
+    { name: "Required security gate", bucket: "fail", state: "FAILURE" },
+  ]).ok, false);
+  for (const mergeStateStatus of ["BEHIND", "BLOCKED", "DIRTY", "UNKNOWN"]) {
+    assert.equal(validatePrForIntegrationMerge(eligibleIntegrationPr({ mergeStateStatus })).ok, false);
+  }
+});
+
 test("integration merge wrapper pins a guarded squash merge to the audited head", async () => {
   const source = await read("scripts/github/merge-integration-pr.mjs");
   for (const required of [

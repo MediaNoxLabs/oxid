@@ -164,6 +164,11 @@ undetectable later. The check that matters is `gates` parsing.
   unchanged, the merge tree is conflict-free, all required checks (including
   GPG/DCO) pass, both gate verdicts match, and conversations are resolved.
   `main` and `develop` remain human-only.
+- **Advisory checks stay advisory.** A red non-required check may make GitHub
+  report the PR as `UNSTABLE`, but it does not expand the merge gate. The
+  integration wrapper accepts that state only after `gh pr checks --required`
+  returns a non-empty, fully passing exact-head set; stale, conflicting,
+  blocked, or behind states remain ineligible.
 - **Fan-out must show its work.** `gates.requireFanoutEvidence: true` and
   `requireFanoutProvenance: true` — a gate must record not just that five
   angles reported, but which reviewer produced which finding. Provenance is what

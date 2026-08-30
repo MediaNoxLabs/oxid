@@ -10,6 +10,7 @@ const INTEGRATION_BASE = "integration";
 const REPOSITORY = "MediaNoxLabs/oxid";
 const BLOCKING_TITLE_MARKERS = /(?:\[?\bWIP\b\]?|\bDRAFT\b|DO NOT MERGE|🚧)/i;
 const CLOSING_ISSUE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#([1-9]\d*)\b/i;
+const ELIGIBLE_MERGE_STATES = new Set(["CLEAN", "UNSTABLE"]);
 
 function parseJson(source, label) {
   try {
@@ -58,8 +59,10 @@ export function validatePrForIntegrationMerge(pr) {
   if (pr?.isCrossRepository === true) failures.push("cross-repository heads are not eligible for automated merge");
   if (BLOCKING_TITLE_MARKERS.test(pr?.title ?? "")) failures.push("title contains a merge-blocking marker");
   if (pr?.mergeable !== "MERGEABLE") failures.push(`mergeable is ${pr?.mergeable ?? "unknown"}`);
-  if (pr?.mergeStateStatus !== "CLEAN") {
-    failures.push(`mergeStateStatus is ${pr?.mergeStateStatus ?? "unknown"}, expected CLEAN`);
+  // GitHub reports UNSTABLE for failed advisory checks too. The audit below
+  // separately requires a non-empty, fully passing required-check set.
+  if (!ELIGIBLE_MERGE_STATES.has(pr?.mergeStateStatus)) {
+    failures.push(`mergeStateStatus is ${pr?.mergeStateStatus ?? "unknown"}, expected CLEAN or UNSTABLE`);
   }
   if (typeof pr?.headRefOid !== "string" || !/^[0-9a-f]{40}$/.test(pr.headRefOid)) {
     failures.push("head SHA is missing or malformed");
