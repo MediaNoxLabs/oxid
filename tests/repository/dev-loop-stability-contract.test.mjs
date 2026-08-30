@@ -563,7 +563,9 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   const devLoop = await read(".pi/agents/dev-loop.agent.md");
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
   assert.match(devLoop, /pre-flight-gate\.mjs --check-subagents.*before each later delegation or routed action/s);
-  assert.match(devLoop, /contradictory loop-info remains a pinned-runtime residual/);
+  assert.match(devLoop, /gate coordination is authoritative for gate progression/);
+  assert.match(devLoop, /run_draft_gate[\s\S]*requireCi: false/);
+  assert.match(devLoop, /stop on every other contradiction/);
   assert.doesNotMatch(devLoop, /review-routing\.mjs|~\/.pi|npm root -g|require\.resolve\(['"]dev-loops|<dev-loops-package-root>\/cli\/index\.mjs/);
   const review = await read(".pi/agents/review.agent.md");
   assert.doesNotMatch(review, /\bgh api\b|\bgit (?:diff|log)\b/);
