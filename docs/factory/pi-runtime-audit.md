@@ -118,8 +118,9 @@ of another worktree in that common checkout: the tracked ensure-worktree wrapper
 refuses creation when worktree count or target storage is red, but permits reuse
 of an existing canonical worktree. Configuration and metrics findings remain
 visible in the full audit without deadlocking first-worker creation; an
-unavailable lifecycle audit warns and preserves recovery. No audit causes
-automatic process termination or deletion.
+unavailable lifecycle helper falls back to conservative `git worktree` and
+`du` evidence. If neither path can establish capacity, admission blocks. No
+audit causes automatic process termination or deletion.
 
 | Worktree-local target usage | State |
 | --- | --- |

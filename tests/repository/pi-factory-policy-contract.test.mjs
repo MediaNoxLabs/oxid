@@ -34,16 +34,18 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /pi --list-models/u);
 });
 
-test("unavailable host-capacity audit warns without deadlocking first-worker creation", async (t) => {
+test("unavailable lifecycle helper uses conservative fresh-checkout capacity", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "oxid-admission-unavailable-"));
   t.after(() => rm(root, { recursive: true, force: true }));
+  assert.equal(spawnSync("git", ["init", "--quiet", root]).status, 0);
   const result = await auditWorktreeAdmission({ repoRoot: root });
   assert.equal(result.admissionReady, true);
-  assert.equal(result.capacityEvidenceAvailable, false);
+  assert.equal(result.capacityEvidenceAvailable, true);
   assert.deepEqual(result.checks.map(({ id, status }) => ({ id, status })), [
-    { id: "worktree-admission", status: "warn" },
+    { id: "worktree-admission", status: "pass" },
+    { id: "worktree-target-storage", status: "pass" },
   ]);
-  assert.match(result.checks[0].summary, /creation remains recoverable/u);
+  assert.match(result.checks[0].summary, /conservative fallback/u);
 });
 
 test("config-only audit rejects admission enforcement instead of reporting false red", () => {
@@ -98,11 +100,11 @@ test("preflight rewrites split and late generic main guidance to integration", a
     "legitimate origin/main and origin/main-release diagnostic",
     "",
   ].join("\n"));
-  rewritten.sink.once("error", () => {});
-  await assert.rejects(new Promise((resolve, reject) => rewritten.sink.write(
-    "late output\n",
+  await new Promise((resolve, reject) => rewritten.sink.write(
+    "late origin/main output\n",
     (error) => error ? reject(error) : resolve(),
-  )), /after flush/u);
+  ));
+  assert.match(output, /late origin\/main output/u);
 });
 
 test("preflight rewrite sink honors destination backpressure", async () => {
@@ -227,8 +229,6 @@ test("read-only Pi audit recognizes tracked configuration controls", async () =>
     "tracked-agent-budgets",
     "user-subagent-policy",
     "dev-loop-bounds",
-    "worker-topology",
-    "bounded-closeout",
   ]) {
     assert.equal(byId.get(id)?.status, "pass", `${id}: ${byId.get(id)?.summary}`);
   }

@@ -84,7 +84,9 @@ export function createDeliveryBranchRewriteSink(destination) {
     write(chunk, encoding, callback) {
       const decoded = decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
       if (flushed) {
-        callback(new Error("pre-flight rewrite sink cannot accept output after flush"));
+        // Child close should make this unreachable, but preserve any race output
+        // byte-for-byte instead of dropping it or emitting an unhandled error.
+        writeDestination(decoded, callback);
         return;
       }
       pending += decoded;

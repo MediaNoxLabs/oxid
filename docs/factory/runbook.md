@@ -271,10 +271,12 @@ in a diff.
   and seven days of retention. Before creating a new canonical worktree, the
   tracked wrapper runs only host-capacity admission for that Git common
   checkout. A measured red worktree count or target-storage result blocks new
-  creation; an unavailable audit warns and preserves recovery. Pi configuration
-  and private metrics remain visible in `--audit-pi` but do not prevent creating
-  the first isolated worker. Reuse of an existing canonical worktree is always
-  available so in-flight work can be recovered.
+  creation. If the full lifecycle helper is unavailable, a conservative
+  `git worktree` plus `du` fallback still admits a clean first checkout and
+  blocks when capacity cannot be established. Pi configuration and private
+  metrics remain visible in `--audit-pi` but do not prevent creating the first
+  isolated worker. Reuse of an existing canonical worktree is always available
+  so in-flight work can be recovered.
 - **Leave one private metrics record per issue/PR/head.** Generate a closed v1
   template, replace every required `null`/empty target with measured values,
   and atomically store it. An untouched template is invalid. Audit is

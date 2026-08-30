@@ -757,6 +757,7 @@ test("new managed worktrees gate only on host capacity admission", async (t) => 
   });
   assert.equal(existing.reused, true);
 
+  await mkdir(path.join(fixture.root, "tmp", "worktrees", "dev-loops", "issue-151"));
   let auditOptions;
   const admitted = await enforceFactoryAdmissionForCreation([
     "--repo-root", fixture.root, "--issue", "151", "--base", "origin/integration",

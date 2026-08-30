@@ -45,6 +45,18 @@ export function resolveRepositoryWorktreePath(mainRoot, args) {
   return path.join(mainRoot, "tmp", "worktrees", "dev-loops", `${kind}-${Number(issue ?? pr)}`);
 }
 
+function isRegisteredWorktree(mainRoot, target) {
+  if (!existsSync(target)) return false;
+  const targetPath = path.resolve(target);
+  const porcelain = execFileSync("git", ["-C", mainRoot, "worktree", "list", "--porcelain"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return porcelain.split(/\r?\n/u)
+    .filter((line) => line.startsWith("worktree "))
+    .some((line) => path.resolve(line.slice("worktree ".length)) === targetPath);
+}
+
 function replaceOption(args, name, value) {
   const rewritten = [...args];
   const index = rewritten.indexOf(name);
@@ -91,7 +103,7 @@ export async function enforceFactoryAdmissionForCreation(args, { admissionAudit 
   if (repoRootValue === undefined) return { skipped: true };
   const mainRoot = realpathSync(path.resolve(repoRootValue));
   const target = resolveRepositoryWorktreePath(mainRoot, args);
-  if (existsSync(target)) return { reused: true, target };
+  if (isRegisteredWorktree(mainRoot, target)) return { reused: true, target };
   const audit = await admissionAudit({ repoRoot: mainRoot });
   if (!audit.admissionReady) {
     const failures = audit.checks.filter((item) => item.status === "fail").map((item) => item.id);

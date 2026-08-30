@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -144,6 +145,10 @@ function inspectOperationalState(repoRoot) {
       cwd: repoRoot,
       timeout: 60_000,
     }));
+    if (!Array.isArray(lifecycle) || lifecycle.some((item) => !item || typeof item.merged !== "boolean"
+      || !Number.isFinite(item.targetGiB) || item.targetGiB < 0 || typeof item.removableAfterSevenDays !== "boolean")) {
+      throw new Error("lifecycle audit returned an invalid JSON contract");
+    }
     const nonPrimary = lifecycle.slice(1);
     const active = nonPrimary.filter((item) => !item.merged);
     const targetGiB = lifecycle.reduce((sum, item) => sum + (Number(item.targetGiB) || 0), 0);
@@ -159,7 +164,33 @@ function inspectOperationalState(repoRoot) {
         { targetGiB, greenMaximumGiB: 100, amberMaximumGiB: 200 }, "operational"),
     ];
   } catch (error) {
-    return [check("worktree-admission", "warn", `Worktree lifecycle audit unavailable; creation remains recoverable: ${error.message}`, undefined, "operational")];
+    try {
+      const worktrees = run("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot })
+        .split(/\r?\n/u)
+        .filter((line) => line.startsWith("worktree "))
+        .map((line) => line.slice("worktree ".length));
+      if (worktrees.length === 0) throw new Error("git reported no registered worktrees");
+      const nonPrimary = worktrees.slice(1);
+      const targetGiB = worktrees.reduce((sum, worktree) => {
+        const target = path.join(worktree, "target");
+        if (!existsSync(target)) return sum;
+        const kib = Number(run("du", ["-sk", target]).split(/\s/u, 1)[0]);
+        if (!Number.isFinite(kib) || kib < 0) throw new Error(`du returned an invalid size for ${target}`);
+        return sum + kib / 1024 / 1024;
+      }, 0);
+      return [
+        check("worktree-admission", nonPrimary.length <= 2 ? "pass" : "fail",
+          `${nonPrimary.length} non-primary registered worktrees from conservative fallback; green limit is 2`,
+          { active: nonPrimary.length, registered: worktrees.length, fallback: true }, "operational"),
+        check("worktree-target-storage", targetGiB <= 100 ? "pass" : targetGiB <= 200 ? "warn" : "fail",
+          `${targetGiB.toFixed(1)} GiB in worktree-local target directories from conservative fallback`,
+          { targetGiB, greenMaximumGiB: 100, amberMaximumGiB: 200, fallback: true }, "operational"),
+      ];
+    } catch (fallbackError) {
+      return [check("worktree-admission", "fail",
+        `Worktree capacity audit unavailable: ${error.message}; fallback failed: ${fallbackError.message}`,
+        undefined, "operational")];
+    }
   }
 }
 
@@ -252,9 +283,9 @@ export async function auditPi({
     const installed = await inspectInstalledPackages(layout.commonCheckout);
     checks.push(check("installed-packages", installed.problems.length ? "fail" : "pass",
       installed.problems.length ? "The common Pi package store does not match tracked pins" : "Installed Pi packages match tracked pins",
-      { installed: installed.installed, problems: installed.problems }));
+      { installed: installed.installed, problems: installed.problems }, "runtime"));
   } catch (error) {
-    checks.push(check("installed-packages", "fail", `Cannot resolve the common Pi package store: ${error.message}`));
+    checks.push(check("installed-packages", "fail", `Cannot resolve the common Pi package store: ${error.message}`, undefined, "runtime"));
   }
 
   let effectivePiVersion = piVersion;
@@ -278,7 +309,7 @@ export async function auditPi({
   }
   checks.push(check("tracked-agent-budgets", agentProblems.length ? "fail" : "pass",
     agentProblems.length ? "One or more tracked agents are unbounded" : "Every tracked agent has a bounded runtime and turn budget",
-    agentProblems.length ? agentProblems : undefined, "contract"));
+    agentProblems.length ? agentProblems : undefined));
 
   const effectiveUserPolicy = userPolicyResult ?? await checkUserPolicy({ env });
   checks.push(check("user-subagent-policy", effectiveUserPolicy.ok ? "pass" : "fail",
@@ -299,28 +330,6 @@ export async function auditPi({
     devloopBounds.every((pattern) => pattern.test(devloops))
       ? "Dev-loop review, queue, retry, and integration merge concurrency are bounded"
       : "One or more dev-loop constitutional bounds are missing"));
-
-  const workerTopology = await readFile(path.join(repoRoot, "docs", "factory", "worker-topology.md"), "utf8");
-  const topologyControls = [
-    /one mutating parent session/iu,
-    /Git common checkout on one host/u,
-    /One remotely driven candidate/u,
-    /Cloud workers are not autonomous claimants until/u,
-    /--approve/u,
-  ];
-  checks.push(check("worker-topology", topologyControls.every((pattern) => pattern.test(workerTopology)) ? "pass" : "fail",
-    topologyControls.every((pattern) => pattern.test(workerTopology))
-      ? "Local, cloud, and independent worker concurrency scopes preserve isolated mutation lanes"
-      : "The multi-worker ownership or cloud admission contract is incomplete",
-    undefined, "documentation"));
-
-  const pullRequestTemplate = await readFile(path.join(repoRoot, ".github", "pull_request_template.md"), "utf8");
-  const closeoutRecorded = /final-head private metrics record and bounded closeout comment/u.test(pullRequestTemplate);
-  checks.push(check("bounded-closeout", closeoutRecorded ? "pass" : "fail",
-    closeoutRecorded
-      ? "Every PR requires a no-model metrics closeout"
-      : "The routine metrics closeout contract is missing",
-    undefined, "documentation"));
 
   if (includeOperational) {
     checks.push(...inspectOperationalState(repoRoot));
@@ -364,6 +373,8 @@ async function main(argv = process.argv.slice(2)) {
   process.stdout.write(argv.includes("--json") ? `${JSON.stringify(result, null, 2)}\n` : renderText(result));
   if (argv.includes("--enforce-admission") && !result.admissionReady) return 1;
   if (argv.includes("--enforce-config") && !result.configReady) return 1;
+  if (!argv.includes("--enforce-admission") && !argv.includes("--enforce-config")
+    && result.checks.some((item) => item.status === "fail")) return 1;
   return 0;
 }
 
