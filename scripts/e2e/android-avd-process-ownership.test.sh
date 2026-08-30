@@ -113,9 +113,19 @@ if process_is_live "$changed_parent_pid"; then fail changed-parent-survivor; fi
 
 oxid_emulator_command_matches "/sdk/emulator -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562" \
   /sdk/emulator exact_avd 5562 || fail emulator-command
+oxid_emulator_command_matches "/sdk/qemu/darwin-aarch64/qemu-system-aarch64 -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562" \
+  /sdk/emulator exact_avd 5562 || fail emulator-qemu-exec-command
 if oxid_emulator_command_matches "/sdk/other -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562" \
   /sdk/emulator exact_avd 5562; then
   fail emulator-executable-refusal
+fi
+if oxid_emulator_command_matches "/sdk/qemu/darwin-aarch64/nested/qemu-system-aarch64 -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562" \
+  /sdk/emulator exact_avd 5562; then
+  fail emulator-qemu-nested-refusal
+fi
+if oxid_emulator_command_matches "/other/qemu/darwin-aarch64/qemu-system-aarch64 -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562" \
+  /sdk/emulator exact_avd 5562; then
+  fail emulator-qemu-sdk-refusal
 fi
 if oxid_emulator_command_matches "/sdk/emulator -avd other_avd -read-only -no-snapshot -no-snapshot-save -port 5562" \
   /sdk/emulator exact_avd 5562; then

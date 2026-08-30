@@ -65,10 +65,15 @@ oxid_direct_child_owned() {
 
 oxid_emulator_command_matches() {
   local command_line="$1" executable="$2" avd="$3" port="$4"
+  local qemu_prefix="${executable%/*}/qemu/"
   timeout -k 1s "${OXID_PROCESS_PS_TIMEOUT_SECONDS:-5}s" \
-    awk -v executable="$executable" -v avd="$avd" -v port="$port" '
+    awk -v executable="$executable" -v qemu_prefix="$qemu_prefix" -v avd="$avd" -v port="$port" '
     {
-      if ($1 != executable) exit 1
+      if ($1 != executable) {
+        if (index($1, qemu_prefix) != 1) exit 1
+        qemu_relative = substr($1, length(qemu_prefix) + 1)
+        if (qemu_relative !~ /^[A-Za-z0-9._-]+\/qemu-system-[A-Za-z0-9._-]+$/) exit 1
+      }
       avd_count = port_count = readonly_count = snapshot_count = snapshot_save_count = 0
       for (i = 2; i <= NF; i++) {
         if ($i == "-avd" && $(i + 1) == avd) avd_count++
