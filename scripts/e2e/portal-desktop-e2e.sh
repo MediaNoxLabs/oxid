@@ -133,6 +133,10 @@ func fail() -> Never {
     exit(1)
 }
 
+guard CGPreflightScreenCaptureAccess() else {
+    fail()
+}
+
 guard CommandLine.arguments.count == 2,
       let rawPid = Int32(CommandLine.arguments[1]) else {
     fail()
@@ -319,6 +323,8 @@ jq -cn \
       issuerDidBootstrappedAndResolved:true,
       laceDiditMockExercised:true,
       noExternalProviderCall:true,
+      screenCapturePermissionPreflight:true,
+      visibleScreenshotDenylistClear:true,
       releaseExcluded:true,
       hostedTargetExcluded:true
     }

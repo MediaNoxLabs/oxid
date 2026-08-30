@@ -112,6 +112,7 @@ chacha20poly1305 = { version = "=0.11.0", features = ["zeroize"] }
 ciborium = { version = "=0.2.2" }
 bip32 = { version = "=0.5.3", default-features = false, features = ["secp256k1", "std"] }
 dioxus = { version = "=0.7.10", default-features = false }
+dioxus-document = { version = "=0.7.10" }
 directories = { version = "=6.0.0" }
 ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
 futures = { version = "=0.3.34", default-features = false, features = ["executor"] }

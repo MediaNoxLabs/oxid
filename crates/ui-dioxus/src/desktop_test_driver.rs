@@ -2,8 +2,9 @@
 
 //! Release-absent rendered-control driver for the ARM64-Darwin desktop test.
 //!
-//! This module can only click controls that Dioxus rendered. It has no access
-//! to wallet services, scanner/router ports, or application use cases.
+//! This module can interact only with controls and fields that Dioxus rendered.
+//! It has no access to wallet services, scanner/router ports, or application
+//! use cases.
 
 use std::{
     env, fs,
@@ -83,6 +84,25 @@ return await (async () => {
   };
   const button = (label) => [...document.querySelectorAll("button")]
     .find((candidate) => visible(candidate) && text(candidate) === label);
+  const redactForScreenshot = () => {
+    const styleId = "oxid-desktop-test-screenshot-redaction";
+    let style = document.getElementById(styleId);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      document.head.appendChild(style);
+    }
+    style.textContent = "textarea, code, .privacy-value, .privacy-qr { visibility: hidden !important; }";
+    const sensitive = [...document.querySelectorAll("textarea, code, .privacy-value, .privacy-qr")];
+    if (sensitive.length === 0) return false;
+    const visibleText = document.body.innerText || "";
+    const forbidden = [
+      ["openid", "-credential-offer://"].join(""), "did:",
+      "Alice", "Example", "John", "Doe", "AB1234567"
+    ];
+    return sensitive.every((node) => getComputedStyle(node).visibility === "hidden")
+      && forbidden.every((value) => !visibleText.includes(value));
+  };
   try {
     const scan = await wait(() => button("Scan"));
     scan.scrollIntoView({ block: "center" });
@@ -93,9 +113,7 @@ return await (async () => {
     await wait(() => text(document.body).includes("Credential offer preview")
       && text(document.body).includes("Digital Passport")
       && document.querySelector("#credential-issuance-consent"));
-    for (const sensitive of document.querySelectorAll("textarea, code, .privacy-value, .privacy-qr")) {
-      sensitive.style.visibility = "hidden";
-    }
+    if (!redactForScreenshot()) throw new Error("screenshot redaction failed");
     return "ok";
   } catch (_) {
     return "failed:rendered-stage";
@@ -151,13 +169,30 @@ return await (async () => {
   };
   const button = (label) => [...document.querySelectorAll("button")]
     .find((candidate) => visible(candidate) && text(candidate) === label);
+  const redactForScreenshot = () => {
+    const styleId = "oxid-desktop-test-screenshot-redaction";
+    let style = document.getElementById(styleId);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      document.head.appendChild(style);
+    }
+    style.textContent = "textarea, code, .privacy-value, .privacy-qr { visibility: hidden !important; }";
+    const sensitive = [...document.querySelectorAll("textarea, code, .privacy-value, .privacy-qr")];
+    if (sensitive.length === 0) return false;
+    const visibleText = document.body.innerText || "";
+    const forbidden = [
+      ["openid", "-credential-offer://"].join(""), "did:",
+      "Alice", "Example", "John", "Doe", "AB1234567"
+    ];
+    return sensitive.every((node) => getComputedStyle(node).visibility === "hidden")
+      && forbidden.every((value) => !visibleText.includes(value));
+  };
   try {
     const documents = await wait(() => button("Documents"));
     documents.click();
     await wait(() => text(document.body).includes("Digital Passport") && button("Reverify"));
-    for (const sensitive of document.querySelectorAll("textarea, code, .privacy-value, .privacy-qr")) {
-      sensitive.style.visibility = "hidden";
-    }
+    if (!redactForScreenshot()) throw new Error("screenshot redaction failed");
     const reverify = await wait(() => button("Reverify"));
     reverify.scrollIntoView({ block: "center" });
     reverify.click();
@@ -276,7 +311,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scripts_click_only_rendered_controls_and_never_embed_protocol_payloads() {
+    fn scripts_interact_only_with_rendered_controls_and_never_embed_protocol_payloads() {
         for script in [
             FIRST_STAGE,
             SCAN_AND_PREVIEW_STAGE,
@@ -289,6 +324,14 @@ mod tests {
             assert!(!script.contains("openid-credential-offer"));
             assert!(!script.contains("pre-authorized"));
             assert!(!script.contains("access_token"));
+        }
+        assert!(FIRST_STAGE.contains("HTMLInputElement.prototype"));
+        for script in [SCAN_AND_PREVIEW_STAGE, RESTART_REVERIFY_STAGE] {
+            assert!(script.contains("redactForScreenshot"));
+            assert!(script.contains("getComputedStyle"));
+            assert!(script.contains("document.body.innerText"));
+            assert!(script.contains("oxid-desktop-test-screenshot-redaction"));
+            assert!(script.contains("visibility: hidden !important"));
         }
     }
 }

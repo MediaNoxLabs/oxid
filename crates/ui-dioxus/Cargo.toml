@@ -23,7 +23,7 @@ desktop-test-click-driver = ["dep:dioxus-document"]
 
 [dependencies]
 dioxus = { workspace = true, features = ["minimal"] }
-dioxus-document = { version = "=0.7.10", optional = true }
+dioxus-document = { workspace = true, optional = true }
 oxid-capabilities-application = { workspace = true, optional = true }
 oxid-wallet-application.workspace = true
 oxid-credential-application.workspace = true

@@ -196,7 +196,16 @@ test("desktop test feature is exact and its rendered-control driver has no direc
   assert.match(driver, /pub\(super\) fn use_desktop_test_driver\(\)/);
   assert.match(driver, /\.click\(\)/);
   assert.match(driver, /dioxus_document::eval/);
+  assert.match(driver, /redactForScreenshot/);
+  assert.match(driver, /getComputedStyle/);
+  assert.match(driver, /document\.body\.innerText/);
+  assert.match(driver, /oxid-desktop-test-screenshot-redaction/);
+  assert.match(driver, /visibility: hidden !important/);
   assert.doesNotMatch(driver, /qr_scanner|route_identity_request|UseCase|\.execute\(/);
+  const desktopHarness = await text("scripts/e2e/portal-desktop-e2e.sh");
+  assert.match(desktopHarness, /CGPreflightScreenCaptureAccess\(\)/);
+  assert.match(desktopHarness, /screenCapturePermissionPreflight:true/);
+  assert.match(desktopHarness, /visibleScreenshotDenylistClear:true/);
 });
 
 test("normal release gate excludes every desktop-test marker and localhost route", async () => {
