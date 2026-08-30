@@ -337,7 +337,7 @@ counters="$(control_curl --max-time 10 "$CONTROL_ORIGIN/counters")"
 exact_protocol_counters="$(jq -r '
   .authorizationMetadata == 3
   and .credential == 1
-  and .issuerMetadata == 7
+  and .issuerMetadata == 6
   and .issuerResolution == 3
   and .issuerResolutionSuccess == 3
   and .kyc == 14

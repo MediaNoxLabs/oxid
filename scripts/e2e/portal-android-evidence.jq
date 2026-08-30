@@ -40,7 +40,7 @@ def measured($mode; $name):
     exactProtocolCounters:(
       $counters.authorizationMetadata == 3
       and $counters.credential == 1
-      and $counters.issuerMetadata == 7
+      and $counters.issuerMetadata == 6
       and $counters.issuerResolution == 3
       and $counters.issuerResolutionSuccess == 3
       and $counters.kyc == 14

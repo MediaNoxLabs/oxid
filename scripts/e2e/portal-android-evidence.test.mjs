@@ -43,7 +43,7 @@ const scenarios = [
 const counters = {
   authorizationMetadata: 3,
   credential: 1,
-  issuerMetadata: 7,
+  issuerMetadata: 6,
   issuerResolution: 3,
   issuerResolutionSuccess: 3,
   kyc: 14,

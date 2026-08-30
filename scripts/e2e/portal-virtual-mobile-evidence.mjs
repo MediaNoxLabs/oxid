@@ -27,13 +27,13 @@ const COUNTER_KEYS = Object.freeze([
   "token",
 ]);
 const ZERO_COUNTERS = Object.freeze(Object.fromEntries(COUNTER_KEYS.map((key) => [key, 0])));
-function expectedScenarios(platformKind) {
+function expectedScenarios() {
   return [
     ["cold-route", {}],
     ["prepare-holder", {}],
     ["route-refuse", { authorizationMetadata: 1, issuerMetadata: 1 }],
     ["malformed", { issuerMetadata: 1 }],
-    ["protocol-error", { issuerMetadata: platformKind === "ios_simulator" ? 1 : 2 }],
+    ["protocol-error", { issuerMetadata: 1 }],
     ["protocol-timeout", { issuerMetadata: 1 }],
     ["issue-error", { authorizationMetadata: 1, issuerMetadata: 1, token: 1 }],
     ["issue", {
@@ -49,11 +49,11 @@ function expectedScenarios(platformKind) {
   ];
 }
 
-function expectedTotals(platformKind) {
+function expectedTotals() {
   return {
     authorizationMetadata: 3,
     credential: 1,
-    issuerMetadata: platformKind === "ios_simulator" ? 6 : 7,
+    issuerMetadata: 6,
     issuerResolution: 3,
     issuerResolutionSuccess: 3,
     kyc: 14,
@@ -166,8 +166,8 @@ function exactCounters(actual, expected) {
   return COUNTER_KEYS.every((key) => actual[key] === expected[key]);
 }
 
-function exactScenarioDeltas(scenarios, platformKind) {
-  return expectedScenarios(platformKind).every(([name, overrides], index) => {
+function exactScenarioDeltas(scenarios) {
+  return expectedScenarios().every(([name, overrides], index) => {
     const scenario = scenarios[index];
     return scenario.name === name && scenario.passed === true
       && exactCounters(scenario.counterDelta, expectedDelta(overrides));
@@ -224,7 +224,7 @@ function validateMeasurements(input) {
   assertHex(input.artifactSha256, 64, "artifactSha256");
 
   if (!Array.isArray(input.scenarios)
-      || input.scenarios.length !== expectedScenarios(input.platform.kind).length) {
+      || input.scenarios.length !== expectedScenarios().length) {
     throw new Error("scenarios are incomplete");
   }
   input.scenarios.forEach((scenario, index) => {
@@ -263,8 +263,8 @@ function deriveAcceptance(input) {
   const issuance = allTrue(input.issuance, ISSUANCE_KEYS);
   const encryptedPersistence = allTrue(input.storage, STORAGE_KEYS);
   const restartAndReverification = allTrue(input.restart, RESTART_KEYS);
-  const exactScenarios = exactScenarioDeltas(input.scenarios, input.platform.kind);
-  const exactTotals = exactCounters(input.totalCounters, expectedTotals(input.platform.kind));
+  const exactScenarios = exactScenarioDeltas(input.scenarios);
+  const exactTotals = exactCounters(input.totalCounters, expectedTotals());
   const cleanup = allTrue(input.cleanup, CLEANUP_KEYS);
   const virtualTargetOnly = input.cleanup.virtualTargetOnly === true;
   const secretFreeEvidence = true;

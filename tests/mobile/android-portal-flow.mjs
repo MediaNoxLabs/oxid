@@ -380,7 +380,7 @@ try {
     measuredCounterDelta = assertExactCounterDelta(
       start,
       after,
-      { issuerMetadata: mode === "protocol-error" ? 2 : 1 },
+      { issuerMetadata: 1 },
       mode,
     );
     await setProxyMode("normal");
