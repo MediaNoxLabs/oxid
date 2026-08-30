@@ -520,6 +520,7 @@ arm_offer() {
 deliver_warm_offer() {
   arm_offer || return 1
   adb_device shell am start -W --activity-single-top \
+    -n "$PACKAGE/dev.dioxus.main.MainActivity" \
     -a android.intent.action.VIEW -d "$TRIGGER" "$PACKAGE" >/dev/null 2>>"$PRIVATE_LOG" || return 1
 }
 assert_consumed() { [ "$(handoff_state)" = empty ] && wait_capability_absent; }

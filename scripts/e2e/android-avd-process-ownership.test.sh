@@ -311,6 +311,8 @@ grep -qF 'OXID_ANDROID_ADB_TIMEOUT_SECONDS=180 OXID_MOBILE_CUSTODY=development' 
 # onNewIntent instead of leaving the authenticated one-shot handoff ready.
 grep -qF 'adb_device shell am start -W --activity-single-top \' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail warm-ingress-single-top
+grep -qF '    -n "$PACKAGE/dev.dioxus.main.MainActivity" \' \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail warm-ingress-component
 grep -qF '  -a android.intent.action.VIEW -d "$TRIGGER" "$PACKAGE" >/dev/null 2>>"$PRIVATE_LOG" || return 1' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail warm-ingress-trigger
 # Cold launch remains a separate path; this contract constrains only the
