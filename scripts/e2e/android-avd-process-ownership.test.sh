@@ -306,6 +306,15 @@ for runner in \
 done
 grep -qF 'OXID_ANDROID_ADB_TIMEOUT_SECONDS=180 OXID_MOBILE_CUSTODY=development' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-launcher-adb-budget
+# The prepared holder is already the app's foreground activity. A warm offer
+# must request single-top delivery so Android calls the existing activity's
+# onNewIntent instead of leaving the authenticated one-shot handoff ready.
+grep -qF 'adb_device shell am start -W --activity-single-top \' \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail warm-ingress-single-top
+grep -qF '  -a android.intent.action.VIEW -d "$TRIGGER" "$PACKAGE" >/dev/null 2>>"$PRIVATE_LOG" || return 1' \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail warm-ingress-trigger
+# Cold launch remains a separate path; this contract constrains only the
+# prepared-holder route that previously timed out while the handoff was ready.
 grep -qF 'run_deadline 5 mkdir "$xcode_project" || fail xcode-project-create' \
   "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh" || fail xcode-project-parent
 
