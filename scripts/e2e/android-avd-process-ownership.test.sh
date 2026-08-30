@@ -24,6 +24,62 @@ temporary="$(timeout -k 1s 5s mktemp -d "${TMPDIR:-/tmp}/oxid-avd-contract.XXXXX
 cleanup() { timeout -k 1s 5s rm -rf -- "$temporary"; }
 trap cleanup EXIT
 
+timeout_command="$(command -v timeout)"
+cat >"$temporary/android-failure-marker-fixture.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$1"
+mode="$2"
+cleanup_marker="$3"
+oxid_android_avd_failure_marker_reset
+failure_phase="unreported-timeout-or-abort"
+cleanup() {
+  incoming=$?
+  oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"
+  : >"$cleanup_marker"
+  exit "$incoming"
+}
+trap cleanup EXIT
+case "$mode" in
+  nonzero)
+    failure_phase="nonzero"
+    exit 1
+    ;;
+  signal|timeout)
+    trap 'failure_phase=signal-term; exit 143' TERM
+    if [ "$mode" = signal ]; then kill -TERM "$BASHPID"; fi
+    while :; do :; done
+    ;;
+  *) exit 64 ;;
+esac
+EOF
+chmod 700 "$temporary/android-failure-marker-fixture.sh"
+
+assert_android_failure_marker() {
+  local name="$1" expected_status="$2" expected_phase="$3"
+  shift 3
+  local output status=0 cleanup_marker="$temporary/$name.cleanup"
+  if output="$("$@" "$ROOT/scripts/e2e/android-avd-process-ownership.sh" "$name" "$cleanup_marker" 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
+  [ "$status" -eq "$expected_status" ] || fail "$name-status"
+  [ "$output" = "android-portal-exact-sequence-avd: FAIL phase=$expected_phase" ] || fail "$name-marker"
+  [ -f "$cleanup_marker" ] || fail "$name-cleanup"
+}
+
+assert_android_failure_marker nonzero 1 nonzero "$temporary/android-failure-marker-fixture.sh"
+assert_android_failure_marker signal 143 signal-term "$temporary/android-failure-marker-fixture.sh"
+assert_android_failure_marker timeout 143 signal-term "$timeout_command" --preserve-status -s TERM -k 2s 0.1s \
+  "$temporary/android-failure-marker-fixture.sh"
+grep -qF 'oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"' \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-runner-marker-wiring
+[ "$(grep -cF 'timeout --preserve-status -k 180s 14400s ./scripts/test-android-portal-exact-sequence-avd.sh' \
+  "$ROOT/Justfile")" -eq 2 ] || fail android-outer-timeout-budget
+
+echo "android-avd-process-ownership-contract: failure-markers=nonzero-timeout-signal-status-preserved-cleanup-proven" >/dev/null
+
 empty_inventory=$'List of devices attached\n\n'
 physical_inventory=$'List of devices attached\nR5CT1234ABC\tdevice product:fixture transport_id:1\n'
 mixed_inventory=$'List of devices attached\nemulator-5562\tdevice product:sdk_gphone transport_id:1\nR5CT1234ABC\tdevice product:fixture transport_id:2\n'

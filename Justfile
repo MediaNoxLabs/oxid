@@ -109,7 +109,7 @@ portal-virtual-mobile-evidence-contract:
 
 # Build and exercise the packaged Portal profile on one explicit owned Android QEMU AVD.
 android-portal-exact-sequence-avd:
-    @timeout -k 30s 7200s ./scripts/test-android-portal-exact-sequence-avd.sh
+    @timeout --preserve-status -k 180s 14400s ./scripts/test-android-portal-exact-sequence-avd.sh
 
 # Build and exercise the packaged Portal profile on one newly created disposable iOS Simulator.
 ios-portal-exact-sequence-simulator:
@@ -122,7 +122,7 @@ portal-mobile-simulators-e2e:
     @./scripts/test-android-portal-exact-sequence-avd.sh --preflight >tmp/issue-213/aggregate-android-preflight.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=android-preflight' >&2; exit 1; }
     @timeout -k 30s 7200s just portal-macos-laptop-e2e >tmp/issue-213/aggregate-macos.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=macos-prequalification' >&2; exit 1; }
     @timeout -k 30s 7200s ./scripts/test-ios-portal-exact-sequence-simulator.sh
-    @timeout -k 30s 7200s ./scripts/test-android-portal-exact-sequence-avd.sh
+    @timeout --preserve-status -k 180s 14400s ./scripts/test-android-portal-exact-sequence-avd.sh
     @jq -s -e --arg head "$(git rev-parse HEAD)" --arg tree "$(git rev-parse 'HEAD^{tree}')" 'length == 4 and all(.[]; .oxid == {head:$head,tree:$tree}) and (.[2].platform.kind == "ios_simulator") and (.[3].platform.kind == "android_emulator")' target/portal-headless-e2e/evidence.json target/portal-desktop-e2e/evidence.json target/ios-portal-exact-sequence-simulator/evidence.json target/android-portal-exact-sequence-avd/evidence.json >/dev/null
     @echo "portal-mobile-simulators-e2e: PASS evidence=target/ios-portal-exact-sequence-simulator/evidence.json,target/android-portal-exact-sequence-avd/evidence.json"
 

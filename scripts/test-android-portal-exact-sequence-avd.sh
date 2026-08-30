@@ -81,12 +81,23 @@ build_cleanup=false
 private_logs_removed=false
 head_clean=false
 journey_deadline=0
+oxid_android_avd_failure_marker_reset
 
 fail() {
   failure_phase="$1"
-  printf 'android-portal-exact-sequence-avd: FAIL phase=%s\n' "$failure_phase" >&2
   exit 1
 }
+
+report_unhandled_exit() {
+  local incoming=$?
+  oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"
+  return "$incoming"
+}
+
+trap report_unhandled_exit EXIT
+trap 'failure_phase=signal-int; exit 130' INT
+trap 'failure_phase=signal-term; exit 143' TERM
+trap 'failure_phase=signal-hup; exit 129' HUP
 
 case "$OPERATION" in
   run|--preflight) ;;
@@ -241,6 +252,7 @@ cleanup() {
   journey_deadline=0
   trap - EXIT INT TERM HUP
   set +e
+  oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"
 
   if [ -n "$arm_pid" ]; then
     if oxid_job_is_running "$arm_pid"; then oxid_terminate_supervised_job "$arm_pid" || cleanup_ok=false; else wait "$arm_pid" >/dev/null 2>&1 || true; fi
@@ -335,10 +347,12 @@ cleanup() {
   fi
   if [ "$cleanup_ok" != true ]; then
     incoming=1
+    [ "$failure_phase" = none ] && failure_phase=cleanup
     printf 'android-portal-exact-sequence-avd: cleanup could not prove owned-state restoration\n' >&2
   elif [ "$evidence_published" -eq 1 ]; then
     printf 'android-portal-exact-sequence-avd: PASS evidence=target/android-portal-exact-sequence-avd/evidence.json\n'
   fi
+  oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"
   exit "$incoming"
 }
 
@@ -366,9 +380,6 @@ if [ "$OPERATION" = --preflight ]; then
 fi
 
 trap cleanup EXIT
-trap 'failure_phase=signal-int; exit 130' INT
-trap 'failure_phase=signal-term; exit 143' TERM
-trap 'failure_phase=signal-hup; exit 129' HUP
 
 umask 077
 run_deadline 5 mkdir -p -- "${RUN_ROOT%/*}" || fail run-parent-create

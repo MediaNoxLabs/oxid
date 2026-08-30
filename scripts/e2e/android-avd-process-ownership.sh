@@ -179,3 +179,16 @@ oxid_path_has_identity() {
   actual="$(oxid_filesystem_identity "$path")" || return 1
   [ "$actual" = "$expected" ]
 }
+
+oxid_android_avd_failure_marker_reset() {
+  OXID_ANDROID_AVD_FAILURE_MARKER_EMITTED=0
+}
+
+oxid_android_avd_emit_failure_marker() {
+  local status="$1" phase="${2:-unreported-timeout-or-abort}"
+  [ "$status" -ne 0 ] || return 0
+  [ "${OXID_ANDROID_AVD_FAILURE_MARKER_EMITTED:-0}" -eq 0 ] || return 0
+  [[ "$phase" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || phase="unreported-timeout-or-abort"
+  OXID_ANDROID_AVD_FAILURE_MARKER_EMITTED=1
+  printf 'android-portal-exact-sequence-avd: FAIL phase=%s\n' "$phase" >&2
+}
