@@ -13,6 +13,11 @@ final class PortalFlowTests: XCTestCase {
     @MainActor
     private func application() -> XCUIApplication {
         let application = XCUIApplication(bundleIdentifier: applicationIdentifier)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let open = springboard.buttons["Open"]
+        if open.waitForExistence(timeout: 5) {
+            open.tap()
+        }
         application.activate()
         XCTAssertTrue(application.wait(for: .runningForeground, timeout: 15))
         return application
@@ -45,7 +50,10 @@ final class PortalFlowTests: XCTestCase {
         if createWallet.waitForExistence(timeout: 5) {
             createWallet.tap()
             let createAndContinue = application.buttons["Create and continue"]
-            XCTAssertTrue(createAndContinue.waitForExistence(timeout: 10))
+            if !createAndContinue.waitForExistence(timeout: 3) {
+                createWallet.tap()
+            }
+            XCTAssertTrue(createAndContinue.waitForExistence(timeout: 7))
             createAndContinue.tap()
             let skip = application.buttons["Skip for now"]
             XCTAssertTrue(skip.waitForExistence(timeout: 15))
@@ -107,6 +115,7 @@ final class PortalFlowTests: XCTestCase {
         return assertExactPreview(in: application)
     }
 
+    @MainActor
     private func unavailableStatus(in application: XCUIApplication) -> XCUIElement {
         application.staticTexts.matching(
             NSPredicate(format: "label CONTAINS[c] %@", "protocol is unavailable")
