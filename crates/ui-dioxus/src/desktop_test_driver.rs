@@ -187,18 +187,23 @@ return await (async () => {
     return sensitive.every((node) => getComputedStyle(node).visibility === "hidden")
       && forbidden.every((value) => !visibleText.includes(value));
   };
+  let phase = "documents";
   try {
     const documents = await wait(() => button("Documents"));
     documents.click();
+    phase = "credential-record";
     await wait(() => text(document.body).includes("Digital Passport") && button("Reverify"));
+    phase = "screenshot-redaction";
     if (!redactForScreenshot()) throw new Error("screenshot redaction failed");
+    phase = "reverify";
     const reverify = await wait(() => button("Reverify"));
     reverify.scrollIntoView({ block: "center" });
     reverify.click();
+    phase = "reverification";
     await wait(() => text(document.body).includes("Credential reverification applied"));
     return "ok";
   } catch (_) {
-    return "failed:rendered-stage";
+    return `failed:restart-${phase}`;
   }
 })();
 "##;
@@ -340,5 +345,7 @@ mod tests {
             "forbidden.every((value) => !visibleText.includes(value))"
         ));
         assert!(!RESTART_REVERIFY_STAGE.contains("if (sensitive.length === 0) return false;"));
+        assert!(RESTART_REVERIFY_STAGE.contains("let phase = \"documents\";"));
+        assert!(RESTART_REVERIFY_STAGE.contains("return `failed:restart-${phase}`;"));
     }
 }
