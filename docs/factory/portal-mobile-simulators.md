@@ -26,8 +26,8 @@ holder binding, and encrypted storage remain the security boundary.
 - Nix shell, Docker Desktop, Git/network, Cargo/rustup, Node, Java, `jq`,
   `curl`, `shasum`, `timeout`, and XcodeGen.
 - Installed `aarch64-apple-ios-sim` and Android Rust target for the selected AVD.
-- A clean, committed, locally verifiable signed `HEAD` containing parent issue
-  #210 commit `875b5e1c52f3d5699c058b14e256d23c1c3fc41c`.
+- A clean, committed, locally verifiable signed `HEAD` containing merged PR
+  #211 integration commit `6d4f8256eb524179c7edf1cf772919e0fe3102f9`.
 - Exactly three healthy pre-existing `oxid-standalone` services on ports 6300,
   8088, and 9944; no Portal consumer, virtual stack lock, Portal listeners, or
   stale mobile evidence.

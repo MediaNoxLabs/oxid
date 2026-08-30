@@ -19,7 +19,7 @@ readonly BUILD_RECEIPT="$PRIVATE_STATE/build-receipt.tsv"
 readonly PACKAGE="io.medianox.oxid"
 readonly TRIGGER="openid-credential-offer://standalone-portal-test-fetch"
 readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
-readonly PARENT_HEAD="875b5e1c52f3d5699c058b14e256d23c1c3fc41c"
+readonly PARENT_HEAD="6d4f8256eb524179c7edf1cf772919e0fe3102f9"
 readonly PORTAL_COMMIT="22ae5369b6f939e6b20648f4b85dd993527748ef"
 readonly PORTAL_TREE="74d8d1a5b87c160ea554006e47d5f3edc3cd3e10"
 readonly EMULATOR_PORT=5562
@@ -285,7 +285,7 @@ cleanup() {
 
   if [ -n "$emulator_pid" ]; then
     if oxid_job_is_running "$emulator_pid"; then
-      if oxid_terminate_emulator_job "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then emulator_cleanup=true; else cleanup_ok=false; fi
+      if oxid_terminate_emulator_job "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then emulator_cleanup=true; else cleanup_ok=false; fi
     else
       wait "$emulator_pid" >/dev/null 2>&1 || emulator_status=$?
       case "$emulator_status" in 0|137|143) emulator_cleanup=true ;; *) cleanup_ok=false ;; esac
@@ -385,12 +385,12 @@ run_deadline 5 chmod 600 "$PRIVATE_LOG" || fail private-log-mode
 "$EMULATOR" -avd "$avd" -read-only -no-snapshot -no-snapshot-save -port "$EMULATOR_PORT" </dev/null >>"$PRIVATE_LOG" 2>&1 &
 emulator_pid=$!
 for ((_attempt = 0; _attempt < 50; _attempt++)); do
-  oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" && break
+  oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" && break
   run_deadline 2 sleep 0.1
 done
-oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership
+oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership
 for ((_attempt = 0; _attempt < 300; _attempt++)); do
-  oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership-lost
+  oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership-lost
   inventory="$(oxid_adb_inventory_snapshot "$ADB" 2>/dev/null || true)"
   if oxid_adb_inventory_is_exact_online "$inventory" "$SERIAL" \
     && [ "$(adb_text shell getprop sys.boot_completed 2>/dev/null)" = 1 ]; then emulator_online=1; break; fi

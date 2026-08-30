@@ -57,13 +57,13 @@ fi
 cat >"$temporary/grandchild.sh" <<'EOF'
 #!/usr/bin/env bash
 trap 'printf "TERM\n" >"$2"' TERM
-printf '%s\n' "$BASHPID" >"$1"
+printf '%s\n' "$$" >"$1"
 while :; do sleep 1; done
 EOF
 chmod 700 "$temporary/grandchild.sh"
 cat >"$temporary/owner.sh" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$BASHPID" >"$1"
+printf '%s\n' "$$" >"$1"
 bash "$2" "$3" "$4"
 status=$?
 printf '%s\n' "$status" >/dev/null
@@ -72,7 +72,7 @@ chmod 700 "$temporary/owner.sh"
 timeout -k 1s 30s "$temporary/owner.sh" "$temporary/owner.pid" \
   "$temporary/grandchild.sh" "$temporary/grandchild.pid" "$temporary/term.seen" &
 supervisor_pid=$!
-for ((_attempt = 0; _attempt < 50; _attempt++)); do
+for ((_attempt = 0; _attempt < 200; _attempt++)); do
   [ -s "$temporary/grandchild.pid" ] && break
   timeout -k 1s 1s sleep 0.05
 done
@@ -93,19 +93,19 @@ fi
 
 sleep 30 &
 direct_pid=$!
-oxid_direct_child_owned "$direct_pid" "$BASHPID" || fail direct-child-owned
+oxid_direct_child_owned "$direct_pid" "$$" || fail direct-child-owned
 kill -TERM "$direct_pid"
 wait "$direct_pid" 2>/dev/null || true
 
 timeout -k 1s 30s bash -c 'sleep 30 & printf "%s\n" "$!" >"$1"; wait' \
   _ "$temporary/changed-parent.pid" &
 intermediary_pid=$!
-for ((_attempt = 0; _attempt < 50; _attempt++)); do
+for ((_attempt = 0; _attempt < 200; _attempt++)); do
   [ -s "$temporary/changed-parent.pid" ] && break
   timeout -k 1s 1s sleep 0.05
 done
 changed_parent_pid="$(<"$temporary/changed-parent.pid")"
-if oxid_direct_child_owned "$changed_parent_pid" "$BASHPID"; then
+if oxid_direct_child_owned "$changed_parent_pid" "$$"; then
   fail changed-parent-refused
 fi
 oxid_terminate_supervised_job "$intermediary_pid" || fail changed-parent-cleanup
@@ -125,19 +125,24 @@ fi
 cat >"$temporary/emulator.mjs" <<'EOF'
 import fs from "node:fs";
 process.on("SIGTERM", () => fs.writeFileSync(process.env.OXID_FAKE_EMULATOR_TERM, "TERM\n"));
+fs.writeFileSync(process.env.OXID_FAKE_EMULATOR_READY, "READY\n");
 setInterval(() => {}, 1000);
 EOF
+OXID_FAKE_EMULATOR_READY="$temporary/emulator-ready.seen" \
 OXID_FAKE_EMULATOR_TERM="$temporary/emulator-term.seen" \
   node "$temporary/emulator.mjs" -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562 &
 fake_emulator_pid=$!
 fake_emulator_executable=node
-for ((_attempt = 0; _attempt < 50; _attempt++)); do
-  oxid_emulator_job_owned "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 && break
+for ((_attempt = 0; _attempt < 200; _attempt++)); do
+  [ -f "$temporary/emulator-ready.seen" ] \
+    && oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
+    && break
   timeout -k 1s 1s sleep 0.05
 done
-oxid_emulator_job_owned "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 \
+[ -f "$temporary/emulator-ready.seen" ] || fail direct-emulator-ready
+oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
   || fail direct-emulator-owned
-oxid_terminate_emulator_job "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 \
+oxid_terminate_emulator_job "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
   || fail direct-emulator-cleanup
 [ -f "$temporary/emulator-term.seen" ] || fail direct-emulator-term
 process_is_live "$fake_emulator_pid" && fail direct-emulator-survivor

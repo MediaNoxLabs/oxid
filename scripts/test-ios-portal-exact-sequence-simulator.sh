@@ -21,7 +21,7 @@ readonly RECEIPT="$PRIVATE_STATE/simulator-receipt.json"
 readonly PACKAGE="io.medianox.oxid"
 readonly TRIGGER="openid-credential-offer://standalone-portal-test-fetch"
 readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
-readonly PARENT_HEAD="875b5e1c52f3d5699c058b14e256d23c1c3fc41c"
+readonly PARENT_HEAD="6d4f8256eb524179c7edf1cf772919e0fe3102f9"
 readonly PORTAL_COMMIT="22ae5369b6f939e6b20648f4b85dd993527748ef"
 readonly PORTAL_TREE="74d8d1a5b87c160ea554006e47d5f3edc3cd3e10"
 readonly OPERATION="${1:-run}"
@@ -294,7 +294,7 @@ run_deadline 5 chmod 700 "$PRIVATE_STATE" || fail private-state-mode
 : >"$PRIVATE_LOG"
 run_deadline 5 chmod 600 "$PRIVATE_LOG" || fail private-log-mode
 
-simulator_name="oxid-issue-213-$BASHPID-$RANDOM"
+simulator_name="oxid-issue-213-$$-$RANDOM"
 simulator_mutation_started=1
 udid="$(oxid_ios_create_owned "$DEVELOPER_DIR_SELECTED" "$RUNTIME_ID" "$DEVICE_TYPE_ID" "$simulator_name" "$RECEIPT")" || fail simulator-create
 simulator_owned=1

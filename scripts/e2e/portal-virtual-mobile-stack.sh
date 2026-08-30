@@ -166,7 +166,7 @@ if ! run_deadline 5 mkdir -- "$STACK_LOCK" 2>/dev/null; then
 fi
 lock_owned=1
 lock_identity="$(oxid_filesystem_identity "$STACK_LOCK")" || fail lock-identity
-lock_receipt="receipt-$BASHPID-$RANDOM-$RANDOM-$RANDOM"
+lock_receipt="receipt-$$-$RANDOM-$RANDOM-$RANDOM"
 run_deadline 5 mkdir -- "$STACK_LOCK/$lock_receipt" || fail lock-receipt
 lock_receipt_identity="$(oxid_filesystem_identity "$STACK_LOCK/$lock_receipt")" || fail lock-receipt-identity
 run_deadline 5 chmod 700 "$STACK_LOCK" "$STACK_LOCK/$lock_receipt" || fail lock-mode
