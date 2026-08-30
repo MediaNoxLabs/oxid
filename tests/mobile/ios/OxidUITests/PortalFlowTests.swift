@@ -150,7 +150,7 @@ final class PortalFlowTests: XCTestCase {
         let application = application()
         ensureProfile(in: application)
         application.buttons["Wallet"].tap()
-        let activate = application.buttons["Activate development wallet"]
+        let activate = application.buttons["Activate protected Midnight account"]
         if activate.waitForExistence(timeout: 5) {
             activate.tap()
             XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 45))
@@ -263,7 +263,7 @@ final class PortalFlowTests: XCTestCase {
     func testRestored() {
         let application = application()
         application.buttons["Wallet"].tap()
-        let reactivate = application.buttons["Activate development wallet"]
+        let reactivate = application.buttons["Activate protected Midnight account"]
         XCTAssertTrue(reactivate.waitForExistence(timeout: 15))
         reactivate.tap()
         XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 45))
