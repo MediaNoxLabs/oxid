@@ -286,6 +286,13 @@ for runner in \
     || fail failed-build-preservation
   grep -qF 'if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$runner" \
     || fail failed-log-preservation
+  grep -qF 'BUILD_SOURCE="$(run_deadline 5 mktemp -d "${TMPDIR:-/tmp}/oxid-' "$runner" \
+    || fail detached-build-source
+  grep -qF 'oxid_path_has_identity "$BUILD_SOURCE" "$build_identity"' "$runner" \
+    || fail build-source-identity
+  if grep -qF 'readonly BUILD_SOURCE="$PRIVATE_STATE/build-source"' "$runner"; then
+    fail nested-build-source
+  fi
 done
 
 acquisition_parent="$temporary/evidence-acquisition"

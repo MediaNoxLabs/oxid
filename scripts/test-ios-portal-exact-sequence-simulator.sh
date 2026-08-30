@@ -16,7 +16,7 @@ readonly RUN_ROOT="$ROOT/target/ios-portal-exact-sequence-simulator"
 readonly PRIVATE_STATE="$RUN_ROOT/private"
 readonly PRIVATE_LOG="$PRIVATE_STATE/journey.log"
 readonly EVIDENCE="$RUN_ROOT/evidence.json"
-readonly BUILD_SOURCE="$PRIVATE_STATE/build-source"
+readonly BUILD_RECEIPT="$PRIVATE_STATE/build-receipt.tsv"
 readonly RECEIPT="$PRIVATE_STATE/simulator-receipt.json"
 readonly PACKAGE="io.medianox.oxid"
 readonly TRIGGER="openid-credential-offer://standalone-portal-test-fetch"
@@ -52,6 +52,8 @@ failure_phase="none"
 head=""
 tree=""
 app_sha256=""
+BUILD_SOURCE=""
+build_identity=""
 scenario_results="[]"
 total_counters="{}"
 api_level=0
@@ -186,7 +188,7 @@ write_evidence() {
 }
 
 cleanup() {
-  local incoming=$? after_portal project_ids
+  local incoming=$? after_portal project_ids build_receipt_path build_receipt_identity
   if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
   cleanup_running=1
   journey_deadline=0
@@ -230,7 +232,10 @@ cleanup() {
   fi
 
   if [ "$build_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then
-    if oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then
+    if [ -f "$BUILD_RECEIPT" ] && [ ! -L "$BUILD_RECEIPT" ] \
+      && IFS=$'\t' read -r build_receipt_path build_receipt_identity <"$BUILD_RECEIPT" \
+      && [ "$build_receipt_path" = "$BUILD_SOURCE" ] && [ "$build_receipt_identity" = "$build_identity" ] \
+      && oxid_path_has_identity "$BUILD_SOURCE" "$build_identity"; then
       run_deadline 30 rm -rf -- "$BUILD_SOURCE" >/dev/null 2>&1
       [ ! -e "$BUILD_SOURCE" ] && build_cleanup=true || cleanup_ok=false
     else cleanup_ok=false; fi
@@ -320,8 +325,12 @@ portal_ready=1
 
 archive="$PRIVATE_STATE/source.tar"
 run_deadline 60 git -C "$ROOT" archive --format=tar --output="$archive" "$head" || fail build-source-archive
-run_deadline 5 mkdir -p "$BUILD_SOURCE" || fail build-source-create
+BUILD_SOURCE="$(run_deadline 5 mktemp -d "${TMPDIR:-/tmp}/oxid-ios-portal-build.XXXXXX")" || fail build-source-create
 build_owned=1
+[ -d "$BUILD_SOURCE" ] && [ ! -L "$BUILD_SOURCE" ] || fail build-source-create
+build_identity="$(oxid_filesystem_identity "$BUILD_SOURCE")" || fail build-source-identity
+printf '%s\t%s\n' "$BUILD_SOURCE" "$build_identity" >"$BUILD_RECEIPT" || fail build-receipt
+run_deadline 5 chmod 600 "$BUILD_RECEIPT" || fail build-receipt-mode
 run_deadline 60 tar -xf "$archive" -C "$BUILD_SOURCE" || fail build-source-extract
 run_deadline 5 rm -f -- "$archive" || fail build-archive-remove
 [ ! -e "$BUILD_SOURCE/target" ] || fail isolated-build-output
