@@ -365,13 +365,40 @@ if [ "$standalone_network_profile" = "local" ]; then
     # physical suite keeps its unpublished control API on 18095.
     reverse_ports+=(18090 18091 18093)
   fi
-  for local_port in "${reverse_ports[@]}"; do
-    adb_device reverse "tcp:$local_port" "tcp:$local_port"
-  done
+  reverse_owner_receipt_matches_ports() {
+    local receipt="${OXID_ANDROID_REVERSE_OWNER_RECEIPT:-}" mode
+    [ -n "$receipt" ] && [[ "$receipt" = /* ]] && [ -f "$receipt" ] && [ ! -L "$receipt" ] || return 1
+    if mode="$(stat -c '%a' "$receipt" 2>/dev/null)"; then :; else mode="$(stat -f '%Lp' "$receipt")"; fi
+    [ "$mode" = 600 ] || return 1
+    awk -v ports="${reverse_ports[*]}" '
+      BEGIN {
+        split(ports, values, " ")
+        for (i in values) expected[values[i]] = 1
+      }
+      NR == 1 { if ($0 != "android-adb-reverse-owner-v1") invalid = 1; next }
+      {
+        if ($0 !~ /^[1-9][0-9]{0,4}$/ || !($0 in expected) || ++seen[$0] != 1) invalid = 1
+      }
+      END {
+        for (port in expected) if (seen[port] != 1) invalid = 1
+        exit invalid ? 1 : 0
+      }
+    ' "$receipt"
+  }
+  if [ -n "${OXID_ANDROID_REVERSE_OWNER_RECEIPT:-}" ]; then
+    if ! reverse_owner_receipt_matches_ports; then
+      echo "The Android reverse-owner receipt is not an exact private mapping receipt." >&2
+      exit 1
+    fi
+  else
+    for local_port in "${reverse_ports[@]}"; do
+      adb_device reverse "tcp:$local_port" "tcp:$local_port"
+    done
+  fi
   reverse_list="$(adb_device reverse --list)"
   for local_port in "${reverse_ports[@]}"; do
-    if ! awk -v route="tcp:$local_port" '$2 == route && $3 == route { found = 1 } END { exit !found }' \
-      <<<"$reverse_list"; then
+    if ! awk -v serial="$device" -v route="tcp:$local_port" \
+      '$1 == serial && $2 == route && $3 == route { found = 1 } END { exit !found }' <<<"$reverse_list"; then
       echo "Android emulator reverse route tcp:$local_port was not installed." >&2
       exit 1
     fi

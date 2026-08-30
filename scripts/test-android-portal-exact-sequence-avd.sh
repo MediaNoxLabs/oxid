@@ -56,6 +56,9 @@ apk_sha256=""
 BUILD_SOURCE=""
 build_identity=""
 reverse_before=""
+reverse_owner_receipt="$PRIVATE_STATE/reverse-owner.receipt"
+reverse_owner_identity=""
+reverse_mapping_owned=0
 shared_before=""
 scenario_results="[]"
 total_counters="{}"
@@ -183,6 +186,96 @@ listener_fingerprint() {
   done
 }
 
+file_mode() {
+  local path="$1" mode
+  if mode="$(run_deadline 5 stat -c '%a' "$path" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+  else
+    run_deadline 5 stat -f '%Lp' "$path"
+  fi
+}
+
+reverse_owner_ports=()
+read_reverse_owner_receipt() {
+  local line port candidate allowed count=0
+  reverse_owner_ports=()
+  [ -f "$reverse_owner_receipt" ] && [ ! -L "$reverse_owner_receipt" ] || return 1
+  [ "$(file_mode "$reverse_owner_receipt")" = 600 ] || return 1
+  oxid_path_has_identity "$reverse_owner_receipt" "$reverse_owner_identity" || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$count" -eq 0 ]; then
+      [ "$line" = android-adb-reverse-owner-v1 ] || return 1
+      count=1
+      continue
+    fi
+    [[ "$line" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$line" -le 65535 ] || return 1
+    allowed=false
+    for candidate in "${REVERSE_PORTS[@]}"; do [ "$line" = "$candidate" ] && { allowed=true; break; }; done
+    [ "$allowed" = true ] || return 1
+    for port in "${reverse_owner_ports[@]}"; do [ "$line" != "$port" ] || return 1; done
+    reverse_owner_ports+=("$line")
+    count=$((count + 1))
+  done <"$reverse_owner_receipt"
+  [ "$count" -gt 0 ] || return 1
+  count=$((count - 1))
+  [ "$count" -le "${#REVERSE_PORTS[@]}" ]
+}
+
+reverse_owner_receipt_has_all_routes() {
+  local port
+  read_reverse_owner_receipt || return 1
+  [ "${#reverse_owner_ports[@]}" -eq "${#REVERSE_PORTS[@]}" ] || return 1
+  for port in "${REVERSE_PORTS[@]}"; do
+    case " ${reverse_owner_ports[*]} " in *" $port "*) ;; *) return 1 ;; esac
+  done
+}
+
+prepare_owned_reverse_mappings() {
+  local port current
+  oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_before" "$SERIAL" "${REVERSE_PORTS[@]}" || return 1
+  [ ! -e "$reverse_owner_receipt" ] && [ ! -L "$reverse_owner_receipt" ] || return 1
+  : >"$reverse_owner_receipt" || return 1
+  chmod 600 "$reverse_owner_receipt" || return 1
+  reverse_owner_identity="$(oxid_filesystem_identity "$reverse_owner_receipt")" || return 1
+  printf '%s\n' android-adb-reverse-owner-v1 >"$reverse_owner_receipt" || return 1
+  reverse_mapping_owned=1
+  for port in "${REVERSE_PORTS[@]}"; do
+    oxid_path_has_identity "$reverse_owner_receipt" "$reverse_owner_identity" || return 1
+    printf '%s\n' "$port" >>"$reverse_owner_receipt" || return 1
+    adb_device reverse "tcp:$port" "tcp:$port" >/dev/null || return 1
+  done
+  reverse_owner_receipt_has_all_routes || return 1
+  current="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)" || return 1
+  oxid_adb_reverse_snapshot_has_exact_managed_routes "$current" "$SERIAL" "${REVERSE_PORTS[@]}"
+}
+
+cleanup_owned_reverse_mappings() {
+  local current port
+  read_reverse_owner_receipt || return 1
+  current="$(cleanup_adb reverse --list 2>/dev/null | run_deadline 5 sort)" || return 1
+  if [ "${#reverse_owner_ports[@]}" -eq 0 ]; then
+    [ "$current" = "$reverse_before" ] || return 1
+    oxid_path_has_identity "$reverse_owner_receipt" "$reverse_owner_identity" || return 1
+    run_deadline 5 rm -f -- "$reverse_owner_receipt" || return 1
+    reverse_mapping_owned=0
+    return 0
+  fi
+  oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent \
+    "$current" "$SERIAL" "${reverse_owner_ports[@]}" || return 1
+  for port in "${reverse_owner_ports[@]}"; do
+    if oxid_adb_reverse_snapshot_has_exact_managed_routes "$current" "$SERIAL" "$port"; then
+      cleanup_adb reverse --remove "tcp:$port" >/dev/null 2>&1 || return 1
+    elif ! oxid_adb_reverse_snapshot_has_no_managed_routes "$current" "$SERIAL" "$port"; then
+      return 1
+    fi
+  done
+  current="$(cleanup_adb reverse --list 2>/dev/null | run_deadline 5 sort)" || return 1
+  [ "$current" = "$reverse_before" ] || return 1
+  oxid_path_has_identity "$reverse_owner_receipt" "$reverse_owner_identity" || return 1
+  run_deadline 5 rm -f -- "$reverse_owner_receipt" || return 1
+  reverse_mapping_owned=0
+}
+
 remove_forward() {
   if [ "$forward_active" -eq 1 ]; then
     cleanup_adb forward --remove "tcp:$CDP_PORT" >/dev/null 2>&1 || return 1
@@ -291,9 +384,9 @@ cleanup() {
         cleanup_adb shell "run-as $PACKAGE sh -c 'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp'" >/dev/null 2>&1 || cleanup_ok=false
         cleanup_adb uninstall "$PACKAGE" >/dev/null 2>&1 || cleanup_ok=false
       fi
-      for port in "${REVERSE_PORTS[@]}"; do cleanup_adb reverse --remove "tcp:$port" >/dev/null 2>&1 || true; done
-      current="$(cleanup_adb reverse --list 2>/dev/null | run_deadline 5 sort || true)"
-      if [ "$forward_cleanup" = true ] && [ "$current" = "$reverse_before" ]; then
+    fi
+    if [ "$reverse_mapping_owned" -eq 1 ]; then
+      if cleanup_owned_reverse_mappings && [ "$forward_cleanup" = true ]; then
         reverse_cleanup=true
       else
         cleanup_ok=false
@@ -435,10 +528,9 @@ host_epoch="$(run_deadline 5 date +%s)" || fail host-clock
 emulator_epoch="$(adb_text shell date +%s 2>/dev/null)" || fail emulator-clock
 oxid_epoch_seconds_are_close "$host_epoch" "$emulator_epoch" 300 || fail emulator-clock
 [ -z "$(adb_text shell pm path "$PACKAGE" 2>/dev/null)" ] || fail preinstalled-package
-reverse_before="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)"
-for port in "${REVERSE_PORTS[@]}"; do
-  if run_deadline 5 awk -v route="tcp:$port" '$2 == route || $3 == route { found=1 } END { exit !found }' <<<"$reverse_before"; then fail occupied-reverse; fi
-done
+reverse_before="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)" || fail reverse-inventory
+oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_before" "$SERIAL" "${REVERSE_PORTS[@]}" \
+  || fail occupied-reverse
 
 timeout -k 30s 7200s "$ROOT/scripts/e2e/portal-virtual-mobile-stack.sh" >>"$PRIVATE_LOG" 2>&1 &
 portal_pid=$!
@@ -475,12 +567,14 @@ run_deadline 5 chmod 600 "$BUILD_RECEIPT" || fail build-receipt-mode
 run_deadline 60 tar -xf "$archive" -C "$BUILD_SOURCE" || fail build-source-extract
 run_deadline 5 rm -f -- "$archive" || fail build-archive-remove
 [ ! -e "$BUILD_SOURCE/target" ] || fail isolated-build-output
+prepare_owned_reverse_mappings || fail reverse-ownership
 launcher_mutation_owned=1
 timeout -k 30s 4500s env OXID_ANDROID_DEVICE="$SERIAL" OXID_ANDROID_AVD="$avd" \
   OXID_ANDROID_ADB_TIMEOUT_SECONDS=180 OXID_MOBILE_CUSTODY=development \
   OXID_STANDALONE_NETWORK_PROFILE=local OXID_MOBILE_PORTAL_PROFILE=local \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$manifest_path" \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$manifest_sha" \
+  OXID_ANDROID_REVERSE_OWNER_RECEIPT="$reverse_owner_receipt" \
   "$BUILD_SOURCE/scripts/run-android-emulator.sh" >>"$PRIVATE_LOG" 2>&1 &
 launcher_pid=$!
 oxid_job_is_running "$launcher_pid" || fail launcher-supervisor
@@ -491,8 +585,10 @@ apk="$BUILD_SOURCE/target/dx/oxid-app/debug/android/app/app/build/outputs/apk/de
 apk_sha256="$(run_deadline 30 shasum -a 256 "$apk")"; apk_sha256="${apk_sha256%% *}"
 [[ "$apk_sha256" =~ ^[0-9a-f]{64}$ ]] || fail apk-digest
 [ -n "$(adb_text shell pm path "$PACKAGE" 2>/dev/null)" ] || fail package-install
-reverse_after="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)"
-for port in "${REVERSE_PORTS[@]}"; do run_deadline 5 awk -v route="tcp:$port" '$2 == route && $3 == route { found=1 } END { exit !found }' <<<"$reverse_after" || fail reverse-install; done
+reverse_after="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)" || fail reverse-inventory
+oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_after" "$SERIAL" "${REVERSE_PORTS[@]}" \
+  || fail reverse-install
+reverse_owner_receipt_has_all_routes || fail reverse-receipt
 
 capability_absent() {
   adb_device shell "run-as $PACKAGE sh -c 'test ! -e files/portal-offer.capability && test ! -e files/.portal-offer.capability.tmp'" >/dev/null 2>&1

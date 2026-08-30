@@ -126,8 +126,13 @@ or kills shared CoreSimulator processes.
 
 Android uses fixed port 5562/serial `emulator-5562`, launches the selected AVD as
 a directly supervised read-only no-snapshot child, verifies QEMU and exact AVD
-identity, scopes every ADB operation to that serial, and removes only its package
-and mappings. Ambiguous process, mapping, package, evidence, listener, lock, or
+identity, and scopes every ADB operation to that serial. The harness first
+requires every managed reverse port to be absent, then creates its exact
+same-port mappings under a private mode-0600 receipt; the packaged launcher
+receives that receipt and validates rather than re-creates the routes. Cleanup
+removes only receipt-recorded routes that still have their exact serial/local/
+remote identity and then requires the full pre-mutation reverse listing to be
+restored. Ambiguous process, mapping, package, evidence, listener, lock, or
 receipt state is preserved for owner review and suppresses evidence.
 
 Hard ceilings are 15–30 seconds for control/ADB/simctl operations, five minutes

@@ -41,6 +41,70 @@ oxid_require_empty_adb_inventory() {
   oxid_adb_inventory_is_empty "$inventory"
 }
 
+# ADB reverse has no owner metadata. These parsers therefore make ownership
+# explicit: a managed route may be absent, or exactly one route on the expected
+# serial with equal local and remote TCP ports. Any other use of a managed port
+# is ambiguous and must be preserved rather than removed.
+oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent() {
+  local snapshot="$1" serial="$2" ports
+  shift 2
+  [[ "$serial" =~ ^emulator-[0-9]+$ ]] || return 1
+  [ "$#" -gt 0 ] || return 1
+  ports=""
+  for port in "$@"; do
+    [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$port" -le 65535 ] || return 1
+    case " $ports " in *" $port "*) return 1 ;; esac
+    ports+="${ports:+ }$port"
+  done
+  timeout -k 1s "${OXID_ADB_REVERSE_PARSE_TIMEOUT_SECONDS:-5}s" \
+    awk -v expected_serial="$serial" -v ports="$ports" '
+      BEGIN {
+        split(ports, values, " ")
+        for (i in values) managed["tcp:" values[i]] = 1
+      }
+      NF == 0 { next }
+      NF != 3 { invalid = 1; next }
+      ($2 in managed) || ($3 in managed) {
+        if ($1 != expected_serial || !($2 in managed) || $2 != $3 || ++seen[$2] != 1) invalid = 1
+      }
+      END { exit invalid ? 1 : 0 }
+    ' <<<"$snapshot"
+}
+
+oxid_adb_reverse_snapshot_has_no_managed_routes() {
+  local snapshot="$1" serial="$2" ports
+  shift 2
+  oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent "$snapshot" "$serial" "$@" || return 1
+  ports="$*"
+  timeout -k 1s "${OXID_ADB_REVERSE_PARSE_TIMEOUT_SECONDS:-5}s" \
+    awk -v ports="$ports" '
+      BEGIN {
+        split(ports, values, " ")
+        for (i in values) managed["tcp:" values[i]] = 1
+      }
+      ($2 in managed) || ($3 in managed) { found = 1 }
+      END { exit found ? 1 : 0 }
+    ' <<<"$snapshot"
+}
+
+oxid_adb_reverse_snapshot_has_exact_managed_routes() {
+  local snapshot="$1" serial="$2" ports
+  shift 2
+  oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent "$snapshot" "$serial" "$@" || return 1
+  ports="$*"
+  timeout -k 1s "${OXID_ADB_REVERSE_PARSE_TIMEOUT_SECONDS:-5}s" \
+    awk -v ports="$ports" '
+      BEGIN {
+        split(ports, values, " ")
+        for (i in values) managed["tcp:" values[i]] = 1
+      }
+      $2 in managed { seen[$2]++ }
+      END {
+        for (route in managed) if (seen[route] != 1) exit 1
+      }
+    ' <<<"$snapshot"
+}
+
 oxid_epoch_seconds_are_close() {
   local host_epoch="$1" emulator_epoch="$2" tolerance="$3" delta
   [[ "$host_epoch" =~ ^[0-9]{10,11}$ && "$emulator_epoch" =~ ^[0-9]{10,11}$ \

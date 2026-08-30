@@ -106,6 +106,28 @@ if oxid_adb_inventory_is_exact_online "$wrong_emulator_inventory" emulator-5562;
 if oxid_adb_inventory_is_exact_online "$mixed_inventory" emulator-5562; then fail adb-mixed-exact; fi
 oxid_adb_inventory_is_exact_online "$exact_inventory" emulator-5562 || fail adb-exact
 
+reverse_empty=''
+reverse_exact=$'emulator-5562 tcp:6300 tcp:6300\nemulator-5562 tcp:8088 tcp:8088\nemulator-5562 tcp:9944 tcp:9944\n'
+reverse_wrong_remote=$'emulator-5562 tcp:6300 tcp:9999\n'
+reverse_wrong_serial=$'emulator-5554 tcp:6300 tcp:6300\n'
+oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_empty" emulator-5562 6300 8088 9944 \
+  || fail reverse-empty-baseline
+oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent \
+  "$reverse_exact" emulator-5562 6300 8088 9944 || fail reverse-exact-or-absent
+oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact" emulator-5562 6300 8088 9944 \
+  || fail reverse-exact-owned
+if oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_exact" emulator-5562 6300 8088 9944; then
+  fail reverse-occupied-baseline
+fi
+if oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent \
+  "$reverse_wrong_remote" emulator-5562 6300 8088 9944; then
+  fail reverse-wrong-remote
+fi
+if oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent \
+  "$reverse_wrong_serial" emulator-5562 6300 8088 9944; then
+  fail reverse-wrong-serial
+fi
+
 oxid_epoch_seconds_are_close 1700000000 1700000300 300 || fail emulator-clock-boundary
 if oxid_epoch_seconds_are_close 1700000000 1700000301 300; then fail emulator-clock-outside-window; fi
 if oxid_epoch_seconds_are_close invalid 1700000000 300; then fail emulator-clock-invalid-value; fi
@@ -380,6 +402,12 @@ for runner in \
 done
 grep -qF 'OXID_ANDROID_ADB_TIMEOUT_SECONDS=180 OXID_MOBILE_CUSTODY=development' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-launcher-adb-budget
+grep -qF 'prepare_owned_reverse_mappings || fail reverse-ownership' \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-reverse-owner-setup
+grep -qF 'OXID_ANDROID_REVERSE_OWNER_RECEIPT="$reverse_owner_receipt"' \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-reverse-owner-receipt
+grep -qF 'OXID_ANDROID_REVERSE_OWNER_RECEIPT' "$ROOT/scripts/run-android-emulator.sh" \
+  || fail android-launcher-receipt
 # The prepared holder is already the app's foreground activity. A warm offer
 # must request single-top delivery so Android calls the existing activity's
 # onNewIntent instead of leaving the authenticated one-shot handoff ready.
