@@ -598,9 +598,14 @@ its production-ready Rust issuer with Lace's supported Smocker Didit seam; it
 does not run the TypeScript reference issuer from
 `midnight-identity-solution-examples`. Lace's did-manager bootstraps the issuer
 DID and key against the existing local stack, and the Lace resolver observes it
-through local indexed state. Only the native `oxid-headless` executable may
-combine that profile with the exact `undeployed` `127.0.0.1` standalone bundle;
-the general constructor and desktop behavior remain fail-closed. The same child
+through local indexed state. The native `oxid-headless` executable and the separately compile-gated
+ARM64-Darwin `desktop-portal-test` app may combine that profile with the exact
+`undeployed` `127.0.0.1` standalone bundle; the general constructor and normal
+desktop behavior remain fail-closed. The desktop target is owner-invoked L4,
+absent from `HostedTarget` and normal releases, and uses a one-shot app-private
+scanner capability only after its rendered Scan control is clicked. Its
+TCC fallback may click rendered Dioxus controls but cannot call scanner/router/use
+cases. The same headless child
 must preserve pending issuance while `wallet.connect` reports live indexer sync,
 and its websocket replay reports equal numeric current and target cursors. The
 running Lace KYC flow supplies the exact QR/copy offer URL; Oxid rejects before
@@ -608,7 +613,9 @@ consent with no token/nonce/credential calls, then explicitly accepts. This is
 Oxid indexer-sync evidence only: Oxid node and proof-server use are explicitly
 unproven. It is supported mock KYC through the Lace service, not live DIDIT,
 real-person KYC, production discovery, Oxid chain-write/proving/submission, or
-release evidence. ADR-0103 additionally
+release evidence. The desktop evidence likewise proves only app-observed
+indexer sync and keeps node/prover interaction explicitly false unless observed.
+ADR-0103 additionally
 permits one compile-gated physical Android tailnet conformance profile. Oxid owns
 consumer composition, lifecycle, mobile automation, and evidence; Portal input
 is only its merged public source and generic Tailscale HTTPS profile. Runtime

@@ -48,6 +48,7 @@ run_repository() {
   node --test tests/repository/pi-factory-policy-contract.test.mjs
   node --test tests/repository/integration-delivery-contract.test.mjs
   node --test tests/repository/dev-loop-stability-contract.test.mjs
+  node --test tests/repository/desktop-test-profile-contract.test.mjs
   node --test tests/repository/docs-link-contract.test.mjs
   node --test tests/repository/target-plan-contract.test.mjs
   node --test tests/repository/worktree-lifecycle-contract.test.mjs

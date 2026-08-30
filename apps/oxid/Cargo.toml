@@ -23,6 +23,15 @@ ui-profile-demo = ["oxid-ui-dioxus/ui-profile-demo", "oxid-ui-dioxus/app-profile
 # Explicit simulator/emulator composition. This never changes the default
 # production-facing composition selected by a normal application build.
 standalone-development = []
+# Owner-invoked ARM64-Darwin Dioxus test profile. It reuses the exact native
+# Portal/local-standalone policy and is absent from normal release/primary
+# targets and hosted target planning.
+desktop-portal-test = [
+  "desktop",
+  "standalone-development",
+  "oxid-composition/desktop-portal-test",
+  "oxid-ui-dioxus/desktop-test-click-driver",
+]
 # Opt-in native development route profile for the laptop-hosted standalone
 # stack. Routes are immutable loopback constants; Android emulators reach them
 # only through repository-owned adb reverse mappings.

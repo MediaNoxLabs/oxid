@@ -13,6 +13,9 @@ default = []
 # Native oxid-headless-only development admission for the exact local Portal +
 # standalone bundle. Other consumers compile without this escape hatch.
 headless-portal-local = []
+# Owner-invoked ARM64-Darwin Dioxus test profile. The app feature is the only
+# caller; normal composition remains unchanged.
+desktop-portal-test = ["oxid-adapter-identity-ingress/desktop-test-qr-scanner"]
 mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
 # Native-mobile Portal identity/HTTP capability. It is target-gated, and its
 # fixed trigger remains runtime-inert until the app-owned standalone-portal path

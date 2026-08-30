@@ -42,6 +42,22 @@ headless:
 portal-headless-e2e:
     ./scripts/e2e/portal-headless-e2e.sh
 
+# Run the canonical macOS laptop lane and require same-head evidence from both existing harnesses.
+portal-macos-laptop-e2e:
+    just portal-headless-e2e
+    just portal-desktop-e2e
+    jq -s -e \
+      --arg head "$(git rev-parse HEAD)" \
+      --arg tree "$(git rev-parse 'HEAD^{tree}')" \
+      'length == 2 and all(.[]; .oxid == {head:$head,tree:$tree})' \
+      target/portal-headless-e2e/evidence.json \
+      target/portal-desktop-e2e/evidence.json
+    echo "portal-macos-laptop-e2e: PASS evidence=target/portal-headless-e2e/evidence.json,target/portal-desktop-e2e/evidence.json"
+
+# Run the owner-invoked ARM64-Darwin Dioxus Portal journey.
+portal-desktop-e2e:
+    ./scripts/e2e/portal-desktop-e2e.sh
+
 # Start the virtual-mobile Portal issuer, resolver, offer endpoint, and authenticated manifest.
 portal-virtual-mobile-stack:
     ./scripts/e2e/portal-virtual-mobile-stack.sh

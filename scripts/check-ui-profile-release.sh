@@ -148,6 +148,21 @@ fi
 cargo check -p oxid-app --no-default-features \
   --features desktop,standalone-development,standalone-local
 
+if [ "$(uname -s)-$(uname -m)" = "Darwin-arm64" ]; then
+  cargo check -p oxid-app --no-default-features --features desktop-portal-test
+else
+  if cargo check -p oxid-app --no-default-features \
+    --features desktop-portal-test >"$failure_log" 2>&1; then
+    echo "desktop-portal-test compiled outside ARM64 macOS" >&2
+    exit 1
+  fi
+  if ! rg -q 'desktop-portal-test is available only on ARM64 macOS' "$failure_log"; then
+    echo "desktop-portal-test failed for an unexpected reason" >&2
+    sed -n '1,120p' "$failure_log" >&2
+    exit 1
+  fi
+fi
+
 # The Portal dependency feature is a low-level mobile capability, not proof of
 # caller provenance. Direct selection remains runtime-inert because only the
 # app-owned standalone-portal branch calls the explicit Portal constructor; the
@@ -365,6 +380,12 @@ if rg -a -q 'OXID_STANDALONE_TAILNET_PROFILE' "$release_binary"; then
 fi
 if rg -a -q 'OXID_STANDALONE_PORTAL_PROFILE' "$release_binary"; then
   echo "normal release binary contains the standalone Portal profile" >&2
+  exit 1
+fi
+if rg -a -q \
+  'OXID_DESKTOP_PORTAL_TEST_PROFILE|portal-offer\.capability|Oxid Desktop Test' \
+  "$release_binary"; then
+  echo "normal release binary contains the ARM64 desktop test profile" >&2
   exit 1
 fi
 if rg -a -q \
