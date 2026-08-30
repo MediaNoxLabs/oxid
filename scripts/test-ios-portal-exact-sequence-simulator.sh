@@ -359,6 +359,7 @@ capability_candidate="$app_support/.portal-offer.capability.tmp"
 
 journey_deadline=$((SECONDS + 600))
 xcode_project="$PRIVATE_STATE/ios-project"
+run_deadline 5 mkdir "$xcode_project" || fail xcode-project-create
 run_deadline 300 env OXID_REPOSITORY_ROOT="$BUILD_SOURCE" xcodegen generate \
   --spec "$BUILD_SOURCE/tests/mobile/ios/project.yml" --project "$xcode_project" >>"$PRIVATE_LOG" 2>&1 || fail xcodegen
 host_user="$(id -un)"

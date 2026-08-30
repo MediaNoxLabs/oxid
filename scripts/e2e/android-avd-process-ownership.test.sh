@@ -294,6 +294,8 @@ for runner in \
     fail nested-build-source
   fi
 done
+grep -qF 'run_deadline 5 mkdir "$xcode_project" || fail xcode-project-create' \
+  "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh" || fail xcode-project-parent
 
 acquisition_parent="$temporary/evidence-acquisition"
 timeout -k 1s 5s mkdir "$acquisition_parent"
