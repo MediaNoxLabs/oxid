@@ -13,7 +13,7 @@ for required_command in pi node jq; do
   fi
 done
 
-expected_pi_version="0.84.0"
+expected_pi_version="$(tr -d '[:space:]' < .pi/runtime-version)"
 pi_version="$(pi --version)"
 if [[ "$pi_version" != "$expected_pi_version" ]]; then
   echo "unexpected Pi version: expected $expected_pi_version, found $pi_version" >&2

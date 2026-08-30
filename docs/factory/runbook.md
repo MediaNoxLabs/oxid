@@ -15,7 +15,7 @@ routes through a coordination server.
 
 | Piece | Version | Source |
 | --- | --- | --- |
-| `pi-coding-agent` | `0.84.0` | nixpkgs pin in `nix/devshells/default.nix`, `devShells.default` |
+| `pi-coding-agent` | `0.84.0` | expected version in `.pi/runtime-version`; executable supplied by `devShells.default` |
 | `dev-loops` | `0.9.0` | `.pi/settings.json` → project-local `.pi/npm` |
 | `pi-subagents` | `0.42.1` | same |
 | `@input-output-hk/agent-review-pi` | `0.5.0` | same, **GitHub Packages — needs a token** |

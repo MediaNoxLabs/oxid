@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import test from "node:test";
@@ -8,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { createDeliveryBranchRewriteSink } from "../../scripts/loop/pre-flight-gate.mjs";
 import { auditPi } from "../../scripts/factory/audit-pi.mjs";
-import { mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
+import { applyUserPolicy, mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
 import { FACTORY_STATE_LABELS, syncFactoryLabels } from "../../scripts/github/sync-factory-labels.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -53,7 +54,7 @@ test("user subagent policy merge is bounded and preserves unrelated settings", (
   ]);
 });
 
-test("preflight rewrites split generic main guidance to integration", () => {
+test("preflight rewrites split and late generic main guidance to integration", async () => {
   let output = "";
   const destination = new Writable({
     write(chunk, _encoding, callback) {
@@ -64,9 +65,81 @@ test("preflight rewrites split generic main guidance to integration", () => {
   const rewritten = createDeliveryBranchRewriteSink(destination);
   rewritten.sink.write("create from origin/ma");
   rewritten.sink.write("in, then continue\n");
-  rewritten.flush();
-  assert.equal(output, "create from origin/integration, then continue\n");
+  await rewritten.flush();
+  await new Promise((resolve, reject) => rewritten.sink.write("late origin/main\n", (error) => error ? reject(error) : resolve()));
+  assert.equal(output, "create from origin/integration, then continue\nlate origin/integration\n");
   assert.doesNotMatch(output, /origin\/main/u);
+});
+
+test("preflight rewrite sink honors destination backpressure", async () => {
+  let output = "";
+  let release;
+  const destination = new Writable({
+    highWaterMark: 1,
+    write(chunk, _encoding, callback) {
+      output += chunk.toString();
+      release = callback;
+    },
+  });
+  const rewritten = createDeliveryBranchRewriteSink(destination);
+  let completed = false;
+  const write = new Promise((resolve, reject) => rewritten.sink.write(
+    `prefix ${"x".repeat(64)} origin/main\n`,
+    (error) => {
+      completed = true;
+      if (error) reject(error);
+      else resolve();
+    },
+  ));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(completed, false);
+  release();
+  await write;
+  const flush = rewritten.flush();
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  await flush;
+  assert.match(output, /origin\/integration/u);
+  assert.doesNotMatch(output, /origin\/main/u);
+});
+
+test("user policy apply is explicit, atomic, private, and preserves existing keys", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-policy-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const agentDir = path.join(root, "agent");
+  const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+  const env = { PI_CODING_AGENT_DIR: agentDir };
+
+  await assert.rejects(applyUserPolicy({ env }), /without --execute/u);
+  const created = await applyUserPolicy({ env, execute: true });
+  assert.equal(created.changed, true);
+  assert.equal(created.backupPath, null);
+  assert.equal((await stat(configPath)).mode & 0o777, 0o600);
+
+  const aligned = await applyUserPolicy({ env, execute: true });
+  assert.equal(aligned.changed, false);
+  assert.equal(aligned.backupPath, null);
+
+  const existing = { unrelated: { preserved: true }, parallel: { concurrency: 99 } };
+  await writeFile(configPath, `${JSON.stringify(existing)}\n`);
+  await chmod(configPath, 0o644);
+  const updated = await applyUserPolicy({ env, execute: true, now: new Date("2026-08-30T00:00:00.000Z") });
+  assert.equal(updated.changed, true);
+  assert.equal((await stat(configPath)).mode & 0o777, 0o600);
+  assert.equal((await stat(updated.backupPath)).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(await readFile(updated.backupPath, "utf8")), existing);
+  assert.equal(JSON.parse(await readFile(configPath, "utf8")).unrelated.preserved, true);
+});
+
+test("user policy apply leaves invalid JSON untouched", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-policy-invalid-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const agentDir = path.join(root, "agent");
+  const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+  await mkdir(path.dirname(configPath), { recursive: true });
+  await writeFile(configPath, "{invalid\n");
+  await assert.rejects(applyUserPolicy({ env: { PI_CODING_AGENT_DIR: agentDir }, execute: true }), /Cannot read/u);
+  assert.equal(await readFile(configPath, "utf8"), "{invalid\n");
 });
 
 test("factory claim surface fails closed and exposes no raw GitHub mutations", async () => {

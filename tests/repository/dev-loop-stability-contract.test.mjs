@@ -84,11 +84,12 @@ async function realMkdtemp(prefix) {
 
 async function installedPi084Root(t) {
   try {
+    const expectedVersion = (await readFile(path.join(repoRoot, ".pi", "runtime-version"), "utf8")).trim();
     const executable = (execFileSync("which", ["pi"], { encoding: "utf8" })).trim();
     const root = path.dirname(path.dirname(await realpath(executable)));
     const packageRoot = path.join(root, "lib", "node_modules", "pi-monorepo");
     const manifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
-    if (manifest.version !== "0.84.0") throw new Error(`found Pi ${manifest.version}`);
+    if (manifest.version !== expectedVersion) throw new Error(`expected Pi ${expectedVersion}, found ${manifest.version}`);
     return packageRoot;
   } catch (error) {
     t.skip(`Pi 0.84 runner fixture unavailable: ${error.message}`);
@@ -729,7 +730,7 @@ test("Oxid worktree creation applies zero consumer provisioning despite a dirty 
   assert.equal(await lstat(path.join(fixture.worktree, "node_modules")).catch(() => null), null);
 });
 
-test("new managed worktrees fail closed when factory admission is red", async (t) => {
+test("new managed worktrees gate only on host capacity admission", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const existing = await enforceFactoryAdmissionForCreation([
@@ -739,17 +740,28 @@ test("new managed worktrees fail closed when factory admission is red", async (t
   });
   assert.equal(existing.reused, true);
 
-  await assert.rejects(enforceFactoryAdmissionForCreation([
+  let auditOptions;
+  const admitted = await enforceFactoryAdmissionForCreation([
     "--repo-root", fixture.root, "--issue", "151", "--base", "origin/integration",
+  ], {
+    admissionAudit: async (options) => {
+      auditOptions = options;
+      return { admissionReady: true, checks: [{ id: "worktree-admission", status: "pass" }] };
+    },
+  });
+  assert.equal(admitted.reused, false);
+  assert.deepEqual(auditOptions, { repoRoot: await realpath(fixture.root) });
+
+  await assert.rejects(enforceFactoryAdmissionForCreation([
+    "--repo-root", fixture.root, "--issue", "152", "--base", "origin/integration",
   ], {
     admissionAudit: async () => ({
       admissionReady: false,
       checks: [
         { id: "worktree-admission", status: "fail" },
-        { id: "metrics-coverage", status: "fail" },
       ],
     }),
-  }), /factory admission is blocked \(worktree-admission, metrics-coverage\).*--audit-pi/su);
+  }), /factory admission is blocked \(worktree-admission\).*--audit-pi/su);
 });
 
 test("Oxid worktree consumer preserves help, parse-error, conflict, jq, and silent output contracts", async (t) => {

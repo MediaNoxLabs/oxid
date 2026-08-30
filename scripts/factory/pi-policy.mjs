@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
-import { copyFile, chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { copyFile, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -93,10 +94,14 @@ export async function applyUserPolicy({ env = process.env, execute = false, now 
     await copyFile(configPath, backupPath, fsConstants.COPYFILE_EXCL);
     await chmod(backupPath, 0o600);
   }
-  const temporary = path.join(parent, `.config.json.${process.pid}.tmp`);
-  await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-  await rename(temporary, configPath);
-  await chmod(configPath, 0o600);
+  const temporary = path.join(parent, `.config.json.${process.pid}.${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await rename(temporary, configPath);
+    await chmod(configPath, 0o600);
+  } finally {
+    await rm(temporary, { force: true });
+  }
   return { changed: true, configPath, backupPath };
 }
 

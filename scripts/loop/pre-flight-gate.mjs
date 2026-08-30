@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { fileURLToPath } from "node:url";
+import { once } from "node:events";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Writable } from "node:stream";
@@ -51,27 +52,39 @@ export function createDeliveryBranchRewriteSink(destination) {
   let flushed = false;
   const keep = PACKAGE_DELIVERY_BRANCH.length - 1;
   const rewrite = (value) => value.replaceAll(PACKAGE_DELIVERY_BRANCH, REPOSITORY_DELIVERY_BRANCH);
-  const emitStablePrefix = () => {
+  const writeDestination = (value, callback) => {
+    if (value.length === 0 || destination.write(value)) callback();
+    else destination.once("drain", callback);
+  };
+  const stablePrefix = () => {
     pending = rewrite(pending);
-    if (pending.length <= keep) return;
-    destination.write(pending.slice(0, pending.length - keep));
+    if (pending.length <= keep) return "";
+    const value = pending.slice(0, pending.length - keep);
     pending = pending.slice(pending.length - keep);
+    return value;
   };
   const sink = new Writable({
     write(chunk, encoding, callback) {
-      pending += decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
-      emitStablePrefix();
-      callback();
+      const decoded = decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
+      if (flushed) {
+        writeDestination(rewrite(decoded), callback);
+        return;
+      }
+      pending += decoded;
+      writeDestination(stablePrefix(), callback);
     },
   });
   return {
     sink,
-    flush() {
+    async flush() {
       if (flushed) return;
       flushed = true;
       pending += decoder.end();
-      destination.write(rewrite(pending));
+      const finalOutput = rewrite(pending);
       pending = "";
+      if (finalOutput.length > 0 && !destination.write(finalOutput)) {
+        await once(destination, "drain");
+      }
     },
   };
 }
@@ -117,8 +130,7 @@ export async function runPreFlightGate(argv = process.argv.slice(2), {
       label: "pre-flight gate",
     });
   } finally {
-    rewrittenStdout.flush();
-    rewrittenStderr.flush();
+    await Promise.all([rewrittenStdout.flush(), rewrittenStderr.flush()]);
   }
 }
 

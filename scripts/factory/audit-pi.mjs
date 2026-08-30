@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import { checkUserPolicy } from "./pi-policy.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const EXPECTED_PI_VERSION = "0.84.0";
 const EXPECTED_PACKAGES = new Map([
   ["dev-loops", "0.9.0"],
   ["pi-subagents", "0.42.1"],
@@ -143,14 +142,34 @@ async function inspectMetrics(repoRoot) {
     }));
     const valid = audit.records?.valid ?? 0;
     const invalid = audit.records?.invalid ?? 0;
-    return check("metrics-coverage", valid > 0 && invalid === 0 ? "pass" : "fail",
-      valid > 0 && invalid === 0
+    const status = invalid > 0 ? "fail" : valid > 0 ? "pass" : "warn";
+    return check("metrics-coverage", status,
+      status === "pass"
         ? `${valid} valid private work-item metric records available`
-        : `${valid} valid and ${invalid} invalid work-item metric records; at least one valid record is required`,
-      { valid, invalid }, "operational");
+        : status === "warn"
+          ? "No private work-item metrics exist yet; record the first completed work item to establish coverage"
+          : `${valid} valid and ${invalid} invalid work-item metric records`,
+      { valid, invalid }, "observability");
   } catch (error) {
-    return check("metrics-coverage", "fail", `Metrics store unavailable: ${error.message}`, undefined, "operational");
+    return check("metrics-coverage", "warn", `Metrics store unavailable: ${error.message}`, undefined, "observability");
   }
+}
+
+/**
+ * Worktree creation needs only host-capacity admission. It deliberately does
+ * not depend on Pi being installed, user policy being configured, documentation
+ * prose, or prior metrics existing, so a fresh checkout can create its first
+ * isolated worker.
+ */
+export async function auditWorktreeAdmission({ repoRoot = DEFAULT_REPO_ROOT } = {}) {
+  const checks = inspectOperationalState(repoRoot);
+  return {
+    schemaVersion: 1,
+    operationalChecked: true,
+    configReady: null,
+    admissionReady: checks.every((item) => item.status !== "fail"),
+    checks,
+  };
 }
 
 export async function auditPi({
@@ -161,6 +180,7 @@ export async function auditPi({
   userPolicyResult = undefined,
 } = {}) {
   const checks = [];
+  const expectedPiVersion = (await readFile(path.join(repoRoot, ".pi", "runtime-version"), "utf8")).trim();
   const settings = JSON.parse(await readFile(path.join(repoRoot, ".pi", "settings.json"), "utf8"));
   const settingProblems = Object.entries(EXPECTED_PROJECT_VALUES)
     .filter(([field, expected]) => JSON.stringify(getAtPath(settings, field)) !== JSON.stringify(expected))
@@ -196,10 +216,10 @@ export async function auditPi({
   if (effectivePiVersion === undefined) {
     try { effectivePiVersion = run("pi", ["--version"], { cwd: repoRoot }); } catch { effectivePiVersion = null; }
   }
-  checks.push(check("pi-runtime", effectivePiVersion === EXPECTED_PI_VERSION ? "pass" : "fail",
-    effectivePiVersion === EXPECTED_PI_VERSION
-      ? `Pi ${EXPECTED_PI_VERSION} is active`
-      : `Expected Pi ${EXPECTED_PI_VERSION}; active executable reports ${effectivePiVersion ?? "unavailable"}`));
+  checks.push(check("pi-runtime", effectivePiVersion === expectedPiVersion ? "pass" : "fail",
+    effectivePiVersion === expectedPiVersion
+      ? `Pi ${expectedPiVersion} is active`
+      : `Expected Pi ${expectedPiVersion}; active executable reports ${effectivePiVersion ?? "unavailable"}`));
 
   const agentProblems = [];
   const agentDir = path.join(repoRoot, ".pi", "agents");
@@ -224,7 +244,6 @@ export async function auditPi({
     /maxFanoutReviewers:\s*2/u,
     /maxParallel:\s*1/u,
     /reDispatchMaxRetries:\s*0/u,
-    /humanMergeOnly:\s*false/u,
   ];
   checks.push(check("dev-loop-bounds", devloopBounds.every((pattern) => pattern.test(devloops)) ? "pass" : "fail",
     devloopBounds.every((pattern) => pattern.test(devloops))
@@ -242,15 +261,16 @@ export async function auditPi({
   checks.push(check("worker-topology", topologyControls.every((pattern) => pattern.test(workerTopology)) ? "pass" : "fail",
     topologyControls.every((pattern) => pattern.test(workerTopology))
       ? "Local, cloud, and independent worker concurrency scopes preserve isolated mutation lanes"
-      : "The multi-worker ownership or cloud admission contract is incomplete"));
+      : "The multi-worker ownership or cloud admission contract is incomplete",
+    undefined, "documentation"));
 
   const pullRequestTemplate = await readFile(path.join(repoRoot, ".github", "pull_request_template.md"), "utf8");
-  const closeoutRecorded = /final-head private metrics record and bounded closeout comment/u.test(pullRequestTemplate)
-    && /requireRetrospective:\s*false/u.test(devloops);
+  const closeoutRecorded = /final-head private metrics record and bounded closeout comment/u.test(pullRequestTemplate);
   checks.push(check("bounded-closeout", closeoutRecorded ? "pass" : "fail",
     closeoutRecorded
-      ? "Every PR requires a no-model metrics closeout; deep retrospectives remain conditional"
-      : "The routine metrics/retrospective closeout contract is missing"));
+      ? "Every PR requires a no-model metrics closeout"
+      : "The routine metrics closeout contract is missing",
+    undefined, "documentation"));
 
   const factory = await readFile(path.join(repoRoot, ".pi", "extensions", "factory.ts"), "utf8");
   const mutatingGh = /["'](?:issue|pr)["']\s*,\s*["'](?:edit|comment|close|reopen|delete|merge|create)["']/u.test(factory);

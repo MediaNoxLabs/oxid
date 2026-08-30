@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { runManagedChild } from "../lib/managed-child-process.mjs";
 import { enforceSingleBase, readLongOptionValues } from "../lib/pinned-dev-loops-args.mjs";
-import { auditPi } from "../factory/audit-pi.mjs";
+import { auditWorktreeAdmission } from "../factory/audit-pi.mjs";
 
 const INTEGRATION_BASE = "origin/integration";
 
@@ -76,7 +76,7 @@ export function normalizeLinkedWorktreeContext(argv, { gitCommand = "git" } = {}
   return replaceOption(argv, "--repo-root", mainRoot);
 }
 
-export async function enforceFactoryAdmissionForCreation(args, { admissionAudit = auditPi } = {}) {
+export async function enforceFactoryAdmissionForCreation(args, { admissionAudit = auditWorktreeAdmission } = {}) {
   if (args.includes("--help") || args.includes("-h")) return { skipped: true };
   const repoRootValue = optionValue(args, "--repo-root");
   // Preserve the pinned package's parse-error contract for incomplete input.
@@ -84,7 +84,7 @@ export async function enforceFactoryAdmissionForCreation(args, { admissionAudit 
   const mainRoot = realpathSync(path.resolve(repoRootValue));
   const target = path.join(mainRoot, "tmp", "worktrees", "dev-loops", selectorValue(args));
   if (existsSync(target)) return { reused: true, target };
-  const audit = await admissionAudit({ repoRoot: mainRoot, includeOperational: true });
+  const audit = await admissionAudit({ repoRoot: mainRoot });
   if (!audit.admissionReady) {
     const failures = audit.checks.filter((item) => item.status === "fail").map((item) => item.id);
     throw new Error(
@@ -98,7 +98,7 @@ export async function runEnsureWorktree(argv = process.argv.slice(2), {
   cwd = process.cwd(),
   stdout = process.stdout,
   stderr = process.stderr,
-  admissionAudit = auditPi,
+  admissionAudit = auditWorktreeAdmission,
 } = {}) {
   const args = normalizeLinkedWorktreeContext(normalizeWorktreeArgs(argv));
   await enforceFactoryAdmissionForCreation(args, { admissionAudit });
