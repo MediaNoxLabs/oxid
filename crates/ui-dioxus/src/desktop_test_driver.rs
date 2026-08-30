@@ -179,7 +179,6 @@ return await (async () => {
     }
     style.textContent = "textarea, code, .privacy-value, .privacy-qr { visibility: hidden !important; }";
     const sensitive = [...document.querySelectorAll("textarea, code, .privacy-value, .privacy-qr")];
-    if (sensitive.length === 0) return false;
     const visibleText = document.body.innerText || "";
     const forbidden = [
       ["openid", "-credential-offer://"].join(""), "did:",
@@ -333,5 +332,13 @@ mod tests {
             assert!(script.contains("oxid-desktop-test-screenshot-redaction"));
             assert!(script.contains("visibility: hidden !important"));
         }
+        // A restored credential page may legitimately render no sensitive
+        // field. Its screenshot is still admissible only when the body-text
+        // denylist passes; treating an empty sensitive-node set as failure
+        // makes the restart harness fail before its rendered reverify proof.
+        assert!(RESTART_REVERIFY_STAGE.contains(
+            "forbidden.every((value) => !visibleText.includes(value))"
+        ));
+        assert!(!RESTART_REVERIFY_STAGE.contains("if (sensitive.length === 0) return false;"));
     }
 }
