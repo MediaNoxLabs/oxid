@@ -38,6 +38,9 @@ test("issue accepts either the completion notice or the protected valid-record s
   assert.match(source, /credential-record/u);
   assert.match(source, /textContent\.trim\(\) === "Valid"/u);
   assert.match(source, /function issuanceDiagnosticExpression\(\)/u);
+  assert.match(source, /invalidCredential/u);
+  assert.match(source, /invalidCredentialResponse/u);
+  assert.match(source, /credentialStoreUnavailable/u);
   assert.match(terminal, /const diagnosticState = await evaluate\(issuanceDiagnosticExpression\(\)\);/u);
   assert.match(terminal, /payload-free counters \$\{JSON\.stringify\(diagnosticCounts\)\} and state \$\{JSON\.stringify\(diagnosticState\)\}/u);
 });

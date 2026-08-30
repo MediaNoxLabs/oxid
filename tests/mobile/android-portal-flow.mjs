@@ -170,13 +170,19 @@ function issuanceDiagnosticExpression() {
       Array.from(record.querySelectorAll(".status-pill.success"))
         .some((element) => element.textContent.trim() === "Valid")
     );
+    const hasStatus = (value) => statuses.some((text) => text.includes(value));
     return {
       acceptReady: Boolean(${button("Accept and issue credential")}),
       issuanceBusy: Boolean(${button("Issuing credential…")}),
       reviewVisible: document.body.innerText.includes("Credential offer preview"),
       successNotice: document.body.innerText.includes("Credential issued, verified, and stored in the protected inventory."),
       validRecord,
-      failureStatus: statuses.some((text) => /credential|issuer|protocol|session|unavailable|failed|error/iu.test(text))
+      failureStatus: statuses.some((text) => /credential|issuer|protocol|session|unavailable|failed|error/iu.test(text)),
+      invalidCredential: hasStatus("The credential is not valid"),
+      invalidCredentialResponse: hasStatus("The issuer returned an invalid credential"),
+      issuerRejected: hasStatus("The issuer rejected the request"),
+      credentialStoreUnavailable: hasStatus("Credential storage is unavailable"),
+      genericFailure: hasStatus("The operation could not be completed")
     };
   })()`;
 }
