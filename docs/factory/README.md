@@ -17,11 +17,13 @@ current-head review evidence are the delivery gates.
 | [ci-target-matrix.md](ci-target-matrix.md) | Assurance levels, component routing, branch profiles, target dependencies, budgets, and promotion gaps. |
 | [runbook.md](runbook.md) | Phase 1 operations: what is installed, the three concurrency mechanisms, the label profile, and what refuses to work by design. |
 | [productive-loop.md](productive-loop.md) | Time-to-main SLOs, target routing, review limits, and worktree/disk lifecycle. |
+| [pi-runtime-audit.md](pi-runtime-audit.md) | Effective Pi/model/package budgets, measured disk state, package canaries, and operator setup. |
+| [worker-topology.md](worker-topology.md) | Multiple local sessions, cloud workers, independent engineer setup, and concurrency ownership. |
 
-Tooling lives in [`.pi/extensions/factory.ts`](../../.pi/extensions/factory.ts)
-(a [pi](https://pi.dev) repo-local extension) so any engineer or agent with the
-repository checkout and a `gh` login can participate — from any machine, with
-any LLM provider.
+Read-only status tooling lives in
+[`.pi/extensions/factory.ts`](../../.pi/extensions/factory.ts). GitHub mutation
+belongs to tracked, contract-tested repository wrappers; `/factory claim`
+fails closed until the guarded lease transaction in issue #197 is delivered.
 
 ## Design constraints
 
@@ -29,7 +31,8 @@ any LLM provider.
    existing development flow; a work item enters the factory only when it
    carries a `factory:*` label.
 2. **No coordination infrastructure.** GitHub is the lock service, the queue,
-   and the audit log. Any agent that can run `gh` can participate.
+   and the audit log. Any conforming worker that can run `gh` can participate
+   from an isolated local or cloud checkout.
 3. **Provider-agnostic.** Roles reference capabilities, never a specific LLM.
    Model selection is configuration (`.pi/settings.json`, `.devloops`
    persona `defaultModel`), not process.

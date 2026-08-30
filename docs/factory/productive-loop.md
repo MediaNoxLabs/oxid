@@ -13,9 +13,13 @@ not.
 - A routine PR should be merge-ready in 35–60 minutes of elapsed time.
 - At most two review agents run concurrently and at most four automatic review
   sessions are expected across ordinary draft and pre-approval gates.
-- Only one PR candidate is auto-driven remotely at a time.
-- Keep at most two active managed delivery worktrees. An experiment may use a
-  temporary third worktree only when its owner and deletion date are recorded.
+- Only one PR candidate is auto-driven remotely by each parent session.
+- Keep at most two active managed delivery worktrees per Git common checkout
+  on a host. An experiment may use a temporary third worktree only when its
+  owner and deletion date are recorded.
+- Multiple parents may work different issue branches locally or on other
+  hosts. One mutating parent owns each issue worktree; repository merges remain
+  serialized.
 - A clean gate is evidence, not permission to mutate the delivery branch. An
   agent may merge only an issue-backed `integration` PR when the active owner
   request explicitly authorizes it and the guarded merge audit passes.

@@ -6,6 +6,8 @@ argument-hint: "Active phase doc or rough plan, phase boundary, known constraint
 systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
+timeoutMs: 600000
+turnBudget: {"maxTurns":10,"graceTurns":1}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/refiner.agent.md (Copyright (c) 2026 mfittko). -->

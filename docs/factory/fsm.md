@@ -25,7 +25,7 @@ label is present at a time.
                             factory:merge-ready
                                      │ authorized clean merge
                                      ▼
-                                   done ──▶ retrospective note on the issue
+                                   done ──▶ bounded PR closeout comment
 ```
 
 Failure edges (from any active state):
@@ -77,9 +77,12 @@ and resolved conversations. `main` and `develop` remain human-only. Fresh
 Claude current-head evidence is added for high-risk `full` work, an owner
 request, or a disputed finding.
 
-## Retrospective
+## Retrospective and closeout
 
-Retrospectives are optional for routine work. After an incident, an SLO miss,
-or a high-risk delivery, the implementer (or steward) records what the gates
-caught, wall-clock and CI time consumed, and any protocol friction. The metrics
-loop aggregates these into metrics.md.
+Every work item leaves one bounded PR closeout comment stating whether the
+private final-head metric record was captured, whether an incident or SLO miss
+occurred, and which follow-up issue owns any confirmed regression. This is the
+routine retrospective and requires no additional model call. A deeper
+retrospective is required after an incident, an SLO miss, high-risk delivery,
+or an owner request; it records what the gates caught, wall-clock and CI time,
+and protocol friction without publishing private raw telemetry.

@@ -26,6 +26,7 @@ See `docs/integration-delivery.md`.
 - [ ] Branch, PR title, and every commit follow `docs/factory/contribution-policy.md`
 - [ ] Commits are OpenPGP signed, GitHub-verifiable, and include exact DCO `Signed-off-by` trailers
 - [ ] The diff was self-reviewed and the PR remains a draft until gates pass
+- [ ] The final-head private metrics record and bounded closeout comment are complete, or unavailable counters are identified without estimates
 
 ## Links
 

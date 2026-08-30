@@ -6,6 +6,8 @@ argument-hint: "Quality or CI task, relevant workflows/config files, required ch
 systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
+timeoutMs: 1200000
+turnBudget: {"maxTurns":14,"graceTurns":2}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/quality.agent.md (Copyright (c) 2026 mfittko). -->

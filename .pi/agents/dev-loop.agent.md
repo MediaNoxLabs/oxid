@@ -7,7 +7,9 @@ systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: true
 user-invocable: true
-maxSubagentDepth: 3
+maxSubagentDepth: 2
+timeoutMs: 3600000
+turnBudget: {"maxTurns":32,"graceTurns":2}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/dev-loop.agent.md (Copyright (c) 2026 mfittko). -->
@@ -72,7 +74,7 @@ If local facts, GitHub facts, and helper/state-machine output do not agree well 
 ## Subagent delegation
 
 <!-- pi-only -->
-This agent's frontmatter `tools:` comma-token scalar includes `subagent` (single-line comma form, no brackets — see #1111) and it sets `maxSubagentDepth: 3` to allow orchestrating parallel review, chains, and staged fix passes.
+This agent's frontmatter `tools:` comma-token scalar includes `subagent` (single-line comma form, no brackets — see #1111) and sets `maxSubagentDepth: 2`. The previous three-level chain is intentionally retired: the parent conductor dispatches workers and independent reviewers directly instead of allowing a worker to create another orchestration tier.
 <!-- /pi-only -->
 
 All delegation MUST originate from the handoff envelope: the envelope's `nextAction`, `requiredReads`, `stopRules`, and `acceptance` define the bounded task. The envelope is passed to child subagents as their primary handoff artifact.
