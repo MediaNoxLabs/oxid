@@ -89,16 +89,28 @@ exact PR head SHA. It never checks out or
 executes candidate files. The PR-title and body contexts use the same pattern,
 so a PR cannot approve a weakened workflow or checker included in its own diff.
 
-### Two-phase rollout
+### Completed rollout
 
 GitHub discovers `pull_request` workflow definitions from the candidate merge
 ref but `pull_request_target` definitions from the trusted base ref. Therefore
 the PR that installs the trusted workflows cannot also delete the legacy
 required-context workflows: doing so would leave that bootstrap head with no
 producer for its required contexts. Issue
-[#193](https://github.com/MediaNoxLabs/oxid/issues/193) is the bounded second
-phase. Immediately after this policy lands, it deletes only the two legacy
-workflow files, leaving the trusted workflows as the sole context producers.
+[#193](https://github.com/MediaNoxLabs/oxid/issues/193) completes the bounded
+second phase by deleting the two legacy workflows. The trusted workflows are
+now the sole context producers.
+
+### Required commit evidence and advisory metadata
+
+Conventional Commits, DCO, and OpenPGP prove the provenance of the exact commit
+history and remain a required merge status. Draft work can continue through the
+draft gate while that status is red, but the history must be repaired before
+pre-approval or merge.
+
+PR title, scope, branch, and body checks are advisory. They publish successful
+exact-head statuses with explicit advisory descriptions and workflow warnings
+when metadata is invalid. This keeps actionable feedback visible without
+turning administrative metadata into a merge blocker.
 
 ## Contribution labels
 
@@ -119,4 +131,6 @@ node scripts/github/sync-contribution-labels.mjs --execute
 ```
 
 Label metadata helps routing and metrics; it is not permission to trust the
-declared scope over the actual diff.
+declared scope over the actual diff. Classification itself is informational:
+an invalid title or label API failure emits a workflow warning but is not a
+merge gate.

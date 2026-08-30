@@ -5,7 +5,7 @@ on:
   # code. The trusted base policy parses only pull-request event metadata.
   # zizmor: ignore[dangerous-triggers] trusted-base metadata only; candidate code is never executed
   pull_request_target:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft]
 
 permissions:
   contents: read
@@ -40,6 +40,7 @@ jobs:
 
       - name: Replace contribution classification labels
         if: always()
+        continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           DERIVATION_PASSED: ${{ steps.derive.outcome == 'success' }}
@@ -67,4 +68,4 @@ jobs:
               issue_number: context.issue.number,
               labels: [...retained, ...desired],
             });
-            if (!passed) core.setFailed('Contribution labels were removed because the PR title is invalid.');
+            if (!passed) core.warning('Contribution labels were removed because the PR title is invalid.');

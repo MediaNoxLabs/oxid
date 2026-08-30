@@ -11,17 +11,17 @@ devices, and a separate repository remain explicit owner evidence.
 
 | Level | Required evidence | Budget | When it runs |
 | --- | --- | --- | --- |
-| L0 basic | PR title/body, DCO, GitHub-verified commit signature, repository contracts, formatting, architecture, lint, production compilation | 0–5 min | Every PR. Rust compilation is omitted only when the impact plan proves no Rust/build surface changed. |
+| L0 basic | Advisory PR title/body feedback; required DCO, GitHub-verified commit signature, repository contracts, formatting, architecture, lint, and production compilation | 0–5 min | Every PR. Rust compilation is omitted only when the impact plan proves no Rust/build surface changed. |
 | L1 host | Workspace unit tests on one Linux host | 5–10 min | Rust, UI, headless, platform, Compact, or build changes; on demand for any PR. |
 | L2 component integration | Hermetic headless black-box tests, then deterministic Docker integration when its fixture is ready | 5–10 min for the current hermetic lane; Docker budget pending measurement | Affected host/component changes and on demand. |
 | L3 extended | UI feature profiles, optimized UI release audit, coverage, quality, locked Nix package, Compact artifacts | 10–30 min per parallel lane | Affected high-risk/build changes; every `integration` delivery; release profile. |
 | L4 platform/release | WASM, Android, iOS, Portal, standalone Midnight, PreProd, physical-device and real-proof evidence | Target-specific | Scheduled, on demand, or owner-private until each row below has a hermetic hosted runner. |
 
-L0 is an envelope of existing required contexts rather than one serial job.
-`Validate PR title`, `Validate PR body`, `Verify commit sign-offs`, scanner,
-and the new `Basic gate` run in parallel. Commit signatures remain enforced by
-GitHub ruleset `21481544`; a checkout cannot independently verify an unknown
-contributor's GPG keyring.
+L0 is an envelope of parallel policy and build contexts rather than one serial
+job. `Validate PR title` and `Validate PR body` report advisory findings;
+`Verify commit sign-offs`, scanner, and the new `Basic gate` provide required
+evidence. Commit signatures remain enforced by GitHub ruleset `21481544`; a
+checkout cannot independently verify an unknown contributor's GPG keyring.
 
 ## Runnable and planned targets
 
