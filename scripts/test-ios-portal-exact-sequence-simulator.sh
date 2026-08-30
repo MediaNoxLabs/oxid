@@ -294,7 +294,7 @@ run_deadline 5 chmod 700 "$PRIVATE_STATE" || fail private-state-mode
 : >"$PRIVATE_LOG"
 run_deadline 5 chmod 600 "$PRIVATE_LOG" || fail private-log-mode
 
-simulator_name="oxid-issue-213-$$-$RANDOM"
+simulator_name="oxid-issue-213-$BASHPID-$RANDOM"
 simulator_mutation_started=1
 udid="$(oxid_ios_create_owned "$DEVELOPER_DIR_SELECTED" "$RUNTIME_ID" "$DEVICE_TYPE_ID" "$simulator_name" "$RECEIPT")" || fail simulator-create
 simulator_owned=1

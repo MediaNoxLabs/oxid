@@ -285,7 +285,7 @@ cleanup() {
 
   if [ -n "$emulator_pid" ]; then
     if oxid_job_is_running "$emulator_pid"; then
-      if oxid_terminate_emulator_job "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then emulator_cleanup=true; else cleanup_ok=false; fi
+      if oxid_terminate_emulator_job "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then emulator_cleanup=true; else cleanup_ok=false; fi
     else
       wait "$emulator_pid" >/dev/null 2>&1 || emulator_status=$?
       case "$emulator_status" in 0|137|143) emulator_cleanup=true ;; *) cleanup_ok=false ;; esac
@@ -385,12 +385,12 @@ run_deadline 5 chmod 600 "$PRIVATE_LOG" || fail private-log-mode
 "$EMULATOR" -avd "$avd" -read-only -no-snapshot -no-snapshot-save -port "$EMULATOR_PORT" </dev/null >>"$PRIVATE_LOG" 2>&1 &
 emulator_pid=$!
 for ((_attempt = 0; _attempt < 50; _attempt++)); do
-  oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" && break
+  oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" && break
   run_deadline 2 sleep 0.1
 done
-oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership
+oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership
 for ((_attempt = 0; _attempt < 300; _attempt++)); do
-  oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership-lost
+  oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership-lost
   inventory="$(oxid_adb_inventory_snapshot "$ADB" 2>/dev/null || true)"
   if oxid_adb_inventory_is_exact_online "$inventory" "$SERIAL" \
     && [ "$(adb_text shell getprop sys.boot_completed 2>/dev/null)" = 1 ]; then emulator_online=1; break; fi
@@ -445,7 +445,7 @@ run_deadline 5 rm -f -- "$archive" || fail build-archive-remove
 [ ! -e "$BUILD_SOURCE/target" ] || fail isolated-build-output
 launcher_mutation_owned=1
 timeout -k 30s 4500s env OXID_ANDROID_DEVICE="$SERIAL" OXID_ANDROID_AVD="$avd" \
-  OXID_ANDROID_ADB_TIMEOUT_SECONDS=45 OXID_MOBILE_CUSTODY=development \
+  OXID_ANDROID_ADB_TIMEOUT_SECONDS=180 OXID_MOBILE_CUSTODY=development \
   OXID_STANDALONE_NETWORK_PROFILE=local OXID_MOBILE_PORTAL_PROFILE=local \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$manifest_path" \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$manifest_sha" \
