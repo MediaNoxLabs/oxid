@@ -341,9 +341,10 @@ mod tests {
         // field. Its screenshot is still admissible only when the body-text
         // denylist passes; treating an empty sensitive-node set as failure
         // makes the restart harness fail before its rendered reverify proof.
-        assert!(RESTART_REVERIFY_STAGE.contains(
-            "forbidden.every((value) => !visibleText.includes(value))"
-        ));
+        assert!(
+            RESTART_REVERIFY_STAGE
+                .contains("forbidden.every((value) => !visibleText.includes(value))")
+        );
         assert!(!RESTART_REVERIFY_STAGE.contains("if (sensitive.length === 0) return false;"));
         assert!(RESTART_REVERIFY_STAGE.contains("let phase = \"documents\";"));
         assert!(RESTART_REVERIFY_STAGE.contains("return `failed:restart-${phase}`;"));
