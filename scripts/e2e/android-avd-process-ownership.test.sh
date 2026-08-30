@@ -277,6 +277,16 @@ stale_after="$(shasum -a 256 "$fixture_root/target/android-portal-exact-sequence
 if grep -Eq 'mv[[:space:]].*-f.*EVIDENCE' "$fixture_root/scripts/test-android-portal-exact-sequence-avd.sh"; then
   fail evidence-force-move
 fi
+for runner in \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" \
+  "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh"; do
+  grep -qF 'oxid_poll_job_dead "$portal_pid" 1200 || true' "$runner" \
+    || fail portal-cleanup-grace
+  grep -qF 'if [ "$build_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$runner" \
+    || fail failed-build-preservation
+  grep -qF 'if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$runner" \
+    || fail failed-log-preservation
+done
 
 acquisition_parent="$temporary/evidence-acquisition"
 timeout -k 1s 5s mkdir "$acquisition_parent"
@@ -367,4 +377,4 @@ if grep -q 'parent=timeout' "$fake_adb_log"; then fail launcher-unset-timeout; f
 grep -q 'serial=unset args=devices' "$fake_adb_log" || fail launcher-discovery-wrapper
 grep -q 'serial=fixture-device args=get-state' "$fake_adb_log" || fail launcher-selected-wrapper
 
-printf 'android-avd-process-ownership-contract: PASS process_group=bounded-term-kill direct_emulator=bounded-term-kill docker_query=error-timeout-nonempty evidence=no-clobber-concurrent lock=identity-preserved signal=partial-readiness adb_inventory=physical-mixed-refused adb_unset=normal\n'
+printf 'android-avd-process-ownership-contract: PASS process_group=bounded-term-kill direct_emulator=bounded-term-kill docker_query=error-timeout-nonempty evidence=no-clobber-concurrent lock=identity-preserved signal=partial-readiness failure=diagnostics-preserved adb_inventory=physical-mixed-refused adb_unset=normal\n'

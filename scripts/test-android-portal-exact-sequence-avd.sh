@@ -269,7 +269,10 @@ cleanup() {
 
   if [ -n "$portal_pid" ]; then
     if oxid_job_is_running "$portal_pid"; then
-      if [ "$portal_ready" -eq 1 ] && [ -f "$PORTAL_STATE/control-curl.conf" ]; then control_curl -X POST "$CONTROL_ORIGIN/complete" >/dev/null 2>&1 || true; fi
+      if [ "$portal_ready" -eq 1 ] && [ -f "$PORTAL_STATE/control-curl.conf" ]; then
+        control_curl -X POST "$CONTROL_ORIGIN/complete" >/dev/null 2>&1 || true
+        oxid_poll_job_dead "$portal_pid" 1200 || true
+      fi
       if oxid_job_is_running "$portal_pid"; then oxid_terminate_supervised_job "$portal_pid" || cleanup_ok=false; else wait "$portal_pid" >/dev/null 2>&1 || true; fi
     else
       wait "$portal_pid" >/dev/null 2>&1 || true
@@ -298,13 +301,13 @@ cleanup() {
     fi
   fi
 
-  if [ "$build_owned" -eq 1 ]; then
+  if [ "$build_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then
     if oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then
       run_deadline 30 rm -rf -- "$BUILD_SOURCE" >/dev/null 2>&1
       [ ! -e "$BUILD_SOURCE" ] && build_cleanup=true || cleanup_ok=false
     else cleanup_ok=false; fi
   fi
-  if [ "$private_state_owned" -eq 1 ]; then
+  if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then
     if oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then
       run_deadline 30 rm -rf -- "$PRIVATE_STATE" >/dev/null 2>&1
       [ ! -e "$PRIVATE_STATE" ] && private_logs_removed=true || cleanup_ok=false
@@ -319,7 +322,7 @@ cleanup() {
   if [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ] && [ "$journey_status" = passed ]; then
     write_evidence || cleanup_ok=false
   fi
-  if [ "$run_root_owned" -eq 1 ] && [ "$evidence_published" -eq 0 ]; then
+  if [ "$run_root_owned" -eq 1 ] && [ "$evidence_published" -eq 0 ] && [ "$incoming" -eq 0 ]; then
     if [ "$cleanup_ok" = true ] && oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then
       run_deadline 5 rmdir -- "$RUN_ROOT" >/dev/null 2>&1 || cleanup_ok=false
     fi
