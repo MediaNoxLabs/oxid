@@ -31,6 +31,7 @@ Configure a host once, then create or reuse one canonical worktree per issue:
 ```bash
 cd /path/to/oxid
 ./bootstrap.sh --configure-pi
+./bootstrap.sh --configure-git
 ./bootstrap.sh --check
 ./bootstrap.sh --audit-pi
 
@@ -63,15 +64,19 @@ cd oxid
 git fetch origin integration
 git switch --detach origin/integration
 gh auth status
+git config user.name "Your Name"
+git config user.email "you@example.com"
+git config user.signingkey "YOUR_OPENPGP_KEY_ID"
 ./bootstrap.sh --configure-pi
+./bootstrap.sh --configure-git
 ./bootstrap.sh --check
 ./bootstrap.sh --audit-pi
 ./bootstrap.sh --pi
 ```
 
 Use Pi's interactive `/login` on that host when the selected provider requires
-subscription or stored API-key authentication. Configure the operator's Git
-identity and approved signing key before creating commits.
+subscription or stored API-key authentication. Replace the example Git
+identity and key ID with the operator's approved values before configuration.
 
 The tracked default is `openai-codex/gpt-5.6-terra:medium`, not a provider
 lock. Pi accepts a deliberate session override, for example

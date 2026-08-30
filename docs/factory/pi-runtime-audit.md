@@ -72,6 +72,7 @@ through the pinned shell:
 
 ```bash
 ./bootstrap.sh --configure-pi
+./bootstrap.sh --configure-git
 ./bootstrap.sh --check
 ./bootstrap.sh --audit-pi
 ./bootstrap.sh --pi
@@ -94,6 +95,10 @@ without accumulating repeated snapshots. It never reads or writes `auth.json`.
 `--pi` refuses to start when the effective package policy drifts.
 Restart Pi after any `.pi/`, `.devloops`, pin, or user-policy change because a
 running process retains the configuration loaded at startup.
+
+The companion `--configure-git` command installs the repository-scoped local
+contribution hooks and signing defaults. `--check` validates both surfaces; it
+does not call an LLM or publish anything.
 
 The project default is a preference, not provider lock-in. Use Pi's model
 selector or `--provider`/`--model` for a deliberate session override. High-risk

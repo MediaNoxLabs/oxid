@@ -29,6 +29,10 @@ sources:
 pi-smoke:
     ./scripts/check-pi-devshell.sh
 
+factory-smoke:
+    ./scripts/check-pi-devshell.sh
+    node scripts/git-hooks/configure.mjs check
+
 run:
     cargo run -p oxid-app
 

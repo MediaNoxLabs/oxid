@@ -90,7 +90,12 @@ export function validatePullRequestBody(body, { expectedIssue = null, actor = ""
 }
 
 function git(repository, args) {
-  return execFileSync("git", args, { cwd: repository, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  return execFileSync("git", args, {
+    cwd: repository,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 }
 
 function requireCommit(repository, revision, label) {
@@ -107,14 +112,8 @@ function dcoExempt(authorName, actor) {
 }
 
 export function validateCommitEvidence({ message, authorName, authorEmail, rawCommit = null, verification = null, actor = "" }) {
-  const normalized = message.replace(/\n+$/u, "");
-  const [subject = "", ...bodyLines] = normalized.split("\n");
-  const subjectResult = parseConventionalSubject(subject, { body: bodyLines.join("\n") });
-  const errors = subjectResult.errors.map((problem) => `subject: ${problem}`);
-  if (contributionPolicy.commit.requireDco && !dcoExempt(authorName, actor)) {
-    const exactTrailer = `Signed-off-by: ${authorName} <${authorEmail}>`;
-    if (!bodyLines.includes(exactTrailer)) errors.push(`missing exact DCO trailer '${exactTrailer}'`);
-  }
+  const messageResult = validateCommitMessage({ message, authorName, authorEmail, actor });
+  const errors = [...messageResult.errors];
   if (contributionPolicy.commit.requireOpenPgp) {
     if (verification) {
       const isOpenPgp = verification.signature?.startsWith("-----BEGIN PGP SIGNATURE-----");
@@ -125,14 +124,43 @@ export function validateCommitEvidence({ message, authorName, authorEmail, rawCo
       errors.push("commit does not contain an OpenPGP signature envelope");
     }
   }
+  return { ok: errors.length === 0, errors, subject: messageResult.subject };
+}
+
+export function validateCommitMessage({ message, authorName, authorEmail, actor = "" }) {
+  const normalized = message.replace(/\n+$/u, "");
+  const [subject = "", ...bodyLines] = normalized.split("\n");
+  const subjectResult = parseConventionalSubject(subject, { body: bodyLines.join("\n") });
+  const errors = subjectResult.errors.map((problem) => `subject: ${problem}`);
+  if (contributionPolicy.commit.requireDco && !dcoExempt(authorName, actor)) {
+    const exactTrailer = `Signed-off-by: ${authorName} <${authorEmail}>`;
+    if (!bodyLines.includes(exactTrailer)) errors.push(`missing exact DCO trailer '${exactTrailer}'`);
+  }
   return { ok: errors.length === 0, errors, subject: subjectResult };
 }
 
-export function validateCommitRange({ repository, base, head, actor = "" }) {
+export function verifyOpenPgpCommit(repository, commit) {
+  try {
+    git(repository, ["verify-commit", "--raw", commit]);
+    return null;
+  } catch {
+    return "local OpenPGP cryptographic verification failed; ensure the signer public key is available and trusted locally";
+  }
+}
+
+export function validateCommitRange({
+  repository,
+  base,
+  head,
+  actor = "",
+  verifyOpenPgp = false,
+  verifyCommit = verifyOpenPgpCommit,
+}) {
   requireCommit(repository, base, "base");
   requireCommit(repository, head, "head");
   const commits = git(repository, ["rev-list", "--reverse", `${base}..${head}`]).trim().split("\n").filter(Boolean);
   if (commits.length === 0) return { ok: false, commits: [], errors: ["commit range is empty"] };
+  if (commits.length > 250) return { ok: false, commits: [], errors: ["commit range exceeds the 250-commit policy bound"] };
   const results = [];
   for (const commit of commits) {
     const evidence = validateCommitEvidence({
@@ -142,6 +170,11 @@ export function validateCommitRange({ repository, base, head, actor = "" }) {
       rawCommit: git(repository, ["cat-file", "commit", commit]),
       actor,
     });
+    if (verifyOpenPgp) {
+      const verificationError = verifyCommit(repository, commit);
+      if (verificationError) evidence.errors.push(verificationError);
+      evidence.ok = evidence.errors.length === 0;
+    }
     results.push({ commit, ok: evidence.ok, errors: evidence.errors });
   }
   return { ok: results.every((result) => result.ok), commits: results, errors: [] };

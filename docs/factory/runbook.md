@@ -57,6 +57,7 @@ registrations, and runtime skill discovery without an LLM call or GitHub
 mutation:
 
 ```bash
+./bootstrap.sh --configure-git
 ./bootstrap.sh --check
 ```
 
@@ -70,6 +71,7 @@ Configure and audit the bounded package policy before the first start:
 
 ```bash
 ./bootstrap.sh --configure-pi
+./bootstrap.sh --configure-git
 ./bootstrap.sh --check
 ./bootstrap.sh --audit-pi
 ./bootstrap.sh --pi
@@ -83,6 +85,12 @@ there. See [pi-runtime-audit.md](pi-runtime-audit.md) for the exact budgets,
 global-package config boundary, measured storage, and upgrade canaries. See
 [worker-topology.md](worker-topology.md) before starting a second local session
 or attaching a worker from another engineer or cloud host.
+
+`--configure-git` copies the tracked contribution dispatchers into stable,
+private Git-common state and sets only repository-local OpenPGP signing
+defaults. It requires an existing author identity and signing-key selection,
+refuses to replace another hook manager, and never reads or generates a key.
+`--check` validates both the Pi runtime and the local hook installation.
 
 ## Three concurrency mechanisms, which are easy to confuse
 

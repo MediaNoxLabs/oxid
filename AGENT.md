@@ -36,6 +36,9 @@ index points to it; it is not a required read for unrelated work.
   policy: allowed Conventional Commit type and mandatory scope, exact DCO
   sign-off, and a GitHub-verifiable OpenPGP signature. Before any push, verify
   the full local commit range.
+- Install and audit the repository-scoped contribution hooks with
+  `./bootstrap.sh --configure-git` and `./bootstrap.sh --check`. Hooks provide
+  early feedback; hosted exact-head verification remains authoritative.
 - Do not push, merge, change repository settings, accept an ADR, tag, or release
   without the authority required by the active user request.
 

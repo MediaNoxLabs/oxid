@@ -12,12 +12,14 @@ usage() {
     "       ./bootstrap.sh --check" \
     "       ./bootstrap.sh --audit-pi" \
     "       ./bootstrap.sh --configure-pi" \
+    "       ./bootstrap.sh --configure-git" \
     "       ./bootstrap.sh -- COMMAND [ARGS...]" \
     "" \
     "With no arguments, enter the pinned Nix development shell." \
-    "Use --pi to start Pi, --check to validate the Pi integration," \
+    "Use --pi to start Pi, --check to validate factory integrations," \
     "--audit-pi to inspect constitutional readiness, --configure-pi to" \
-    "install the bounded user-level pi-subagents policy, or" \
+    "install the bounded user-level pi-subagents policy, --configure-git" \
+    "to install repository-local contribution hooks and signing defaults, or" \
     "-- to run one command inside the development shell."
 }
 
@@ -47,7 +49,7 @@ case "${1:-}" in
       usage >&2
       exit 2
     fi
-    exec nix develop --command just pi-smoke
+    exec nix develop --command just factory-smoke
     ;;
   --audit-pi)
     shift
@@ -66,6 +68,15 @@ case "${1:-}" in
       exit 2
     fi
     exec nix develop --command node scripts/factory/pi-policy.mjs apply --execute
+    ;;
+  --configure-git)
+    shift
+    if (( $# != 0 )); then
+      echo "--configure-git does not accept additional arguments" >&2
+      usage >&2
+      exit 2
+    fi
+    exec nix develop --command node scripts/git-hooks/configure.mjs apply --execute
     ;;
   --help|-h)
     usage

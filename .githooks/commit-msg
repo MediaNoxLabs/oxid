@@ -1,0 +1,7 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+
+set -eu
+
+hook_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+exec node "$hook_dir/policy-root/scripts/git-hooks/local-policy.mjs" commit-msg "$@"
