@@ -177,8 +177,8 @@ return await (async () => {
       style.id = styleId;
       document.head.appendChild(style);
     }
-    style.textContent = "textarea, code, .privacy-value, .privacy-qr { visibility: hidden !important; }";
-    const sensitive = [...document.querySelectorAll("textarea, code, .privacy-value, .privacy-qr")];
+    style.textContent = "textarea, code, .privacy-value, .privacy-qr, .credential-record__facts dd { visibility: hidden !important; }";
+    const sensitive = [...document.querySelectorAll("textarea, code, .privacy-value, .privacy-qr, .credential-record__facts dd")];
     const visibleText = document.body.innerText || "";
     const forbidden = [
       ["openid", "-credential-offer://"].join(""), "did:",
@@ -347,5 +347,6 @@ mod tests {
         assert!(!RESTART_REVERIFY_STAGE.contains("if (sensitive.length === 0) return false;"));
         assert!(RESTART_REVERIFY_STAGE.contains("let phase = \"documents\";"));
         assert!(RESTART_REVERIFY_STAGE.contains("return `failed:restart-${phase}`;"));
+        assert!(RESTART_REVERIFY_STAGE.contains(".credential-record__facts dd"));
     }
 }
