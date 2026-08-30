@@ -367,10 +367,11 @@ run_ios_test() {
   local method="$1" phase_directory="${2:-}"
   run_deadline 600 env -i DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" HOME="$HOME" \
     LANG="${LANG:-en_US.UTF-8}" LOGNAME="$host_user" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-    TMPDIR="${TMPDIR:-/tmp}" USER="$host_user" OXID_PORTAL_PHASE_DIRECTORY="$phase_directory" \
+    TMPDIR="${TMPDIR:-/tmp}" USER="$host_user" \
     /usr/bin/xcodebuild test -project "$xcode_project/OxidMobileSmoke.xcodeproj" -scheme OxidUITests \
     -destination "platform=iOS Simulator,id=$udid" -derivedDataPath "$PRIVATE_STATE/derived-data" \
-    -only-testing:"OxidUITests/PortalFlowTests/$method" CODE_SIGNING_ALLOWED=NO >>"$PRIVATE_LOG" 2>&1
+    -only-testing:"OxidUITests/PortalFlowTests/$method" CODE_SIGNING_ALLOWED=NO \
+    OXID_PORTAL_PHASE_DIRECTORY="$phase_directory" >>"$PRIVATE_LOG" 2>&1
 }
 stage_capability() {
   local source_kind="$1" source_path="$2"
@@ -409,7 +410,7 @@ run_measured_offer() {
     timeout -k 5s 60s bash -c '
       set -eu
       request="$1/issue-error-ready"; ack="$1/issue-error-armed"; config="$2"
-      for _attempt in $(seq 1 150); do [ -f "$request" ] && break; sleep 0.1; done
+      for _attempt in $(seq 1 450); do [ -f "$request" ] && break; sleep 0.1; done
       [ -f "$request" ]
       printf unavailable | timeout -k 2s 15s curl --config "$config" --noproxy "*" --fail --silent --show-error --max-time 10 -X POST --data-binary @- http://127.0.0.1:18095/proxy-mode >/dev/null
       printf "armed\n" >"$ack"
