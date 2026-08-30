@@ -21,9 +21,10 @@ than layers bolted onto one chain-specific frontend.
 > inventory through standalone or explicitly configured native adapters. A
 > deterministic OpenID4VCI 1.0 Final adapter now exercises embedded-offer
 > preview, explicit consent, DID-bound proof, strict verification, and protected
-> credential storage end to end. Native headless development can additionally
-> select the exact authenticated Portal `integration` profile for real HTTP
-> issuance without exposing that route to production or mobile builds. A
+> credential storage end to end. Authenticated native headless, ARM64-Darwin,
+> and authority-gated iOS Simulator/Android QEMU development profiles can
+> additionally select the exact Portal `integration` profile for real HTTP
+> issuance without exposing that route to ordinary or production builds. A
 > separate deterministic SIOPv2 draft-13
 > adapter previews a standalone verifier request, requires explicit consent,
 > and independently verifies a single-use self-issued DID login without
@@ -419,9 +420,10 @@ remains absent from ordinary incoming DTOs. The Digital Passport adapter
 interprets it only after recomputing all five official Midnight commitments and
 the signed claim root. Headless exposes safe candidate/plan metadata but no
 reveal operation.
-The separate ADR-0102 Portal route is native desktop/headless development only.
-It requires an absolute regular non-symlink deployment manifest plus its exact
-SHA-256 in a pair; partial or mismatched configuration fails startup:
+The ADR-0102 Portal route is limited to authenticated native-headless and
+compile-gated desktop/virtual-mobile development profiles. It requires an
+absolute regular non-symlink deployment manifest plus its exact SHA-256 in a
+pair; partial or mismatched configuration fails startup:
 
 ```bash
 export OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH='<absolute-public-manifest.json>'
@@ -529,6 +531,27 @@ Portal consumer project was removed; it never removes `oxid-standalone`.
 `just portal-virtual-mobile-stack-contract` drives the real 18090/18091/18093
 routes, derived manifest, unauthorized request, single authenticated offer, and
 exact cleanup without a device.
+
+The [Portal mobile simulator runbook](docs/factory/portal-mobile-simulators.md)
+defines the canonical packaged two-platform lane. It preflights both explicit
+virtual targets, requires the macOS headless/desktop prequalification, creates
+and deletes one receipt-bound iOS Simulator, then runs one fixed-port
+repository-owned Android QEMU AVD:
+
+```bash
+OXID_XCODE_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+OXID_IOS_RUNTIME_ID='<explicit-reviewed-runtime-id>' \
+OXID_IOS_DEVICE_TYPE_ID='<explicit-reviewed-iphone-device-type-id>' \
+OXID_ANDROID_AVD='<explicit-reviewed-avd>' \
+just portal-mobile-simulators-e2e
+```
+
+The closed per-platform evidence proves exact preview, zero token/nonce/
+credential/issuer-resolution calls before consent (metadata preview calls are
+required), explicit issuance, encrypted persistence, true process death,
+restart listing, fresh resolver-backed reverification, and cleanup at one
+head/tree. This owner-invoked virtual evidence is not a physical-device,
+Tailscale, camera, native-custody, release, live-DIDIT, or performance claim.
 
 The loopback bearer authenticates the app to the offer listener, but plaintext
 loopback does not authenticate that listener to the app. Another local process
@@ -807,9 +830,12 @@ camera and therefore show the expected unavailable message. The offer, login,
 and presentation fixture buttons remain available for complete simulator flow
 testing.
 
-Set `OXID_IOS_DEVICE` to a simulator UDID to select a particular device. The
-script obtains the pinned Dioxus CLI from the locked Nix flake but deliberately
-uses the host Xcode and Rustup toolchain for Apple SDK discovery. Generated
+Set `OXID_IOS_DEVICE` to a simulator UDID to select a particular device. Set
+`OXID_XCODE_DEVELOPER_DIR` to an absolute full-Xcode developer directory when
+the host-global selection is unsuitable; the launcher validates it without
+changing `xcode-select`. The script obtains the pinned Dioxus CLI from the
+locked Nix flake but deliberately uses the host Xcode and Rustup toolchain for
+Apple SDK discovery. Generated
 platform output and signing state remain uncommitted; secure storage arrives as
 an explicit mobile adapter.
 

@@ -6,6 +6,41 @@ oxid_process_ps() {
   timeout -k 1s "${deadline}s" ps "$@"
 }
 
+oxid_adb_inventory_is_empty() {
+  local inventory="$1"
+  timeout -k 1s "${OXID_ADB_INVENTORY_PARSE_TIMEOUT_SECONDS:-5}s" awk '
+    NR == 1 { if ($0 != "List of devices attached") exit 2; next }
+    NF > 0 { found=1 }
+    END { exit found ? 1 : 0 }
+  ' <<<"$inventory"
+}
+
+oxid_adb_inventory_is_exact_online() {
+  local inventory="$1" expected_serial="$2"
+  [[ "$expected_serial" =~ ^emulator-[0-9]+$ ]] || return 1
+  timeout -k 1s "${OXID_ADB_INVENTORY_PARSE_TIMEOUT_SECONDS:-5}s" \
+    awk -v expected="$expected_serial" '
+      NR == 1 { if ($0 != "List of devices attached") exit 2; next }
+      NF > 0 {
+        count++
+        if ($1 != expected || $2 != "device") invalid=1
+      }
+      END { exit !(count == 1 && !invalid) }
+    ' <<<"$inventory"
+}
+
+oxid_adb_inventory_snapshot() {
+  local adb="$1" deadline="${OXID_ADB_INVENTORY_TIMEOUT_SECONDS:-15}"
+  [ -x "$adb" ] || return 1
+  timeout -k 2s "${deadline}s" env -u ANDROID_SERIAL "$adb" devices -l
+}
+
+oxid_require_empty_adb_inventory() {
+  local adb="$1" inventory
+  inventory="$(oxid_adb_inventory_snapshot "$adb")" || return 1
+  oxid_adb_inventory_is_empty "$inventory"
+}
+
 oxid_job_is_running() {
   local expected="$1" job
   while IFS= read -r job; do

@@ -7,7 +7,7 @@
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14` (the same tree as the landed squash commit)
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; exact provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039 and ADR-0101
-- Implementation state: strict native desktop/headless Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; production and mobile Portal HTTP composition remain unavailable
+- Implementation state: strict native desktop/headless plus authority-gated iOS Simulator/Android QEMU Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; ordinary and production Portal HTTP composition remain unavailable
 
 ## Context
 
@@ -78,10 +78,14 @@ proof JWTs, credentials, private parts, claims, DIDs, routes, logs, PIDs, and
 timestamps are excluded. Scripted HTTP/component tests remain separate from
 this live evidence.
 
-The iOS simulator and Android emulator continue to exercise the same incoming
-router, explicit consent, managed-method, verification, encrypted-persistence,
-and restart flows through their compile-time standalone test framework. They do
-not compile or claim the native-headless Portal HTTP route.
+The authority-gated iOS Simulator and Android QEMU profiles exercise the same
+strict Portal HTTP client through actual packaged applications while retaining
+the normal incoming router, explicit consent, managed-method, verification,
+encrypted-persistence, and restart owners. Their canonical owner lane uses a
+new receipt-bound disposable iOS Simulator and one explicit fixed-port QEMU AVD,
+publishes closed same-head evidence only after cleanup, and never substitutes
+for physical-device, Tailscale, production, native-custody, or release proof.
+Ordinary mobile composition remains unable to name the Portal client.
 
 ## Consequences
 

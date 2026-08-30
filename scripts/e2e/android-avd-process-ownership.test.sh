@@ -3,7 +3,8 @@
 
 set -euo pipefail
 
-readonly ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd -P)"
+ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd -P)"
+readonly ROOT
 # shellcheck source=android-avd-process-ownership.sh
 source "$ROOT/scripts/e2e/android-avd-process-ownership.sh"
 
@@ -23,16 +24,46 @@ temporary="$(timeout -k 1s 5s mktemp -d "${TMPDIR:-/tmp}/oxid-avd-contract.XXXXX
 cleanup() { timeout -k 1s 5s rm -rf -- "$temporary"; }
 trap cleanup EXIT
 
+empty_inventory=$'List of devices attached\n\n'
+physical_inventory=$'List of devices attached\nR5CT1234ABC\tdevice product:fixture transport_id:1\n'
+mixed_inventory=$'List of devices attached\nemulator-5562\tdevice product:sdk_gphone transport_id:1\nR5CT1234ABC\tdevice product:fixture transport_id:2\n'
+wrong_emulator_inventory=$'List of devices attached\nemulator-5554\tdevice product:sdk_gphone transport_id:1\n'
+exact_inventory=$'List of devices attached\nemulator-5562\tdevice product:sdk_gphone transport_id:1\n'
+oxid_adb_inventory_is_empty "$empty_inventory" || fail adb-empty
+if oxid_adb_inventory_is_empty "$physical_inventory"; then fail adb-physical-only; fi
+if oxid_adb_inventory_is_empty "$mixed_inventory"; then fail adb-mixed; fi
+if oxid_adb_inventory_is_exact_online "$wrong_emulator_inventory" emulator-5562; then fail adb-wrong-serial; fi
+if oxid_adb_inventory_is_exact_online "$mixed_inventory" emulator-5562; then fail adb-mixed-exact; fi
+oxid_adb_inventory_is_exact_online "$exact_inventory" emulator-5562 || fail adb-exact
+
+cat >"$temporary/fake-adb" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$OXID_FAKE_ADB_INVENTORY_LOG"
+[ "$*" = 'devices -l' ] || {
+  printf 'MUTATION\n' >>"$OXID_FAKE_ADB_INVENTORY_LOG"
+  exit 97
+}
+printf 'List of devices attached\nR5CT1234ABC\tdevice product:fixture transport_id:1\n'
+EOF
+chmod 700 "$temporary/fake-adb"
+: >"$temporary/adb-inventory.log"
+if OXID_FAKE_ADB_INVENTORY_LOG="$temporary/adb-inventory.log" \
+  oxid_require_empty_adb_inventory "$temporary/fake-adb"; then
+  fail adb-physical-preflight
+fi
+[ "$(wc -l <"$temporary/adb-inventory.log" | tr -d ' ')" -eq 1 ] || fail adb-physical-mutation
+[ "$(<"$temporary/adb-inventory.log")" = 'devices -l' ] || fail adb-physical-command
+
 cat >"$temporary/grandchild.sh" <<'EOF'
 #!/usr/bin/env bash
 trap 'printf "TERM\n" >"$2"' TERM
-printf '%s\n' "$BASHPID" >"$1"
+printf '%s\n' "$$" >"$1"
 while :; do sleep 1; done
 EOF
 chmod 700 "$temporary/grandchild.sh"
 cat >"$temporary/owner.sh" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$BASHPID" >"$1"
+printf '%s\n' "$$" >"$1"
 bash "$2" "$3" "$4"
 status=$?
 printf '%s\n' "$status" >/dev/null
@@ -41,7 +72,7 @@ chmod 700 "$temporary/owner.sh"
 timeout -k 1s 30s "$temporary/owner.sh" "$temporary/owner.pid" \
   "$temporary/grandchild.sh" "$temporary/grandchild.pid" "$temporary/term.seen" &
 supervisor_pid=$!
-for ((_attempt = 0; _attempt < 50; _attempt++)); do
+for ((_attempt = 0; _attempt < 200; _attempt++)); do
   [ -s "$temporary/grandchild.pid" ] && break
   timeout -k 1s 1s sleep 0.05
 done
@@ -62,19 +93,19 @@ fi
 
 sleep 30 &
 direct_pid=$!
-oxid_direct_child_owned "$direct_pid" "$BASHPID" || fail direct-child-owned
+oxid_direct_child_owned "$direct_pid" "$$" || fail direct-child-owned
 kill -TERM "$direct_pid"
 wait "$direct_pid" 2>/dev/null || true
 
 timeout -k 1s 30s bash -c 'sleep 30 & printf "%s\n" "$!" >"$1"; wait' \
   _ "$temporary/changed-parent.pid" &
 intermediary_pid=$!
-for ((_attempt = 0; _attempt < 50; _attempt++)); do
+for ((_attempt = 0; _attempt < 200; _attempt++)); do
   [ -s "$temporary/changed-parent.pid" ] && break
   timeout -k 1s 1s sleep 0.05
 done
 changed_parent_pid="$(<"$temporary/changed-parent.pid")"
-if oxid_direct_child_owned "$changed_parent_pid" "$BASHPID"; then
+if oxid_direct_child_owned "$changed_parent_pid" "$$"; then
   fail changed-parent-refused
 fi
 oxid_terminate_supervised_job "$intermediary_pid" || fail changed-parent-cleanup
@@ -94,19 +125,24 @@ fi
 cat >"$temporary/emulator.mjs" <<'EOF'
 import fs from "node:fs";
 process.on("SIGTERM", () => fs.writeFileSync(process.env.OXID_FAKE_EMULATOR_TERM, "TERM\n"));
+fs.writeFileSync(process.env.OXID_FAKE_EMULATOR_READY, "READY\n");
 setInterval(() => {}, 1000);
 EOF
+OXID_FAKE_EMULATOR_READY="$temporary/emulator-ready.seen" \
 OXID_FAKE_EMULATOR_TERM="$temporary/emulator-term.seen" \
   node "$temporary/emulator.mjs" -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562 &
 fake_emulator_pid=$!
 fake_emulator_executable=node
-for ((_attempt = 0; _attempt < 50; _attempt++)); do
-  oxid_emulator_job_owned "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 && break
+for ((_attempt = 0; _attempt < 200; _attempt++)); do
+  [ -f "$temporary/emulator-ready.seen" ] \
+    && oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
+    && break
   timeout -k 1s 1s sleep 0.05
 done
-oxid_emulator_job_owned "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 \
+[ -f "$temporary/emulator-ready.seen" ] || fail direct-emulator-ready
+oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
   || fail direct-emulator-owned
-oxid_terminate_emulator_job "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 \
+oxid_terminate_emulator_job "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
   || fail direct-emulator-cleanup
 [ -f "$temporary/emulator-term.seen" ] || fail direct-emulator-term
 process_is_live "$fake_emulator_pid" && fail direct-emulator-survivor
@@ -246,6 +282,25 @@ stale_after="$(shasum -a 256 "$fixture_root/target/android-portal-exact-sequence
 if grep -Eq 'mv[[:space:]].*-f.*EVIDENCE' "$fixture_root/scripts/test-android-portal-exact-sequence-avd.sh"; then
   fail evidence-force-move
 fi
+for runner in \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" \
+  "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh"; do
+  grep -qF 'oxid_poll_job_dead "$portal_pid" 1200 || true' "$runner" \
+    || fail portal-cleanup-grace
+  grep -qF 'if [ "$build_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$runner" \
+    || fail failed-build-preservation
+  grep -qF 'if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$runner" \
+    || fail failed-log-preservation
+  grep -qF 'BUILD_SOURCE="$(run_deadline 5 mktemp -d "${TMPDIR:-/tmp}/oxid-' "$runner" \
+    || fail detached-build-source
+  grep -qF 'oxid_path_has_identity "$BUILD_SOURCE" "$build_identity"' "$runner" \
+    || fail build-source-identity
+  if grep -qF 'readonly BUILD_SOURCE="$PRIVATE_STATE/build-source"' "$runner"; then
+    fail nested-build-source
+  fi
+done
+grep -qF 'run_deadline 5 mkdir "$xcode_project" || fail xcode-project-create' \
+  "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh" || fail xcode-project-parent
 
 acquisition_parent="$temporary/evidence-acquisition"
 timeout -k 1s 5s mkdir "$acquisition_parent"
@@ -336,4 +391,4 @@ if grep -q 'parent=timeout' "$fake_adb_log"; then fail launcher-unset-timeout; f
 grep -q 'serial=unset args=devices' "$fake_adb_log" || fail launcher-discovery-wrapper
 grep -q 'serial=fixture-device args=get-state' "$fake_adb_log" || fail launcher-selected-wrapper
 
-printf 'android-avd-process-ownership-contract: PASS process_group=bounded-term-kill direct_emulator=bounded-term-kill docker_query=error-timeout-nonempty evidence=no-clobber-concurrent lock=identity-preserved signal=partial-readiness adb_unset=normal\n'
+printf 'android-avd-process-ownership-contract: PASS process_group=bounded-term-kill direct_emulator=bounded-term-kill docker_query=error-timeout-nonempty evidence=no-clobber-concurrent lock=identity-preserved signal=partial-readiness failure=diagnostics-preserved adb_inventory=physical-mixed-refused adb_unset=normal\n'

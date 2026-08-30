@@ -23,5 +23,7 @@ schemes:
       targets:
         OxidUITests: test
     test:
+      environmentVariables:
+        OXID_PORTAL_PHASE_DIRECTORY: "$(OXID_PORTAL_PHASE_DIRECTORY)"
       targets:
         - OxidUITests
