@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -38,10 +39,19 @@ test("unavailable host-capacity audit warns without deadlocking first-worker cre
   t.after(() => rm(root, { recursive: true, force: true }));
   const result = await auditWorktreeAdmission({ repoRoot: root });
   assert.equal(result.admissionReady, true);
+  assert.equal(result.capacityEvidenceAvailable, false);
   assert.deepEqual(result.checks.map(({ id, status }) => ({ id, status })), [
     { id: "worktree-admission", status: "warn" },
   ]);
   assert.match(result.checks[0].summary, /creation remains recoverable/u);
+});
+
+test("config-only audit rejects admission enforcement instead of reporting false red", () => {
+  const result = spawnSync(process.execPath, [
+    "scripts/factory/audit-pi.mjs", "--config-only", "--enforce-admission",
+  ], { cwd: repoRoot, encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--config-only cannot be combined with --enforce-admission/u);
 });
 
 test("user subagent policy merge is bounded and preserves unrelated settings", () => {
@@ -78,21 +88,21 @@ test("preflight rewrites split and late generic main guidance to integration", a
   const rewritten = createDeliveryBranchRewriteSink(destination);
   rewritten.sink.write("  (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/ma");
   rewritten.sink.write("in)\n");
-  await rewritten.flush();
-  await new Promise((resolve, reject) => rewritten.sink.write(
-    "late (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/main)\n",
-    (error) => error ? reject(error) : resolve(),
-  ));
   await new Promise((resolve, reject) => rewritten.sink.write(
     "legitimate origin/main and origin/main-release diagnostic\n",
     (error) => error ? reject(error) : resolve(),
   ));
+  await rewritten.flush();
   assert.equal(output, [
     "  (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/integration)",
-    "late (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/integration)",
     "legitimate origin/main and origin/main-release diagnostic",
     "",
   ].join("\n"));
+  rewritten.sink.once("error", () => {});
+  await assert.rejects(new Promise((resolve, reject) => rewritten.sink.write(
+    "late output\n",
+    (error) => error ? reject(error) : resolve(),
+  )), /after flush/u);
 });
 
 test("preflight rewrite sink honors destination backpressure", async () => {
@@ -147,7 +157,7 @@ test("user policy apply is explicit, atomic, private, and preserves existing key
   const existing = { unrelated: { preserved: true }, parallel: { concurrency: 99 } };
   await writeFile(configPath, `${JSON.stringify(existing)}\n`);
   await chmod(configPath, 0o644);
-  const updated = await applyUserPolicy({ env, execute: true, now: new Date("2026-08-30T00:00:00.000Z") });
+  const updated = await applyUserPolicy({ env, execute: true });
   assert.equal(updated.changed, true);
   assert.equal((await stat(configPath)).mode & 0o777, 0o600);
   assert.equal((await stat(updated.backupPath)).mode & 0o777, 0o600);
@@ -155,8 +165,8 @@ test("user policy apply is explicit, atomic, private, and preserves existing key
   assert.equal(JSON.parse(await readFile(configPath, "utf8")).unrelated.preserved, true);
 
   await writeFile(configPath, `${JSON.stringify(existing)}\n`);
-  const repeated = await applyUserPolicy({ env, execute: true, now: new Date("2026-08-30T00:00:00.000Z") });
-  assert.notEqual(repeated.backupPath, updated.backupPath);
+  const repeated = await applyUserPolicy({ env, execute: true });
+  assert.equal(repeated.backupPath, updated.backupPath);
   assert.deepEqual(JSON.parse(await readFile(repeated.backupPath, "utf8")), existing);
 });
 
@@ -229,13 +239,14 @@ test("factory topology permits isolated multi-host workers without sharing mutat
   const runbook = await readFile(path.join(repoRoot, "docs", "factory", "runbook.md"), "utf8");
   const productiveLoop = await readFile(path.join(repoRoot, "docs", "factory", "productive-loop.md"), "utf8");
   const devloops = await readFile(path.join(repoRoot, ".devloops"), "utf8");
+  const normalizeProse = (value) => value.replace(/\s+/gu, " ");
 
-  assert.match(topology, /every mutating parent session owns one issue and one isolated\nworktree/u);
+  assert.match(normalizeProse(topology), /every mutating parent session owns one issue and one isolated worktree/u);
   assert.match(topology, /Two active managed delivery worktrees/u);
   assert.match(topology, /cloud worker is possible/u);
   assert.match(topology, /--provider openai --model <model>/u);
   assert.match(topology, /Cloud workers are not autonomous claimants until the atomic lease work/u);
-  assert.match(runbook, /one remote candidate active per parent session/u);
-  assert.match(productiveLoop, /per Git common checkout\n  on a host/u);
+  assert.match(normalizeProse(runbook), /one remote candidate active per parent session/u);
+  assert.match(normalizeProse(productiveLoop), /per Git common checkout on a host/u);
   assert.match(devloops, /One delivery candidate per conductor/u);
 });

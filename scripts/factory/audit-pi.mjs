@@ -67,7 +67,8 @@ function stripYamlComment(value, file) {
       if (character === quote) quote = null;
       continue;
     }
-    if (character === '"' || character === "'") quote = character;
+    if ((character === '"' || character === "'")
+      && (index === 0 || /[\s[{,:]/u.test(value[index - 1]))) quote = character;
     else if (character === "#" && (index === 0 || /\s/u.test(value[index - 1]))) return value.slice(0, index).trimEnd();
   }
   if (quote !== null) throw new Error(`${file}: unmatched quote in frontmatter`);
@@ -191,11 +192,13 @@ async function inspectMetrics(repoRoot) {
  */
 export async function auditWorktreeAdmission({ repoRoot = DEFAULT_REPO_ROOT } = {}) {
   const checks = inspectOperationalState(repoRoot);
+  const capacityEvidenceAvailable = !checks.some((item) => item.id === "worktree-admission" && item.status === "warn");
   return {
     schemaVersion: 1,
     operationalChecked: true,
     configReady: null,
     admissionReady: checks.every((item) => item.status !== "fail"),
+    capacityEvidenceAvailable,
     checks,
   };
 }
@@ -275,7 +278,7 @@ export async function auditPi({
   }
   checks.push(check("tracked-agent-budgets", agentProblems.length ? "fail" : "pass",
     agentProblems.length ? "One or more tracked agents are unbounded" : "Every tracked agent has a bounded runtime and turn budget",
-    agentProblems.length ? agentProblems : undefined));
+    agentProblems.length ? agentProblems : undefined, "contract"));
 
   const effectiveUserPolicy = userPolicyResult ?? await checkUserPolicy({ env });
   checks.push(check("user-subagent-policy", effectiveUserPolicy.ok ? "pass" : "fail",
@@ -319,20 +322,22 @@ export async function auditPi({
       : "The routine metrics closeout contract is missing",
     undefined, "documentation"));
 
-  if (includeOperational && layout) {
+  if (includeOperational) {
     checks.push(...inspectOperationalState(repoRoot));
     checks.push(await inspectMetrics(repoRoot));
   }
 
   const configurationFailures = checks.filter((item) => item.category === "configuration" && item.status === "fail");
   const operationalFailures = checks.filter((item) => item.category === "operational" && item.status === "fail");
+  const capacityEvidenceAvailable = !checks.some((item) => item.id === "worktree-admission" && item.status === "warn");
   return {
     schemaVersion: 1,
     operationalChecked: includeOperational,
     configReady: configurationFailures.length === 0,
     admissionReady: includeOperational
-      ? configurationFailures.length === 0 && operationalFailures.length === 0
+      ? configurationFailures.length === 0 && operationalFailures.length === 0 && capacityEvidenceAvailable
       : null,
+    capacityEvidenceAvailable: includeOperational ? capacityEvidenceAvailable : null,
     checks,
   };
 }
@@ -351,6 +356,9 @@ async function main(argv = process.argv.slice(2)) {
   if (argv.includes("--help") || argv.includes("-h")) {
     process.stdout.write("Usage: node scripts/factory/audit-pi.mjs [--json] [--config-only] [--enforce-config|--enforce-admission]\n");
     return 0;
+  }
+  if (argv.includes("--config-only") && argv.includes("--enforce-admission")) {
+    throw new Error("--config-only cannot be combined with --enforce-admission");
   }
   const result = await auditPi({ includeOperational: !argv.includes("--config-only") });
   process.stdout.write(argv.includes("--json") ? `${JSON.stringify(result, null, 2)}\n` : renderText(result));

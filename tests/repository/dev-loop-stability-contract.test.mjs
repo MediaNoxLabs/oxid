@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   checkAgentToolAllowlists,
@@ -19,7 +19,7 @@ import {
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
 import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
-import { enforceFactoryAdmissionForCreation, normalizeLinkedWorktreeContext, normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
+import { enforceFactoryAdmissionForCreation, normalizeLinkedWorktreeContext, normalizeWorktreeArgs, resolveRepositoryWorktreePath, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import { assertReviewedWorktreePin, oxidConsumerProvision } from "../../scripts/loop/ensure-worktree-consumer.mjs";
 import {
   assertMinimumGhVersion,
@@ -82,7 +82,7 @@ async function realMkdtemp(prefix) {
   return realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
 }
 
-async function installedPi084Root(t) {
+async function installedPiRoot(t) {
   try {
     const expectedVersion = execFileSync("pi", ["--version"], { encoding: "utf8" }).trim();
     const executable = (execFileSync("which", ["pi"], { encoding: "utf8" })).trim();
@@ -92,7 +92,7 @@ async function installedPi084Root(t) {
     if (manifest.version !== expectedVersion) throw new Error(`expected Pi ${expectedVersion}, found ${manifest.version}`);
     return packageRoot;
   } catch (error) {
-    t.skip(`Pi 0.84 runner fixture unavailable: ${error.message}`);
+    t.skip(`Nix-pinned Pi runner fixture unavailable: ${error.message}`);
     return null;
   }
 }
@@ -142,13 +142,6 @@ async function makeFixture() {
     '  stdout.write(`${JSON.stringify(value)}\\n`);',
     '  return 0;',
     '}',
-  ].join("\n"));
-  const coreRoot = path.join(packageRoot, "node_modules", "@dev-loops", "core");
-  await mkdir(path.join(coreRoot, "src", "loop"), { recursive: true });
-  await writeFile(path.join(coreRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.0" }));
-  await writeFile(path.join(coreRoot, "src", "loop", "handoff-envelope.mjs"), [
-    'import path from "node:path";',
-    'export function resolveWorktreePath({ repoRoot, kind, number }) { return path.join(repoRoot, "tmp", "worktrees", "dev-loops", `${kind}-${number}`); }',
   ].join("\n"));
   await writeFile(path.join(packageRoot, "scripts", "_core-helpers.mjs"), 'export function formatCliError(error) { return error.message; }\n');
   await writeFile(path.join(packageRoot, "agents", "developer.agent.md"), [
@@ -476,8 +469,8 @@ test("tracked extension is idempotent and truthfully advisory on invalid allowli
   assert.match(notifications[2].message, /Advisory only.*errors are swallowed/);
 });
 
-test("Pi 0.84 runner cannot hard-cancel a local fake provider through these hooks", async (t) => {
-  const piRoot = await installedPi084Root(t);
+test("Nix-pinned Pi runner cannot hard-cancel a local fake provider through these hooks", async (t) => {
+  const piRoot = await installedPiRoot(t);
   if (!piRoot) return;
   const [{ Agent }, { createAssistantMessageEventStream }, { fauxAssistantMessage }, extensions, { createEventBus }] = await Promise.all([
     import(new URL("./node_modules/@earendil-works/pi-agent-core/dist/agent.js", `file://${piRoot}/`)),
@@ -672,6 +665,23 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.doesNotThrow(() => assertReviewedWorktreePin("0.9.0"));
   assert.throws(() => assertReviewedWorktreePin("0.9.1"), /supports only reviewed dev-loops@0\.9\.0/);
   assert.notStrictEqual(oxidConsumerProvision(), oxidConsumerProvision());
+});
+
+test("repository recovery path stays aligned with the real pinned dev-loops core", async () => {
+  const resolved = await resolveDevLoopsPackageRoot({ cwd: repoRoot });
+  const corePath = await resolvePinnedCoreModulePath(resolved.packageRoot);
+  const core = await import(pathToFileURL(corePath).href);
+  const packagePreflight = await readFile(path.join(resolved.packageRoot, "scripts", "loop", "pre-flight-gate.mjs"), "utf8");
+  assert.match(packagePreflight, /\(creates\+provisions tmp\/worktrees\/dev-loops\/<kind>-<n> from origin\/main\)/u);
+  for (const target of [
+    { args: ["--issue", "194"], kind: "issue", number: 194 },
+    { args: ["--pr", "204"], kind: "pr", number: 204 },
+  ]) {
+    assert.equal(
+      resolveRepositoryWorktreePath(repoRoot, target.args),
+      core.resolveWorktreePath({ repoRoot, kind: target.kind, number: target.number }),
+    );
+  }
 });
 
 test("linked worktree context handles issue/PR selectors, equals forms, main roots, and spaces", async (t) => {

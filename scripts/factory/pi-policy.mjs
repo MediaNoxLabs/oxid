@@ -72,11 +72,7 @@ export async function checkUserPolicy({ env = process.env } = {}) {
   return { ok: mismatches.length === 0, configPath, mismatches };
 }
 
-function backupSuffix(now = new Date()) {
-  return now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
-}
-
-export async function applyUserPolicy({ env = process.env, execute = false, now = new Date() } = {}) {
+export async function applyUserPolicy({ env = process.env, execute = false } = {}) {
   if (!execute) throw new Error("Refusing to modify user Pi configuration without --execute");
   const policy = await loadTrackedPolicy();
   const configPath = resolveUserSubagentConfigPath(env);
@@ -90,8 +86,12 @@ export async function applyUserPolicy({ env = process.env, execute = false, now 
   await mkdir(parent, { recursive: true, mode: 0o700 });
   let backupPath = null;
   if (Object.keys(current).length > 0) {
-    backupPath = `${configPath}.backup-${backupSuffix(now)}-${randomUUID()}`;
-    await copyFile(configPath, backupPath, fsConstants.COPYFILE_EXCL);
+    backupPath = `${configPath}.backup`;
+    try {
+      await copyFile(configPath, backupPath, fsConstants.COPYFILE_EXCL);
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+    }
     await chmod(backupPath, 0o600);
   }
   const temporary = path.join(parent, `.config.json.${process.pid}.${randomUUID()}.tmp`);

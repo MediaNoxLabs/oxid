@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { fileURLToPath } from "node:url";
-import { once } from "node:events";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Writable } from "node:stream";
@@ -53,9 +52,26 @@ export function createDeliveryBranchRewriteSink(destination) {
   let flushed = false;
   const keep = PACKAGE_RECOVERY_GUIDANCE.length - 1;
   const rewrite = (value) => value.replaceAll(PACKAGE_RECOVERY_GUIDANCE, REPOSITORY_RECOVERY_GUIDANCE);
+  const waitForDrain = (callback) => {
+    const cleanup = () => {
+      destination.off("drain", onDrain);
+      destination.off("error", onError);
+      destination.off("close", onClose);
+    };
+    const finish = (error) => {
+      cleanup();
+      callback(error);
+    };
+    const onDrain = () => finish();
+    const onError = (error) => finish(error);
+    const onClose = () => finish(new Error("pre-flight output destination closed before draining"));
+    destination.once("drain", onDrain);
+    destination.once("error", onError);
+    destination.once("close", onClose);
+  };
   const writeDestination = (value, callback) => {
     if (value.length === 0 || destination.write(value)) callback();
-    else destination.once("drain", callback);
+    else waitForDrain(callback);
   };
   const stablePrefix = () => {
     pending = rewrite(pending);
@@ -68,7 +84,7 @@ export function createDeliveryBranchRewriteSink(destination) {
     write(chunk, encoding, callback) {
       const decoded = decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
       if (flushed) {
-        writeDestination(rewrite(decoded), callback);
+        callback(new Error("pre-flight rewrite sink cannot accept output after flush"));
         return;
       }
       pending += decoded;
@@ -84,7 +100,7 @@ export function createDeliveryBranchRewriteSink(destination) {
       const finalOutput = rewrite(pending);
       pending = "";
       if (finalOutput.length > 0 && !destination.write(finalOutput)) {
-        await once(destination, "drain");
+        await new Promise((resolve, reject) => waitForDrain((error) => error ? reject(error) : resolve()));
       }
     },
   };

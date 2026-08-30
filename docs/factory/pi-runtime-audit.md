@@ -32,24 +32,22 @@ the startup audit rejects formats outside that tracked contract.
 
 | Surface | Evidence | Status |
 | --- | --- | --- |
-| Devshell Pi | `0.84.0`; `./bootstrap.sh --check` passed | healthy |
-| Direct host Pi | `0.82.1` outside Nix | unsupported path; use `./bootstrap.sh --pi` |
+| Devshell Pi | Nix-pinned; `./bootstrap.sh --check` passed | healthy |
+| Direct host Pi | outside Nix | unsupported path; use `./bootstrap.sh --pi` |
 | Project packages | `dev-loops@0.9.0`, `pi-subagents@0.42.1`, `agent-review-pi@0.5.0` | exact pins installed |
-| npm production audit | 127 dependencies, 0 reported vulnerabilities | healthy at audit time |
-| Common Pi package store | about 68 MiB | healthy and shared by linked worktrees |
-| Registered worktrees | 40 registered, 19 not proven merged, 6 dirty | red; active green limit is 2 |
-| Worktree-local Rust targets | 231.9 GiB | red; see storage thresholds below |
-| User Pi sessions | about 1.2 GiB | observable; retained transcripts were not read |
-| Project subagent artifacts | 11 directories, about 259 MiB | move future artifacts to session retention |
-| Private factory metrics | 0 valid records | red; no tuning evidence exists yet |
+| npm production audit | 0 reported vulnerabilities | healthy at audit time |
+| Common Pi package store | one shared store per Git common checkout | healthy |
+| Registered worktrees | above the active green limit | red; exact counts remain private operational telemetry |
+| Worktree-local Rust targets | above the 200 GiB ceiling | red; exact usage remains private operational telemetry |
+| User Pi sessions | observable but private | retained transcripts were not read |
+| Project subagent artifacts | above desired retention | move future artifacts to session retention |
+| Private factory metrics | coverage not yet established | red; no tuning evidence exists yet |
 
 The audit did not stop running Pi processes, read transcripts or credentials,
-or delete dirty state. The lifecycle audit identified four clean, merged,
-seven-day-old worktrees as mechanically removable; deletion still required an
-exact path/head and explicit `--execute`. The first bounded cleanup removed
-those four zero-target worktrees and about 43 GiB of rebuildable target
-data from three inactive merged worktrees. The owner-aware reconciliation of
-remaining dirty/unmerged state is tracked by
+or delete dirty state. It identified only clean, merged, retained worktrees as
+mechanically removable; deletion still required an exact path/head and explicit
+`--execute`. The first bounded cleanup removed only audited, rebuildable state.
+The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 [#198](https://github.com/MediaNoxLabs/oxid/issues/198).
 
 ## Package posture
@@ -81,13 +79,19 @@ through the pinned shell:
 
 `./bootstrap.sh --check` also verifies that the parent/subagent default model
 is present in the Nix-pinned Pi model catalog. This is a catalog canary without
-making a billed provider request.
+making a billed provider request. The same smoke reads the exact
+`pi-subagents` pin's `ExtensionConfig`, agent-frontmatter parser, and turn-budget
+validator before the offline Pi RPC load. Those installed package sources are
+the schema authority for every key written from `.pi/subagent-policy.json` and
+for `timeoutMs` / `turnBudget` in tracked agents; the repository copy is not
+treated as self-authenticating evidence.
 
 `--configure-pi` changes only
 `~/.pi/agent/extensions/subagent/config.json` (or the
 `PI_CODING_AGENT_DIR` equivalent), preserves unrelated keys, writes mode 0600,
-and backs up a pre-existing non-empty file. It never reads or writes
-`auth.json`. `--pi` refuses to start when the effective package policy drifts.
+and preserves the first pre-policy non-empty file as mode-0600 `config.json.backup`
+without accumulating repeated snapshots. It never reads or writes `auth.json`.
+`--pi` refuses to start when the effective package policy drifts.
 Restart Pi after any `.pi/`, `.devloops`, pin, or user-policy change because a
 running process retains the configuration loaded at startup.
 

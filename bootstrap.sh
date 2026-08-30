@@ -3,6 +3,9 @@
 
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$repo_root"
+
 usage() {
   printf '%s\n' \
     "Usage: ./bootstrap.sh [--pi [PI_ARGS...]]" \
@@ -31,7 +34,7 @@ case "${1:-}" in
     shift
     exec nix develop --command bash -c '
       node scripts/factory/audit-pi.mjs --config-only --enforce-config || {
-        echo "Pi startup policy is not aligned; run ./bootstrap.sh --configure-pi, then retry ./bootstrap.sh --pi." >&2
+        echo "Pi startup audit failed. If user-subagent-policy is red, run ./bootstrap.sh --configure-pi; otherwise fix the reported control, then retry ./bootstrap.sh --pi." >&2
         exit 1
       }
       exec pi "$@"

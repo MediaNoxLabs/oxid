@@ -6,7 +6,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-for required_command in pi node jq; do
+for required_command in pi node jq realpath awk; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "missing Pi devshell command: $required_command" >&2
     exit 1
@@ -41,8 +41,12 @@ process.stdout.write(`${settings.defaultProvider}\t${settings.defaultModel}`);
 NODE
 )"
 IFS=$'\t' read -r expected_provider expected_model <<< "$model_policy"
-if ! pi --list-models "$expected_provider/$expected_model" \
-  | awk -v provider="$expected_provider" -v model="$expected_model" 'NR > 1 && $1 == provider && $2 == model { found = 1 } END { exit !found }'; then
+if ! model_catalog="$(pi --list-models "$expected_provider/$expected_model")"; then
+  echo "Pi model catalog query failed for $expected_provider/$expected_model" >&2
+  exit 1
+fi
+if ! awk -v provider="$expected_provider" -v model="$expected_model" \
+  'NR > 1 && $1 == provider && $2 == model { found = 1 } END { exit !found }' <<< "$model_catalog"; then
   echo "tracked Pi model is absent from the Nix-pinned catalog: $expected_provider/$expected_model" >&2
   exit 1
 fi
@@ -62,6 +66,43 @@ if (!reviewPackage) {
 process.stdout.write(reviewPackage.packageRoot);
 NODE
 )"
+
+subagent_package_root="$(node --input-type=module <<'NODE'
+import { resolveDevLoopsPackageRoot } from "./scripts/lib/dev-loop-runtime.mjs";
+
+const expectedName = "pi-subagents";
+const resolved = await resolveDevLoopsPackageRoot({ cwd: process.cwd(), includeAllPinnedPackages: true });
+const subagents = resolved.packageRoots.find(({ name }) => name === expectedName);
+if (!subagents) throw new Error(`project Pi settings do not pin ${expectedName}`);
+process.stdout.write(subagents.packageRoot);
+NODE
+)"
+
+node --input-type=module - "$subagent_package_root" <<'NODE'
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+const root = process.argv[2];
+const [types, agents, turnBudget] = await Promise.all([
+  readFile(path.join(root, "src", "shared", "types.ts"), "utf8"),
+  readFile(path.join(root, "src", "agents", "agents.ts"), "utf8"),
+  readFile(path.join(root, "src", "runs", "shared", "turn-budget.ts"), "utf8"),
+]);
+for (const field of [
+  "asyncByDefault", "forceTopLevelAsync", "maxSubagentDepth",
+  "maxSubagentSpawnsPerSession", "glo" + "balConcurrencyLimit", "turnBudget",
+  "usageBudget", "parallel", "chain", "dynamicFanout", "maxItems", "artifactDir",
+]) {
+  if (!types.includes(`${field}?`)) throw new Error(`pi-subagents schema does not declare ${field}`);
+}
+for (const field of ["frontmatter.timeoutMs", "frontmatter.turnBudget", "frontmatter.maxSubagentDepth"]) {
+  if (!agents.includes(field)) throw new Error(`pi-subagents agent parser does not consume ${field}`);
+}
+for (const field of ["maxTurns", "graceTurns"]) {
+  if (!turnBudget.includes(field)) throw new Error(`pi-subagents turn budget does not consume ${field}`);
+}
+NODE
+
 review_package_json="$review_package_root/package.json"
 if [[ ! -f "$review_package_json" ]]; then
   echo "missing exact project @input-output-hk/agent-review-pi@0.5.0" >&2

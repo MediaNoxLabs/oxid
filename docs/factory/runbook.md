@@ -15,7 +15,7 @@ routes through a coordination server.
 
 | Piece | Version | Source |
 | --- | --- | --- |
-| `pi-coding-agent` | `0.84.0` at this audit | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
+| `pi-coding-agent` | Nix-pinned | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
 | `dev-loops` | `0.9.0` | `.pi/settings.json` → project-local `.pi/npm` |
 | `pi-subagents` | `0.42.1` | same |
 | `@input-output-hk/agent-review-pi` | `0.5.0` | same, **GitHub Packages — needs a token** |
@@ -251,6 +251,12 @@ in a diff.
   Another parent may own another issue worktree locally or on a different host.
   Batch accepted findings locally and push a coherent candidate instead of
   invalidating CI and exact-head evidence after every small edit.
+- **Recover after the one-hour conductor bound.** A Pi timeout does not delete
+  the issue branch, managed worktree, draft PR, or private metrics. Re-run the
+  startup resolver for the same issue, reuse its canonical worktree, verify the
+  exact head and working-tree status, and continue from the last durable commit.
+  Record the interrupted duration in closeout metrics; changing the ceiling is
+  a tracked factory-policy change, not a per-session escape hatch.
 - **Audit before creating another worktree.** `node scripts/worktree-lifecycle.mjs
   audit` lists target size, cleanliness, merge state/proof, and age. Direct
   ancestry is preferred; squash-merged heads require one exact merged GitHub PR
