@@ -179,7 +179,8 @@ test("PR metadata workflow never checks out or executes candidate code", async (
   assert.match(labels, /# zizmor: ignore\[dangerous-triggers\] trusted-base metadata only; candidate code is never executed/);
   assert.match(labels, /ref: \$\{\{ github\.workflow_sha \}\}/);
   assert.doesNotMatch(labels, /pull_request\.head\.sha/);
-  assert.match(labels, /issues: write/);
+  assert.match(labels, /pull-requests: write/);
+  assert.doesNotMatch(labels, /issues: write/);
   assert.match(labels, /listLabelsOnIssue/);
   assert.match(labels, /cancel-in-progress: true/);
   assert.match(labels, /DERIVATION_PASSED/);
