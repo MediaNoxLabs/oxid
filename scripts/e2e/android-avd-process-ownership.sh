@@ -41,6 +41,18 @@ oxid_require_empty_adb_inventory() {
   oxid_adb_inventory_is_empty "$inventory"
 }
 
+oxid_epoch_seconds_are_close() {
+  local host_epoch="$1" emulator_epoch="$2" tolerance="$3" delta
+  [[ "$host_epoch" =~ ^[0-9]{10,11}$ && "$emulator_epoch" =~ ^[0-9]{10,11}$ \
+    && "$tolerance" =~ ^[0-9]{1,4}$ ]] || return 1
+  if [ "$host_epoch" -ge "$emulator_epoch" ]; then
+    delta=$((host_epoch - emulator_epoch))
+  else
+    delta=$((emulator_epoch - host_epoch))
+  fi
+  [ "$delta" -le "$tolerance" ]
+}
+
 oxid_job_is_running() {
   local expected="$1" job
   while IFS= read -r job; do

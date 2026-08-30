@@ -98,6 +98,10 @@ if oxid_adb_inventory_is_exact_online "$wrong_emulator_inventory" emulator-5562;
 if oxid_adb_inventory_is_exact_online "$mixed_inventory" emulator-5562; then fail adb-mixed-exact; fi
 oxid_adb_inventory_is_exact_online "$exact_inventory" emulator-5562 || fail adb-exact
 
+oxid_epoch_seconds_are_close 1700000000 1700000300 300 || fail emulator-clock-boundary
+if oxid_epoch_seconds_are_close 1700000000 1700000301 300; then fail emulator-clock-outside-window; fi
+if oxid_epoch_seconds_are_close invalid 1700000000 300; then fail emulator-clock-invalid-value; fi
+
 cat >"$temporary/fake-adb" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$OXID_FAKE_ADB_INVENTORY_LOG"

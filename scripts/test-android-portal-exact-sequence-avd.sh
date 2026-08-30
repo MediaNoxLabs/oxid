@@ -107,7 +107,7 @@ esac
 # Occupied evidence is owner state. Reject it before probing tools or devices.
 [ ! -e "$RUN_ROOT" ] && [ ! -L "$RUN_ROOT" ] || fail occupied-evidence
 
-for command_name in awk cargo curl docker git jq lsof mktemp nix node ps rg rustup sed shasum stat tar timeout; do
+for command_name in awk cargo curl date docker git jq lsof mktemp nix node ps rg rustup sed shasum stat tar timeout; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
 if timeout -k 1s 0.1s sleep 5; then fail timeout-capability; else [ "$?" -eq 124 ] || fail timeout-capability; fi
@@ -412,6 +412,9 @@ oxid_adb_inventory_is_exact_online "$inventory" "$SERIAL" || fail adb-inventory-
 [ "$(adb_text shell getprop ro.kernel.qemu)" = 1 ] || fail qemu
 avd_name="$(adb_text emu avd name 2>/dev/null)"; avd_name="${avd_name%%$'\n'*}"
 [ "$avd_name" = "$avd" ] || fail avd-identity
+host_epoch="$(run_deadline 5 date +%s)" || fail host-clock
+emulator_epoch="$(adb_text shell date +%s 2>/dev/null)" || fail emulator-clock
+oxid_epoch_seconds_are_close "$host_epoch" "$emulator_epoch" 300 || fail emulator-clock
 [ -z "$(adb_text shell pm path "$PACKAGE" 2>/dev/null)" ] || fail preinstalled-package
 reverse_before="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)"
 for port in "${REVERSE_PORTS[@]}"; do
