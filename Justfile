@@ -66,6 +66,10 @@ portal-virtual-mobile-stack:
 portal-virtual-mobile-stack-contract:
     ./scripts/e2e/portal-virtual-mobile-stack.sh --contract-test
 
+# Verify pinned Portal image tags agree with the checked-out image archives.
+portal-consumer-lifecycle-contract:
+    ./scripts/e2e/portal-consumer-lifecycle.test.sh
+
 # Serve one externally prepared offer to the isolated virtual-mobile loopback endpoint.
 portal-virtual-mobile-offer-harness:
     node ./scripts/e2e/portal-virtual-mobile-offer-harness.mjs

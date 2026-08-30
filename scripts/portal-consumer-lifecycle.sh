@@ -108,9 +108,9 @@ build_image() {
   [ -f "$output" ] || return 1
   docker load <"$output" >>"$PRIVATE_LOG" 2>&1 || return 1
   case "$attribute" in
-    midnight-did-resolver-image) image_id="$(docker image inspect --format '{{.Id}}' midnight-did-resolver:local 2>/dev/null)" ;;
-    did-manager-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-did-manager:local 2>/dev/null)" ;;
-    issuer-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-issuer:local 2>/dev/null)" ;;
+    midnight-did-resolver-image) image_id="$(docker image inspect --format '{{.Id}}' midnight-did-resolver:0.1.0 2>/dev/null)" ;;
+    did-manager-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-did-manager:0.1.0 2>/dev/null)" ;;
+    issuer-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-issuer:0.1.0 2>/dev/null)" ;;
     *) return 1 ;;
   esac
   [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
