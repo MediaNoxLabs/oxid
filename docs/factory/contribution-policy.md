@@ -107,6 +107,10 @@ derived from its title. A metadata-only `pull_request_target` workflow reads
 trusted base policy and never checks out candidate code. Other labels are
 preserved.
 
+PR labels are pull-request metadata, so the workflow grants only
+`pull-requests: write` alongside `contents: read`. It does not grant Issues
+write or alter the repository-wide default workflow permissions.
+
 The label catalog is deterministic. Preview or synchronize it with:
 
 ```bash

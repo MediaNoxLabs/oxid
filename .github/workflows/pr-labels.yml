@@ -9,7 +9,7 @@ on:
 
 permissions:
   contents: read
-  issues: write
+  pull-requests: write
 
 concurrency:
   group: contribution-labels-${{ github.event.pull_request.number }}
