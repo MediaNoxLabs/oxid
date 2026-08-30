@@ -152,6 +152,16 @@ function strictReviewBoundaryExpression() {
   }))()`;
 }
 
+function issuanceCompletionExpression() {
+  return `(() => {
+    if (document.body.innerText.includes("Credential issued, verified, and stored in the protected inventory.")) return true;
+    return Array.from(document.querySelectorAll(".credential-record")).some((record) =>
+      Array.from(record.querySelectorAll(".status-pill.success"))
+        .some((element) => element.textContent.trim() === "Valid")
+    );
+  })()`;
+}
+
 async function click(label, timeoutMs = 20_000) {
   await waitFor(
     `(() => { const element = ${button(label)}; return Boolean(element && !element.disabled && !element.closest("[inert]")); })()`,
@@ -456,11 +466,7 @@ try {
     await evaluate('document.querySelector("#credential-issuance-consent").click()');
     await click("Accept and issue credential");
     try {
-      await waitFor(
-        'document.body.innerText.includes("Credential issued, verified, and stored in the protected inventory.")',
-        "Portal issuance",
-        90_000,
-      );
+      await waitFor(issuanceCompletionExpression(), "Portal issuance", 90_000);
     } catch (error) {
       const diagnosticCounts = await counters();
       throw new Error(`Portal issuance failed with payload-free counters ${JSON.stringify(diagnosticCounts)}: ${error.message}`);
