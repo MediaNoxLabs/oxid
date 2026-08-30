@@ -487,7 +487,7 @@ restored_after="$(counter_snapshot)"
 write_scenario restored "$(counter_delta "$restored_before" "$restored_after")" '{"custodyReactivated":true,"freshReverification":true,"listedAfterRestart":true,"noStaleReverificationMarker":true}' || fail restored-result
 
 total_counters="$(counter_snapshot)"
-run_deadline 10 jq -e '.authorizationMetadata == 3 and .credential == 1 and .issuerMetadata == 7
+run_deadline 10 jq -e '.authorizationMetadata == 3 and .credential == 1 and .issuerMetadata == 6
   and .issuerResolution == 3 and .issuerResolutionSuccess == 3 and .kyc == 14
   and .nonce == 1 and .other == 0 and .token == 2' <<<"$total_counters" >/dev/null || fail total-counters
 scenario_results="$(run_deadline 10 jq -s -c '.' \

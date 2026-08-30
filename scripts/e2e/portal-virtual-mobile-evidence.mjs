@@ -27,36 +27,41 @@ const COUNTER_KEYS = Object.freeze([
   "token",
 ]);
 const ZERO_COUNTERS = Object.freeze(Object.fromEntries(COUNTER_KEYS.map((key) => [key, 0])));
-const EXPECTED_SCENARIOS = Object.freeze([
-  ["cold-route", {}],
-  ["prepare-holder", {}],
-  ["route-refuse", { authorizationMetadata: 1, issuerMetadata: 1 }],
-  ["malformed", { issuerMetadata: 1 }],
-  ["protocol-error", { issuerMetadata: 2 }],
-  ["protocol-timeout", { issuerMetadata: 1 }],
-  ["issue-error", { authorizationMetadata: 1, issuerMetadata: 1, token: 1 }],
-  ["issue", {
-    authorizationMetadata: 1,
+function expectedScenarios(platformKind) {
+  return [
+    ["cold-route", {}],
+    ["prepare-holder", {}],
+    ["route-refuse", { authorizationMetadata: 1, issuerMetadata: 1 }],
+    ["malformed", { issuerMetadata: 1 }],
+    ["protocol-error", { issuerMetadata: platformKind === "ios_simulator" ? 1 : 2 }],
+    ["protocol-timeout", { issuerMetadata: 1 }],
+    ["issue-error", { authorizationMetadata: 1, issuerMetadata: 1, token: 1 }],
+    ["issue", {
+      authorizationMetadata: 1,
+      credential: 1,
+      issuerMetadata: 1,
+      issuerResolution: 1,
+      issuerResolutionSuccess: 1,
+      nonce: 1,
+      token: 1,
+    }],
+    ["restored", { issuerResolution: 1, issuerResolutionSuccess: 1 }],
+  ];
+}
+
+function expectedTotals(platformKind) {
+  return {
+    authorizationMetadata: 3,
     credential: 1,
-    issuerMetadata: 1,
-    issuerResolution: 1,
-    issuerResolutionSuccess: 1,
+    issuerMetadata: platformKind === "ios_simulator" ? 6 : 7,
+    issuerResolution: 3,
+    issuerResolutionSuccess: 3,
+    kyc: 14,
     nonce: 1,
-    token: 1,
-  }],
-  ["restored", { issuerResolution: 1, issuerResolutionSuccess: 1 }],
-]);
-const EXPECTED_TOTALS = Object.freeze({
-  authorizationMetadata: 3,
-  credential: 1,
-  issuerMetadata: 7,
-  issuerResolution: 3,
-  issuerResolutionSuccess: 3,
-  kyc: 14,
-  nonce: 1,
-  other: 0,
-  token: 2,
-});
+    other: 0,
+    token: 2,
+  };
+}
 const OFFER_KEYS = Object.freeze([
   "triggerOnly",
   "capabilityMode0600",
@@ -161,8 +166,8 @@ function exactCounters(actual, expected) {
   return COUNTER_KEYS.every((key) => actual[key] === expected[key]);
 }
 
-function exactScenarioDeltas(scenarios) {
-  return EXPECTED_SCENARIOS.every(([name, overrides], index) => {
+function exactScenarioDeltas(scenarios, platformKind) {
+  return expectedScenarios(platformKind).every(([name, overrides], index) => {
     const scenario = scenarios[index];
     return scenario.name === name && scenario.passed === true
       && exactCounters(scenario.counterDelta, expectedDelta(overrides));
@@ -218,7 +223,8 @@ function validateMeasurements(input) {
   }
   assertHex(input.artifactSha256, 64, "artifactSha256");
 
-  if (!Array.isArray(input.scenarios) || input.scenarios.length !== EXPECTED_SCENARIOS.length) {
+  if (!Array.isArray(input.scenarios)
+      || input.scenarios.length !== expectedScenarios(input.platform.kind).length) {
     throw new Error("scenarios are incomplete");
   }
   input.scenarios.forEach((scenario, index) => {
@@ -257,8 +263,8 @@ function deriveAcceptance(input) {
   const issuance = allTrue(input.issuance, ISSUANCE_KEYS);
   const encryptedPersistence = allTrue(input.storage, STORAGE_KEYS);
   const restartAndReverification = allTrue(input.restart, RESTART_KEYS);
-  const exactScenarios = exactScenarioDeltas(input.scenarios);
-  const exactTotals = exactCounters(input.totalCounters, EXPECTED_TOTALS);
+  const exactScenarios = exactScenarioDeltas(input.scenarios, input.platform.kind);
+  const exactTotals = exactCounters(input.totalCounters, expectedTotals(input.platform.kind));
   const cleanup = allTrue(input.cleanup, CLEANUP_KEYS);
   const virtualTargetOnly = input.cleanup.virtualTargetOnly === true;
   const secretFreeEvidence = true;

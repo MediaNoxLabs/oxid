@@ -57,7 +57,11 @@ function measurements(kind = "android_emulator") {
         counterDelta: delta({ authorizationMetadata: 1, issuerMetadata: 1 }),
       },
       { name: "malformed", passed: true, counterDelta: delta({ issuerMetadata: 1 }) },
-      { name: "protocol-error", passed: true, counterDelta: delta({ issuerMetadata: 2 }) },
+      {
+        name: "protocol-error",
+        passed: true,
+        counterDelta: delta({ issuerMetadata: ios ? 1 : 2 }),
+      },
       { name: "protocol-timeout", passed: true, counterDelta: delta({ issuerMetadata: 1 }) },
       {
         name: "issue-error",
@@ -86,7 +90,7 @@ function measurements(kind = "android_emulator") {
     totalCounters: {
       authorizationMetadata: 3,
       credential: 1,
-      issuerMetadata: 7,
+      issuerMetadata: ios ? 6 : 7,
       issuerResolution: 3,
       issuerResolutionSuccess: 3,
       kyc: 14,
@@ -158,6 +162,18 @@ for (const kind of ["android_emulator", "ios_simulator"]) {
     assert.doesNotThrow(() => validateEvidence(evidence, { requireAccepted: true }));
   });
 }
+
+test("unavailable preview counts stay bound to measured platform transport behavior", () => {
+  const ios = measurements("ios_simulator");
+  ios.scenarios[4].counterDelta.issuerMetadata = 2;
+  ios.totalCounters.issuerMetadata = 7;
+  assert.equal(buildEvidence(ios).acceptance.accepted, false);
+
+  const android = measurements("android_emulator");
+  android.scenarios[4].counterDelta.issuerMetadata = 1;
+  android.totalCounters.issuerMetadata = 6;
+  assert.equal(buildEvidence(android).acceptance.accepted, false);
+});
 
 test("acceptance is derived from every required measured boolean and boundary count", () => {
   const base = measurements();
