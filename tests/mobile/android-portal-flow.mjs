@@ -193,6 +193,9 @@ function issuanceDiagnosticExpression() {
       invalidCredentialResponse: hasStatus("The issuer returned an invalid credential"),
       issuerRejected: hasStatus("The issuer rejected the request"),
       credentialStoreUnavailable: hasStatus("Credential storage is unavailable"),
+      issuedCredentialVerificationFailed: hasStatus("issued credential verification failed"),
+      issuedCredentialPersistenceFailed: hasStatus("issued credential persistence failed"),
+      issuedCredentialStorageUnavailable: hasStatus("issued credential storage is unavailable"),
       genericFailure: hasStatus("The operation could not be completed")
     };
   })()`;

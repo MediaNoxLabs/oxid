@@ -43,6 +43,10 @@ test("issue accepts either the completion notice or the protected valid-record s
   assert.match(source, /invalidCredential/u);
   assert.match(source, /invalidCredentialResponse/u);
   assert.match(source, /credentialStoreUnavailable/u);
+  assert.match(source, /issuedCredentialVerificationFailed/u);
+  assert.match(source, /issuedCredentialPersistenceFailed/u);
+  assert.match(source, /issuedCredentialStorageUnavailable/u);
+  assert.match(source, /const hasStatus = \(value\) => statuses\.some\(\(text\) => text\.includes\(value\)\);/u);
   assert.match(terminal, /const diagnosticState = await evaluate\(issuanceDiagnosticExpression\(\)\);/u);
   assert.match(terminal, /payload-free counters \$\{JSON\.stringify\(diagnosticCounts\)\} and state \$\{JSON\.stringify\(diagnosticState\)\}/u);
 });
