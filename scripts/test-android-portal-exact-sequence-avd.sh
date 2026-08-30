@@ -81,6 +81,7 @@ build_cleanup=false
 private_logs_removed=false
 head_clean=false
 journey_deadline=0
+journey_phase="none"
 oxid_android_avd_failure_marker_reset
 
 fail() {
@@ -131,7 +132,16 @@ run_deadline() {
   shift
   if [ "$journey_deadline" -gt 0 ]; then
     remaining=$((journey_deadline - SECONDS))
-    [ "$remaining" -gt 0 ] || return 124
+    if [ "$remaining" -le 0 ]; then
+      if [ "$journey_phase" != none ] && [ -f "$PRIVATE_LOG" ]; then
+        printf 'android-portal-exact-sequence-avd: timing phase=%s elapsed=%s remaining=0\n' \
+          "$journey_phase" "$SECONDS" >>"$PRIVATE_LOG" 2>/dev/null || true
+        failure_phase="$journey_phase"
+      else
+        failure_phase="journey-timeout"
+      fi
+      return 124
+    fi
     [ "$seconds" -le "$remaining" ] || seconds="$remaining"
   fi
   timeout -k 5s "${seconds}s" "$@"
@@ -517,7 +527,9 @@ run_scenario() {
   run_deadline 10 jq -e --arg mode "$mode" '.mode == $mode and .passed == true and (.measurements | type == "object") and (.counterDelta | type == "object")' "$result" >/dev/null || return 1
   if run_deadline 5 rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|serial|\.ts\.net' "$result"; then return 1; fi
   run_deadline 5 chmod 600 "$result" || return 1
-  remove_forward
+  remove_forward || return 1
+  printf 'android-portal-exact-sequence-avd: timing phase=%s elapsed=%s completed=true\n' \
+    "$journey_phase" "$SECONDS" >>"$PRIVATE_LOG" || return 1
 }
 set_proxy_normal() { printf 'normal' | control_curl -X POST --data-binary @- "$CONTROL_ORIGIN/proxy-mode" >/dev/null; }
 arm_offer() {
@@ -540,6 +552,7 @@ assert_consumed() { [ "$(handoff_state)" = empty ] && wait_capability_absent; }
 
 journey_status="running"
 journey_deadline=$((SECONDS + 600))
+journey_phase="cold-route"
 [ "$(handoff_state)" = ready ] || fail cold-handoff-ready
 stage_capability_file file "$PORTAL_STATE/portal-offer.capability" || fail cold-capability-stage
 run_deadline 5 rm -f -- "$PORTAL_STATE/portal-offer.capability" || fail cold-capability-remove
@@ -549,12 +562,14 @@ adb_device shell am start -W -a android.intent.action.VIEW -d "$TRIGGER" "$PACKA
 run_scenario cold-route || fail cold-route
 assert_consumed || fail cold-consume
 session_pid="$(app_pid)"; [[ "$session_pid" =~ ^[1-9][0-9]*$ ]] || fail cold-pid
+journey_phase="prepare-holder"
 run_scenario prepare-holder || fail prepare-holder
 [ "$(app_pid)" = "$session_pid" ] || fail holder-process
 adb_device exec-out run-as "$PACKAGE" cat files/oxid/private/did-records.json | \
   control_curl -H 'Content-Type: application/json' --data-binary @- "$CONTROL_ORIGIN/holder" >/dev/null || fail holder-sync
 
 for mode in route-refuse malformed protocol-error protocol-timeout issue-error issue; do
+  journey_phase="$mode"
   deliver_warm_offer || fail "$mode-arm"
   [ "$(app_pid)" = "$session_pid" ] || fail "$mode-process"
   run_scenario "$mode" || fail "$mode"
@@ -563,6 +578,7 @@ done
 capability_burned_before_network=true
 one_shot_ready_empty=true
 
+journey_phase="post-issue-storage"
 credential_header="$(adb_device shell run-as "$PACKAGE" od -An -tx1 -N8 files/oxid/private/credentials.enc 2>/dev/null | tr -d ' \r\n')"
 credential_key_size="$(adb_device shell run-as "$PACKAGE" wc -c files/oxid/private/credentials.key 2>/dev/null | awk '{print $1}' | tr -d '\r\n')"
 [ "$credential_header" = 4f58494456433031 ] || fail encrypted-store-header
@@ -574,6 +590,7 @@ if adb_device exec-out run-as "$PACKAGE" cat files/oxid/private/credentials.enc 
   fail encrypted-store-plaintext
 fi
 storage_denylist=true
+journey_phase="process-restart"
 old_pid="$(app_pid)"; [[ "$old_pid" =~ ^[1-9][0-9]*$ ]] || fail process-generation
 adb_device shell am force-stop "$PACKAGE" >/dev/null || fail process-stop
 for ((_attempt = 0; _attempt < 50; _attempt++)); do [ -z "$(app_pid)" ] && { process_absent=true; break; }; run_deadline 2 sleep 0.1; done
@@ -582,8 +599,10 @@ adb_device shell am start -n "$PACKAGE/dev.dioxus.main.MainActivity" >/dev/null 
 for ((_attempt = 0; _attempt < 60; _attempt++)); do new_pid="$(app_pid)"; [ -n "$new_pid" ] && [ "$new_pid" != "$old_pid" ] && { different_generation=true; break; }; run_deadline 2 sleep 0.25; done
 [ "$different_generation" = true ] || fail process-restart
 no_data_reset=true
+journey_phase="restored"
 run_scenario restored || fail restored
 
+journey_phase="final-verification"
 total_counters="$(counter_snapshot)"
 run_deadline 10 jq -e '.authorizationMetadata == 3 and .credential == 1 and .issuerMetadata == 6
   and .issuerResolution == 3 and .issuerResolutionSuccess == 3 and .kyc == 14

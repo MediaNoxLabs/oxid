@@ -81,6 +81,12 @@ grep -qF 'oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-runner-marker-wiring
 grep -qF 'failure_phase="unreported-timeout-or-abort"' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-runner-unreported-phase
+grep -qF 'journey_phase="post-issue-storage"' \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-runner-post-issue-phase
+grep -qF 'failure_phase="$journey_phase"' \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-runner-timing-phase
+grep -qF 'timing phase=%s elapsed=%s completed=true' \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-runner-scenario-timing
 [ "$(grep -cF 'timeout --preserve-status -k 180s 14400s ./scripts/test-android-portal-exact-sequence-avd.sh' \
   "$ROOT/Justfile")" -eq 2 ] || fail android-outer-timeout-budget
 
