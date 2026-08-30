@@ -128,7 +128,7 @@ done
 [ "$avd_found" = true ] || fail avd-definition
 
 run_deadline() {
-  local seconds="$1" remaining
+  local seconds="$1" remaining status
   shift
   if [ "$journey_deadline" -gt 0 ]; then
     remaining=$((journey_deadline - SECONDS))
@@ -144,7 +144,16 @@ run_deadline() {
     fi
     [ "$seconds" -le "$remaining" ] || seconds="$remaining"
   fi
-  timeout -k 5s "${seconds}s" "$@"
+  if timeout -k 5s "${seconds}s" "$@"; then
+    return 0
+  fi
+  status=$?
+  if [ "$journey_deadline" -gt 0 ] && [ "$journey_phase" != none ] && [ -f "$PRIVATE_LOG" ]; then
+    printf 'android-portal-exact-sequence-avd: timing phase=%s elapsed=%s supervisor-status=%s\n' \
+      "$journey_phase" "$SECONDS" "$status" >>"$PRIVATE_LOG" 2>/dev/null || true
+    failure_phase="$journey_phase"
+  fi
+  return "$status"
 }
 
 adb_device() {

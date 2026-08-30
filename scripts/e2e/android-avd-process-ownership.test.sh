@@ -87,6 +87,8 @@ grep -qF 'failure_phase="$journey_phase"' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-runner-timing-phase
 grep -qF 'timing phase=%s elapsed=%s completed=true' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-runner-scenario-timing
+grep -qF 'timing phase=%s elapsed=%s supervisor-status=%s' \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-runner-supervisor-status
 [ "$(grep -cF 'timeout --preserve-status -k 180s 14400s ./scripts/test-android-portal-exact-sequence-avd.sh' \
   "$ROOT/Justfile")" -eq 2 ] || fail android-outer-timeout-budget
 
