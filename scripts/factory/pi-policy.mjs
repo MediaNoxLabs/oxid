@@ -90,7 +90,7 @@ export async function applyUserPolicy({ env = process.env, execute = false, now 
   await mkdir(parent, { recursive: true, mode: 0o700 });
   let backupPath = null;
   if (Object.keys(current).length > 0) {
-    backupPath = `${configPath}.backup-${backupSuffix(now)}`;
+    backupPath = `${configPath}.backup-${backupSuffix(now)}-${randomUUID()}`;
     await copyFile(configPath, backupPath, fsConstants.COPYFILE_EXCL);
     await chmod(backupPath, 0o600);
   }

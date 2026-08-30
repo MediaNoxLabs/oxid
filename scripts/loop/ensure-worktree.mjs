@@ -3,10 +3,12 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
+import { resolvePinnedCoreModulePath } from "../dev-loops.mjs";
 import { runManagedChild } from "../lib/managed-child-process.mjs";
+import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 import { enforceSingleBase, readLongOptionValues } from "../lib/pinned-dev-loops-args.mjs";
 import { auditWorktreeAdmission } from "../factory/audit-pi.mjs";
 
@@ -35,6 +37,20 @@ function selectorValue(args) {
   const value = issue ?? pr;
   if (!/^[1-9]\d*$/.test(value)) throw new Error(`${issue === undefined ? "--pr" : "--issue"} must be a positive integer`);
   return issue === undefined ? `pr-${value}` : `issue-${value}`;
+}
+
+async function resolveCanonicalTarget(mainRoot, args) {
+  const issue = optionValue(args, "--issue");
+  const pr = optionValue(args, "--pr");
+  selectorValue(args);
+  const resolved = await resolveDevLoopsPackageRoot({ cwd: mainRoot });
+  const corePath = await resolvePinnedCoreModulePath(resolved.packageRoot);
+  const { resolveWorktreePath } = await import(pathToFileURL(corePath).href);
+  return resolveWorktreePath({
+    repoRoot: mainRoot,
+    kind: issue === undefined ? "pr" : "issue",
+    number: Number(issue ?? pr),
+  });
 }
 
 function replaceOption(args, name, value) {
@@ -82,7 +98,7 @@ export async function enforceFactoryAdmissionForCreation(args, { admissionAudit 
   // Preserve the pinned package's parse-error contract for incomplete input.
   if (repoRootValue === undefined) return { skipped: true };
   const mainRoot = realpathSync(path.resolve(repoRootValue));
-  const target = path.join(mainRoot, "tmp", "worktrees", "dev-loops", selectorValue(args));
+  const target = await resolveCanonicalTarget(mainRoot, args);
   if (existsSync(target)) return { reused: true, target };
   const audit = await admissionAudit({ repoRoot: mainRoot });
   if (!audit.admissionReady) {

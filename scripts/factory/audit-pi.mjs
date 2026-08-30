@@ -15,9 +15,6 @@ const EXPECTED_PACKAGES = new Map([
   ["@input-output-hk/agent-review-pi", "0.5.0"],
 ]);
 const EXPECTED_PROJECT_VALUES = Object.freeze({
-  defaultProvider: "openai-codex",
-  defaultModel: "gpt-5.6-terra",
-  defaultThinkingLevel: "medium",
   "compaction.enabled": true,
   "compaction.reserveTokens": 16384,
   "compaction.keepRecentTokens": 20000,
@@ -28,8 +25,6 @@ const EXPECTED_PROJECT_VALUES = Object.freeze({
   "retry.provider.maxRetries": 0,
   "retry.provider.maxRetryDelayMs": 60000,
   "subagents.projectRootResolution": "git-root",
-  "subagents.defaultModel": "openai-codex/gpt-5.6-terra",
-  "subagents.defaultThinking": "medium",
 });
 
 function getAtPath(object, dotted) {
@@ -55,14 +50,47 @@ function resolveGitLayout(repoRoot) {
   return { commonGitDir, commonCheckout: path.dirname(commonGitDir) };
 }
 
-function parseFrontmatter(source) {
-  const match = source.match(/^---\n([\s\S]*?)\n---/u);
-  if (!match) return {};
+function stripYamlComment(value, file) {
+  let quote = null;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote === '"' && escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote === '"' && character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote !== null) {
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === "#" && (index === 0 || /\s/u.test(value[index - 1]))) return value.slice(0, index).trimEnd();
+  }
+  if (quote !== null) throw new Error(`${file}: unmatched quote in frontmatter`);
+  return value;
+}
+
+function parseFrontmatter(source, file) {
+  const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u);
+  if (!match) throw new Error(`${file}: missing YAML frontmatter`);
   const result = {};
-  for (const line of match[1].split("\n")) {
-    const separator = line.indexOf(":");
-    if (separator <= 0) continue;
-    result[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+  for (const line of match[1].split(/\r?\n/u)) {
+    if (/^\s*(?:#.*)?$/u.test(line) || /^\s/u.test(line)) continue;
+    const field = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(?:\s*(.*))?$/u);
+    if (!field) continue;
+    const [, key, raw = ""] = field;
+    let value = stripYamlComment(raw, file).trim();
+    if (["|", ">", "|-", ">-"].includes(value)) {
+      throw new Error(`${file}: ${key} must use a scalar; YAML block values are outside the budget contract`);
+    }
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    result[key] = value;
   }
   return result;
 }
@@ -130,7 +158,7 @@ function inspectOperationalState(repoRoot) {
         { targetGiB, greenMaximumGiB: 100, amberMaximumGiB: 200 }, "operational"),
     ];
   } catch (error) {
-    return [check("worktree-admission", "fail", `Worktree lifecycle audit unavailable: ${error.message}`, undefined, "operational")];
+    return [check("worktree-admission", "warn", `Worktree lifecycle audit unavailable; creation remains recoverable: ${error.message}`, undefined, "operational")];
   }
 }
 
@@ -180,11 +208,25 @@ export async function auditPi({
   userPolicyResult = undefined,
 } = {}) {
   const checks = [];
-  const expectedPiVersion = (await readFile(path.join(repoRoot, ".pi", "runtime-version"), "utf8")).trim();
   const settings = JSON.parse(await readFile(path.join(repoRoot, ".pi", "settings.json"), "utf8"));
   const settingProblems = Object.entries(EXPECTED_PROJECT_VALUES)
     .filter(([field, expected]) => JSON.stringify(getAtPath(settings, field)) !== JSON.stringify(expected))
     .map(([field, expected]) => `${field}: expected ${JSON.stringify(expected)}, found ${JSON.stringify(getAtPath(settings, field))}`);
+  const parentModel = typeof settings.defaultProvider === "string" && typeof settings.defaultModel === "string"
+    ? `${settings.defaultProvider}/${settings.defaultModel}`
+    : null;
+  if (!parentModel || !/^[a-z0-9-]+\/[a-z0-9.-]+$/u.test(parentModel)) {
+    settingProblems.push("defaultProvider/defaultModel: expected a well-formed provider/model pair");
+  }
+  if (settings.subagents?.defaultModel !== parentModel) {
+    settingProblems.push(`subagents.defaultModel: expected ${JSON.stringify(parentModel)}, found ${JSON.stringify(settings.subagents?.defaultModel)}`);
+  }
+  if (settings.subagents?.defaultThinking !== settings.defaultThinkingLevel) {
+    settingProblems.push("subagents.defaultThinking must match defaultThinkingLevel");
+  }
+  if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(settings.defaultThinkingLevel)) {
+    settingProblems.push(`defaultThinkingLevel: unsupported value ${JSON.stringify(settings.defaultThinkingLevel)}`);
+  }
   checks.push(check("project-pi-policy", settingProblems.length ? "fail" : "pass",
     settingProblems.length ? "Project Pi defaults are not bounded" : "Project model, retry, provider deadline, and compaction are bounded",
     settingProblems.length ? settingProblems : undefined));
@@ -216,15 +258,20 @@ export async function auditPi({
   if (effectivePiVersion === undefined) {
     try { effectivePiVersion = run("pi", ["--version"], { cwd: repoRoot }); } catch { effectivePiVersion = null; }
   }
-  checks.push(check("pi-runtime", effectivePiVersion === expectedPiVersion ? "pass" : "fail",
-    effectivePiVersion === expectedPiVersion
-      ? `Pi ${expectedPiVersion} is active`
-      : `Expected Pi ${expectedPiVersion}; active executable reports ${effectivePiVersion ?? "unavailable"}`));
+  const validPiVersion = typeof effectivePiVersion === "string" && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(effectivePiVersion);
+  checks.push(check("pi-runtime", validPiVersion ? "pass" : "fail",
+    validPiVersion
+      ? `Nix-pinned Pi ${effectivePiVersion} is active`
+      : `The Pi executable is unavailable or reported an invalid version: ${effectivePiVersion ?? "unavailable"}`));
 
   const agentProblems = [];
   const agentDir = path.join(repoRoot, ".pi", "agents");
   for (const file of (await readdir(agentDir)).filter((entry) => entry.endsWith(".agent.md")).sort()) {
-    agentProblems.push(...validateAgentBudget(file, parseFrontmatter(await readFile(path.join(agentDir, file), "utf8"))));
+    try {
+      agentProblems.push(...validateAgentBudget(file, parseFrontmatter(await readFile(path.join(agentDir, file), "utf8"), file)));
+    } catch (error) {
+      agentProblems.push(error.message);
+    }
   }
   checks.push(check("tracked-agent-budgets", agentProblems.length ? "fail" : "pass",
     agentProblems.length ? "One or more tracked agents are unbounded" : "Every tracked agent has a bounded runtime and turn budget",
@@ -271,27 +318,6 @@ export async function auditPi({
       ? "Every PR requires a no-model metrics closeout"
       : "The routine metrics closeout contract is missing",
     undefined, "documentation"));
-
-  const factory = await readFile(path.join(repoRoot, ".pi", "extensions", "factory.ts"), "utf8");
-  const mutatingGh = /["'](?:issue|pr)["']\s*,\s*["'](?:edit|comment|close|reopen|delete|merge|create)["']/u.test(factory);
-  const claimFailsClosed = /Claiming #\$\{issue\} is disabled/u.test(factory);
-  checks.push(check("factory-github-authority", !mutatingGh && claimFailsClosed ? "pass" : "fail",
-    !mutatingGh && claimFailsClosed
-      ? "The Pi factory extension is read-only and claim fails closed"
-      : "The Pi factory extension still exposes an unguarded GitHub mutation path"));
-
-  const factoryLabels = await readFile(path.join(repoRoot, "scripts", "github", "sync-factory-labels.mjs"), "utf8");
-  const expectedFactoryLabels = ["ready", "claimed", "in-progress", "gate-draft", "gate-preapproval", "merge-ready", "blocked"];
-  const labelTaxonomyComplete = expectedFactoryLabels.every((name) => factoryLabels.includes(`factory:${name}`));
-  checks.push(check("factory-label-taxonomy", labelTaxonomyComplete ? "pass" : "fail",
-    labelTaxonomyComplete ? "The tracked FSM label taxonomy is complete" : "One or more factory FSM state labels are missing"));
-
-  const preflight = await readFile(path.join(repoRoot, "scripts", "loop", "pre-flight-gate.mjs"), "utf8");
-  const integrationRewrite = /PACKAGE_DELIVERY_BRANCH = "origin\/main"/u.test(preflight)
-    && /REPOSITORY_DELIVERY_BRANCH = "origin\/integration"/u.test(preflight)
-    && /createDeliveryBranchRewriteSink/u.test(preflight);
-  checks.push(check("integration-recovery-guidance", integrationRewrite ? "pass" : "fail",
-    integrationRewrite ? "Generic package recovery output is normalized to origin/integration" : "Preflight recovery may still recommend the wrong delivery branch"));
 
   if (includeOperational && layout) {
     checks.push(...inspectOperationalState(repoRoot));

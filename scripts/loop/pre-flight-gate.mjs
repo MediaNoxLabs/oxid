@@ -37,21 +37,22 @@ export function assertNoPreflightBypass(env = process.env) {
   }
 }
 
-const PACKAGE_DELIVERY_BRANCH = "origin/main";
-const REPOSITORY_DELIVERY_BRANCH = "origin/integration";
+const PACKAGE_RECOVERY_GUIDANCE = "(creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/main)";
+const REPOSITORY_RECOVERY_GUIDANCE = "(creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/integration)";
 
 /**
  * The pinned generic package describes its own main-based repository. Oxid's
- * wrapper is authoritative for this consumer and must never surface that base
- * as recovery guidance. Keep the rewrite at the package-output boundary so no
+ * wrapper is authoritative for this consumer. Rewrite only the package's exact
+ * worktree-recovery sentence; legitimate diagnostics about main must remain
+ * byte-for-byte accurate. Keep this at the package-output boundary so no
  * installed package is patched in place.
  */
 export function createDeliveryBranchRewriteSink(destination) {
   const decoder = new StringDecoder("utf8");
   let pending = "";
   let flushed = false;
-  const keep = PACKAGE_DELIVERY_BRANCH.length - 1;
-  const rewrite = (value) => value.replaceAll(PACKAGE_DELIVERY_BRANCH, REPOSITORY_DELIVERY_BRANCH);
+  const keep = PACKAGE_RECOVERY_GUIDANCE.length - 1;
+  const rewrite = (value) => value.replaceAll(PACKAGE_RECOVERY_GUIDANCE, REPOSITORY_RECOVERY_GUIDANCE);
   const writeDestination = (value, callback) => {
     if (value.length === 0 || destination.write(value)) callback();
     else destination.once("drain", callback);

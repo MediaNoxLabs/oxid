@@ -29,8 +29,13 @@ case "${1:-}" in
     ;;
   --pi)
     shift
-    nix develop --command node scripts/factory/audit-pi.mjs --config-only --enforce-config
-    exec nix develop --command pi "$@"
+    exec nix develop --command bash -c '
+      node scripts/factory/audit-pi.mjs --config-only --enforce-config || {
+        echo "Pi startup policy is not aligned; run ./bootstrap.sh --configure-pi, then retry ./bootstrap.sh --pi." >&2
+        exit 1
+      }
+      exec pi "$@"
+    ' bootstrap-pi "$@"
     ;;
   --check)
     shift

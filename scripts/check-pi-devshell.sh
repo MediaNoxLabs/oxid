@@ -13,11 +13,37 @@ for required_command in pi node jq; do
   fi
 done
 
-expected_pi_version="$(tr -d '[:space:]' < .pi/runtime-version)"
+pi_executable="$(realpath "$(command -v pi)")"
+if [[ "$pi_executable" != /nix/store/*/bin/pi ]]; then
+  echo "Pi is not supplied by the pinned Nix development shell: $pi_executable" >&2
+  echo "run this check through ./bootstrap.sh --check" >&2
+  exit 1
+fi
+
 pi_version="$(pi --version)"
-if [[ "$pi_version" != "$expected_pi_version" ]]; then
-  echo "unexpected Pi version: expected $expected_pi_version, found $pi_version" >&2
+if [[ ! "$pi_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+  echo "unexpected Pi version output: $pi_version" >&2
   echo "start Pi only through ./bootstrap.sh --pi" >&2
+  exit 1
+fi
+
+model_policy="$(node --input-type=module <<'NODE'
+import { readFile } from "node:fs/promises";
+
+const settings = JSON.parse(await readFile(".pi/settings.json", "utf8"));
+if (!/^[a-z0-9-]+$/u.test(settings.defaultProvider ?? "") || !/^[a-z0-9.-]+$/u.test(settings.defaultModel ?? "")) {
+  throw new Error("tracked defaultProvider/defaultModel is malformed");
+}
+if (settings.subagents?.defaultModel !== `${settings.defaultProvider}/${settings.defaultModel}`) {
+  throw new Error("parent and subagent default models are not aligned");
+}
+process.stdout.write(`${settings.defaultProvider}\t${settings.defaultModel}`);
+NODE
+)"
+IFS=$'\t' read -r expected_provider expected_model <<< "$model_policy"
+if ! pi --list-models "$expected_provider/$expected_model" \
+  | awk -v provider="$expected_provider" -v model="$expected_model" 'NR > 1 && $1 == provider && $2 == model { found = 1 } END { exit !found }'; then
+  echo "tracked Pi model is absent from the Nix-pinned catalog: $expected_provider/$expected_model" >&2
   exit 1
 fi
 
@@ -116,4 +142,4 @@ if ! jq -s -e --arg loader_path "$loader_path" '
   exit 1
 fi
 
-echo "Pi devshell smoke passed: pi $pi_version, agent-review-pi 0.5.0 extension and skill available."
+echo "Pi devshell smoke passed: pi $pi_version, $expected_provider/$expected_model, agent-review-pi 0.5.0 extension and skill available."

@@ -15,7 +15,7 @@ routes through a coordination server.
 
 | Piece | Version | Source |
 | --- | --- | --- |
-| `pi-coding-agent` | `0.84.0` | expected version in `.pi/runtime-version`; executable supplied by `devShells.default` |
+| `pi-coding-agent` | `0.84.0` at this audit | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
 | `dev-loops` | `0.9.0` | `.pi/settings.json` → project-local `.pi/npm` |
 | `pi-subagents` | `0.42.1` | same |
 | `@input-output-hk/agent-review-pi` | `0.5.0` | same, **GitHub Packages — needs a token** |
@@ -262,11 +262,13 @@ in a diff.
   the proof column, while automation should use the additive JSON shape. `remove` and
   `clean-target` require an exact path, expected head SHA, and `--execute`;
   removal additionally requires a clean head integrated into `origin/integration`
-  and seven days of retention. The tracked ensure-worktree wrapper also runs
-  the constitutional Pi audit for that Git common checkout before creating a
-  new canonical worktree and
-  refuses while worktree/storage/metrics admission is red; reuse of an existing
-  canonical worktree remains available so in-flight work can be recovered.
+  and seven days of retention. Before creating a new canonical worktree, the
+  tracked wrapper runs only host-capacity admission for that Git common
+  checkout. A measured red worktree count or target-storage result blocks new
+  creation; an unavailable audit warns and preserves recovery. Pi configuration
+  and private metrics remain visible in `--audit-pi` but do not prevent creating
+  the first isolated worker. Reuse of an existing canonical worktree is always
+  available so in-flight work can be recovered.
 - **Leave one private metrics record per issue/PR/head.** Generate a closed v1
   template, replace every required `null`/empty target with measured values,
   and atomically store it. An untouched template is invalid. Audit is

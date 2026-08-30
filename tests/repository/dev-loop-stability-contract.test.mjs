@@ -84,7 +84,7 @@ async function realMkdtemp(prefix) {
 
 async function installedPi084Root(t) {
   try {
-    const expectedVersion = (await readFile(path.join(repoRoot, ".pi", "runtime-version"), "utf8")).trim();
+    const expectedVersion = execFileSync("pi", ["--version"], { encoding: "utf8" }).trim();
     const executable = (execFileSync("which", ["pi"], { encoding: "utf8" })).trim();
     const root = path.dirname(path.dirname(await realpath(executable)));
     const packageRoot = path.join(root, "lib", "node_modules", "pi-monorepo");
@@ -142,6 +142,13 @@ async function makeFixture() {
     '  stdout.write(`${JSON.stringify(value)}\\n`);',
     '  return 0;',
     '}',
+  ].join("\n"));
+  const coreRoot = path.join(packageRoot, "node_modules", "@dev-loops", "core");
+  await mkdir(path.join(coreRoot, "src", "loop"), { recursive: true });
+  await writeFile(path.join(coreRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.0" }));
+  await writeFile(path.join(coreRoot, "src", "loop", "handoff-envelope.mjs"), [
+    'import path from "node:path";',
+    'export function resolveWorktreePath({ repoRoot, kind, number }) { return path.join(repoRoot, "tmp", "worktrees", "dev-loops", `${kind}-${number}`); }',
   ].join("\n"));
   await writeFile(path.join(packageRoot, "scripts", "_core-helpers.mjs"), 'export function formatCliError(error) { return error.message; }\n');
   await writeFile(path.join(packageRoot, "agents", "developer.agent.md"), [

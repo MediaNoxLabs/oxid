@@ -93,6 +93,8 @@ pass `--approve` to trust the checked-out project for that run and inject an
 API-key provider through its documented environment variable. An interactive
 subscription login stores OAuth material in `~/.pi/agent/auth.json`; treat that
 file as a credential secret and mount it only on an operator-approved host.
+Use `--approve` only after the runner has pinned and verified the operator-
+selected commit SHA; never approve a mutable or externally supplied branch ref.
 With the provider credential already injected by the runner, a bounded
 non-interactive entry point has this shape:
 

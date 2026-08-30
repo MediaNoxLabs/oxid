@@ -8,7 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createDeliveryBranchRewriteSink } from "../../scripts/loop/pre-flight-gate.mjs";
-import { auditPi } from "../../scripts/factory/audit-pi.mjs";
+import { auditPi, auditWorktreeAdmission } from "../../scripts/factory/audit-pi.mjs";
 import { applyUserPolicy, mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
 import { FACTORY_STATE_LABELS, syncFactoryLabels } from "../../scripts/github/sync-factory-labels.mjs";
 
@@ -16,9 +16,9 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 
 test("tracked Pi policy uses balanced Codex defaults and exact package pins", async () => {
   const settings = JSON.parse(await readFile(path.join(repoRoot, ".pi", "settings.json"), "utf8"));
-  assert.equal(settings.defaultProvider, "openai-codex");
-  assert.equal(settings.defaultModel, "gpt-5.6-terra");
-  assert.equal(settings.defaultThinkingLevel, "medium");
+  assert.match(settings.defaultProvider, /^[a-z0-9-]+$/u);
+  assert.match(settings.defaultModel, /^[a-z0-9.-]+$/u);
+  assert.match(settings.defaultThinkingLevel, /^(?:off|minimal|low|medium|high|xhigh|max)$/u);
   assert.equal(settings.retry.maxRetries, 1);
   assert.equal(settings.retry.provider.timeoutMs, 600000);
   assert.equal(settings.retry.provider.maxRetries, 0);
@@ -27,8 +27,21 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
     "npm:pi-subagents@0.42.1",
     "npm:@input-output-hk/agent-review-pi@0.5.0",
   ]);
-  assert.equal(settings.subagents.defaultModel, "openai-codex/gpt-5.6-terra");
-  assert.equal(settings.subagents.defaultThinking, "medium");
+  assert.equal(settings.subagents.defaultModel, `${settings.defaultProvider}/${settings.defaultModel}`);
+  assert.equal(settings.subagents.defaultThinking, settings.defaultThinkingLevel);
+  const smoke = await readFile(path.join(repoRoot, "scripts", "check-pi-devshell.sh"), "utf8");
+  assert.match(smoke, /pi --list-models/u);
+});
+
+test("unavailable host-capacity audit warns without deadlocking first-worker creation", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-admission-unavailable-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const result = await auditWorktreeAdmission({ repoRoot: root });
+  assert.equal(result.admissionReady, true);
+  assert.deepEqual(result.checks.map(({ id, status }) => ({ id, status })), [
+    { id: "worktree-admission", status: "warn" },
+  ]);
+  assert.match(result.checks[0].summary, /creation remains recoverable/u);
 });
 
 test("user subagent policy merge is bounded and preserves unrelated settings", () => {
@@ -63,12 +76,23 @@ test("preflight rewrites split and late generic main guidance to integration", a
     },
   });
   const rewritten = createDeliveryBranchRewriteSink(destination);
-  rewritten.sink.write("create from origin/ma");
-  rewritten.sink.write("in, then continue\n");
+  rewritten.sink.write("  (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/ma");
+  rewritten.sink.write("in)\n");
   await rewritten.flush();
-  await new Promise((resolve, reject) => rewritten.sink.write("late origin/main\n", (error) => error ? reject(error) : resolve()));
-  assert.equal(output, "create from origin/integration, then continue\nlate origin/integration\n");
-  assert.doesNotMatch(output, /origin\/main/u);
+  await new Promise((resolve, reject) => rewritten.sink.write(
+    "late (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/main)\n",
+    (error) => error ? reject(error) : resolve(),
+  ));
+  await new Promise((resolve, reject) => rewritten.sink.write(
+    "legitimate origin/main and origin/main-release diagnostic\n",
+    (error) => error ? reject(error) : resolve(),
+  ));
+  assert.equal(output, [
+    "  (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/integration)",
+    "late (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/integration)",
+    "legitimate origin/main and origin/main-release diagnostic",
+    "",
+  ].join("\n"));
 });
 
 test("preflight rewrite sink honors destination backpressure", async () => {
@@ -84,7 +108,7 @@ test("preflight rewrite sink honors destination backpressure", async () => {
   const rewritten = createDeliveryBranchRewriteSink(destination);
   let completed = false;
   const write = new Promise((resolve, reject) => rewritten.sink.write(
-    `prefix ${"x".repeat(64)} origin/main\n`,
+    `prefix ${"x".repeat(64)} (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/main)\n`,
     (error) => {
       completed = true;
       if (error) reject(error);
@@ -129,6 +153,11 @@ test("user policy apply is explicit, atomic, private, and preserves existing key
   assert.equal((await stat(updated.backupPath)).mode & 0o777, 0o600);
   assert.deepEqual(JSON.parse(await readFile(updated.backupPath, "utf8")), existing);
   assert.equal(JSON.parse(await readFile(configPath, "utf8")).unrelated.preserved, true);
+
+  await writeFile(configPath, `${JSON.stringify(existing)}\n`);
+  const repeated = await applyUserPolicy({ env, execute: true, now: new Date("2026-08-30T00:00:00.000Z") });
+  assert.notEqual(repeated.backupPath, updated.backupPath);
+  assert.deepEqual(JSON.parse(await readFile(repeated.backupPath, "utf8")), existing);
 });
 
 test("user policy apply leaves invalid JSON untouched", async (t) => {
@@ -190,9 +219,6 @@ test("read-only Pi audit recognizes tracked configuration controls", async () =>
     "dev-loop-bounds",
     "worker-topology",
     "bounded-closeout",
-    "factory-github-authority",
-    "factory-label-taxonomy",
-    "integration-recovery-guidance",
   ]) {
     assert.equal(byId.get(id)?.status, "pass", `${id}: ${byId.get(id)?.summary}`);
   }

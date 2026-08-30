@@ -23,6 +23,11 @@ reported child usage at a 120k soft / 200k hard token envelope. Async execution
 requires an explicit request. These are starting bounds, not permanent
 performance targets; tune them only from retained metrics.
 
+Agent budget frontmatter intentionally uses a small machine-readable grammar:
+`timeoutMs` and `maxSubagentDepth` are top-level integers, while `turnBudget` is
+an inline JSON object. Do not convert these controls to YAML block mappings;
+the startup audit rejects formats outside that tracked contract.
+
 ## Measured snapshot before remediation
 
 | Surface | Evidence | Status |
@@ -74,6 +79,10 @@ through the pinned shell:
 ./bootstrap.sh --pi
 ```
 
+`./bootstrap.sh --check` also verifies that the parent/subagent default model
+is present in the Nix-pinned Pi model catalog. This is a catalog canary without
+making a billed provider request.
+
 `--configure-pi` changes only
 `~/.pi/agent/extensions/subagent/config.json` (or the
 `PI_CODING_AGENT_DIR` equivalent), preserves unrelated keys, writes mode 0600,
@@ -100,11 +109,13 @@ ownership and authentication contract is in
 ## Admission and retention
 
 `node scripts/factory/audit-pi.mjs --json` is read-only. Configuration failures
-block `./bootstrap.sh --pi`. Operational failures block admission of another
-worktree in that common checkout: the tracked ensure-worktree wrapper refuses
-to create a new canonical worktree while admission is red, but permits reuse of
-an existing canonical worktree. No audit causes automatic process termination
-or deletion.
+block `./bootstrap.sh --pi`. Only measured host-capacity failures block admission
+of another worktree in that common checkout: the tracked ensure-worktree wrapper
+refuses creation when worktree count or target storage is red, but permits reuse
+of an existing canonical worktree. Configuration and metrics findings remain
+visible in the full audit without deadlocking first-worker creation; an
+unavailable lifecycle audit warns and preserves recovery. No audit causes
+automatic process termination or deletion.
 
 | Worktree-local target usage | State |
 | --- | --- |
