@@ -162,6 +162,17 @@ function issuanceCompletionExpression() {
   })()`;
 }
 
+function issuanceEvidenceExpression() {
+  return `(() => {
+    const records = Array.from(document.querySelectorAll(".credential-record"));
+    return records.length === 1
+      && Array.from(records[0].querySelectorAll(".status-pill.success"))
+        .some((element) => element.textContent.trim() === "Valid")
+      && document.body.innerText.includes("Credential policy · issuer passed · time passed · trust passed · revocation not checked")
+      && !document.body.innerText.includes("John") && !document.body.innerText.includes("Doe");
+  })()`;
+}
+
 function issuanceDiagnosticExpression() {
   return `(() => {
     const statuses = Array.from(document.querySelectorAll('[role="status"]'))
@@ -497,6 +508,7 @@ try {
       const diagnosticState = await evaluate(issuanceDiagnosticExpression());
       throw new Error(`Portal issuance failed with payload-free counters ${JSON.stringify(diagnosticCounts)} and state ${JSON.stringify(diagnosticState)}: ${error.message}`);
     }
+    await waitFor(issuanceEvidenceExpression(), "protected credential inventory", 30_000);
     const result = await evaluate(`({
       valid: Array.from(document.querySelectorAll(".credential-record")).length === 1
         && document.body.innerText.includes("Valid"),
