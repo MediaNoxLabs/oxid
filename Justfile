@@ -91,6 +91,33 @@ android-portal-tailnet-physical-smoke:
 android-portal-avd-safety-contract:
     ./scripts/e2e/android-avd-process-ownership.test.sh
 
+# Verify disposable-simulator selection, receipt identity, and bounded exact cleanup without a simulator.
+ios-portal-simulator-safety-contract:
+    ./scripts/e2e/ios-simulator-ownership.test.sh
+
+# Verify the shared closed virtual-mobile evidence schema, derivation, redaction, and publication.
+portal-virtual-mobile-evidence-contract:
+    node --test ./scripts/e2e/portal-virtual-mobile-evidence.test.mjs
+
+# Build and exercise the packaged Portal profile on one explicit owned Android QEMU AVD.
+android-portal-exact-sequence-avd:
+    @timeout -k 30s 7200s ./scripts/test-android-portal-exact-sequence-avd.sh
+
+# Build and exercise the packaged Portal profile on one newly created disposable iOS Simulator.
+ios-portal-exact-sequence-simulator:
+    @timeout -k 30s 7200s ./scripts/test-ios-portal-exact-sequence-simulator.sh
+
+# Preflight both virtual targets, prequalify shared macOS behavior, then run iOS before Android.
+portal-mobile-simulators-e2e:
+    @mkdir -p tmp/issue-213
+    @./scripts/test-ios-portal-exact-sequence-simulator.sh --preflight >tmp/issue-213/aggregate-ios-preflight.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=ios-preflight' >&2; exit 1; }
+    @./scripts/test-android-portal-exact-sequence-avd.sh --preflight >tmp/issue-213/aggregate-android-preflight.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=android-preflight' >&2; exit 1; }
+    @timeout -k 30s 7200s just portal-macos-laptop-e2e >tmp/issue-213/aggregate-macos.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=macos-prequalification' >&2; exit 1; }
+    @timeout -k 30s 7200s ./scripts/test-ios-portal-exact-sequence-simulator.sh
+    @timeout -k 30s 7200s ./scripts/test-android-portal-exact-sequence-avd.sh
+    @jq -s -e --arg head "$(git rev-parse HEAD)" --arg tree "$(git rev-parse 'HEAD^{tree}')" 'length == 4 and all(.[]; .oxid == {head:$head,tree:$tree}) and (.[2].platform.kind == "ios_simulator") and (.[3].platform.kind == "android_emulator")' target/portal-headless-e2e/evidence.json target/portal-desktop-e2e/evidence.json target/ios-portal-exact-sequence-simulator/evidence.json target/android-portal-exact-sequence-avd/evidence.json >/dev/null
+    @echo "portal-mobile-simulators-e2e: PASS evidence=target/ios-portal-exact-sequence-simulator/evidence.json,target/android-portal-exact-sequence-avd/evidence.json"
+
 standalone-recovery-smoke:
     cargo test -p oxid-composition standalone_composition_recovers_a_complete_wallet_into_a_fresh_instance
 

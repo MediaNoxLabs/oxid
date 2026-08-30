@@ -7,7 +7,9 @@ Apple-silicon development Mac. It runs the existing headless Portal journey
 first to localize protocol/composition failures, then the native Dioxus journey
 to exercise the same shared behavior before entering mobile-specific lanes.
 The aggregate command is not a `HostedTarget`, CI gate, release lane, or claim
-that the combined run is faster overall; its duration is unmeasured.
+that the combined run is faster overall; its duration is unmeasured. After this
+lane passes, the [Portal mobile simulator lane](portal-mobile-simulators.md)
+provides the separate packaged iOS Simulator and Android QEMU continuation.
 
 ## Prerequisites
 

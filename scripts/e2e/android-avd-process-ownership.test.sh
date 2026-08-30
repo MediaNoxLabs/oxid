@@ -3,7 +3,8 @@
 
 set -euo pipefail
 
-readonly ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd -P)"
+ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd -P)"
+readonly ROOT
 # shellcheck source=android-avd-process-ownership.sh
 source "$ROOT/scripts/e2e/android-avd-process-ownership.sh"
 
@@ -22,6 +23,36 @@ fi
 temporary="$(timeout -k 1s 5s mktemp -d "${TMPDIR:-/tmp}/oxid-avd-contract.XXXXXX")"
 cleanup() { timeout -k 1s 5s rm -rf -- "$temporary"; }
 trap cleanup EXIT
+
+empty_inventory=$'List of devices attached\n\n'
+physical_inventory=$'List of devices attached\nR5CT1234ABC\tdevice product:fixture transport_id:1\n'
+mixed_inventory=$'List of devices attached\nemulator-5562\tdevice product:sdk_gphone transport_id:1\nR5CT1234ABC\tdevice product:fixture transport_id:2\n'
+wrong_emulator_inventory=$'List of devices attached\nemulator-5554\tdevice product:sdk_gphone transport_id:1\n'
+exact_inventory=$'List of devices attached\nemulator-5562\tdevice product:sdk_gphone transport_id:1\n'
+oxid_adb_inventory_is_empty "$empty_inventory" || fail adb-empty
+if oxid_adb_inventory_is_empty "$physical_inventory"; then fail adb-physical-only; fi
+if oxid_adb_inventory_is_empty "$mixed_inventory"; then fail adb-mixed; fi
+if oxid_adb_inventory_is_exact_online "$wrong_emulator_inventory" emulator-5562; then fail adb-wrong-serial; fi
+if oxid_adb_inventory_is_exact_online "$mixed_inventory" emulator-5562; then fail adb-mixed-exact; fi
+oxid_adb_inventory_is_exact_online "$exact_inventory" emulator-5562 || fail adb-exact
+
+cat >"$temporary/fake-adb" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$OXID_FAKE_ADB_INVENTORY_LOG"
+[ "$*" = 'devices -l' ] || {
+  printf 'MUTATION\n' >>"$OXID_FAKE_ADB_INVENTORY_LOG"
+  exit 97
+}
+printf 'List of devices attached\nR5CT1234ABC\tdevice product:fixture transport_id:1\n'
+EOF
+chmod 700 "$temporary/fake-adb"
+: >"$temporary/adb-inventory.log"
+if OXID_FAKE_ADB_INVENTORY_LOG="$temporary/adb-inventory.log" \
+  oxid_require_empty_adb_inventory "$temporary/fake-adb"; then
+  fail adb-physical-preflight
+fi
+[ "$(wc -l <"$temporary/adb-inventory.log" | tr -d ' ')" -eq 1 ] || fail adb-physical-mutation
+[ "$(<"$temporary/adb-inventory.log")" = 'devices -l' ] || fail adb-physical-command
 
 cat >"$temporary/grandchild.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -336,4 +367,4 @@ if grep -q 'parent=timeout' "$fake_adb_log"; then fail launcher-unset-timeout; f
 grep -q 'serial=unset args=devices' "$fake_adb_log" || fail launcher-discovery-wrapper
 grep -q 'serial=fixture-device args=get-state' "$fake_adb_log" || fail launcher-selected-wrapper
 
-printf 'android-avd-process-ownership-contract: PASS process_group=bounded-term-kill direct_emulator=bounded-term-kill docker_query=error-timeout-nonempty evidence=no-clobber-concurrent lock=identity-preserved signal=partial-readiness adb_unset=normal\n'
+printf 'android-avd-process-ownership-contract: PASS process_group=bounded-term-kill direct_emulator=bounded-term-kill docker_query=error-timeout-nonempty evidence=no-clobber-concurrent lock=identity-preserved signal=partial-readiness adb_inventory=physical-mixed-refused adb_unset=normal\n'

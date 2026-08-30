@@ -564,10 +564,11 @@ composition.
 
 [Issue #24](https://github.com/MediaNoxLabs/oxid/issues/24) and ADR-0039 add a
 dependency-free protocol domain/application hexagon plus an exact OpenID4VCI
-1.0 Final standalone subset. Embedded standalone issuance remains the mobile
-and deterministic test journey; ADR-0102 adds one separately authenticated
-native desktop/headless Portal HTTP journey using the same pre-authorized-code
-grant without Transaction Code. The in-process
+1.0 Final standalone subset. Embedded standalone issuance remains the ordinary
+mobile and deterministic test journey; ADR-0102 adds separately authenticated
+native desktop/headless and authority-gated iOS Simulator/Android QEMU Portal
+HTTP journeys using the same pre-authorized-code grant without Transaction
+Code. The in-process
 adapter strictly separates Credential Issuer and OAuth metadata, uses the Nonce
 Endpoint model, builds `proofs.jwt`, parses the final `credentials` array, and
 imports through the valid-only ADR-0038 sink. Offer preview and exact
@@ -632,7 +633,15 @@ plaintext, explicit consent, distinct managed authentication and Jubjub methods,
 exact three-part verified import, encrypted persistence, unavailable production
 composition, and compile-time mobile isolation. Never add a permissive Portal
 decoder, runtime production route switch, helper checkout, personal endpoint,
-or fixed device selector.
+or fixed device selector. The owner-invoked virtual-mobile lane builds from a
+clean `git archive HEAD`, runs a shell-mediated nine-scenario journey without
+exposing the control capability to XCTest, inspects the development encrypted
+envelope, kills and replaces the app process without data reset, and publishes
+only the closed `oxid-portal-virtual-mobile-evidence-v1` record after exact
+simulator/emulator, listener, stack, build, and private-artifact cleanup. iOS
+uses only a newly created receipt-matched UDID and never kills CoreSimulator;
+Android rejects every physical, mixed, wrong-serial, wrong-AVD, or non-QEMU
+inventory before device mutation.
 
 [Issue #25](https://github.com/MediaNoxLabs/oxid/issues/25) and ADR-0040 migrate
 the prototype's actual `oid4vp_client` behavior as a separate SIOPv2 draft-13
@@ -1120,7 +1129,7 @@ Current package ownership:
 | `brands` | Reviewed immutable presentation inputs only. Each real directory is one validated pack; no secrets, endpoints, trust, protocol, custody, confirmation, or application state. |
 | `crates/adapters/platform-system` | System clock, OS randomness, and typed public receive-address export implementations. |
 | `crates/ui-dioxus` | Brand-agnostic Dioxus incoming adapter, immutable `BrandProfile` presentation context, bounded mobile route stack, safe read-only Home projection, exact amount/consent presentation state, public receive-QR rendering, distinct protected-DUST registration review/authorization/submission/cancellation/reconciliation, standalone Passport Vault UI, and truthfully labelled typed native vault-call lifecycle. |
-| `crates/composition` | Concrete dependency wiring with no product rules, including the authenticated native-headless-only Portal bridge that remains absent from production/mobile composition. |
+| `crates/composition` | Concrete dependency wiring with no product rules, including authenticated native-headless and authority-gated virtual-mobile Portal bridges that remain absent from ordinary and production composition. |
 | `apps/oxid` | Default-brand thin executable shell, literal `brands/oxid` build selection, and platform launch point. |
 | `apps/oxid-headless` | Standalone NDJSON incoming adapter and flow harness. |
 
@@ -1608,10 +1617,13 @@ must not be used for simulator discovery. The launcher replaces Nix's
 `DEVELOPER_DIR` with the selected Xcode installation and explicitly removes
 `SDKROOT` for the Dioxus build. SwiftPM must compile its host-side package
 manifest before Xcode selects the simulator SDK; exporting the simulator
-`SDKROOT` globally makes that manifest fail to load. Preserve the host-tool and
-simulator split so `nix develop --command just ios-smoke` remains valid. The
-XCUITest invocation also uses a minimal host environment so Nix compiler/linker
-variables cannot leak into Apple's build system.
+`SDKROOT` globally makes that manifest fail to load. An explicit
+`OXID_XCODE_DEVELOPER_DIR` selects and validates full Xcode without changing the
+host-global `xcode-select`; otherwise the ordinary launcher retains its selected
+Xcode behavior. Preserve the host-tool and simulator split so
+`nix develop --command just ios-smoke` remains valid. The XCUITest invocation
+also uses a minimal host environment so Nix compiler/linker variables cannot
+leak into Apple's build system.
 `OXID_IOS_DEVICE=<UDID>` selects a specific simulator. The first verified smoke
 test used an arm64 iPhone simulator. The prototype-derived shell and
 first-launch profile gateway were subsequently built, launched, and visually
