@@ -29,6 +29,7 @@ const readyFifo = process.env.OXID_PORTAL_MOBILE_READY_FIFO;
 const capabilityFifo = process.env.OXID_PORTAL_MOBILE_CAPABILITY_FIFO;
 const lifecycle = process.env.PORTAL_CONSUMER_LIFECYCLE;
 const supportProfile = process.env.OXID_PORTAL_MOBILE_SUPPORT_PROFILE ?? "physical-android";
+const controlReceiptEnabled = process.env.OXID_PORTAL_MOBILE_CONTROL_RECEIPT !== "none";
 const virtualProfile = supportProfile === "virtual-mobile";
 const publicOrigin = virtualProfile
   ? `http://127.0.0.1:${ISSUER_PROXY_PORT}`
@@ -492,7 +493,10 @@ async function cleanup() {
 }
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => completionResolve());
+  process.on(signal, () => {
+    if (!controlReceiptEnabled) complete = true;
+    completionResolve();
+  });
 }
 
 try {
@@ -523,7 +527,9 @@ try {
   const manifestBytes = Buffer.from(JSON.stringify(manifest));
   fs.writeFileSync(manifestPath, manifestBytes, { mode: 0o600 });
   const ready = {
-    controlCapability: "0".repeat(controlCapability.length),
+    controlCapability: controlReceiptEnabled
+      ? "0".repeat(controlCapability.length)
+      : "0".repeat(64),
     controlOrigin: `http://127.0.0.1:${PHYSICAL_CONTROL_PORT}`,
     issuerProxyPort: ISSUER_PROXY_PORT,
     offerPort,
@@ -533,13 +539,15 @@ try {
     schema: virtualProfile ? "oxid-portal-virtual-ready-v1" : "oxid-portal-android-ready-v2",
   };
   const readyBytes = Buffer.from(JSON.stringify(ready));
-  const placeholder = Buffer.from(`"${"0".repeat(controlCapability.length)}"`);
-  const placeholderOffset = readyBytes.indexOf(placeholder);
-  if (placeholderOffset < 0) throw new Error("control capability staging failed");
-  controlCapability.copy(readyBytes, placeholderOffset + 1);
+  if (controlReceiptEnabled) {
+    const placeholder = Buffer.from(`"${"0".repeat(controlCapability.length)}"`);
+    const placeholderOffset = readyBytes.indexOf(placeholder);
+    if (placeholderOffset < 0) throw new Error("control capability staging failed");
+    controlCapability.copy(readyBytes, placeholderOffset + 1);
+    placeholder.fill(0);
+  }
   fs.writeFileSync(path.join(stateDirectory, "ready.json"), readyBytes, { mode: 0o600 });
   readyBytes.fill(0);
-  placeholder.fill(0);
   fs.writeFileSync(readyFifo, "READY\n");
   process.stdout.write("portal-android-support: READY\n");
   await completion;

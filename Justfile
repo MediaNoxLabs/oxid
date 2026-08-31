@@ -95,6 +95,18 @@ portal-android-flow-contract:
 android-portal-tailnet-physical-smoke:
     ./scripts/test-android-portal-tailnet-physical.sh
 
+# Start a fresh, owner-invoked physical Android Portal QR demo; it is not E2E evidence.
+portal-tailnet-manual-start:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-start
+
+# Report only receipt-supervised manual-demo readiness; this never reveals payloads.
+portal-tailnet-manual-status:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-status
+
+# Stop one receipt-supervised manual demo and restore its exact prior Serve baseline.
+portal-tailnet-manual-stop:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-stop
+
 # Verify exact-sequence process ownership and bounded process-group cleanup without Android or Docker.
 android-portal-avd-safety-contract:
     ./scripts/e2e/android-avd-process-ownership.test.sh

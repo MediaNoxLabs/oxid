@@ -36,6 +36,13 @@ Require Tailscale online on the Mac and phone, exactly one approved non-QEMU ADB
 device, and validated HTTPS Serve configuration without logging identities. It
 never accepts a simulator substitute.
 
+For an owner-requested browser-and-phone QR demonstration only (never evidence),
+use `just portal-tailnet-manual-start`; it opens and deliberately prints the one
+public page URL. `just portal-tailnet-manual-status` is payload-free, and
+`just portal-tailnet-manual-stop` receipt-validates cleanup and restores the
+prior Serve baseline. Stop before any retry: every manual start is a fresh
+one-shot session and a consumed QR is never reused.
+
 For every retry create a completely fresh offer, capability, app state, and
 runtime; never reuse a consumed offer. Preserve explicit consent, zero secret
 calls before consent, encrypted persistence, a true process restart, listing,
@@ -51,7 +58,14 @@ live-KYC claim.
   "schema": "oxid-portal-e2e-skill-contract-v1",
   "commands": {
     "localLadder": ["just portal-macos-laptop-e2e", "just portal-mobile-simulators-e2e"],
-    "physicalTailnet": "just android-portal-tailnet-physical-smoke"
+    "physicalTailnet": "just android-portal-tailnet-physical-smoke",
+    "manualTailnet": {
+      "start": "just portal-tailnet-manual-start",
+      "statusCommand": "just portal-tailnet-manual-status",
+      "stop": "just portal-tailnet-manual-stop",
+      "evidence": false,
+      "statusOutput": "payload-free"
+    }
   },
   "local": {
     "virtualSelectors": {

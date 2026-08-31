@@ -38,6 +38,13 @@ test("Lace ID Portal E2E skill preserves its bounded operational contract", asyn
     "just portal-mobile-simulators-e2e",
   ]);
   assert.equal(contract.commands.physicalTailnet, "just android-portal-tailnet-physical-smoke");
+  assert.deepEqual(contract.commands.manualTailnet, {
+    start: "just portal-tailnet-manual-start",
+    statusCommand: "just portal-tailnet-manual-status",
+    stop: "just portal-tailnet-manual-stop",
+    evidence: false,
+    statusOutput: "payload-free",
+  });
   assert.deepEqual(contract.local.virtualSelectors, {
     privacy: "operator-private-explicit",
     required: [

@@ -27,6 +27,30 @@ Run:
 just android-portal-tailnet-physical-smoke
 ```
 
+## Owner manual QR demonstration
+
+This optional lifecycle is a live owner demo, not physical-lane evidence and
+never a replacement for the automated physical or simulator lanes. From the
+same clean, healthy preconditions, start one fresh session:
+
+```bash
+just portal-tailnet-manual-start
+just portal-tailnet-manual-status
+```
+
+Start opens the Portal page in the Mac browser and prints the one permitted
+public page URL; status intentionally reveals no payload. Complete the Portal
+page and scan its QR once with the connected physical Oxid app. Do not retry or
+reuse a consumed QR. Stop before a fresh attempt:
+
+```bash
+just portal-tailnet-manual-stop
+```
+
+Stop validates the session/process/Serve receipts, removes only owned Portal
+state, and restores the exact prior Serve baseline. If a receipt is ambiguous,
+it fails closed for owner review rather than deleting shared state.
+
 ## Safety, evidence, and cleanup
 
 Every retry uses a fresh offer, capability, app state, and runtime. Never reuse
