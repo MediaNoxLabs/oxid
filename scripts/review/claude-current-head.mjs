@@ -103,7 +103,7 @@ export function buildClaudeInvocation({
   };
 }
 
-export function assertClaudeReviewEffort(effort) {
+export function assertClaudeCliEffort(effort) {
   if (!CLAUDE_REVIEW_EFFORTS.includes(effort)) {
     throw new Error(`Claude review effort must be one of: ${CLAUDE_REVIEW_EFFORTS.join(", ")}`);
   }
@@ -111,7 +111,7 @@ export function assertClaudeReviewEffort(effort) {
 }
 
 export function assertClaudeEffortCapability(effort, documentedEfforts) {
-  assertClaudeReviewEffort(effort);
+  assertClaudeCliEffort(effort);
   if (!Array.isArray(documentedEfforts) || !documentedEfforts.includes(effort)) {
     throw new Error(`installed Claude CLI does not document the selected review effort: ${effort}`);
   }
@@ -119,7 +119,7 @@ export function assertClaudeEffortCapability(effort, documentedEfforts) {
 }
 
 export function assertAttestedReviewEffort(effort) {
-  assertClaudeReviewEffort(effort);
+  assertClaudeCliEffort(effort);
   if (CLAUDE_REVIEW_EFFORT_RANK[effort] < CLAUDE_REVIEW_EFFORT_RANK[MINIMUM_ATTESTED_REVIEW_EFFORT]) {
     throw new Error(`exact-head attestation effort must be at least ${MINIMUM_ATTESTED_REVIEW_EFFORT}`);
   }
@@ -183,8 +183,10 @@ function helpWindow(help, flag, length = 600) {
 function helpEntry(help, flag) {
   const option = helpFlagPattern(flag, HELP_FLAG_POLICIES[flag]);
   const lines = help.split(/\r?\n/);
-  const start = lines.findIndex((line) => option.test(line));
-  if (start < 0) return "";
+  const matches = lines.flatMap((line, index) => (option.test(line) ? [index] : []));
+  if (matches.length === 0) return "";
+  if (matches.length !== 1) throw new Error(`Claude CLI help exposes multiple ${flag} option blocks`);
+  const [start] = matches;
   const entry = [lines[start]];
   for (const line of lines.slice(start + 1)) {
     if (/^\s*-/i.test(line) || !/^\s+\S/.test(line)) break;
@@ -785,6 +787,8 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     throw new Error("Claude review attestation does not bind the selected effort to the captured CLI capabilities");
   }
   if (evidence.claude.capabilities.effortHelpEntry !== capabilities.effortHelpEntry) {
+    // Defence in depth: the captured help digest and derived levels already
+    // bind semantics, while this preserves the exact diagnostic option slice.
     throw new Error("Claude review attestation does not bind the captured effort help entry");
   }
   const parsed = parseClaudeReviewResult(rawResponse);

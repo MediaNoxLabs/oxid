@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -36,7 +36,7 @@ import {
   assertAttestedReviewEffort,
   assertClaudeEffortCapability,
   assertClaudeHelpCapabilities,
-  assertClaudeReviewEffort,
+  assertClaudeCliEffort,
   assertMinimumClaudeVersion,
   CLAUDE_REVIEW_EFFORTS,
   DEFAULT_CLAUDE_REVIEW_EFFORT,
@@ -1444,10 +1444,10 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.ok(effortIndex >= 0);
   assert.equal(invocation.args[effortIndex + 1], DEFAULT_CLAUDE_REVIEW_EFFORT);
   assert.deepEqual(CLAUDE_REVIEW_EFFORTS, ["low", "medium", "high", "xhigh", "max"]);
-  assert.equal(assertClaudeReviewEffort("high"), "high");
+  assert.equal(assertClaudeCliEffort("high"), "high");
   assert.equal(assertAttestedReviewEffort("medium"), "medium");
   assert.throws(() => assertAttestedReviewEffort("low"), /must be at least medium/);
-  assert.throws(() => assertClaudeReviewEffort("unbounded"), /must be one of/);
+  assert.throws(() => assertClaudeCliEffort("unbounded"), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be at least medium/);
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
@@ -1463,6 +1463,14 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(/^\s*--effort.*\n/m, ""), [2, 1, 228]),
     /required review flags: --effort/,
+  );
+  const duplicateEffortHelp = fixtureClaudeHelp.replace(
+    "  --effort <level> (low, medium, high, xhigh, max)",
+    "  --effort <level> (low, high)\n  --effort <level> (low, medium, high, xhigh, max)",
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(duplicateEffortHelp, [2, 1, 228]),
+    /multiple --effort option blocks/,
   );
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("  --safe-mode", "  -s, --safe-mode"), [2, 1, 228]),
@@ -1887,6 +1895,18 @@ if (process.argv.includes("--version")) {
   const legacyCliFailure = claudeReviewCliFailure(new ClaudeReviewEvidenceVersionError(2));
   assert.equal(legacyCliFailure.exitCode, 3);
   assert.deepEqual(JSON.parse(legacyCliFailure.output), {
+    ok: false,
+    code: "CLAUDE_REVIEW_EVIDENCE_VERSION",
+    message: "unsupported Claude review attestation schema version 2; rerun the exact-head review",
+  });
+  const legacyCliProcess = spawnSync(process.execPath, [
+    path.join(repoRoot, "scripts", "review", "claude-current-head.mjs"),
+    "--verify-evidence", legacyEvidencePath,
+    "--repo-root", repository,
+  ], { encoding: "utf8" });
+  assert.equal(legacyCliProcess.status, 3);
+  assert.equal(legacyCliProcess.stdout, "");
+  assert.deepEqual(JSON.parse(legacyCliProcess.stderr), {
     ok: false,
     code: "CLAUDE_REVIEW_EVIDENCE_VERSION",
     message: "unsupported Claude review attestation schema version 2; rerun the exact-head review",
