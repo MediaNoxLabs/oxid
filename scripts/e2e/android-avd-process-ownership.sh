@@ -66,9 +66,20 @@ oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent() {
       # record terminator before applying the exact three-field contract.
       { sub(/\r$/, "") }
       NF == 0 { next }
-      NF != 3 { invalid = 1; next }
-      ($2 in managed) || ($3 in managed) {
-        if ($1 != expected_serial || !($2 in managed) || $2 != $3 || ++seen[$2] != 1) invalid = 1
+      # A scoped `adb -s <serial> reverse --list` may omit the already-bound
+      # serial or report its private host transport label, while an unscoped
+      # listing includes the serial. The caller scopes every query to the
+      # expected serial, so accept only these exact shapes and one consistent
+      # host label per snapshot.
+      NF == 2 { serial = expected_serial; local = $1; remote = $2 }
+      NF == 3 { serial = $1; local = $2; remote = $3 }
+      NF != 2 && NF != 3 { invalid = 1; next }
+      (local in managed) || (remote in managed) {
+        if (serial != expected_serial) {
+          if (serial !~ /^host-[1-9][0-9]*$/ || (host_label && serial != host_label)) invalid = 1
+          host_label = serial
+        }
+        if (!(local in managed) || local != remote || ++seen[local] != 1) invalid = 1
       }
       END { exit invalid ? 1 : 0 }
     ' <<<"$snapshot"

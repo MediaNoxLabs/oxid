@@ -85,10 +85,12 @@ private_logs_removed=false
 head_clean=false
 journey_deadline=0
 journey_phase="none"
+scenario_phase="not_started"
 oxid_android_avd_failure_marker_reset
 
 fail() {
   failure_phase="$1"
+  printf 'android-portal-exact-sequence-avd: diagnostic=%s\n' "$scenario_phase" >&2
   exit 1
 }
 
@@ -621,18 +623,33 @@ open_webview() {
 app_pid() { adb_text shell pidof "$PACKAGE" 2>/dev/null; }
 run_scenario() {
   local mode="$1" pid control_capability result
+  scenario_phase="app_pid"
   result="$PRIVATE_STATE/scenario-$mode.json"
   pid="$(app_pid)"; [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  scenario_phase="webview"
   open_webview "$pid" || return 1
+  scenario_phase="control_capability"
   control_capability="$(run_deadline 10 jq -r '.controlCapability // empty' "$PORTAL_STATE/ready.json")"
   [[ "$control_capability" =~ ^[0-9a-f]{64}$ ]] || return 1
+  scenario_phase="flow"
   printf '%s' "$control_capability" | run_deadline 180 env OXID_PORTAL_CONTROL_ORIGIN="$CONTROL_ORIGIN" \
     node "$ROOT/tests/mobile/android-portal-flow.mjs" "$websocket_url" "$mode" >"$result" 2>>"$PRIVATE_LOG" || return 1
   control_capability=""
-  run_deadline 10 jq -e --arg mode "$mode" '.mode == $mode and .passed == true and (.measurements | type == "object") and (.counterDelta | type == "object")' "$result" >/dev/null || return 1
-  if run_deadline 5 rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|serial|\.ts\.net' "$result"; then return 1; fi
+  scenario_phase="result_closed_schema"
+  run_deadline 10 jq -e --arg mode "$mode" '
+    type == "object"
+    and (keys | sort) == ["counterDelta", "measurements", "mode", "passed"]
+    and .mode == $mode
+    and .passed == true
+    and (.counterDelta | type == "object" and all(.[]; type == "number"))
+    and (.measurements | type == "object")
+    and all(.measurements[]; type == "boolean")
+  ' "$result" >/dev/null || return 1
+  scenario_phase="result_mode"
   run_deadline 5 chmod 600 "$result" || return 1
+  scenario_phase="forward_cleanup"
   remove_forward || return 1
+  scenario_phase="complete"
   printf 'android-portal-exact-sequence-avd: timing phase=%s elapsed=%s completed=true\n' \
     "$journey_phase" "$SECONDS" >>"$PRIVATE_LOG" || return 1
 }
@@ -684,7 +701,7 @@ capability_burned_before_network=true
 one_shot_ready_empty=true
 
 journey_phase="post-issue-storage"
-credential_header="$(adb_device shell run-as "$PACKAGE" od -An -tx1 -N8 files/oxid/private/credentials.enc 2>/dev/null | tr -d ' \r\n')"
+credential_header="$(adb_device exec-out run-as "$PACKAGE" head -c 8 files/oxid/private/credentials.enc 2>/dev/null | od -An -tx1 | tr -d ' \r\n')"
 credential_key_size="$(adb_device shell run-as "$PACKAGE" wc -c files/oxid/private/credentials.key 2>/dev/null | awk '{print $1}' | tr -d '\r\n')"
 [ "$credential_header" = 4f58494456433031 ] || fail encrypted-store-header
 [ "$credential_key_size" = 32 ] || fail encrypted-store-key

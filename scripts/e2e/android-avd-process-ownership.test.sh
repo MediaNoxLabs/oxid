@@ -111,6 +111,8 @@ reverse_exact=$'emulator-5562 tcp:6300 tcp:6300\nemulator-5562 tcp:8088 tcp:8088
 reverse_wrong_remote=$'emulator-5562 tcp:6300 tcp:9999\n'
 reverse_wrong_serial=$'emulator-5554 tcp:6300 tcp:6300\n'
 reverse_exact_crlf=$'emulator-5562 tcp:6300 tcp:6300\r\nemulator-5562 tcp:8088 tcp:8088\r\nemulator-5562 tcp:9944 tcp:9944\r\n'
+reverse_exact_scoped=$'tcp:6300 tcp:6300\ntcp:8088 tcp:8088\ntcp:9944 tcp:9944\n'
+reverse_exact_host=$'host-16 tcp:6300 tcp:6300\nhost-16 tcp:8088 tcp:8088\nhost-16 tcp:9944 tcp:9944\n'
 oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_empty" emulator-5562 6300 8088 9944 \
   || fail reverse-empty-baseline
 oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent \
@@ -119,6 +121,10 @@ oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact" emulator-556
   || fail reverse-exact-owned
 oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact_crlf" emulator-5562 6300 8088 9944 \
   || fail reverse-crlf-owned
+oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact_scoped" emulator-5562 6300 8088 9944 \
+  || fail reverse-scoped-owned
+oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact_host" emulator-5562 6300 8088 9944 \
+  || fail reverse-host-owned
 if oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_exact" emulator-5562 6300 8088 9944; then
   fail reverse-occupied-baseline
 fi
@@ -422,10 +428,18 @@ grep -qF 'OXID_ANDROID_ADB_TIMEOUT_SECONDS=180 OXID_MOBILE_CUSTODY=development' 
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-launcher-adb-budget
 grep -qF 'prepare_owned_reverse_mappings || fail reverse-ownership' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-reverse-owner-setup
+grep -qF 'scenario_phase="webview"' "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" \
+  || fail android-closed-webview-diagnostic
+grep -qF 'all(.measurements[]; type == "boolean")' "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" \
+  || fail android-closed-scenario-result
+grep -qF 'adb_device exec-out run-as "$PACKAGE" head -c 8 files/oxid/private/credentials.enc' \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-host-envelope-header
 grep -qF 'OXID_ANDROID_REVERSE_OWNER_RECEIPT="$reverse_owner_receipt"' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-reverse-owner-receipt
 grep -qF 'OXID_ANDROID_REVERSE_OWNER_RECEIPT' "$ROOT/scripts/run-android-emulator.sh" \
   || fail android-launcher-receipt
+grep -qF '$1 ~ /^host-[1-9][0-9]*$/' "$ROOT/scripts/run-android-emulator.sh" \
+  || fail android-launcher-host-labeled-reverse
 # The prepared holder is already the app's foreground activity. A warm offer
 # must request single-top delivery so Android calls the existing activity's
 # onNewIntent instead of leaving the authenticated one-shot handoff ready.

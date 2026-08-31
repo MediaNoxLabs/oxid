@@ -397,8 +397,14 @@ if [ "$standalone_network_profile" = "local" ]; then
   fi
   reverse_list="$(adb_device reverse --list)"
   for local_port in "${reverse_ports[@]}"; do
-    if ! awk -v serial="$device" -v route="tcp:$local_port" \
-      '$1 == serial && $2 == route && $3 == route { found = 1 } END { exit !found }' <<<"$reverse_list"; then
+    if ! awk -v serial="$device" -v route="tcp:$local_port" '
+      { sub(/\r$/, "") }
+      NF == 2 && $1 == route && $2 == route { found = 1 }
+      NF == 3 && ($1 == serial || $1 ~ /^host-[1-9][0-9]*$/) && $2 == route && $3 == route {
+        found = 1
+      }
+      END { exit !found }
+    ' <<<"$reverse_list"; then
       echo "Android emulator reverse route tcp:$local_port was not installed." >&2
       exit 1
     fi
