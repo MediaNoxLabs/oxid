@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -1460,6 +1460,14 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     /required review flags: --effort/,
   );
   assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("  --safe-mode", "  -s, --safe-mode"), [2, 1, 228]),
+    /required review flags: --safe-mode/,
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("--tools", "--TOOLS"), [2, 1, 228]),
+    /required review flags: --tools/,
+  );
+  assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('Use "" to disable all tools.', "Use defaults."), [2, 1, 228]),
     /no-tools form/,
   );
@@ -1507,6 +1515,10 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.deepEqual(
     assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortLevels,
     CLAUDE_REVIEW_EFFORTS,
+  );
+  assert.equal(
+    assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortHelpEntry,
+    capturedClaudeEffortEntry,
   );
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "with a bounded level"), [2, 1, 228]),
@@ -1574,6 +1586,12 @@ test("Claude review CLI rejects an unsupported effort before model execution", a
     ], { stdout: { write() {} } }),
     /effort must be one of/,
   );
+  for (const invalidTimeout of ["abc", "300001"]) {
+    await assert.rejects(
+      runClaudeReviewCli(["--timeout-ms", invalidTimeout]),
+      /--timeout-ms must be an integer between 1 and 300000/,
+    );
+  }
 });
 
 test("installed real Claude CLI smoke is explicit opt-in and never a default API dependency", async (t) => {
@@ -1704,19 +1722,24 @@ if (process.argv.includes("--version")) {
     await writeFile(issueContractPath, JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }));
     const cliScript = path.join(repoRoot, "scripts", "review", "claude-current-head.mjs");
     const cliEnvironment = { ...process.env, PATH: `${fixtureRoot}${path.delimiter}${process.env.PATH ?? ""}` };
-    const runFixtureCli = ({ effort, evidenceName }) => {
+    const runFixtureCli = ({ effort, evidenceName, timeoutMs }) => {
       const args = [
         cliScript,
         "--issue", "150",
         "--repo-root", repository,
         "--evidence-dir", path.join(fixtureRoot, evidenceName),
         "--issue-contract-file", issueContractPath,
-        "--expected-head", headSha,
-      ];
-      if (effort) args.push("--effort", effort);
+      "--expected-head", headSha,
+    ];
+    if (effort) args.push("--effort", effort);
+    if (timeoutMs) args.push("--timeout-ms", timeoutMs);
       return JSON.parse(execFileSync(process.execPath, args, { encoding: "utf8", env: cliEnvironment }));
     };
-    const highEvidence = runFixtureCli({ effort: "high", evidenceName: "cli-high-evidence" });
+    const highEvidence = runFixtureCli({
+      effort: "high",
+      evidenceName: "cli-high-evidence",
+      timeoutMs: "300000",
+    });
     assert.equal(highEvidence.invocation.effort, "high");
     assert.equal(highEvidence.invocation.timeoutMs, 300_000);
     assert.equal(highEvidence.verdict, "clean");
@@ -1785,6 +1808,9 @@ if (process.argv.includes("--version")) {
       /does not document the selected review effort: high/,
     );
     assert.equal(modelCalls, 0);
+    const persisted = await readdir(path.join(fixtureRoot, "restricted-effort-evidence"));
+    assert.ok(persisted.some((file) => file.endsWith(".claude-help.txt")));
+    assert.ok(persisted.some((file) => file.endsWith(".claude-auth-help.txt")));
   });
 
   const legacyEvidencePath = path.join(evidenceDir, "legacy-v2.evidence.json");
@@ -1841,6 +1867,9 @@ if (process.argv.includes("--version")) {
     bytes: Buffer.byteLength(reducedHelp),
   };
   missingCapabilityEvidence.claude.capabilities.effortLevels = ["low", "medium", "xhigh", "max"];
+  missingCapabilityEvidence.claude.capabilities.effortHelpEntry = reducedHelp
+    .split("\n")
+    .find((line) => line.includes("--effort"));
   await writeFile(missingCapabilityEvidencePath, `${JSON.stringify(missingCapabilityEvidence)}\n`, { mode: 0o600 });
   await assert.rejects(
     verifyClaudeReviewEvidence({
@@ -2101,6 +2130,20 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
   assert.match(config, /^  stopAt: \[\]$/m);
   assert.match(config, /^  humanMergeOnly: false$/m);
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
+});
+
+test("the hardened wrapper is the sole production parser for local Claude attestations", () => {
+  const evidenceKind = ["local", "attestation"].join("-");
+  const scan = spawnSync(
+    "git",
+    ["grep", "-l", evidenceKind, "--", "*.js", "*.mjs", "*.ts", "*.sh"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.equal(scan.status, 0, scan.stderr);
+  const productionParsers = scan.stdout.trim().split("\n")
+    .filter(Boolean)
+    .filter((file) => !file.startsWith("tests/"));
+  assert.deepEqual(productionParsers, ["scripts/review/claude-current-head.mjs"]);
 });
 
 test("upstream-only gaps are linked and speculative local patches are forbidden", async () => {

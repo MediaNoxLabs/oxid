@@ -142,13 +142,14 @@ export function assertMinimumClaudeVersion(
   return version;
 }
 
-function helpFlagPattern(flag) {
+function helpFlagPattern(flag, { allowAlias = false } = {}) {
   const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|\\n)\\s*(?:-[a-z0-9],\\s*)?${escaped}(?=\\s|=|<|\\[|$)`, "im");
+  const alias = allowAlias ? "(?:-[a-z0-9],\\s*)?" : "";
+  return new RegExp(`(?:^|\\n)\\s*${alias}${escaped}(?=\\s|=|<|\\[|$)`, "m");
 }
 
 function exactHelpFlag(help, flag) {
-  return helpFlagPattern(flag).test(help);
+  return helpFlagPattern(flag, { allowAlias: flag === "--effort" }).test(help);
 }
 
 function helpWindow(help, flag, length = 600) {
@@ -157,7 +158,7 @@ function helpWindow(help, flag, length = 600) {
 }
 
 function helpEntry(help, flag) {
-  const option = helpFlagPattern(flag);
+  const option = helpFlagPattern(flag, { allowAlias: flag === "--effort" });
   const lines = help.split(/\r?\n/);
   const start = lines.findIndex((line) => option.test(line));
   if (start < 0) return "";
@@ -220,6 +221,7 @@ export function assertClaudeHelpCapabilities(help, version) {
     emptyToolsDisabled: true,
     emptyToolsBasis: "captured-help-and-bounded-version-contract",
     effortLevels: effortChoices,
+    effortHelpEntry: helpEntry(help, "--effort"),
     minimumVersion: [...MINIMUM_CLAUDE_VERSION],
     maximumExclusiveVersion: [...MAXIMUM_EXCLUSIVE_CLAUDE_VERSION],
     observedVersion: [...supportedVersion],
@@ -564,9 +566,13 @@ export async function runClaudeCurrentHeadReview({
   const probe = probeClaudeCliCapabilities({ claudeCommand, cwd: outputRoot, runner: claudeRunner });
   const { accountStatus } = probe;
   const claudeVersion = probe.version;
-  assertClaudeEffortCapability(effort, probe.capabilities.effortLevels);
   await atomicPrivateWrite(helpPath, probe.help);
   await atomicPrivateWrite(authHelpPath, probe.authHelp);
+  try {
+    assertClaudeEffortCapability(effort, probe.capabilities.effortLevels);
+  } catch (error) {
+    throw new Error(`${error.message}; captured help: ${helpPath}`, { cause: error });
+  }
 
   const invocation = buildClaudeInvocation({ command: claudeCommand, maxBudgetUsd, effort });
   const prompt = reviewPrompt({
@@ -630,6 +636,7 @@ export async function runClaudeCurrentHeadReview({
         emptyToolsDisabled: probe.capabilities.emptyToolsDisabled,
         emptyToolsBasis: probe.capabilities.emptyToolsBasis,
         effortLevels: probe.capabilities.effortLevels,
+        effortHelpEntry: probe.capabilities.effortHelpEntry,
         minimumVersion: probe.capabilities.minimumVersion,
         maximumExclusiveVersion: probe.capabilities.maximumExclusiveVersion,
         observedVersion: probe.capabilities.observedVersion,
@@ -731,6 +738,9 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     || !recordedEfforts.includes(evidence.invocation.effort)) {
     throw new Error("Claude review attestation does not bind the selected effort to the captured CLI capabilities");
   }
+  if (evidence.claude.capabilities.effortHelpEntry !== capabilities.effortHelpEntry) {
+    throw new Error("Claude review attestation does not bind the captured effort help entry");
+  }
   const parsed = parseClaudeReviewResult(rawResponse);
   if (parsed.observedSessionId !== evidence.claude?.observedSessionId || parsed.review.verdict !== "clean") {
     throw new Error("Claude review output does not match the local attestation");
@@ -764,6 +774,10 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     stdout.write(`${JSON.stringify({ ok: true, evidenceKind: verified.evidence.evidenceKind, evidencePath: values["verify-evidence"], headSha: verified.evidence.headSha })}\n`);
     return;
   }
+  const timeoutMs = values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_CLAUDE_REVIEW_TIMEOUT_MS) {
+    throw new Error(`--timeout-ms must be an integer between 1 and ${MAX_CLAUDE_REVIEW_TIMEOUT_MS}`);
+  }
   if (!values["issue-contract-file"]) throw new Error("--issue-contract-file is required");
   const issueContract = await readFile(values["issue-contract-file"], "utf8");
   const result = await runClaudeCurrentHeadReview({
@@ -772,7 +786,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     evidenceDir: values["evidence-dir"],
     issueContract,
     expectedHead: values["expected-head"],
-    timeoutMs: values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]),
+    timeoutMs,
     maxBudgetUsd: values["max-budget-usd"] === undefined ? DEFAULT_MAX_BUDGET_USD : Number(values["max-budget-usd"]),
     effort: values.effort ?? DEFAULT_CLAUDE_REVIEW_EFFORT,
   });
