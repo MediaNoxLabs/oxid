@@ -34,9 +34,9 @@
       "facadeFiles": [
         "crates/ui-dioxus/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 13489,
+      "facadeMaximumPhysicalLines": 14753,
       "facadeMaximumPhysicalLinesByPath": {
-        "crates/ui-dioxus/src/lib.rs": 13489
+        "crates/ui-dioxus/src/lib.rs": 14753
       },
       "capabilityOwners": [
         {
@@ -49,6 +49,12 @@
           "name": "public-labels",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/labels"
+          ]
+        },
+        {
+          "name": "desktop-test-driver",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/desktop_test_driver"
           ]
         },
         {
@@ -67,9 +73,9 @@
       "facadeFiles": [
         "crates/composition/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 4514,
+      "facadeMaximumPhysicalLines": 4966,
       "facadeMaximumPhysicalLinesByPath": {
-        "crates/composition/src/lib.rs": 4514
+        "crates/composition/src/lib.rs": 4966
       },
       "capabilityOwners": [
         {
