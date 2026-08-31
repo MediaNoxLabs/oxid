@@ -23,4 +23,13 @@ if grep -qE '(midnight-did-resolver|laceid-did-manager|laceid-issuer):local' "$L
   fail stale-local-tag
 fi
 
-printf 'portal-consumer-lifecycle-contract: PASS pinned-image-tags=0.1.0\n'
+for tailnet_contract in \
+  'PORTAL_TAILNET_MOCK_STATE_DIR' \
+  'tailnet_mock_state_valid' \
+  'tailnet-mock-transform.mjs' \
+  '--validate "$TAILNET_MOCK_STATE" "$PORTAL_ISSUER_URL"' \
+  '--data-binary "@$mock_state"'; do
+  grep -qF -- "$tailnet_contract" "$LIFECYCLE" || fail tailnet-private-mock
+ done
+
+printf 'portal-consumer-lifecycle-contract: PASS pinned-image-tags=0.1.0 tailnet-private-mock=true\n'

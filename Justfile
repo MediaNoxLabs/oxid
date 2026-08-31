@@ -83,6 +83,10 @@ portal-tailnet-origin-contract:
     cargo test -p oxid-adapter-identity-ingress --features tailnet-test-offer-trigger tailnet_offer_profile_accepts_only_shared_contract_origins
     node --test ./scripts/e2e/tailnet-origin-policy.test.mjs
 
+# Prove the pinned Portal browser journey stays on one temporary Tailnet HTTPS origin.
+portal-tailnet-browser-e2e:
+    ./scripts/e2e/portal-tailnet-browser-e2e.sh
+
 # Verify physical Portal evidence is derived from exact measured results.
 portal-android-evidence-contract:
     node --test ./scripts/e2e/portal-android-evidence.test.mjs
