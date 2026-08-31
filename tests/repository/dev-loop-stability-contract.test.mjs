@@ -1460,7 +1460,10 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     /missing required review effort levels/,
   );
   const reorderedEfforts = assertClaudeHelpCapabilities(
-    fixtureClaudeHelp.replace("low, medium, high, xhigh, max", 'choices: "max", "low", "xhigh", "medium", "high", "none"'),
+    fixtureClaudeHelp.replace(
+      "(low, medium, high, xhigh, max)",
+      '(default: medium) (choices: "max", "low", "xhigh", "medium", "high", "none")',
+    ),
     [2, 1, 228],
   );
   assert.deepEqual(reorderedEfforts.effortLevels, ["max", "low", "xhigh", "medium", "high", "none"]);
@@ -1546,6 +1549,10 @@ test("Claude runner binds clean exact-head evidence and rejects stale worktrees"
   git("add", "contract.txt");
   git("commit", "--quiet", "-m", "base");
   const baseSha = git("rev-parse", "HEAD");
+  const origin = path.join(fixtureRoot, "origin.git");
+  execFileSync("git", ["init", "--bare", "--quiet", origin]);
+  git("remote", "add", "origin", origin);
+  git("push", "--quiet", "origin", "HEAD:refs/heads/integration");
   git("update-ref", "refs/remotes/origin/integration", baseSha);
   await writeFile(path.join(repository, "contract.txt"), "base\nhead\n");
   git("add", "contract.txt");
@@ -1576,7 +1583,7 @@ if (process.argv.includes("--version")) {
   else if (mode === "nonzero") { process.stderr.write("fixture failure\\n"); process.exit(7); }
   else if (mode === "malformed") process.stdout.write("not json");
   else {
-    if (mode === "cli-high" && process.argv[process.argv.indexOf("--effort") + 1] !== "high") process.exit(11);
+    if (mode.startsWith("cli-") && process.argv[process.argv.indexOf("--effort") + 1] !== mode.slice(4)) process.exit(11);
     if (mode === "advance") execFileSync("git", ["-C", ${JSON.stringify(repository)}, "commit", "--allow-empty", "-m", "advance"]);
     process.stdout.write(JSON.stringify({
       session_id: "fixture-session",
@@ -1631,24 +1638,39 @@ if (process.argv.includes("--version")) {
   const issueContractPath = path.join(fixtureRoot, "issue-150.json");
   await writeFile(issueContractPath, JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }));
   let cliOutput = "";
-  await runClaudeReviewCli([
-    "--issue", "150",
-    "--repo-root", repository,
-    "--evidence-dir", evidenceDir,
-    "--issue-contract-file", issueContractPath,
-    "--expected-head", headSha,
-    "--effort", "high",
-  ], {
-    stdout: { write(chunk) { cliOutput += chunk; } },
-    runReview: (options) => runClaudeCurrentHeadReview({
-      ...options,
-      claudeCommand: fakeClaude,
-      fetchBase: false,
-    }),
-  });
-  const cliEvidence = JSON.parse(cliOutput);
-  assert.equal(cliEvidence.invocation.effort, "high");
-  assert.equal(cliEvidence.verdict, "clean");
+  const priorPath = process.env.PATH;
+  process.env.PATH = `${fixtureRoot}${path.delimiter}${priorPath ?? ""}`;
+  try {
+    await runClaudeReviewCli([
+      "--issue", "150",
+      "--repo-root", repository,
+      "--evidence-dir", evidenceDir,
+      "--issue-contract-file", issueContractPath,
+      "--expected-head", headSha,
+      "--effort", "high",
+    ], { stdout: { write(chunk) { cliOutput += chunk; } } });
+    const highEvidence = JSON.parse(cliOutput);
+    assert.equal(highEvidence.invocation.effort, "high");
+    assert.equal(highEvidence.invocation.timeoutMs, 300_000);
+    assert.equal(highEvidence.verdict, "clean");
+
+    await writeFakeClaude("cli-medium");
+    cliOutput = "";
+    await runClaudeReviewCli([
+      "--issue", "150",
+      "--repo-root", repository,
+      "--evidence-dir", evidenceDir,
+      "--issue-contract-file", issueContractPath,
+      "--expected-head", headSha,
+    ], { stdout: { write(chunk) { cliOutput += chunk; } } });
+    const defaultEvidence = JSON.parse(cliOutput);
+    assert.equal(defaultEvidence.invocation.effort, "medium");
+    assert.equal(defaultEvidence.invocation.timeoutMs, 300_000);
+    assert.equal(defaultEvidence.verdict, "clean");
+  } finally {
+    if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath;
+  }
 
   const legacyEvidencePath = path.join(evidenceDir, "legacy-v2.evidence.json");
   const legacyEvidence = structuredClone(result.evidence);

@@ -13,7 +13,7 @@ const BASE_REF = "origin/integration";
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_BUDGET_USD = 10;
 export const DEFAULT_CLAUDE_REVIEW_EFFORT = "medium";
-export const CLAUDE_REVIEW_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+export const CLAUDE_REVIEW_EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
 export const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
 export const MINIMUM_CLAUDE_VERSION = [2, 1, 228];
 export const MAXIMUM_EXCLUSIVE_CLAUDE_VERSION = [2, 2, 0];
@@ -154,13 +154,12 @@ function documentedEffortLevels(help) {
         .filter((token) => token.toLowerCase() !== "choices"),
     ),
   ]);
-  const documented = candidates.find((candidate) => CLAUDE_REVIEW_EFFORTS.some((effort) => candidate.includes(effort)));
-  if (!documented) throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
-  const missing = CLAUDE_REVIEW_EFFORTS.filter((effort) => !documented.includes(effort));
-  if (missing.length > 0) {
-    throw new Error(`Claude CLI help is missing required review effort levels: ${missing.join(", ")}`);
-  }
-  return documented;
+  const complete = candidates.find((candidate) => CLAUDE_REVIEW_EFFORTS.every((effort) => candidate.includes(effort)));
+  if (complete) return complete;
+  const partial = candidates.find((candidate) => CLAUDE_REVIEW_EFFORTS.some((effort) => candidate.includes(effort)));
+  if (!partial) throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
+  const missing = CLAUDE_REVIEW_EFFORTS.filter((effort) => !partial.includes(effort));
+  throw new Error(`Claude CLI help is missing required review effort levels: ${missing.join(", ")}`);
 }
 
 export function assertClaudeHelpCapabilities(help, version) {
@@ -686,10 +685,7 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   return { ok: true, evidence };
 }
 
-export async function runCli(
-  argv = process.argv.slice(2),
-  { stdout = process.stdout, runReview = runClaudeCurrentHeadReview } = {},
-) {
+export async function runCli(argv = process.argv.slice(2), { stdout = process.stdout } = {}) {
   const { values } = parseArgs({
     args: argv,
     options: {
@@ -717,7 +713,7 @@ export async function runCli(
   }
   if (!values["issue-contract-file"]) throw new Error("--issue-contract-file is required");
   const issueContract = await readFile(values["issue-contract-file"], "utf8");
-  const result = await runReview({
+  const result = await runClaudeCurrentHeadReview({
     issue: Number(values.issue),
     repoRoot: values["repo-root"],
     evidenceDir: values["evidence-dir"],

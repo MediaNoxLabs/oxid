@@ -228,9 +228,10 @@ rerun the exact-head review to issue a v3 record instead of relabeling old
 evidence.
 
 The effort capability record is derived from the captured `--help` artifact,
-not from the CLI installed during later verification. Reordering documented
-levels or adding a new level is accepted as long as the required bounded levels
-remain available; verification binds the selected effort to that captured set.
+not from the CLI installed during later verification. Generation accepts
+reordered documented levels or added levels when every required bounded level
+remains available. Verification then requires the recorded set to match the set
+re-derived from that captured help and binds the selected effort to it.
 
 This is **local attestational evidence**, not cryptographic reviewer-identity,
 GitHub-hosted, or dev-loops-native provenance. Caller-supplied tracker data and
