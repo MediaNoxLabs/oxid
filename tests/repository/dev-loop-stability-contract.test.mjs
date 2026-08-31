@@ -36,7 +36,6 @@ import {
   assertAttestedReviewEffort,
   assertClaudeEffortCapability,
   assertClaudeHelpCapabilities,
-  assertClaudeCliEffort,
   assertMinimumClaudeVersion,
   CLAUDE_REVIEW_EFFORTS,
   DEFAULT_CLAUDE_REVIEW_EFFORT,
@@ -92,6 +91,7 @@ const capturedClaudeEffortEntry = [
   "                                        (low, medium, high, xhigh, max)",
 ].join("\n");
 const fixtureClaudeAuthHelp = "Usage: claude auth status [options]\n  --json Output as JSON (default)\n";
+const fixtureClaudeCliEfforts = ["low", "medium", "high", "xhigh", "max"];
 
 async function realMkdtemp(prefix) {
   return realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
@@ -1443,11 +1443,9 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   const effortIndex = invocation.args.indexOf("--effort");
   assert.ok(effortIndex >= 0);
   assert.equal(invocation.args[effortIndex + 1], DEFAULT_CLAUDE_REVIEW_EFFORT);
-  assert.deepEqual(CLAUDE_REVIEW_EFFORTS, ["low", "medium", "high", "xhigh", "max"]);
-  assert.equal(assertClaudeCliEffort("high"), "high");
+  assert.deepEqual(CLAUDE_REVIEW_EFFORTS, ["medium", "high", "xhigh", "max"]);
   assert.equal(assertAttestedReviewEffort("medium"), "medium");
   assert.throws(() => assertAttestedReviewEffort("low"), /must be at least medium/);
-  assert.throws(() => assertClaudeCliEffort("unbounded"), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be at least medium/);
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
@@ -1471,6 +1469,11 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(
     () => assertClaudeHelpCapabilities(duplicateEffortHelp, [2, 1, 228]),
     /multiple --effort option blocks/,
+  );
+  const splitAliasHelp = fixtureClaudeHelp.replace("  --effort", "  -E,\n  --effort");
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(splitAliasHelp, [2, 1, 228]).effortLevels,
+    fixtureClaudeCliEfforts,
   );
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("  --safe-mode", "  -s, --safe-mode"), [2, 1, 228]),
@@ -1519,7 +1522,7 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   );
   assert.deepEqual(
     assertClaudeHelpCapabilities(aliasedMixedHelp, [2, 1, 228]).effortLevels,
-    CLAUDE_REVIEW_EFFORTS,
+    fixtureClaudeCliEfforts,
   );
   const capturedEntryHelp = fixtureClaudeHelp.replace(
     "  --effort <level> (low, medium, high, xhigh, max)",
@@ -1527,7 +1530,7 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   );
   assert.deepEqual(
     assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortLevels,
-    CLAUDE_REVIEW_EFFORTS,
+    fixtureClaudeCliEfforts,
   );
   assert.equal(
     assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortHelpEntry,
@@ -1539,14 +1542,14 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   );
   assert.deepEqual(
     assertClaudeHelpCapabilities(wrappedChoicesHelp, [2, 1, 228]).effortLevels,
-    CLAUDE_REVIEW_EFFORTS,
+    fixtureClaudeCliEfforts,
   );
   const followingAliasHelp = fixtureClaudeHelp.replace(
     "\n  --safe-mode",
     "\n  -ef, --environment <id> (foreign, modes)\n  --safe-mode",
   );
   const followingAliasCapabilities = assertClaudeHelpCapabilities(followingAliasHelp, [2, 1, 228]);
-  assert.deepEqual(followingAliasCapabilities.effortLevels, CLAUDE_REVIEW_EFFORTS);
+  assert.deepEqual(followingAliasCapabilities.effortLevels, fixtureClaudeCliEfforts);
   assert.doesNotMatch(followingAliasCapabilities.effortHelpEntry, /--environment/);
   const followingShortOnlyHelp = fixtureClaudeHelp
     .replace("(low, medium, high, xhigh, max)", "levels follow")
@@ -1561,7 +1564,7 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   );
   assert.deepEqual(
     assertClaudeHelpCapabilities(enumerationBeforeDefault, [2, 1, 228]).effortLevels,
-    CLAUDE_REVIEW_EFFORTS,
+    fixtureClaudeCliEfforts,
   );
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("low", "Low"), [2, 1, 228]),
@@ -1631,7 +1634,9 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   await runClaudeReviewCli(["--help"], { stdout: { write(chunk) { help += chunk; } } });
   assert.match(help, /--timeout-ms INTEGER/);
   assert.match(help, /--timeout-ms 300000 \(five minutes\)/);
-  assert.match(help, /CLI effort levels: low, medium, high, xhigh, max; exact-head minimum: medium/);
+  assert.match(help, /Attested effort levels: medium, high, xhigh, max/);
+  assert.match(help, /--max-budget-usd NUMBER/);
+  assert.match(help, /--max-budget-usd 10/);
 
   await assert.rejects(
     runClaudeReviewCli([
@@ -1758,7 +1763,7 @@ if (process.argv.includes("--version")) {
   assert.equal(result.evidence.claude.observedSessionId, "fixture-session");
   assert.equal(result.evidence.claude.tools.length, 0);
   assert.equal(result.evidence.claude.capabilities.emptyToolsDisabled, true);
-  assert.deepEqual(result.evidence.claude.capabilities.effortLevels, CLAUDE_REVIEW_EFFORTS);
+  assert.deepEqual(result.evidence.claude.capabilities.effortLevels, fixtureClaudeCliEfforts);
   assert.equal(result.evidence.invocation.effort, "high");
   assert.equal(result.evidence.invocation.minimumEffort, "medium");
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
@@ -1945,6 +1950,19 @@ if (process.argv.includes("--version")) {
   await assert.rejects(
     verifyClaudeReviewEvidence({
       evidencePath: invalidEffortEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /attestation records an unsupported selected effort/,
+  );
+
+  const belowFloorEffortEvidencePath = path.join(evidenceDir, "below-floor-effort.evidence.json");
+  const belowFloorEffortEvidence = structuredClone(result.evidence);
+  belowFloorEffortEvidence.invocation.effort = "low";
+  await writeFile(belowFloorEffortEvidencePath, `${JSON.stringify(belowFloorEffortEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: belowFloorEffortEvidencePath,
       repoRoot: repository,
       fetchBase: false,
     }),

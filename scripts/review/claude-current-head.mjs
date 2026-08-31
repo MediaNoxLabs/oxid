@@ -14,7 +14,8 @@ export const MAX_CLAUDE_REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = MAX_CLAUDE_REVIEW_TIMEOUT_MS;
 const DEFAULT_MAX_BUDGET_USD = 10;
 export const DEFAULT_CLAUDE_REVIEW_EFFORT = "medium";
-export const CLAUDE_REVIEW_EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
+const CLAUDE_CLI_EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
+export const CLAUDE_REVIEW_EFFORTS = Object.freeze(["medium", "high", "xhigh", "max"]);
 export const MINIMUM_ATTESTED_REVIEW_EFFORT = "medium";
 const CLAUDE_REVIEW_EFFORT_RANK = Object.freeze({ low: 0, medium: 1, high: 2, xhigh: 3, max: 4 });
 export const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
@@ -103,15 +104,15 @@ export function buildClaudeInvocation({
   };
 }
 
-export function assertClaudeCliEffort(effort) {
-  if (!CLAUDE_REVIEW_EFFORTS.includes(effort)) {
+function assertKnownClaudeCliEffort(effort) {
+  if (!CLAUDE_CLI_EFFORTS.includes(effort)) {
     throw new Error(`Claude review effort must be one of: ${CLAUDE_REVIEW_EFFORTS.join(", ")}`);
   }
   return effort;
 }
 
 export function assertClaudeEffortCapability(effort, documentedEfforts) {
-  assertClaudeCliEffort(effort);
+  assertAttestedReviewEffort(effort);
   if (!Array.isArray(documentedEfforts) || !documentedEfforts.includes(effort)) {
     throw new Error(`installed Claude CLI does not document the selected review effort: ${effort}`);
   }
@@ -119,7 +120,7 @@ export function assertClaudeEffortCapability(effort, documentedEfforts) {
 }
 
 export function assertAttestedReviewEffort(effort) {
-  assertClaudeCliEffort(effort);
+  assertKnownClaudeCliEffort(effort);
   if (CLAUDE_REVIEW_EFFORT_RANK[effort] < CLAUDE_REVIEW_EFFORT_RANK[MINIMUM_ATTESTED_REVIEW_EFFORT]) {
     throw new Error(`exact-head attestation effort must be at least ${MINIMUM_ATTESTED_REVIEW_EFFORT}`);
   }
@@ -167,8 +168,9 @@ function helpFlagPattern(flag, { allowAlias = false } = {}) {
   // Effort alone tolerates a short alias because this new, non-safety option
   // needs layout compatibility. Existing safety flags remain exact and
   // case-sensitive so their capability proof cannot be weakened by aliases.
-  const alias = allowAlias ? "(?:-[a-zA-Z0-9]+,\\s*)?" : "";
-  return new RegExp(`(?:^|\\n)\\s*${alias}${escaped}(?=\\s|=|<|\\[|$)`, "m");
+  const horizontalWhitespace = "[^\\S\\r\\n]*";
+  const alias = allowAlias ? `(?:-[a-zA-Z0-9]+,${horizontalWhitespace})?` : "";
+  return new RegExp(`(?:^|\\r?\\n)${horizontalWhitespace}${alias}${escaped}(?=\\s|=|<|\\[|$)`, "m");
 }
 
 function exactHelpFlag(help, flag) {
@@ -216,7 +218,8 @@ function documentedEffortLevels(entry) {
   const bareChoices = commaGroups
     .filter((group) => !/choices?\s*:/i.test(group))
     .map(parseEnumeration)
-    .filter((candidate) => Array.isArray(candidate));
+    .filter((candidate) => Array.isArray(candidate)
+      && candidate.every((effort) => CLAUDE_CLI_EFFORTS.includes(effort.toLowerCase())));
   const candidates = [...explicitChoices, ...bareChoices];
   if (candidates.length === 0) {
     throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
@@ -227,12 +230,12 @@ function documentedEffortLevels(entry) {
   }
   const documented = distinct.values().next().value;
   if (documented.some(
-    (effort) => CLAUDE_REVIEW_EFFORTS.includes(effort.toLowerCase())
-      && !CLAUDE_REVIEW_EFFORTS.includes(effort),
+    (effort) => CLAUDE_CLI_EFFORTS.includes(effort.toLowerCase())
+      && !CLAUDE_CLI_EFFORTS.includes(effort),
   )) {
     throw new Error("Claude CLI help documents review effort levels with unsupported casing");
   }
-  const supported = documented.filter((effort) => CLAUDE_REVIEW_EFFORTS.includes(effort));
+  const supported = documented.filter((effort) => CLAUDE_CLI_EFFORTS.includes(effort));
   if (supported.length === 0) {
     throw new Error("Claude CLI help does not document a factory-supported review effort");
   }
@@ -816,7 +819,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     strict: true,
   });
   if (values.help) {
-    stdout.write(`Usage: claude-current-head.mjs --issue NUMBER [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nCLI effort levels: ${CLAUDE_REVIEW_EFFORTS.join(", ")}; exact-head minimum: ${MINIMUM_ATTESTED_REVIEW_EFFORT}.\nDefaults: --effort medium; --timeout-ms 300000 (five minutes).\n`);
+    stdout.write(`Usage: claude-current-head.mjs --issue NUMBER [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER] [--max-budget-usd NUMBER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nAttested effort levels: ${CLAUDE_REVIEW_EFFORTS.join(", ")}.\nDefaults: --effort medium; --timeout-ms 300000 (five minutes); --max-budget-usd 10.\n`);
     return;
   }
   if (values["verify-evidence"]) {
