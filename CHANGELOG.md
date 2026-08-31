@@ -12,8 +12,9 @@ once public releases begin.
 
 - Exact-head Claude reviews now select and attest a bounded reasoning effort.
   Their default deadline is five minutes, reduced from fifteen to keep the
-  review checkpoint inside the factory SLA; callers may still select a shorter
-  explicit deadline but cannot treat a timeout as a pass.
+  review checkpoint inside the factory SLA; the wrapper and verifier reject
+  longer deadlines, callers may select a shorter one, and a timeout is not a
+  pass.
   New attestations use schema v3; rerun reviews whose legacy v2 evidence no
   longer verifies instead of relabeling records that did not capture effort.
   Verification reports this migration through the distinct

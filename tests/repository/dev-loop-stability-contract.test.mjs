@@ -43,6 +43,7 @@ import {
   buildClaudeInvocation,
   ClaudeReviewEvidenceVersionError,
   ClaudeReviewFindingsError,
+  MAX_CLAUDE_REVIEW_TIMEOUT_MS,
   MAX_REVIEW_DIFF_BYTES,
   parseClaudeReviewResult,
   parseClaudeVersion,
@@ -82,6 +83,11 @@ const fixtureClaudeHelp = [
   "  --no-session-persistence",
   '  --permission-mode <mode> (choices: "acceptEdits", "dontAsk", "plan")',
   "  --system-prompt <prompt>",
+].join("\n");
+// Captured verbatim from the installed Claude Code 2.1.228 general help.
+const capturedClaudeEffortEntry = [
+  "  --effort <level>                      Effort level for the current session",
+  "                                        (low, medium, high, xhigh, max)",
 ].join("\n");
 const fixtureClaudeAuthHelp = "Usage: claude auth status [options]\n  --json Output as JSON (default)\n";
 
@@ -1486,6 +1492,22 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     [2, 1, 228],
   );
   assert.deepEqual(reorderedEfforts.effortLevels, ["max", "low", "xhigh", "medium", "high"]);
+  const aliasedMixedHelp = fixtureClaudeHelp.replace(
+    "  --effort <level> (low, medium, high, xhigh, max)",
+    '  -e, --effort <level> (choices: "low", "medium", "high", "xhigh", "max", default: "medium")',
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(aliasedMixedHelp, [2, 1, 228]).effortLevels,
+    CLAUDE_REVIEW_EFFORTS,
+  );
+  const capturedEntryHelp = fixtureClaudeHelp.replace(
+    "  --effort <level> (low, medium, high, xhigh, max)",
+    capturedClaudeEffortEntry,
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortLevels,
+    CLAUDE_REVIEW_EFFORTS,
+  );
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "with a bounded level"), [2, 1, 228]),
     /recognizable review effort choice list/,
@@ -1707,6 +1729,11 @@ if (process.argv.includes("--version")) {
   });
 
   await t.test("default five-minute timeout remains a hard failure", async () => {
+    assert.equal(MAX_CLAUDE_REVIEW_TIMEOUT_MS, 300_000);
+    await assert.rejects(
+      runClaudeCurrentHeadReview({ issue: 150, timeoutMs: MAX_CLAUDE_REVIEW_TIMEOUT_MS + 1 }),
+      /timeoutMs must be an integer between 1 and 300000/,
+    );
     const defaultTimeouts = [];
     const timeoutRunner = (_command, args, options = {}) => {
       if (args[0] === "--version") return { status: 0, stdout: "2.1.228 (Claude Code)\n", stderr: "" };
@@ -1730,6 +1757,34 @@ if (process.argv.includes("--version")) {
       /timed out or was terminated after 300000ms/,
     );
     assert.deepEqual(defaultTimeouts, [300_000]);
+  });
+
+  await t.test("run path rejects an effort omitted by captured CLI capabilities", async () => {
+    let modelCalls = 0;
+    const restrictedHelp = fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "(low, medium)");
+    const restrictedRunner = (_command, args) => {
+      if (args[0] === "--version") return { status: 0, stdout: "2.1.228 (Claude Code)\n", stderr: "" };
+      if (args[0] === "--help") return { status: 0, stdout: restrictedHelp, stderr: "" };
+      if (args.at(-1) === "--help") return { status: 0, stdout: fixtureClaudeAuthHelp, stderr: "" };
+      if (args.at(-1) === "--json") return { status: 0, stdout: JSON.stringify({ loggedIn: true }), stderr: "" };
+      modelCalls += 1;
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    await assert.rejects(
+      runClaudeCurrentHeadReview({
+        issue: 150,
+        repoRoot: repository,
+        evidenceDir: path.join(fixtureRoot, "restricted-effort-evidence"),
+        expectedHead: headSha,
+        claudeCommand: fakeClaude,
+        issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+        effort: "high",
+        fetchBase: false,
+        claudeRunner: restrictedRunner,
+      }),
+      /does not document the selected review effort: high/,
+    );
+    assert.equal(modelCalls, 0);
   });
 
   const legacyEvidencePath = path.join(evidenceDir, "legacy-v2.evidence.json");
@@ -1777,6 +1832,14 @@ if (process.argv.includes("--version")) {
 
   const missingCapabilityEvidencePath = path.join(evidenceDir, "missing-effort-capability.evidence.json");
   const missingCapabilityEvidence = structuredClone(result.evidence);
+  const reducedHelp = fixtureClaudeHelp.replace(", high", "");
+  const reducedHelpName = "missing-effort-capability.claude-help.txt";
+  await writeFile(path.join(evidenceDir, reducedHelpName), reducedHelp, { mode: 0o600 });
+  missingCapabilityEvidence.claude.capabilities.help = {
+    path: reducedHelpName,
+    sha256: createHash("sha256").update(reducedHelp).digest("hex"),
+    bytes: Buffer.byteLength(reducedHelp),
+  };
   missingCapabilityEvidence.claude.capabilities.effortLevels = ["low", "medium", "xhigh", "max"];
   await writeFile(missingCapabilityEvidencePath, `${JSON.stringify(missingCapabilityEvidence)}\n`, { mode: 0o600 });
   await assert.rejects(
@@ -1786,6 +1849,19 @@ if (process.argv.includes("--version")) {
       fetchBase: false,
     }),
     /does not bind the selected effort to the captured CLI capabilities/,
+  );
+
+  const overlongTimeoutEvidencePath = path.join(evidenceDir, "overlong-timeout.evidence.json");
+  const overlongTimeoutEvidence = structuredClone(result.evidence);
+  overlongTimeoutEvidence.invocation.timeoutMs = MAX_CLAUDE_REVIEW_TIMEOUT_MS + 1;
+  await writeFile(overlongTimeoutEvidencePath, `${JSON.stringify(overlongTimeoutEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: overlongTimeoutEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /attestation exceeds the five-minute timeout SLA/,
   );
 
   await assert.rejects(runClaudeCurrentHeadReview({

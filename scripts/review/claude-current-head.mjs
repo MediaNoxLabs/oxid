@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 const BASE_REF = "origin/integration";
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+export const MAX_CLAUDE_REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = MAX_CLAUDE_REVIEW_TIMEOUT_MS;
 const DEFAULT_MAX_BUDGET_USD = 10;
 export const DEFAULT_CLAUDE_REVIEW_EFFORT = "medium";
 export const CLAUDE_REVIEW_EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
@@ -141,25 +142,28 @@ export function assertMinimumClaudeVersion(
   return version;
 }
 
-function exactHelpFlag(help, flag) {
+function helpFlagPattern(flag) {
   const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|\\n)\\s*${escaped}(?=\\s|=|<|\\[|$)`, "m").test(help);
+  return new RegExp(`(?:^|\\n)\\s*(?:-[a-z0-9],\\s*)?${escaped}(?=\\s|=|<|\\[|$)`, "im");
+}
+
+function exactHelpFlag(help, flag) {
+  return helpFlagPattern(flag).test(help);
 }
 
 function helpWindow(help, flag, length = 600) {
-  const line = new RegExp(`(?:^|\\n)\\s*${flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|=|<|\\[|$)`, "m").exec(help);
+  const line = helpFlagPattern(flag).exec(help);
   return line ? help.slice(line.index, line.index + length) : "";
 }
 
 function helpEntry(help, flag) {
-  const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const option = new RegExp(`^\\s*${escaped}(?=\\s|=|<|\\[|$)`);
+  const option = helpFlagPattern(flag);
   const lines = help.split(/\r?\n/);
   const start = lines.findIndex((line) => option.test(line));
   if (start < 0) return "";
   const entry = [lines[start]];
   for (const line of lines.slice(start + 1)) {
-    if (/^\s*--[a-z0-9]/i.test(line) || !/^\s+\S/.test(line)) break;
+    if (/^\s*(?:-[a-z0-9],\s*)?--[a-z0-9]/i.test(line) || !/^\s+\S/.test(line)) break;
     entry.push(line);
   }
   return entry.join("\n");
@@ -170,25 +174,30 @@ function documentedEffortLevels(help) {
   const groups = [...entry.matchAll(/\(([^()]*)\)/g)].map((match) => match[1]);
   const choices = [...entry.matchAll(/choices?\s*:\s*([^\n)]+)/gi)].map((match) => match[1]);
   const parseEnumeration = (candidate) => {
-    if (!/[,|]/.test(candidate)) return null;
-    const tokens = candidate.split(/[,|]/).map((token) => token.trim().replace(/^["']|["']$/g, ""));
+    const withoutDefault = candidate.replace(
+      /,\s*(?:default|recommended)\s*:\s*["']?[a-z][a-z0-9-]*["']?\s*$/i,
+      "",
+    );
+    if (!/[,|]/.test(withoutDefault)) return null;
+    const tokens = withoutDefault.split(/[,|]/).map((token) => token.trim().replace(/^["']|["']$/g, ""));
     if (tokens.some((token) => !/^[a-z][a-z0-9-]*$/i.test(token))) return null;
     return [...new Set(tokens.map((token) => token.toLowerCase()))];
   };
   const candidates = [...choices, ...groups]
     .map(parseEnumeration)
     .filter((candidate) => Array.isArray(candidate));
-  const supportedCandidates = candidates
-    .map((candidate) => candidate.filter((effort) => CLAUDE_REVIEW_EFFORTS.includes(effort)))
-    .filter((candidate) => candidate.length > 0);
-  if (supportedCandidates.length === 0) {
+  if (candidates.length === 0) {
     throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
   }
-  const distinct = new Map(supportedCandidates.map((candidate) => [[...candidate].sort().join("\0"), candidate]));
+  const distinct = new Map(candidates.map((candidate) => [[...candidate].sort().join("\0"), candidate]));
   if (distinct.size !== 1) {
     throw new Error("Claude CLI help exposes multiple conflicting review effort choice lists");
   }
-  return distinct.values().next().value;
+  const supported = distinct.values().next().value.filter((effort) => CLAUDE_REVIEW_EFFORTS.includes(effort));
+  if (supported.length === 0) {
+    throw new Error("Claude CLI help does not document a factory-supported review effort");
+  }
+  return supported;
 }
 
 export function assertClaudeHelpCapabilities(help, version) {
@@ -515,7 +524,9 @@ export async function runClaudeCurrentHeadReview({
   claudeRunner = run,
 } = {}) {
   if (!Number.isInteger(issue) || issue < 1) throw new Error("issue must be a positive integer");
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new Error("timeoutMs must be a positive integer");
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_CLAUDE_REVIEW_TIMEOUT_MS) {
+    throw new Error(`timeoutMs must be an integer between 1 and ${MAX_CLAUDE_REVIEW_TIMEOUT_MS}`);
+  }
   assertClaudeReviewEffort(effort);
   if (typeof issueContract !== "string" || !issueContract.trim()) throw new Error("issueContract is required for an exact-scope review");
   let contractPayload;
@@ -657,6 +668,11 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   }
   if (evidence.evidenceKind !== "local-attestation" || evidence.baseRef !== BASE_REF || evidence.verdict !== "clean") {
     throw new Error("unsupported or non-clean Claude review attestation");
+  }
+  if (!Number.isInteger(evidence.invocation?.timeoutMs)
+    || evidence.invocation.timeoutMs < 1
+    || evidence.invocation.timeoutMs > MAX_CLAUDE_REVIEW_TIMEOUT_MS) {
+    throw new Error("Claude review attestation exceeds the five-minute timeout SLA");
   }
   if (!evidence.diff || typeof evidence.diff !== "object" || !evidence.rawResponse || typeof evidence.rawResponse !== "object"
     || !evidence.claude?.capabilities?.help || typeof evidence.claude.capabilities.help !== "object"

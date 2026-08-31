@@ -221,12 +221,14 @@ review inside the five-minute default deadline; the example above states that
 deadline explicitly so copied commands retain the SLA if defaults later change.
 Operators may select only the factory's closed set (`low`, `medium`, `high`,
 `xhigh`, or `max`), and the selected level must also appear in the installed
-CLI's captured choice list. Increasing effort does not extend the timeout, and
-a timeout never counts as a review pass. New effort-bound attestations use
-schema v3. Version 2
+CLI's captured choice list. The wrapper and verifier reject deadlines above
+300,000 ms, so increasing effort cannot extend the SLA; a timeout never counts
+as a review pass. New effort-bound attestations use schema v3. Version 2
 records do not bind effort and are intentionally rejected after this upgrade;
 rerun the exact-head review to issue a v3 record instead of relabeling old
-evidence.
+evidence. These records live in private local state outside the repository; at
+this migration checkpoint, no checked-in evidence or separate CI/gate parser
+consumes the v2 shape. The wrapper verifier remains the evidence authority.
 
 For a large diff that cannot finish inside five minutes, split the issue and PR
 at a coherent architecture boundary. A reviewer may select `--effort low` for a
@@ -236,7 +238,8 @@ timeout as approval.
 The effort capability record is derived from the captured `--help` artifact,
 not from the CLI installed during later verification. Generation requires one
 unambiguous comma- or pipe-delimited enumeration in the `--effort` option block,
-then requires the selected factory-supported level to occur in that enumeration.
+ignores an optional documented default annotation, then requires the selected
+factory-supported level to occur in that enumeration.
 The normalized factory-supported subset is recorded. Verification requires that
 record to match the subset re-derived from the captured help and binds the
 selected effort to it. This proves the CLI invocation and its documented
