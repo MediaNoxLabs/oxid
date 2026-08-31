@@ -63,6 +63,15 @@ export class ClaudeReviewFindingsError extends Error {
   }
 }
 
+export class ClaudeReviewEvidenceVersionError extends Error {
+  constructor(version) {
+    super(`unsupported Claude review attestation schema version ${String(version)}; rerun the exact-head review`);
+    this.name = "ClaudeReviewEvidenceVersionError";
+    this.code = "CLAUDE_REVIEW_EVIDENCE_VERSION";
+    this.version = version;
+  }
+}
+
 export function buildClaudeInvocation({
   schema = CLAUDE_REVIEW_SCHEMA,
   maxBudgetUsd = DEFAULT_MAX_BUDGET_USD,
@@ -144,11 +153,16 @@ function helpWindow(help, flag, length = 600) {
 
 function helpEntry(help, flag) {
   const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`(?:^|\\n)\\s*${escaped}(?=\\s|=|<|\\[|$)`, "m").exec(help);
-  if (!match) return "";
-  const entry = help.slice(match.index);
-  const boundary = /\n(?:\s*--[a-z0-9]|\s*\n)/i.exec(entry.slice(1));
-  return boundary ? entry.slice(0, boundary.index + 1) : entry;
+  const option = new RegExp(`^\\s*${escaped}(?=\\s|=|<|\\[|$)`);
+  const lines = help.split(/\r?\n/);
+  const start = lines.findIndex((line) => option.test(line));
+  if (start < 0) return "";
+  const entry = [lines[start]];
+  for (const line of lines.slice(start + 1)) {
+    if (/^\s*--[a-z0-9]/i.test(line) || !/^\s+\S/.test(line)) break;
+    entry.push(line);
+  }
+  return entry.join("\n");
 }
 
 function documentedEffortLevels(help) {
@@ -164,15 +178,17 @@ function documentedEffortLevels(help) {
   const candidates = [...choices, ...groups]
     .map(parseEnumeration)
     .filter((candidate) => Array.isArray(candidate));
-  const supported = candidates
+  const supportedCandidates = candidates
     .map((candidate) => candidate.filter((effort) => CLAUDE_REVIEW_EFFORTS.includes(effort)))
-    .filter((candidate) => candidate.length > 0)
-    .sort((left, right) => right.length - left.length)[0];
-  if (!supported) throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
-  if (!supported.includes(DEFAULT_CLAUDE_REVIEW_EFFORT)) {
-    throw new Error(`Claude CLI help does not expose the default review effort: ${DEFAULT_CLAUDE_REVIEW_EFFORT}`);
+    .filter((candidate) => candidate.length > 0);
+  if (supportedCandidates.length === 0) {
+    throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
   }
-  return supported;
+  const distinct = new Map(supportedCandidates.map((candidate) => [[...candidate].sort().join("\0"), candidate]));
+  if (distinct.size !== 1) {
+    throw new Error("Claude CLI help exposes multiple conflicting review effort choice lists");
+  }
+  return distinct.values().next().value;
 }
 
 export function assertClaudeHelpCapabilities(help, version) {
@@ -637,7 +653,7 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     throw new Error(`Claude review evidence is not valid JSON: ${error.message}`, { cause: error });
   }
   if (evidence.schemaVersion !== 3) {
-    throw new Error(`unsupported Claude review attestation schema version ${String(evidence.schemaVersion)}; rerun the exact-head review`);
+    throw new ClaudeReviewEvidenceVersionError(evidence.schemaVersion);
   }
   if (evidence.evidenceKind !== "local-attestation" || evidence.baseRef !== BASE_REF || evidence.verdict !== "clean") {
     throw new Error("unsupported or non-clean Claude review attestation");
@@ -684,7 +700,14 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     || evidence.claude.capabilities.emptyToolsBasis !== "captured-help-and-bounded-version-contract") {
     throw new Error("Claude review attestation does not prove the empty tool-set capability");
   }
-  assertClaudeReviewEffort(evidence.invocation?.effort);
+  if (typeof evidence.invocation?.effort !== "string") {
+    throw new Error("Claude review attestation is missing the selected effort");
+  }
+  try {
+    assertClaudeReviewEffort(evidence.invocation.effort);
+  } catch (error) {
+    throw new Error("Claude review attestation records an unsupported selected effort", { cause: error });
+  }
   const recordedEfforts = evidence.claude.capabilities.effortLevels;
   if (!Array.isArray(recordedEfforts)
     || recordedEfforts.length !== capabilities.effortLevels.length

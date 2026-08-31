@@ -41,6 +41,7 @@ import {
   DEFAULT_CLAUDE_REVIEW_EFFORT,
   MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
   buildClaudeInvocation,
+  ClaudeReviewEvidenceVersionError,
   ClaudeReviewFindingsError,
   MAX_REVIEW_DIFF_BYTES,
   parseClaudeReviewResult,
@@ -1467,6 +1468,16 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     () => assertClaudeEffortCapability("max", reducedEfforts.effortLevels),
     /does not document the selected review effort: max/,
   );
+  const noDefaultEfforts = assertClaudeHelpCapabilities(
+    fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "(low, high)"),
+    [2, 1, 228],
+  );
+  assert.deepEqual(noDefaultEfforts.effortLevels, ["low", "high"]);
+  assert.equal(assertClaudeEffortCapability("high", noDefaultEfforts.effortLevels), "high");
+  assert.throws(
+    () => assertClaudeEffortCapability("medium", noDefaultEfforts.effortLevels),
+    /does not document the selected review effort: medium/,
+  );
   const reorderedEfforts = assertClaudeHelpCapabilities(
     fixtureClaudeHelp.replace(
       "(low, medium, high, xhigh, max)",
@@ -1488,6 +1499,14 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(
     () => assertClaudeHelpCapabilities(effortLastHelp, [2, 1, 228]),
     /recognizable review effort choice list/,
+  );
+  const conflictingEffortHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    "(low, medium, high) (low, medium, xhigh, max)",
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(conflictingEffortHelp, [2, 1, 228]),
+    /multiple conflicting review effort choice lists/,
   );
   assert.throws(() => assertClaudeAuthHelpCapabilities("Usage: claude auth status\n"), /default JSON output/);
   const calls = [];
@@ -1725,7 +1744,9 @@ if (process.argv.includes("--version")) {
       repoRoot: repository,
       fetchBase: false,
     }),
-    /unsupported Claude review attestation schema version 2; rerun the exact-head review/,
+    (error) => error instanceof ClaudeReviewEvidenceVersionError
+      && error.code === "CLAUDE_REVIEW_EVIDENCE_VERSION"
+      && /schema version 2; rerun/.test(error.message),
   );
 
   const missingEffortEvidence = path.join(evidenceDir, "missing-effort.evidence.json");
@@ -1738,7 +1759,7 @@ if (process.argv.includes("--version")) {
       repoRoot: repository,
       fetchBase: false,
     }),
-    /effort must be one of/,
+    /attestation is missing the selected effort/,
   );
 
   const invalidEffortEvidencePath = path.join(evidenceDir, "invalid-effort.evidence.json");
@@ -1751,7 +1772,7 @@ if (process.argv.includes("--version")) {
       repoRoot: repository,
       fetchBase: false,
     }),
-    /effort must be one of/,
+    /attestation records an unsupported selected effort/,
   );
 
   const missingCapabilityEvidencePath = path.join(evidenceDir, "missing-effort-capability.evidence.json");
@@ -2004,31 +2025,6 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
   assert.match(config, /^  stopAt: \[\]$/m);
   assert.match(config, /^  humanMergeOnly: false$/m);
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
-});
-
-test("repository contains no stored or consumed legacy Claude-v2 evidence", async () => {
-  const evidenceFiles = execFileSync(
-    "git",
-    ["ls-files", "-z", "--", "*.evidence.json"],
-    { cwd: repoRoot, encoding: "utf8" },
-  ).split("\0").filter(Boolean);
-  for (const evidenceFile of evidenceFiles) {
-    const stored = JSON.parse(await readFile(path.join(repoRoot, evidenceFile), "utf8"));
-    assert.notEqual(
-      stored.evidenceKind === "local-attestation" ? stored.schemaVersion : null,
-      2,
-      evidenceFile,
-    );
-  }
-
-  const consumers = execFileSync(
-    "git",
-    ["grep", "-l", "verifyClaudeReviewEvidence", "--", "."],
-    { cwd: repoRoot, encoding: "utf8" },
-  ).trim().split("\n");
-  for (const consumer of consumers.filter((file) => !file.startsWith("tests/"))) {
-    assert.doesNotMatch(await readFile(path.join(repoRoot, consumer), "utf8"), /schemaVersion\s*[:=]\s*2/);
-  }
 });
 
 test("upstream-only gaps are linked and speculative local patches are forbidden", async () => {

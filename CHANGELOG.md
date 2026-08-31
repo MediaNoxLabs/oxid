@@ -16,7 +16,8 @@ once public releases begin.
   explicit deadline but cannot treat a timeout as a pass.
   New attestations use schema v3; rerun reviews whose legacy v2 evidence no
   longer verifies instead of relabeling records that did not capture effort.
-  Verification reports this migration separately from a non-clean verdict.
+  Verification reports this migration through the distinct
+  `ClaudeReviewEvidenceVersionError` type rather than as a non-clean verdict.
 
 ### Added
 

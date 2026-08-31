@@ -234,11 +234,14 @@ genuinely low-risk diff, but must not lengthen the deadline or reinterpret a
 timeout as approval.
 
 The effort capability record is derived from the captured `--help` artifact,
-not from the CLI installed during later verification. Generation accepts an
-explicit comma- or pipe-delimited choice enumeration when every required
-bounded level remains available; its normalized documented set is recorded.
-Verification requires that record to match the set re-derived from the captured
-help and binds the selected effort to it.
+not from the CLI installed during later verification. Generation requires one
+unambiguous comma- or pipe-delimited enumeration in the `--effort` option block,
+then requires the selected factory-supported level to occur in that enumeration.
+The normalized factory-supported subset is recorded. Verification requires that
+record to match the subset re-derived from the captured help and binds the
+selected effort to it. This proves the CLI invocation and its documented
+capability; it cannot prove that the provider honored the requested effort
+internally.
 
 This is **local attestational evidence**, not cryptographic reviewer-identity,
 GitHub-hosted, or dev-loops-native provenance. Caller-supplied tracker data and
