@@ -45,6 +45,7 @@ import {
   parseClaudeReviewResult,
   parseClaudeVersion,
   probeClaudeCliCapabilities,
+  runCli as runClaudeReviewCli,
   runClaudeCurrentHeadReview,
   verifyClaudeReviewEvidence,
 } from "../../scripts/review/claude-current-head.mjs";
@@ -1483,6 +1484,22 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(() => parseClaudeReviewResult(JSON.stringify({ structured_output: { verdict: "clean", findings: [{ severity: "blocker", message: "bad" }] } })), /clean verdict cannot contain findings/);
 });
 
+test("Claude review CLI rejects an unsupported effort before model execution", async (t) => {
+  const directory = await realMkdtemp("oxid-claude-effort-");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const contract = path.join(directory, "issue.json");
+  await writeFile(contract, JSON.stringify({ issue: 232, title: "Fixture", body: "Contract" }));
+
+  await assert.rejects(
+    runClaudeReviewCli([
+      "--issue", "232",
+      "--issue-contract-file", contract,
+      "--effort", "unbounded",
+    ], { stdout: { write() {} } }),
+    /effort must be one of/,
+  );
+});
+
 test("installed real Claude CLI smoke is explicit opt-in and never a default API dependency", async (t) => {
   if (process.env.OXID_CLAUDE_LIVE_SMOKE !== "1") {
     t.skip("set OXID_CLAUDE_LIVE_SMOKE=1 to opt into the authenticated billed capability smoke");
@@ -1575,11 +1592,12 @@ if (process.argv.includes("--version")) {
   });
   assert.equal(result.evidence.headSha, headSha);
   assert.equal(result.evidence.baseSha, baseSha);
-  assert.equal(result.evidence.schemaVersion, 2);
+  assert.equal(result.evidence.schemaVersion, 3);
   assert.equal(result.evidence.evidenceKind, "local-attestation");
   assert.equal(result.evidence.claude.observedSessionId, "fixture-session");
   assert.equal(result.evidence.claude.tools.length, 0);
   assert.equal(result.evidence.claude.capabilities.emptyToolsDisabled, true);
+  assert.deepEqual(result.evidence.claude.capabilities.effortLevels, CLAUDE_REVIEW_EFFORTS);
   assert.equal(result.evidence.invocation.effort, DEFAULT_CLAUDE_REVIEW_EFFORT);
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
   assert.equal(path.isAbsolute(result.evidence.diff.path), false);
@@ -1597,6 +1615,31 @@ if (process.argv.includes("--version")) {
   }
   const exactGitDiff = execFileSync("git", ["diff", "--binary", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], { cwd: repository });
   assert.deepEqual(await readFile(path.join(evidenceDir, result.evidence.diff.path)), exactGitDiff);
+
+  const legacyEvidencePath = path.join(evidenceDir, "legacy-v2.evidence.json");
+  const legacyEvidence = structuredClone(result.evidence);
+  legacyEvidence.schemaVersion = 2;
+  delete legacyEvidence.invocation.effort;
+  delete legacyEvidence.claude.capabilities.effortLevels;
+  await writeFile(legacyEvidencePath, `${JSON.stringify(legacyEvidence)}\n`, { mode: 0o600 });
+  assert.equal((await verifyClaudeReviewEvidence({
+    evidencePath: legacyEvidencePath,
+    repoRoot: repository,
+    fetchBase: false,
+  })).ok, true);
+
+  const missingEffortEvidence = path.join(evidenceDir, "missing-effort.evidence.json");
+  const missingEffort = structuredClone(result.evidence);
+  delete missingEffort.invocation.effort;
+  await writeFile(missingEffortEvidence, `${JSON.stringify(missingEffort)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: missingEffortEvidence,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /effort must be one of/,
+  );
 
   await assert.rejects(runClaudeCurrentHeadReview({
     issue: 151,
