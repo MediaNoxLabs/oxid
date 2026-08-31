@@ -41,6 +41,7 @@ import {
   CLAUDE_REVIEW_EFFORTS,
   DEFAULT_CLAUDE_REVIEW_EFFORT,
   MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
+  MINIMUM_CLAUDE_REVIEW_BUDGET_USD,
   buildClaudeInvocation,
   claudeReviewCliFailure,
   ClaudeReviewEvidenceVersionError,
@@ -1449,9 +1450,10 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(() => assertAttestedReviewEffort("low"), /must be one of: medium, high, xhigh, max/);
   assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be one of/);
-  assert.equal(assertClaudeReviewMaxBudgetUsd(0.01), 0.01);
+  assert.equal(assertClaudeReviewMaxBudgetUsd(MINIMUM_CLAUDE_REVIEW_BUDGET_USD), 1);
   assert.equal(assertClaudeReviewMaxBudgetUsd("10"), 10);
-  assert.throws(() => assertClaudeReviewMaxBudgetUsd(Number.POSITIVE_INFINITY), /positive finite number/);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(0.01), /finite number of at least 1 USD/);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(Number.POSITIVE_INFINITY), /finite number of at least 1 USD/);
   const stringBudgetInvocation = buildClaudeInvocation({ maxBudgetUsd: "10" });
   assert.equal(stringBudgetInvocation.args[stringBudgetInvocation.args.indexOf("--max-budget-usd") + 1], "10");
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
@@ -1532,6 +1534,14 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   );
   assert.deepEqual(
     assertClaudeHelpCapabilities(futureEffortHelp, [2, 1, 228]).effortLevels,
+    fixtureClaudeCliEfforts,
+  );
+  const describedEffortHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    "(low, medium, high, xhigh, max) Effort level for the session",
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(describedEffortHelp, [2, 1, 228]).effortLevels,
     fixtureClaudeCliEfforts,
   );
   const aliasedMixedHelp = fixtureClaudeHelp.replace(
@@ -1663,6 +1673,7 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   assert.match(help, /Attested effort levels: medium, high, xhigh, max/);
   assert.match(help, /--max-budget-usd NUMBER/);
   assert.match(help, /--max-budget-usd 10/);
+  assert.match(help, /Minimum budget: 1 USD/);
 
   await assert.rejects(
     runClaudeReviewCli([
@@ -1691,18 +1702,19 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   for (const invalidBudget of ["", "-1", "0", "NaN", "Infinity"]) {
     await assert.rejects(
       runClaudeReviewCli([`--max-budget-usd=${invalidBudget}`]),
-      /review max budget must be a positive finite number/,
+      /review max budget must be a finite number of at least 1 USD/,
     );
   }
 });
 
 test("review attestation migration has a closed in-repository consumer set", () => {
-  const output = execFileSync(
+  const grep = spawnSync(
     "git",
     ["grep", "-l", "claude-current-head.mjs", "--", "."],
     { cwd: repoRoot, encoding: "utf8" },
   );
-  const executableConsumers = output.trim().split("\n").filter(
+  assert.equal(grep.status, 0, `could not audit review consumers: ${grep.stderr || "no tracked wrapper reference"}`);
+  const executableConsumers = grep.stdout.trim().split("\n").filter(
     (file) => !file.startsWith("docs/") && !file.startsWith("tests/"),
   );
   assert.deepEqual(executableConsumers, [
@@ -1816,7 +1828,9 @@ if (process.argv.includes("--version")) {
   assert.deepEqual(result.evidence.claude.capabilities.effortLevels, fixtureClaudeCliEfforts);
   assert.equal(result.evidence.invocation.effort, "high");
   assert.equal(result.evidence.invocation.minimumEffort, "medium");
+  assert.equal(result.evidence.invocation.minimumBudgetUsd, 1);
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
+  assert.match(result.evidence.limitations.join(" "), /cannot prove the provider honored/);
   assert.equal(path.isAbsolute(result.evidence.diff.path), false);
   assert.equal(path.isAbsolute(result.evidence.rawResponse.path), false);
   assert.equal((await verifyClaudeReviewEvidence({ evidencePath: result.evidencePath, repoRoot: repository, fetchBase: false })).ok, true);
@@ -1991,6 +2005,32 @@ if (process.argv.includes("--version")) {
       fetchBase: false,
     }),
     /does not bind the minimum review effort/,
+  );
+
+  const belowFloorBudgetEvidencePath = path.join(evidenceDir, "below-floor-budget.evidence.json");
+  const belowFloorBudgetEvidence = structuredClone(result.evidence);
+  belowFloorBudgetEvidence.invocation.maxBudgetUsd = 0.01;
+  await writeFile(belowFloorBudgetEvidencePath, `${JSON.stringify(belowFloorBudgetEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: belowFloorBudgetEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /attestation records an unsupported review budget/,
+  );
+
+  const missingMinimumBudgetEvidencePath = path.join(evidenceDir, "missing-minimum-budget.evidence.json");
+  const missingMinimumBudgetEvidence = structuredClone(result.evidence);
+  delete missingMinimumBudgetEvidence.invocation.minimumBudgetUsd;
+  await writeFile(missingMinimumBudgetEvidencePath, `${JSON.stringify(missingMinimumBudgetEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: missingMinimumBudgetEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the minimum review budget/,
   );
 
   const invalidEffortEvidencePath = path.join(evidenceDir, "invalid-effort.evidence.json");

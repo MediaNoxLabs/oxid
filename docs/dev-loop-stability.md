@@ -224,7 +224,9 @@ but high-risk exact-head attestations enforce a recorded floor of `medium`.
 The selected level must also appear in the installed CLI's captured choice
 list. The wrapper and verifier reject deadlines above
 300,000 ms, so increasing effort cannot extend the SLA; a timeout never counts
-as a review pass. New effort-bound attestations use schema v3. Version 2
+as a review pass. The recorded budget must be finite and at least USD 1, and
+the verifier binds that floor; the USD 10 default remains a cost ceiling rather
+than a spend target. New effort-bound attestations use schema v3. Version 2
 records do not bind effort and are intentionally rejected after this upgrade;
 rerun the exact-head review to issue a v3 record instead of relabeling old
 evidence. These records live in private local state outside the repository; at
