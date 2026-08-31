@@ -89,7 +89,7 @@ export function buildClaudeInvocation({
   effort = DEFAULT_CLAUDE_REVIEW_EFFORT,
   command = "claude",
 } = {}) {
-  maxBudgetUsd = assertClaudeReviewMaxBudgetUsd(maxBudgetUsd);
+  const validatedBudgetUsd = assertClaudeReviewMaxBudgetUsd(maxBudgetUsd);
   assertAttestedReviewEffort(effort);
   return {
     command,
@@ -97,7 +97,7 @@ export function buildClaudeInvocation({
       "--print",
       "--output-format", "json",
       "--json-schema", JSON.stringify(schema),
-      "--max-budget-usd", String(maxBudgetUsd),
+      "--max-budget-usd", String(validatedBudgetUsd),
       "--effort", effort,
       "--safe-mode",
       "--tools", "",
@@ -597,7 +597,7 @@ export async function runClaudeCurrentHeadReview({
 } = {}) {
   if (!Number.isInteger(issue) || issue < 1) throw new Error("issue must be a positive integer");
   assertClaudeReviewTimeoutMs(timeoutMs);
-  maxBudgetUsd = assertClaudeReviewMaxBudgetUsd(maxBudgetUsd);
+  const validatedBudgetUsd = assertClaudeReviewMaxBudgetUsd(maxBudgetUsd);
   assertAttestedReviewEffort(effort);
   if (typeof issueContract !== "string" || !issueContract.trim()) throw new Error("issueContract is required for an exact-scope review");
   let contractPayload;
@@ -643,7 +643,7 @@ export async function runClaudeCurrentHeadReview({
     throw new Error(`${error.message}; captured help: ${helpPath}`, { cause: error });
   }
 
-  const invocation = buildClaudeInvocation({ command: claudeCommand, maxBudgetUsd, effort });
+  const invocation = buildClaudeInvocation({ command: claudeCommand, maxBudgetUsd: validatedBudgetUsd, effort });
   const prompt = reviewPrompt({
     issue,
     headSha,
@@ -681,7 +681,7 @@ export async function runClaudeCurrentHeadReview({
     limitations: [
       "Digests bind local artifacts to this record but do not authenticate reviewer identity.",
       "The observed CLI session and account status are operational facts, not cryptographic or hosted provenance.",
-      "Recorded effort and budget bind wrapper inputs but cannot prove the provider honored those controls.",
+      "Recorded effort, budget, and deadline bind wrapper inputs but cannot prove the provider honored those controls.",
       "This record is not a dev-loops-native or GitHub-hosted review status.",
     ],
     issue,
@@ -722,7 +722,7 @@ export async function runClaudeCurrentHeadReview({
       startedAt,
       reviewedAt,
       timeoutMs,
-      maxBudgetUsd,
+      maxBudgetUsd: validatedBudgetUsd,
       minimumBudgetUsd: MINIMUM_CLAUDE_REVIEW_BUDGET_USD,
       effort,
       minimumEffort: MINIMUM_ATTESTED_REVIEW_EFFORT,
@@ -761,6 +761,9 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     throw new Error("Claude review attestation records an unsupported review timeout", { cause: error });
   }
   try {
+    if (typeof evidence.invocation?.maxBudgetUsd !== "number") {
+      throw new Error("review budget must be encoded as a JSON number");
+    }
     assertClaudeReviewMaxBudgetUsd(evidence.invocation?.maxBudgetUsd);
   } catch (error) {
     throw new Error("Claude review attestation records an unsupported review budget", { cause: error });

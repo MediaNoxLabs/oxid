@@ -2040,6 +2040,20 @@ if (process.argv.includes("--version")) {
     }),
     /attestation records an unsupported review budget/,
   );
+  for (const [name, value] of [["string", "10"], ["boolean", true], ["array", [10]]]) {
+    const typedBudgetEvidencePath = path.join(evidenceDir, `${name}-budget.evidence.json`);
+    const typedBudgetEvidence = structuredClone(result.evidence);
+    typedBudgetEvidence.invocation.maxBudgetUsd = value;
+    await writeFile(typedBudgetEvidencePath, `${JSON.stringify(typedBudgetEvidence)}\n`, { mode: 0o600 });
+    await assert.rejects(
+      verifyClaudeReviewEvidence({
+        evidencePath: typedBudgetEvidencePath,
+        repoRoot: repository,
+        fetchBase: false,
+      }),
+      /attestation records an unsupported review budget/,
+    );
+  }
 
   const missingMinimumBudgetEvidencePath = path.join(evidenceDir, "missing-minimum-budget.evidence.json");
   const missingMinimumBudgetEvidence = structuredClone(result.evidence);

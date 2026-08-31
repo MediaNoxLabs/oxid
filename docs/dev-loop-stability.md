@@ -240,10 +240,8 @@ records do not bind effort and are intentionally rejected after this upgrade;
 rerun the exact-head review to issue a v3 record instead of relabeling old
 evidence. These records live in private local state outside the repository; at
 this migration checkpoint, the wrapper verifier remains the repository's
-evidence authority. In-flight v2 records must be rerun rather than translated.
-No attestation artifact or executable consumer was tracked in the repository at
-the migration checkpoint; the one known in-flight reviewed PR already required
-a fresh exact-head run because its integration base was advancing.
+evidence authority. In-flight v2 records must be rerun rather than translated;
+the pull request that changes this contract records the one-time consumer audit.
 The CLI reports this migration as JSON on stderr with exit status 3; successful
 verification JSON remains on stdout.
 
