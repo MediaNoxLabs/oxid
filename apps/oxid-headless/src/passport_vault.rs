@@ -1,6 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use std::{thread, time::Duration};
+
+use oxid_composition::ApplicationServices;
+use oxid_passport_vault_application::{
+    AuthorizePassportVaultCallCommand, ClaimPassportVaultLockCommand,
+    CreatePassportVaultLockCommand, DecodePassportVaultContractStateCommand,
+    PassportVaultAmountCommand, PassportVaultCallError, PassportVaultCallPortError,
+    PassportVaultCallQuery, PreparePassportVaultCallCommand, ReadPassportVaultContractStateCommand,
+    SUBMIT_PASSPORT_VAULT_CALL_INTENT, SubmitPassportVaultCallCommand,
+};
+use serde_json::{Value, json};
+
+use crate::{
+    HeadlessWallet,
+    parameters::{
+        AuthorizeVaultContractCallParams, ClaimVaultLockParams, CreateVaultLockParams,
+        DecodeVaultContractStateParams, PrepareVaultContractCallParams,
+        ReadVaultContractStateParams, SubmitVaultContractCallParams, VaultAmountParams,
+        VaultContractCallDraftParams,
+    },
+    projections::{
+        decimal_u128, decode_hex_bounded, encode_hex, invalid_empty_params, invalid_vault_amount,
+        invalid_vault_policy_value, passport_vault_call_error, passport_vault_call_port_error,
+        passport_vault_call_preview_value, passport_vault_call_submission_status_value,
+        passport_vault_call_submission_value, passport_vault_contract_state_error,
+        passport_vault_contract_state_read_error, passport_vault_error, passport_vault_lock_value,
+        passport_vault_value, policy_value, vault_contract_call_action,
+    },
+    protocol::{Dispatch, Request, Response, params_are_empty},
+};
 
 impl HeadlessWallet {
     pub(super) fn list_vault_locks(&self, request: Request) -> Dispatch {

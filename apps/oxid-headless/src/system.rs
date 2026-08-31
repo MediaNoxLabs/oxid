@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use oxid_diagnostics_application::{ClearDiagnosticsCommand, DiagnosticCode, DiagnosticSeverity};
+use serde_json::json;
+
+use crate::{
+    HeadlessWallet,
+    parameters::ClearDiagnosticsParams,
+    projections::{capability_manifest, diagnostic_snapshot_value, invalid_empty_params},
+    protocol::{Dispatch, Request, Response, params_are_empty},
+};
 
 impl HeadlessWallet {
     pub(super) fn record_diagnostic(&self, code: DiagnosticCode, severity: DiagnosticSeverity) {

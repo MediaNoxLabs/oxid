@@ -1,6 +1,41 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use std::{thread, time::Duration};
+
+use oxid_composition::ApplicationServices;
+use oxid_wallet_application::{
+    AuthorizeWalletDustRegistrationCommand, AuthorizeWalletTransferCommand,
+    CancelWalletDustRegistrationSubmissionCommand, GetWalletDustRegistrationCommand,
+    GetWalletDustRegistrationStatusCommand, PrepareShieldedWalletTransferCommand,
+    PrepareWalletDustRegistrationCommand, PrepareWalletTransferCommand,
+    ReconcileWalletDustRegistrationSubmissionCommand, SensitiveOperationConfirmation,
+    SubmitWalletDustRegistrationCommand, SubmitWalletTransferCommand, WalletAccountQuery,
+    WalletAccountView, WalletDustRegistrationError, WalletDustRegistrationPortError,
+    WalletDustRegistrationSubmissionStatusView, WalletDustSyncCommand, WalletDustSyncError,
+    WalletDustSyncView, WalletShieldedSyncCommand, WalletShieldedSyncError, WalletShieldedSyncView,
+    WalletTransactionError, WalletTransactionPortError, WalletTransferDraftQuery,
+    WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView, validate_confirmation,
+};
+use serde_json::{Value, json};
+
+use crate::{
+    HeadlessWallet,
+    parameters::{
+        AuthorizeDustRegistrationParams, AuthorizeTransferParams, PrepareShieldedTransferParams,
+        PrepareTransferParams, SubmitTransferParams, TransactionDraftParams,
+        dust_registration_draft_params,
+    },
+    projections::{
+        account_error, account_value, address_value, balance_value, dust_registration_error,
+        dust_registration_port_error, dust_registration_preview_value,
+        dust_registration_status_value, dust_registration_submission_value, dust_sync_error,
+        dust_sync_value, invalid_empty_params, sensitive_error, shielded_sync_error,
+        shielded_sync_value, sync_value, transaction_error, transaction_port_error,
+        transaction_value, transfer_preview_value, transfer_submission_status_value,
+        transfer_submission_value,
+    },
+    protocol::{Dispatch, Request, Response, params_are_empty},
+};
 
 impl HeadlessWallet {
     pub(super) fn sync_account(&self, request: Request) -> Dispatch {

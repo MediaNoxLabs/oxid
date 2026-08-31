@@ -1,6 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use oxid_wallet_application::{
+    DeleteWalletKeyCommand, GenerateWalletKeyCommand, SignWalletDataCommand,
+    WalletProfileSecurityCommand,
+};
+use serde_json::json;
+
+use crate::{
+    HeadlessWallet,
+    parameters::{DeleteKeyParams, GenerateKeyParams, SignParams},
+    projections::{
+        algorithm_name, decode_hex, encode_hex, invalid_empty_params, key_algorithm, key_error,
+        key_purpose, key_value, security_error, security_status_value, sensitive_error,
+    },
+    protocol::{Dispatch, Request, Response, params_are_empty},
+};
 
 impl HeadlessWallet {
     pub(super) fn security_status(&self, request: Request) -> Dispatch {

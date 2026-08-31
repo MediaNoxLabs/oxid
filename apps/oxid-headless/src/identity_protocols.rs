@@ -1,6 +1,42 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use oxid_credential_application::{
+    CredentialDisclosureQuery, CredentialPredicateInput, CredentialProfileQuery, CredentialQuery,
+    DeleteCredentialCommand, PreviewCredentialDisclosureCommand,
+};
+use oxid_presentation_application::{
+    AcceptCredentialPresentationCommand, CredentialPresentationProfileQuery,
+    CredentialPresentationQuery, PrepareCredentialPresentationCommand,
+    RefuseCredentialPresentationCommand,
+};
+use oxid_protocol_application::{
+    AcceptCredentialIssuanceCommand, AcceptSelfIssuedAuthenticationCommand,
+    CredentialIssuanceProfileQuery, CredentialIssuanceQuery, IdentityRequestKind,
+    PrepareCredentialIssuanceCommand, PrepareSelfIssuedAuthenticationCommand,
+    RefuseCredentialIssuanceCommand, RefuseSelfIssuedAuthenticationCommand,
+    RouteIdentityRequestCommand, SelfIssuedAuthenticationProfileQuery,
+    SelfIssuedAuthenticationQuery,
+};
+use serde_json::json;
+
+use crate::{
+    HeadlessWallet,
+    parameters::{
+        AcceptCredentialIssuanceParams, AcceptCredentialPresentationParams,
+        AcceptSelfIssuedAuthenticationParams, CredentialIssuanceParams, CredentialParams,
+        CredentialPresentationParams, DeleteCredentialParams, DisclosurePreviewParams,
+        PrepareCredentialIssuanceParams, PrepareCredentialPresentationParams,
+        PrepareSelfIssuedAuthenticationParams, RouteIdentityRequestParams,
+        SelfIssuedAuthenticationParams,
+    },
+    projections::{
+        credential_disclosure_plan_value, credential_disclosure_value, credential_error,
+        credential_issuance_error, credential_issuance_value, credential_presentation_error,
+        credential_presentation_value, credential_value, identity_request_routing_error,
+        invalid_empty_params, self_issued_authentication_error, self_issued_authentication_value,
+    },
+    protocol::{Dispatch, Request, Response, params_are_empty},
+};
 
 impl HeadlessWallet {
     pub(super) fn receive_credential(&self, request: Request) -> Dispatch {

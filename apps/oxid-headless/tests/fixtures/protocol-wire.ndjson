@@ -7,5 +7,14 @@
 {"protocol":"oxid.headless.v1","id":"empty-unknown","method":"system.capabilities","params":{"unexpected":true}}
 {"protocol":"oxid.headless.v1","id":"typed-unknown","method":"wallet.profile.create","params":{"displayName":"Sanitized profile","seedHex":"must-not-echo"}}
 {"protocol":"oxid.headless.v1","id":"unknown","method":"private.export","params":{}}
+{"protocol":"oxid.headless.v1","id":"profile-list","method":"wallet.profile.list","params":{}}
+{"protocol":"oxid.headless.v1","id":"account","method":"wallet.network.list","params":{}}
+{"protocol":"oxid.headless.v1","id":"security","method":"wallet.security.status","params":{}}
+{"protocol":"oxid.headless.v1","id":"did","method":"did.list","params":{}}
+{"protocol":"oxid.headless.v1","id":"credential","method":"credential.list","params":{}}
+{"protocol":"oxid.headless.v1","id":"vault","method":"vault.locks.list","params":{}}
+{"protocol":"oxid.headless.v1","id":"midnight","method":"wallet.dust.sync.status","params":{}}
+{"protocol":"oxid.headless.v1","id":"identity","method":"identity.authentication.list","params":{}}
+{"protocol":"oxid.headless.v1","id":"diagnostics","method":"system.diagnostics.snapshot","params":{}}
 {"protocol":"oxid.headless.v1","id":"quit","method":"system.quit","params":{}}
 {"protocol":"oxid.headless.v1","id":"ignored","method":"system.capabilities","params":{}}

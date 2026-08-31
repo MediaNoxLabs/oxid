@@ -7,9 +7,9 @@
       "facadeFiles": [
         "apps/oxid-headless/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 5930,
+      "facadeMaximumPhysicalLines": 295,
       "facadeMaximumPhysicalLinesByPath": {
-        "apps/oxid-headless/src/lib.rs": 5930
+        "apps/oxid-headless/src/lib.rs": 295
       },
       "capabilityOwners": [
         {
@@ -19,15 +19,15 @@
           ]
         },
         {
-          "name": "credential-protocols",
+          "name": "identity-protocols",
           "modulePathPrefixes": [
-            "apps/oxid-headless/src/credentials"
+            "apps/oxid-headless/src/identity_protocols"
           ]
         },
         {
-          "name": "diagnostics",
+          "name": "system-and-diagnostics",
           "modulePathPrefixes": [
-            "apps/oxid-headless/src/diagnostics"
+            "apps/oxid-headless/src/system"
           ]
         },
         {
@@ -39,13 +39,13 @@
         {
           "name": "did-lifecycle",
           "modulePathPrefixes": [
-            "apps/oxid-headless/src/identity"
+            "apps/oxid-headless/src/dids"
           ]
         },
         {
           "name": "midnight-wallet",
           "modulePathPrefixes": [
-            "apps/oxid-headless/src/midnight"
+            "apps/oxid-headless/src/midnight_wallet"
           ]
         },
         {
@@ -58,6 +58,30 @@
           "name": "wallet-security",
           "modulePathPrefixes": [
             "apps/oxid-headless/src/security"
+          ]
+        },
+        {
+          "name": "wire-parameters",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/parameters"
+          ]
+        },
+        {
+          "name": "wire-projections",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/projections"
+          ]
+        },
+        {
+          "name": "protocol-envelope",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/protocol"
+          ]
+        },
+        {
+          "name": "facade-contract-tests",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/tests"
           ]
         },
         {

@@ -1,6 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use oxid_wallet_application::{
+    DeriveWalletAccountCommand, SelectWalletNetworkCommand, WalletAccountQuery,
+};
+use serde_json::json;
+
+use crate::{
+    HeadlessWallet,
+    parameters::{DeriveAccountParams, SelectNetworkParams},
+    projections::{
+        account_error, account_value, derived_account_value, invalid_empty_params,
+        network_list_value,
+    },
+    protocol::{Dispatch, Request, Response, params_are_empty},
+};
 
 impl HeadlessWallet {
     pub(super) fn list_networks(&self, request: Request) -> Dispatch {

@@ -8,7 +8,10 @@ use oxid_wallet_application::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{Dispatch, HeadlessWallet, Request, Response, params_are_empty};
+use crate::{
+    HeadlessWallet,
+    protocol::{Dispatch, Request, Response, params_are_empty},
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -1,6 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use oxid_identity_application::{
+    CreateDidCommand, DeactivateDidCommand, DidRecordQuery, ListDidRecordsQuery, ResolveDidCommand,
+    SignDidPayloadCommand, UpdateDidCommand,
+};
+use serde_json::json;
+
+use crate::{
+    HeadlessWallet,
+    parameters::{
+        CreateDidParams, DeactivateDidParams, DidParams, DidUpdateParams, SignDidParams, did_update,
+    },
+    projections::{decode_hex, did_error, did_record_value, encode_hex, invalid_empty_params},
+    protocol::{Dispatch, Request, Response, params_are_empty},
+};
 
 impl HeadlessWallet {
     pub(super) fn resolve_did(&self, request: Request) -> Dispatch {
