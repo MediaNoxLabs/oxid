@@ -290,6 +290,9 @@ pub(super) async fn read_json_response(
     response: Response,
     limit: usize,
 ) -> Result<Zeroizing<Vec<u8>>, IssuanceProtocolError> {
+    if response.status().is_server_error() {
+        return Err(IssuanceProtocolError::Unavailable);
+    }
     if response.status() != StatusCode::OK {
         return Err(IssuanceProtocolError::IssuerRejected);
     }

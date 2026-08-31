@@ -391,10 +391,6 @@ for runner in \
   "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh"; do
   grep -qF 'oxid_poll_job_dead "$portal_pid" 1200 || true' "$runner" \
     || fail portal-cleanup-grace
-  grep -qF 'if [ "$build_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$runner" \
-    || fail failed-build-preservation
-  grep -qF 'if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$runner" \
-    || fail failed-log-preservation
   grep -qF 'BUILD_SOURCE="$(run_deadline 5 mktemp -d "${TMPDIR:-/tmp}/oxid-' "$runner" \
     || fail detached-build-source
   grep -qF 'oxid_path_has_identity "$BUILD_SOURCE" "$build_identity"' "$runner" \
@@ -403,6 +399,25 @@ for runner in \
     fail nested-build-source
   fi
 done
+android_runner="$ROOT/scripts/test-android-portal-exact-sequence-avd.sh"
+grep -qF 'if [ "$build_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$android_runner" \
+  || fail android-failed-build-preservation
+grep -qF 'if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$android_runner" \
+  || fail android-failed-log-preservation
+ios_runner="$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh"
+grep -qF 'readonly PROTOCOL_ERROR_DIAGNOSTIC="$RUN_ROOT/protocol-error-diagnostic.json"' "$ios_runner" \
+  || fail ios-closed-diagnostic-path
+grep -qF 'validate_protocol_error_diagnostic() {' "$ios_runner" \
+  || fail ios-closed-diagnostic-validation
+grep -qF 'index($value) != null' "$ios_runner" \
+  || fail ios-closed-diagnostic-jq-compatibility
+grep -qF 'if [ "$build_owned" -eq 1 ]; then' "$ios_runner" \
+  || fail ios-failed-build-cleanup
+grep -qF 'if [ "$private_state_owned" -eq 1 ]; then' "$ios_runner" \
+  || fail ios-failed-private-cleanup
+if grep -qF 'if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$ios_runner"; then
+  fail ios-failed-private-preservation
+fi
 grep -qF 'OXID_ANDROID_ADB_TIMEOUT_SECONDS=180 OXID_MOBILE_CUSTODY=development' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-launcher-adb-budget
 grep -qF 'prepare_owned_reverse_mappings || fail reverse-ownership' \

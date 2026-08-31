@@ -129,6 +129,10 @@ const DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL: &str = "Authorize DUST regis
 const DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL: &str = "Register on Midnight";
 const DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL: &str =
     "Reconcile DUST registration with Midnight";
+const CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS: &str =
+    "Credential issuance terminal error: protocol unavailable";
+const CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS: &str =
+    "Credential issuance protocol error: protocol unavailable";
 #[cfg(not(target_arch = "wasm32"))]
 const UI_BLOCKING_TASK_STACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -1951,6 +1955,19 @@ fn credential_issuance_action_label(action: CredentialIssuanceAction) -> &'stati
         CredentialIssuanceAction::Accepting => "Issuing credential…",
         CredentialIssuanceAction::Refusing => "Refusing offer…",
         CredentialIssuanceAction::Cleaning => "Discarding credential review…",
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CredentialIssuanceTerminalError {
+    ProtocolUnavailable,
+}
+
+impl CredentialIssuanceTerminalError {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::ProtocolUnavailable => "This protocol is unavailable in the current build",
+        }
     }
 }
 
@@ -10416,6 +10433,29 @@ fn credential_issuance_message(error: CredentialIssuanceError) -> String {
     }
 }
 
+fn credential_issuance_terminal_error(
+    error: &CredentialIssuanceError,
+) -> Option<CredentialIssuanceTerminalError> {
+    matches!(error, CredentialIssuanceError::Protocol(error) if error.code() == "protocol_unavailable")
+        .then_some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+}
+
+fn credential_issuance_terminal_error_for_message(
+    message: &str,
+) -> Option<CredentialIssuanceTerminalError> {
+    (message == CredentialIssuanceTerminalError::ProtocolUnavailable.message())
+        .then_some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+}
+
+fn credential_issuance_protocol_error_for_message(message: &str) -> bool {
+    let unavailable = CredentialIssuanceTerminalError::ProtocolUnavailable.message();
+    message == unavailable
+        || message.strip_prefix(unavailable).is_some_and(|suffix| {
+            suffix
+                == ". Session cleanup is unavailable; use Leave credential review to retry secret disposal before navigating away."
+        })
+}
+
 fn credential_issuance_error_proves_no_retained_session(error: &CredentialIssuanceError) -> bool {
     matches!(
         error,
@@ -11712,7 +11752,11 @@ fn CredentialsPage(
                                             offer_draft.write().clear_imported();
                                             prepared_issuance.set(None);
                                             issuance_consent.set(false);
-                                            issuance_notice.set(Some(credential_issuance_message(error)));
+                                            let message = credential_issuance_terminal_error(&error)
+                                                .map(CredentialIssuanceTerminalError::message)
+                                                .map(str::to_owned)
+                                                .unwrap_or_else(|| credential_issuance_message(error));
+                                            issuance_notice.set(Some(message));
                                         }
                                         Err(error) => {
                                             offer_draft.write().clear_imported();
@@ -11738,11 +11782,33 @@ fn CredentialsPage(
                         }
                     }
                     if let Some(message) = issuance_notice.read().as_deref() {
-                        p {
-                            class: if prepared_issuance.read().as_ref().is_some_and(|review| review.state == "succeeded") { "form-hint credential-reverification-success" } else { "form-hint" },
-                            role: "status",
-                            aria_live: "polite",
-                            "{message}"
+                        if let Some(error) = credential_issuance_terminal_error_for_message(message) {
+                            p {
+                                class: "form-hint",
+                                role: "status",
+                                aria_live: "polite",
+                                span {
+                                    aria_label: CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS,
+                                    "{error.message()}"
+                                }
+                            }
+                        } else if credential_issuance_protocol_error_for_message(message) {
+                            p {
+                                class: "form-hint",
+                                role: "status",
+                                aria_live: "polite",
+                                span {
+                                    aria_label: CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS,
+                                    "{message}"
+                                }
+                            }
+                        } else {
+                            p {
+                                class: if prepared_issuance.read().as_ref().is_some_and(|review| review.state == "succeeded") { "form-hint credential-reverification-success" } else { "form-hint" },
+                                role: "status",
+                                aria_live: "polite",
+                                "{message}"
+                            }
                         }
                     }
                     if credential_review_escape_visible {
@@ -11953,9 +12019,12 @@ fn CredentialsPage(
                                                             }
                                                         }
                                                         failure => {
-                                                            let message = match failure {
-                                                                Ok(Err(error)) => credential_issuance_message(error),
-                                                                Err(error) => error.to_string(),
+                                                            let (message, terminal_error) = match failure {
+                                                                Ok(Err(error)) => (
+                                                                    credential_issuance_message(error.clone()),
+                                                                    credential_issuance_terminal_error(&error),
+                                                                ),
+                                                                Err(error) => (error.to_string(), None),
                                                                 Ok(Ok(_)) => unreachable!(),
                                                             };
                                                             let cleanup = run_ui_blocking(move || {
@@ -11978,6 +12047,10 @@ fn CredentialsPage(
                                                                 )
                                                             };
                                                             if cleanup_confirmed {
+                                                                let message = terminal_error
+                                                                    .map(CredentialIssuanceTerminalError::message)
+                                                                    .map(str::to_owned)
+                                                                    .unwrap_or(message);
                                                                 issuance_notice.set(Some(message));
                                                             } else {
                                                                 issuance_notice.set(Some(format!(
@@ -14948,6 +15021,74 @@ mod tests {
         }
         assert!(source.contains("aria_busy: true"));
         assert!(source.contains("aria_describedby: \"credential-issuance-consent-guidance\""));
+    }
+
+    #[test]
+    fn protocol_error_feedback_renders_a_durable_sanitized_terminal_status() {
+        let source = include_str!("lib.rs");
+        let rendered_source = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source precedes tests");
+        assert_eq!(
+            rendered_source
+                .matches("aria_label: CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS")
+                .count(),
+            1,
+            "the terminal error must have one stable accessibility identifier",
+        );
+        assert!(rendered_source.contains("CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS"));
+        assert!(rendered_source.contains("CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS"));
+        assert!(rendered_source.contains("credential_issuance_protocol_error_for_message"));
+        assert!(rendered_source.contains("credential_issuance_terminal_error_for_message"));
+        assert!(rendered_source.contains("role: \"status\""));
+        assert!(rendered_source.contains("aria_live: \"polite\""));
+
+        let unavailable = CredentialIssuanceError::Protocol(
+            oxid_protocol_application::IssuanceProtocolError::Unavailable,
+        );
+        let terminal_error = credential_issuance_terminal_error(&unavailable);
+        assert_eq!(
+            terminal_error,
+            Some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+        );
+        let terminal_error = terminal_error.expect("known terminal category");
+        assert_eq!(
+            CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS,
+            "Credential issuance terminal error: protocol unavailable"
+        );
+        assert_eq!(
+            terminal_error.message(),
+            "This protocol is unavailable in the current build"
+        );
+        assert_eq!(
+            credential_issuance_terminal_error_for_message(terminal_error.message()),
+            Some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+        );
+        assert!(credential_issuance_protocol_error_for_message(
+            terminal_error.message()
+        ));
+        assert!(credential_issuance_protocol_error_for_message(
+            "This protocol is unavailable in the current build. Session cleanup is unavailable; use Leave credential review to retry secret disposal before navigating away."
+        ));
+
+        let mut action = CredentialIssuanceAction::Idle;
+        assert!(begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Previewing,
+        ));
+        assert_eq!(action, CredentialIssuanceAction::Previewing);
+        action = CredentialIssuanceAction::Idle;
+        assert_eq!(action, CredentialIssuanceAction::Idle);
+
+        let mut pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialIssuance,
+            request_uri: String::new(),
+        });
+        let mut manual_review_lock = false;
+        clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
+        assert!(pending.is_none());
+        assert!(!manual_review_lock);
     }
 
     #[test]

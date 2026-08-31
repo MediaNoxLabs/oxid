@@ -16,6 +16,7 @@ readonly RUN_ROOT="$ROOT/target/ios-portal-exact-sequence-simulator"
 readonly PRIVATE_STATE="$RUN_ROOT/private"
 readonly PRIVATE_LOG="$PRIVATE_STATE/journey.log"
 readonly EVIDENCE="$RUN_ROOT/evidence.json"
+readonly PROTOCOL_ERROR_DIAGNOSTIC="$RUN_ROOT/protocol-error-diagnostic.json"
 readonly BUILD_RECEIPT="$PRIVATE_STATE/build-receipt.tsv"
 readonly RECEIPT="$PRIVATE_STATE/simulator-receipt.json"
 readonly PACKAGE="io.medianox.oxid"
@@ -74,6 +75,7 @@ listener_cleanup=false
 stack_cleanup=false
 build_cleanup=false
 private_logs_removed=false
+protocol_error_diagnostic_retained=false
 head_clean=false
 journey_deadline=0
 
@@ -136,6 +138,23 @@ write_scenario() {
   run_deadline 10 jq -cn --arg name "$name" --argjson delta "$delta" --argjson measurements "$measurements" \
     '{name:$name,passed:true,counterDelta:$delta,measurements:$measurements}' >"$output" || return 1
   run_deadline 5 chmod 600 "$output"
+}
+
+validate_protocol_error_diagnostic() {
+  local mode
+  [ -f "$PROTOCOL_ERROR_DIAGNOSTIC" ] && [ ! -L "$PROTOCOL_ERROR_DIAGNOSTIC" ] || return 1
+  if mode="$(stat -c '%a' "$PROTOCOL_ERROR_DIAGNOSTIC" 2>/dev/null)"; then :; else mode="$(stat -f '%Lp' "$PROTOCOL_ERROR_DIAGNOSTIC")"; fi
+  [ "$mode" = 600 ] || return 1
+  run_deadline 10 jq -e '
+    (keys | sort) == ["action","category","importedOffer","legacyStaticText","reviewAdmission","schema","status"]
+    and .schema == "oxid-ios-protocol-error-diagnostic-v1"
+    and (.status as $value | ["durable", "absent", "cleared_early"] | index($value) != null)
+    and (.category as $value | ["protocol_unavailable", "absent"] | index($value) != null)
+    and (.action as $value | ["idle", "busy"] | index($value) != null)
+    and (.importedOffer as $value | ["cleared", "retained"] | index($value) != null)
+    and (.reviewAdmission as $value | ["cleared", "retained"] | index($value) != null)
+    and (.legacyStaticText as $value | ["legacy_static_text_present", "legacy_static_text_absent"] | index($value) != null)
+  ' "$PROTOCOL_ERROR_DIAGNOSTIC" >/dev/null
 }
 
 write_evidence() {
@@ -231,7 +250,7 @@ cleanup() {
     fi
   fi
 
-  if [ "$build_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then
+  if [ "$build_owned" -eq 1 ]; then
     if [ -f "$BUILD_RECEIPT" ] && [ ! -L "$BUILD_RECEIPT" ] \
       && IFS=$'\t' read -r build_receipt_path build_receipt_identity <"$BUILD_RECEIPT" \
       && [ "$build_receipt_path" = "$BUILD_SOURCE" ] && [ "$build_receipt_identity" = "$build_identity" ] \
@@ -240,7 +259,19 @@ cleanup() {
       [ ! -e "$BUILD_SOURCE" ] && build_cleanup=true || cleanup_ok=false
     else cleanup_ok=false; fi
   fi
-  if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then
+  if [ -e "$PROTOCOL_ERROR_DIAGNOSTIC" ] || [ -L "$PROTOCOL_ERROR_DIAGNOSTIC" ]; then
+    if validate_protocol_error_diagnostic; then
+      if [ "$incoming" -ne 0 ]; then
+        protocol_error_diagnostic_retained=true
+      else
+        run_deadline 5 rm -f -- "$PROTOCOL_ERROR_DIAGNOSTIC" || cleanup_ok=false
+      fi
+    else
+      run_deadline 5 rm -f -- "$PROTOCOL_ERROR_DIAGNOSTIC" || cleanup_ok=false
+      cleanup_ok=false
+    fi
+  fi
+  if [ "$private_state_owned" -eq 1 ]; then
     if oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then
       run_deadline 30 rm -rf -- "$PRIVATE_STATE" >/dev/null 2>&1
       [ ! -e "$PRIVATE_STATE" ] && private_logs_removed=true || cleanup_ok=false
@@ -251,8 +282,12 @@ cleanup() {
     && [ -z "$(run_deadline 10 git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then head_clean=true; else cleanup_ok=false; fi
 
   if [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ] && [ "$journey_status" = passed ]; then write_evidence || cleanup_ok=false; fi
-  if [ "$run_root_owned" -eq 1 ] && [ "$evidence_published" -eq 0 ] && [ "$incoming" -eq 0 ]; then
-    if [ "$cleanup_ok" = true ] && oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then run_deadline 5 rmdir -- "$RUN_ROOT" >/dev/null 2>&1 || cleanup_ok=false; fi
+  if [ "$run_root_owned" -eq 1 ] && [ "$evidence_published" -eq 0 ]; then
+    if oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then
+      if [ "$protocol_error_diagnostic_retained" != true ]; then
+        run_deadline 5 rmdir -- "$RUN_ROOT" >/dev/null 2>&1 || cleanup_ok=false
+      fi
+    else cleanup_ok=false; fi
   fi
   if [ "$cleanup_ok" != true ]; then
     incoming=1
@@ -371,7 +406,8 @@ run_ios_test() {
     /usr/bin/xcodebuild test -project "$xcode_project/OxidMobileSmoke.xcodeproj" -scheme OxidUITests \
     -destination "platform=iOS Simulator,id=$udid" -derivedDataPath "$PRIVATE_STATE/derived-data" \
     -only-testing:"OxidUITests/PortalFlowTests/$method" CODE_SIGNING_ALLOWED=NO \
-    OXID_PORTAL_PHASE_DIRECTORY="$phase_directory" >>"$PRIVATE_LOG" 2>&1
+    OXID_PORTAL_PHASE_DIRECTORY="$phase_directory" \
+    OXID_PORTAL_PROTOCOL_ERROR_DIAGNOSTIC_PATH="$PROTOCOL_ERROR_DIAGNOSTIC" >>"$PRIVATE_LOG" 2>&1
 }
 stage_capability() {
   local source_kind="$1" source_path="$2"

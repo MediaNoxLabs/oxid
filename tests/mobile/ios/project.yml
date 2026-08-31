@@ -25,5 +25,6 @@ schemes:
     test:
       environmentVariables:
         OXID_PORTAL_PHASE_DIRECTORY: "$(OXID_PORTAL_PHASE_DIRECTORY)"
+        OXID_PORTAL_PROTOCOL_ERROR_DIAGNOSTIC_PATH: "$(OXID_PORTAL_PROTOCOL_ERROR_DIAGNOSTIC_PATH)"
       targets:
         - OxidUITests

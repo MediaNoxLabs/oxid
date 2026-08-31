@@ -471,6 +471,23 @@ async fn status_and_redirect_errors_are_payload_free_and_never_retried() {
 }
 
 #[tokio::test]
+async fn service_unavailable_status_is_payload_free_and_not_retried() {
+    let (origin, journal, server) = spawn_server(1, StatusCode::SERVICE_UNAVAILABLE).await;
+    let error = protocol(&origin)
+        .prepare(PrepareIssuanceRequest {
+            profile_id: ProtocolProfileId::parse("profile_1").expect("profile"),
+            offer: offer(&origin),
+        })
+        .await
+        .expect_err("service unavailability must fail");
+    server.await.expect("server");
+
+    assert_eq!(error, IssuanceProtocolError::Unavailable);
+    assert_eq!(journal.lock().expect("journal").len(), 1);
+    assert!(!format!("{error:?} {error}").contains("HOSTILE_SECRET_RESPONSE_BODY"));
+}
+
+#[tokio::test]
 async fn whole_request_timeout_is_payload_free_and_not_retried() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
     let origin = format!("http://{}", listener.local_addr().expect("address"));
