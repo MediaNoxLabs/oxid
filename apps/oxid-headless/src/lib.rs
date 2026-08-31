@@ -4,7 +4,7 @@
 #![recursion_limit = "256"]
 
 //! Versioned incoming adapter organized according to
-//! [ADR-0104](../../../docs/adr/0104-regrow-incoming-adapters-behind-capability-facades.md).
+//! [ADR-0104](https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr/0104-regrow-incoming-adapters-behind-capability-facades.md).
 //! `protocol` owns the envelope and stream errors; `parameters`, `projections`,
 //! and `errors` own wire translation; capability modules own application-port
 //! invocation; this root owns transport, stable re-exports, and dispatch.

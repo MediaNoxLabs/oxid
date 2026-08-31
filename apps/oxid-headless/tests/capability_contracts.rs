@@ -22,3 +22,5 @@ mod support;
 mod system;
 #[path = "capability_contracts/wallet.rs"]
 mod wallet;
+#[path = "capability_contracts/wallet_profiles.rs"]
+mod wallet_profiles;

@@ -18,20 +18,28 @@ const WIRE_INPUT: &[u8] = include_bytes!("fixtures/protocol-wire.ndjson");
 const WIRE_EXPECTED: &[u8] = include_bytes!("fixtures/protocol-wire.expected.ndjson");
 const ROUTER_SOURCE: &str = include_str!("../src/lib.rs");
 
-fn routed_methods() -> BTreeSet<&'static str> {
+fn router_source() -> &'static str {
     let (_, router) = ROUTER_SOURCE
         .split_once("// BEGIN HEADLESS METHOD ROUTER")
         .expect("router start marker should exist");
     let (router, _) = router
         .split_once("// END HEADLESS METHOD ROUTER")
         .expect("router end marker should exist");
-
     router
+}
+
+fn is_router_pattern_line(line: &str) -> bool {
+    line.len() - line.trim_start().len() == 12 && line.trim_start().starts_with('"')
+}
+
+fn routed_methods() -> BTreeSet<&'static str> {
+    router_source()
         .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            (line.starts_with('"') && line.contains("=>"))
-                .then(|| line.split_once("=>").expect("guarded by contains").0)
+        .filter(|line| is_router_pattern_line(line))
+        .map(|line| {
+            line.split_once("=>")
+                .expect("router pattern must contain =>")
+                .0
         })
         .flat_map(|patterns| patterns.split('|'))
         .map(|literal| literal.trim().trim_matches('"'))
@@ -206,6 +214,21 @@ fn every_checked_in_dispatch_name_routes_and_manifest_vocabulary_is_exact() {
         .map(|method| method.as_str().expect("method should be a string"))
         .collect::<BTreeSet<_>>();
     assert_eq!(expected_dispatch.len(), dispatch_methods.len());
+
+    let router = router_source();
+    let pattern_lines = router
+        .lines()
+        .filter(|line| is_router_pattern_line(line))
+        .collect::<Vec<_>>();
+    assert!(
+        pattern_lines.iter().all(|line| line.contains("=>")),
+        "router patterns must remain one line so the exact inventory cannot under-report"
+    );
+    assert_eq!(
+        router.matches("=>").count(),
+        pattern_lines.len() + 1,
+        "every router arm plus the fail-closed fallback must be inventoried"
+    );
     assert_eq!(routed_methods(), expected_dispatch);
 
     for method in &expected_dispatch {

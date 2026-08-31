@@ -188,7 +188,9 @@ awk -F '\t' '
   seen[$1]++ { if (seen[$1] > 1) exit 1 }
 ' "$inventory" || fail "indexed inventory must contain unique path and physical-line records."
 
+crate_index=0
 while IFS= read -r crate; do
+  crate_index=$((crate_index + 1))
   name="$(jq -r '.name' <<<"$crate")"
   source_root="$(jq -r '.sourceRoot' <<<"$crate")"
   maximum="$(jq -r '.facadeMaximumPhysicalLines' <<<"$crate")"
@@ -215,7 +217,7 @@ while IFS= read -r crate; do
   duplicate_owner="$(jq -r '.capabilityOwners[].name' <<<"$crate" | sort | uniq -d)"
   [ -z "$duplicate_owner" ] || fail "$name repeats capability owner '$duplicate_owner'."
 
-  prefixes="$(mktemp)"
+  prefixes="$temporary_directory/prefixes-$crate_index"
   jq -r '.capabilityOwners[] | .name as $owner | .modulePathPrefixes[] | [$owner, .] | @tsv' <<<"$crate" >"$prefixes"
   while IFS=$'\t' read -r owner prefix; do
     path_has_glob "$prefix" && fail "$name owner '$owner' prefix '$prefix' must not contain a glob."
