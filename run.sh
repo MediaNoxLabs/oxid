@@ -149,7 +149,8 @@ run_headless_integration() {
   cargo test -p oxid-headless \
     --test persistent_profile_flow \
     --test portal_live_flow \
-    --test portal_profile_flow
+    --test portal_profile_flow \
+    --test protocol_contract
 }
 
 run_coverage() {
