@@ -8,6 +8,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { exactPublicOrigin } from "./tailnet-origin-policy.mjs";
+import { mockKycExternalUrl } from "./tailnet-mock-route.mjs";
 
 const PORTAL_COMMIT = "22ae5369b6f939e6b20648f4b85dd993527748ef";
 const PORTAL_TREE = "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10";
@@ -66,7 +67,7 @@ export function transformBrowserUrls(source, origin) {
     fail("pinned browser URL occurrences drifted");
   }
   const transformed = source
-    .replaceAll(MOCK_VERIFICATION, `${origin}/mock-verification`)
+    .replaceAll(MOCK_VERIFICATION, mockKycExternalUrl(origin))
     .replace(PENDING_CALLBACK, `${origin}/issue/pending.html`);
   validateBrowserUrls(transformed, origin);
   return transformed;
@@ -76,8 +77,8 @@ export function transformBrowserUrls(source, origin) {
 export function validateBrowserUrls(transformed, origin) {
   if (typeof transformed !== "string" || !exactPublicOrigin(origin)) fail("invalid input");
   const expected = [
-    `${origin}/mock-verification`,
-    `${origin}/mock-verification`,
+    mockKycExternalUrl(origin),
+    mockKycExternalUrl(origin),
     `${origin}/issue/pending.html`,
   ].sort();
   const actual = navigationUrls(transformed).sort();

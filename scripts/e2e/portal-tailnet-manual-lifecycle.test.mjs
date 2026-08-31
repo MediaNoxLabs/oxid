@@ -25,6 +25,16 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   }
   assert.match(lifecycle, /target\/portal-tailnet-manual\/runtime/);
   assert.match(lifecycle, /manual-public-page-url/);
+  assert.match(lifecycle, /readonly MOCK_STATE="\$STATE\/mock-state"/);
+  assert.match(lifecycle, /tailnet-mock-transform\.mjs/);
+  assert.match(lifecycle, /tailnet-mock-route\.mjs/);
+  assert.match(lifecycle, /--create "\$SOURCE" "\$MOCK_STATE" "\$public_origin"/);
+  assert.match(lifecycle, /--validate "\$MOCK_STATE" "\$manual_public_origin"/);
+  assert.match(lifecycle, /PORTAL_TAILNET_MOCK_STATE_DIR="\$MOCK_STATE"/);
+  assert.match(lifecycle, /--config "\$public_origin" "\$listener"/);
+  assert.match(lifecycle, /\$mock_route\.route/);
+  assert.match(lifecycle, /manual-mock-page\.html/);
+  assert.match(lifecycle, /mockRoute:true/);
   assert.match(lifecycle, /chmod 600 \"\$MANUAL_PAGE_URL\"/);
   assert.match(lifecycle, /open \"\$public_page_url\"/);
   assert.match(lifecycle, /manual_control_receipt=none/);
@@ -34,6 +44,7 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   assert.match(lifecycle, /portal-consumer-lifecycle\.sh/);
   assert.match(lifecycle, /OXID_MOBILE_PORTAL_PROFILE=tailnet-android/);
   assert.match(lifecycle, /manual_status/);
+  assert.match(lifecycle, /manual_mock_state_valid/);
   assert.match(lifecycle, /manual_cleanup/);
   assert.doesNotMatch(lifecycle, /manual.*evidence/i);
 });

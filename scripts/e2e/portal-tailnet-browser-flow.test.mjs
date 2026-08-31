@@ -14,7 +14,7 @@ test("browser Tailnet journey accepts only the reviewed HTTPS origin and one pri
     origin,
     locations: [
       `${origin}/issue/`,
-      `${origin}/mock-verification`,
+      `${origin}/kyc/mock-verification`,
       `${origin}/issue/pending.html`,
       `${origin}/issue/complete.html`,
     ],
@@ -45,7 +45,7 @@ test("browser Tailnet journey rejects localhost, insecure navigation, and offer 
   assert.throws(() => assertSameOriginJourney(shared));
   assert.throws(() => assertSameOriginJourney({
     ...shared,
-    locations: [`${origin}/issue/`, `${origin}/mock-verification`, `${origin}/issue/pending.html`, `${origin}/issue/complete.html`],
+    locations: [`${origin}/issue/`, `${origin}/kyc/mock-verification`, `${origin}/issue/pending.html`, `${origin}/issue/complete.html`],
     copyOffer: "openid-credential-offer://other-private-test-value",
   }));
 });

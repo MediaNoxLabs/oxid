@@ -38,10 +38,13 @@ just portal-tailnet-manual-start
 just portal-tailnet-manual-status
 ```
 
-Start opens the Portal page in the Mac browser and prints the one permitted
-public page URL; status intentionally reveals no payload. Complete the Portal
-page and scan its QR once with the connected physical Oxid app. Do not retry or
-reuse a consumed QR. Stop before a fresh attempt:
+Start creates and validates the same private mode-`0600` pinned mock transform
+used by the browser contract, then exposes its KYC page under the receipt-owned
+same-origin HTTPS `/kyc` mount. It opens the Portal page in the Mac browser and
+prints the one permitted public page URL; status intentionally reveals no
+payload. This owner demo remains non-evidence. Complete the Portal page and
+scan its QR once with the connected physical Oxid app. Do not retry or reuse a
+consumed QR. Stop before a fresh attempt:
 
 ```bash
 just portal-tailnet-manual-stop

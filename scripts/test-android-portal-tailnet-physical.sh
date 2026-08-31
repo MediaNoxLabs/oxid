@@ -33,7 +33,10 @@ readonly CONTROL_CONFIG="$STATE/control-curl.conf"
 readonly MANUAL_RECEIPT="$STATE/manual-session-receipt.json"
 readonly MANUAL_STOP_REQUEST="$STATE/manual-stop-request"
 readonly MANUAL_PAGE_URL="$STATE/manual-public-page-url"
+readonly MOCK_STATE="$STATE/mock-state"
 readonly ORIGIN_POLICY="$REPOSITORY_ROOT/scripts/e2e/tailnet-origin-policy.mjs"
+readonly MOCK_TRANSFORM="$REPOSITORY_ROOT/scripts/e2e/tailnet-mock-transform.mjs"
+readonly MOCK_ROUTE="$REPOSITORY_ROOT/scripts/e2e/tailnet-mock-route.mjs"
 readonly EVIDENCE_FILTER="$REPOSITORY_ROOT/scripts/e2e/portal-android-evidence.jq"
 readonly TRIGGER="openid-credential-offer://standalone-portal-test-fetch"
 readonly SOURCE_INPUT="${OXID_PORTAL_SOURCE_REPOSITORY:-$PORTAL_REMOTE}"
@@ -43,6 +46,8 @@ profile_active=0
 forward_port=""
 websocket_url=""
 cleanup_running=0
+manual_public_origin=""
+manual_mock_receipt_sha=""
 
 fail() {
   printf 'android-portal-tailnet: FAIL phase=%s\n' "$1" >&2
@@ -105,7 +110,10 @@ manual_session_load() {
       and (.supervisor.commandSha256 | test("^[0-9a-f]{64}$"))
       and (.serve.baselineSha256 | test("^[0-9a-f]{64}$"))
       and (.serve.activeSha256 | test("^[0-9a-f]{64}$"))
-      and .page == {html:true}
+      and (.mock.transformReceiptSha256 | test("^[0-9a-f]{64}$"))
+      and .mock.externalPath == "/kyc/mock-verification"
+      and .mock.upstreamPath == "/mock-verification"
+      and .page == {html:true,mockRoute:true}
     ' "$MANUAL_RECEIPT" >/dev/null || return 1
   manual_support_pid="$(jq -r '.support.pid' "$MANUAL_RECEIPT")"
   manual_support_command_sha="$(jq -r '.support.commandSha256' "$MANUAL_RECEIPT")"
@@ -113,6 +121,7 @@ manual_session_load() {
   manual_supervisor_command_sha="$(jq -r '.supervisor.commandSha256' "$MANUAL_RECEIPT")"
   manual_baseline_sha="$(jq -r '.serve.baselineSha256' "$MANUAL_RECEIPT")"
   manual_active_serve_sha="$(jq -r '.serve.activeSha256' "$MANUAL_RECEIPT")"
+  manual_mock_receipt_sha="$(jq -r '.mock.transformReceiptSha256' "$MANUAL_RECEIPT")"
 }
 
 manual_process_matches() {
@@ -122,12 +131,20 @@ manual_process_matches() {
 }
 
 manual_page_url_valid() {
-  local page_url public_origin
+  local page_url
   private_regular_file "$MANUAL_PAGE_URL" || return 1
   page_url="$(<"$MANUAL_PAGE_URL")"
-  public_origin="${page_url%/issue/index.html}"
-  [ "$public_origin/issue/index.html" = "$page_url" ] || return 1
-  OXID_TAILNET_ORIGIN_POLICY_INPUT="$public_origin" node "$ORIGIN_POLICY" --origin-env
+  manual_public_origin="${page_url%/issue/index.html}"
+  [ "$manual_public_origin/issue/index.html" = "$page_url" ] || return 1
+  OXID_TAILNET_ORIGIN_POLICY_INPUT="$manual_public_origin" node "$ORIGIN_POLICY" --origin-env
+}
+
+manual_mock_state_valid() {
+  [ -d "$MOCK_STATE" ] && [ ! -L "$MOCK_STATE" ] && [ "$(file_mode "$MOCK_STATE")" = 700 ] || return 1
+  private_regular_file "$MOCK_STATE/didit-tailnet.yml" || return 1
+  private_regular_file "$MOCK_STATE/didit-tailnet-receipt.json" || return 1
+  [ "$(shasum -a 256 "$MOCK_STATE/didit-tailnet-receipt.json" | awk '{print $1}')" = "$manual_mock_receipt_sha" ] || return 1
+  node "$MOCK_TRANSFORM" --validate "$MOCK_STATE" "$manual_public_origin" >/dev/null
 }
 
 manual_serve_receipt_valid() {
@@ -151,6 +168,7 @@ manual_status() {
   [ -x "$adb" ] || fail adb
   manual_session_load \
     && manual_page_url_valid \
+    && manual_mock_state_valid \
     && manual_serve_receipt_valid \
     && manual_process_matches "$manual_support_pid" "$manual_support_command_sha" \
     && manual_process_matches "$manual_supervisor_pid" "$manual_supervisor_command_sha" \
@@ -162,7 +180,7 @@ manual_status() {
 
 manual_cleanup() {
   local after_cleanup project_ids cleanup_status=0
-  manual_session_load && manual_page_url_valid && manual_serve_receipt_valid || return 1
+  manual_session_load && manual_page_url_valid && manual_mock_state_valid && manual_serve_receipt_valid || return 1
   manual_select_physical_device || return 1
   adb_device shell \
     "run-as io.medianox.oxid sh -c 'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp && test ! -e files/portal-offer.capability && test ! -e files/.portal-offer.capability.tmp'" \
@@ -194,6 +212,7 @@ manual_stop() {
   [ -x "$adb" ] || fail adb
   manual_session_load \
     && manual_page_url_valid \
+    && manual_mock_state_valid \
     && manual_serve_receipt_valid \
     && manual_process_matches "$manual_support_pid" "$manual_support_command_sha" \
     && manual_process_matches "$manual_supervisor_pid" "$manual_supervisor_command_sha" \
@@ -218,6 +237,7 @@ manual_supervise() {
   sleep 1
   manual_session_load \
     && manual_page_url_valid \
+    && manual_mock_state_valid \
     && manual_serve_receipt_valid \
     && [ "$manual_supervisor_pid" = "$$" ] \
     && [ "$(process_command_sha256 "$$")" = "$manual_supervisor_command_sha" ] \
@@ -231,7 +251,7 @@ manual_supervise() {
         || return 1
       return
     fi
-    manual_session_load && manual_page_url_valid && manual_serve_receipt_valid || return 1
+    manual_session_load && manual_page_url_valid && manual_mock_state_valid && manual_serve_receipt_valid || return 1
     if ! manual_process_matches "$manual_support_pid" "$manual_support_command_sha"; then
       manual_cleanup || return 1
       return
@@ -357,6 +377,13 @@ temporary_listener_discovered=true
 public_origin="https://$dns_name:$listener"
 OXID_TAILNET_ORIGIN_POLICY_INPUT="$public_origin" node "$ORIGIN_POLICY" --origin-env \
   || fail listener
+if [ "$OPERATION" = manual-start ]; then
+  mock_route_config="$(node "$MOCK_ROUTE" --config "$public_origin" "$listener")" || fail manual-mock-route
+  jq -e --argjson port "$listener" '
+    . == {route:{path:"/kyc",httpsPort:$port,upstream:"http://127.0.0.1:9090"},externalRequestPath:"/kyc/mock-verification",upstreamRequestPath:"/mock-verification"}
+  ' <<<"$mock_route_config" >/dev/null || fail manual-mock-route
+  mock_external_path="$(jq -r '.externalRequestPath' <<<"$mock_route_config")"
+fi
 
 umask 077
 if [ "$OPERATION" = manual-start ]; then
@@ -366,6 +393,10 @@ else
 fi
 mkdir -p "$STATE" "$XDG_CONFIG/lace-id-portal" "$XDG_STATE"
 chmod 700 "$STATE" "$XDG_CONFIG" "$XDG_CONFIG/lace-id-portal" "$XDG_STATE"
+if [ "$OPERATION" = manual-start ]; then
+  mkdir -p "$MOCK_STATE"
+  chmod 700 "$MOCK_STATE"
+fi
 : >"$PRIVATE_LOG"
 chmod 600 "$PRIVATE_LOG"
 printf '%s' "$baseline" >"$STATE/tailscale-baseline.json"
@@ -377,8 +408,15 @@ git -C "$SOURCE" fetch origin integration >>"$PRIVATE_LOG" 2>&1 || fail source-f
 [ "$(git -C "$SOURCE" rev-parse FETCH_HEAD^{commit})" = "$PORTAL_COMMIT" ] || fail source-commit
 [ "$(git -C "$SOURCE" rev-parse FETCH_HEAD^{tree})" = "$PORTAL_TREE" ] || fail source-tree
 git -C "$SOURCE" checkout --detach "$PORTAL_COMMIT" >>"$PRIVATE_LOG" 2>&1
+chmod 700 "$SOURCE"
 [ -z "$(git -C "$SOURCE" status --porcelain --untracked-files=all)" ] || fail source-dirty
 [ -x "$SOURCE/scripts/tailscale-https-profile.sh" ] || fail profile-source
+if [ "$OPERATION" = manual-start ]; then
+  node "$MOCK_TRANSFORM" --create "$SOURCE" "$MOCK_STATE" "$public_origin" || fail manual-mock-transform
+  private_regular_file "$MOCK_STATE/didit-tailnet.yml" || fail manual-mock-mode
+  private_regular_file "$MOCK_STATE/didit-tailnet-receipt.json" || fail manual-mock-receipt
+  export PORTAL_TAILNET_MOCK_STATE_DIR="$MOCK_STATE"
+fi
 
 mkfifo "$READY_FIFO" "$CAPABILITY_FIFO"
 chmod 600 "$READY_FIFO" "$CAPABILITY_FIFO"
@@ -421,16 +459,33 @@ control_capability=""
 [ -f "$manifest_path" ] && [ ! -L "$manifest_path" ] || fail manifest
 [ "$(shasum -a 256 "$manifest_path" | awk '{print $1}')" = "$manifest_sha" ] || fail manifest
 
-jq -cn --arg dns "$dns_name" --argjson port "$listener" '
-  {PORTAL_TAILSCALE_DNS_NAME:$dns,routes:[
-    {path:"/",httpsPort:$port,upstream:"http://127.0.0.1:18090"},
-    {path:"/issuer-resolver",httpsPort:$port,upstream:"http://127.0.0.1:18093"},
-    {path:"/offer",httpsPort:$port,upstream:"http://127.0.0.1:18094"}
-  ]}' >"$XDG_CONFIG/lace-id-portal/tailscale-https.json"
+if [ "$OPERATION" = manual-start ]; then
+  jq -cn --arg dns "$dns_name" --argjson port "$listener" --argjson mock_route "$mock_route_config" '
+    {PORTAL_TAILSCALE_DNS_NAME:$dns,routes:[
+      {path:"/",httpsPort:$port,upstream:"http://127.0.0.1:18090"},
+      {path:"/issuer-resolver",httpsPort:$port,upstream:"http://127.0.0.1:18093"},
+      {path:"/offer",httpsPort:$port,upstream:"http://127.0.0.1:18094"},
+      $mock_route.route
+    ]}' >"$XDG_CONFIG/lace-id-portal/tailscale-https.json"
+else
+  jq -cn --arg dns "$dns_name" --argjson port "$listener" '
+    {PORTAL_TAILSCALE_DNS_NAME:$dns,routes:[
+      {path:"/",httpsPort:$port,upstream:"http://127.0.0.1:18090"},
+      {path:"/issuer-resolver",httpsPort:$port,upstream:"http://127.0.0.1:18093"},
+      {path:"/offer",httpsPort:$port,upstream:"http://127.0.0.1:18094"}
+    ]}' >"$XDG_CONFIG/lace-id-portal/tailscale-https.json"
+fi
 chmod 600 "$XDG_CONFIG/lace-id-portal/tailscale-https.json"
 XDG_CONFIG_HOME="$XDG_CONFIG" XDG_STATE_HOME="$XDG_STATE" \
   "$SOURCE/scripts/tailscale-https-profile.sh" setup >>"$PRIVATE_LOG" 2>&1 || fail profile-setup
 profile_active=1
+if [ "$OPERATION" = manual-start ]; then
+  curl --noproxy '*' --fail --silent --show-error --max-time 30 \
+    "$public_origin$mock_external_path" >"$STATE/manual-mock-page.html" || fail manual-mock-route
+  chmod 600 "$STATE/manual-mock-page.html"
+  grep -qF 'id="approve-btn"' "$STATE/manual-mock-page.html" || fail manual-mock-route
+  rm -f -- "$STATE/manual-mock-page.html"
+fi
 
 adb_reverse_before="$(adb_device reverse --list 2>/dev/null | sort)"
 adb_device shell pm clear io.medianox.oxid >/dev/null 2>&1 || true
@@ -458,6 +513,7 @@ if [ "$OPERATION" = manual-start ]; then
   printf '%s\n' "$public_page_url" >"$MANUAL_PAGE_URL"
   chmod 600 "$MANUAL_PAGE_URL"
   baseline_sha="$(shasum -a 256 "$STATE/tailscale-baseline.json" | awk '{print $1}')"
+  mock_receipt_sha="$(shasum -a 256 "$MOCK_STATE/didit-tailnet-receipt.json" | awk '{print $1}')"
   active_serve="$(tailscale serve status --json | jq -S -c '.')" || fail manual-serve-receipt
   active_serve_sha="$(sha256_text "$active_serve")"
   support_command_sha="$(process_command_sha256 "$support_pid")" || fail manual-support-receipt
@@ -466,7 +522,8 @@ if [ "$OPERATION" = manual-start ]; then
     --arg commit "$PORTAL_COMMIT" --arg portal_tree "$PORTAL_TREE" \
     --argjson support_pid "$support_pid" --arg support_sha "$support_command_sha" \
     --arg baseline_sha "$baseline_sha" --arg active_sha "$active_serve_sha" \
-    '{schema:"oxid-portal-tailnet-manual-session-v1",oxid:{head:$head,tree:$tree},portal:{commit:$commit,tree:$portal_tree},support:{pid:$support_pid,commandSha256:$support_sha},supervisor:{pid:0,commandSha256:("0" * 64)},serve:{baselineSha256:$baseline_sha,activeSha256:$active_sha},page:{html:true}}' \
+    --arg mock_receipt_sha "$mock_receipt_sha" \
+    '{schema:"oxid-portal-tailnet-manual-session-v1",oxid:{head:$head,tree:$tree},portal:{commit:$commit,tree:$portal_tree},support:{pid:$support_pid,commandSha256:$support_sha},supervisor:{pid:0,commandSha256:("0" * 64)},serve:{baselineSha256:$baseline_sha,activeSha256:$active_sha},mock:{transformReceiptSha256:$mock_receipt_sha,externalPath:"/kyc/mock-verification",upstreamPath:"/mock-verification"},page:{html:true,mockRoute:true}}' \
     >"$MANUAL_RECEIPT"
   chmod 600 "$MANUAL_RECEIPT"
   nohup bash "$REPOSITORY_ROOT/scripts/test-android-portal-tailnet-physical.sh" --manual-supervise \

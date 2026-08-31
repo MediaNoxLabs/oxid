@@ -24,6 +24,7 @@ readonly MOCK_STATE="$RUNTIME/mock-state"
 readonly MOCK_PAGE="$RUNTIME/mock-page.html"
 readonly ORIGIN_POLICY="$REPOSITORY_ROOT/scripts/e2e/tailnet-origin-policy.mjs"
 readonly MOCK_TRANSFORM="$REPOSITORY_ROOT/scripts/e2e/tailnet-mock-transform.mjs"
+readonly MOCK_ROUTE="$REPOSITORY_ROOT/scripts/e2e/tailnet-mock-route.mjs"
 readonly BROWSER_FLOW="$REPOSITORY_ROOT/scripts/e2e/portal-tailnet-browser-flow.mjs"
 readonly PROFILE_SCRIPT_RELATIVE="scripts/tailscale-https-profile.sh"
 readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
@@ -124,7 +125,7 @@ for command_name in curl docker git jq node shasum tailscale; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
 [ -x "$CHROME_BIN" ] || fail browser
-[ -f "$MOCK_TRANSFORM" ] && [ -f "$BROWSER_FLOW" ] || fail harness
+[ -f "$MOCK_TRANSFORM" ] && [ -f "$MOCK_ROUTE" ] && [ -f "$BROWSER_FLOW" ] || fail harness
 [ -z "$(git -C "$REPOSITORY_ROOT" status --porcelain --untracked-files=no)" ] || fail oxid-dirty
 [ ! -e "$EVIDENCE_ROOT/evidence.json" ] && [ ! -L "$EVIDENCE_ROOT/evidence.json" ] || fail stale-evidence
 [ ! -e "$RUNTIME" ] && [ ! -L "$RUNTIME" ] || fail stale-runtime
@@ -147,6 +148,11 @@ done
 [ -n "$listener" ] || fail listener
 public_origin="https://$DNS_NAME:$listener"
 OXID_TAILNET_ORIGIN_POLICY_INPUT="$public_origin" node "$ORIGIN_POLICY" --origin-env || fail origin
+mock_route_config="$(node "$MOCK_ROUTE" --config "$public_origin" "$listener")" || fail mock-route-config
+jq -e --argjson port "$listener" '
+  . == {route:{path:"/kyc",httpsPort:$port,upstream:"http://127.0.0.1:9090"},externalRequestPath:"/kyc/mock-verification",upstreamRequestPath:"/mock-verification"}
+' <<<"$mock_route_config" >/dev/null || fail mock-route-config
+mock_external_path="$(jq -r '.externalRequestPath' <<<"$mock_route_config")"
 
 umask 077
 mkdir -p -- "$EVIDENCE_ROOT" "$RUNTIME" "$XDG_CONFIG/lace-id-portal" "$XDG_STATE" "$BROWSER_HOME" "$MOCK_STATE"
@@ -174,12 +180,12 @@ PORTAL_INTEGRATION_CHECKOUT="$SOURCE" \
 OXID_PORTAL_CONSUMER_STATE_DIR="$RUNTIME/portal-consumer" \
   "$REPOSITORY_ROOT/scripts/portal-consumer-lifecycle.sh" prerequisite >>"$PRIVATE_LOG" 2>&1 || fail standalone-prerequisite
 
-jq -cn --arg dns "$DNS_NAME" --argjson port "$listener" '
+jq -cn --arg dns "$DNS_NAME" --argjson port "$listener" --argjson mock_route "$mock_route_config" '
   {PORTAL_TAILSCALE_DNS_NAME:$dns,routes:[
     {path:"/",httpsPort:$port,upstream:"http://127.0.0.1:18090"},
     {path:"/issuer-resolver",httpsPort:$port,upstream:"http://127.0.0.1:18093"},
     {path:"/offer",httpsPort:$port,upstream:"http://127.0.0.1:18094"},
-    {path:"/mock-verification",httpsPort:$port,upstream:"http://127.0.0.1:9090"}
+    $mock_route.route
   ]}' >"$XDG_CONFIG/lace-id-portal/tailscale-https.json"
 chmod 600 "$XDG_CONFIG/lace-id-portal/tailscale-https.json"
 
@@ -212,7 +218,7 @@ XDG_CONFIG_HOME="$XDG_CONFIG" XDG_STATE_HOME="$XDG_STATE" \
   "$SOURCE/$PROFILE_SCRIPT_RELATIVE" setup >>"$PRIVATE_LOG" 2>&1 || fail profile-setup
 profile_active=1
 curl --noproxy '*' --fail --silent --show-error --max-time 30 \
-  "$public_origin/mock-verification" >"$MOCK_PAGE" || fail mock-route
+  "$public_origin$mock_external_path" >"$MOCK_PAGE" || fail mock-route
 chmod 600 "$MOCK_PAGE"
 grep -qF 'id="approve-btn"' "$MOCK_PAGE" || fail mock-route
 rm -f -- "$MOCK_PAGE"

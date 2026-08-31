@@ -22,7 +22,7 @@ export function assertSameOriginJourney({ origin, locations, copyOffer, qrRender
   }
   const expectedPaths = new Set([
     "/issue/",
-    "/mock-verification",
+    "/kyc/mock-verification",
     "/issue/pending.html",
     "/issue/complete.html",
   ]);
@@ -169,7 +169,7 @@ async function runBrowserJourney(debugEndpoint, origin, setPhase) {
     await browser.waitFor("document.readyState === 'complete' && location.pathname === '/issue/'");
     setPhase("begin");
     await browser.evaluate("document.getElementById('begin-button')?.click() ?? false");
-    await browser.waitFor("location.pathname === '/mock-verification'");
+    await browser.waitFor("location.pathname === '/kyc/mock-verification'");
     setPhase("approval");
     await browser.waitFor("Boolean(document.getElementById('approve-btn'))");
     await browser.evaluate("document.getElementById('approve-btn')?.click() ?? false");

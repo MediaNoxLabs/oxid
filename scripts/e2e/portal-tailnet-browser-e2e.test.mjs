@@ -12,9 +12,14 @@ const justfile = fs.readFileSync(path.join(root, "Justfile"), "utf8");
 test("Tailnet browser E2E owns a private transformed mock and exact Serve cleanup", () => {
   for (const required of [
     'tailnet-mock-transform.mjs',
+    'tailnet-mock-route.mjs',
     '--create "$SOURCE" "$MOCK_STATE" "$public_origin"',
     'PORTAL_TAILNET_MOCK_STATE_DIR="$MOCK_STATE"',
-    '{path:"/mock-verification",httpsPort:$port,upstream:"http://127.0.0.1:9090"}',
+    'node "$MOCK_ROUTE" --config "$public_origin" "$listener"',
+    'externalRequestPath:"/kyc/mock-verification"',
+    'upstreamRequestPath:"/mock-verification"',
+    '$mock_route.route',
+    '"$public_origin$mock_external_path"',
     'tailscale serve status --json',
     '[ "$after_cleanup" = "$baseline" ]',
     'chmod 600 "$EVIDENCE_ROOT/evidence.json"',
@@ -22,6 +27,9 @@ test("Tailnet browser E2E owns a private transformed mock and exact Serve cleanu
     'mock-page.html',
     'id="approve-btn"',
   ]) assert.ok(script.includes(required), required);
+  assert.match(script, /mock_route_config=.*--config "\$public_origin" "\$listener"/u);
+  assert.doesNotMatch(script, /path:"\/mock-verification",httpsPort:\$port/u);
+  assert.doesNotMatch(script, /"\$public_origin\/mock-verification"/u);
   assert.doesNotMatch(script, /\badb\b/u);
   assert.doesNotMatch(script, /android-portal-tailnet-physical/u);
 });
