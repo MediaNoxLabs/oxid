@@ -33,6 +33,7 @@ import { preflightGh } from "../../scripts/github/preflight-gh.mjs";
 import { GH_REST_MAX_BUFFER_BYTES, runGhCommand } from "../../scripts/github/rest-client.mjs";
 import {
   assertClaudeAuthHelpCapabilities,
+  assertAttestedReviewEffort,
   assertClaudeEffortCapability,
   assertClaudeHelpCapabilities,
   assertClaudeReviewEffort,
@@ -41,6 +42,7 @@ import {
   DEFAULT_CLAUDE_REVIEW_EFFORT,
   MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
   buildClaudeInvocation,
+  claudeReviewCliFailure,
   ClaudeReviewEvidenceVersionError,
   ClaudeReviewFindingsError,
   MAX_CLAUDE_REVIEW_TIMEOUT_MS,
@@ -1443,6 +1445,8 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.equal(invocation.args[effortIndex + 1], DEFAULT_CLAUDE_REVIEW_EFFORT);
   assert.deepEqual(CLAUDE_REVIEW_EFFORTS, ["low", "medium", "high", "xhigh", "max"]);
   assert.equal(assertClaudeReviewEffort("high"), "high");
+  assert.equal(assertAttestedReviewEffort("medium"), "medium");
+  assert.throws(() => assertAttestedReviewEffort("low"), /must be at least medium/);
   assert.throws(() => assertClaudeReviewEffort("unbounded"), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
@@ -1580,6 +1584,14 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     () => assertClaudeHelpCapabilities(conflictingEffortHelp, [2, 1, 228]),
     /multiple conflicting review effort choice lists/,
   );
+  const explicitConflictHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    '(choices: "low", "medium", "high", "xhigh", "max") (low, medium)',
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(explicitConflictHelp, [2, 1, 228]),
+    /multiple conflicting review effort choice lists/,
+  );
   assert.throws(() => assertClaudeAuthHelpCapabilities("Usage: claude auth status\n"), /default JSON output/);
   const calls = [];
   const capabilityProbe = probeClaudeCliCapabilities({
@@ -1617,6 +1629,10 @@ test("Claude review CLI rejects invalid resource arguments before model executio
       "--effort", "unbounded",
     ], { stdout: { write() {} } }),
     /effort must be one of/,
+  );
+  await assert.rejects(
+    runClaudeReviewCli(["--effort", "low"]),
+    /exact-head attestation effort must be at least medium/,
   );
   for (const invalidTimeout of ["", "-1", "0", "1.5", "1e3", "300001"]) {
     await assert.rejects(
@@ -1735,6 +1751,7 @@ if (process.argv.includes("--version")) {
   assert.equal(result.evidence.claude.capabilities.emptyToolsDisabled, true);
   assert.deepEqual(result.evidence.claude.capabilities.effortLevels, CLAUDE_REVIEW_EFFORTS);
   assert.equal(result.evidence.invocation.effort, "high");
+  assert.equal(result.evidence.invocation.minimumEffort, "medium");
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
   assert.equal(path.isAbsolute(result.evidence.diff.path), false);
   assert.equal(path.isAbsolute(result.evidence.rawResponse.path), false);
@@ -1866,6 +1883,13 @@ if (process.argv.includes("--version")) {
       && error.code === "CLAUDE_REVIEW_EVIDENCE_VERSION"
       && /schema version 2; rerun/.test(error.message),
   );
+  const legacyCliFailure = claudeReviewCliFailure(new ClaudeReviewEvidenceVersionError(2));
+  assert.equal(legacyCliFailure.exitCode, 3);
+  assert.deepEqual(JSON.parse(legacyCliFailure.output), {
+    ok: false,
+    code: "CLAUDE_REVIEW_EVIDENCE_VERSION",
+    message: "unsupported Claude review attestation schema version 2; rerun the exact-head review",
+  });
 
   const missingEffortEvidence = path.join(evidenceDir, "missing-effort.evidence.json");
   const missingEffort = structuredClone(result.evidence);
@@ -1878,6 +1902,19 @@ if (process.argv.includes("--version")) {
       fetchBase: false,
     }),
     /attestation is missing the selected effort/,
+  );
+
+  const missingMinimumEvidencePath = path.join(evidenceDir, "missing-minimum-effort.evidence.json");
+  const missingMinimumEvidence = structuredClone(result.evidence);
+  delete missingMinimumEvidence.invocation.minimumEffort;
+  await writeFile(missingMinimumEvidencePath, `${JSON.stringify(missingMinimumEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: missingMinimumEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the minimum review effort/,
   );
 
   const invalidEffortEvidencePath = path.join(evidenceDir, "invalid-effort.evidence.json");

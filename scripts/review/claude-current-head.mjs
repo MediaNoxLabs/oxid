@@ -15,6 +15,7 @@ const DEFAULT_TIMEOUT_MS = MAX_CLAUDE_REVIEW_TIMEOUT_MS;
 const DEFAULT_MAX_BUDGET_USD = 10;
 export const DEFAULT_CLAUDE_REVIEW_EFFORT = "medium";
 export const CLAUDE_REVIEW_EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
+export const MINIMUM_ATTESTED_REVIEW_EFFORT = "medium";
 export const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
 export const MINIMUM_CLAUDE_VERSION = [2, 1, 228];
 export const MAXIMUM_EXCLUSIVE_CLAUDE_VERSION = [2, 2, 0];
@@ -116,6 +117,14 @@ export function assertClaudeEffortCapability(effort, documentedEfforts) {
   return effort;
 }
 
+export function assertAttestedReviewEffort(effort) {
+  assertClaudeReviewEffort(effort);
+  if (CLAUDE_REVIEW_EFFORTS.indexOf(effort) < CLAUDE_REVIEW_EFFORTS.indexOf(MINIMUM_ATTESTED_REVIEW_EFFORT)) {
+    throw new Error(`exact-head attestation effort must be at least ${MINIMUM_ATTESTED_REVIEW_EFFORT}`);
+  }
+  return effort;
+}
+
 export function assertClaudeReviewTimeoutMs(timeoutMs) {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_CLAUDE_REVIEW_TIMEOUT_MS) {
     throw new Error(`review timeout must be an integer between 1 and ${MAX_CLAUDE_REVIEW_TIMEOUT_MS} milliseconds`);
@@ -201,13 +210,11 @@ function documentedEffortLevels(entry) {
   };
   const commaGroups = groups.filter((group) => /[,|]/.test(group));
   const explicitChoices = choices.map(parseEnumeration).filter((candidate) => Array.isArray(candidate));
-  let candidates = explicitChoices;
-  if (candidates.length === 0) {
-    if (commaGroups.length > 1) {
-      throw new Error("Claude CLI help exposes multiple conflicting review effort choice lists");
-    }
-    candidates = commaGroups.map(parseEnumeration).filter((candidate) => Array.isArray(candidate));
-  }
+  const bareChoices = commaGroups
+    .filter((group) => !/choices?\s*:/i.test(group))
+    .map(parseEnumeration)
+    .filter((candidate) => Array.isArray(candidate));
+  const candidates = [...explicitChoices, ...bareChoices];
   if (candidates.length === 0) {
     throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
   }
@@ -557,6 +564,7 @@ export async function runClaudeCurrentHeadReview({
   if (!Number.isInteger(issue) || issue < 1) throw new Error("issue must be a positive integer");
   assertClaudeReviewTimeoutMs(timeoutMs);
   assertClaudeReviewEffort(effort);
+  assertAttestedReviewEffort(effort);
   if (typeof issueContract !== "string" || !issueContract.trim()) throw new Error("issueContract is required for an exact-scope review");
   let contractPayload;
   try { contractPayload = JSON.parse(issueContract); } catch (error) {
@@ -675,7 +683,15 @@ export async function runClaudeCurrentHeadReview({
         subscriptionType: typeof accountStatus.subscriptionType === "string" ? accountStatus.subscriptionType : null,
       },
     },
-    invocation: { startedAt, reviewedAt, timeoutMs, maxBudgetUsd, effort, exitStatus: result.status },
+    invocation: {
+      startedAt,
+      reviewedAt,
+      timeoutMs,
+      maxBudgetUsd,
+      effort,
+      minimumEffort: MINIMUM_ATTESTED_REVIEW_EFFORT,
+      exitStatus: result.status,
+    },
     rawResponse: { path: path.basename(rawResponsePath), sha256: sha256(rawResponse), bytes: Buffer.byteLength(rawResponse) },
     verdict: parsed.review.verdict,
     review: parsed.review,
@@ -754,9 +770,12 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     throw new Error("Claude review attestation is missing the selected effort");
   }
   try {
-    assertClaudeReviewEffort(evidence.invocation.effort);
+    assertAttestedReviewEffort(evidence.invocation.effort);
   } catch (error) {
     throw new Error("Claude review attestation records an unsupported selected effort", { cause: error });
+  }
+  if (evidence.invocation.minimumEffort !== MINIMUM_ATTESTED_REVIEW_EFFORT) {
+    throw new Error("Claude review attestation does not bind the minimum review effort");
   }
   const recordedEfforts = evidence.claude.capabilities.effortLevels;
   if (!Array.isArray(recordedEfforts)
@@ -807,7 +826,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
   const timeoutMs = values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]);
   assertClaudeReviewTimeoutMs(timeoutMs);
   const effort = values.effort ?? DEFAULT_CLAUDE_REVIEW_EFFORT;
-  assertClaudeReviewEffort(effort);
+  assertAttestedReviewEffort(effort);
   if (!values["issue-contract-file"]) throw new Error("--issue-contract-file is required");
   const issueContract = await readFile(values["issue-contract-file"], "utf8");
   const result = await runClaudeCurrentHeadReview({
@@ -827,9 +846,20 @@ function isDirectRun(metaUrl) {
   return process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(metaUrl);
 }
 
+export function claudeReviewCliFailure(error) {
+  if (error instanceof ClaudeReviewEvidenceVersionError) {
+    return {
+      exitCode: 3,
+      output: `${JSON.stringify({ ok: false, code: error.code, message: error.message })}\n`,
+    };
+  }
+  return { exitCode: 1, output: `[claude-current-head] ${error.message}\n` };
+}
+
 if (isDirectRun(import.meta.url)) {
   runCli().catch((error) => {
-    process.stderr.write(`[claude-current-head] ${error.message}\n`);
-    process.exitCode = 1;
+    const failure = claudeReviewCliFailure(error);
+    process.stderr.write(failure.output);
+    process.exitCode = failure.exitCode;
   });
 }

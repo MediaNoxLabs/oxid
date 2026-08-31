@@ -219,9 +219,10 @@ The wrapper passes `--effort medium` by default and records that choice in the
 attestation. Medium effort bounds reasoning cost while retaining a substantive
 review inside the five-minute default deadline; the example above states that
 deadline explicitly so copied commands retain the SLA if defaults later change.
-Operators may select only the factory's closed set (`low`, `medium`, `high`,
-`xhigh`, or `max`), and the selected level must also appear in the installed
-CLI's captured choice list. The wrapper and verifier reject deadlines above
+The CLI capability set is closed (`low`, `medium`, `high`, `xhigh`, or `max`),
+but high-risk exact-head attestations enforce a recorded floor of `medium`.
+The selected level must also appear in the installed CLI's captured choice
+list. The wrapper and verifier reject deadlines above
 300,000 ms, so increasing effort cannot extend the SLA; a timeout never counts
 as a review pass. New effort-bound attestations use schema v3. Version 2
 records do not bind effort and are intentionally rejected after this upgrade;
@@ -231,9 +232,9 @@ this migration checkpoint, the wrapper verifier remains the repository's
 evidence authority. In-flight v2 records must be rerun rather than translated.
 
 For a large diff that cannot finish inside five minutes, split the issue and PR
-at a coherent architecture boundary. A reviewer may select `--effort low` for a
-genuinely low-risk diff, but must not lengthen the deadline or reinterpret a
-timeout as approval. `high`, `xhigh`, and `max` are useful only for small,
+at a coherent architecture boundary; do not lower the attested review beneath
+`medium`, lengthen the deadline, or reinterpret a timeout as approval. `high`,
+`xhigh`, and `max` are useful only for small,
 reasoning-dense diffs that can still finish within the same cap; do not escalate
 effort to retry a timed-out large diff. Split that diff instead.
 
@@ -246,7 +247,9 @@ The normalized factory-supported subset is recorded. Verification requires that
 record to match the subset re-derived from the captured help and binds the
 selected effort to it. The raw bounded `--effort` help entry is recorded for
 diagnosis. A help-layout change fails closed and requires an explicit parser and
-test update. This is wrapper-generated operational evidence that the value was
+test update. The bounded entry ends at a blank, non-indented, or hyphen-leading
+line so a following option cannot supply the effort list; a conflicting layout
+also fails closed. This is wrapper-generated operational evidence that the value was
 validated and placed in the constructed argv; it cannot independently prove
 what argv the process received or that the provider honored the requested
 effort internally.
