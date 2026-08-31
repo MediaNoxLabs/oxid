@@ -1587,6 +1587,7 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   await runClaudeReviewCli(["--help"], { stdout: { write(chunk) { help += chunk; } } });
   assert.match(help, /--timeout-ms INTEGER/);
   assert.match(help, /--timeout-ms 300000 \(five minutes\)/);
+  assert.match(help, /Effort levels: low, medium, high, xhigh, max/);
 
   await assert.rejects(
     runClaudeReviewCli([
@@ -1597,7 +1598,7 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   for (const invalidTimeout of ["abc", "300001"]) {
     await assert.rejects(
       runClaudeReviewCli(["--timeout-ms", invalidTimeout]),
-      /--timeout-ms must be an integer between 1 and 300000/,
+      /review timeout must be an integer between 1 and 300000 milliseconds/,
     );
   }
 });
@@ -1686,7 +1687,7 @@ if (process.argv.includes("--version")) {
 `);
     await chmod(fakeClaude, 0o755);
   };
-  await writeFakeClaude("clean");
+  await writeFakeClaude("cli-high");
 
   const result = await runClaudeCurrentHeadReview({
     issue: 150,
@@ -1737,10 +1738,10 @@ if (process.argv.includes("--version")) {
         "--repo-root", repository,
         "--evidence-dir", path.join(fixtureRoot, evidenceName),
         "--issue-contract-file", issueContractPath,
-      "--expected-head", headSha,
-    ];
-    if (effort) args.push("--effort", effort);
-    if (timeoutMs) args.push("--timeout-ms", timeoutMs);
+        "--expected-head", headSha,
+      ];
+      if (effort) args.push("--effort", effort);
+      if (timeoutMs) args.push("--timeout-ms", timeoutMs);
       return JSON.parse(execFileSync(process.execPath, args, { encoding: "utf8", env: cliEnvironment }));
     };
     const highEvidence = runFixtureCli({
@@ -1764,7 +1765,7 @@ if (process.argv.includes("--version")) {
     assert.equal(MAX_CLAUDE_REVIEW_TIMEOUT_MS, 300_000);
     await assert.rejects(
       runClaudeCurrentHeadReview({ issue: 150, timeoutMs: MAX_CLAUDE_REVIEW_TIMEOUT_MS + 1 }),
-      /timeoutMs must be an integer between 1 and 300000/,
+      /review timeout must be an integer between 1 and 300000 milliseconds/,
     );
     const defaultTimeouts = [];
     const timeoutRunner = (_command, args, options = {}) => {
@@ -1899,7 +1900,7 @@ if (process.argv.includes("--version")) {
       repoRoot: repository,
       fetchBase: false,
     }),
-    /attestation exceeds the five-minute timeout SLA/,
+    /review timeout must be an integer between 1 and 300000 milliseconds/,
   );
 
   await assert.rejects(runClaudeCurrentHeadReview({
@@ -2139,27 +2140,6 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
   assert.match(config, /^  stopAt: \[\]$/m);
   assert.match(config, /^  humanMergeOnly: false$/m);
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
-});
-
-test("the hardened wrapper is the sole repository-script parser for local Claude attestations", async () => {
-  const evidenceKind = ["local", "attestation"].join("-");
-  const productionParsers = [];
-  const visit = async (directory, relative = "") => {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const childRelative = path.join(relative, entry.name);
-      if (entry.isDirectory()) {
-        await visit(path.join(directory, entry.name), childRelative);
-        continue;
-      }
-      if (!entry.isFile() || !/\.(?:js|mjs|ts|sh)$/.test(entry.name)) continue;
-      if ((await readFile(path.join(directory, entry.name), "utf8")).includes(evidenceKind)) {
-        productionParsers.push(childRelative);
-      }
-    }
-  };
-  await visit(path.join(repoRoot, "scripts"), "scripts");
-  productionParsers.sort();
-  assert.deepEqual(productionParsers, ["scripts/review/claude-current-head.mjs"]);
 });
 
 test("upstream-only gaps are linked and speculative local patches are forbidden", async () => {

@@ -30,6 +30,9 @@ const REQUIRED_CLAUDE_FLAGS = [
   "--permission-mode",
   "--system-prompt",
 ];
+const HELP_FLAG_POLICIES = Object.freeze({
+  "--effort": Object.freeze({ allowAlias: true }),
+});
 
 export const CLAUDE_REVIEW_SCHEMA = {
   type: "object",
@@ -113,6 +116,13 @@ export function assertClaudeEffortCapability(effort, documentedEfforts) {
   return effort;
 }
 
+export function assertClaudeReviewTimeoutMs(timeoutMs) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_CLAUDE_REVIEW_TIMEOUT_MS) {
+    throw new Error(`review timeout must be an integer between 1 and ${MAX_CLAUDE_REVIEW_TIMEOUT_MS} milliseconds`);
+  }
+  return timeoutMs;
+}
+
 export function parseClaudeVersion(output) {
   const match = String(output).match(/(?:^|[^0-9])(\d+)\.(\d+)\.(\d+)(?:[^0-9]|$)/);
   if (!match) throw new Error("could not parse Claude CLI version");
@@ -152,7 +162,7 @@ function helpFlagPattern(flag, { allowAlias = false } = {}) {
 }
 
 function exactHelpFlag(help, flag) {
-  return helpFlagPattern(flag, { allowAlias: flag === "--effort" }).test(help);
+  return helpFlagPattern(flag, HELP_FLAG_POLICIES[flag]).test(help);
 }
 
 function helpWindow(help, flag, length = 600) {
@@ -161,7 +171,7 @@ function helpWindow(help, flag, length = 600) {
 }
 
 function helpEntry(help, flag) {
-  const option = helpFlagPattern(flag, { allowAlias: flag === "--effort" });
+  const option = helpFlagPattern(flag, HELP_FLAG_POLICIES[flag]);
   const lines = help.split(/\r?\n/);
   const start = lines.findIndex((line) => option.test(line));
   if (start < 0) return "";
@@ -187,9 +197,16 @@ function documentedEffortLevels(entry) {
     if (tokens.some((token) => !/^[a-z][a-z0-9-]*$/i.test(token))) return null;
     return [...new Set(tokens.map((token) => token.toLowerCase()))];
   };
-  const candidates = [...choices, ...groups]
-    .map(parseEnumeration)
-    .filter((candidate) => Array.isArray(candidate));
+  const commaGroups = groups.filter((group) => /[,|]/.test(group));
+  if (commaGroups.length > 1) {
+    throw new Error("Claude CLI help exposes multiple conflicting review effort choice lists");
+  }
+  const explicitChoices = choices.map(parseEnumeration).filter((candidate) => Array.isArray(candidate));
+  const trailingGroup = /\(([^()]*)\)\s*$/.exec(normalizedEntry)?.[1];
+  const trailingChoice = trailingGroup ? parseEnumeration(trailingGroup) : null;
+  const candidates = explicitChoices.length > 0
+    ? explicitChoices
+    : (trailingChoice ? [trailingChoice] : []);
   if (candidates.length === 0) {
     throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
   }
@@ -530,9 +547,7 @@ export async function runClaudeCurrentHeadReview({
   claudeRunner = run,
 } = {}) {
   if (!Number.isInteger(issue) || issue < 1) throw new Error("issue must be a positive integer");
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_CLAUDE_REVIEW_TIMEOUT_MS) {
-    throw new Error(`timeoutMs must be an integer between 1 and ${MAX_CLAUDE_REVIEW_TIMEOUT_MS}`);
-  }
+  assertClaudeReviewTimeoutMs(timeoutMs);
   assertClaudeReviewEffort(effort);
   if (typeof issueContract !== "string" || !issueContract.trim()) throw new Error("issueContract is required for an exact-scope review");
   let contractPayload;
@@ -680,11 +695,7 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   if (evidence.evidenceKind !== "local-attestation" || evidence.baseRef !== BASE_REF || evidence.verdict !== "clean") {
     throw new Error("unsupported or non-clean Claude review attestation");
   }
-  if (!Number.isInteger(evidence.invocation?.timeoutMs)
-    || evidence.invocation.timeoutMs < 1
-    || evidence.invocation.timeoutMs > MAX_CLAUDE_REVIEW_TIMEOUT_MS) {
-    throw new Error("Claude review attestation exceeds the five-minute timeout SLA");
-  }
+  assertClaudeReviewTimeoutMs(evidence.invocation?.timeoutMs);
   if (!evidence.diff || typeof evidence.diff !== "object" || !evidence.rawResponse || typeof evidence.rawResponse !== "object"
     || !evidence.claude?.capabilities?.help || typeof evidence.claude.capabilities.help !== "object"
     || !evidence.claude?.capabilities?.authHelp || typeof evidence.claude.capabilities.authHelp !== "object") {
@@ -770,7 +781,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     strict: true,
   });
   if (values.help) {
-    stdout.write("Usage: claude-current-head.mjs --issue NUMBER [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nDefaults: --effort medium; --timeout-ms 300000 (five minutes).\n");
+    stdout.write(`Usage: claude-current-head.mjs --issue NUMBER [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nEffort levels: ${CLAUDE_REVIEW_EFFORTS.join(", ")}.\nDefaults: --effort medium; --timeout-ms 300000 (five minutes).\n`);
     return;
   }
   if (values["verify-evidence"]) {
@@ -779,9 +790,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     return;
   }
   const timeoutMs = values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]);
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_CLAUDE_REVIEW_TIMEOUT_MS) {
-    throw new Error(`--timeout-ms must be an integer between 1 and ${MAX_CLAUDE_REVIEW_TIMEOUT_MS}`);
-  }
+  assertClaudeReviewTimeoutMs(timeoutMs);
   const effort = values.effort ?? DEFAULT_CLAUDE_REVIEW_EFFORT;
   assertClaudeReviewEffort(effort);
   if (!values["issue-contract-file"]) throw new Error("--issue-contract-file is required");
