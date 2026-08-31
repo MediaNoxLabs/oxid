@@ -62,6 +62,9 @@ oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent() {
         split(ports, values, " ")
         for (i in values) managed["tcp:" values[i]] = 1
       }
+      # ADB may delimit reverse-list records with CRLF; normalize only the
+      # record terminator before applying the exact three-field contract.
+      { sub(/\r$/, "") }
       NF == 0 { next }
       NF != 3 { invalid = 1; next }
       ($2 in managed) || ($3 in managed) {

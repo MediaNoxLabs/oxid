@@ -110,12 +110,15 @@ reverse_empty=''
 reverse_exact=$'emulator-5562 tcp:6300 tcp:6300\nemulator-5562 tcp:8088 tcp:8088\nemulator-5562 tcp:9944 tcp:9944\n'
 reverse_wrong_remote=$'emulator-5562 tcp:6300 tcp:9999\n'
 reverse_wrong_serial=$'emulator-5554 tcp:6300 tcp:6300\n'
+reverse_exact_crlf=$'emulator-5562 tcp:6300 tcp:6300\r\nemulator-5562 tcp:8088 tcp:8088\r\nemulator-5562 tcp:9944 tcp:9944\r\n'
 oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_empty" emulator-5562 6300 8088 9944 \
   || fail reverse-empty-baseline
 oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent \
   "$reverse_exact" emulator-5562 6300 8088 9944 || fail reverse-exact-or-absent
 oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact" emulator-5562 6300 8088 9944 \
   || fail reverse-exact-owned
+oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact_crlf" emulator-5562 6300 8088 9944 \
+  || fail reverse-crlf-owned
 if oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_exact" emulator-5562 6300 8088 9944; then
   fail reverse-occupied-baseline
 fi
