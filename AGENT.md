@@ -108,6 +108,13 @@ the configuration visible in its worktree.
 
 ## Validation
 
+For Lace ID Portal local or Tailscale E2E work, load the
+[Portal Pi skill](.pi/skills/oxid-portal-e2e/SKILL.md) and follow the tracked
+[macOS laptop](docs/factory/portal-macos-laptop.md),
+[mobile simulator](docs/factory/portal-mobile-simulators.md), and
+[physical Android Tailnet](docs/factory/portal-android-tailnet-physical.md)
+runbooks.
+
 Run focused checks first. The path planner chooses proportional target lanes:
 
 ```bash
