@@ -177,7 +177,7 @@ function helpEntry(help, flag) {
   if (start < 0) return "";
   const entry = [lines[start]];
   for (const line of lines.slice(start + 1)) {
-    if (/^\s*(?:-[a-z0-9]+,\s*)?--[a-z0-9]/i.test(line) || !/^\s+\S/.test(line)) break;
+    if (/^\s*-/i.test(line) || !/^\s+\S/.test(line)) break;
     entry.push(line);
   }
   return entry.join("\n");
@@ -195,18 +195,16 @@ function documentedEffortLevels(entry) {
     if (!/[,|]/.test(withoutDefault)) return null;
     const tokens = withoutDefault.split(/[,|]/).map((token) => token.trim().replace(/^["']|["']$/g, ""));
     if (tokens.some((token) => !/^[a-z][a-z0-9-]*$/i.test(token))) return null;
-    return [...new Set(tokens.map((token) => token.toLowerCase()))];
+    return [...new Set(tokens)];
   };
   const commaGroups = groups.filter((group) => /[,|]/.test(group));
   if (commaGroups.length > 1) {
     throw new Error("Claude CLI help exposes multiple conflicting review effort choice lists");
   }
   const explicitChoices = choices.map(parseEnumeration).filter((candidate) => Array.isArray(candidate));
-  const trailingGroup = /\(([^()]*)\)\s*$/.exec(normalizedEntry)?.[1];
-  const trailingChoice = trailingGroup ? parseEnumeration(trailingGroup) : null;
   const candidates = explicitChoices.length > 0
     ? explicitChoices
-    : (trailingChoice ? [trailingChoice] : []);
+    : commaGroups.map(parseEnumeration).filter((candidate) => Array.isArray(candidate));
   if (candidates.length === 0) {
     throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
   }
@@ -214,7 +212,14 @@ function documentedEffortLevels(entry) {
   if (distinct.size !== 1) {
     throw new Error("Claude CLI help exposes multiple conflicting review effort choice lists");
   }
-  const supported = distinct.values().next().value.filter((effort) => CLAUDE_REVIEW_EFFORTS.includes(effort));
+  const documented = distinct.values().next().value;
+  if (documented.some(
+    (effort) => CLAUDE_REVIEW_EFFORTS.includes(effort.toLowerCase())
+      && !CLAUDE_REVIEW_EFFORTS.includes(effort),
+  )) {
+    throw new Error("Claude CLI help documents review effort levels with unsupported casing");
+  }
+  const supported = documented.filter((effort) => CLAUDE_REVIEW_EFFORTS.includes(effort));
   if (supported.length === 0) {
     throw new Error("Claude CLI help does not document a factory-supported review effort");
   }
@@ -695,7 +700,11 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   if (evidence.evidenceKind !== "local-attestation" || evidence.baseRef !== BASE_REF || evidence.verdict !== "clean") {
     throw new Error("unsupported or non-clean Claude review attestation");
   }
-  assertClaudeReviewTimeoutMs(evidence.invocation?.timeoutMs);
+  try {
+    assertClaudeReviewTimeoutMs(evidence.invocation?.timeoutMs);
+  } catch (error) {
+    throw new Error("Claude review attestation records an unsupported review timeout", { cause: error });
+  }
   if (!evidence.diff || typeof evidence.diff !== "object" || !evidence.rawResponse || typeof evidence.rawResponse !== "object"
     || !evidence.claude?.capabilities?.help || typeof evidence.claude.capabilities.help !== "object"
     || !evidence.claude?.capabilities?.authHelp || typeof evidence.claude.capabilities.authHelp !== "object") {
@@ -788,6 +797,9 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     const verified = await verifyClaudeReviewEvidence({ evidencePath: values["verify-evidence"], repoRoot: values["repo-root"] });
     stdout.write(`${JSON.stringify({ ok: true, evidenceKind: verified.evidence.evidenceKind, evidencePath: values["verify-evidence"], headSha: verified.evidence.headSha })}\n`);
     return;
+  }
+  if (values["timeout-ms"] !== undefined && !/^[1-9][0-9]*$/.test(values["timeout-ms"])) {
+    throw new Error(`review timeout must be an integer between 1 and ${MAX_CLAUDE_REVIEW_TIMEOUT_MS} milliseconds`);
   }
   const timeoutMs = values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]);
   assertClaudeReviewTimeoutMs(timeoutMs);

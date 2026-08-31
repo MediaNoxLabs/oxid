@@ -227,9 +227,8 @@ as a review pass. New effort-bound attestations use schema v3. Version 2
 records do not bind effort and are intentionally rejected after this upgrade;
 rerun the exact-head review to issue a v3 record instead of relabeling old
 evidence. These records live in private local state outside the repository; at
-this migration checkpoint, a repository-wide audit found no separate script or
-CI parser for the local-attestation evidence kind. The wrapper verifier remains
-the evidence authority.
+this migration checkpoint, the wrapper verifier remains the repository's
+evidence authority. In-flight v2 records must be rerun rather than translated.
 
 For a large diff that cannot finish inside five minutes, split the issue and PR
 at a coherent architecture boundary. A reviewer may select `--effort low` for a
@@ -251,6 +250,10 @@ test update. This is wrapper-generated operational evidence that the value was
 validated and placed in the constructed argv; it cannot independently prove
 what argv the process received or that the provider honored the requested
 effort internally.
+
+Safety-critical flags remain exact, case-sensitive long-option matches in the
+capability probe. Only the non-safety `--effort` entry may include a short alias;
+the long option and documented level casing must still match exactly.
 
 This is **local attestational evidence**, not cryptographic reviewer-identity,
 GitHub-hosted, or dev-loops-native provenance. Caller-supplied tracker data and

@@ -1535,6 +1535,25 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   const followingAliasCapabilities = assertClaudeHelpCapabilities(followingAliasHelp, [2, 1, 228]);
   assert.deepEqual(followingAliasCapabilities.effortLevels, CLAUDE_REVIEW_EFFORTS);
   assert.doesNotMatch(followingAliasCapabilities.effortHelpEntry, /--environment/);
+  const followingShortOnlyHelp = fixtureClaudeHelp
+    .replace("(low, medium, high, xhigh, max)", "levels follow")
+    .replace("\n  --safe-mode", "\n  -v <mode> (low, medium, high, xhigh, max)\n  --safe-mode");
+  assert.throws(
+    () => assertClaudeHelpCapabilities(followingShortOnlyHelp, [2, 1, 228]),
+    /recognizable review effort choice list/,
+  );
+  const enumerationBeforeDefault = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    '(low, medium, high, xhigh, max) (default: "medium")',
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(enumerationBeforeDefault, [2, 1, 228]).effortLevels,
+    CLAUDE_REVIEW_EFFORTS,
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("low", "Low"), [2, 1, 228]),
+    /unsupported casing/,
+  );
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "with a bounded level"), [2, 1, 228]),
     /recognizable review effort choice list/,
@@ -1595,12 +1614,16 @@ test("Claude review CLI rejects invalid resource arguments before model executio
     ], { stdout: { write() {} } }),
     /effort must be one of/,
   );
-  for (const invalidTimeout of ["abc", "300001"]) {
+  for (const invalidTimeout of ["", "-1", "0", "1.5", "1e3", "300001"]) {
     await assert.rejects(
-      runClaudeReviewCli(["--timeout-ms", invalidTimeout]),
+      runClaudeReviewCli([`--timeout-ms=${invalidTimeout}`]),
       /review timeout must be an integer between 1 and 300000 milliseconds/,
     );
   }
+  await assert.rejects(
+    runClaudeReviewCli(["--timeout-ms", "1"]),
+    /--issue-contract-file is required/,
+  );
 });
 
 test("installed real Claude CLI smoke is explicit opt-in and never a default API dependency", async (t) => {
@@ -1900,7 +1923,7 @@ if (process.argv.includes("--version")) {
       repoRoot: repository,
       fetchBase: false,
     }),
-    /review timeout must be an integer between 1 and 300000 milliseconds/,
+    /attestation records an unsupported review timeout/,
   );
 
   await assert.rejects(runClaudeCurrentHeadReview({

@@ -82,7 +82,7 @@ once public releases begin.
   pass.
   New attestations use schema v3; rerun reviews whose legacy v2 evidence no
   longer verifies instead of relabeling records that did not capture effort.
-  In-flight branches must rerun the exact-head review; the migration sweep found
-  no separate repository-script parser or stale review-timeout documentation.
+  In-flight branches must rerun the exact-head review; legacy records are not
+  translated into the stronger shape.
   Verification reports this migration through the distinct
   `ClaudeReviewEvidenceVersionError` type rather than as a non-clean verdict.
