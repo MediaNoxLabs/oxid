@@ -8,6 +8,12 @@ once public releases begin.
 
 ## [Unreleased]
 
+### Changed
+
+- Exact-head Claude reviews now select and attest a bounded reasoning effort.
+  New attestations use schema v3; rerun reviews whose legacy v2 evidence no
+  longer verifies instead of relabeling records that did not capture effort.
+
 ### Added
 
 - Reproducible Nix development shell and build.

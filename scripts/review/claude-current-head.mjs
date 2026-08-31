@@ -148,7 +148,12 @@ export function assertClaudeHelpCapabilities(help, version) {
     throw new Error('Claude CLI help does not document --tools "" as the no-tools form');
   }
   const effortHelp = helpWindow(help, "--effort", 240);
-  if (!/\(\s*low\s*,\s*medium\s*,\s*high\s*,\s*xhigh\s*,\s*max\s*\)/.test(effortHelp)) {
+  const effortChoices = /\(([^()]*)\)/.exec(effortHelp)?.[1]
+    ?.split(",")
+    .map((effort) => effort.trim());
+  if (!Array.isArray(effortChoices)
+    || effortChoices.length !== CLAUDE_REVIEW_EFFORTS.length
+    || CLAUDE_REVIEW_EFFORTS.some((effort, index) => effortChoices[index] !== effort)) {
     throw new Error("Claude CLI help does not expose the required review effort levels");
   }
   return {
@@ -597,7 +602,7 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   } catch (error) {
     throw new Error(`Claude review evidence is not valid JSON: ${error.message}`, { cause: error });
   }
-  if (![2, 3].includes(evidence.schemaVersion) || evidence.evidenceKind !== "local-attestation" || evidence.baseRef !== BASE_REF || evidence.verdict !== "clean") {
+  if (evidence.schemaVersion !== 3 || evidence.evidenceKind !== "local-attestation" || evidence.baseRef !== BASE_REF || evidence.verdict !== "clean") {
     throw new Error("unsupported or non-clean Claude review attestation");
   }
   if (!evidence.diff || typeof evidence.diff !== "object" || !evidence.rawResponse || typeof evidence.rawResponse !== "object"
@@ -642,13 +647,13 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     || evidence.claude.capabilities.emptyToolsBasis !== "captured-help-and-bounded-version-contract") {
     throw new Error("Claude review attestation does not prove the empty tool-set capability");
   }
-  if (evidence.schemaVersion === 3) {
-    assertClaudeReviewEffort(evidence.invocation?.effort);
-    if (!Array.isArray(evidence.claude.capabilities.effortLevels)
-      || !CLAUDE_REVIEW_EFFORTS.every((effort, index) => evidence.claude.capabilities.effortLevels[index] === effort)
-      || evidence.claude.capabilities.effortLevels.length !== CLAUDE_REVIEW_EFFORTS.length) {
-      throw new Error("Claude review attestation does not bind the supported effort levels");
-    }
+  assertClaudeReviewEffort(evidence.invocation?.effort);
+  if (!Array.isArray(evidence.claude.capabilities.effortLevels)
+    || evidence.claude.capabilities.effortLevels.length !== capabilities.effortLevels.length
+    || capabilities.effortLevels.some(
+      (effort, index) => evidence.claude.capabilities.effortLevels[index] !== effort,
+    )) {
+    throw new Error("Claude review attestation does not bind the supported effort levels");
   }
   const parsed = parseClaudeReviewResult(rawResponse);
   if (parsed.observedSessionId !== evidence.claude?.observedSessionId || parsed.review.verdict !== "clean") {

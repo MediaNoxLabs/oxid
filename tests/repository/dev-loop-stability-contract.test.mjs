@@ -1459,6 +1459,10 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(", max", ""), [2, 1, 228]),
     /required review effort levels/,
   );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("low, medium", "medium, low"), [2, 1, 228]),
+    /required review effort levels/,
+  );
   assert.throws(() => assertClaudeAuthHelpCapabilities("Usage: claude auth status\n"), /default JSON output/);
   const calls = [];
   const capabilityProbe = probeClaudeCliCapabilities({
@@ -1589,6 +1593,7 @@ if (process.argv.includes("--version")) {
     claudeCommand: fakeClaude,
     issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
     fetchBase: false,
+    effort: "high",
   });
   assert.equal(result.evidence.headSha, headSha);
   assert.equal(result.evidence.baseSha, baseSha);
@@ -1598,7 +1603,7 @@ if (process.argv.includes("--version")) {
   assert.equal(result.evidence.claude.tools.length, 0);
   assert.equal(result.evidence.claude.capabilities.emptyToolsDisabled, true);
   assert.deepEqual(result.evidence.claude.capabilities.effortLevels, CLAUDE_REVIEW_EFFORTS);
-  assert.equal(result.evidence.invocation.effort, DEFAULT_CLAUDE_REVIEW_EFFORT);
+  assert.equal(result.evidence.invocation.effort, "high");
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
   assert.equal(path.isAbsolute(result.evidence.diff.path), false);
   assert.equal(path.isAbsolute(result.evidence.rawResponse.path), false);
@@ -1622,11 +1627,14 @@ if (process.argv.includes("--version")) {
   delete legacyEvidence.invocation.effort;
   delete legacyEvidence.claude.capabilities.effortLevels;
   await writeFile(legacyEvidencePath, `${JSON.stringify(legacyEvidence)}\n`, { mode: 0o600 });
-  assert.equal((await verifyClaudeReviewEvidence({
-    evidencePath: legacyEvidencePath,
-    repoRoot: repository,
-    fetchBase: false,
-  })).ok, true);
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: legacyEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /unsupported or non-clean/,
+  );
 
   const missingEffortEvidence = path.join(evidenceDir, "missing-effort.evidence.json");
   const missingEffort = structuredClone(result.evidence);
@@ -1639,6 +1647,32 @@ if (process.argv.includes("--version")) {
       fetchBase: false,
     }),
     /effort must be one of/,
+  );
+
+  const invalidEffortEvidencePath = path.join(evidenceDir, "invalid-effort.evidence.json");
+  const invalidEffortEvidence = structuredClone(result.evidence);
+  invalidEffortEvidence.invocation.effort = "unbounded";
+  await writeFile(invalidEffortEvidencePath, `${JSON.stringify(invalidEffortEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: invalidEffortEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /effort must be one of/,
+  );
+
+  const reorderedEffortEvidencePath = path.join(evidenceDir, "reordered-effort.evidence.json");
+  const reorderedEffortEvidence = structuredClone(result.evidence);
+  reorderedEffortEvidence.claude.capabilities.effortLevels.reverse();
+  await writeFile(reorderedEffortEvidencePath, `${JSON.stringify(reorderedEffortEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: reorderedEffortEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the supported effort levels/,
   );
 
   await assert.rejects(runClaudeCurrentHeadReview({
