@@ -5,8 +5,9 @@ use serde_json::json;
 
 use crate::{
     HeadlessWallet,
+    errors::invalid_empty_params,
     parameters::ClearDiagnosticsParams,
-    projections::{capability_manifest, diagnostic_snapshot_value, invalid_empty_params},
+    projections::{capability_manifest, diagnostic_snapshot_value},
     protocol::{Dispatch, Request, Response, params_are_empty},
 };
 

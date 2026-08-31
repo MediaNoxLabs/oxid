@@ -2,11 +2,16 @@
 
 use oxid_identity_application::{DidKeyAlgorithm, DidOperationConfirmation, DidUpdate};
 use oxid_identity_domain::VerificationRelationship;
+use oxid_passport_vault_application::PreparePassportVaultCallAction;
 use oxid_wallet_application::SensitiveOperationConfirmation;
+use oxid_wallet_domain::{WalletKeyAlgorithm, WalletKeyPurpose};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::protocol::Response;
+use crate::{
+    errors::{invalid_vault_amount, invalid_vault_policy_value},
+    protocol::{Dispatch, Response},
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -577,5 +582,150 @@ pub(super) fn dust_registration_draft_params(
             "invalid_params",
             format!("{method} requires only a string draftId"),
         )
+    })
+}
+
+pub(super) fn key_algorithm(value: &str) -> Option<WalletKeyAlgorithm> {
+    match value {
+        "ed25519" => Some(WalletKeyAlgorithm::Ed25519),
+        "p256" => Some(WalletKeyAlgorithm::P256),
+        "secp256k1-schnorr" => Some(WalletKeyAlgorithm::Secp256k1Schnorr),
+        "jubjub" => Some(WalletKeyAlgorithm::Jubjub),
+        _ => None,
+    }
+}
+
+pub(super) fn key_purpose(value: &str) -> Option<WalletKeyPurpose> {
+    match value {
+        "transaction" => Some(WalletKeyPurpose::Transaction),
+        "authentication" => Some(WalletKeyPurpose::Authentication),
+        "assertion" => Some(WalletKeyPurpose::Assertion),
+        "key_agreement" => Some(WalletKeyPurpose::KeyAgreement),
+        "recovery" => Some(WalletKeyPurpose::Recovery),
+        _ => None,
+    }
+}
+
+pub(super) fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    decode_hex_bounded(value, oxid_wallet_application::MAX_SIGNING_PAYLOAD_BYTES)
+}
+
+pub(super) fn decode_hex_bounded(value: &str, maximum_bytes: usize) -> Option<Vec<u8>> {
+    if value.is_empty()
+        || value.len() > maximum_bytes.checked_mul(2)?
+        || !value.len().is_multiple_of(2)
+        || !value.is_ascii()
+    {
+        return None;
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = hex_nibble(pair[0])?;
+            let low = hex_nibble(pair[1])?;
+            Some((high << 4) | low)
+        })
+        .collect()
+}
+
+const fn hex_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+pub(super) fn decimal_u128(value: &str) -> Option<u128> {
+    if value.is_empty()
+        || value.len() > 39
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return None;
+    }
+    value.parse().ok()
+}
+
+pub(super) fn policy_value(value: Option<String>) -> Result<Option<[u8; 32]>, ()> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_empty()
+        || value.trim() != value
+        || value.len() > 32
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() || byte == b' ')
+    {
+        return Err(());
+    }
+    let mut padded = [0_u8; 32];
+    padded[..value.len()].copy_from_slice(value.as_bytes());
+    Ok(Some(padded))
+}
+
+pub(super) fn vault_contract_call_action(
+    id: Option<String>,
+    action: VaultContractCallActionParams,
+) -> Result<PreparePassportVaultCallAction, Box<Dispatch>> {
+    Ok(match action {
+        VaultContractCallActionParams::Create {
+            minimum_age_years,
+            required_issuing_state,
+            required_document_number,
+            maximum_claim_amount,
+            initial_amount,
+        } => {
+            if decimal_u128(&maximum_claim_amount).is_none() {
+                return Err(Box::new(invalid_vault_amount(id, "maximumClaimAmount")));
+            }
+            if decimal_u128(&initial_amount).is_none() {
+                return Err(Box::new(invalid_vault_amount(id, "initialAmount")));
+            }
+            let required_issuing_state = policy_value(required_issuing_state).map_err(|()| {
+                Box::new(invalid_vault_policy_value(
+                    id.clone(),
+                    "requiredIssuingState",
+                ))
+            })?;
+            let required_document_number = policy_value(required_document_number)
+                .map_err(|()| Box::new(invalid_vault_policy_value(id, "requiredDocumentNumber")))?;
+            PreparePassportVaultCallAction::CreateLock {
+                minimum_age_years,
+                required_issuing_state,
+                required_document_number,
+                maximum_claim_amount,
+                initial_amount,
+            }
+        }
+        VaultContractCallActionParams::Deposit { lock_id, amount } => {
+            if decimal_u128(&amount).is_none() {
+                return Err(Box::new(invalid_vault_amount(id, "amount")));
+            }
+            PreparePassportVaultCallAction::DepositToLock { lock_id, amount }
+        }
+        VaultContractCallActionParams::Claim {
+            lock_id,
+            credential_id,
+            amount,
+        } => {
+            if decimal_u128(&amount).is_none() {
+                return Err(Box::new(invalid_vault_amount(id, "amount")));
+            }
+            PreparePassportVaultCallAction::ClaimFromLock {
+                lock_id,
+                credential_id,
+                amount,
+            }
+        }
+        VaultContractCallActionParams::Withdraw { lock_id, amount } => {
+            if decimal_u128(&amount).is_none() {
+                return Err(Box::new(invalid_vault_amount(id, "amount")));
+            }
+            PreparePassportVaultCallAction::WithdrawFromLock { lock_id, amount }
+        }
     })
 }

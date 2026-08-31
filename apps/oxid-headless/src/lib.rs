@@ -3,8 +3,12 @@
 #![forbid(unsafe_code)]
 #![recursion_limit = "256"]
 
+//! Versioned incoming adapter organized according to
+//! [ADR-0104](../../../docs/adr/0104-regrow-incoming-adapters-behind-capability-facades.md).
+
 mod accounts;
 mod dids;
+mod errors;
 mod identity_protocols;
 mod midnight_wallet;
 mod parameters;
@@ -142,6 +146,18 @@ impl HeadlessWallet {
             ));
         }
 
+        if !protocol::is_dispatch_method(&request.method) {
+            self.record_diagnostic(
+                DiagnosticCode::HeadlessMethodNotFound,
+                DiagnosticSeverity::Warning,
+            );
+            return Dispatch::continue_with(Response::error(
+                request.id,
+                "method_not_found",
+                "requested method is not implemented",
+            ));
+        }
+
         match request.method.as_str() {
             "system.capabilities" => self.capabilities(request),
             "system.diagnostics.snapshot" => self.diagnostics_snapshot(request),
@@ -264,17 +280,7 @@ impl HeadlessWallet {
             "identity.authentication.refuse" => self.refuse_self_issued_authentication(request),
             "identity.authentication.get" => self.get_self_issued_authentication(request),
             "identity.authentication.list" => self.list_self_issued_authentications(request),
-            _ => {
-                self.record_diagnostic(
-                    DiagnosticCode::HeadlessMethodNotFound,
-                    DiagnosticSeverity::Warning,
-                );
-                Dispatch::continue_with(Response::error(
-                    request.id,
-                    "method_not_found",
-                    "requested method is not implemented",
-                ))
-            }
+            _ => unreachable!("dispatch allowlist and router must stay in lockstep"),
         }
     }
 
@@ -290,6 +296,3 @@ impl HeadlessWallet {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

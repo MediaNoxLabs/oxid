@@ -21,6 +21,10 @@ use serde_json::json;
 
 use crate::{
     HeadlessWallet,
+    errors::{
+        credential_error, credential_issuance_error, credential_presentation_error,
+        identity_request_routing_error, invalid_empty_params, self_issued_authentication_error,
+    },
     parameters::{
         AcceptCredentialIssuanceParams, AcceptCredentialPresentationParams,
         AcceptSelfIssuedAuthenticationParams, CredentialIssuanceParams, CredentialParams,
@@ -30,10 +34,8 @@ use crate::{
         SelfIssuedAuthenticationParams,
     },
     projections::{
-        credential_disclosure_plan_value, credential_disclosure_value, credential_error,
-        credential_issuance_error, credential_issuance_value, credential_presentation_error,
-        credential_presentation_value, credential_value, identity_request_routing_error,
-        invalid_empty_params, self_issued_authentication_error, self_issued_authentication_value,
+        credential_disclosure_plan_value, credential_disclosure_value, credential_issuance_value,
+        credential_presentation_value, credential_value, self_issued_authentication_value,
     },
     protocol::{Dispatch, Request, Response, params_are_empty},
 };

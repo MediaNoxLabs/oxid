@@ -8,10 +8,12 @@ use serde_json::json;
 
 use crate::{
     HeadlessWallet,
+    errors::{did_error, invalid_empty_params},
     parameters::{
-        CreateDidParams, DeactivateDidParams, DidParams, DidUpdateParams, SignDidParams, did_update,
+        CreateDidParams, DeactivateDidParams, DidParams, DidUpdateParams, SignDidParams,
+        decode_hex, did_update,
     },
-    projections::{decode_hex, did_error, did_record_value, encode_hex, invalid_empty_params},
+    projections::{did_record_value, encode_hex},
     protocol::{Dispatch, Request, Response, params_are_empty},
 };
 

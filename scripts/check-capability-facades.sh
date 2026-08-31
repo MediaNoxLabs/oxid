@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+# Enforces docs/adr/0104-regrow-incoming-adapters-behind-capability-facades.md.
 
 set -euo pipefail
 export LC_ALL=C
@@ -143,6 +144,7 @@ done < <(jq -r '.crates[].sourceRoot' "$baseline")
 inventory="$temporary_directory/inventory"
 unsorted_inventory="$temporary_directory/unsorted-inventory"
 index_entries="$temporary_directory/index-entries"
+: >"$unsorted_inventory"
 if ! git -C "$repository_root" ls-files -s -z -- "${source_roots[@]}" >"$index_entries"; then
   fail "could not enumerate governed index entries."
 fi
@@ -174,7 +176,7 @@ while IFS= read -r -d '' entry; do
     *[!0-9a-f]*|'') fail "governed Rust path '$(display_path "$path")' has an invalid indexed object ID." ;;
   esac
 
-  if ! lines="$(git -C "$repository_root" cat-file blob "$object_id" | wc -l | tr -d ' ')"; then
+  if ! lines="$(git -C "$repository_root" cat-file blob "$object_id" | awk 'END { print NR }')"; then
     fail "could not read indexed blob for governed Rust path '$(display_path "$path")'."
   fi
   printf '%s\t%s\n' "$(encode_path "$path")" "$lines" >>"$unsorted_inventory"

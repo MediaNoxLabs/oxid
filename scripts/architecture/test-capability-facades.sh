@@ -78,6 +78,18 @@ printf 'one\ntwo\nthree\n' >"$over_limit_repo/fixture/src/lib.rs"
 git -C "$over_limit_repo" add fixture/src/lib.rs
 expect_failure "$over_limit_repo" "façade 'fixture/src/lib.rs' has 3 lines; path maximum is 2"
 
+unterminated_over_limit_repo="$fixture_root/unterminated-over-limit"
+init_fixture "$unterminated_over_limit_repo"
+printf 'one\ntwo\nthree' >"$unterminated_over_limit_repo/fixture/src/lib.rs"
+git -C "$unterminated_over_limit_repo" add fixture/src/lib.rs
+expect_failure "$unterminated_over_limit_repo" "façade 'fixture/src/lib.rs' has 3 lines; path maximum is 2"
+
+empty_source_repo="$fixture_root/empty-source"
+init_fixture "$empty_source_repo"
+rm -rf "$empty_source_repo/fixture/src"
+git -C "$empty_source_repo" add -u fixture/src
+expect_failure "$empty_source_repo" "façade 'fixture/src/lib.rs' is missing from the indexed inventory"
+
 unowned_repo="$fixture_root/unowned"
 init_fixture "$unowned_repo"
 printf 'orphan\n' >"$unowned_repo/fixture/src/orphan.rs"

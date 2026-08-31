@@ -14,19 +14,22 @@ use serde_json::{Value, json};
 
 use crate::{
     HeadlessWallet,
+    errors::{
+        invalid_empty_params, invalid_vault_amount, invalid_vault_policy_value,
+        passport_vault_call_error, passport_vault_call_port_error,
+        passport_vault_contract_state_error, passport_vault_contract_state_read_error,
+        passport_vault_error,
+    },
     parameters::{
         AuthorizeVaultContractCallParams, ClaimVaultLockParams, CreateVaultLockParams,
         DecodeVaultContractStateParams, PrepareVaultContractCallParams,
         ReadVaultContractStateParams, SubmitVaultContractCallParams, VaultAmountParams,
-        VaultContractCallDraftParams,
+        VaultContractCallDraftParams, decimal_u128, decode_hex_bounded, policy_value,
+        vault_contract_call_action,
     },
     projections::{
-        decimal_u128, decode_hex_bounded, encode_hex, invalid_empty_params, invalid_vault_amount,
-        invalid_vault_policy_value, passport_vault_call_error, passport_vault_call_port_error,
-        passport_vault_call_preview_value, passport_vault_call_submission_status_value,
-        passport_vault_call_submission_value, passport_vault_contract_state_error,
-        passport_vault_contract_state_read_error, passport_vault_error, passport_vault_lock_value,
-        passport_vault_value, policy_value, vault_contract_call_action,
+        encode_hex, passport_vault_call_preview_value, passport_vault_call_submission_status_value,
+        passport_vault_call_submission_value, passport_vault_lock_value, passport_vault_value,
     },
     protocol::{Dispatch, Request, Response, params_are_empty},
 };

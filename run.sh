@@ -147,6 +147,7 @@ run_headless_integration() {
   # Name integration targets explicitly so this lane does not repeat the
   # headless unit tests already owned by `unit`.
   cargo test -p oxid-headless \
+    --test capability_contracts \
     --test persistent_profile_flow \
     --test portal_live_flow \
     --test portal_profile_flow \
