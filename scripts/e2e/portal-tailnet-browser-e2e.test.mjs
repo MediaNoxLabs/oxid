@@ -34,6 +34,21 @@ test("Tailnet browser E2E owns a private transformed mock and exact Serve cleanu
   assert.doesNotMatch(script, /android-portal-tailnet-physical/u);
 });
 
+test("Tailnet browser evidence keeps the QR/copy agreement payload-free under its redaction scan", () => {
+  assert.match(script, /qrAndCopyUriAgree:true/u);
+  assert.doesNotMatch(script, /qrAndCopyOfferAgree/u);
+});
+
+test("Tailnet browser E2E removes rejected evidence during failure cleanup", () => {
+  assert.match(script, /if \[ "\$incoming" -ne 0 \]; then\n    rm -f -- "\$EVIDENCE_ROOT\/evidence\.json"/u);
+});
+
+test("Tailnet browser E2E reports only sanitized navigation timing and path classes on failure", () => {
+  assert.match(script, /browser-navigation=%s/u);
+  assert.match(script, /navigation elapsed_ms=\[0-9\]\+ path_class=\(index\|mock\|pending\|complete\)/u);
+  assert.doesNotMatch(script, /browser-navigation=.*url/u);
+});
+
 test("Tailnet browser E2E is an explicit browser-only Just target and repository contract", () => {
   assert.match(justfile, /^portal-tailnet-browser-e2e:\n/mu);
   const runner = fs.readFileSync(path.join(root, "run.sh"), "utf8");

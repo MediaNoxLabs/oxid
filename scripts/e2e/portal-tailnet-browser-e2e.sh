@@ -40,15 +40,19 @@ cleanup_running=0
 baseline=""
 
 fail() {
-  local phase="$1" browser_phase=""
+  local phase="$1" browser_phase="" browser_navigation=""
   if [ "$phase" = browser-journey ] && [ -f "$PRIVATE_LOG" ]; then
     browser_phase="$(grep -E '^portal-tailnet-browser-flow: FAIL phase=(connect|page-enable|index|begin|approval|pending|complete|offer-check)$' "$PRIVATE_LOG" | tail -n 1 || true)"
     browser_phase="${browser_phase##*=}"
+    browser_navigation="$(grep -E '^portal-tailnet-browser-flow: navigation elapsed_ms=[0-9]+ path_class=(index|mock|pending|complete)$' "$PRIVATE_LOG" | awk '{print $3 ":" $4}' | paste -sd, - || true)"
   fi
   if [ -n "$browser_phase" ]; then
     printf 'portal-tailnet-browser-e2e: FAIL phase=%s browser=%s\n' "$phase" "$browser_phase" >&2
   else
     printf 'portal-tailnet-browser-e2e: FAIL phase=%s\n' "$phase" >&2
+  fi
+  if [ -n "$browser_navigation" ]; then
+    printf 'portal-tailnet-browser-e2e: browser-navigation=%s\n' "$browser_navigation" >&2
   fi
   exit 1
 }
@@ -106,6 +110,10 @@ cleanup() {
     cleanup_status=1
   fi
   rm -f -- "$READY_FIFO" "$CAPABILITY_FIFO" "$CONTROL_CONFIG"
+  if [ "$incoming" -ne 0 ]; then
+    rm -f -- "$EVIDENCE_ROOT/evidence.json"
+    [ ! -e "$EVIDENCE_ROOT/evidence.json" ] && [ ! -L "$EVIDENCE_ROOT/evidence.json" ] || cleanup_status=1
+  fi
   if [ "$cleanup_status" -eq 0 ]; then
     rm -rf -- "$RUNTIME"
     [ ! -e "$RUNTIME" ] && [ ! -L "$RUNTIME" ] || cleanup_status=1
@@ -256,7 +264,7 @@ after_cleanup="$(tailscale serve status --json | jq -S -c '.')"
 OXID_HEAD="$(git -C "$REPOSITORY_ROOT" rev-parse HEAD)"
 OXID_TREE="$(git -C "$REPOSITORY_ROOT" rev-parse 'HEAD^{tree}')"
 jq -cn --arg head "$OXID_HEAD" --arg tree "$OXID_TREE" --arg commit "$PORTAL_COMMIT" --arg portal_tree "$PORTAL_TREE" '
-  {schema:"oxid-tailnet-browser-same-origin-v1",oxid:{head:$head,tree:$tree},portal:{integrationCommit:$commit,integrationTree:$portal_tree},browser:"chromium-headless",acceptance:{browserOnly:true,checkoutClean:true,exactServeRestoration:true,freshRuntime:true,httpsSingleOrigin:true,mockApprovalReached:true,pendingReached:true,completeReached:true,qrAndCopyOfferAgree:true}}
+  {schema:"oxid-tailnet-browser-same-origin-v1",oxid:{head:$head,tree:$tree},portal:{integrationCommit:$commit,integrationTree:$portal_tree},browser:"chromium-headless",acceptance:{browserOnly:true,checkoutClean:true,exactServeRestoration:true,freshRuntime:true,httpsSingleOrigin:true,mockApprovalReached:true,pendingReached:true,completeReached:true,qrAndCopyUriAgree:true}}
 ' >"$EVIDENCE_ROOT/evidence.json"
 chmod 600 "$EVIDENCE_ROOT/evidence.json"
 if grep -Eqi 'https?://|localhost|127\.0\.0\.1|openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|credential|offer|session|path|pid|timestamp' "$EVIDENCE_ROOT/evidence.json"; then
