@@ -4,7 +4,7 @@
 
 use std::{error::Error, fmt};
 
-use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
+use oxid_foundation::{UnixTimestampMillis, opaque_id_type};
 
 mod chain;
 mod dust_registration;
@@ -14,46 +14,16 @@ pub use chain::*;
 pub use dust_registration::*;
 pub use transaction::*;
 
-/// Stable identifier for one wallet profile.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct WalletProfileId(OpaqueId);
-
-impl WalletProfileId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    /// Stable identifier for one wallet profile.
+    pub struct WalletProfileId;
+    display;
 }
 
-impl fmt::Display for WalletProfileId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-/// Opaque handle for a protected key. The value never contains key material.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct WalletKeyReference(OpaqueId);
-
-impl WalletKeyReference {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-impl fmt::Display for WalletKeyReference {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
+opaque_id_type! {
+    /// Opaque handle for a protected key. The value never contains key material.
+    pub struct WalletKeyReference;
+    display;
 }
 
 /// User-facing public label for a protected key.
