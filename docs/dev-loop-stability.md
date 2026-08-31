@@ -227,11 +227,17 @@ records do not bind effort and are intentionally rejected after this upgrade;
 rerun the exact-head review to issue a v3 record instead of relabeling old
 evidence.
 
+For a large diff that cannot finish inside five minutes, split the issue and PR
+at a coherent architecture boundary. A reviewer may select `--effort low` for a
+genuinely low-risk diff, but must not lengthen the deadline or reinterpret a
+timeout as approval.
+
 The effort capability record is derived from the captured `--help` artifact,
-not from the CLI installed during later verification. Generation accepts
-reordered documented levels or added levels when every required bounded level
-remains available. Verification then requires the recorded set to match the set
-re-derived from that captured help and binds the selected effort to it.
+not from the CLI installed during later verification. Generation accepts an
+explicit comma- or pipe-delimited choice enumeration when every required
+bounded level remains available; its normalized documented set is recorded.
+Verification requires that record to match the set re-derived from the captured
+help and binds the selected effort to it.
 
 This is **local attestational evidence**, not cryptographic reviewer-identity,
 GitHub-hosted, or dev-loops-native provenance. Caller-supplied tracker data and

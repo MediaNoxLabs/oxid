@@ -1448,6 +1448,10 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.equal(assertClaudeAuthHelpCapabilities(fixtureClaudeAuthHelp).jsonOutput, true);
   assert.throws(() => assertClaudeHelpCapabilities("  --safe-mode\n  --toolsfoo\n", [2, 1, 228]), /required review flags/);
   assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(/^\s*--effort.*\n/m, ""), [2, 1, 228]),
+    /required review flags: --effort/,
+  );
+  assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('Use "" to disable all tools.', "Use defaults."), [2, 1, 228]),
     /no-tools form/,
   );
@@ -1637,40 +1641,59 @@ if (process.argv.includes("--version")) {
   await writeFakeClaude("cli-high");
   const issueContractPath = path.join(fixtureRoot, "issue-150.json");
   await writeFile(issueContractPath, JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }));
-  let cliOutput = "";
-  const priorPath = process.env.PATH;
-  process.env.PATH = `${fixtureRoot}${path.delimiter}${priorPath ?? ""}`;
-  try {
-    await runClaudeReviewCli([
-      "--issue", "150",
-      "--repo-root", repository,
-      "--evidence-dir", evidenceDir,
-      "--issue-contract-file", issueContractPath,
-      "--expected-head", headSha,
-      "--effort", "high",
-    ], { stdout: { write(chunk) { cliOutput += chunk; } } });
-    const highEvidence = JSON.parse(cliOutput);
-    assert.equal(highEvidence.invocation.effort, "high");
-    assert.equal(highEvidence.invocation.timeoutMs, 300_000);
-    assert.equal(highEvidence.verdict, "clean");
+  const cliScript = path.join(repoRoot, "scripts", "review", "claude-current-head.mjs");
+  const cliEnvironment = { ...process.env, PATH: `${fixtureRoot}${path.delimiter}${process.env.PATH ?? ""}` };
+  const highOutput = execFileSync(process.execPath, [
+    cliScript,
+    "--issue", "150",
+    "--repo-root", repository,
+    "--evidence-dir", evidenceDir,
+    "--issue-contract-file", issueContractPath,
+    "--expected-head", headSha,
+    "--effort", "high",
+  ], { encoding: "utf8", env: cliEnvironment });
+  const highEvidence = JSON.parse(highOutput);
+  assert.equal(highEvidence.invocation.effort, "high");
+  assert.equal(highEvidence.invocation.timeoutMs, 300_000);
+  assert.equal(highEvidence.verdict, "clean");
 
-    await writeFakeClaude("cli-medium");
-    cliOutput = "";
-    await runClaudeReviewCli([
-      "--issue", "150",
-      "--repo-root", repository,
-      "--evidence-dir", evidenceDir,
-      "--issue-contract-file", issueContractPath,
-      "--expected-head", headSha,
-    ], { stdout: { write(chunk) { cliOutput += chunk; } } });
-    const defaultEvidence = JSON.parse(cliOutput);
-    assert.equal(defaultEvidence.invocation.effort, "medium");
-    assert.equal(defaultEvidence.invocation.timeoutMs, 300_000);
-    assert.equal(defaultEvidence.verdict, "clean");
-  } finally {
-    if (priorPath === undefined) delete process.env.PATH;
-    else process.env.PATH = priorPath;
-  }
+  await writeFakeClaude("cli-medium");
+  const defaultOutput = execFileSync(process.execPath, [
+    cliScript,
+    "--issue", "150",
+    "--repo-root", repository,
+    "--evidence-dir", evidenceDir,
+    "--issue-contract-file", issueContractPath,
+    "--expected-head", headSha,
+  ], { encoding: "utf8", env: cliEnvironment });
+  const defaultEvidence = JSON.parse(defaultOutput);
+  assert.equal(defaultEvidence.invocation.effort, "medium");
+  assert.equal(defaultEvidence.invocation.timeoutMs, 300_000);
+  assert.equal(defaultEvidence.verdict, "clean");
+
+  const defaultTimeouts = [];
+  const timeoutRunner = (_command, args, options = {}) => {
+    if (args[0] === "--version") return { status: 0, stdout: "2.1.228 (Claude Code)\n", stderr: "" };
+    if (args[0] === "--help") return { status: 0, stdout: fixtureClaudeHelp, stderr: "" };
+    if (args.at(-1) === "--help") return { status: 0, stdout: fixtureClaudeAuthHelp, stderr: "" };
+    if (args.at(-1) === "--json") return { status: 0, stdout: JSON.stringify({ loggedIn: true }), stderr: "" };
+    defaultTimeouts.push(options.timeout);
+    return { status: null, stdout: "", stderr: "", signal: "SIGTERM", error: { code: "ETIMEDOUT" } };
+  };
+  await assert.rejects(
+    runClaudeCurrentHeadReview({
+      issue: 150,
+      repoRoot: repository,
+      evidenceDir,
+      expectedHead: headSha,
+      claudeCommand: fakeClaude,
+      issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+      fetchBase: false,
+      claudeRunner: timeoutRunner,
+    }),
+    /timed out or was terminated after 300000ms/,
+  );
+  assert.deepEqual(defaultTimeouts, [300_000]);
 
   const legacyEvidencePath = path.join(evidenceDir, "legacy-v2.evidence.json");
   const legacyEvidence = structuredClone(result.evidence);
@@ -1963,6 +1986,18 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
   assert.match(config, /^  stopAt: \[\]$/m);
   assert.match(config, /^  humanMergeOnly: false$/m);
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
+});
+
+test("Claude schema-v3 verifier has no un-migrated repository consumers", () => {
+  const consumers = execFileSync(
+    "git",
+    ["grep", "-l", "verifyClaudeReviewEvidence", "--", "scripts", "tests"],
+    { cwd: repoRoot, encoding: "utf8" },
+  ).trim().split("\n").sort();
+  assert.deepEqual(consumers, [
+    "scripts/review/claude-current-head.mjs",
+    "tests/repository/dev-loop-stability-contract.test.mjs",
+  ]);
 });
 
 test("upstream-only gaps are linked and speculative local patches are forbidden", async () => {

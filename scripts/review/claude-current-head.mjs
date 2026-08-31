@@ -146,14 +146,16 @@ function helpEntry(help, flag) {
 function documentedEffortLevels(help) {
   const entry = helpEntry(help, "--effort");
   const groups = [...entry.matchAll(/\(([^()]*)\)/g)].map((match) => match[1]);
-  const choices = [...entry.matchAll(/choices?\s*:\s*([^\n]+)/gi)].map((match) => match[1]);
-  const candidates = [...groups, ...choices].map((candidate) => [
-    ...new Set(
-      [...candidate.matchAll(/["']?([a-z][a-z0-9-]*)["']?/gi)]
-        .map((match) => match[1])
-        .filter((token) => token.toLowerCase() !== "choices"),
-    ),
-  ]);
+  const choices = [...entry.matchAll(/choices?\s*:\s*([^\n)]+)/gi)].map((match) => match[1]);
+  const parseEnumeration = (candidate) => {
+    if (!/[,|]/.test(candidate)) return null;
+    const tokens = candidate.split(/[,|]/).map((token) => token.trim().replace(/^["']|["']$/g, ""));
+    if (tokens.some((token) => !/^[a-z][a-z0-9-]*$/i.test(token))) return null;
+    return [...new Set(tokens.map((token) => token.toLowerCase()))];
+  };
+  const candidates = [...choices, ...groups]
+    .map(parseEnumeration)
+    .filter((candidate) => Array.isArray(candidate));
   const complete = candidates.find((candidate) => CLAUDE_REVIEW_EFFORTS.every((effort) => candidate.includes(effort)));
   if (complete) return complete;
   const partial = candidates.find((candidate) => CLAUDE_REVIEW_EFFORTS.some((effort) => candidate.includes(effort)));
