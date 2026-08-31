@@ -303,6 +303,8 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(config, /^  fanOut: 2$/m);
   assert.match(config, /^  stopOnLowSignal: true$/m);
   assert.match(config, /^  maxFanoutReviewers: 2$/m);
+  assert.match(config, /^  requireFanoutEvidence: false$/m);
+  assert.match(config, /^  requireFanoutProvenance: false$/m);
   const scan = await read(".github/workflows/scan.yml");
   const scanJobStart = scan.indexOf("  scan:");
   assert.ok(scanJobStart >= 0, "scan.yml: scan job");
