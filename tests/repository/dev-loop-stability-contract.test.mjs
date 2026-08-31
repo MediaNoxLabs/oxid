@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -33,15 +33,25 @@ import { preflightGh } from "../../scripts/github/preflight-gh.mjs";
 import { GH_REST_MAX_BUFFER_BYTES, runGhCommand } from "../../scripts/github/rest-client.mjs";
 import {
   assertClaudeAuthHelpCapabilities,
+  assertAttestedReviewEffort,
+  assertClaudeEffortCapability,
   assertClaudeHelpCapabilities,
   assertMinimumClaudeVersion,
+  assertClaudeReviewMaxBudgetUsd,
+  CLAUDE_REVIEW_EFFORTS,
+  DEFAULT_CLAUDE_REVIEW_EFFORT,
   MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
+  MAXIMUM_CLAUDE_REVIEW_BUDGET_USD,
   buildClaudeInvocation,
+  claudeReviewCliFailure,
+  ClaudeReviewEvidenceVersionError,
   ClaudeReviewFindingsError,
+  MAX_CLAUDE_REVIEW_TIMEOUT_MS,
   MAX_REVIEW_DIFF_BYTES,
   parseClaudeReviewResult,
   parseClaudeVersion,
   probeClaudeCliCapabilities,
+  runCli as runClaudeReviewCli,
   runClaudeCurrentHeadReview,
   verifyClaudeReviewEvidence,
 } from "../../scripts/review/claude-current-head.mjs";
@@ -70,13 +80,20 @@ const fixtureClaudeHelp = [
   "  --output-format <format>",
   "  --json-schema <schema>",
   "  --max-budget-usd <amount>",
+  "  --effort <level> (low, medium, high, xhigh, max)",
   "  --safe-mode",
   '  --tools <tools...> Specify tools. Use "" to disable all tools.',
   "  --no-session-persistence",
   '  --permission-mode <mode> (choices: "acceptEdits", "dontAsk", "plan")',
   "  --system-prompt <prompt>",
 ].join("\n");
+// Captured verbatim from the installed Claude Code 2.1.228 general help.
+const capturedClaudeEffortEntry = [
+  "  --effort <level>                      Effort level for the current session",
+  "                                        (low, medium, high, xhigh, max)",
+].join("\n");
 const fixtureClaudeAuthHelp = "Usage: claude auth status [options]\n  --json Output as JSON (default)\n";
+const fixtureClaudeCliEfforts = ["low", "medium", "high", "xhigh", "max"];
 
 async function realMkdtemp(prefix) {
   return realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
@@ -1425,6 +1442,23 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.ok(toolsIndex >= 0);
   assert.equal(invocation.args[toolsIndex + 1], "");
   assert.ok(invocation.args.includes("--no-session-persistence"));
+  const effortIndex = invocation.args.indexOf("--effort");
+  assert.ok(effortIndex >= 0);
+  assert.equal(invocation.args[effortIndex + 1], DEFAULT_CLAUDE_REVIEW_EFFORT);
+  assert.deepEqual(CLAUDE_REVIEW_EFFORTS, ["medium", "high", "xhigh", "max"]);
+  assert.equal(assertAttestedReviewEffort("medium"), "medium");
+  assert.throws(() => assertAttestedReviewEffort("low"), /must be one of: medium, high, xhigh, max/);
+  assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
+  assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be one of/);
+  assert.match(new ClaudeReviewEvidenceVersionError(4).message, /upgrade the review wrapper/);
+  assert.equal(assertClaudeReviewMaxBudgetUsd(0.01), 0.01);
+  assert.equal(assertClaudeReviewMaxBudgetUsd("10"), 10);
+  assert.equal(assertClaudeReviewMaxBudgetUsd(MAXIMUM_CLAUDE_REVIEW_BUDGET_USD), 10);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(0), /positive and no more than 10 USD/);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(11), /positive and no more than 10 USD/);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(Number.POSITIVE_INFINITY), /positive and no more than 10 USD/);
+  const stringBudgetInvocation = buildClaudeInvocation({ maxBudgetUsd: "10" });
+  assert.equal(stringBudgetInvocation.args[stringBudgetInvocation.args.indexOf("--max-budget-usd") + 1], "10");
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
   assert.deepEqual(assertMinimumClaudeVersion([2, 1, 228]), [2, 1, 228]);
   assert.throws(() => assertMinimumClaudeVersion([2, 1, 227]), /unsupported; require >= 2\.1\.228 and < 2\.2\.0/);
@@ -1436,12 +1470,186 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.equal(assertClaudeAuthHelpCapabilities(fixtureClaudeAuthHelp).jsonOutput, true);
   assert.throws(() => assertClaudeHelpCapabilities("  --safe-mode\n  --toolsfoo\n", [2, 1, 228]), /required review flags/);
   assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(/^\s*--effort.*\n/m, ""), [2, 1, 228]),
+    /required review flags: --effort/,
+  );
+  const duplicateEffortHelp = fixtureClaudeHelp.replace(
+    "  --effort <level> (low, medium, high, xhigh, max)",
+    "  --effort <level> (low, high)\n  --effort <level> (low, medium, high, xhigh, max)",
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(duplicateEffortHelp, [2, 1, 228]),
+    /multiple --effort option blocks/,
+  );
+  const splitAliasHelp = fixtureClaudeHelp.replace("  --effort", "  -E,\n  --effort");
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(splitAliasHelp, [2, 1, 228]).effortLevels,
+    fixtureClaudeCliEfforts,
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("  --safe-mode", "  -s, --safe-mode"), [2, 1, 228]),
+    /required review flags: --safe-mode/,
+  );
+  const crlfIndentedHelp = fixtureClaudeHelp
+    .replace("  --safe-mode", "    --safe-mode")
+    .replaceAll("\n", "\r\n");
+  assert.equal(assertClaudeHelpCapabilities(crlfIndentedHelp, [2, 1, 228]).emptyToolsDisabled, true);
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("--tools", "--TOOLS"), [2, 1, 228]),
+    /required review flags: --tools/,
+  );
+  assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('Use "" to disable all tools.', "Use defaults."), [2, 1, 228]),
     /no-tools form/,
   );
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('"dontAsk", ', ""), [2, 1, 228]),
     /dontAsk permission mode/,
+  );
+  const reducedEfforts = assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(", max", ""), [2, 1, 228]);
+  assert.deepEqual(reducedEfforts.effortLevels, ["low", "medium", "high", "xhigh"]);
+  assert.equal(assertClaudeEffortCapability("medium", reducedEfforts.effortLevels), "medium");
+  assert.throws(
+    () => assertClaudeEffortCapability("max", reducedEfforts.effortLevels),
+    /does not document the selected review effort: max/,
+  );
+  const noDefaultEfforts = assertClaudeHelpCapabilities(
+    fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "(low, high)"),
+    [2, 1, 228],
+  );
+  assert.deepEqual(noDefaultEfforts.effortLevels, ["low", "high"]);
+  assert.equal(assertClaudeEffortCapability("high", noDefaultEfforts.effortLevels), "high");
+  assert.throws(
+    () => assertClaudeEffortCapability("medium", noDefaultEfforts.effortLevels),
+    /does not document the selected review effort: medium/,
+  );
+  const reorderedEfforts = assertClaudeHelpCapabilities(
+    fixtureClaudeHelp.replace(
+      "(low, medium, high, xhigh, max)",
+      '(default: medium) (choices: "max", "low", "xhigh", "medium", "high", "none")',
+    ),
+    [2, 1, 228],
+  );
+  assert.deepEqual(reorderedEfforts.effortLevels, ["max", "low", "xhigh", "medium", "high"]);
+  const futureEffortHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    "(low, medium, high, xhigh, max, ultra)",
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(futureEffortHelp, [2, 1, 228]).effortLevels,
+    fixtureClaudeCliEfforts,
+  );
+  const describedEffortHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    "(low, medium, high, xhigh, max) Effort level for the session",
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(describedEffortHelp, [2, 1, 228]).effortLevels,
+    fixtureClaudeCliEfforts,
+  );
+  const aliasedMixedHelp = fixtureClaudeHelp.replace(
+    "  --effort <level> (low, medium, high, xhigh, max)",
+    '  -E, --effort <level> (choices: "low", "medium", "high", "xhigh", "max", default: "medium")',
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(aliasedMixedHelp, [2, 1, 228]).effortLevels,
+    fixtureClaudeCliEfforts,
+  );
+  const capturedEntryHelp = fixtureClaudeHelp.replace(
+    "  --effort <level> (low, medium, high, xhigh, max)",
+    capturedClaudeEffortEntry,
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortLevels,
+    fixtureClaudeCliEfforts,
+  );
+  assert.equal(
+    assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortHelpEntry,
+    capturedClaudeEffortEntry,
+  );
+  const wrappedChoicesHelp = fixtureClaudeHelp.replace(
+    "  --effort <level> (low, medium, high, xhigh, max)",
+    '  --effort <level> (choices: "low", "medium",\n      "high", "xhigh", "max")',
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(wrappedChoicesHelp, [2, 1, 228]).effortLevels,
+    fixtureClaudeCliEfforts,
+  );
+  const followingAliasHelp = fixtureClaudeHelp.replace(
+    "\n  --safe-mode",
+    "\n  -ef, --environment <id> (foreign, modes)\n  --safe-mode",
+  );
+  const followingAliasCapabilities = assertClaudeHelpCapabilities(followingAliasHelp, [2, 1, 228]);
+  assert.deepEqual(followingAliasCapabilities.effortLevels, fixtureClaudeCliEfforts);
+  assert.doesNotMatch(followingAliasCapabilities.effortHelpEntry, /--environment/);
+  const followingShortOnlyHelp = fixtureClaudeHelp
+    .replace("(low, medium, high, xhigh, max)", "levels follow")
+    .replace("\n  --safe-mode", "\n  -v <mode> (low, medium, high, xhigh, max)\n  --safe-mode");
+  assert.throws(
+    () => assertClaudeHelpCapabilities(followingShortOnlyHelp, [2, 1, 228]),
+    /recognizable review effort choice list/,
+  );
+  const unrelatedLatencyHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    "Effort profile (low, high) latency",
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(unrelatedLatencyHelp, [2, 1, 228]),
+    /recognizable review effort choice list/,
+  );
+  const commaProseHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    "(level for the session, see docs)",
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(commaProseHelp, [2, 1, 228]),
+    /recognizable review effort choice list/,
+  );
+  const enumerationBeforeDefault = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    '(low, medium, high, xhigh, max) (default: "medium")',
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(enumerationBeforeDefault, [2, 1, 228]).effortLevels,
+    fixtureClaudeCliEfforts,
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("low", "Low"), [2, 1, 228]),
+    /unsupported casing/,
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "with a bounded level"), [2, 1, 228]),
+    /recognizable review effort choice list/,
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "(medium)"), [2, 1, 228]),
+    /recognizable review effort choice list/,
+  );
+  const effortLastHelp = [
+    ...fixtureClaudeHelp.split("\n").filter((line) => !line.includes("--effort")),
+    "  --effort <level> (default: medium)",
+    "",
+    "Examples: unrelated modes (low, medium, high, xhigh, max)",
+  ].join("\n");
+  assert.throws(
+    () => assertClaudeHelpCapabilities(effortLastHelp, [2, 1, 228]),
+    /recognizable review effort choice list/,
+  );
+  const conflictingEffortHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    "(low, medium, high) (low, medium, xhigh, max)",
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(conflictingEffortHelp, [2, 1, 228]),
+    /multiple conflicting review effort choice lists/,
+  );
+  const explicitConflictHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    '(choices: "low", "medium", "high", "xhigh", "max") (low, medium)',
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(explicitConflictHelp, [2, 1, 228]),
+    /multiple conflicting review effort choice lists/,
   );
   assert.throws(() => assertClaudeAuthHelpCapabilities("Usage: claude auth status\n"), /default JSON output/);
   const calls = [];
@@ -1466,6 +1674,65 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.equal(parsed.observedSessionId, "session-1");
   assert.throws(() => parseClaudeReviewResult(JSON.stringify({ result: "No findings" })), /structured review result/);
   assert.throws(() => parseClaudeReviewResult(JSON.stringify({ structured_output: { verdict: "clean", findings: [{ severity: "blocker", message: "bad" }] } })), /clean verdict cannot contain findings/);
+});
+
+test("Claude review CLI rejects invalid resource arguments before model execution", async () => {
+  let help = "";
+  await runClaudeReviewCli(["--help"], { stdout: { write(chunk) { help += chunk; } } });
+  assert.match(help, /--timeout-ms INTEGER/);
+  assert.match(help, /--timeout-ms 300000 \(five minutes\)/);
+  assert.match(help, /Attested effort levels: medium, high, xhigh, max/);
+  assert.match(help, /--max-budget-usd NUMBER/);
+  assert.match(help, /--max-budget-usd 10/);
+  assert.match(help, /Budget must be positive and no more than 10 USD/);
+
+  await assert.rejects(
+    runClaudeReviewCli([
+      "--effort", "unbounded",
+    ], { stdout: { write() {} } }),
+    /effort must be one of/,
+  );
+  await assert.rejects(
+    runClaudeReviewCli(["--effort", "low"]),
+    /exact-head attestation effort must be one of/,
+  );
+  for (const invalidTimeout of ["", "-1", "0", "1.5", "1e3"]) {
+    await assert.rejects(
+      runClaudeReviewCli([`--timeout-ms=${invalidTimeout}`]),
+      /review timeout must use positive base-10 integer syntax/,
+    );
+  }
+  await assert.rejects(
+    runClaudeReviewCli(["--timeout-ms=300001"]),
+    /review timeout must be an integer between 1 and 300000 milliseconds/,
+  );
+  await assert.rejects(
+    runClaudeReviewCli(["--timeout-ms", "1"]),
+    /--issue-contract-file is required/,
+  );
+  for (const invalidBudget of ["", "-1", "0", "NaN", "Infinity", "0x10", "1e6", " 10 "]) {
+    await assert.rejects(
+      runClaudeReviewCli([`--max-budget-usd=${invalidBudget}`]),
+      /review max budget must use positive base-10 decimal syntax|review max budget must be positive and no more than 10 USD/,
+    );
+  }
+  await assert.rejects(
+    runClaudeReviewCli(["--max-budget-usd=10.01"]),
+    /review max budget must be positive and no more than 10 USD/,
+  );
+  await assert.rejects(
+    runClaudeReviewCli(["--max-budget-usd=0.50"]),
+    /--issue-contract-file is required/,
+  );
+});
+
+test("review migration note remains inside the Unreleased changelog section", async () => {
+  const changelog = await read("CHANGELOG.md");
+  const unreleased = changelog.indexOf("## [Unreleased]");
+  const nextRelease = changelog.indexOf("\n## [", unreleased + 1);
+  const unreleasedEnd = nextRelease < 0 ? changelog.length : nextRelease;
+  const reviewMigration = changelog.indexOf("Exact-head Claude reviews now select and attest a bounded reasoning effort");
+  assert.ok(unreleased >= 0 && reviewMigration > unreleased && reviewMigration < unreleasedEnd);
 });
 
 test("installed real Claude CLI smoke is explicit opt-in and never a default API dependency", async (t) => {
@@ -1505,6 +1772,10 @@ test("Claude runner binds clean exact-head evidence and rejects stale worktrees"
   git("add", "contract.txt");
   git("commit", "--quiet", "-m", "base");
   const baseSha = git("rev-parse", "HEAD");
+  const origin = path.join(fixtureRoot, "origin.git");
+  execFileSync("git", ["init", "--bare", "--quiet", origin]);
+  git("remote", "add", "origin", origin);
+  git("push", "--quiet", "origin", "HEAD:refs/heads/integration");
   git("update-ref", "refs/remotes/origin/integration", baseSha);
   await writeFile(path.join(repository, "contract.txt"), "base\nhead\n");
   git("add", "contract.txt");
@@ -1535,6 +1806,7 @@ if (process.argv.includes("--version")) {
   else if (mode === "nonzero") { process.stderr.write("fixture failure\\n"); process.exit(7); }
   else if (mode === "malformed") process.stdout.write("not json");
   else {
+    if (mode.startsWith("cli-") && process.argv[process.argv.indexOf("--effort") + 1] !== mode.slice(4)) process.exit(11);
     if (mode === "advance") execFileSync("git", ["-C", ${JSON.stringify(repository)}, "commit", "--allow-empty", "-m", "advance"]);
     process.stdout.write(JSON.stringify({
       session_id: "fixture-session",
@@ -1547,7 +1819,7 @@ if (process.argv.includes("--version")) {
 `);
     await chmod(fakeClaude, 0o755);
   };
-  await writeFakeClaude("clean");
+  await writeFakeClaude("cli-high");
 
   const result = await runClaudeCurrentHeadReview({
     issue: 150,
@@ -1557,15 +1829,22 @@ if (process.argv.includes("--version")) {
     claudeCommand: fakeClaude,
     issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
     fetchBase: false,
+    effort: "high",
   });
   assert.equal(result.evidence.headSha, headSha);
   assert.equal(result.evidence.baseSha, baseSha);
-  assert.equal(result.evidence.schemaVersion, 2);
+  assert.equal(result.evidence.schemaVersion, 3);
   assert.equal(result.evidence.evidenceKind, "local-attestation");
   assert.equal(result.evidence.claude.observedSessionId, "fixture-session");
   assert.equal(result.evidence.claude.tools.length, 0);
   assert.equal(result.evidence.claude.capabilities.emptyToolsDisabled, true);
+  assert.deepEqual(result.evidence.claude.capabilities.effortLevels, fixtureClaudeCliEfforts);
+  assert.equal(result.evidence.invocation.effort, "high");
+  assert.equal(result.evidence.invocation.minimumEffort, "medium");
+  assert.equal(result.evidence.invocation.maximumTimeoutMs, 300_000);
+  assert.equal(result.evidence.invocation.maximumBudgetUsd, 10);
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
+  assert.match(result.evidence.limitations.join(" "), /cannot prove the provider honored/);
   assert.equal(path.isAbsolute(result.evidence.diff.path), false);
   assert.equal(path.isAbsolute(result.evidence.rawResponse.path), false);
   assert.equal((await verifyClaudeReviewEvidence({ evidencePath: result.evidencePath, repoRoot: repository, fetchBase: false })).ok, true);
@@ -1581,6 +1860,319 @@ if (process.argv.includes("--version")) {
   }
   const exactGitDiff = execFileSync("git", ["diff", "--binary", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], { cwd: repository });
   assert.deepEqual(await readFile(path.join(evidenceDir, result.evidence.diff.path)), exactGitDiff);
+
+  await t.test("CLI propagates explicit and default effort into isolated evidence", async () => {
+    await writeFakeClaude("cli-high");
+    const issueContractPath = path.join(fixtureRoot, "issue-150.json");
+    await writeFile(issueContractPath, JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }));
+    const cliScript = path.join(repoRoot, "scripts", "review", "claude-current-head.mjs");
+    const cliEnvironment = { ...process.env, PATH: `${fixtureRoot}${path.delimiter}${process.env.PATH ?? ""}` };
+    const runFixtureCli = ({ effort, evidenceName, timeoutMs }) => {
+      const args = [
+        cliScript,
+        "--issue", "150",
+        "--repo-root", repository,
+        "--evidence-dir", path.join(fixtureRoot, evidenceName),
+        "--issue-contract-file", issueContractPath,
+        "--expected-head", headSha,
+      ];
+      if (effort) args.push("--effort", effort);
+      if (timeoutMs) args.push("--timeout-ms", timeoutMs);
+      return JSON.parse(execFileSync(process.execPath, args, { encoding: "utf8", env: cliEnvironment }));
+    };
+    const highEvidence = runFixtureCli({
+      effort: "high",
+      evidenceName: "cli-high-evidence",
+      timeoutMs: "300000",
+    });
+    assert.equal(highEvidence.invocation.effort, "high");
+    assert.equal(highEvidence.invocation.timeoutMs, 300_000);
+    assert.equal(highEvidence.verdict, "clean");
+
+    await writeFakeClaude("cli-medium");
+    const defaultEvidence = runFixtureCli({ evidenceName: "cli-default-evidence" });
+    assert.equal(defaultEvidence.invocation.effort, "medium");
+    assert.equal(defaultEvidence.invocation.timeoutMs, 300_000);
+    assert.equal(defaultEvidence.verdict, "clean");
+    await writeFakeClaude("clean");
+  });
+
+  await t.test("default five-minute timeout remains a hard failure", async () => {
+    assert.equal(MAX_CLAUDE_REVIEW_TIMEOUT_MS, 300_000);
+    await assert.rejects(
+      runClaudeCurrentHeadReview({ issue: 150, timeoutMs: MAX_CLAUDE_REVIEW_TIMEOUT_MS + 1 }),
+      /review timeout must be an integer between 1 and 300000 milliseconds/,
+    );
+    const defaultTimeouts = [];
+    const timeoutRunner = (_command, args, options = {}) => {
+      if (args[0] === "--version") return { status: 0, stdout: "2.1.228 (Claude Code)\n", stderr: "" };
+      if (args[0] === "--help") return { status: 0, stdout: fixtureClaudeHelp, stderr: "" };
+      if (args.at(-1) === "--help") return { status: 0, stdout: fixtureClaudeAuthHelp, stderr: "" };
+      if (args.at(-1) === "--json") return { status: 0, stdout: JSON.stringify({ loggedIn: true }), stderr: "" };
+      defaultTimeouts.push(options.timeout);
+      return { status: null, stdout: "", stderr: "", signal: "SIGTERM", error: { code: "ETIMEDOUT" } };
+    };
+    await assert.rejects(
+      runClaudeCurrentHeadReview({
+        issue: 150,
+        repoRoot: repository,
+        evidenceDir: path.join(fixtureRoot, "timeout-evidence"),
+        expectedHead: headSha,
+        claudeCommand: fakeClaude,
+        issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+        fetchBase: false,
+        claudeRunner: timeoutRunner,
+      }),
+      /timed out or was terminated after 300000ms/,
+    );
+    assert.deepEqual(defaultTimeouts, [300_000]);
+  });
+
+  await t.test("run path rejects an effort omitted by captured CLI capabilities", async () => {
+    let modelCalls = 0;
+    const restrictedHelp = fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "(low, medium)");
+    const restrictedRunner = (_command, args) => {
+      if (args[0] === "--version") return { status: 0, stdout: "2.1.228 (Claude Code)\n", stderr: "" };
+      if (args[0] === "--help") return { status: 0, stdout: restrictedHelp, stderr: "" };
+      if (args.at(-1) === "--help") return { status: 0, stdout: fixtureClaudeAuthHelp, stderr: "" };
+      if (args.at(-1) === "--json") return { status: 0, stdout: JSON.stringify({ loggedIn: true }), stderr: "" };
+      modelCalls += 1;
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    await assert.rejects(
+      runClaudeCurrentHeadReview({
+        issue: 150,
+        repoRoot: repository,
+        evidenceDir: path.join(fixtureRoot, "restricted-effort-evidence"),
+        expectedHead: headSha,
+        claudeCommand: fakeClaude,
+        issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+        effort: "high",
+        fetchBase: false,
+        claudeRunner: restrictedRunner,
+      }),
+      /does not document the selected review effort: high/,
+    );
+    assert.equal(modelCalls, 0);
+    const persisted = await readdir(path.join(fixtureRoot, "restricted-effort-evidence"));
+    assert.ok(persisted.some((file) => file.endsWith(".claude-help.txt")));
+    assert.ok(persisted.some((file) => file.endsWith(".claude-auth-help.txt")));
+  });
+
+  const legacyEvidencePath = path.join(evidenceDir, "legacy-v2.evidence.json");
+  const legacyEvidence = structuredClone(result.evidence);
+  legacyEvidence.schemaVersion = 2;
+  delete legacyEvidence.invocation.effort;
+  delete legacyEvidence.claude.capabilities.effortLevels;
+  await writeFile(legacyEvidencePath, `${JSON.stringify(legacyEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: legacyEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    (error) => error instanceof ClaudeReviewEvidenceVersionError
+      && error.code === "CLAUDE_REVIEW_EVIDENCE_VERSION"
+      && /schema version 2; rerun/.test(error.message),
+  );
+  const legacyCliFailure = claudeReviewCliFailure(new ClaudeReviewEvidenceVersionError(2));
+  assert.equal(legacyCliFailure.exitCode, 3);
+  assert.deepEqual(JSON.parse(legacyCliFailure.output), {
+    ok: false,
+    code: "CLAUDE_REVIEW_EVIDENCE_VERSION",
+    message: "unsupported Claude review attestation schema version 2; rerun the exact-head review",
+  });
+  const legacyCliProcess = spawnSync(process.execPath, [
+    path.join(repoRoot, "scripts", "review", "claude-current-head.mjs"),
+    "--verify-evidence", legacyEvidencePath,
+    "--repo-root", repository,
+  ], { encoding: "utf8" });
+  assert.equal(legacyCliProcess.status, 3);
+  assert.equal(legacyCliProcess.stdout, "");
+  assert.deepEqual(JSON.parse(legacyCliProcess.stderr), {
+    ok: false,
+    code: "CLAUDE_REVIEW_EVIDENCE_VERSION",
+    message: "unsupported Claude review attestation schema version 2; rerun the exact-head review",
+  });
+
+  const missingEffortEvidence = path.join(evidenceDir, "missing-effort.evidence.json");
+  const missingEffort = structuredClone(result.evidence);
+  delete missingEffort.invocation.effort;
+  await writeFile(missingEffortEvidence, `${JSON.stringify(missingEffort)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: missingEffortEvidence,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /attestation is missing the selected effort/,
+  );
+
+  const missingMaximumTimeoutEvidencePath = path.join(evidenceDir, "missing-maximum-timeout.evidence.json");
+  const missingMaximumTimeoutEvidence = structuredClone(result.evidence);
+  delete missingMaximumTimeoutEvidence.invocation.maximumTimeoutMs;
+  await writeFile(missingMaximumTimeoutEvidencePath, `${JSON.stringify(missingMaximumTimeoutEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: missingMaximumTimeoutEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the maximum review timeout/,
+  );
+
+  const missingMinimumEvidencePath = path.join(evidenceDir, "missing-minimum-effort.evidence.json");
+  const missingMinimumEvidence = structuredClone(result.evidence);
+  delete missingMinimumEvidence.invocation.minimumEffort;
+  await writeFile(missingMinimumEvidencePath, `${JSON.stringify(missingMinimumEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: missingMinimumEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the minimum review effort/,
+  );
+  const mismatchedMinimumEffortEvidencePath = path.join(evidenceDir, "mismatched-minimum-effort.evidence.json");
+  const mismatchedMinimumEffortEvidence = structuredClone(result.evidence);
+  mismatchedMinimumEffortEvidence.invocation.minimumEffort = "max";
+  await writeFile(mismatchedMinimumEffortEvidencePath, `${JSON.stringify(mismatchedMinimumEffortEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: mismatchedMinimumEffortEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the minimum review effort/,
+  );
+
+  const aboveCeilingBudgetEvidencePath = path.join(evidenceDir, "above-ceiling-budget.evidence.json");
+  const aboveCeilingBudgetEvidence = structuredClone(result.evidence);
+  aboveCeilingBudgetEvidence.invocation.maxBudgetUsd = 10.01;
+  await writeFile(aboveCeilingBudgetEvidencePath, `${JSON.stringify(aboveCeilingBudgetEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: aboveCeilingBudgetEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /attestation records an unsupported review budget/,
+  );
+  for (const [name, value] of [["string", "10"], ["boolean", true], ["array", [10]]]) {
+    const typedBudgetEvidencePath = path.join(evidenceDir, `${name}-budget.evidence.json`);
+    const typedBudgetEvidence = structuredClone(result.evidence);
+    typedBudgetEvidence.invocation.maxBudgetUsd = value;
+    await writeFile(typedBudgetEvidencePath, `${JSON.stringify(typedBudgetEvidence)}\n`, { mode: 0o600 });
+    await assert.rejects(
+      verifyClaudeReviewEvidence({
+        evidencePath: typedBudgetEvidencePath,
+        repoRoot: repository,
+        fetchBase: false,
+      }),
+      /attestation records an unsupported review budget/,
+    );
+  }
+
+  const missingMaximumBudgetEvidencePath = path.join(evidenceDir, "missing-maximum-budget.evidence.json");
+  const missingMaximumBudgetEvidence = structuredClone(result.evidence);
+  delete missingMaximumBudgetEvidence.invocation.maximumBudgetUsd;
+  await writeFile(missingMaximumBudgetEvidencePath, `${JSON.stringify(missingMaximumBudgetEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: missingMaximumBudgetEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the maximum review budget/,
+  );
+  const mismatchedMaximumBudgetEvidencePath = path.join(evidenceDir, "mismatched-maximum-budget.evidence.json");
+  const mismatchedMaximumBudgetEvidence = structuredClone(result.evidence);
+  mismatchedMaximumBudgetEvidence.invocation.maximumBudgetUsd = 9;
+  await writeFile(mismatchedMaximumBudgetEvidencePath, `${JSON.stringify(mismatchedMaximumBudgetEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: mismatchedMaximumBudgetEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the maximum review budget/,
+  );
+
+  const invalidEffortEvidencePath = path.join(evidenceDir, "invalid-effort.evidence.json");
+  const invalidEffortEvidence = structuredClone(result.evidence);
+  invalidEffortEvidence.invocation.effort = "unbounded";
+  await writeFile(invalidEffortEvidencePath, `${JSON.stringify(invalidEffortEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: invalidEffortEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /attestation records an unsupported selected effort/,
+  );
+
+  const belowFloorEffortEvidencePath = path.join(evidenceDir, "below-floor-effort.evidence.json");
+  const belowFloorEffortEvidence = structuredClone(result.evidence);
+  belowFloorEffortEvidence.invocation.effort = "low";
+  await writeFile(belowFloorEffortEvidencePath, `${JSON.stringify(belowFloorEffortEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: belowFloorEffortEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /attestation records an unsupported selected effort/,
+  );
+
+  const missingCapabilityEvidencePath = path.join(evidenceDir, "missing-effort-capability.evidence.json");
+  const missingCapabilityEvidence = structuredClone(result.evidence);
+  const reducedHelp = fixtureClaudeHelp.replace(", high", "");
+  const reducedHelpName = "missing-effort-capability.claude-help.txt";
+  await writeFile(path.join(evidenceDir, reducedHelpName), reducedHelp, { mode: 0o600 });
+  missingCapabilityEvidence.claude.capabilities.help = {
+    path: reducedHelpName,
+    sha256: createHash("sha256").update(reducedHelp).digest("hex"),
+    bytes: Buffer.byteLength(reducedHelp),
+  };
+  missingCapabilityEvidence.claude.capabilities.effortLevels = ["low", "medium", "xhigh", "max"];
+  missingCapabilityEvidence.claude.capabilities.effortHelpEntry = reducedHelp
+    .split("\n")
+    .find((line) => line.includes("--effort"));
+  await writeFile(missingCapabilityEvidencePath, `${JSON.stringify(missingCapabilityEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: missingCapabilityEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the selected effort to the captured CLI capabilities/,
+  );
+
+  const tamperedHelpEntryEvidencePath = path.join(evidenceDir, "tampered-effort-help-entry.evidence.json");
+  const tamperedHelpEntryEvidence = structuredClone(result.evidence);
+  tamperedHelpEntryEvidence.claude.capabilities.effortHelpEntry += " altered";
+  await writeFile(tamperedHelpEntryEvidencePath, `${JSON.stringify(tamperedHelpEntryEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: tamperedHelpEntryEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the captured effort help entry/,
+  );
+
+  const overlongTimeoutEvidencePath = path.join(evidenceDir, "overlong-timeout.evidence.json");
+  const overlongTimeoutEvidence = structuredClone(result.evidence);
+  overlongTimeoutEvidence.invocation.timeoutMs = MAX_CLAUDE_REVIEW_TIMEOUT_MS + 1;
+  await writeFile(overlongTimeoutEvidencePath, `${JSON.stringify(overlongTimeoutEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: overlongTimeoutEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /attestation records an unsupported review timeout/,
+  );
 
   await assert.rejects(runClaudeCurrentHeadReview({
     issue: 151,
@@ -1816,6 +2408,8 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
     assert.doesNotMatch(block, /^\s+- external-review$/m);
   }
   assert.match(config, /^  maxFanoutReviewers: 2$/m);
+  assert.match(config, /^  requireFanoutEvidence: false$/m);
+  assert.match(config, /^  requireFanoutProvenance: false$/m);
   assert.match(config, /^  stopAt: \[\]$/m);
   assert.match(config, /^  humanMergeOnly: false$/m);
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);

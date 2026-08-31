@@ -185,6 +185,8 @@ git fetch origin integration
 node scripts/review/claude-current-head.mjs \
   --issue <number> \
   --expected-head "$(git rev-parse HEAD)" \
+  --effort medium \
+  --timeout-ms 300000 \
   --issue-contract-file <tracker-export.json>
 
 node scripts/review/claude-current-head.mjs \
@@ -204,13 +206,72 @@ and a new captured capability pass; do not widen the range speculatively. The
 provider prompt receives only the diff artifact basename and digest, never its
 local absolute path. Claude runs outside the checkout in safe mode with an
 empty tool set and no session persistence, then records CLI account readiness,
-version, observed session id, timestamps, raw-output digest, exit status, and a
-structured verdict. It checks clean/head/base/exact-diff facts again afterward.
+version, selected effort, observed session id, timestamps, raw-output digest,
+exit status, and a structured verdict. It checks clean/head/base/exact-diff
+facts again afterward.
 Timeout, nonzero exit, malformed output, mutation, or a changed ref is a hard
 failure. A findings verdict is also a failed gate, but its structured findings
 attestation is written first so the next fix pass has durable evidence.
 Verification accepts only clean evidence and re-derives all revision facts, so
 a push or integration advance makes it stale.
+
+The wrapper passes `--effort medium` by default and records that choice in the
+attestation. Medium effort bounds reasoning cost while retaining a substantive
+review inside the five-minute default deadline; the example above states that
+deadline explicitly so copied commands retain the SLA if defaults later change.
+The installed CLI capability vocabulary is closed (`low`, `medium`, `high`,
+`xhigh`, or `max`), while the wrapper accepts only `medium`, `high`, `xhigh`,
+or `max` for an exact-head attestation.
+The selected level must also appear in the installed CLI's captured choice
+list. Accepted help grammar is deliberately narrow: one comma- or
+pipe-delimited enumeration must either follow the `--effort <level>` value,
+occupy a parenthesized continuation line, or carry an explicit `choices:`
+marker; an optional trailing `default:` or `recommended:` token is ignored.
+At least two known levels must remain after filtering. Any other layout is a
+capability-probe failure that requires a parser/test update. The wrapper and
+verifier reject deadlines above
+300,000 ms, so increasing effort cannot extend the SLA; a timeout never counts
+as a review pass. The recorded budget must be positive and no more than USD 10;
+the verifier binds that ceiling, which remains a cost limit rather than a spend
+target. The recorded `medium` effort floor and USD 10 budget ceiling are exact
+schema-v3 constants; changing either requires a new evidence schema and the
+same explicit migration treatment. New effort-bound attestations use
+schema v3. Version 2
+records do not bind effort and are intentionally rejected after this upgrade;
+rerun the exact-head review to issue a v3 record instead of relabeling old
+evidence. These records live in private local state outside the repository; at
+this migration checkpoint, the wrapper verifier remains the repository's
+evidence authority. In-flight v2 records must be rerun rather than translated;
+the pull request that changes this contract records the one-time consumer audit.
+The CLI reports this migration as JSON on stderr with exit status 3; successful
+verification JSON remains on stdout.
+
+For a large diff that cannot finish inside five minutes, split the issue and PR
+at a coherent architecture boundary; do not lower the attested review beneath
+`medium`, lengthen the deadline, or reinterpret a timeout as approval. `high`,
+`xhigh`, and `max` are useful only for small,
+reasoning-dense diffs that can still finish within the same cap; do not escalate
+effort to retry a timed-out large diff. Split that diff instead.
+
+The effort capability record is derived from the captured `--help` artifact,
+not from the CLI installed during later verification. Generation requires one
+unambiguous comma- or pipe-delimited enumeration in the `--effort` option block,
+ignores an optional trailing documented default annotation, then requires the
+selected factory-supported level to occur in that enumeration.
+The normalized factory-supported subset is recorded. Verification requires that
+record to match the subset re-derived from the captured help and binds the
+selected effort to it. The raw bounded `--effort` help entry is recorded for
+diagnosis. A help-layout change fails closed and requires an explicit parser and
+test update. The bounded entry ends at a blank, non-indented, or hyphen-leading
+line so a following option cannot supply the effort list; a conflicting layout
+also fails closed. This is wrapper-generated operational evidence that the value was
+validated and placed in the constructed argv; it cannot independently prove
+what argv the process received or that the provider honored the requested
+effort internally.
+
+Safety-critical flags remain exact, case-sensitive long-option matches in the
+capability probe. Only the non-safety `--effort` entry may include a short alias;
+the long option and documented level casing must still match exactly.
 
 This is **local attestational evidence**, not cryptographic reviewer-identity,
 GitHub-hosted, or dev-loops-native provenance. Caller-supplied tracker data and
