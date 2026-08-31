@@ -222,10 +222,16 @@ deadline explicitly so copied commands retain the SLA if defaults later change.
 The CLI capability set is closed (`low`, `medium`, `high`, `xhigh`, or `max`),
 but high-risk exact-head attestations enforce a recorded floor of `medium`.
 The selected level must also appear in the installed CLI's captured choice
-list. The wrapper and verifier reject deadlines above
+list. Accepted help grammar is deliberately narrow: one comma- or
+pipe-delimited enumeration must either follow the `--effort <level>` value,
+occupy a parenthesized continuation line, or carry an explicit `choices:`
+marker; an optional trailing `default:` or `recommended:` token is ignored.
+At least two known levels must remain after filtering. Any other layout is a
+capability-probe failure that requires a parser/test update. The wrapper and
+verifier reject deadlines above
 300,000 ms, so increasing effort cannot extend the SLA; a timeout never counts
-as a review pass. The recorded budget must be finite and at least USD 1, and
-the verifier binds that floor; the USD 10 default remains a cost ceiling rather
+as a review pass. The recorded budget must be from USD 1 through USD 10, and
+the verifier binds that range; the USD 10 default remains a cost ceiling rather
 than a spend target. New effort-bound attestations use schema v3. Version 2
 records do not bind effort and are intentionally rejected after this upgrade;
 rerun the exact-head review to issue a v3 record instead of relabeling old

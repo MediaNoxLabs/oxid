@@ -41,6 +41,7 @@ import {
   CLAUDE_REVIEW_EFFORTS,
   DEFAULT_CLAUDE_REVIEW_EFFORT,
   MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
+  MAXIMUM_CLAUDE_REVIEW_BUDGET_USD,
   MINIMUM_CLAUDE_REVIEW_BUDGET_USD,
   buildClaudeInvocation,
   claudeReviewCliFailure,
@@ -1452,8 +1453,10 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be one of/);
   assert.equal(assertClaudeReviewMaxBudgetUsd(MINIMUM_CLAUDE_REVIEW_BUDGET_USD), 1);
   assert.equal(assertClaudeReviewMaxBudgetUsd("10"), 10);
-  assert.throws(() => assertClaudeReviewMaxBudgetUsd(0.01), /finite number of at least 1 USD/);
-  assert.throws(() => assertClaudeReviewMaxBudgetUsd(Number.POSITIVE_INFINITY), /finite number of at least 1 USD/);
+  assert.equal(assertClaudeReviewMaxBudgetUsd(MAXIMUM_CLAUDE_REVIEW_BUDGET_USD), 10);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(0.01), /between 1 and 10 USD/);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(11), /between 1 and 10 USD/);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(Number.POSITIVE_INFINITY), /between 1 and 10 USD/);
   const stringBudgetInvocation = buildClaudeInvocation({ maxBudgetUsd: "10" });
   assert.equal(stringBudgetInvocation.args[stringBudgetInvocation.args.indexOf("--max-budget-usd") + 1], "10");
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
@@ -1594,6 +1597,14 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     () => assertClaudeHelpCapabilities(unrelatedLatencyHelp, [2, 1, 228]),
     /recognizable review effort choice list/,
   );
+  const commaProseHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    "(level for the session, see docs)",
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(commaProseHelp, [2, 1, 228]),
+    /recognizable review effort choice list/,
+  );
   const enumerationBeforeDefault = fixtureClaudeHelp.replace(
     "(low, medium, high, xhigh, max)",
     '(low, medium, high, xhigh, max) (default: "medium")',
@@ -1673,7 +1684,7 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   assert.match(help, /Attested effort levels: medium, high, xhigh, max/);
   assert.match(help, /--max-budget-usd NUMBER/);
   assert.match(help, /--max-budget-usd 10/);
-  assert.match(help, /Minimum budget: 1 USD/);
+  assert.match(help, /Budget range: 1-10 USD/);
 
   await assert.rejects(
     runClaudeReviewCli([
@@ -1699,27 +1710,38 @@ test("Claude review CLI rejects invalid resource arguments before model executio
     runClaudeReviewCli(["--timeout-ms", "1"]),
     /--issue-contract-file is required/,
   );
-  for (const invalidBudget of ["", "-1", "0", "NaN", "Infinity"]) {
+  for (const invalidBudget of ["", "-1", "0", "NaN", "Infinity", "0x10", "1e6", " 10 "]) {
     await assert.rejects(
       runClaudeReviewCli([`--max-budget-usd=${invalidBudget}`]),
-      /review max budget must be a finite number of at least 1 USD/,
+      /review max budget must use positive base-10 decimal syntax|review max budget must be between 1 and 10 USD/,
     );
   }
+  await assert.rejects(
+    runClaudeReviewCli(["--max-budget-usd=10.01"]),
+    /review max budget must be between 1 and 10 USD/,
+  );
 });
 
 test("review attestation migration has a closed in-repository consumer set", () => {
   const grep = spawnSync(
     "git",
-    ["grep", "-l", "claude-current-head.mjs", "--", "."],
+    ["grep", "-l", "claude-current-head.mjs", "--", ".github", "scripts"],
     { cwd: repoRoot, encoding: "utf8" },
   );
   assert.equal(grep.status, 0, `could not audit review consumers: ${grep.stderr || "no tracked wrapper reference"}`);
-  const executableConsumers = grep.stdout.trim().split("\n").filter(
-    (file) => !file.startsWith("docs/") && !file.startsWith("tests/"),
-  );
+  const executableConsumers = grep.stdout.trim().split("\n");
   assert.deepEqual(executableConsumers, [
     "scripts/review/claude-current-head.mjs",
   ], "new executable consumers require an explicit schema-v3 and five-minute migration audit");
+});
+
+test("review migration note remains inside the Unreleased changelog section", async () => {
+  const changelog = await read("CHANGELOG.md");
+  const unreleased = changelog.indexOf("## [Unreleased]");
+  const nextRelease = changelog.indexOf("\n## [", unreleased + 1);
+  const unreleasedEnd = nextRelease < 0 ? changelog.length : nextRelease;
+  const reviewMigration = changelog.indexOf("Exact-head Claude reviews now select and attest a bounded reasoning effort");
+  assert.ok(unreleased >= 0 && reviewMigration > unreleased && reviewMigration < unreleasedEnd);
 });
 
 test("installed real Claude CLI smoke is explicit opt-in and never a default API dependency", async (t) => {

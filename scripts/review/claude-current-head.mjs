@@ -14,6 +14,7 @@ export const MAX_CLAUDE_REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = MAX_CLAUDE_REVIEW_TIMEOUT_MS;
 const DEFAULT_MAX_BUDGET_USD = 10;
 export const MINIMUM_CLAUDE_REVIEW_BUDGET_USD = 1;
+export const MAXIMUM_CLAUDE_REVIEW_BUDGET_USD = DEFAULT_MAX_BUDGET_USD;
 export const DEFAULT_CLAUDE_REVIEW_EFFORT = "medium";
 export const MINIMUM_ATTESTED_REVIEW_EFFORT = "medium";
 const CLAUDE_REVIEW_EFFORT_RANK = Object.freeze({ low: 0, medium: 1, high: 2, xhigh: 3, max: 4 });
@@ -124,8 +125,10 @@ export function assertAttestedReviewEffort(effort) {
 
 export function assertClaudeReviewMaxBudgetUsd(maxBudgetUsd) {
   const numericBudget = Number(maxBudgetUsd);
-  if (!Number.isFinite(numericBudget) || numericBudget < MINIMUM_CLAUDE_REVIEW_BUDGET_USD) {
-    throw new Error(`review max budget must be a finite number of at least ${MINIMUM_CLAUDE_REVIEW_BUDGET_USD} USD`);
+  if (!Number.isFinite(numericBudget)
+    || numericBudget < MINIMUM_CLAUDE_REVIEW_BUDGET_USD
+    || numericBudget > MAXIMUM_CLAUDE_REVIEW_BUDGET_USD) {
+    throw new Error(`review max budget must be between ${MINIMUM_CLAUDE_REVIEW_BUDGET_USD} and ${MAXIMUM_CLAUDE_REVIEW_BUDGET_USD} USD`);
   }
   return numericBudget;
 }
@@ -244,7 +247,7 @@ function documentedEffortLevels(entry) {
     .map(normalizeCandidate)
     // Two known levels distinguish an option enumeration from unrelated prose
     // while allowing a compatible CLI to add a new level inside the 2.1.x band.
-    .filter((candidate) => candidate.length >= 2);
+    .filter((candidate) => Array.isArray(candidate) && candidate.length >= 2);
   const candidates = [...explicitChoices, ...bareChoices];
   if (candidates.length === 0) {
     throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
@@ -762,7 +765,9 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   } catch (error) {
     throw new Error("Claude review attestation records an unsupported review budget", { cause: error });
   }
-  if (evidence.invocation.minimumBudgetUsd !== MINIMUM_CLAUDE_REVIEW_BUDGET_USD) {
+  try {
+    assertClaudeReviewMaxBudgetUsd(evidence.invocation.minimumBudgetUsd);
+  } catch (error) {
     throw new Error("Claude review attestation does not bind the minimum review budget");
   }
   if (!evidence.diff || typeof evidence.diff !== "object" || !evidence.rawResponse || typeof evidence.rawResponse !== "object"
@@ -815,7 +820,9 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   } catch (error) {
     throw new Error("Claude review attestation records an unsupported selected effort", { cause: error });
   }
-  if (evidence.invocation.minimumEffort !== MINIMUM_ATTESTED_REVIEW_EFFORT) {
+  try {
+    assertAttestedReviewEffort(evidence.invocation.minimumEffort);
+  } catch (error) {
     throw new Error("Claude review attestation does not bind the minimum review effort");
   }
   const recordedEfforts = evidence.claude.capabilities.effortLevels;
@@ -855,7 +862,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     strict: true,
   });
   if (values.help) {
-    stdout.write(`Usage: claude-current-head.mjs --issue NUMBER [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER] [--max-budget-usd NUMBER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nAttested effort levels: ${CLAUDE_REVIEW_EFFORTS.join(", ")}.\nDefaults: --effort ${DEFAULT_CLAUDE_REVIEW_EFFORT}; --timeout-ms ${DEFAULT_TIMEOUT_MS} (five minutes); --max-budget-usd ${DEFAULT_MAX_BUDGET_USD}. Minimum budget: ${MINIMUM_CLAUDE_REVIEW_BUDGET_USD} USD.\n`);
+    stdout.write(`Usage: claude-current-head.mjs --issue NUMBER [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER] [--max-budget-usd NUMBER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nAttested effort levels: ${CLAUDE_REVIEW_EFFORTS.join(", ")}.\nDefaults: --effort ${DEFAULT_CLAUDE_REVIEW_EFFORT}; --timeout-ms ${DEFAULT_TIMEOUT_MS} (five minutes); --max-budget-usd ${DEFAULT_MAX_BUDGET_USD}. Budget range: ${MINIMUM_CLAUDE_REVIEW_BUDGET_USD}-${MAXIMUM_CLAUDE_REVIEW_BUDGET_USD} USD.\n`);
     return;
   }
   if (values["verify-evidence"]) {
@@ -868,6 +875,9 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
   }
   const timeoutMs = values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]);
   assertClaudeReviewTimeoutMs(timeoutMs);
+  if (values["max-budget-usd"] !== undefined && !/^(?:[1-9][0-9]*)(?:\.[0-9]+)?$/.test(values["max-budget-usd"])) {
+    throw new Error("review max budget must use positive base-10 decimal syntax");
+  }
   const maxBudgetUsd = values["max-budget-usd"] === undefined
     ? DEFAULT_MAX_BUDGET_USD
     : Number(values["max-budget-usd"]);
