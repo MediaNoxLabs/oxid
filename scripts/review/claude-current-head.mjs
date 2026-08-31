@@ -75,7 +75,10 @@ export class ClaudeReviewFindingsError extends Error {
 
 export class ClaudeReviewEvidenceVersionError extends Error {
   constructor(version) {
-    super(`unsupported Claude review attestation schema version ${String(version)}; rerun the exact-head review`);
+    const guidance = Number.isInteger(version) && version > 3
+      ? "upgrade the review wrapper"
+      : "rerun the exact-head review";
+    super(`unsupported Claude review attestation schema version ${String(version)}; ${guidance}`);
     this.name = "ClaudeReviewEvidenceVersionError";
     this.code = "CLAUDE_REVIEW_EVIDENCE_VERSION";
     this.version = version;
@@ -724,6 +727,7 @@ export async function runClaudeCurrentHeadReview({
       startedAt,
       reviewedAt,
       timeoutMs,
+      maximumTimeoutMs: MAX_CLAUDE_REVIEW_TIMEOUT_MS,
       maxBudgetUsd: validatedBudgetUsd,
       maximumBudgetUsd: MAXIMUM_CLAUDE_REVIEW_BUDGET_USD,
       effort,
@@ -761,6 +765,9 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     assertClaudeReviewTimeoutMs(evidence.invocation?.timeoutMs);
   } catch (error) {
     throw new Error("Claude review attestation records an unsupported review timeout", { cause: error });
+  }
+  if (evidence.invocation.maximumTimeoutMs !== MAX_CLAUDE_REVIEW_TIMEOUT_MS) {
+    throw new Error("Claude review attestation does not bind the maximum review timeout");
   }
   try {
     if (typeof evidence.invocation?.maxBudgetUsd !== "number") {
@@ -878,7 +885,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
   }
   const timeoutMs = values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]);
   assertClaudeReviewTimeoutMs(timeoutMs);
-  if (values["max-budget-usd"] !== undefined && !/^(?:[1-9][0-9]*)(?:\.[0-9]+)?$/.test(values["max-budget-usd"])) {
+  if (values["max-budget-usd"] !== undefined && !/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(values["max-budget-usd"])) {
     throw new Error("review max budget must use positive base-10 decimal syntax");
   }
   const maxBudgetUsd = values["max-budget-usd"] === undefined

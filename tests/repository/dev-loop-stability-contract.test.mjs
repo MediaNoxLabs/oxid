@@ -1450,6 +1450,7 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(() => assertAttestedReviewEffort("low"), /must be one of: medium, high, xhigh, max/);
   assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be one of/);
+  assert.match(new ClaudeReviewEvidenceVersionError(4).message, /upgrade the review wrapper/);
   assert.equal(assertClaudeReviewMaxBudgetUsd(0.01), 0.01);
   assert.equal(assertClaudeReviewMaxBudgetUsd("10"), 10);
   assert.equal(assertClaudeReviewMaxBudgetUsd(MAXIMUM_CLAUDE_REVIEW_BUDGET_USD), 10);
@@ -1719,6 +1720,10 @@ test("Claude review CLI rejects invalid resource arguments before model executio
     runClaudeReviewCli(["--max-budget-usd=10.01"]),
     /review max budget must be positive and no more than 10 USD/,
   );
+  await assert.rejects(
+    runClaudeReviewCli(["--max-budget-usd=0.50"]),
+    /--issue-contract-file is required/,
+  );
 });
 
 test("review migration note remains inside the Unreleased changelog section", async () => {
@@ -1836,6 +1841,7 @@ if (process.argv.includes("--version")) {
   assert.deepEqual(result.evidence.claude.capabilities.effortLevels, fixtureClaudeCliEfforts);
   assert.equal(result.evidence.invocation.effort, "high");
   assert.equal(result.evidence.invocation.minimumEffort, "medium");
+  assert.equal(result.evidence.invocation.maximumTimeoutMs, 300_000);
   assert.equal(result.evidence.invocation.maximumBudgetUsd, 10);
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
   assert.match(result.evidence.limitations.join(" "), /cannot prove the provider honored/);
@@ -2000,6 +2006,19 @@ if (process.argv.includes("--version")) {
       fetchBase: false,
     }),
     /attestation is missing the selected effort/,
+  );
+
+  const missingMaximumTimeoutEvidencePath = path.join(evidenceDir, "missing-maximum-timeout.evidence.json");
+  const missingMaximumTimeoutEvidence = structuredClone(result.evidence);
+  delete missingMaximumTimeoutEvidence.invocation.maximumTimeoutMs;
+  await writeFile(missingMaximumTimeoutEvidencePath, `${JSON.stringify(missingMaximumTimeoutEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: missingMaximumTimeoutEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the maximum review timeout/,
   );
 
   const missingMinimumEvidencePath = path.join(evidenceDir, "missing-minimum-effort.evidence.json");
