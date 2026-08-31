@@ -1558,6 +1558,10 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "with a bounded level"), [2, 1, 228]),
     /recognizable review effort choice list/,
   );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "(medium)"), [2, 1, 228]),
+    /recognizable review effort choice list/,
+  );
   const effortLastHelp = [
     ...fixtureClaudeHelp.split("\n").filter((line) => !line.includes("--effort")),
     "  --effort <level> (default: medium)",

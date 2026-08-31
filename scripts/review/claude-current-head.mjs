@@ -166,7 +166,7 @@ function exactHelpFlag(help, flag) {
 }
 
 function helpWindow(help, flag, length = 600) {
-  const line = helpFlagPattern(flag).exec(help);
+  const line = helpFlagPattern(flag, HELP_FLAG_POLICIES[flag]).exec(help);
   return line ? help.slice(line.index, line.index + length) : "";
 }
 
@@ -192,19 +192,22 @@ function documentedEffortLevels(entry) {
       /,\s*(?:default|recommended)\s*:\s*["']?[a-z][a-z0-9-]*["']?\s*$/i,
       "",
     );
+    // A delimiter is required intentionally: a bare `(medium)` is
+    // indistinguishable from a default annotation, not a capability list.
     if (!/[,|]/.test(withoutDefault)) return null;
     const tokens = withoutDefault.split(/[,|]/).map((token) => token.trim().replace(/^["']|["']$/g, ""));
     if (tokens.some((token) => !/^[a-z][a-z0-9-]*$/i.test(token))) return null;
     return [...new Set(tokens)];
   };
   const commaGroups = groups.filter((group) => /[,|]/.test(group));
-  if (commaGroups.length > 1) {
-    throw new Error("Claude CLI help exposes multiple conflicting review effort choice lists");
-  }
   const explicitChoices = choices.map(parseEnumeration).filter((candidate) => Array.isArray(candidate));
-  const candidates = explicitChoices.length > 0
-    ? explicitChoices
-    : commaGroups.map(parseEnumeration).filter((candidate) => Array.isArray(candidate));
+  let candidates = explicitChoices;
+  if (candidates.length === 0) {
+    if (commaGroups.length > 1) {
+      throw new Error("Claude CLI help exposes multiple conflicting review effort choice lists");
+    }
+    candidates = commaGroups.map(parseEnumeration).filter((candidate) => Array.isArray(candidate));
+  }
   if (candidates.length === 0) {
     throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
   }
