@@ -16,6 +16,27 @@ use serde_json::{Value, json};
 const VOCABULARY: &str = include_str!("fixtures/protocol-vocabulary.json");
 const WIRE_INPUT: &[u8] = include_bytes!("fixtures/protocol-wire.ndjson");
 const WIRE_EXPECTED: &[u8] = include_bytes!("fixtures/protocol-wire.expected.ndjson");
+const ROUTER_SOURCE: &str = include_str!("../src/lib.rs");
+
+fn routed_methods() -> BTreeSet<&'static str> {
+    let (_, router) = ROUTER_SOURCE
+        .split_once("// BEGIN HEADLESS METHOD ROUTER")
+        .expect("router start marker should exist");
+    let (router, _) = router
+        .split_once("// END HEADLESS METHOD ROUTER")
+        .expect("router end marker should exist");
+
+    router
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            (line.starts_with('"') && line.contains("=>"))
+                .then(|| line.split_once("=>").expect("guarded by contains").0)
+        })
+        .flat_map(|patterns| patterns.split('|'))
+        .map(|literal| literal.trim().trim_matches('"'))
+        .collect()
+}
 
 fn execute(input: &[u8]) -> Result<Vec<u8>, HeadlessIoError> {
     let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
@@ -45,6 +66,60 @@ fn preserves_the_exact_sanitized_wire_corpus_and_stream_recovery() {
             .expect("wire output should be UTF-8")
             .contains("must-not-echo")
     );
+}
+
+#[test]
+fn diagnostics_shape_is_stable_without_pinning_internal_order_or_capacity() {
+    let output = execute(
+        br#"{
+{"protocol":"oxid.headless.v1","id":"unknown","method":"private.export","params":{}}
+{"protocol":"oxid.headless.v1","id":"diagnostics","method":"system.diagnostics.snapshot","params":{}}
+"#,
+    )
+    .expect("diagnostic exchange should execute");
+    let responses = String::from_utf8(output)
+        .expect("diagnostic responses should be UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("response should be JSON"))
+        .collect::<Vec<_>>();
+    let diagnostics = &responses[2]["result"]["diagnostics"];
+
+    let counts = diagnostics["counts"]
+        .as_array()
+        .expect("diagnostic counts should be an array")
+        .iter()
+        .map(|count| {
+            (
+                count["code"].as_str().expect("code should be a string"),
+                count["occurrences"]
+                    .as_u64()
+                    .expect("occurrences should be an integer"),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        counts,
+        BTreeMap::from([
+            ("headless.method.not_found", 1),
+            ("headless.request.rejected", 1),
+        ])
+    );
+
+    let recent_codes = diagnostics["recent"]
+        .as_array()
+        .expect("recent diagnostics should be an array")
+        .iter()
+        .map(|event| event["code"].as_str().expect("code should be a string"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        recent_codes,
+        BTreeSet::from(["headless.method.not_found", "headless.request.rejected"])
+    );
+    assert_eq!(diagnostics["payloadsRetained"], false);
+    assert_eq!(diagnostics["persistence"], "process_local");
+    assert_eq!(diagnostics["telemetry"], "off");
+    assert_eq!(diagnostics["totalEvents"], 2);
+    assert_eq!(diagnostics["retainedEvents"], 2);
 }
 
 #[test]
@@ -131,6 +206,7 @@ fn every_checked_in_dispatch_name_routes_and_manifest_vocabulary_is_exact() {
         .map(|method| method.as_str().expect("method should be a string"))
         .collect::<BTreeSet<_>>();
     assert_eq!(expected_dispatch.len(), dispatch_methods.len());
+    assert_eq!(routed_methods(), expected_dispatch);
 
     for method in &expected_dispatch {
         let response = execute_json(json!({

@@ -5,6 +5,9 @@
 
 //! Versioned incoming adapter organized according to
 //! [ADR-0104](../../../docs/adr/0104-regrow-incoming-adapters-behind-capability-facades.md).
+//! `protocol` owns the envelope and stream errors; `parameters`, `projections`,
+//! and `errors` own wire translation; capability modules own application-port
+//! invocation; this root owns transport, stable re-exports, and dispatch.
 
 mod accounts;
 mod dids;
@@ -146,18 +149,7 @@ impl HeadlessWallet {
             ));
         }
 
-        if !protocol::is_dispatch_method(&request.method) {
-            self.record_diagnostic(
-                DiagnosticCode::HeadlessMethodNotFound,
-                DiagnosticSeverity::Warning,
-            );
-            return Dispatch::continue_with(Response::error(
-                request.id,
-                "method_not_found",
-                "requested method is not implemented",
-            ));
-        }
-
+        // BEGIN HEADLESS METHOD ROUTER — protocol_contract.rs inventories these arms.
         match request.method.as_str() {
             "system.capabilities" => self.capabilities(request),
             "system.diagnostics.snapshot" => self.diagnostics_snapshot(request),
@@ -280,8 +272,19 @@ impl HeadlessWallet {
             "identity.authentication.refuse" => self.refuse_self_issued_authentication(request),
             "identity.authentication.get" => self.get_self_issued_authentication(request),
             "identity.authentication.list" => self.list_self_issued_authentications(request),
-            _ => unreachable!("dispatch allowlist and router must stay in lockstep"),
+            _ => {
+                self.record_diagnostic(
+                    DiagnosticCode::HeadlessMethodNotFound,
+                    DiagnosticSeverity::Warning,
+                );
+                Dispatch::continue_with(Response::error(
+                    request.id,
+                    "method_not_found",
+                    "requested method is not implemented",
+                ))
+            }
         }
+        // END HEADLESS METHOD ROUTER
     }
 
     fn active_profile_id(&self, id: Option<String>) -> Result<String, Response> {

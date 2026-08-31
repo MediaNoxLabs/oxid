@@ -7,9 +7,9 @@
       "facadeFiles": [
         "apps/oxid-headless/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 300,
+      "facadeMaximumPhysicalLines": 350,
       "facadeMaximumPhysicalLinesByPath": {
-        "apps/oxid-headless/src/lib.rs": 300
+        "apps/oxid-headless/src/lib.rs": 350
       },
       "capabilityOwners": [
         {

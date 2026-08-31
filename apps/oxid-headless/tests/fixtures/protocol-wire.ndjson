@@ -15,6 +15,5 @@
 {"protocol":"oxid.headless.v1","id":"vault","method":"vault.locks.list","params":{}}
 {"protocol":"oxid.headless.v1","id":"midnight","method":"wallet.dust.sync.status","params":{}}
 {"protocol":"oxid.headless.v1","id":"identity","method":"identity.authentication.list","params":{}}
-{"protocol":"oxid.headless.v1","id":"diagnostics","method":"system.diagnostics.snapshot","params":{}}
 {"protocol":"oxid.headless.v1","id":"quit","method":"system.quit","params":{}}
 {"protocol":"oxid.headless.v1","id":"ignored","method":"system.capabilities","params":{}}
