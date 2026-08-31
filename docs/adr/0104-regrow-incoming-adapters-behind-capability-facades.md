@@ -209,6 +209,16 @@ protocol, custody, credential, ledger, composition, or UI behavior changes.
 - Run the repository's ordinary strict gate before integration; do not reduce
   coverage, architecture, lint, security, DCO, or signature requirements.
 
+## Implementation traceability
+
+- Issue [#146](https://github.com/MediaNoxLabs/oxid/issues/146) applies this
+  decision to `apps/oxid-headless`. Its baseline scopes ownership and the
+  façade ratchet to that crate; later delivery issues add their own crate entry
+  when their decomposition lands.
+- The headless façade owns transport and explicit cross-capability routing.
+  Private modules own the protocol envelope, wire translation, application-port
+  invocation, and capability-focused tests without creating new public paths.
+
 ## Rejected alternatives
 
 - **Extract a crate per capability now.** File size is not a dependency

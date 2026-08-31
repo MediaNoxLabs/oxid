@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "crates": [
+    {
+      "name": "oxid-headless",
+      "sourceRoot": "apps/oxid-headless/src",
+      "facadeFiles": [
+        "apps/oxid-headless/src/lib.rs"
+      ],
+      "facadeMaximumPhysicalLines": 350,
+      "facadeMaximumPhysicalLinesByPath": {
+        "apps/oxid-headless/src/lib.rs": 350
+      },
+      "capabilityOwners": [
+        {
+          "name": "wallet-accounts",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/accounts"
+          ]
+        },
+        {
+          "name": "identity-protocols",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/identity_protocols"
+          ]
+        },
+        {
+          "name": "system-and-diagnostics",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/system"
+          ]
+        },
+        {
+          "name": "wallet-profiles",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/wallet_profiles"
+          ]
+        },
+        {
+          "name": "did-lifecycle",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/dids"
+          ]
+        },
+        {
+          "name": "midnight-wallet",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/midnight_wallet"
+          ]
+        },
+        {
+          "name": "passport-vault",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/passport_vault"
+          ]
+        },
+        {
+          "name": "wallet-security",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/security"
+          ]
+        },
+        {
+          "name": "wire-parameters",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/parameters"
+          ]
+        },
+        {
+          "name": "wire-errors",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/errors"
+          ]
+        },
+        {
+          "name": "wire-projections",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/projections"
+          ]
+        },
+        {
+          "name": "protocol-envelope",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/protocol"
+          ]
+        },
+        {
+          "name": "executable-shell",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/main"
+          ]
+        }
+      ],
+      "exclusions": [],
+      "temporaryExceptions": []
+    }
+  ]
+}
