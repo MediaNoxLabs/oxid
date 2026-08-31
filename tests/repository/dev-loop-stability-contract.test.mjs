@@ -34,7 +34,10 @@ import { GH_REST_MAX_BUFFER_BYTES, runGhCommand } from "../../scripts/github/res
 import {
   assertClaudeAuthHelpCapabilities,
   assertClaudeHelpCapabilities,
+  assertClaudeReviewEffort,
   assertMinimumClaudeVersion,
+  CLAUDE_REVIEW_EFFORTS,
+  DEFAULT_CLAUDE_REVIEW_EFFORT,
   MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
   buildClaudeInvocation,
   ClaudeReviewFindingsError,
@@ -70,6 +73,7 @@ const fixtureClaudeHelp = [
   "  --output-format <format>",
   "  --json-schema <schema>",
   "  --max-budget-usd <amount>",
+  "  --effort <level> (low, medium, high, xhigh, max)",
   "  --safe-mode",
   '  --tools <tools...> Specify tools. Use "" to disable all tools.',
   "  --no-session-persistence",
@@ -1425,6 +1429,13 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.ok(toolsIndex >= 0);
   assert.equal(invocation.args[toolsIndex + 1], "");
   assert.ok(invocation.args.includes("--no-session-persistence"));
+  const effortIndex = invocation.args.indexOf("--effort");
+  assert.ok(effortIndex >= 0);
+  assert.equal(invocation.args[effortIndex + 1], DEFAULT_CLAUDE_REVIEW_EFFORT);
+  assert.deepEqual(CLAUDE_REVIEW_EFFORTS, ["low", "medium", "high", "xhigh", "max"]);
+  assert.equal(assertClaudeReviewEffort("high"), "high");
+  assert.throws(() => assertClaudeReviewEffort("unbounded"), /must be one of/);
+  assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
   assert.deepEqual(assertMinimumClaudeVersion([2, 1, 228]), [2, 1, 228]);
   assert.throws(() => assertMinimumClaudeVersion([2, 1, 227]), /unsupported; require >= 2\.1\.228 and < 2\.2\.0/);
@@ -1442,6 +1453,10 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('"dontAsk", ', ""), [2, 1, 228]),
     /dontAsk permission mode/,
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(", max", ""), [2, 1, 228]),
+    /required review effort levels/,
   );
   assert.throws(() => assertClaudeAuthHelpCapabilities("Usage: claude auth status\n"), /default JSON output/);
   const calls = [];
@@ -1565,6 +1580,7 @@ if (process.argv.includes("--version")) {
   assert.equal(result.evidence.claude.observedSessionId, "fixture-session");
   assert.equal(result.evidence.claude.tools.length, 0);
   assert.equal(result.evidence.claude.capabilities.emptyToolsDisabled, true);
+  assert.equal(result.evidence.invocation.effort, DEFAULT_CLAUDE_REVIEW_EFFORT);
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
   assert.equal(path.isAbsolute(result.evidence.diff.path), false);
   assert.equal(path.isAbsolute(result.evidence.rawResponse.path), false);

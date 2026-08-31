@@ -217,7 +217,9 @@ undetectable later. The check that matters is `gates` parsing.
   Copilot review disabled. A manually invoked Claude CLI review is reserved for
   high-risk `full` changes, an owner request, or a disputed finding. It is not a hosted GitHub check and does not authenticate reviewer identity. Run
   `scripts/review/claude-current-head.mjs` once on the final clean head as
-  documented in `docs/dev-loop-stability.md`.
+  documented in `docs/dev-loop-stability.md`. The wrapper selects and records
+  bounded `medium` effort by default; a timeout remains a failed review rather
+  than permission to merge.
 
 ## Model policy
 

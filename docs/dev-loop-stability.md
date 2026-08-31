@@ -185,6 +185,7 @@ git fetch origin integration
 node scripts/review/claude-current-head.mjs \
   --issue <number> \
   --expected-head "$(git rev-parse HEAD)" \
+  --effort medium \
   --issue-contract-file <tracker-export.json>
 
 node scripts/review/claude-current-head.mjs \
@@ -204,13 +205,20 @@ and a new captured capability pass; do not widen the range speculatively. The
 provider prompt receives only the diff artifact basename and digest, never its
 local absolute path. Claude runs outside the checkout in safe mode with an
 empty tool set and no session persistence, then records CLI account readiness,
-version, observed session id, timestamps, raw-output digest, exit status, and a
+version, selected effort, observed session id, timestamps, raw-output digest, exit status, and a
 structured verdict. It checks clean/head/base/exact-diff facts again afterward.
 Timeout, nonzero exit, malformed output, mutation, or a changed ref is a hard
 failure. A findings verdict is also a failed gate, but its structured findings
 attestation is written first so the next fix pass has durable evidence.
 Verification accepts only clean evidence and re-derives all revision facts, so
 a push or integration advance makes it stale.
+
+The wrapper passes `--effort medium` by default and records that choice in the
+attestation. Medium effort bounds reasoning cost while retaining a substantive
+review inside the default five-minute deadline. Operators may select only the
+installed CLI's closed set (`low`, `medium`, `high`, `xhigh`, or `max`);
+increasing effort does not extend the timeout, and a timeout never counts as a
+review pass.
 
 This is **local attestational evidence**, not cryptographic reviewer-identity,
 GitHub-hosted, or dev-loops-native provenance. Caller-supplied tracker data and
