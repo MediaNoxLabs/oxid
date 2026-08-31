@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(directory, "android-portal-flow.mjs"), "utf8");
+const supportSource = fs.readFileSync(
+  path.resolve(directory, "../../scripts/e2e/portal-android-support.mjs"),
+  "utf8",
+);
 
 function issueErrorTerminalWait() {
   const start = source.indexOf('} else if (mode === "issue-error")');
@@ -15,6 +19,13 @@ function issueErrorTerminalWait() {
   const restoreProxy = source.indexOf('await setProxyMode("normal");', acceptance);
   assert.ok(start >= 0 && acceptance >= start && restoreProxy > acceptance);
   return source.slice(acceptance, restoreProxy);
+}
+
+function unavailableProxyBranch() {
+  const start = supportSource.indexOf('if (counter !== "kyc" && proxyMode === "unavailable")');
+  const nextBranch = supportSource.indexOf('if (counter === "issuerMetadata" && proxyMode === "malformed")', start);
+  assert.ok(start >= 0 && nextBranch > start);
+  return supportSource.slice(start, nextBranch);
 }
 
 test("issue-error waits for the post-failure locked-review state before restoring the proxy", () => {
@@ -25,6 +36,13 @@ test("issue-error waits for the post-failure locked-review state before restorin
   assert.match(terminal, /const issue = \$\{button\("Accept and issue credential"\)\};/u);
   assert.match(terminal, /Boolean\(issue && issue\.disabled\)/u);
   assert.match(terminal, /const leave = \$\{button\("Leave credential review"\)\};/u);
+});
+
+test("unavailable issuer proxy uses one deterministic HTTP failure response", () => {
+  const branch = unavailableProxyBranch();
+
+  assert.match(branch, /sendJson\(response, 503, \{ error: "unavailable" \}\);/u);
+  assert.doesNotMatch(branch, /response\.destroy\(\);/u);
 });
 
 test("issue accepts either the completion notice or the protected valid-record state", () => {

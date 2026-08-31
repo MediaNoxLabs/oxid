@@ -187,7 +187,10 @@ const issuerProxy = http.createServer((request, response) => {
   const counter = pathCounter(parsed.pathname);
   counters[counter] += 1;
   if (counter !== "kyc" && proxyMode === "unavailable") {
-    response.destroy();
+    // A transport reset permits client retries, making this single-boundary
+    // failure non-deterministic. A terminal 503 preserves the unavailable
+    // condition while proving exactly one rejected protocol request.
+    sendJson(response, 503, { error: "unavailable" });
     return;
   }
   if (counter === "issuerMetadata" && proxyMode === "malformed") {
