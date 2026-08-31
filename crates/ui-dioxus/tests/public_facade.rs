@@ -110,6 +110,17 @@ fn other_stable_facade_paths_remain_at_the_crate_root() {
     assert_public_path(App);
 }
 
+#[test]
+fn passport_vault_service_methods_remain_on_the_wallet_facade() {
+    assert_public_path(WalletUiServices::list_passport_vault_locks);
+    assert_public_path(WalletUiServices::create_passport_vault_lock);
+    assert_public_path(WalletUiServices::deposit_passport_vault_lock);
+    assert_public_path(WalletUiServices::claim_passport_vault_lock);
+    assert_public_path(WalletUiServices::withdraw_passport_vault_lock);
+    assert_public_path(WalletUiServices::passport_vault_contract_calls);
+    assert_public_path(WalletUiServices::passport_vault_state_persistence);
+}
+
 #[cfg(feature = "ui-profile-dev")]
 #[test]
 fn developer_manifest_context_remains_at_the_crate_root() {
