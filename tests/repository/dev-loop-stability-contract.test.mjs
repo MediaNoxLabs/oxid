@@ -37,6 +37,7 @@ import {
   assertClaudeEffortCapability,
   assertClaudeHelpCapabilities,
   assertMinimumClaudeVersion,
+  assertClaudeReviewMaxBudgetUsd,
   CLAUDE_REVIEW_EFFORTS,
   DEFAULT_CLAUDE_REVIEW_EFFORT,
   MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
@@ -1445,9 +1446,11 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.equal(invocation.args[effortIndex + 1], DEFAULT_CLAUDE_REVIEW_EFFORT);
   assert.deepEqual(CLAUDE_REVIEW_EFFORTS, ["medium", "high", "xhigh", "max"]);
   assert.equal(assertAttestedReviewEffort("medium"), "medium");
-  assert.throws(() => assertAttestedReviewEffort("low"), /must be at least medium/);
+  assert.throws(() => assertAttestedReviewEffort("low"), /must be one of: medium, high, xhigh, max/);
   assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
-  assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be at least medium/);
+  assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be one of/);
+  assert.equal(assertClaudeReviewMaxBudgetUsd(0.01), 0.01);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(Number.POSITIVE_INFINITY), /positive finite number/);
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
   assert.deepEqual(assertMinimumClaudeVersion([2, 1, 228]), [2, 1, 228]);
   assert.throws(() => assertMinimumClaudeVersion([2, 1, 227]), /unsupported; require >= 2\.1\.228 and < 2\.2\.0/);
@@ -1516,6 +1519,14 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     [2, 1, 228],
   );
   assert.deepEqual(reorderedEfforts.effortLevels, ["max", "low", "xhigh", "medium", "high"]);
+  const futureEffortHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    "(low, medium, high, xhigh, max, ultra)",
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(futureEffortHelp, [2, 1, 228]).effortLevels,
+    fixtureClaudeCliEfforts,
+  );
   const aliasedMixedHelp = fixtureClaudeHelp.replace(
     "  --effort <level> (low, medium, high, xhigh, max)",
     '  -E, --effort <level> (choices: "low", "medium", "high", "xhigh", "max", default: "medium")',
@@ -1646,7 +1657,7 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   );
   await assert.rejects(
     runClaudeReviewCli(["--effort", "low"]),
-    /exact-head attestation effort must be at least medium/,
+    /exact-head attestation effort must be one of/,
   );
   for (const invalidTimeout of ["", "-1", "0", "1.5", "1e3", "300001"]) {
     await assert.rejects(
@@ -1658,6 +1669,27 @@ test("Claude review CLI rejects invalid resource arguments before model executio
     runClaudeReviewCli(["--timeout-ms", "1"]),
     /--issue-contract-file is required/,
   );
+  for (const invalidBudget of ["", "-1", "0", "NaN", "Infinity"]) {
+    await assert.rejects(
+      runClaudeReviewCli([`--max-budget-usd=${invalidBudget}`]),
+      /review max budget must be a positive finite number/,
+    );
+  }
+});
+
+test("review attestation migration has a closed in-repository consumer set", () => {
+  const output = execFileSync(
+    "git",
+    ["grep", "-l", "-E", "claude-current-head\\.mjs|--verify-evidence|--timeout-ms", "--", "."],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.deepEqual(output.trim().split("\n").sort(), [
+    "docs/dev-loop-stability.md",
+    "docs/factory/runbook.md",
+    "docs/integration-delivery.md",
+    "scripts/review/claude-current-head.mjs",
+    "tests/repository/dev-loop-stability-contract.test.mjs",
+  ]);
 });
 
 test("installed real Claude CLI smoke is explicit opt-in and never a default API dependency", async (t) => {

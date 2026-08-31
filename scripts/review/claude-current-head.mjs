@@ -14,10 +14,12 @@ export const MAX_CLAUDE_REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = MAX_CLAUDE_REVIEW_TIMEOUT_MS;
 const DEFAULT_MAX_BUDGET_USD = 10;
 export const DEFAULT_CLAUDE_REVIEW_EFFORT = "medium";
-const CLAUDE_CLI_EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
-export const CLAUDE_REVIEW_EFFORTS = Object.freeze(["medium", "high", "xhigh", "max"]);
 export const MINIMUM_ATTESTED_REVIEW_EFFORT = "medium";
 const CLAUDE_REVIEW_EFFORT_RANK = Object.freeze({ low: 0, medium: 1, high: 2, xhigh: 3, max: 4 });
+const CLAUDE_CLI_EFFORTS = Object.freeze(Object.keys(CLAUDE_REVIEW_EFFORT_RANK));
+export const CLAUDE_REVIEW_EFFORTS = Object.freeze(CLAUDE_CLI_EFFORTS.filter(
+  (effort) => CLAUDE_REVIEW_EFFORT_RANK[effort] >= CLAUDE_REVIEW_EFFORT_RANK[MINIMUM_ATTESTED_REVIEW_EFFORT],
+));
 export const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
 export const MINIMUM_CLAUDE_VERSION = [2, 1, 228];
 export const MAXIMUM_EXCLUSIVE_CLAUDE_VERSION = [2, 2, 0];
@@ -85,7 +87,7 @@ export function buildClaudeInvocation({
   effort = DEFAULT_CLAUDE_REVIEW_EFFORT,
   command = "claude",
 } = {}) {
-  if (!(Number(maxBudgetUsd) > 0)) throw new Error("maxBudgetUsd must be positive");
+  assertClaudeReviewMaxBudgetUsd(maxBudgetUsd);
   assertAttestedReviewEffort(effort);
   return {
     command,
@@ -104,13 +106,6 @@ export function buildClaudeInvocation({
   };
 }
 
-function assertKnownClaudeCliEffort(effort) {
-  if (!CLAUDE_CLI_EFFORTS.includes(effort)) {
-    throw new Error(`Claude review effort must be one of: ${CLAUDE_REVIEW_EFFORTS.join(", ")}`);
-  }
-  return effort;
-}
-
 export function assertClaudeEffortCapability(effort, documentedEfforts) {
   assertAttestedReviewEffort(effort);
   if (!Array.isArray(documentedEfforts) || !documentedEfforts.includes(effort)) {
@@ -120,11 +115,17 @@ export function assertClaudeEffortCapability(effort, documentedEfforts) {
 }
 
 export function assertAttestedReviewEffort(effort) {
-  assertKnownClaudeCliEffort(effort);
-  if (CLAUDE_REVIEW_EFFORT_RANK[effort] < CLAUDE_REVIEW_EFFORT_RANK[MINIMUM_ATTESTED_REVIEW_EFFORT]) {
-    throw new Error(`exact-head attestation effort must be at least ${MINIMUM_ATTESTED_REVIEW_EFFORT}`);
+  if (!CLAUDE_REVIEW_EFFORTS.includes(effort)) {
+    throw new Error(`exact-head attestation effort must be one of: ${CLAUDE_REVIEW_EFFORTS.join(", ")}`);
   }
   return effort;
+}
+
+export function assertClaudeReviewMaxBudgetUsd(maxBudgetUsd) {
+  if (!Number.isFinite(maxBudgetUsd) || maxBudgetUsd <= 0) {
+    throw new Error("review max budget must be a positive finite number");
+  }
+  return maxBudgetUsd;
 }
 
 export function assertClaudeReviewTimeoutMs(timeoutMs) {
@@ -218,8 +219,13 @@ function documentedEffortLevels(entry) {
   const bareChoices = commaGroups
     .filter((group) => !/choices?\s*:/i.test(group))
     .map(parseEnumeration)
-    .filter((candidate) => Array.isArray(candidate)
-      && candidate.every((effort) => CLAUDE_CLI_EFFORTS.includes(effort.toLowerCase())));
+    .filter((candidate) => Array.isArray(candidate))
+    .map((candidate) => candidate.filter(
+      (effort) => CLAUDE_CLI_EFFORTS.includes(effort.toLowerCase()),
+    ))
+    // Two known levels distinguish an option enumeration from unrelated prose
+    // while allowing a compatible CLI to add a new level inside the 2.1.x band.
+    .filter((candidate) => candidate.length >= 2);
   const candidates = [...explicitChoices, ...bareChoices];
   if (candidates.length === 0) {
     throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
@@ -569,6 +575,7 @@ export async function runClaudeCurrentHeadReview({
 } = {}) {
   if (!Number.isInteger(issue) || issue < 1) throw new Error("issue must be a positive integer");
   assertClaudeReviewTimeoutMs(timeoutMs);
+  assertClaudeReviewMaxBudgetUsd(maxBudgetUsd);
   assertAttestedReviewEffort(effort);
   if (typeof issueContract !== "string" || !issueContract.trim()) throw new Error("issueContract is required for an exact-scope review");
   let contractPayload;
@@ -832,6 +839,10 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
   }
   const timeoutMs = values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]);
   assertClaudeReviewTimeoutMs(timeoutMs);
+  const maxBudgetUsd = values["max-budget-usd"] === undefined
+    ? DEFAULT_MAX_BUDGET_USD
+    : Number(values["max-budget-usd"]);
+  assertClaudeReviewMaxBudgetUsd(maxBudgetUsd);
   const effort = values.effort ?? DEFAULT_CLAUDE_REVIEW_EFFORT;
   assertAttestedReviewEffort(effort);
   if (!values["issue-contract-file"]) throw new Error("--issue-contract-file is required");
@@ -843,7 +854,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     issueContract,
     expectedHead: values["expected-head"],
     timeoutMs,
-    maxBudgetUsd: values["max-budget-usd"] === undefined ? DEFAULT_MAX_BUDGET_USD : Number(values["max-budget-usd"]),
+    maxBudgetUsd,
     effort,
   });
   stdout.write(`${JSON.stringify({ ok: true, evidencePath: result.evidencePath, ...result.evidence })}\n`);
