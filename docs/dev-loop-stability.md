@@ -219,8 +219,9 @@ The wrapper passes `--effort medium` by default and records that choice in the
 attestation. Medium effort bounds reasoning cost while retaining a substantive
 review inside the five-minute default deadline; the example above states that
 deadline explicitly so copied commands retain the SLA if defaults later change.
-The CLI capability set is closed (`low`, `medium`, `high`, `xhigh`, or `max`),
-but high-risk exact-head attestations enforce a recorded floor of `medium`.
+The installed CLI capability vocabulary is closed (`low`, `medium`, `high`,
+`xhigh`, or `max`), while the wrapper accepts only `medium`, `high`, `xhigh`,
+or `max` for an exact-head attestation.
 The selected level must also appear in the installed CLI's captured choice
 list. Accepted help grammar is deliberately narrow: one comma- or
 pipe-delimited enumeration must either follow the `--effort <level>` value,
@@ -230,11 +231,11 @@ At least two known levels must remain after filtering. Any other layout is a
 capability-probe failure that requires a parser/test update. The wrapper and
 verifier reject deadlines above
 300,000 ms, so increasing effort cannot extend the SLA; a timeout never counts
-as a review pass. The recorded budget must be from USD 1 through USD 10, and
-the verifier binds that range; the USD 10 default remains a cost ceiling rather
-than a spend target. The recorded `medium` effort floor and USD 1 budget floor
-are exact schema-v3 constants; changing either requires a new evidence schema
-and the same explicit migration treatment. New effort-bound attestations use
+as a review pass. The recorded budget must be positive and no more than USD 10;
+the verifier binds that ceiling, which remains a cost limit rather than a spend
+target. The recorded `medium` effort floor and USD 10 budget ceiling are exact
+schema-v3 constants; changing either requires a new evidence schema and the
+same explicit migration treatment. New effort-bound attestations use
 schema v3. Version 2
 records do not bind effort and are intentionally rejected after this upgrade;
 rerun the exact-head review to issue a v3 record instead of relabeling old

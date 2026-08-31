@@ -81,6 +81,8 @@ once public releases begin.
   review checkpoint inside the factory SLA; the wrapper and verifier reject
   longer deadlines, callers may select a shorter one, and a timeout is not a
   pass.
+  The review budget remains positive and is capped at USD 10; sub-dollar
+  canaries remain valid.
   New attestations use schema v3; rerun reviews whose legacy v2 evidence no
   longer verifies instead of relabeling records that did not capture effort.
   In-flight branches must rerun the exact-head review; legacy records are not

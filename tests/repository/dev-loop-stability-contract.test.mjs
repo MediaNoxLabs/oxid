@@ -42,7 +42,6 @@ import {
   DEFAULT_CLAUDE_REVIEW_EFFORT,
   MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
   MAXIMUM_CLAUDE_REVIEW_BUDGET_USD,
-  MINIMUM_CLAUDE_REVIEW_BUDGET_USD,
   buildClaudeInvocation,
   claudeReviewCliFailure,
   ClaudeReviewEvidenceVersionError,
@@ -1451,12 +1450,12 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(() => assertAttestedReviewEffort("low"), /must be one of: medium, high, xhigh, max/);
   assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be one of/);
-  assert.equal(assertClaudeReviewMaxBudgetUsd(MINIMUM_CLAUDE_REVIEW_BUDGET_USD), 1);
+  assert.equal(assertClaudeReviewMaxBudgetUsd(0.01), 0.01);
   assert.equal(assertClaudeReviewMaxBudgetUsd("10"), 10);
   assert.equal(assertClaudeReviewMaxBudgetUsd(MAXIMUM_CLAUDE_REVIEW_BUDGET_USD), 10);
-  assert.throws(() => assertClaudeReviewMaxBudgetUsd(0.01), /between 1 and 10 USD/);
-  assert.throws(() => assertClaudeReviewMaxBudgetUsd(11), /between 1 and 10 USD/);
-  assert.throws(() => assertClaudeReviewMaxBudgetUsd(Number.POSITIVE_INFINITY), /between 1 and 10 USD/);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(0), /positive and no more than 10 USD/);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(11), /positive and no more than 10 USD/);
+  assert.throws(() => assertClaudeReviewMaxBudgetUsd(Number.POSITIVE_INFINITY), /positive and no more than 10 USD/);
   const stringBudgetInvocation = buildClaudeInvocation({ maxBudgetUsd: "10" });
   assert.equal(stringBudgetInvocation.args[stringBudgetInvocation.args.indexOf("--max-budget-usd") + 1], "10");
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
@@ -1684,7 +1683,7 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   assert.match(help, /Attested effort levels: medium, high, xhigh, max/);
   assert.match(help, /--max-budget-usd NUMBER/);
   assert.match(help, /--max-budget-usd 10/);
-  assert.match(help, /Budget range: 1-10 USD/);
+  assert.match(help, /Budget must be positive and no more than 10 USD/);
 
   await assert.rejects(
     runClaudeReviewCli([
@@ -1713,12 +1712,12 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   for (const invalidBudget of ["", "-1", "0", "NaN", "Infinity", "0x10", "1e6", " 10 "]) {
     await assert.rejects(
       runClaudeReviewCli([`--max-budget-usd=${invalidBudget}`]),
-      /review max budget must use positive base-10 decimal syntax|review max budget must be between 1 and 10 USD/,
+      /review max budget must use positive base-10 decimal syntax|review max budget must be positive and no more than 10 USD/,
     );
   }
   await assert.rejects(
     runClaudeReviewCli(["--max-budget-usd=10.01"]),
-    /review max budget must be between 1 and 10 USD/,
+    /review max budget must be positive and no more than 10 USD/,
   );
 });
 
@@ -1837,7 +1836,7 @@ if (process.argv.includes("--version")) {
   assert.deepEqual(result.evidence.claude.capabilities.effortLevels, fixtureClaudeCliEfforts);
   assert.equal(result.evidence.invocation.effort, "high");
   assert.equal(result.evidence.invocation.minimumEffort, "medium");
-  assert.equal(result.evidence.invocation.minimumBudgetUsd, 1);
+  assert.equal(result.evidence.invocation.maximumBudgetUsd, 10);
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
   assert.match(result.evidence.limitations.join(" "), /cannot prove the provider honored/);
   assert.equal(path.isAbsolute(result.evidence.diff.path), false);
@@ -2028,13 +2027,13 @@ if (process.argv.includes("--version")) {
     /does not bind the minimum review effort/,
   );
 
-  const belowFloorBudgetEvidencePath = path.join(evidenceDir, "below-floor-budget.evidence.json");
-  const belowFloorBudgetEvidence = structuredClone(result.evidence);
-  belowFloorBudgetEvidence.invocation.maxBudgetUsd = 0.01;
-  await writeFile(belowFloorBudgetEvidencePath, `${JSON.stringify(belowFloorBudgetEvidence)}\n`, { mode: 0o600 });
+  const aboveCeilingBudgetEvidencePath = path.join(evidenceDir, "above-ceiling-budget.evidence.json");
+  const aboveCeilingBudgetEvidence = structuredClone(result.evidence);
+  aboveCeilingBudgetEvidence.invocation.maxBudgetUsd = 10.01;
+  await writeFile(aboveCeilingBudgetEvidencePath, `${JSON.stringify(aboveCeilingBudgetEvidence)}\n`, { mode: 0o600 });
   await assert.rejects(
     verifyClaudeReviewEvidence({
-      evidencePath: belowFloorBudgetEvidencePath,
+      evidencePath: aboveCeilingBudgetEvidencePath,
       repoRoot: repository,
       fetchBase: false,
     }),
@@ -2055,29 +2054,29 @@ if (process.argv.includes("--version")) {
     );
   }
 
-  const missingMinimumBudgetEvidencePath = path.join(evidenceDir, "missing-minimum-budget.evidence.json");
-  const missingMinimumBudgetEvidence = structuredClone(result.evidence);
-  delete missingMinimumBudgetEvidence.invocation.minimumBudgetUsd;
-  await writeFile(missingMinimumBudgetEvidencePath, `${JSON.stringify(missingMinimumBudgetEvidence)}\n`, { mode: 0o600 });
+  const missingMaximumBudgetEvidencePath = path.join(evidenceDir, "missing-maximum-budget.evidence.json");
+  const missingMaximumBudgetEvidence = structuredClone(result.evidence);
+  delete missingMaximumBudgetEvidence.invocation.maximumBudgetUsd;
+  await writeFile(missingMaximumBudgetEvidencePath, `${JSON.stringify(missingMaximumBudgetEvidence)}\n`, { mode: 0o600 });
   await assert.rejects(
     verifyClaudeReviewEvidence({
-      evidencePath: missingMinimumBudgetEvidencePath,
+      evidencePath: missingMaximumBudgetEvidencePath,
       repoRoot: repository,
       fetchBase: false,
     }),
-    /does not bind the minimum review budget/,
+    /does not bind the maximum review budget/,
   );
-  const mismatchedMinimumBudgetEvidencePath = path.join(evidenceDir, "mismatched-minimum-budget.evidence.json");
-  const mismatchedMinimumBudgetEvidence = structuredClone(result.evidence);
-  mismatchedMinimumBudgetEvidence.invocation.minimumBudgetUsd = 9;
-  await writeFile(mismatchedMinimumBudgetEvidencePath, `${JSON.stringify(mismatchedMinimumBudgetEvidence)}\n`, { mode: 0o600 });
+  const mismatchedMaximumBudgetEvidencePath = path.join(evidenceDir, "mismatched-maximum-budget.evidence.json");
+  const mismatchedMaximumBudgetEvidence = structuredClone(result.evidence);
+  mismatchedMaximumBudgetEvidence.invocation.maximumBudgetUsd = 9;
+  await writeFile(mismatchedMaximumBudgetEvidencePath, `${JSON.stringify(mismatchedMaximumBudgetEvidence)}\n`, { mode: 0o600 });
   await assert.rejects(
     verifyClaudeReviewEvidence({
-      evidencePath: mismatchedMinimumBudgetEvidencePath,
+      evidencePath: mismatchedMaximumBudgetEvidencePath,
       repoRoot: repository,
       fetchBase: false,
     }),
-    /does not bind the minimum review budget/,
+    /does not bind the maximum review budget/,
   );
 
   const invalidEffortEvidencePath = path.join(evidenceDir, "invalid-effort.evidence.json");
