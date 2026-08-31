@@ -74,6 +74,14 @@ cleanup() {
       if [ -f "$CONTROL_CONFIG" ]; then
         control_curl -X POST "$CONTROL_ORIGIN/complete" >/dev/null 2>&1 || true
       fi
+      # The support process owns receipt-scoped Portal Compose cleanup. Give it
+      # a bounded opportunity to remove that project before terminating its
+      # process group; killing immediately after the accepted control response
+      # can strand containers after the receipt has already been removed.
+      for _cleanup_attempt in {1..120}; do
+        oxid_job_is_running "$support_pid" || break
+        sleep 1
+      done
       if oxid_job_is_running "$support_pid"; then
         oxid_terminate_supervised_job "$support_pid" || cleanup_status=1
       else
@@ -158,7 +166,7 @@ if ! run_deadline 5 mkdir -- "$STACK_LOCK" 2>/dev/null; then
 fi
 lock_owned=1
 lock_identity="$(oxid_filesystem_identity "$STACK_LOCK")" || fail lock-identity
-lock_receipt="receipt-$BASHPID-$RANDOM-$RANDOM-$RANDOM"
+lock_receipt="receipt-$$-$RANDOM-$RANDOM-$RANDOM"
 run_deadline 5 mkdir -- "$STACK_LOCK/$lock_receipt" || fail lock-receipt
 lock_receipt_identity="$(oxid_filesystem_identity "$STACK_LOCK/$lock_receipt")" || fail lock-receipt-identity
 run_deadline 5 chmod 700 "$STACK_LOCK" "$STACK_LOCK/$lock_receipt" || fail lock-mode

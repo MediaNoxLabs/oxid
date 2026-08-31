@@ -24,6 +24,9 @@ default = []
 # authority-guarded `mobile-portal` feature, forwarded from the iOS/Android
 # `oxid-app/standalone-portal` profile.
 loopback-test-offer-trigger = ["dep:zeroize"]
+# ARM64-Darwin desktop-test scanner. It reuses the same bounded owner-private
+# loopback handoff but is never selected by normal desktop/mobile/web builds.
+desktop-test-qr-scanner = ["dep:zeroize"]
 # Bounded HTTPS handoff for the compile-time authenticated tailnet profile.
 tailnet-test-offer-trigger = [
   "loopback-test-offer-trigger",

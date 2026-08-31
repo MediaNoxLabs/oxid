@@ -15,10 +15,31 @@ for command_name in nix rustup jq; do
   fi
 done
 
-if [ ! -x /usr/bin/xcrun ] || [ ! -x /usr/bin/open ] || [ ! -x /usr/bin/plutil ]; then
+if [ ! -x /usr/bin/xcrun ] || [ ! -x /usr/bin/xcodebuild ] \
+  || [ ! -x /usr/bin/open ] || [ ! -x /usr/bin/plutil ]; then
   echo "Xcode command-line tools are required." >&2
   exit 1
 fi
+
+xcode_developer_dir="${OXID_XCODE_DEVELOPER_DIR:-}"
+if [ -n "$xcode_developer_dir" ]; then
+  if [[ "$xcode_developer_dir" != /* ]] || [ ! -d "$xcode_developer_dir" ] \
+    || [ -L "$xcode_developer_dir" ]; then
+    echo "OXID_XCODE_DEVELOPER_DIR must select an available absolute Xcode developer directory." >&2
+    exit 1
+  fi
+else
+  xcode_developer_dir="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p)"
+fi
+if ! DEVELOPER_DIR="$xcode_developer_dir" /usr/bin/xcodebuild -version >/dev/null 2>&1 \
+  || ! DEVELOPER_DIR="$xcode_developer_dir" /usr/bin/xcrun --find simctl >/dev/null 2>&1; then
+  echo "The selected developer directory does not provide a usable full Xcode installation." >&2
+  exit 1
+fi
+
+ios_xcrun() {
+  DEVELOPER_DIR="$xcode_developer_dir" /usr/bin/xcrun "$@"
+}
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
@@ -150,13 +171,13 @@ esac
 device="${OXID_IOS_DEVICE:-}"
 if [ -z "$device" ]; then
   device="$(
-    /usr/bin/xcrun simctl list devices booted -j \
+    ios_xcrun simctl list devices booted -j \
       | jq -r 'first(.devices[][] | select(.isAvailable and (.name | startswith("iPhone"))) | .udid) // empty'
   )"
 fi
 if [ -z "$device" ]; then
   device="$(
-    /usr/bin/xcrun simctl list devices available -j \
+    ios_xcrun simctl list devices available -j \
       | jq -r 'first(.devices[][] | select(.isAvailable and (.name | startswith("iPhone"))) | .udid) // empty'
   )"
 fi
@@ -166,7 +187,7 @@ if [ -z "$device" ]; then
 fi
 
 device_state="$(
-  /usr/bin/xcrun simctl list devices -j \
+  ios_xcrun simctl list devices -j \
     | jq -r --arg device "$device" 'first(.devices[][] | select(.udid == $device) | .state) // empty'
 )"
 if [ -z "$device_state" ]; then
@@ -174,11 +195,11 @@ if [ -z "$device_state" ]; then
   exit 1
 fi
 if [ "$device_state" != "Booted" ]; then
-  /usr/bin/xcrun simctl boot "$device"
+  ios_xcrun simctl boot "$device"
 fi
 
 /usr/bin/open -a Simulator --args -CurrentDeviceUDID "$device"
-/usr/bin/xcrun simctl bootstatus "$device" -b
+ios_xcrun simctl bootstatus "$device" -b
 
 if [ "$portal_profile" = "local" ]; then
   portal_profile_authority_directory="$(mktemp -d "${TMPDIR:-/tmp}/oxid-portal-profile-ios.XXXXXX")"
@@ -193,8 +214,6 @@ rustup target add "$rust_target"
 rust_toolchain_bin="$(dirname -- "$(rustup which cargo)")"
 dioxus_output="$(nix build .#dioxus-cli --no-link --print-out-paths)"
 dioxus_cli="$dioxus_output/bin/dx"
-xcode_developer_dir="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p)"
-
 PATH="$rust_toolchain_bin:/usr/bin:$PATH" \
   DEVELOPER_DIR="$xcode_developer_dir" \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$portal_manifest_path" \
@@ -222,12 +241,12 @@ if [ "$mobile_presentation_proving" = "artifacts" ]; then
 fi
 
 if [ "${OXID_IOS_RESET_DATA:-0}" = "1" ]; then
-  /usr/bin/xcrun simctl uninstall "$device" io.medianox.oxid >/dev/null 2>&1 || true
+  ios_xcrun simctl uninstall "$device" io.medianox.oxid >/dev/null 2>&1 || true
 fi
-/usr/bin/xcrun simctl install "$device" "$app_bundle"
+ios_xcrun simctl install "$device" "$app_bundle"
 
 bundle_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app_bundle/Info.plist")"
-/usr/bin/xcrun simctl terminate "$device" "$bundle_identifier" >/dev/null 2>&1 || true
-/usr/bin/xcrun simctl launch "$device" "$bundle_identifier"
+ios_xcrun simctl terminate "$device" "$bundle_identifier" >/dev/null 2>&1 || true
+ios_xcrun simctl launch "$device" "$bundle_identifier"
 
 echo "Launched $bundle_identifier ($ui_profile profile, $mobile_custody custody, $standalone_network_profile network) on simulator $device."

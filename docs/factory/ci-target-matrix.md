@@ -11,17 +11,17 @@ devices, and a separate repository remain explicit owner evidence.
 
 | Level | Required evidence | Budget | When it runs |
 | --- | --- | --- | --- |
-| L0 basic | PR title/body, DCO, GitHub-verified commit signature, repository contracts, formatting, architecture, lint, production compilation | 0–5 min | Every PR. Rust compilation is omitted only when the impact plan proves no Rust/build surface changed. |
+| L0 basic | Advisory PR title/body feedback; required DCO, GitHub-verified commit signature, repository contracts, formatting, architecture, lint, and production compilation | 0–5 min | Every PR. Rust compilation is omitted only when the impact plan proves no Rust/build surface changed. |
 | L1 host | Workspace unit tests on one Linux host | 5–10 min | Rust, UI, headless, platform, Compact, or build changes; on demand for any PR. |
 | L2 component integration | Hermetic headless black-box tests, then deterministic Docker integration when its fixture is ready | 5–10 min for the current hermetic lane; Docker budget pending measurement | Affected host/component changes and on demand. |
 | L3 extended | UI feature profiles, optimized UI release audit, coverage, quality, locked Nix package, Compact artifacts | 10–30 min per parallel lane | Affected high-risk/build changes; every `integration` delivery; release profile. |
 | L4 platform/release | WASM, Android, iOS, Portal, standalone Midnight, PreProd, physical-device and real-proof evidence | Target-specific | Scheduled, on demand, or owner-private until each row below has a hermetic hosted runner. |
 
-L0 is an envelope of existing required contexts rather than one serial job.
-`Validate PR title`, `Validate PR body`, `Verify commit sign-offs`, scanner,
-and the new `Basic gate` run in parallel. Commit signatures remain enforced by
-GitHub ruleset `21481544`; a checkout cannot independently verify an unknown
-contributor's GPG keyring.
+L0 is an envelope of parallel policy and build contexts rather than one serial
+job. `Validate PR title` and `Validate PR body` report advisory findings;
+`Verify commit sign-offs`, scanner, and the new `Basic gate` provide required
+evidence. Commit signatures remain enforced by GitHub ruleset `21481544`; a
+checkout cannot independently verify an unknown contributor's GPG keyring.
 
 ## Runnable and planned targets
 
@@ -39,6 +39,10 @@ contributor's GPG keyring.
 | `nightly-hermetic` | `nix flake check --print-build-logs` | full Nix sandbox | complete repository | 57–60 min observed | Hosted nightly backstop |
 | `standalone-midnight` | `standalone-up.sh` plus funded finality scripts | Docker; proof server, indexer and node images; reviewed public funding fixture | Midnight transaction/Compact | startup can wait up to 20 min; full budget unmeasured | On demand; not yet safe as a public required gate |
 | `portal-headless-local` | `scripts/e2e/portal-headless-e2e.sh` / ignored live headless test | existing three-service `oxid-standalone`; pinned Lace integration Rust issuer/resolver/did-manager; Lace Smocker Didit mode; loopback only | OID4VCI, identity, headless composition, Midnight indexer sync | unmeasured | On demand; Lace service + mock-provider evidence and Oxid indexer-sync evidence only, with Oxid node/prover use unproven |
+| `portal-desktop-arm64-darwin` | `just portal-desktop-e2e` / closed exact-head evidence and safe native window crops | Apple silicon macOS WindowServer; existing `oxid-standalone`; pinned Lace Rust issuer/resolver/did-manager; Lace Smocker; loopback only | Dioxus Scan/consent/storage/restart and Midnight indexer sync | unmeasured | Owner-invoked L4 test target; deliberately absent from `HostedTarget`, normal release, and primary product targets; node/prover use unproven |
+| `portal-ios-simulator` | `just ios-portal-exact-sequence-simulator` / `target/ios-portal-exact-sequence-simulator/evidence.json` | Apple silicon macOS WindowServer; explicit full Xcode/runtime/iPhone type; disposable receipt-bound simulator; existing `oxid-standalone`; pinned Lace/Smocker; loopback only | packaged Portal route/preview/consent/issuance/encrypted restart/reverification | hard 2 h platform ceiling; journey timing unmeasured | Owner-invoked L4 virtual target; not physical, release, custody, or hosted evidence |
+| `portal-android-qemu` | `just android-portal-exact-sequence-avd` / `target/android-portal-exact-sequence-avd/evidence.json` | explicit repository-owned QEMU AVD; empty preflight ADB inventory; SDK/NDK; existing `oxid-standalone`; pinned Lace/Smocker; loopback plus exact fixed-serial reverse mappings | packaged Portal route/preview/consent/issuance/encrypted restart/reverification | hard 2 h platform ceiling; journey timing unmeasured | Owner-invoked L4 virtual target; rejects physical/mixed ADB and is not release, custody, or hosted evidence |
+| `portal-mobile-simulators` | `just portal-mobile-simulators-e2e` / same-head headless, desktop, iOS, Android records | both rows above plus macOS Portal prequalification | aggregate only; iOS before Android, fail-stop on cleanup uncertainty | hard 6 h aggregate ceiling; performance unmeasured | Owner-invoked aggregate; absent from `HostedTarget` and required CI |
 | `preprod-live` | `test-preprod-registration-e2e.sh` | private master seed, funded cases, public prover privacy acknowledgement | live Midnight delivery | variable/non-hermetic | Owner-private release evidence only |
 | `real-proof` | ignored p18 proof tests | authenticated 135 MiB artifact closure and prover resources | presentation and Passport Vault proofs | device/host budgets pending | Release/performance evidence |
 | `wasm-compile` | `cargo check -p oxid-app --no-default-features --features web --target wasm32-unknown-unknown` | target-scoped compiler override | web/shared UI/dependencies | currently fails in Nix cc-wrapper hardening flags | Blocked; issue #13 |

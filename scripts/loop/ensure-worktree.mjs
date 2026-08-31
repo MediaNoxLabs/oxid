@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { runManagedChild } from "../lib/managed-child-process.mjs";
 import { enforceSingleBase, readLongOptionValues } from "../lib/pinned-dev-loops-args.mjs";
+import { auditWorktreeAdmission } from "../factory/audit-pi.mjs";
 
 const INTEGRATION_BASE = "origin/integration";
 
@@ -34,6 +35,26 @@ function selectorValue(args) {
   const value = issue ?? pr;
   if (!/^[1-9]\d*$/.test(value)) throw new Error(`${issue === undefined ? "--pr" : "--issue"} must be a positive integer`);
   return issue === undefined ? `pr-${value}` : `issue-${value}`;
+}
+
+export function resolveRepositoryWorktreePath(mainRoot, args) {
+  const issue = optionValue(args, "--issue");
+  const pr = optionValue(args, "--pr");
+  selectorValue(args);
+  const kind = issue === undefined ? "pr" : "issue";
+  return path.join(mainRoot, "tmp", "worktrees", "dev-loops", `${kind}-${Number(issue ?? pr)}`);
+}
+
+function isRegisteredWorktree(mainRoot, target) {
+  if (!existsSync(target)) return false;
+  const targetPath = path.resolve(target);
+  const porcelain = execFileSync("git", ["-C", mainRoot, "worktree", "list", "--porcelain"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return porcelain.split(/\r?\n/u)
+    .filter((line) => line.startsWith("worktree "))
+    .some((line) => path.resolve(line.slice("worktree ".length)) === targetPath);
 }
 
 function replaceOption(args, name, value) {
@@ -75,12 +96,32 @@ export function normalizeLinkedWorktreeContext(argv, { gitCommand = "git" } = {}
   return replaceOption(argv, "--repo-root", mainRoot);
 }
 
+export async function enforceFactoryAdmissionForCreation(args, { admissionAudit = auditWorktreeAdmission } = {}) {
+  if (args.includes("--help") || args.includes("-h")) return { skipped: true };
+  const repoRootValue = optionValue(args, "--repo-root");
+  // Preserve the pinned package's parse-error contract for incomplete input.
+  if (repoRootValue === undefined) return { skipped: true };
+  const mainRoot = realpathSync(path.resolve(repoRootValue));
+  const target = resolveRepositoryWorktreePath(mainRoot, args);
+  if (isRegisteredWorktree(mainRoot, target)) return { reused: true, target };
+  const audit = await admissionAudit({ repoRoot: mainRoot });
+  if (!audit.admissionReady) {
+    const failures = audit.checks.filter((item) => item.status === "fail").map((item) => item.id);
+    throw new Error(
+      `factory admission is blocked (${failures.join(", ")}); run ./bootstrap.sh --audit-pi and resolve red controls before creating ${target}`,
+    );
+  }
+  return { reused: false, target };
+}
+
 export async function runEnsureWorktree(argv = process.argv.slice(2), {
   cwd = process.cwd(),
   stdout = process.stdout,
   stderr = process.stderr,
+  admissionAudit = auditWorktreeAdmission,
 } = {}) {
   const args = normalizeLinkedWorktreeContext(normalizeWorktreeArgs(argv));
+  await enforceFactoryAdmissionForCreation(args, { admissionAudit });
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "ensure-worktree-consumer.mjs");
   return runManagedChild(process.execPath, [script, ...args], {
     cwd,

@@ -74,6 +74,31 @@ the OpenPGP envelope in the Git object and GitHub's cryptographic verification
 result. An SSH or S/MIME “Verified” badge does not satisfy this repository's
 OpenPGP rule.
 
+### Local enforcement
+
+`./bootstrap.sh --configure-git` installs the tracked `pre-commit`,
+`commit-msg`, and `pre-push` dispatchers into private Git-common state and sets
+repository-local `commit.gpgSign=true` plus `gpg.format=openpgp`. The common
+installation is stable when a linked worktree is removed and carries a
+version-checked copy of the tracked policy, so old and new worktrees do not
+load different hook logic. Existing foreign `core.hooksPath` configuration is
+never overwritten. Re-run the configuration command after a tracked hook or
+policy update; `./bootstrap.sh --check` reports a stale installed bundle.
+
+The commit hook checks signing configuration, Git itself aborts a normal commit
+when OpenPGP signing fails, and the message hook rejects a non-conventional
+subject or missing exact DCO trailer. The push hook permits issue branches
+only, derives their complete range from the locally fetched
+`<remote>/integration`, checks every commit, and runs `git verify-commit` before
+Git transfers objects. It ignores deletions and rejects tag, protected-branch,
+stale-base, malformed, empty, or oversized ranges. Run `git fetch origin
+integration` before pushing.
+
+Hooks can be bypassed with Git's `--no-verify` and a command-line
+`--no-gpg-sign` can override the signing default. Therefore hooks are early
+feedback, never merge evidence. The trusted hosted workflow remains the final
+authority for the exact PR head and GitHub account/key association.
+
 Dependabot and Renovate are exempt only from DCO certification, and only when
 both the PR actor and commit author match the closed bot policy. Their commits
 still require conventional subjects and GitHub-verified OpenPGP signatures. A
@@ -89,16 +114,28 @@ exact PR head SHA. It never checks out or
 executes candidate files. The PR-title and body contexts use the same pattern,
 so a PR cannot approve a weakened workflow or checker included in its own diff.
 
-### Two-phase rollout
+### Completed rollout
 
 GitHub discovers `pull_request` workflow definitions from the candidate merge
 ref but `pull_request_target` definitions from the trusted base ref. Therefore
 the PR that installs the trusted workflows cannot also delete the legacy
 required-context workflows: doing so would leave that bootstrap head with no
 producer for its required contexts. Issue
-[#193](https://github.com/MediaNoxLabs/oxid/issues/193) is the bounded second
-phase. Immediately after this policy lands, it deletes only the two legacy
-workflow files, leaving the trusted workflows as the sole context producers.
+[#193](https://github.com/MediaNoxLabs/oxid/issues/193) completes the bounded
+second phase by deleting the two legacy workflows. The trusted workflows are
+now the sole context producers.
+
+### Required commit evidence and advisory metadata
+
+Conventional Commits, DCO, and OpenPGP prove the provenance of the exact commit
+history and remain a required merge status. Draft work can continue through the
+draft gate while that status is red, but the history must be repaired before
+pre-approval or merge.
+
+PR title, scope, branch, and body checks are advisory. They publish successful
+exact-head statuses with explicit advisory descriptions and workflow warnings
+when metadata is invalid. This keeps actionable feedback visible without
+turning administrative metadata into a merge blocker.
 
 ## Contribution labels
 
@@ -119,4 +156,6 @@ node scripts/github/sync-contribution-labels.mjs --execute
 ```
 
 Label metadata helps routing and metrics; it is not permission to trust the
-declared scope over the actual diff.
+declared scope over the actual diff. Classification itself is informational:
+an invalid title or label API failure emits a workflow warning but is not a
+merge gate.

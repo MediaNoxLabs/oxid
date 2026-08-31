@@ -3,14 +3,23 @@
 
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$repo_root"
+
 usage() {
   printf '%s\n' \
     "Usage: ./bootstrap.sh [--pi [PI_ARGS...]]" \
     "       ./bootstrap.sh --check" \
+    "       ./bootstrap.sh --audit-pi" \
+    "       ./bootstrap.sh --configure-pi" \
+    "       ./bootstrap.sh --configure-git" \
     "       ./bootstrap.sh -- COMMAND [ARGS...]" \
     "" \
     "With no arguments, enter the pinned Nix development shell." \
-    "Use --pi to start Pi, --check to validate the Pi integration, or" \
+    "Use --pi to start Pi, --check to validate factory integrations," \
+    "--audit-pi to inspect constitutional readiness, --configure-pi to" \
+    "install the bounded user-level pi-subagents policy, --configure-git" \
+    "to install repository-local contribution hooks and signing defaults, or" \
     "-- to run one command inside the development shell."
 }
 
@@ -25,7 +34,13 @@ case "${1:-}" in
     ;;
   --pi)
     shift
-    exec nix develop --command pi "$@"
+    exec nix develop --command bash -c '
+      node scripts/factory/audit-pi.mjs --config-only --enforce-config || {
+        echo "Pi startup audit failed. If user-subagent-policy is red, run ./bootstrap.sh --configure-pi; otherwise fix the reported control, then retry ./bootstrap.sh --pi." >&2
+        exit 1
+      }
+      exec pi "$@"
+    ' bootstrap-pi "$@"
     ;;
   --check)
     shift
@@ -34,7 +49,34 @@ case "${1:-}" in
       usage >&2
       exit 2
     fi
-    exec nix develop --command just pi-smoke
+    exec nix develop --command just factory-smoke
+    ;;
+  --audit-pi)
+    shift
+    if (( $# != 0 )); then
+      echo "--audit-pi does not accept additional arguments" >&2
+      usage >&2
+      exit 2
+    fi
+    exec nix develop --command node scripts/factory/audit-pi.mjs
+    ;;
+  --configure-pi)
+    shift
+    if (( $# != 0 )); then
+      echo "--configure-pi does not accept additional arguments" >&2
+      usage >&2
+      exit 2
+    fi
+    exec nix develop --command node scripts/factory/pi-policy.mjs apply --execute
+    ;;
+  --configure-git)
+    shift
+    if (( $# != 0 )); then
+      echo "--configure-git does not accept additional arguments" >&2
+      usage >&2
+      exit 2
+    fi
+    exec nix develop --command node scripts/git-hooks/configure.mjs apply --execute
     ;;
   --help|-h)
     usage

@@ -38,6 +38,17 @@ let nextId = 1;
 let terminalError = null;
 const pending = new Map();
 const measurements = {};
+let measuredCounterDelta = {
+  authorizationMetadata: 0,
+  credential: 0,
+  issuerMetadata: 0,
+  issuerResolution: 0,
+  issuerResolutionSuccess: 0,
+  kyc: 0,
+  nonce: 0,
+  other: 0,
+  token: 0,
+};
 
 function rejectPending(error) {
   terminalError ??= error;
@@ -221,6 +232,7 @@ function assertExactCounterDelta(before, after, expected, scenario) {
   if (JSON.stringify(delta) !== JSON.stringify(exact)) {
     throw new Error(`${scenario} counters were not exact: ${JSON.stringify(delta)}`);
   }
+  return delta;
 }
 
 async function setProxyMode(mode) {
@@ -271,6 +283,17 @@ try {
       "Why add it?", "Unverified endpoint"
     ].every((value) => document.body.innerText.includes(value))`);
     if (!questions) throw new Error("Portal consent questions are incomplete");
+    const consentBoundary = await evaluate(`(() => {
+      const consent = document.querySelector("#credential-issuance-consent");
+      const issue = ${button("Accept and issue credential")};
+      return {
+        consentUnchecked: Boolean(consent) && !consent.checked,
+        issuanceDisabled: Boolean(issue) && issue.disabled
+      };
+    })()`);
+    if (!Object.values(consentBoundary).every(Boolean)) {
+      throw new Error(`preview crossed the consent boundary: ${JSON.stringify(consentBoundary)}`);
+    }
     const before = await counters();
     assertExactCounterDelta(start, before, {
       authorizationMetadata: 1,
@@ -282,7 +305,7 @@ try {
       "refusal",
     );
     const after = await counters();
-    assertExactCounterDelta(start, after, {
+    measuredCounterDelta = assertExactCounterDelta(start, after, {
       authorizationMetadata: 1,
       issuerMetadata: 1,
     }, "refusal");
@@ -292,6 +315,13 @@ try {
     );
     const refusalDelta = counterDelta(after, start);
     Object.assign(measurements, {
+      consentInitiallyUnchecked: consentBoundary.consentUnchecked,
+      exactOfferRouted: true,
+      exactPreview: true,
+      fiveQuestions: true,
+      issuanceInitiallyDisabled: consentBoundary.issuanceDisabled,
+      issuerResolutionCallsBeforeConsent: refusalDelta.issuerResolution,
+      rawOfferClearedAfterPreview: true,
       refusalBeforeConsent: true,
       refusalSecretEndpointCalls: refusalDelta.token + refusalDelta.nonce + refusalDelta.credential,
       warmIngress: true,
@@ -304,7 +334,12 @@ try {
     await waitFor('document.body.innerText.includes("The issuer metadata is not valid")', "strict malformed rejection");
     await waitFor(`!Boolean(${button("Dismiss identity request")})`, "malformed request cleanup");
     const after = await counters();
-    assertExactCounterDelta(start, after, { issuerMetadata: 1 }, "malformed response");
+    measuredCounterDelta = assertExactCounterDelta(
+      start,
+      after,
+      { issuerMetadata: 1 },
+      "malformed response",
+    );
     await setProxyMode("normal");
     Object.assign(measurements, { malformedRejected: true, warmIngress: true });
   } else if (mode === "protocol-error" || mode === "protocol-timeout") {
@@ -342,7 +377,7 @@ try {
     );
     await waitFor(`!Boolean(${button("Dismiss identity request")})`, "failed request cleanup");
     const after = await counters();
-    assertExactCounterDelta(
+    measuredCounterDelta = assertExactCounterDelta(
       start,
       after,
       { issuerMetadata: mode === "protocol-error" ? 2 : 1 },
@@ -397,7 +432,7 @@ try {
       "failed issuance retained prepared review and route lock",
     );
     const counts = await counters();
-    assertExactCounterDelta(start, counts, {
+    measuredCounterDelta = assertExactCounterDelta(start, counts, {
       authorizationMetadata: 1,
       issuerMetadata: 1,
       token: 1,
@@ -436,7 +471,7 @@ try {
     if (!Object.values(result).every(Boolean)) {
       throw new Error(`Portal issuance UI evidence failed: ${JSON.stringify(result)}`);
     }
-    assertExactCounterDelta(start, counts, {
+    measuredCounterDelta = assertExactCounterDelta(start, counts, {
       authorizationMetadata: 1,
       credential: 1,
       issuerMetadata: 1,
@@ -446,6 +481,7 @@ try {
       token: 1,
     }, "successful issuance");
     Object.assign(measurements, {
+      claimsHidden: result.claimsHidden,
       exactBundleImported: true,
       explicitConsent: true,
       managedAuthenticationProof: true,
@@ -458,7 +494,7 @@ try {
     await assertRouted();
     await click("Dismiss identity request");
     const after = await counters();
-    assertExactCounterDelta(start, after, {}, "cold route");
+    measuredCounterDelta = assertExactCounterDelta(start, after, {}, "cold route");
     Object.assign(measurements, { coldIngress: true, oneItemIngress: true });
   } else if (mode === "restored") {
     await click("Wallet");
@@ -482,6 +518,7 @@ try {
     if (await evaluate('Boolean(document.querySelector(".credential-reverification-success"))')) {
       throw new Error("fresh reverification marker was stale before reverify");
     }
+    Object.assign(measurements, { noStaleReverificationMarker: true });
     const beforeReverify = await counters();
     await click("Reverify");
     const reverifyDeadline = Date.now() + 30_000;
@@ -496,7 +533,7 @@ try {
     if (!(afterReverify.issuerResolutionSuccess > beforeReverify.issuerResolutionSuccess)) {
       throw new Error("Reverify did not produce a fresh issuer-resolution success");
     }
-    assertExactCounterDelta(beforeReverify, afterReverify, {
+    measuredCounterDelta = assertExactCounterDelta(beforeReverify, afterReverify, {
       issuerResolution: 1,
       issuerResolutionSuccess: 1,
     }, "restart reverification");
@@ -532,7 +569,7 @@ try {
       listedAfterRestart: true,
     });
   }
-  process.stdout.write(`${JSON.stringify({ measurements, mode, passed: true })}\n`);
+  process.stdout.write(`${JSON.stringify({ counterDelta: measuredCounterDelta, measurements, mode, passed: true })}\n`);
 } finally {
   socket.close();
 }

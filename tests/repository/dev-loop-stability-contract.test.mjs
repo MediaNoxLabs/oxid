@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   checkAgentToolAllowlists,
@@ -19,7 +19,7 @@ import {
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
 import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
-import { normalizeLinkedWorktreeContext, normalizeWorktreeArgs, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
+import { enforceFactoryAdmissionForCreation, normalizeLinkedWorktreeContext, normalizeWorktreeArgs, resolveRepositoryWorktreePath, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import { assertReviewedWorktreePin, oxidConsumerProvision } from "../../scripts/loop/ensure-worktree-consumer.mjs";
 import {
   assertMinimumGhVersion,
@@ -82,16 +82,17 @@ async function realMkdtemp(prefix) {
   return realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
 }
 
-async function installedPi084Root(t) {
+async function installedPiRoot(t) {
   try {
+    const expectedVersion = execFileSync("pi", ["--version"], { encoding: "utf8" }).trim();
     const executable = (execFileSync("which", ["pi"], { encoding: "utf8" })).trim();
     const root = path.dirname(path.dirname(await realpath(executable)));
     const packageRoot = path.join(root, "lib", "node_modules", "pi-monorepo");
     const manifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
-    if (manifest.version !== "0.84.0") throw new Error(`found Pi ${manifest.version}`);
+    if (manifest.version !== expectedVersion) throw new Error(`expected Pi ${expectedVersion}, found ${manifest.version}`);
     return packageRoot;
   } catch (error) {
-    t.skip(`Pi 0.84 runner fixture unavailable: ${error.message}`);
+    t.skip(`Nix-pinned Pi runner fixture unavailable: ${error.message}`);
     return null;
   }
 }
@@ -468,8 +469,8 @@ test("tracked extension is idempotent and truthfully advisory on invalid allowli
   assert.match(notifications[2].message, /Advisory only.*errors are swallowed/);
 });
 
-test("Pi 0.84 runner cannot hard-cancel a local fake provider through these hooks", async (t) => {
-  const piRoot = await installedPi084Root(t);
+test("Nix-pinned Pi runner cannot hard-cancel a local fake provider through these hooks", async (t) => {
+  const piRoot = await installedPiRoot(t);
   if (!piRoot) return;
   const [{ Agent }, { createAssistantMessageEventStream }, { fauxAssistantMessage }, extensions, { createEventBus }] = await Promise.all([
     import(new URL("./node_modules/@earendil-works/pi-agent-core/dist/agent.js", `file://${piRoot}/`)),
@@ -563,7 +564,9 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   const devLoop = await read(".pi/agents/dev-loop.agent.md");
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
   assert.match(devLoop, /pre-flight-gate\.mjs --check-subagents.*before each later delegation or routed action/s);
-  assert.match(devLoop, /contradictory loop-info remains a pinned-runtime residual/);
+  assert.match(devLoop, /gate coordination is authoritative for gate progression/);
+  assert.match(devLoop, /run_draft_gate[\s\S]*requireCi: false/);
+  assert.match(devLoop, /stop on every other contradiction/);
   assert.doesNotMatch(devLoop, /review-routing\.mjs|~\/.pi|npm root -g|require\.resolve\(['"]dev-loops|<dev-loops-package-root>\/cli\/index\.mjs/);
   const review = await read(".pi/agents/review.agent.md");
   assert.doesNotMatch(review, /\bgh api\b|\bgit (?:diff|log)\b/);
@@ -664,6 +667,32 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.notStrictEqual(oxidConsumerProvision(), oxidConsumerProvision());
 });
 
+test("repository recovery path stays aligned with the real pinned dev-loops core", async (t) => {
+  let resolved;
+  try {
+    resolved = await resolveDevLoopsPackageRoot({ cwd: repoRoot });
+  } catch (error) {
+    if (/missing exact dev-loops@/u.test(error.message)) {
+      t.skip("project-local Pi packages are intentionally absent from public CI");
+      return;
+    }
+    throw error;
+  }
+  const corePath = await resolvePinnedCoreModulePath(resolved.packageRoot);
+  const core = await import(pathToFileURL(corePath).href);
+  const packagePreflight = await readFile(path.join(resolved.packageRoot, "scripts", "loop", "pre-flight-gate.mjs"), "utf8");
+  assert.match(packagePreflight, /\(creates\+provisions tmp\/worktrees\/dev-loops\/<kind>-<n> from origin\/main\)/u);
+  for (const target of [
+    { args: ["--issue", "194"], kind: "issue", number: 194 },
+    { args: ["--pr", "204"], kind: "pr", number: 204 },
+  ]) {
+    assert.equal(
+      resolveRepositoryWorktreePath(repoRoot, target.args),
+      core.resolveWorktreePath({ repoRoot, kind: target.kind, number: target.number }),
+    );
+  }
+});
+
 test("linked worktree context handles issue/PR selectors, equals forms, main roots, and spaces", async (t) => {
   const root = await realMkdtemp("oxid-worktree-context-");
   const unusual = path.join(root, "checkout with spaces");
@@ -725,6 +754,41 @@ test("Oxid worktree creation applies zero consumer provisioning despite a dirty 
   });
   assert.doesNotMatch(stderr.join(""), /provision-worktree|packages\/core|WARN/);
   assert.equal(await lstat(path.join(fixture.worktree, "node_modules")).catch(() => null), null);
+});
+
+test("new managed worktrees gate only on host capacity admission", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const existing = await enforceFactoryAdmissionForCreation([
+    "--repo-root", fixture.root, "--issue", "150", "--base", "origin/integration",
+  ], {
+    admissionAudit: async () => { throw new Error("audit must not run for an existing canonical worktree"); },
+  });
+  assert.equal(existing.reused, true);
+
+  await mkdir(path.join(fixture.root, "tmp", "worktrees", "dev-loops", "issue-151"));
+  let auditOptions;
+  const admitted = await enforceFactoryAdmissionForCreation([
+    "--repo-root", fixture.root, "--issue", "151", "--base", "origin/integration",
+  ], {
+    admissionAudit: async (options) => {
+      auditOptions = options;
+      return { admissionReady: true, checks: [{ id: "worktree-admission", status: "pass" }] };
+    },
+  });
+  assert.equal(admitted.reused, false);
+  assert.deepEqual(auditOptions, { repoRoot: await realpath(fixture.root) });
+
+  await assert.rejects(enforceFactoryAdmissionForCreation([
+    "--repo-root", fixture.root, "--issue", "152", "--base", "origin/integration",
+  ], {
+    admissionAudit: async () => ({
+      admissionReady: false,
+      checks: [
+        { id: "worktree-admission", status: "fail" },
+      ],
+    }),
+  }), /factory admission is blocked \(worktree-admission\).*--audit-pi/su);
 });
 
 test("Oxid worktree consumer preserves help, parse-error, conflict, jq, and silent output contracts", async (t) => {

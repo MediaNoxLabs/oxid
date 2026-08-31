@@ -25,7 +25,10 @@ use oxid_protocol_application::{
 #[cfg(any(target_os = "ios", target_os = "android", test))]
 use serde::Deserialize;
 use url::Url;
-#[cfg(feature = "loopback-test-offer-trigger")]
+#[cfg(any(
+    feature = "loopback-test-offer-trigger",
+    feature = "desktop-test-qr-scanner"
+))]
 use zeroize::Zeroizing;
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -222,7 +225,10 @@ fn registered_openid4vp_request(
 /// verification before storage. Tao/Wry's OS-event callback never performs
 /// network I/O. Failure instead enqueues the literal trigger, which the strict
 /// credential-offer router rejects as malformed.
-#[cfg(feature = "loopback-test-offer-trigger")]
+#[cfg(any(
+    feature = "loopback-test-offer-trigger",
+    feature = "desktop-test-qr-scanner"
+))]
 mod loopback_test_offer_trigger {
     use std::fs;
     use std::io::{Read, Write};
@@ -240,24 +246,38 @@ mod loopback_test_offer_trigger {
     use std::os::unix::fs::PermissionsExt as _;
     use zeroize::Zeroizing;
 
+    #[cfg_attr(not(feature = "loopback-test-offer-trigger"), allow(dead_code))]
     pub const TRIGGER: &str = "openid-credential-offer://standalone-portal-test-fetch";
 
     const LOOPBACK_OFFER_PORT: u16 = 18091;
     const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
     const MAX_RESPONSE_BYTES: usize = 32 * 1_024;
     const CAPABILITY_BYTES: usize = 64;
-    #[cfg(any(target_os = "ios", target_os = "android", test))]
+    #[cfg(any(
+        target_os = "ios",
+        target_os = "android",
+        all(feature = "desktop-test-qr-scanner", target_os = "macos"),
+        test
+    ))]
     const CAPABILITY_FILE: &str = "portal-offer.capability";
 
+    #[cfg_attr(not(feature = "loopback-test-offer-trigger"), allow(dead_code))]
     pub fn is_trigger(value: &str) -> bool {
         value == TRIGGER
     }
 
+    #[cfg(feature = "loopback-test-offer-trigger")]
     pub fn resolve_trigger() -> Zeroizing<String> {
+        fetch_one_shot_offer().unwrap_or_else(|()| Zeroizing::new(TRIGGER.to_owned()))
+    }
+
+    #[cfg(any(
+        feature = "loopback-test-offer-trigger",
+        feature = "desktop-test-qr-scanner"
+    ))]
+    pub fn fetch_one_shot_offer() -> Result<Zeroizing<String>, ()> {
         let address = SocketAddr::from(([127, 0, 0, 1], LOOPBACK_OFFER_PORT));
-        read_capability()
-            .and_then(|capability| fetch_offer(address, CONTROL_TIMEOUT, &capability))
-            .unwrap_or_else(|()| Zeroizing::new(TRIGGER.to_owned()))
+        read_capability().and_then(|capability| fetch_offer(address, CONTROL_TIMEOUT, &capability))
     }
 
     #[cfg(feature = "tailnet-test-offer-trigger")]
@@ -346,7 +366,18 @@ mod loopback_test_offer_trigger {
         {
             return Ok(PathBuf::from("/data/data/io.medianox.oxid/files").join(CAPABILITY_FILE));
         }
-        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        #[cfg(all(feature = "desktop-test-qr-scanner", target_os = "macos"))]
+        {
+            let home = std::env::var_os("HOME").ok_or(())?;
+            Ok(PathBuf::from(home)
+                .join("Library/Application Support/io.medianox.oxid")
+                .join(CAPABILITY_FILE))
+        }
+        #[cfg(not(any(
+            target_os = "ios",
+            target_os = "android",
+            all(feature = "desktop-test-qr-scanner", target_os = "macos")
+        )))]
         Err(())
     }
 
@@ -607,6 +638,52 @@ mod loopback_test_offer_trigger {
         }
     }
 }
+/// One-shot ARM64-Darwin test scanner for the owner-private Lace offer handoff.
+///
+/// Admission is burned when `scan()` is called, before the capability file or
+/// loopback service is touched. The feature is never selected by normal app
+/// composition and exposes no runtime payload injection surface.
+#[cfg(feature = "desktop-test-qr-scanner")]
+#[derive(Debug, Default)]
+pub struct DesktopPortalTestQrScanner {
+    scan_reserved: Mutex<bool>,
+}
+
+#[cfg(feature = "desktop-test-qr-scanner")]
+impl DesktopPortalTestQrScanner {
+    fn reserve_scan(&self) -> Result<(), QrScanError> {
+        let mut reserved = self.scan_reserved.lock().map_err(|_| QrScanError::Failed)?;
+        if *reserved {
+            return Err(QrScanError::Failed);
+        }
+        *reserved = true;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "desktop-test-qr-scanner")]
+fn desktop_test_scanned_payload(
+    fetched: Result<Zeroizing<String>, ()>,
+) -> Result<ScannedQrPayload, QrScanError> {
+    let fetched = fetched.map_err(|()| QrScanError::Failed)?;
+    ScannedQrPayload::new(fetched.to_string())
+}
+
+#[cfg(feature = "desktop-test-qr-scanner")]
+impl QrScannerPort for DesktopPortalTestQrScanner {
+    fn scan<'a>(&'a self) -> QrScanFuture<'a> {
+        let reservation = self.reserve_scan();
+        Box::pin(async move {
+            reservation?;
+            let fetched =
+                tokio::task::spawn_blocking(loopback_test_offer_trigger::fetch_one_shot_offer)
+                    .await
+                    .map_err(|_| QrScanError::Failed)?;
+            desktop_test_scanned_payload(fetched)
+        })
+    }
+}
+
 /// Native scanner backed by AVFoundation on iOS and Google Code Scanner on
 /// Android. Other targets return `Unavailable` without attempting a bridge.
 #[derive(Clone, Copy, Debug, Default)]
@@ -1276,6 +1353,37 @@ mod tests {
                 Err(IdentityRequestRoutingError::InvalidRequest)
             );
         }
+    }
+
+    #[cfg(feature = "desktop-test-qr-scanner")]
+    #[test]
+    fn desktop_test_scanner_admits_exactly_one_request() {
+        let scanner = DesktopPortalTestQrScanner::default();
+        assert_eq!(scanner.reserve_scan(), Ok(()));
+        assert_eq!(scanner.reserve_scan(), Err(QrScanError::Failed));
+    }
+
+    #[cfg(feature = "desktop-test-qr-scanner")]
+    #[test]
+    fn desktop_test_scanner_returns_the_exact_bounded_offer_and_rejects_bad_results() {
+        let offer = "openid-credential-offer://?credential_offer=%7B%22exact%22%3Atrue%7D";
+        assert_eq!(
+            desktop_test_scanned_payload(Ok(Zeroizing::new(offer.to_owned())))
+                .map(ScannedQrPayload::into_inner),
+            Ok(offer.to_owned())
+        );
+        assert_eq!(
+            desktop_test_scanned_payload(Err(())),
+            Err(QrScanError::Failed)
+        );
+        assert_eq!(
+            desktop_test_scanned_payload(Ok(Zeroizing::new(String::new()))),
+            Err(QrScanError::InvalidPayload)
+        );
+        assert_eq!(
+            desktop_test_scanned_payload(Ok(Zeroizing::new("x".repeat(32 * 1_024 + 1)))),
+            Err(QrScanError::InvalidPayload)
+        );
     }
 
     #[test]

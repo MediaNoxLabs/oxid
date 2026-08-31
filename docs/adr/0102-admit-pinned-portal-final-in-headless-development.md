@@ -7,7 +7,7 @@
 - Historical Portal PR head: `9c82db23eabe8b6d758b2731f2225910ea627c14` (the same tree as the landed squash commit)
 - Profile source: `76e8edf394a4cb37ca822037272d543c68f25f71`; exact provenance SHA-256 `cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87`
 - Amends: ADR-0039 and ADR-0101
-- Implementation state: strict native desktop/headless Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; production and mobile Portal HTTP composition remain unavailable
+- Implementation state: strict native desktop/headless plus authority-gated iOS Simulator/Android QEMU Portal HTTP issuance, authenticated development composition, exact private-material conversion, encrypted import, and new-process restore/reverification are implemented; ordinary and production Portal HTTP composition remain unavailable
 
 ## Context
 
@@ -78,10 +78,14 @@ proof JWTs, credentials, private parts, claims, DIDs, routes, logs, PIDs, and
 timestamps are excluded. Scripted HTTP/component tests remain separate from
 this live evidence.
 
-The iOS simulator and Android emulator continue to exercise the same incoming
-router, explicit consent, managed-method, verification, encrypted-persistence,
-and restart flows through their compile-time standalone test framework. They do
-not compile or claim the native-headless Portal HTTP route.
+The authority-gated iOS Simulator and Android QEMU profiles exercise the same
+strict Portal HTTP client through actual packaged applications while retaining
+the normal incoming router, explicit consent, managed-method, verification,
+encrypted-persistence, and restart owners. Their canonical owner lane uses a
+new receipt-bound disposable iOS Simulator and one explicit fixed-port QEMU AVD,
+publishes closed same-head evidence only after cleanup, and never substitutes
+for physical-device, Tailscale, production, native-custody, or release proof.
+Ordinary mobile composition remains unable to name the Portal client.
 
 ## Consequences
 
@@ -180,3 +184,31 @@ proof-server interactions remain explicitly false. This is not live DIDIT,
 real-person KYC, production discovery/trust, release evidence, Oxid proving or
 submission evidence, desktop/mobile/tailnet evidence, issue #162, or a Lace
 source change.
+
+## Test-only ARM64-Darwin amendment — 2026-08-29
+
+One owner-invoked `desktop-portal-test` profile may reuse the exact native
+Portal plus local-standalone policy in the real Dioxus `oxid-app` on ARM64
+macOS. This is a simple test target for faster desktop/simulator feedback, not
+a primary desktop product target, hosted graphical lane, or release profile.
+It is absent from normal desktop/mobile/web composition and from the public
+`HostedTarget` matrix.
+
+The profile adds one compile-gated `QrScannerPort` adapter over the existing
+owner-private port-18091 handoff. A single admission is burned when the visible
+rendered Scan action calls `scan()`; only then may the adapter unlink the fixed
+app-private capability and fetch the exact bounded offer. The offer and
+capability cannot enter argv, environment, logs, retained JSON, or screenshots.
+Malformed, unauthenticated, replayed, concurrent, second, and late requests
+fail closed, and UI admission cannot replace a pending identity request. The
+result remains the unchanged `ScannedQrPayload`; the normal strict router,
+offer preview, explicit consent, verifier, and encrypted store retain authority.
+
+macOS Accessibility is tried first. If WKWebView traversal is unavailable or
+TCC-blocked, the compile-gated in-process Dioxus document driver may call
+`.click()` only on rendered controls. It has no scanner, router, or use-case
+surface and is excluded from normal release binaries. Live evidence must use
+the Lace Rust issuer with supported Smocker, launch a clean second app process,
+show fresh Reverify, retain only closed exact-head JSON and protocol-redacted
+native window crops, and describe only app-observed indexer sync. Node and
+proof-server interaction remain unproven unless directly observed.

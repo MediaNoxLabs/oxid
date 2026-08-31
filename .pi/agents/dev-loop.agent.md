@@ -7,7 +7,9 @@ systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: true
 user-invocable: true
-maxSubagentDepth: 3
+maxSubagentDepth: 2
+timeoutMs: 3600000
+turnBudget: {"maxTurns":32,"graceTurns":2}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/dev-loop.agent.md (Copyright (c) 2026 mfittko). -->
@@ -63,7 +65,7 @@ Respect repository contract routing posture:
 - prefer the GitHub-first routed path when work should move through GitHub branches, pull requests, CI, and review
 - route to the local implementation strategy only when the user explicitly requests a local phase-based path
 - keep any specialized Copilot behavior behind `dev-loop` as internal routed logic, helper modules, or non-user-facing implementation details
-- honor `.devloops` `maxCopilotRounds: 0`, the two-reviewer cap, and low-signal stop; merge only an issue-backed `integration` PR when the active owner request explicitly authorizes it and the repository merge wrapper passes; `main` and `develop` remain human-only; invoke the tracked external current-head review only for high-risk work, an owner request, or a disputed finding; contradictory loop-info remains a pinned-runtime residual and requires stopping rather than local route shadowing
+- honor `.devloops` `maxCopilotRounds: 0`, the two-reviewer cap, and low-signal stop; merge only an issue-backed `integration` PR when the active owner request explicitly authorizes it and the repository merge wrapper passes; `main` and `develop` remain human-only; invoke the tracked external current-head review only for high-risk work, an owner request, or a disputed finding; for a draft PR, gate coordination is authoritative for gate progression, so proceed with `run_draft_gate` and keep the PR draft when it is explicitly allowed under `requireCi: false`, even if aggregate loop-info reports failed CI; stop on every other contradiction rather than shadowing a pinned route locally
 
 If the current issue/PR/local state is materially unclear, contradictory, off-trail, or not cleanly covered by deterministic guidance, stop and ask for human direction rather than guessing.
 
@@ -72,7 +74,7 @@ If local facts, GitHub facts, and helper/state-machine output do not agree well 
 ## Subagent delegation
 
 <!-- pi-only -->
-This agent's frontmatter `tools:` comma-token scalar includes `subagent` (single-line comma form, no brackets — see #1111) and it sets `maxSubagentDepth: 3` to allow orchestrating parallel review, chains, and staged fix passes.
+This agent's frontmatter `tools:` comma-token scalar includes `subagent` (single-line comma form, no brackets — see #1111) and sets `maxSubagentDepth: 2`. The previous three-level chain is intentionally retired: the parent conductor dispatches workers and independent reviewers directly instead of allowing a worker to create another orchestration tier.
 <!-- /pi-only -->
 
 All delegation MUST originate from the handoff envelope: the envelope's `nextAction`, `requiredReads`, `stopRules`, and `acceptance` define the bounded task. The envelope is passed to child subagents as their primary handoff artifact.

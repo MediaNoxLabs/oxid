@@ -6,6 +6,8 @@ argument-hint: "Documentation task or documentation-correctness review, affected
 systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
+timeoutMs: 600000
+turnBudget: {"maxTurns":8,"graceTurns":1}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/docs.agent.md (Copyright (c) 2026 mfittko). -->

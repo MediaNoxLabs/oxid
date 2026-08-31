@@ -9,6 +9,7 @@ import {
   labelsForSubject,
   parseConventionalSubject,
   validateBranchName,
+  validateCommitMessage,
   validateCommitEvidence,
   validateHostedCommits,
   validatePullRequest,
@@ -108,6 +109,20 @@ test("commit evidence requires exact DCO identity and an OpenPGP envelope", () =
   }).ok, true);
 });
 
+test("local message policy validates DCO and subject before a signature object exists", () => {
+  const result = validateCommitMessage({
+    message: "feat(factory): enforce local hooks\n\nSigned-off-by: Factory Agent <agent@example.com>\n",
+    authorName: "Factory Agent",
+    authorEmail: "agent@example.com",
+  });
+  assert.equal(result.ok, true);
+  assert.equal(validateCommitMessage({
+    message: "feat: missing scope",
+    authorName: "Factory Agent",
+    authorEmail: "agent@example.com",
+  }).ok, false);
+});
+
 test("hosted commit evidence is exact-head, unique, and GitHub-verified OpenPGP", () => {
   const sha = "a".repeat(40);
   const valid = [{
@@ -146,6 +161,8 @@ test("hosted policy evaluates trusted base code and verifies OpenPGP through Git
   assert.match(dco, /policy\/scripts\/ci\/contribution-policy\.mjs hosted-commits/);
   assert.match(dco, /createCommitStatus/);
   assert.match(dco, /state: 'pending'/);
+  assert.match(dco, /state: passed \? 'success' : 'failure'/);
+  assert.match(dco, /core\.setFailed/);
   assert.match(dco, /sha: context\.payload\.pull_request\.head\.sha/);
   assert.match(dco, /context: 'Verify commit sign-offs'/);
   assert.doesNotMatch(dco, /pull_request\.head\.sha[^\n]*\n[^\n]*path:/);
@@ -158,19 +175,22 @@ test("hosted policy evaluates trusted base code and verifies OpenPGP through Git
   assert.match(prCheck, /context: 'Validate PR title'/);
   assert.match(prCheck, /context: 'Validate PR body'/);
   assert.match(prCheck, /state: 'pending'/);
+  assert.match(prCheck, /ready_for_review, converted_to_draft/);
+  assert.match(prCheck, /state: 'success'/);
+  assert.match(prCheck, /Advisory: title, scope, or branch policy failed/);
+  assert.match(prCheck, /core\.warning/);
+  assert.doesNotMatch(prCheck, /core\.setFailed/);
   assert.match(prCheck, /cancel-in-progress: true/);
   assert.match(prCheck, /sha: context\.payload\.pull_request\.head\.sha/);
   assert.doesNotMatch(prCheck, /action-semantic-pull-request|pull_request\.head\.sha[^\n]*\n[^\n]*path:/);
 });
 
-test("legacy required-context workflows are bounded to the tracked bootstrap", async () => {
-  const legacy = `${await read(".github/workflows/dco.yml")}\n${await read(".github/workflows/pr-check.yml")}`;
-  assert.match(legacy, /Bootstrap workflow retained/);
-  assert.match(legacy, /pull_request:/);
-  assert.doesNotMatch(legacy, /pull_request_target:/);
+test("legacy candidate-controlled contribution workflows are retired", async () => {
+  await assert.rejects(read(".github/workflows/dco.yml"), { code: "ENOENT" });
+  await assert.rejects(read(".github/workflows/pr-check.yml"), { code: "ENOENT" });
   const policy = await read("docs/factory/contribution-policy.md");
   assert.match(policy, /#193/);
-  assert.match(policy, /two-phase rollout/i);
+  assert.match(policy, /completed rollout/i);
 });
 
 test("PR metadata workflow never checks out or executes candidate code", async () => {
@@ -183,6 +203,9 @@ test("PR metadata workflow never checks out or executes candidate code", async (
   assert.doesNotMatch(labels, /issues: write/);
   assert.match(labels, /listLabelsOnIssue/);
   assert.match(labels, /cancel-in-progress: true/);
+  assert.match(labels, /ready_for_review, converted_to_draft/);
   assert.match(labels, /DERIVATION_PASSED/);
   assert.match(labels, /desired = passed \?/);
+  assert.match(labels, /core\.warning/);
+  assert.doesNotMatch(labels, /core\.setFailed/);
 });

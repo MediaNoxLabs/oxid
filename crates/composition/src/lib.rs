@@ -41,6 +41,8 @@ use oxid_adapter_did_midnight::{
     HttpDidResolver, HttpDidResolverConfig, HttpDidResolverConfigError,
 };
 use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
+#[cfg(feature = "desktop-portal-test")]
+use oxid_adapter_identity_ingress::DesktopPortalTestQrScanner;
 use oxid_adapter_identity_ingress::StrictIdentityRequestRouter;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_identity_ingress::{NativeIdentityLinkIngress, NativeQrScanner};
@@ -1607,7 +1609,7 @@ impl std::error::Error for HeadlessCompositionError {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HeadlessEnvironmentPolicy {
     General,
-    #[cfg(feature = "headless-portal-local")]
+    #[cfg(any(feature = "headless-portal-local", feature = "desktop-portal-test"))]
     NativeHeadlessProcess,
 }
 
@@ -1643,7 +1645,10 @@ impl PortalAdjacentEnvironmentSettings {
             || self.passport_vault_store
     }
 
-    #[cfg(all(test, feature = "headless-portal-local"))]
+    #[cfg(all(
+        test,
+        any(feature = "headless-portal-local", feature = "desktop-portal-test")
+    ))]
     fn each_conflict() -> [Self; 9] {
         [
             Self {
@@ -1703,7 +1708,7 @@ fn validate_portal_environment_combination(
     if matches!(policy, HeadlessEnvironmentPolicy::General) || adjacent.any() {
         return Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation);
     }
-    #[cfg(feature = "headless-portal-local")]
+    #[cfg(any(feature = "headless-portal-local", feature = "desktop-portal-test"))]
     {
         let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
             .map_err(|_| HeadlessCompositionError::PortalRequiresStandaloneSimulation)?;
@@ -1726,7 +1731,7 @@ fn validate_portal_environment_combination(
             Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
         }
     }
-    #[cfg(not(feature = "headless-portal-local"))]
+    #[cfg(not(any(feature = "headless-portal-local", feature = "desktop-portal-test")))]
     Err(HeadlessCompositionError::PortalRequiresStandaloneSimulation)
 }
 
@@ -1746,6 +1751,19 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
 pub fn compose_native_headless_process_from_environment()
 -> Result<ApplicationServices, HeadlessCompositionError> {
     compose_headless_from_environment_with_policy(HeadlessEnvironmentPolicy::NativeHeadlessProcess)
+}
+
+/// Selects the exact Phase 1 Portal + local-standalone policy for the
+/// owner-invoked native Dioxus desktop test and replaces only its unavailable
+/// desktop scanner with the one-shot test adapter.
+#[cfg(all(not(target_arch = "wasm32"), feature = "desktop-portal-test"))]
+pub fn compose_native_desktop_test_from_environment()
+-> Result<ApplicationServices, HeadlessCompositionError> {
+    let mut services = compose_headless_from_environment_with_policy(
+        HeadlessEnvironmentPolicy::NativeHeadlessProcess,
+    )?;
+    services.qr_scanner = Arc::new(DesktopPortalTestQrScanner::default());
+    Ok(services)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -4585,7 +4603,10 @@ mod tests {
         drop(compose_headless());
     }
 
-    #[cfg(all(not(target_arch = "wasm32"), feature = "headless-portal-local"))]
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        any(feature = "headless-portal-local", feature = "desktop-portal-test")
+    ))]
     #[test]
     fn headless_process_portal_policy_accepts_only_the_canonical_standalone_bundle() {
         let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
