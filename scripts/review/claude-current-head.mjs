@@ -87,7 +87,7 @@ export function buildClaudeInvocation({
   effort = DEFAULT_CLAUDE_REVIEW_EFFORT,
   command = "claude",
 } = {}) {
-  assertClaudeReviewMaxBudgetUsd(maxBudgetUsd);
+  maxBudgetUsd = assertClaudeReviewMaxBudgetUsd(maxBudgetUsd);
   assertAttestedReviewEffort(effort);
   return {
     command,
@@ -122,10 +122,11 @@ export function assertAttestedReviewEffort(effort) {
 }
 
 export function assertClaudeReviewMaxBudgetUsd(maxBudgetUsd) {
-  if (!Number.isFinite(maxBudgetUsd) || maxBudgetUsd <= 0) {
+  const numericBudget = Number(maxBudgetUsd);
+  if (!Number.isFinite(numericBudget) || numericBudget <= 0) {
     throw new Error("review max budget must be a positive finite number");
   }
-  return maxBudgetUsd;
+  return numericBudget;
 }
 
 export function assertClaudeReviewTimeoutMs(timeoutMs) {
@@ -200,7 +201,6 @@ function helpEntry(help, flag) {
 
 function documentedEffortLevels(entry) {
   const normalizedEntry = entry.replace(/\s*\r?\n\s*/g, " ");
-  const groups = [...normalizedEntry.matchAll(/\(([^()]*)\)/g)].map((match) => match[1]);
   const choices = [...normalizedEntry.matchAll(/choices?\s*:\s*([^)]+)/gi)].map((match) => match[1]);
   const parseEnumeration = (candidate) => {
     const withoutDefault = candidate.replace(
@@ -214,9 +214,24 @@ function documentedEffortLevels(entry) {
     if (tokens.some((token) => !/^[a-z][a-z0-9-]*$/i.test(token))) return null;
     return [...new Set(tokens)];
   };
-  const commaGroups = groups.filter((group) => /[,|]/.test(group));
+  const lines = entry.split(/\r?\n/);
+  const optionSuffix = lines[0]?.match(/--effort(?:\s+|=)<[^>]+>(.*)$/)?.[1] ?? "";
+  const leadingGroups = [];
+  let remainingSuffix = optionSuffix.trim();
+  while (remainingSuffix.startsWith("(")) {
+    const group = remainingSuffix.match(/^\(([^()]*)\)\s*/);
+    if (!group) break;
+    leadingGroups.push(group[1]);
+    remainingSuffix = remainingSuffix.slice(group[0].length);
+  }
+  const continuationGroups = lines.slice(1).flatMap((line) => {
+    const group = line.match(/^\s*\(([^()]*)\)\s*$/);
+    return group ? [group[1]] : [];
+  });
+  const bareGroups = remainingSuffix ? continuationGroups : [...leadingGroups, ...continuationGroups];
   const explicitChoices = choices.map(parseEnumeration).filter((candidate) => Array.isArray(candidate));
-  const bareChoices = commaGroups
+  const bareChoices = bareGroups
+    .filter((group) => /[,|]/.test(group))
     .filter((group) => !/choices?\s*:/i.test(group))
     .map(parseEnumeration)
     .filter((candidate) => Array.isArray(candidate))
@@ -575,7 +590,7 @@ export async function runClaudeCurrentHeadReview({
 } = {}) {
   if (!Number.isInteger(issue) || issue < 1) throw new Error("issue must be a positive integer");
   assertClaudeReviewTimeoutMs(timeoutMs);
-  assertClaudeReviewMaxBudgetUsd(maxBudgetUsd);
+  maxBudgetUsd = assertClaudeReviewMaxBudgetUsd(maxBudgetUsd);
   assertAttestedReviewEffort(effort);
   if (typeof issueContract !== "string" || !issueContract.trim()) throw new Error("issueContract is required for an exact-scope review");
   let contractPayload;
@@ -835,7 +850,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     return;
   }
   if (values["timeout-ms"] !== undefined && !/^[1-9][0-9]*$/.test(values["timeout-ms"])) {
-    throw new Error(`review timeout must be an integer between 1 and ${MAX_CLAUDE_REVIEW_TIMEOUT_MS} milliseconds`);
+    throw new Error("review timeout must use positive base-10 integer syntax");
   }
   const timeoutMs = values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]);
   assertClaudeReviewTimeoutMs(timeoutMs);

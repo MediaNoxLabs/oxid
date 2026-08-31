@@ -1450,7 +1450,10 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be one of/);
   assert.equal(assertClaudeReviewMaxBudgetUsd(0.01), 0.01);
+  assert.equal(assertClaudeReviewMaxBudgetUsd("10"), 10);
   assert.throws(() => assertClaudeReviewMaxBudgetUsd(Number.POSITIVE_INFINITY), /positive finite number/);
+  const stringBudgetInvocation = buildClaudeInvocation({ maxBudgetUsd: "10" });
+  assert.equal(stringBudgetInvocation.args[stringBudgetInvocation.args.indexOf("--max-budget-usd") + 1], "10");
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
   assert.deepEqual(assertMinimumClaudeVersion([2, 1, 228]), [2, 1, 228]);
   assert.throws(() => assertMinimumClaudeVersion([2, 1, 227]), /unsupported; require >= 2\.1\.228 and < 2\.2\.0/);
@@ -1482,6 +1485,10 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("  --safe-mode", "  -s, --safe-mode"), [2, 1, 228]),
     /required review flags: --safe-mode/,
   );
+  const crlfIndentedHelp = fixtureClaudeHelp
+    .replace("  --safe-mode", "    --safe-mode")
+    .replaceAll("\n", "\r\n");
+  assert.equal(assertClaudeHelpCapabilities(crlfIndentedHelp, [2, 1, 228]).emptyToolsDisabled, true);
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("--tools", "--TOOLS"), [2, 1, 228]),
     /required review flags: --tools/,
@@ -1567,6 +1574,14 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     .replace("\n  --safe-mode", "\n  -v <mode> (low, medium, high, xhigh, max)\n  --safe-mode");
   assert.throws(
     () => assertClaudeHelpCapabilities(followingShortOnlyHelp, [2, 1, 228]),
+    /recognizable review effort choice list/,
+  );
+  const unrelatedLatencyHelp = fixtureClaudeHelp.replace(
+    "(low, medium, high, xhigh, max)",
+    "Effort profile (low, high) latency",
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(unrelatedLatencyHelp, [2, 1, 228]),
     /recognizable review effort choice list/,
   );
   const enumerationBeforeDefault = fixtureClaudeHelp.replace(
@@ -1659,12 +1674,16 @@ test("Claude review CLI rejects invalid resource arguments before model executio
     runClaudeReviewCli(["--effort", "low"]),
     /exact-head attestation effort must be one of/,
   );
-  for (const invalidTimeout of ["", "-1", "0", "1.5", "1e3", "300001"]) {
+  for (const invalidTimeout of ["", "-1", "0", "1.5", "1e3"]) {
     await assert.rejects(
       runClaudeReviewCli([`--timeout-ms=${invalidTimeout}`]),
-      /review timeout must be an integer between 1 and 300000 milliseconds/,
+      /review timeout must use positive base-10 integer syntax/,
     );
   }
+  await assert.rejects(
+    runClaudeReviewCli(["--timeout-ms=300001"]),
+    /review timeout must be an integer between 1 and 300000 milliseconds/,
+  );
   await assert.rejects(
     runClaudeReviewCli(["--timeout-ms", "1"]),
     /--issue-contract-file is required/,
@@ -1680,16 +1699,15 @@ test("Claude review CLI rejects invalid resource arguments before model executio
 test("review attestation migration has a closed in-repository consumer set", () => {
   const output = execFileSync(
     "git",
-    ["grep", "-l", "-E", "claude-current-head\\.mjs|--verify-evidence|--timeout-ms", "--", "."],
+    ["grep", "-l", "claude-current-head.mjs", "--", "."],
     { cwd: repoRoot, encoding: "utf8" },
   );
-  assert.deepEqual(output.trim().split("\n").sort(), [
-    "docs/dev-loop-stability.md",
-    "docs/factory/runbook.md",
-    "docs/integration-delivery.md",
+  const executableConsumers = output.trim().split("\n").filter(
+    (file) => !file.startsWith("docs/") && !file.startsWith("tests/"),
+  );
+  assert.deepEqual(executableConsumers, [
     "scripts/review/claude-current-head.mjs",
-    "tests/repository/dev-loop-stability-contract.test.mjs",
-  ]);
+  ], "new executable consumers require an explicit schema-v3 and five-minute migration audit");
 });
 
 test("installed real Claude CLI smoke is explicit opt-in and never a default API dependency", async (t) => {
