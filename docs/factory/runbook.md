@@ -198,11 +198,12 @@ undetectable later. The check that matters is `gates` parsing.
   unchanged, the merge tree is conflict-free, all required checks (including
   GPG/DCO) pass, both gate verdicts match, and conversations are resolved.
   `main` and `develop` remain human-only.
-- **Fan-out must show its work.** `gates.requireFanoutEvidence: true` and
-  `requireFanoutProvenance: true` — a gate must record not just that five
-  angles reported, but which reviewer produced which finding. Provenance is what
-  makes a collapsed panel detectable, where one reviewer's output is replayed
-  under several angle names.
+- **Fan-out is on demand, not an integration merge prerequisite.**
+  `gates.requireFanoutEvidence: false` and `requireFanoutProvenance: false`
+  keep the ordinary local-only path compatible with
+  `refinement.maxCopilotRounds: 0`. High-risk work may still fan out to the
+  configured two-reviewer pool, and any resulting findings remain visible, but
+  an unavailable panel cannot deadlock an issue-backed, exact-head green PR.
 - **Foreign angles are rejected.** `gates.rejectForeignAngles: true`, so an
   angle name not in the configured set cannot smuggle itself into evidence.
 - **Draft first, without a CI stall.** `workflow.requireDraftFirst: true`, but
@@ -216,8 +217,11 @@ undetectable later. The check that matters is `gates` parsing.
 - **No Copilot gate.** `refinement.maxCopilotRounds: 0` keeps unavailable
   Copilot review disabled. A manually invoked Claude CLI review is reserved for
   high-risk `full` changes, an owner request, or a disputed finding. It is not a hosted GitHub check and does not authenticate reviewer identity. Run
-  `scripts/review/claude-current-head.mjs` once on the final clean head as
-  documented in `docs/dev-loop-stability.md`.
+  `scripts/review/claude-current-head.mjs` once on the final head as
+  documented in `docs/dev-loop-stability.md`. The wrapper selects and records
+  bounded `medium` effort by default; a timeout remains a failed review rather
+  than permission to merge. Concrete blocking findings stop delivery;
+  recommendations are retained on the PR and tracked as follow-up issues.
 
 ## Model policy
 
