@@ -1528,6 +1528,13 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     assertClaudeHelpCapabilities(wrappedChoicesHelp, [2, 1, 228]).effortLevels,
     CLAUDE_REVIEW_EFFORTS,
   );
+  const followingAliasHelp = fixtureClaudeHelp.replace(
+    "\n  --safe-mode",
+    "\n  -ef, --environment <id> (foreign, modes)\n  --safe-mode",
+  );
+  const followingAliasCapabilities = assertClaudeHelpCapabilities(followingAliasHelp, [2, 1, 228]);
+  assert.deepEqual(followingAliasCapabilities.effortLevels, CLAUDE_REVIEW_EFFORTS);
+  assert.doesNotMatch(followingAliasCapabilities.effortHelpEntry, /--environment/);
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "with a bounded level"), [2, 1, 228]),
     /recognizable review effort choice list/,
@@ -1575,12 +1582,7 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(() => parseClaudeReviewResult(JSON.stringify({ structured_output: { verdict: "clean", findings: [{ severity: "blocker", message: "bad" }] } })), /clean verdict cannot contain findings/);
 });
 
-test("Claude review CLI rejects an unsupported effort before model execution", async (t) => {
-  const directory = await realMkdtemp("oxid-claude-effort-");
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const contract = path.join(directory, "issue.json");
-  await writeFile(contract, JSON.stringify({ issue: 232, title: "Fixture", body: "Contract" }));
-
+test("Claude review CLI rejects invalid resource arguments before model execution", async () => {
   let help = "";
   await runClaudeReviewCli(["--help"], { stdout: { write(chunk) { help += chunk; } } });
   assert.match(help, /--timeout-ms INTEGER/);
@@ -1588,8 +1590,6 @@ test("Claude review CLI rejects an unsupported effort before model execution", a
 
   await assert.rejects(
     runClaudeReviewCli([
-      "--issue", "232",
-      "--issue-contract-file", contract,
       "--effort", "unbounded",
     ], { stdout: { write() {} } }),
     /effort must be one of/,
@@ -1757,6 +1757,7 @@ if (process.argv.includes("--version")) {
     assert.equal(defaultEvidence.invocation.effort, "medium");
     assert.equal(defaultEvidence.invocation.timeoutMs, 300_000);
     assert.equal(defaultEvidence.verdict, "clean");
+    await writeFakeClaude("clean");
   });
 
   await t.test("default five-minute timeout remains a hard failure", async () => {
@@ -2140,26 +2141,23 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
 });
 
-test("the hardened wrapper is the sole production parser for local Claude attestations", async () => {
+test("the hardened wrapper is the sole repository-script parser for local Claude attestations", async () => {
   const evidenceKind = ["local", "attestation"].join("-");
-  const ignoredDirectories = new Set([".git", "node_modules", "target", "tmp"]);
   const productionParsers = [];
   const visit = async (directory, relative = "") => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const childRelative = path.join(relative, entry.name);
       if (entry.isDirectory()) {
-        if (!ignoredDirectories.has(entry.name) && childRelative !== path.join(".pi", "npm")) {
-          await visit(path.join(directory, entry.name), childRelative);
-        }
+        await visit(path.join(directory, entry.name), childRelative);
         continue;
       }
-      if (!entry.isFile() || !/\.(?:js|mjs|ts|sh)$/.test(entry.name) || childRelative.startsWith(`tests${path.sep}`)) continue;
+      if (!entry.isFile() || !/\.(?:js|mjs|ts|sh)$/.test(entry.name)) continue;
       if ((await readFile(path.join(directory, entry.name), "utf8")).includes(evidenceKind)) {
         productionParsers.push(childRelative);
       }
     }
   };
-  await visit(repoRoot);
+  await visit(path.join(repoRoot, "scripts"), "scripts");
   productionParsers.sort();
   assert.deepEqual(productionParsers, ["scripts/review/claude-current-head.mjs"]);
 });

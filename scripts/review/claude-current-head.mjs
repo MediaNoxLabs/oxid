@@ -147,7 +147,7 @@ function helpFlagPattern(flag, { allowAlias = false } = {}) {
   // Effort alone tolerates a short alias because this new, non-safety option
   // needs layout compatibility. Existing safety flags remain exact and
   // case-sensitive so their capability proof cannot be weakened by aliases.
-  const alias = allowAlias ? "(?:-[a-zA-Z0-9],\\s*)?" : "";
+  const alias = allowAlias ? "(?:-[a-zA-Z0-9]+,\\s*)?" : "";
   return new RegExp(`(?:^|\\n)\\s*${alias}${escaped}(?=\\s|=|<|\\[|$)`, "m");
 }
 
@@ -167,7 +167,7 @@ function helpEntry(help, flag) {
   if (start < 0) return "";
   const entry = [lines[start]];
   for (const line of lines.slice(start + 1)) {
-    if (/^\s*(?:-[a-z0-9],\s*)?--[a-z0-9]/i.test(line) || !/^\s+\S/.test(line)) break;
+    if (/^\s*(?:-[a-z0-9]+,\s*)?--[a-z0-9]/i.test(line) || !/^\s+\S/.test(line)) break;
     entry.push(line);
   }
   return entry.join("\n");
@@ -782,6 +782,8 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_CLAUDE_REVIEW_TIMEOUT_MS) {
     throw new Error(`--timeout-ms must be an integer between 1 and ${MAX_CLAUDE_REVIEW_TIMEOUT_MS}`);
   }
+  const effort = values.effort ?? DEFAULT_CLAUDE_REVIEW_EFFORT;
+  assertClaudeReviewEffort(effort);
   if (!values["issue-contract-file"]) throw new Error("--issue-contract-file is required");
   const issueContract = await readFile(values["issue-contract-file"], "utf8");
   const result = await runClaudeCurrentHeadReview({
@@ -792,7 +794,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     expectedHead: values["expected-head"],
     timeoutMs,
     maxBudgetUsd: values["max-budget-usd"] === undefined ? DEFAULT_MAX_BUDGET_USD : Number(values["max-budget-usd"]),
-    effort: values.effort ?? DEFAULT_CLAUDE_REVIEW_EFFORT,
+    effort,
   });
   stdout.write(`${JSON.stringify({ ok: true, evidencePath: result.evidencePath, ...result.evidence })}\n`);
 }

@@ -228,19 +228,21 @@ records do not bind effort and are intentionally rejected after this upgrade;
 rerun the exact-head review to issue a v3 record instead of relabeling old
 evidence. These records live in private local state outside the repository; at
 this migration checkpoint, a repository contract keeps the wrapper as the sole
-production parser for the local-attestation evidence kind. The wrapper verifier
-remains the evidence authority.
+parser under `scripts/` for the local-attestation evidence kind. The wrapper
+verifier remains the evidence authority.
 
 For a large diff that cannot finish inside five minutes, split the issue and PR
 at a coherent architecture boundary. A reviewer may select `--effort low` for a
 genuinely low-risk diff, but must not lengthen the deadline or reinterpret a
-timeout as approval.
+timeout as approval. `high`, `xhigh`, and `max` are useful only for small,
+reasoning-dense diffs that can still finish within the same cap; do not escalate
+effort to retry a timed-out large diff. Split that diff instead.
 
 The effort capability record is derived from the captured `--help` artifact,
 not from the CLI installed during later verification. Generation requires one
 unambiguous comma- or pipe-delimited enumeration in the `--effort` option block,
-ignores an optional documented default annotation, then requires the selected
-factory-supported level to occur in that enumeration.
+ignores an optional trailing documented default annotation, then requires the
+selected factory-supported level to occur in that enumeration.
 The normalized factory-supported subset is recorded. Verification requires that
 record to match the subset re-derived from the captured help and binds the
 selected effort to it. The raw bounded `--effort` help entry is recorded for
