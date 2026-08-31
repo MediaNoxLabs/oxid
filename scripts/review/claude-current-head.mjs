@@ -144,7 +144,10 @@ export function assertMinimumClaudeVersion(
 
 function helpFlagPattern(flag, { allowAlias = false } = {}) {
   const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const alias = allowAlias ? "(?:-[a-z0-9],\\s*)?" : "";
+  // Effort alone tolerates a short alias because this new, non-safety option
+  // needs layout compatibility. Existing safety flags remain exact and
+  // case-sensitive so their capability proof cannot be weakened by aliases.
+  const alias = allowAlias ? "(?:-[a-zA-Z0-9],\\s*)?" : "";
   return new RegExp(`(?:^|\\n)\\s*${alias}${escaped}(?=\\s|=|<|\\[|$)`, "m");
 }
 
@@ -170,10 +173,10 @@ function helpEntry(help, flag) {
   return entry.join("\n");
 }
 
-function documentedEffortLevels(help) {
-  const entry = helpEntry(help, "--effort");
-  const groups = [...entry.matchAll(/\(([^()]*)\)/g)].map((match) => match[1]);
-  const choices = [...entry.matchAll(/choices?\s*:\s*([^\n)]+)/gi)].map((match) => match[1]);
+function documentedEffortLevels(entry) {
+  const normalizedEntry = entry.replace(/\s*\r?\n\s*/g, " ");
+  const groups = [...normalizedEntry.matchAll(/\(([^()]*)\)/g)].map((match) => match[1]);
+  const choices = [...normalizedEntry.matchAll(/choices?\s*:\s*([^)]+)/gi)].map((match) => match[1]);
   const parseEnumeration = (candidate) => {
     const withoutDefault = candidate.replace(
       /,\s*(?:default|recommended)\s*:\s*["']?[a-z][a-z0-9-]*["']?\s*$/i,
@@ -214,14 +217,15 @@ export function assertClaudeHelpCapabilities(help, version) {
   if (!/Use\s+["']{2}\s+to disable all\s+tools/i.test(toolsHelp)) {
     throw new Error('Claude CLI help does not document --tools "" as the no-tools form');
   }
-  const effortChoices = documentedEffortLevels(help);
+  const effortHelpEntry = helpEntry(help, "--effort");
+  const effortChoices = documentedEffortLevels(effortHelpEntry);
   return {
     flags: [...REQUIRED_CLAUDE_FLAGS],
     permissionMode: "dontAsk",
     emptyToolsDisabled: true,
     emptyToolsBasis: "captured-help-and-bounded-version-contract",
     effortLevels: effortChoices,
-    effortHelpEntry: helpEntry(help, "--effort"),
+    effortHelpEntry,
     minimumVersion: [...MINIMUM_CLAUDE_VERSION],
     maximumExclusiveVersion: [...MAXIMUM_EXCLUSIVE_CLAUDE_VERSION],
     observedVersion: [...supportedVersion],

@@ -8,18 +8,6 @@ once public releases begin.
 
 ## [Unreleased]
 
-### Changed
-
-- Exact-head Claude reviews now select and attest a bounded reasoning effort.
-  Their default deadline is five minutes, reduced from fifteen to keep the
-  review checkpoint inside the factory SLA; the wrapper and verifier reject
-  longer deadlines, callers may select a shorter one, and a timeout is not a
-  pass.
-  New attestations use schema v3; rerun reviews whose legacy v2 evidence no
-  longer verifies instead of relabeling records that did not capture effort.
-  Verification reports this migration through the distinct
-  `ClaudeReviewEvidenceVersionError` type rather than as a non-clean verdict.
-
 ### Added
 
 - Reproducible Nix development shell and build.
@@ -84,3 +72,15 @@ once public releases begin.
   adapters, with profile-scoped list/get/forget headless methods.
 - Separate versioned owner-private public DID-record persistence with restart
   coverage and a functional Dioxus/iOS/Android DID inventory page.
+
+### Changed
+
+- Exact-head Claude reviews now select and attest a bounded reasoning effort.
+  Their default deadline is five minutes, reduced from fifteen to keep the
+  review checkpoint inside the factory SLA; the wrapper and verifier reject
+  longer deadlines, callers may select a shorter one, and a timeout is not a
+  pass.
+  New attestations use schema v3; rerun reviews whose legacy v2 evidence no
+  longer verifies instead of relabeling records that did not capture effort.
+  Verification reports this migration through the distinct
+  `ClaudeReviewEvidenceVersionError` type rather than as a non-clean verdict.

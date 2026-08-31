@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -1502,7 +1502,7 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.deepEqual(reorderedEfforts.effortLevels, ["max", "low", "xhigh", "medium", "high"]);
   const aliasedMixedHelp = fixtureClaudeHelp.replace(
     "  --effort <level> (low, medium, high, xhigh, max)",
-    '  -e, --effort <level> (choices: "low", "medium", "high", "xhigh", "max", default: "medium")',
+    '  -E, --effort <level> (choices: "low", "medium", "high", "xhigh", "max", default: "medium")',
   );
   assert.deepEqual(
     assertClaudeHelpCapabilities(aliasedMixedHelp, [2, 1, 228]).effortLevels,
@@ -1519,6 +1519,14 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.equal(
     assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortHelpEntry,
     capturedClaudeEffortEntry,
+  );
+  const wrappedChoicesHelp = fixtureClaudeHelp.replace(
+    "  --effort <level> (low, medium, high, xhigh, max)",
+    '  --effort <level> (choices: "low", "medium",\n      "high", "xhigh", "max")',
+  );
+  assert.deepEqual(
+    assertClaudeHelpCapabilities(wrappedChoicesHelp, [2, 1, 228]).effortLevels,
+    CLAUDE_REVIEW_EFFORTS,
   );
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "with a bounded level"), [2, 1, 228]),
@@ -2132,17 +2140,27 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
 });
 
-test("the hardened wrapper is the sole production parser for local Claude attestations", () => {
+test("the hardened wrapper is the sole production parser for local Claude attestations", async () => {
   const evidenceKind = ["local", "attestation"].join("-");
-  const scan = spawnSync(
-    "git",
-    ["grep", "-l", evidenceKind, "--", "*.js", "*.mjs", "*.ts", "*.sh"],
-    { cwd: repoRoot, encoding: "utf8" },
-  );
-  assert.equal(scan.status, 0, scan.stderr);
-  const productionParsers = scan.stdout.trim().split("\n")
-    .filter(Boolean)
-    .filter((file) => !file.startsWith("tests/"));
+  const ignoredDirectories = new Set([".git", "node_modules", "target", "tmp"]);
+  const productionParsers = [];
+  const visit = async (directory, relative = "") => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const childRelative = path.join(relative, entry.name);
+      if (entry.isDirectory()) {
+        if (!ignoredDirectories.has(entry.name) && childRelative !== path.join(".pi", "npm")) {
+          await visit(path.join(directory, entry.name), childRelative);
+        }
+        continue;
+      }
+      if (!entry.isFile() || !/\.(?:js|mjs|ts|sh)$/.test(entry.name) || childRelative.startsWith(`tests${path.sep}`)) continue;
+      if ((await readFile(path.join(directory, entry.name), "utf8")).includes(evidenceKind)) {
+        productionParsers.push(childRelative);
+      }
+    }
+  };
+  await visit(repoRoot);
+  productionParsers.sort();
   assert.deepEqual(productionParsers, ["scripts/review/claude-current-head.mjs"]);
 });
 
