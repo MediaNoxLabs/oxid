@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Oxid quality constitution v1.0
+# Oxid quality constitution v1.1
 
 This document turns the owner-authored
 [`RUST_MONOREPO_QUALITY.md`](quality-north-star.md) north star into an
@@ -73,6 +73,23 @@ These rules reflect current repository controls and apply to every change:
 - AI-assisted changes follow the same requirements. They may not add parallel
   domain types, speculative abstractions, broad lint suppressions, disabled
   tests, unreviewed dependencies, micro-crates, or metric-only refactors.
+
+### AI instruction assets
+
+`AGENT.md`, agent skills, prompt templates, and reader-oriented runbooks are
+maintained as reviewed operational documentation unless production or factory
+tooling parses them as executable input. Do not add dedicated tests merely to
+pin their prose, frontmatter, headings, duplicated copies, command lists, or
+other agent guidance. Such tests create a second representation of the
+instruction and accumulate maintenance without proving product behavior.
+
+Prefer one canonical instruction, an always-loaded pointer to it, focused human
+review, and the ordinary documentation/link checks. An executable test is
+justified only when tooling actually parses or dispatches from the asset, or
+when it protects concrete product, security, or delivery behavior beyond the
+wording itself. In that case, test the parser or observable behavior rather
+than reproducing the prose, and record the failure mode that makes the added
+maintenance worthwhile.
 
 Existing size and complexity debt is a baseline, not a blanket exception.
 Unrelated work is not required to refactor it, but a production file already

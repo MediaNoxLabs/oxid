@@ -108,6 +108,12 @@ the configuration visible in its worktree.
 
 ## Validation
 
+Before starting any emulator, simulator, container, heavy build, background
+server, watcher, or disposable worktree, load the
+[resource-hygiene skill](.claude/skills/resource-hygiene/SKILL.md). Its
+receipt-scoped preflight, pressure-stop, sequential-execution, and cleanup
+rules are mandatory even when the task is not primarily about resources.
+
 For Lace ID Portal local or Tailscale E2E work, load the
 [Portal Pi skill](.pi/skills/oxid-portal-e2e/SKILL.md) and follow the tracked
 [macOS laptop](docs/factory/portal-macos-laptop.md),
