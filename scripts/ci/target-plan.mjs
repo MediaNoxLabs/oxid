@@ -11,6 +11,11 @@ export const Profile = Object.freeze({
   RELEASE: "release",
 });
 
+export const DeliveryProfile = Object.freeze({
+  PROTOTYPE: "prototype",
+  PRODUCTION_READY: "production-ready",
+});
+
 export const HostedTarget = Object.freeze({
   BASIC: "basic",
   UNIT_LINUX: "unit-linux",
@@ -24,6 +29,7 @@ export const HostedTarget = Object.freeze({
 });
 
 export const HOSTED_TARGETS = Object.freeze(Object.values(HostedTarget));
+const PROTOTYPE_HOSTED_TARGETS = new Set([HostedTarget.UNIT_LINUX, HostedTarget.HEADLESS_LINUX]);
 
 const AREA_PATTERNS = Object.freeze({
   docs: [
@@ -155,22 +161,38 @@ function orderedTargets(targets) {
   return HOSTED_TARGETS.filter((target) => targets.has(target));
 }
 
-export function makeTargetPlan(paths, { profile = Profile.FEATURE, extraTargets = [] } = {}) {
+export function makeTargetPlan(paths, {
+  profile = Profile.FEATURE,
+  deliveryProfile = DeliveryProfile.PRODUCTION_READY,
+  extraTargets = [],
+} = {}) {
   if (!Object.values(Profile).includes(profile)) throw new Error(`unknown CI profile: ${profile}`);
+  if (!Object.values(DeliveryProfile).includes(deliveryProfile)) {
+    throw new Error(`unknown delivery profile: ${deliveryProfile}`);
+  }
+  if (deliveryProfile === DeliveryProfile.PROTOTYPE && profile !== Profile.FEATURE) {
+    throw new Error("prototype delivery is local-only and supports only the feature CI profile");
+  }
 
   const normalizedPaths = [...new Set(paths.map(normalizePath).filter(Boolean))];
   const diffAvailable = normalizedPaths.length > 0;
   const areas = diffAvailable ? classifyAreas(normalizedPaths) : ["unknown"];
-  const targets = !diffAvailable || profile !== Profile.FEATURE
-    ? new Set(HOSTED_TARGETS)
-    : featureTargets(areas);
+  const targets = deliveryProfile === DeliveryProfile.PROTOTYPE
+    ? new Set([HostedTarget.BASIC])
+    : !diffAvailable || profile !== Profile.FEATURE
+      ? new Set(HOSTED_TARGETS)
+      : featureTargets(areas);
 
   for (const target of extraTargets) {
     if (!HOSTED_TARGETS.includes(target)) throw new Error(`unknown hosted CI target: ${target}`);
+    if (deliveryProfile === DeliveryProfile.PROTOTYPE && !PROTOTYPE_HOSTED_TARGETS.has(target)) {
+      throw new Error(`hosted CI target is not available in prototype delivery: ${target}`);
+    }
     targets.add(target);
   }
 
   return {
+    deliveryProfile,
     profile,
     diffAvailable,
     areas,
@@ -218,6 +240,7 @@ function parseTargets(value) {
 function githubOutput(plan) {
   const selected = new Set(plan.targets);
   const lines = [
+    `delivery_profile=${plan.deliveryProfile}`,
     `profile=${plan.profile}`,
     `areas=${plan.areas.join(",")}`,
     `targets=${plan.targets.join(",")}`,
@@ -231,16 +254,18 @@ function githubOutput(plan) {
 
 export function run(argv = process.argv.slice(2), { cwd = process.cwd(), stdout = process.stdout } = {}) {
   const profile = resolveProfile(readOption(argv, "--profile") ?? "auto", readOption(argv, "--event"));
+  const deliveryProfile = readOption(argv, "--delivery-profile") ?? DeliveryProfile.PRODUCTION_READY;
   const paths = changedPaths(readOption(argv, "--base"), readOption(argv, "--head"), cwd);
   const plan = makeTargetPlan(paths ?? [], {
     profile,
+    deliveryProfile,
     extraTargets: parseTargets(readOption(argv, "--targets")),
   });
   const format = readOption(argv, "--format") ?? "summary";
 
   if (format === "github") stdout.write(githubOutput(plan));
   else if (format === "json") stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
-  else stdout.write(`${plan.profile}: ${plan.targets.join(", ")} [${plan.areas.join(", ")}]\n`);
+  else stdout.write(`${plan.deliveryProfile}/${plan.profile}: ${plan.targets.join(", ")} [${plan.areas.join(", ")}]\n`);
   return plan;
 }
 

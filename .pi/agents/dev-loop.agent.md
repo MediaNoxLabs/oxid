@@ -2,7 +2,7 @@
 name: "dev-loop"
 description: "Use as the single public workflow entrypoint. Route from canonical current state to the deterministic internal strategy, preferring GitHub-first paths and only using local phase implementation when explicitly requested. Keywords: dev-loop, public entrypoint, route workflow, continue dev loop."
 tools: read, grep, find, ls, bash, subagent
-argument-hint: "A dev-loop intent such as issue number/URL, PR number/URL, or a request to continue/inspect current state."
+argument-hint: "[prototype|production-ready] plus an issue/PR number or URL; production-ready is the default."
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: true
@@ -39,8 +39,8 @@ Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global n
 
 1. Before startup, routing, tools that act on routed state, or delegation, run `node <git-root>/scripts/loop/pre-flight-gate.mjs --check-subagents` from the canonical worktree. Stop on any nonzero result. Run it again immediately before each later delegation or routed action; `DEVLOOPS_PREFLIGHT_BYPASS` is forbidden.
 2. Run the deterministic startup resolver to produce the authoritative state bundle: `node <git-root>/scripts/dev-loops.mjs loop startup --issue <n>` for issues, or `node <git-root>/scripts/dev-loops.mjs loop startup --pr <n>` for PRs. When already inside the canonical linked worktree, reuse it; any ensure-worktree call must pass the main checkout as `--repo-root`, never the linked worktree itself.
-3. Pass the resolver output file and current gate state to `node <git-root>/scripts/dev-loops.mjs loop build-envelope --input <resolver-output> --gate-state <json>`. Do not call the package builder directly. The tracked route loads the candidate checkout's `.devloops`, preserves pinned derivation, reuses an identity-matching existing canonical managed worktree, rejects ambiguous/foreign/nested topology, and validates the normalized envelope with the exact pinned core validator before emission.
-4. **Validate the emitted envelope** with `validateHandoffEnvelope()` before consuming any field. If validation returns `ok: false`, reject the handoff with the structured error — do not load requiredReads, do not execute nextAction, do not delegate.
+3. Pass the resolver output file, current gate state, and invocation profile to `node <git-root>/scripts/dev-loops.mjs loop build-envelope --input <resolver-output> --gate-state <json> --delivery-profile <profile>`. Parse only the exact `prototype` or `production-ready` token from the invocation at this point; an omitted token means `production-ready`. Do not call the package builder directly. The tracked route loads the candidate checkout's `.devloops`, preserves pinned derivation, applies the tracked delivery-profile envelope, reuses an identity-matching existing canonical managed worktree, rejects ambiguous/foreign/nested topology, and validates the normalized envelope with the exact pinned core validator before emission.
+4. **Validate the emitted envelope** with `validateHandoffEnvelope()` before consuming any field. If validation returns `ok: false`, reject the handoff with the structured error — do not load requiredReads, do not execute nextAction, do not delegate. Stop if `deliveryProfile` does not equal the requested/default profile.
 5. Read the envelope as the first artifact.
 6. Load every path listed in `requiredReads` (in order).
 7. Execute `nextAction` constrained by `stopRules` and `acceptance`.
@@ -52,6 +52,19 @@ Prose task composition is a fallback only when `buildDevLoopHandoffEnvelope()` i
 ## Operating contract
 
 After the handoff envelope is built and read, load the `dev-loop` skill (Dev Loop Skill (pinned package path `.pi/npm/node_modules/dev-loops/skills/dev-loop/SKILL.md`)) for the routed strategy's execution procedures.
+
+## Delivery profile
+
+After validating the envelope and loading its `requiredReads`, resolve the invocation against `.pi/delivery-profiles.json`. The only accepted entrypoints are:
+
+- `/dev-loop prototype issue <n>`
+- `/dev-loop production-ready issue <n>`
+
+An omitted profile means `production-ready`. Reject an unknown or conflicting profile instead of guessing. Profile selection is per invocation; never write shared mutable profile state.
+
+`prototype` is an explicit request for the local implementation strategy. Keep the issue-backed worktree and all contribution, security, process, and disk invariants, but do not create/update a PR, push, wait for hosted CI, claim merge readiness, or merge. The hosted target plan is `basic` plus only a focused `unit-linux` or `headless-linux` target that the task explicitly needs. When a real stack, platform, device, or Tailnet path is itself the hypothesis, run at most that one focused qualification rather than inferring the whole platform chain. Use at most one bounded scope/correctness reviewer, and stop a focused iteration at ten minutes with a concrete result or blocker. Close with the hypothesis, result, changed paths, checks run, known gaps, resource use, and promotion plan. All prototype evidence is provisional.
+
+`production-ready` retains the normal routed workflow, affected-target planning, draft and pre-approval gates, current-head evidence, and authority controls below. Promotion from `prototype` must be explicit: refresh `origin/integration`, audit prototype shortcuts and known gaps, invalidate provisional evidence, rebuild the handoff envelope, recompute targets, and run the production-ready gates from the refreshed state.
 
 When that skill is not available beneath the exact repository pin, stop at the tracked wrapper/preflight diagnostic; do not search other installation layouts.
 
