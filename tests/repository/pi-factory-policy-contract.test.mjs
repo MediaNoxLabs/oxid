@@ -12,6 +12,7 @@ import { createDeliveryBranchRewriteSink } from "../../scripts/loop/pre-flight-g
 import { auditPi, auditWorktreeAdmission } from "../../scripts/factory/audit-pi.mjs";
 import { applyUserPolicy, mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
 import { FACTORY_STATE_LABELS, syncFactoryLabels } from "../../scripts/github/sync-factory-labels.mjs";
+import { applyDeliveryProfile, extractDeliveryProfileArgs } from "../../scripts/dev-loops.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -32,6 +33,94 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.equal(settings.subagents.defaultThinking, settings.defaultThinkingLevel);
   const smoke = await readFile(path.join(repoRoot, "scripts", "check-pi-devshell.sh"), "utf8");
   assert.match(smoke, /pi --list-models/u);
+});
+
+test("delivery profiles keep prototype evidence local and promotion explicit", async () => {
+  const profiles = JSON.parse(await readFile(path.join(repoRoot, ".pi", "delivery-profiles.json"), "utf8"));
+  assert.equal(profiles.defaultProfile, "production-ready");
+  assert.deepEqual(Object.keys(profiles.profiles).sort(), ["production-ready", "prototype"]);
+
+  const prototype = profiles.profiles.prototype;
+  assert.equal(prototype.remoteMutation, false);
+  assert.equal(prototype.mergeEligible, false);
+  assert.equal(prototype.evidenceClass, "provisional");
+  assert.equal(prototype.maximumReviewers, 1);
+  assert.deepEqual(prototype.targets.required, ["basic"]);
+  assert.deepEqual(prototype.targets.optionalHostedOnDemand, ["unit-linux", "headless-linux"]);
+  assert.equal(prototype.targets.maximumFocusedQualifications, 1);
+
+  assert.deepEqual(profiles.promotion, {
+    explicit: true,
+    refreshBase: "origin/integration",
+    auditPrototypeGaps: true,
+    invalidateProvisionalEvidence: true,
+    recomputeTargets: true,
+  });
+
+  const [rootAgent, devLoopAgent, developerAgent, reviewAgent, productiveLoop] = await Promise.all([
+    readFile(path.join(repoRoot, "AGENT.md"), "utf8"),
+    readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8"),
+    readFile(path.join(repoRoot, ".pi", "agents", "developer.agent.md"), "utf8"),
+    readFile(path.join(repoRoot, ".pi", "agents", "review.agent.md"), "utf8"),
+    readFile(path.join(repoRoot, "docs", "factory", "productive-loop.md"), "utf8"),
+  ]);
+  for (const source of [rootAgent, devLoopAgent, productiveLoop]) {
+    assert.match(source, /\/dev-loop prototype issue <n>/u);
+    assert.match(source, /\/dev-loop production-ready issue <n>/u);
+  }
+  assert.match(developerAgent, /deliveryProfile: prototype/u);
+  assert.match(reviewAgent, /provisional/u);
+  assert.match(productiveLoop, /Do not turn a prototype into a PR by merely pushing its head/u);
+});
+
+test("the handoff wrapper makes prototype local and production-ready the default", async () => {
+  const contract = JSON.parse(await readFile(path.join(repoRoot, ".pi", "delivery-profiles.json"), "utf8"));
+  const base = {
+    target: { kind: "issue", issue: 228, repo: "owner/repo" },
+    deliveryProfile: undefined,
+    executionMode: "durable_auto",
+    currentGate: "draft",
+    nextAction: "create a draft PR",
+    requiredReads: ["AGENT.md"],
+    stopRules: ["merge"],
+    maxCopilotRounds: 5,
+    requireDraftFirst: true,
+    gateConfig: { requireCi: true },
+    acceptance: { criteria: [], evidence: [], maxFinalizationTurns: 6 },
+    control: { needsAttentionAfterMs: 300000, activeNoticeAfterMs: 300000 },
+  };
+
+  assert.deepEqual(extractDeliveryProfileArgs([
+    "--input", "state.json", "--delivery-profile=prototype", "--gate-state", "{}",
+  ]), {
+    args: ["--input", "state.json", "--gate-state", "{}"],
+    requested: "prototype",
+  });
+  assert.throws(
+    () => extractDeliveryProfileArgs(["--delivery-profile", "prototype", "--delivery-profile=production-ready"]),
+    /only once/u,
+  );
+
+  const prototype = applyDeliveryProfile(base, contract, "prototype");
+  assert.equal(prototype.deliveryProfile, "prototype");
+  assert.equal(prototype.executionMode, "bounded_handoff");
+  assert.equal(prototype.requireDraftFirst, false);
+  assert.equal(prototype.maxCopilotRounds, 0);
+  assert.equal(Object.hasOwn(prototype, "gateConfig"), false);
+  assert.deepEqual(prototype.stopRules, ["remote-mutation", "hosted-ci", "merge-readiness", "merge"]);
+  assert.equal(prototype.control.needsAttentionAfterMs, 180000);
+  assert.equal(prototype.control.activeNoticeAfterMs, 600000);
+  assert.equal(prototype.acceptance.criteria.length, contract.profiles.prototype.closeoutFields.length);
+
+  const production = applyDeliveryProfile(base, contract, "production-ready");
+  assert.equal(production.deliveryProfile, "production-ready");
+  assert.equal(production.nextAction, base.nextAction);
+  assert.deepEqual(production.stopRules, base.stopRules);
+  assert.equal(production.requiredReads.includes(".pi/delivery-profiles.json"), true);
+  assert.throws(
+    () => applyDeliveryProfile({ ...base, target: { kind: "pr", pr: 1, repo: "owner/repo" } }, contract, "prototype"),
+    /issue-backed target/u,
+  );
 });
 
 test("unavailable lifecycle helper uses conservative fresh-checkout capacity", async (t) => {
@@ -229,6 +318,7 @@ test("read-only Pi audit recognizes tracked configuration controls", async () =>
     "tracked-agent-budgets",
     "user-subagent-policy",
     "dev-loop-bounds",
+    "delivery-profiles",
   ]) {
     assert.equal(byId.get(id)?.status, "pass", `${id}: ${byId.get(id)?.summary}`);
   }

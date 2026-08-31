@@ -11,6 +11,7 @@ import { resolveDevLoopsPackageRoot } from "./lib/dev-loop-runtime.mjs";
 import { enforceSingleBase, pinnedPublicRoute } from "./lib/pinned-dev-loops-args.mjs";
 
 const INTEGRATION_BASE = "integration";
+const DELIVERY_PROFILE_OPTION = "--delivery-profile";
 
 /** Force the base on dev-loops' public PR create route and deprecated alias. */
 export function normalizeDevLoopsArgs(argv) {
@@ -42,6 +43,75 @@ function buildEnvelopeArgs(args) {
   }
   const leading = args.slice(0, categoryIndex).filter((argument) => argument !== "--json");
   return [...leading, ...args.slice(categoryIndex + 2)];
+}
+
+export function extractDeliveryProfileArgs(args) {
+  const forwarded = [];
+  let requested;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === DELIVERY_PROFILE_OPTION) {
+      if (requested !== undefined) throw new Error(`${DELIVERY_PROFILE_OPTION} may be specified only once`);
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new Error(`${DELIVERY_PROFILE_OPTION} requires a value`);
+      requested = value;
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith(`${DELIVERY_PROFILE_OPTION}=`)) {
+      if (requested !== undefined) throw new Error(`${DELIVERY_PROFILE_OPTION} may be specified only once`);
+      requested = argument.slice(`${DELIVERY_PROFILE_OPTION}=`.length);
+      if (!requested) throw new Error(`${DELIVERY_PROFILE_OPTION} requires a value`);
+      continue;
+    }
+    forwarded.push(argument);
+  }
+  return { args: forwarded, requested };
+}
+
+async function loadDeliveryProfile(repoRoot, requested) {
+  const contract = JSON.parse(await readFile(path.join(repoRoot, ".pi", "delivery-profiles.json"), "utf8"));
+  const profile = requested ?? contract.defaultProfile;
+  if (!Object.hasOwn(contract.profiles ?? {}, profile)) throw new Error(`unknown delivery profile: ${profile}`);
+  return { contract, profile };
+}
+
+export function applyDeliveryProfile(envelope, contract, profile) {
+  const requiredReads = [...new Set([...envelope.requiredReads, ".pi/delivery-profiles.json"])];
+  if (profile === "production-ready") return { ...envelope, deliveryProfile: profile, requiredReads };
+  if (profile !== "prototype") throw new Error(`unsupported delivery profile: ${profile}`);
+  const issueBacked = envelope.target?.kind === "issue"
+    || (envelope.target?.kind === "local_phase" && Number.isInteger(envelope.target.issue));
+  if (!issueBacked) throw new Error("prototype delivery requires an issue-backed target");
+
+  const prototype = contract.profiles.prototype;
+  const criteria = prototype.closeoutFields.map((field) => ({
+    id: `prototype-${field.replace(/[A-Z]/gu, (character) => `-${character.toLowerCase()}`)}`,
+    must: `Record the prototype ${field} in the provisional closeout.`,
+    severity: "required",
+  }));
+  const profiled = {
+    ...envelope,
+    deliveryProfile: profile,
+    executionMode: "bounded_handoff",
+    currentGate: "default",
+    nextAction: "Execute one explicit prototype hypothesis locally, run the bounded focused evidence, and return a provisional closeout.",
+    requiredReads,
+    stopRules: [...new Set(["remote-mutation", "hosted-ci", "merge-readiness", "merge", ...envelope.stopRules])],
+    maxCopilotRounds: 0,
+    requireDraftFirst: false,
+    acceptance: {
+      criteria,
+      evidence: ["commands-run", "validation-output", "changed-files", "manual-notes"],
+      maxFinalizationTurns: 2,
+    },
+    control: {
+      needsAttentionAfterMs: prototype.sloSeconds.firstFeedback * 1000,
+      activeNoticeAfterMs: prototype.sloSeconds.focusedIteration * 1000,
+    },
+  };
+  delete profiled.gateConfig;
+  return profiled;
 }
 
 export async function resolvePinnedCoreModulePath(packageRoot) {
@@ -80,9 +150,16 @@ async function loadPinnedEnvelopeModules(packageRoot) {
 
 async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
   const { cli, output, helpers, core } = await loadPinnedEnvelopeModules(resolved.packageRoot);
+  let deliveryArgs;
+  try {
+    deliveryArgs = extractDeliveryProfileArgs(args);
+  } catch (error) {
+    stderr.write(`${helpers.formatCliError(error)}\n`);
+    return 1;
+  }
   let options;
   try {
-    options = cli.parseBuildHandoffEnvelopeCliArgs(args);
+    options = cli.parseBuildHandoffEnvelopeCliArgs(deliveryArgs.args);
   } catch (error) {
     stderr.write(`${helpers.formatCliError(error)}\n`);
     return 1;
@@ -90,11 +167,12 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
   if (options.help) {
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
-    await cli.runCli(args, {
+    await cli.runCli(deliveryArgs.args, {
       stdout,
       stderr,
       adapter: { getCwd: () => cwd, getRepoRoot: () => resolved.gitRoot },
     });
+    stdout.write("Repository option:\n  --delivery-profile <prototype|production-ready>  Select a bounded delivery profile (default: production-ready).\n");
     const code = process.exitCode ?? 0;
     process.exitCode = previousExitCode;
     return code;
@@ -103,7 +181,11 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
     const candidate = await cli.buildHandoffEnvelopeCli(options, {
       adapter: { getCwd: () => cwd, getRepoRoot: () => resolved.gitRoot },
     });
-    const envelope = await normalizeHandoffEnvelopeCwd(candidate, resolved, core);
+    const normalized = await normalizeHandoffEnvelopeCwd(candidate, resolved, core);
+    const { contract, profile } = await loadDeliveryProfile(resolved.gitRoot, deliveryArgs.requested);
+    const envelope = applyDeliveryProfile(normalized, contract, profile);
+    const validation = core.validateHandoffEnvelope(envelope);
+    if (!validation.ok) throw new Error(`profiled handoff envelope failed core validation: ${JSON.stringify(validation.errors)}`);
     return output.emitResult(envelope, { jq: options.jq, silent: options.silent, stdout, stderr });
   } catch (error) {
     stderr.write(`${helpers.formatCliError(error)}\n`);

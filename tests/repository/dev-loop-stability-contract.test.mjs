@@ -1090,6 +1090,19 @@ function captureSink(chunks) {
   return new Writable({ write(chunk, _encoding, callback) { chunks.push(chunk.toString()); callback(); } });
 }
 
+async function writeEnvelopeDeliveryProfiles(root) {
+  await writeFile(path.join(root, ".pi", "delivery-profiles.json"), JSON.stringify({
+    defaultProfile: "production-ready",
+    profiles: {
+      prototype: {
+        sloSeconds: { firstFeedback: 180, focusedIteration: 600 },
+        closeoutFields: ["hypothesis", "result", "knownGaps"],
+      },
+      "production-ready": {},
+    },
+  }));
+}
+
 async function makeProspectiveEnvelopeRouteFixture(t, blockedAncestor) {
   const parent = await realMkdtemp("oxid-envelope-prospective-");
   const root = path.join(parent, "candidate checkout");
@@ -1097,11 +1110,12 @@ async function makeProspectiveEnvelopeRouteFixture(t, blockedAncestor) {
   t.after(() => rm(parent, { recursive: true, force: true }));
   await mkdir(path.join(root, ".pi"), { recursive: true });
   await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@0.9.0"] }));
+  await writeEnvelopeDeliveryProfiles(root);
   await writeFile(path.join(root, ".devloops"), "version: 1\n");
   execFileSync("git", ["init", "--quiet"], { cwd: root });
   execFileSync("git", ["config", "user.name", "Fixture"], { cwd: root });
   execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: root });
-  execFileSync("git", ["add", ".pi/settings.json", ".devloops"], { cwd: root });
+  execFileSync("git", ["add", ".pi/settings.json", ".pi/delivery-profiles.json", ".devloops"], { cwd: root });
   execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: root });
   await installPinnedEnvelopeFixture(root);
   await writeFile(path.join(root, input), JSON.stringify({
@@ -1157,11 +1171,12 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   t.after(() => rm(parent, { recursive: true, force: true }));
   await mkdir(path.join(root, ".pi"), { recursive: true });
   await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@0.9.0"] }));
+  await writeEnvelopeDeliveryProfiles(root);
   await writeFile(path.join(root, ".devloops"), "version: 1\nrefinement:\n  maxCopilotRounds: 9\n");
   execFileSync("git", ["init", "--quiet"], { cwd: root });
   execFileSync("git", ["config", "user.name", "Fixture"], { cwd: root });
   execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: root });
-  execFileSync("git", ["add", ".pi/settings.json", ".devloops"], { cwd: root });
+  execFileSync("git", ["add", ".pi/settings.json", ".pi/delivery-profiles.json", ".devloops"], { cwd: root });
   execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: root });
   execFileSync("git", ["worktree", "add", "--quiet", "-b", "fixture-issue-150", issueTarget], { cwd: root });
   await writeFile(path.join(issueTarget, ".devloops"), "version: 1\nrefinement:\n  maxCopilotRounds: 2\n");
@@ -1197,9 +1212,22 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   assert.equal(envelope.ciStatus, "success");
   assert.equal(envelope.unresolvedThreadCount, 3);
   assert.equal(envelope.target.repo, "owner/repo");
+  assert.equal(envelope.deliveryProfile, "production-ready");
+  assert.equal(envelope.requiredReads.includes(".pi/delivery-profiles.json"), true);
   assert.deepEqual(envelope.overrides, { preferLocal: true });
   assert.equal(envelope.maxCopilotRounds, 2);
   assert.ok(envelope.sanctionedCommands);
+
+  const prototypeResult = await run([
+    "loop", "build-envelope", `--input=${input}`, "--delivery-profile=prototype",
+  ]);
+  assert.equal(prototypeResult.code, 0, prototypeResult.err);
+  const prototype = JSON.parse(prototypeResult.out);
+  assert.equal(prototype.deliveryProfile, "prototype");
+  assert.equal(prototype.executionMode, "bounded_handoff");
+  assert.equal(prototype.nextAction.includes("prototype hypothesis locally"), true);
+  assert.deepEqual(prototype.stopRules, ["remote-mutation", "hosted-ci", "merge-readiness", "merge"]);
+  assert.equal(Object.hasOwn(prototype, "gateConfig"), false);
 
   const equals = await run(["--jq=.cwd", "loop", "build-envelope", `--input=${input}`, "--repo=owner/repo"]);
   assert.deepEqual(equals, { code: 0, out: `${issueTarget}\n`, err: "" });
@@ -1212,9 +1240,13 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   const help = await run(["loop", "build-envelope", "--help"]);
   assert.equal(help.code, 0);
   assert.match(help.out, /Usage: build-handoff-envelope/);
+  assert.match(help.out, /--delivery-profile <prototype\|production-ready>/u);
   const badJq = await run(["loop", "build-envelope", `--input=${input}`, "--jq", "unsupported"]);
   assert.equal(badJq.code, 2);
   assert.match(badJq.err, /--jq/);
+  const unknownProfile = await run(["loop", "build-envelope", `--input=${input}`, "--delivery-profile", "fast-ish"]);
+  assert.equal(unknownProfile.code, 1);
+  assert.match(unknownProfile.err, /unknown delivery profile/u);
   await writeFile(path.join(issueTarget, "malformed.json"), "{");
   const malformed = await run(["loop", "build-envelope", "--input", "malformed.json"]);
   assert.equal(malformed.code, 1);
