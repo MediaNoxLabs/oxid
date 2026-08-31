@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 const BASE_REF = "origin/integration";
-const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_BUDGET_USD = 10;
 export const DEFAULT_CLAUDE_REVIEW_EFFORT = "medium";
 export const CLAUDE_REVIEW_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -134,6 +134,35 @@ function helpWindow(help, flag, length = 600) {
   return line ? help.slice(line.index, line.index + length) : "";
 }
 
+function helpEntry(help, flag) {
+  const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`(?:^|\\n)\\s*${escaped}(?=\\s|=|<|\\[|$)`, "m").exec(help);
+  if (!match) return "";
+  const entry = help.slice(match.index);
+  const nextFlag = /\n\s*--[a-z0-9]/i.exec(entry.slice(1));
+  return nextFlag ? entry.slice(0, nextFlag.index + 1) : entry;
+}
+
+function documentedEffortLevels(help) {
+  const entry = helpEntry(help, "--effort");
+  const groups = [...entry.matchAll(/\(([^()]*)\)/g)].map((match) => match[1]);
+  const choices = [...entry.matchAll(/choices?\s*:\s*([^\n]+)/gi)].map((match) => match[1]);
+  const candidates = [...groups, ...choices].map((candidate) => [
+    ...new Set(
+      [...candidate.matchAll(/["']?([a-z][a-z0-9-]*)["']?/gi)]
+        .map((match) => match[1])
+        .filter((token) => token.toLowerCase() !== "choices"),
+    ),
+  ]);
+  const documented = candidates.find((candidate) => CLAUDE_REVIEW_EFFORTS.some((effort) => candidate.includes(effort)));
+  if (!documented) throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
+  const missing = CLAUDE_REVIEW_EFFORTS.filter((effort) => !documented.includes(effort));
+  if (missing.length > 0) {
+    throw new Error(`Claude CLI help is missing required review effort levels: ${missing.join(", ")}`);
+  }
+  return documented;
+}
+
 export function assertClaudeHelpCapabilities(help, version) {
   if (typeof help !== "string") throw new Error("Claude CLI help output must be text");
   const supportedVersion = assertMinimumClaudeVersion(version);
@@ -147,21 +176,13 @@ export function assertClaudeHelpCapabilities(help, version) {
   if (!/Use\s+["']{2}\s+to disable all\s+tools/i.test(toolsHelp)) {
     throw new Error('Claude CLI help does not document --tools "" as the no-tools form');
   }
-  const effortHelp = helpWindow(help, "--effort", 240);
-  const effortChoices = /\(([^()]*)\)/.exec(effortHelp)?.[1]
-    ?.split(",")
-    .map((effort) => effort.trim());
-  if (!Array.isArray(effortChoices)
-    || effortChoices.length !== CLAUDE_REVIEW_EFFORTS.length
-    || CLAUDE_REVIEW_EFFORTS.some((effort, index) => effortChoices[index] !== effort)) {
-    throw new Error("Claude CLI help does not expose the required review effort levels");
-  }
+  const effortChoices = documentedEffortLevels(help);
   return {
     flags: [...REQUIRED_CLAUDE_FLAGS],
     permissionMode: "dontAsk",
     emptyToolsDisabled: true,
     emptyToolsBasis: "captured-help-and-bounded-version-contract",
-    effortLevels: [...CLAUDE_REVIEW_EFFORTS],
+    effortLevels: effortChoices,
     minimumVersion: [...MINIMUM_CLAUDE_VERSION],
     maximumExclusiveVersion: [...MAXIMUM_EXCLUSIVE_CLAUDE_VERSION],
     observedVersion: [...supportedVersion],
@@ -602,7 +623,10 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   } catch (error) {
     throw new Error(`Claude review evidence is not valid JSON: ${error.message}`, { cause: error });
   }
-  if (evidence.schemaVersion !== 3 || evidence.evidenceKind !== "local-attestation" || evidence.baseRef !== BASE_REF || evidence.verdict !== "clean") {
+  if (evidence.schemaVersion !== 3) {
+    throw new Error(`unsupported Claude review attestation schema version ${String(evidence.schemaVersion)}; rerun the exact-head review`);
+  }
+  if (evidence.evidenceKind !== "local-attestation" || evidence.baseRef !== BASE_REF || evidence.verdict !== "clean") {
     throw new Error("unsupported or non-clean Claude review attestation");
   }
   if (!evidence.diff || typeof evidence.diff !== "object" || !evidence.rawResponse || typeof evidence.rawResponse !== "object"
@@ -648,12 +672,12 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     throw new Error("Claude review attestation does not prove the empty tool-set capability");
   }
   assertClaudeReviewEffort(evidence.invocation?.effort);
-  if (!Array.isArray(evidence.claude.capabilities.effortLevels)
-    || evidence.claude.capabilities.effortLevels.length !== capabilities.effortLevels.length
-    || capabilities.effortLevels.some(
-      (effort, index) => evidence.claude.capabilities.effortLevels[index] !== effort,
-    )) {
-    throw new Error("Claude review attestation does not bind the supported effort levels");
+  const recordedEfforts = evidence.claude.capabilities.effortLevels;
+  if (!Array.isArray(recordedEfforts)
+    || recordedEfforts.length !== capabilities.effortLevels.length
+    || capabilities.effortLevels.some((effort) => !recordedEfforts.includes(effort))
+    || !recordedEfforts.includes(evidence.invocation.effort)) {
+    throw new Error("Claude review attestation does not bind the selected effort to the captured CLI capabilities");
   }
   const parsed = parseClaudeReviewResult(rawResponse);
   if (parsed.observedSessionId !== evidence.claude?.observedSessionId || parsed.review.verdict !== "clean") {
@@ -662,7 +686,10 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   return { ok: true, evidence };
 }
 
-export async function runCli(argv = process.argv.slice(2), { stdout = process.stdout } = {}) {
+export async function runCli(
+  argv = process.argv.slice(2),
+  { stdout = process.stdout, runReview = runClaudeCurrentHeadReview } = {},
+) {
   const { values } = parseArgs({
     args: argv,
     options: {
@@ -690,7 +717,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
   }
   if (!values["issue-contract-file"]) throw new Error("--issue-contract-file is required");
   const issueContract = await readFile(values["issue-contract-file"], "utf8");
-  const result = await runClaudeCurrentHeadReview({
+  const result = await runReview({
     issue: Number(values.issue),
     repoRoot: values["repo-root"],
     evidenceDir: values["evidence-dir"],

@@ -13,6 +13,7 @@ once public releases begin.
 - Exact-head Claude reviews now select and attest a bounded reasoning effort.
   New attestations use schema v3; rerun reviews whose legacy v2 evidence no
   longer verifies instead of relabeling records that did not capture effort.
+  Verification reports this migration separately from a non-clean verdict.
 
 ### Added
 

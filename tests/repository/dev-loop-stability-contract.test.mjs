@@ -1457,11 +1457,16 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   );
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(", max", ""), [2, 1, 228]),
-    /required review effort levels/,
+    /missing required review effort levels/,
   );
+  const reorderedEfforts = assertClaudeHelpCapabilities(
+    fixtureClaudeHelp.replace("low, medium, high, xhigh, max", 'choices: "max", "low", "xhigh", "medium", "high", "none"'),
+    [2, 1, 228],
+  );
+  assert.deepEqual(reorderedEfforts.effortLevels, ["max", "low", "xhigh", "medium", "high", "none"]);
   assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("low, medium", "medium, low"), [2, 1, 228]),
-    /required review effort levels/,
+    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "with a bounded level"), [2, 1, 228]),
+    /recognizable review effort choice list/,
   );
   assert.throws(() => assertClaudeAuthHelpCapabilities("Usage: claude auth status\n"), /default JSON output/);
   const calls = [];
@@ -1571,6 +1576,7 @@ if (process.argv.includes("--version")) {
   else if (mode === "nonzero") { process.stderr.write("fixture failure\\n"); process.exit(7); }
   else if (mode === "malformed") process.stdout.write("not json");
   else {
+    if (mode === "cli-high" && process.argv[process.argv.indexOf("--effort") + 1] !== "high") process.exit(11);
     if (mode === "advance") execFileSync("git", ["-C", ${JSON.stringify(repository)}, "commit", "--allow-empty", "-m", "advance"]);
     process.stdout.write(JSON.stringify({
       session_id: "fixture-session",
@@ -1621,6 +1627,29 @@ if (process.argv.includes("--version")) {
   const exactGitDiff = execFileSync("git", ["diff", "--binary", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], { cwd: repository });
   assert.deepEqual(await readFile(path.join(evidenceDir, result.evidence.diff.path)), exactGitDiff);
 
+  await writeFakeClaude("cli-high");
+  const issueContractPath = path.join(fixtureRoot, "issue-150.json");
+  await writeFile(issueContractPath, JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }));
+  let cliOutput = "";
+  await runClaudeReviewCli([
+    "--issue", "150",
+    "--repo-root", repository,
+    "--evidence-dir", evidenceDir,
+    "--issue-contract-file", issueContractPath,
+    "--expected-head", headSha,
+    "--effort", "high",
+  ], {
+    stdout: { write(chunk) { cliOutput += chunk; } },
+    runReview: (options) => runClaudeCurrentHeadReview({
+      ...options,
+      claudeCommand: fakeClaude,
+      fetchBase: false,
+    }),
+  });
+  const cliEvidence = JSON.parse(cliOutput);
+  assert.equal(cliEvidence.invocation.effort, "high");
+  assert.equal(cliEvidence.verdict, "clean");
+
   const legacyEvidencePath = path.join(evidenceDir, "legacy-v2.evidence.json");
   const legacyEvidence = structuredClone(result.evidence);
   legacyEvidence.schemaVersion = 2;
@@ -1633,7 +1662,7 @@ if (process.argv.includes("--version")) {
       repoRoot: repository,
       fetchBase: false,
     }),
-    /unsupported or non-clean/,
+    /unsupported Claude review attestation schema version 2; rerun the exact-head review/,
   );
 
   const missingEffortEvidence = path.join(evidenceDir, "missing-effort.evidence.json");
@@ -1662,17 +1691,17 @@ if (process.argv.includes("--version")) {
     /effort must be one of/,
   );
 
-  const reorderedEffortEvidencePath = path.join(evidenceDir, "reordered-effort.evidence.json");
-  const reorderedEffortEvidence = structuredClone(result.evidence);
-  reorderedEffortEvidence.claude.capabilities.effortLevels.reverse();
-  await writeFile(reorderedEffortEvidencePath, `${JSON.stringify(reorderedEffortEvidence)}\n`, { mode: 0o600 });
+  const missingCapabilityEvidencePath = path.join(evidenceDir, "missing-effort-capability.evidence.json");
+  const missingCapabilityEvidence = structuredClone(result.evidence);
+  missingCapabilityEvidence.claude.capabilities.effortLevels = ["low", "medium", "xhigh", "max"];
+  await writeFile(missingCapabilityEvidencePath, `${JSON.stringify(missingCapabilityEvidence)}\n`, { mode: 0o600 });
   await assert.rejects(
     verifyClaudeReviewEvidence({
-      evidencePath: reorderedEffortEvidencePath,
+      evidencePath: missingCapabilityEvidencePath,
       repoRoot: repository,
       fetchBase: false,
     }),
-    /does not bind the supported effort levels/,
+    /does not bind the selected effort to the captured CLI capabilities/,
   );
 
   await assert.rejects(runClaudeCurrentHeadReview({

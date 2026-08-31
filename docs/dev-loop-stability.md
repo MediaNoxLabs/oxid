@@ -217,14 +217,20 @@ a push or integration advance makes it stale.
 
 The wrapper passes `--effort medium` by default and records that choice in the
 attestation. Medium effort bounds reasoning cost while retaining a substantive
-review inside a caller-selected deadline; the example above explicitly selects
-five minutes, while the existing default remains fifteen. Operators may
+review inside the five-minute default deadline; the example above states that
+deadline explicitly so copied commands retain the SLA if defaults later change.
+Operators may
 select only the installed CLI's closed set (`low`, `medium`, `high`, `xhigh`,
 or `max`); increasing effort does not extend the timeout, and a timeout never
 counts as a review pass. New effort-bound attestations use schema v3. Version 2
 records do not bind effort and are intentionally rejected after this upgrade;
 rerun the exact-head review to issue a v3 record instead of relabeling old
 evidence.
+
+The effort capability record is derived from the captured `--help` artifact,
+not from the CLI installed during later verification. Reordering documented
+levels or adding a new level is accepted as long as the required bounded levels
+remain available; verification binds the selected effort to that captured set.
 
 This is **local attestational evidence**, not cryptographic reviewer-identity,
 GitHub-hosted, or dev-loops-native provenance. Caller-supplied tracker data and
