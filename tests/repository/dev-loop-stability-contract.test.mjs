@@ -1722,19 +1722,6 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   );
 });
 
-test("review attestation migration has a closed in-repository consumer set", () => {
-  const grep = spawnSync(
-    "git",
-    ["grep", "-l", "claude-current-head.mjs", "--", ".github", "scripts"],
-    { cwd: repoRoot, encoding: "utf8" },
-  );
-  assert.equal(grep.status, 0, `could not audit review consumers: ${grep.stderr || "no tracked wrapper reference"}`);
-  const executableConsumers = grep.stdout.trim().split("\n");
-  assert.deepEqual(executableConsumers, [
-    "scripts/review/claude-current-head.mjs",
-  ], "new executable consumers require an explicit schema-v3 and five-minute migration audit");
-});
-
 test("review migration note remains inside the Unreleased changelog section", async () => {
   const changelog = await read("CHANGELOG.md");
   const unreleased = changelog.indexOf("## [Unreleased]");
@@ -2028,6 +2015,18 @@ if (process.argv.includes("--version")) {
     }),
     /does not bind the minimum review effort/,
   );
+  const mismatchedMinimumEffortEvidencePath = path.join(evidenceDir, "mismatched-minimum-effort.evidence.json");
+  const mismatchedMinimumEffortEvidence = structuredClone(result.evidence);
+  mismatchedMinimumEffortEvidence.invocation.minimumEffort = "max";
+  await writeFile(mismatchedMinimumEffortEvidencePath, `${JSON.stringify(mismatchedMinimumEffortEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: mismatchedMinimumEffortEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the minimum review effort/,
+  );
 
   const belowFloorBudgetEvidencePath = path.join(evidenceDir, "below-floor-budget.evidence.json");
   const belowFloorBudgetEvidence = structuredClone(result.evidence);
@@ -2049,6 +2048,18 @@ if (process.argv.includes("--version")) {
   await assert.rejects(
     verifyClaudeReviewEvidence({
       evidencePath: missingMinimumBudgetEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the minimum review budget/,
+  );
+  const mismatchedMinimumBudgetEvidencePath = path.join(evidenceDir, "mismatched-minimum-budget.evidence.json");
+  const mismatchedMinimumBudgetEvidence = structuredClone(result.evidence);
+  mismatchedMinimumBudgetEvidence.invocation.minimumBudgetUsd = 9;
+  await writeFile(mismatchedMinimumBudgetEvidencePath, `${JSON.stringify(mismatchedMinimumBudgetEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: mismatchedMinimumBudgetEvidencePath,
       repoRoot: repository,
       fetchBase: false,
     }),

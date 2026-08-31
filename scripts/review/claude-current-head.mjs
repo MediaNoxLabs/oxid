@@ -765,9 +765,9 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   } catch (error) {
     throw new Error("Claude review attestation records an unsupported review budget", { cause: error });
   }
-  try {
-    assertClaudeReviewMaxBudgetUsd(evidence.invocation.minimumBudgetUsd);
-  } catch (error) {
+  // These are schema-v3 contract constants, not caller-selected floors. A
+  // future policy change must bump the evidence schema and migration error.
+  if (evidence.invocation.minimumBudgetUsd !== MINIMUM_CLAUDE_REVIEW_BUDGET_USD) {
     throw new Error("Claude review attestation does not bind the minimum review budget");
   }
   if (!evidence.diff || typeof evidence.diff !== "object" || !evidence.rawResponse || typeof evidence.rawResponse !== "object"
@@ -820,9 +820,7 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   } catch (error) {
     throw new Error("Claude review attestation records an unsupported selected effort", { cause: error });
   }
-  try {
-    assertAttestedReviewEffort(evidence.invocation.minimumEffort);
-  } catch (error) {
+  if (evidence.invocation.minimumEffort !== MINIMUM_ATTESTED_REVIEW_EFFORT) {
     throw new Error("Claude review attestation does not bind the minimum review effort");
   }
   const recordedEfforts = evidence.claude.capabilities.effortLevels;

@@ -232,7 +232,10 @@ verifier reject deadlines above
 300,000 ms, so increasing effort cannot extend the SLA; a timeout never counts
 as a review pass. The recorded budget must be from USD 1 through USD 10, and
 the verifier binds that range; the USD 10 default remains a cost ceiling rather
-than a spend target. New effort-bound attestations use schema v3. Version 2
+than a spend target. The recorded `medium` effort floor and USD 1 budget floor
+are exact schema-v3 constants; changing either requires a new evidence schema
+and the same explicit migration treatment. New effort-bound attestations use
+schema v3. Version 2
 records do not bind effort and are intentionally rejected after this upgrade;
 rerun the exact-head review to issue a v3 record instead of relabeling old
 evidence. These records live in private local state outside the repository; at
