@@ -7,15 +7,57 @@
       "facadeFiles": [
         "apps/oxid-headless/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 8766,
+      "facadeMaximumPhysicalLines": 5930,
       "facadeMaximumPhysicalLinesByPath": {
-        "apps/oxid-headless/src/lib.rs": 8766
+        "apps/oxid-headless/src/lib.rs": 5930
       },
       "capabilityOwners": [
+        {
+          "name": "wallet-accounts",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/accounts"
+          ]
+        },
+        {
+          "name": "credential-protocols",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/credentials"
+          ]
+        },
+        {
+          "name": "diagnostics",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/diagnostics"
+          ]
+        },
         {
           "name": "wallet-profiles",
           "modulePathPrefixes": [
             "apps/oxid-headless/src/wallet_profiles"
+          ]
+        },
+        {
+          "name": "did-lifecycle",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/identity"
+          ]
+        },
+        {
+          "name": "midnight-wallet",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/midnight"
+          ]
+        },
+        {
+          "name": "passport-vault",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/passport_vault"
+          ]
+        },
+        {
+          "name": "wallet-security",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/security"
           ]
         },
         {
