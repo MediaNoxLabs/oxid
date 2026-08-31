@@ -93,6 +93,57 @@
       ],
       "exclusions": [],
       "temporaryExceptions": []
+    },
+    {
+      "name": "oxid-ui-dioxus",
+      "sourceRoot": "crates/ui-dioxus/src",
+      "facadeFiles": [
+        "crates/ui-dioxus/src/lib.rs"
+      ],
+      "facadeMaximumPhysicalLines": 12950,
+      "facadeMaximumPhysicalLinesByPath": {
+        "crates/ui-dioxus/src/lib.rs": 12950
+      },
+      "capabilityOwners": [
+        {
+          "name": "brand-profile",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/brand"
+          ]
+        },
+        {
+          "name": "desktop-test-driver",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/desktop_test_driver"
+          ]
+        },
+        {
+          "name": "diagnostics",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/diagnostics"
+          ]
+        },
+        {
+          "name": "presentation-labels",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/labels"
+          ]
+        },
+        {
+          "name": "passport-vault",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/passport_vault"
+          ]
+        },
+        {
+          "name": "profile-guard",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/profile_guard"
+          ]
+        }
+      ],
+      "exclusions": [],
+      "temporaryExceptions": []
     }
   ]
 }
