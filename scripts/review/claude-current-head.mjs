@@ -16,6 +16,7 @@ const DEFAULT_MAX_BUDGET_USD = 10;
 export const DEFAULT_CLAUDE_REVIEW_EFFORT = "medium";
 export const CLAUDE_REVIEW_EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
 export const MINIMUM_ATTESTED_REVIEW_EFFORT = "medium";
+const CLAUDE_REVIEW_EFFORT_RANK = Object.freeze({ low: 0, medium: 1, high: 2, xhigh: 3, max: 4 });
 export const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
 export const MINIMUM_CLAUDE_VERSION = [2, 1, 228];
 export const MAXIMUM_EXCLUSIVE_CLAUDE_VERSION = [2, 2, 0];
@@ -84,7 +85,7 @@ export function buildClaudeInvocation({
   command = "claude",
 } = {}) {
   if (!(Number(maxBudgetUsd) > 0)) throw new Error("maxBudgetUsd must be positive");
-  assertClaudeReviewEffort(effort);
+  assertAttestedReviewEffort(effort);
   return {
     command,
     args: [
@@ -119,7 +120,7 @@ export function assertClaudeEffortCapability(effort, documentedEfforts) {
 
 export function assertAttestedReviewEffort(effort) {
   assertClaudeReviewEffort(effort);
-  if (CLAUDE_REVIEW_EFFORTS.indexOf(effort) < CLAUDE_REVIEW_EFFORTS.indexOf(MINIMUM_ATTESTED_REVIEW_EFFORT)) {
+  if (CLAUDE_REVIEW_EFFORT_RANK[effort] < CLAUDE_REVIEW_EFFORT_RANK[MINIMUM_ATTESTED_REVIEW_EFFORT]) {
     throw new Error(`exact-head attestation effort must be at least ${MINIMUM_ATTESTED_REVIEW_EFFORT}`);
   }
   return effort;
@@ -563,7 +564,6 @@ export async function runClaudeCurrentHeadReview({
 } = {}) {
   if (!Number.isInteger(issue) || issue < 1) throw new Error("issue must be a positive integer");
   assertClaudeReviewTimeoutMs(timeoutMs);
-  assertClaudeReviewEffort(effort);
   assertAttestedReviewEffort(effort);
   if (typeof issueContract !== "string" || !issueContract.trim()) throw new Error("issueContract is required for an exact-scope review");
   let contractPayload;
@@ -812,7 +812,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     strict: true,
   });
   if (values.help) {
-    stdout.write(`Usage: claude-current-head.mjs --issue NUMBER [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nEffort levels: ${CLAUDE_REVIEW_EFFORTS.join(", ")}.\nDefaults: --effort medium; --timeout-ms 300000 (five minutes).\n`);
+    stdout.write(`Usage: claude-current-head.mjs --issue NUMBER [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nCLI effort levels: ${CLAUDE_REVIEW_EFFORTS.join(", ")}; exact-head minimum: ${MINIMUM_ATTESTED_REVIEW_EFFORT}.\nDefaults: --effort medium; --timeout-ms 300000 (five minutes).\n`);
     return;
   }
   if (values["verify-evidence"]) {

@@ -1449,6 +1449,7 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(() => assertAttestedReviewEffort("low"), /must be at least medium/);
   assert.throws(() => assertClaudeReviewEffort("unbounded"), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
+  assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be at least medium/);
   assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
   assert.deepEqual(assertMinimumClaudeVersion([2, 1, 228]), [2, 1, 228]);
   assert.throws(() => assertMinimumClaudeVersion([2, 1, 227]), /unsupported; require >= 2\.1\.228 and < 2\.2\.0/);
@@ -1622,7 +1623,7 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   await runClaudeReviewCli(["--help"], { stdout: { write(chunk) { help += chunk; } } });
   assert.match(help, /--timeout-ms INTEGER/);
   assert.match(help, /--timeout-ms 300000 \(five minutes\)/);
-  assert.match(help, /Effort levels: low, medium, high, xhigh, max/);
+  assert.match(help, /CLI effort levels: low, medium, high, xhigh, max; exact-head minimum: medium/);
 
   await assert.rejects(
     runClaudeReviewCli([
@@ -1952,6 +1953,19 @@ if (process.argv.includes("--version")) {
       fetchBase: false,
     }),
     /does not bind the selected effort to the captured CLI capabilities/,
+  );
+
+  const tamperedHelpEntryEvidencePath = path.join(evidenceDir, "tampered-effort-help-entry.evidence.json");
+  const tamperedHelpEntryEvidence = structuredClone(result.evidence);
+  tamperedHelpEntryEvidence.claude.capabilities.effortHelpEntry += " altered";
+  await writeFile(tamperedHelpEntryEvidencePath, `${JSON.stringify(tamperedHelpEntryEvidence)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    verifyClaudeReviewEvidence({
+      evidencePath: tamperedHelpEntryEvidencePath,
+      repoRoot: repository,
+      fetchBase: false,
+    }),
+    /does not bind the captured effort help entry/,
   );
 
   const overlongTimeoutEvidencePath = path.join(evidenceDir, "overlong-timeout.evidence.json");

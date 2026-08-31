@@ -230,6 +230,8 @@ rerun the exact-head review to issue a v3 record instead of relabeling old
 evidence. These records live in private local state outside the repository; at
 this migration checkpoint, the wrapper verifier remains the repository's
 evidence authority. In-flight v2 records must be rerun rather than translated.
+The CLI reports this migration as JSON on stderr with exit status 3; successful
+verification JSON remains on stdout.
 
 For a large diff that cannot finish inside five minutes, split the issue and PR
 at a coherent architecture boundary; do not lower the attested review beneath
