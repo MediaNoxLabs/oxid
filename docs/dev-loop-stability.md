@@ -219,10 +219,11 @@ The wrapper passes `--effort medium` by default and records that choice in the
 attestation. Medium effort bounds reasoning cost while retaining a substantive
 review inside the five-minute default deadline; the example above states that
 deadline explicitly so copied commands retain the SLA if defaults later change.
-Operators may
-select only the installed CLI's closed set (`low`, `medium`, `high`, `xhigh`,
-or `max`); increasing effort does not extend the timeout, and a timeout never
-counts as a review pass. New effort-bound attestations use schema v3. Version 2
+Operators may select only the factory's closed set (`low`, `medium`, `high`,
+`xhigh`, or `max`), and the selected level must also appear in the installed
+CLI's captured choice list. Increasing effort does not extend the timeout, and
+a timeout never counts as a review pass. New effort-bound attestations use
+schema v3. Version 2
 records do not bind effort and are intentionally rejected after this upgrade;
 rerun the exact-head review to issue a v3 record instead of relabeling old
 evidence.

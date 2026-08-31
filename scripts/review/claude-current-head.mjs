@@ -95,6 +95,14 @@ export function assertClaudeReviewEffort(effort) {
   return effort;
 }
 
+export function assertClaudeEffortCapability(effort, documentedEfforts) {
+  assertClaudeReviewEffort(effort);
+  if (!Array.isArray(documentedEfforts) || !documentedEfforts.includes(effort)) {
+    throw new Error(`installed Claude CLI does not document the selected review effort: ${effort}`);
+  }
+  return effort;
+}
+
 export function parseClaudeVersion(output) {
   const match = String(output).match(/(?:^|[^0-9])(\d+)\.(\d+)\.(\d+)(?:[^0-9]|$)/);
   if (!match) throw new Error("could not parse Claude CLI version");
@@ -139,8 +147,8 @@ function helpEntry(help, flag) {
   const match = new RegExp(`(?:^|\\n)\\s*${escaped}(?=\\s|=|<|\\[|$)`, "m").exec(help);
   if (!match) return "";
   const entry = help.slice(match.index);
-  const nextFlag = /\n\s*--[a-z0-9]/i.exec(entry.slice(1));
-  return nextFlag ? entry.slice(0, nextFlag.index + 1) : entry;
+  const boundary = /\n(?:\s*--[a-z0-9]|\s*\n)/i.exec(entry.slice(1));
+  return boundary ? entry.slice(0, boundary.index + 1) : entry;
 }
 
 function documentedEffortLevels(help) {
@@ -156,12 +164,15 @@ function documentedEffortLevels(help) {
   const candidates = [...choices, ...groups]
     .map(parseEnumeration)
     .filter((candidate) => Array.isArray(candidate));
-  const complete = candidates.find((candidate) => CLAUDE_REVIEW_EFFORTS.every((effort) => candidate.includes(effort)));
-  if (complete) return complete;
-  const partial = candidates.find((candidate) => CLAUDE_REVIEW_EFFORTS.some((effort) => candidate.includes(effort)));
-  if (!partial) throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
-  const missing = CLAUDE_REVIEW_EFFORTS.filter((effort) => !partial.includes(effort));
-  throw new Error(`Claude CLI help is missing required review effort levels: ${missing.join(", ")}`);
+  const supported = candidates
+    .map((candidate) => candidate.filter((effort) => CLAUDE_REVIEW_EFFORTS.includes(effort)))
+    .filter((candidate) => candidate.length > 0)
+    .sort((left, right) => right.length - left.length)[0];
+  if (!supported) throw new Error("Claude CLI help does not expose a recognizable review effort choice list");
+  if (!supported.includes(DEFAULT_CLAUDE_REVIEW_EFFORT)) {
+    throw new Error(`Claude CLI help does not expose the default review effort: ${DEFAULT_CLAUDE_REVIEW_EFFORT}`);
+  }
+  return supported;
 }
 
 export function assertClaudeHelpCapabilities(help, version) {
@@ -526,6 +537,7 @@ export async function runClaudeCurrentHeadReview({
   const probe = probeClaudeCliCapabilities({ claudeCommand, cwd: outputRoot, runner: claudeRunner });
   const { accountStatus } = probe;
   const claudeVersion = probe.version;
+  assertClaudeEffortCapability(effort, probe.capabilities.effortLevels);
   await atomicPrivateWrite(helpPath, probe.help);
   await atomicPrivateWrite(authHelpPath, probe.authHelp);
 
@@ -705,7 +717,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     strict: true,
   });
   if (values.help) {
-    stdout.write("Usage: claude-current-head.mjs --issue NUMBER [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n");
+    stdout.write("Usage: claude-current-head.mjs --issue NUMBER [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nDefaults: --effort medium; --timeout-ms 300000 (five minutes).\n");
     return;
   }
   if (values["verify-evidence"]) {

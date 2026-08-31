@@ -33,6 +33,7 @@ import { preflightGh } from "../../scripts/github/preflight-gh.mjs";
 import { GH_REST_MAX_BUFFER_BYTES, runGhCommand } from "../../scripts/github/rest-client.mjs";
 import {
   assertClaudeAuthHelpCapabilities,
+  assertClaudeEffortCapability,
   assertClaudeHelpCapabilities,
   assertClaudeReviewEffort,
   assertMinimumClaudeVersion,
@@ -1459,9 +1460,12 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('"dontAsk", ', ""), [2, 1, 228]),
     /dontAsk permission mode/,
   );
+  const reducedEfforts = assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(", max", ""), [2, 1, 228]);
+  assert.deepEqual(reducedEfforts.effortLevels, ["low", "medium", "high", "xhigh"]);
+  assert.equal(assertClaudeEffortCapability("medium", reducedEfforts.effortLevels), "medium");
   assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(", max", ""), [2, 1, 228]),
-    /missing required review effort levels/,
+    () => assertClaudeEffortCapability("max", reducedEfforts.effortLevels),
+    /does not document the selected review effort: max/,
   );
   const reorderedEfforts = assertClaudeHelpCapabilities(
     fixtureClaudeHelp.replace(
@@ -1470,9 +1474,19 @@ test("Claude invocation requires documented empty-tool semantics and structured 
     ),
     [2, 1, 228],
   );
-  assert.deepEqual(reorderedEfforts.effortLevels, ["max", "low", "xhigh", "medium", "high", "none"]);
+  assert.deepEqual(reorderedEfforts.effortLevels, ["max", "low", "xhigh", "medium", "high"]);
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "with a bounded level"), [2, 1, 228]),
+    /recognizable review effort choice list/,
+  );
+  const effortLastHelp = [
+    ...fixtureClaudeHelp.split("\n").filter((line) => !line.includes("--effort")),
+    "  --effort <level> (default: medium)",
+    "",
+    "Examples: unrelated modes (low, medium, high, xhigh, max)",
+  ].join("\n");
+  assert.throws(
+    () => assertClaudeHelpCapabilities(effortLastHelp, [2, 1, 228]),
     /recognizable review effort choice list/,
   );
   assert.throws(() => assertClaudeAuthHelpCapabilities("Usage: claude auth status\n"), /default JSON output/);
@@ -1505,6 +1519,11 @@ test("Claude review CLI rejects an unsupported effort before model execution", a
   t.after(() => rm(directory, { recursive: true, force: true }));
   const contract = path.join(directory, "issue.json");
   await writeFile(contract, JSON.stringify({ issue: 232, title: "Fixture", body: "Contract" }));
+
+  let help = "";
+  await runClaudeReviewCli(["--help"], { stdout: { write(chunk) { help += chunk; } } });
+  assert.match(help, /--timeout-ms INTEGER/);
+  assert.match(help, /--timeout-ms 300000 \(five minutes\)/);
 
   await assert.rejects(
     runClaudeReviewCli([
@@ -1638,62 +1657,61 @@ if (process.argv.includes("--version")) {
   const exactGitDiff = execFileSync("git", ["diff", "--binary", "--full-index", "--no-ext-diff", baseSha, headSha, "--"], { cwd: repository });
   assert.deepEqual(await readFile(path.join(evidenceDir, result.evidence.diff.path)), exactGitDiff);
 
-  await writeFakeClaude("cli-high");
-  const issueContractPath = path.join(fixtureRoot, "issue-150.json");
-  await writeFile(issueContractPath, JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }));
-  const cliScript = path.join(repoRoot, "scripts", "review", "claude-current-head.mjs");
-  const cliEnvironment = { ...process.env, PATH: `${fixtureRoot}${path.delimiter}${process.env.PATH ?? ""}` };
-  const highOutput = execFileSync(process.execPath, [
-    cliScript,
-    "--issue", "150",
-    "--repo-root", repository,
-    "--evidence-dir", evidenceDir,
-    "--issue-contract-file", issueContractPath,
-    "--expected-head", headSha,
-    "--effort", "high",
-  ], { encoding: "utf8", env: cliEnvironment });
-  const highEvidence = JSON.parse(highOutput);
-  assert.equal(highEvidence.invocation.effort, "high");
-  assert.equal(highEvidence.invocation.timeoutMs, 300_000);
-  assert.equal(highEvidence.verdict, "clean");
+  await t.test("CLI propagates explicit and default effort into isolated evidence", async () => {
+    await writeFakeClaude("cli-high");
+    const issueContractPath = path.join(fixtureRoot, "issue-150.json");
+    await writeFile(issueContractPath, JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }));
+    const cliScript = path.join(repoRoot, "scripts", "review", "claude-current-head.mjs");
+    const cliEnvironment = { ...process.env, PATH: `${fixtureRoot}${path.delimiter}${process.env.PATH ?? ""}` };
+    const runFixtureCli = ({ effort, evidenceName }) => {
+      const args = [
+        cliScript,
+        "--issue", "150",
+        "--repo-root", repository,
+        "--evidence-dir", path.join(fixtureRoot, evidenceName),
+        "--issue-contract-file", issueContractPath,
+        "--expected-head", headSha,
+      ];
+      if (effort) args.push("--effort", effort);
+      return JSON.parse(execFileSync(process.execPath, args, { encoding: "utf8", env: cliEnvironment }));
+    };
+    const highEvidence = runFixtureCli({ effort: "high", evidenceName: "cli-high-evidence" });
+    assert.equal(highEvidence.invocation.effort, "high");
+    assert.equal(highEvidence.invocation.timeoutMs, 300_000);
+    assert.equal(highEvidence.verdict, "clean");
 
-  await writeFakeClaude("cli-medium");
-  const defaultOutput = execFileSync(process.execPath, [
-    cliScript,
-    "--issue", "150",
-    "--repo-root", repository,
-    "--evidence-dir", evidenceDir,
-    "--issue-contract-file", issueContractPath,
-    "--expected-head", headSha,
-  ], { encoding: "utf8", env: cliEnvironment });
-  const defaultEvidence = JSON.parse(defaultOutput);
-  assert.equal(defaultEvidence.invocation.effort, "medium");
-  assert.equal(defaultEvidence.invocation.timeoutMs, 300_000);
-  assert.equal(defaultEvidence.verdict, "clean");
+    await writeFakeClaude("cli-medium");
+    const defaultEvidence = runFixtureCli({ evidenceName: "cli-default-evidence" });
+    assert.equal(defaultEvidence.invocation.effort, "medium");
+    assert.equal(defaultEvidence.invocation.timeoutMs, 300_000);
+    assert.equal(defaultEvidence.verdict, "clean");
+  });
 
-  const defaultTimeouts = [];
-  const timeoutRunner = (_command, args, options = {}) => {
-    if (args[0] === "--version") return { status: 0, stdout: "2.1.228 (Claude Code)\n", stderr: "" };
-    if (args[0] === "--help") return { status: 0, stdout: fixtureClaudeHelp, stderr: "" };
-    if (args.at(-1) === "--help") return { status: 0, stdout: fixtureClaudeAuthHelp, stderr: "" };
-    if (args.at(-1) === "--json") return { status: 0, stdout: JSON.stringify({ loggedIn: true }), stderr: "" };
-    defaultTimeouts.push(options.timeout);
-    return { status: null, stdout: "", stderr: "", signal: "SIGTERM", error: { code: "ETIMEDOUT" } };
-  };
-  await assert.rejects(
-    runClaudeCurrentHeadReview({
-      issue: 150,
-      repoRoot: repository,
-      evidenceDir,
-      expectedHead: headSha,
-      claudeCommand: fakeClaude,
-      issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
-      fetchBase: false,
-      claudeRunner: timeoutRunner,
-    }),
-    /timed out or was terminated after 300000ms/,
-  );
-  assert.deepEqual(defaultTimeouts, [300_000]);
+  await t.test("default five-minute timeout remains a hard failure", async () => {
+    const defaultTimeouts = [];
+    const timeoutRunner = (_command, args, options = {}) => {
+      if (args[0] === "--version") return { status: 0, stdout: "2.1.228 (Claude Code)\n", stderr: "" };
+      if (args[0] === "--help") return { status: 0, stdout: fixtureClaudeHelp, stderr: "" };
+      if (args.at(-1) === "--help") return { status: 0, stdout: fixtureClaudeAuthHelp, stderr: "" };
+      if (args.at(-1) === "--json") return { status: 0, stdout: JSON.stringify({ loggedIn: true }), stderr: "" };
+      defaultTimeouts.push(options.timeout);
+      return { status: null, stdout: "", stderr: "", signal: "SIGTERM", error: { code: "ETIMEDOUT" } };
+    };
+    await assert.rejects(
+      runClaudeCurrentHeadReview({
+        issue: 150,
+        repoRoot: repository,
+        evidenceDir: path.join(fixtureRoot, "timeout-evidence"),
+        expectedHead: headSha,
+        claudeCommand: fakeClaude,
+        issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
+        fetchBase: false,
+        claudeRunner: timeoutRunner,
+      }),
+      /timed out or was terminated after 300000ms/,
+    );
+    assert.deepEqual(defaultTimeouts, [300_000]);
+  });
 
   const legacyEvidencePath = path.join(evidenceDir, "legacy-v2.evidence.json");
   const legacyEvidence = structuredClone(result.evidence);
@@ -1988,16 +2006,29 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
 });
 
-test("Claude schema-v3 verifier has no un-migrated repository consumers", () => {
+test("repository contains no stored or consumed legacy Claude-v2 evidence", async () => {
+  const evidenceFiles = execFileSync(
+    "git",
+    ["ls-files", "-z", "--", "*.evidence.json"],
+    { cwd: repoRoot, encoding: "utf8" },
+  ).split("\0").filter(Boolean);
+  for (const evidenceFile of evidenceFiles) {
+    const stored = JSON.parse(await readFile(path.join(repoRoot, evidenceFile), "utf8"));
+    assert.notEqual(
+      stored.evidenceKind === "local-attestation" ? stored.schemaVersion : null,
+      2,
+      evidenceFile,
+    );
+  }
+
   const consumers = execFileSync(
     "git",
-    ["grep", "-l", "verifyClaudeReviewEvidence", "--", "scripts", "tests"],
+    ["grep", "-l", "verifyClaudeReviewEvidence", "--", "."],
     { cwd: repoRoot, encoding: "utf8" },
-  ).trim().split("\n").sort();
-  assert.deepEqual(consumers, [
-    "scripts/review/claude-current-head.mjs",
-    "tests/repository/dev-loop-stability-contract.test.mjs",
-  ]);
+  ).trim().split("\n");
+  for (const consumer of consumers.filter((file) => !file.startsWith("tests/"))) {
+    assert.doesNotMatch(await readFile(path.join(repoRoot, consumer), "utf8"), /schemaVersion\s*[:=]\s*2/);
+  }
 });
 
 test("upstream-only gaps are linked and speculative local patches are forbidden", async () => {
