@@ -28,6 +28,44 @@ An SLO miss is a process finding. Do not answer it by adding retries, reviewers,
 or a second implementation path. Record which phase consumed the time and fix
 that phase.
 
+## Two delivery profiles
+
+Profile selection is explicit and local to each Pi invocation, so independent
+engineers, local sessions, and cloud workers do not overwrite shared mode
+state:
+
+| Profile | Purpose | Required evidence | Remote posture |
+| --- | --- | --- | --- |
+| `prototype` | Answer one product or technical hypothesis quickly | `basic`, plus an explicitly needed focused unit or headless check | Local only; evidence is provisional and never merge-eligible |
+| `production-ready` | Produce a reviewable, merge-eligible change | Affected targets, draft review, hosted CI, and pre-approval review | Normal authority-gated branch/PR flow |
+
+Invoke the public entrypoint as:
+
+```text
+/dev-loop prototype issue <n>
+/dev-loop production-ready issue <n>
+```
+
+The default is `production-ready`. A prototype aims for first feedback within
+three minutes, a focused iteration within ten minutes, and a bounded work item
+within one hour. It uses at most one scope/correctness reviewer and does not
+infer full Nix, coverage, quality, real Lace ID Portal or Midnight stacks,
+desktop/mobile, physical-device, Tailnet, hosted-CI, or review-panel work. Run
+one of those only when it is the hypothesis being tested, and still classify
+the result as provisional.
+
+A prototype closes with its hypothesis, result, changed paths, checks run,
+known gaps, resource use, and promotion plan. Promotion is a deliberate new
+`production-ready` invocation: fetch and refresh from `origin/integration`,
+audit every shortcut and known gap, discard provisional gate claims, rebuild
+the handoff envelope, recompute the affected targets, and execute the normal
+production gates. Do not turn a prototype into a PR by merely pushing its head.
+
+Both profiles retain issue-backed worktrees, branch and commit grammar,
+DCO/GPG requirements, secret and custody boundaries, process ownership, and
+disk limits. The machine-readable contract is
+`.pi/delivery-profiles.json`; `scripts/factory/audit-pi.mjs` rejects drift.
+
 ## One candidate, two checkpoints
 
 1. Start from fetched `origin/integration` in a dedicated worktree. Run
@@ -41,7 +79,8 @@ that phase.
    node scripts/ci/target-plan.mjs \
      --base "$(git merge-base HEAD origin/integration)" \
      --head HEAD \
-     --event pull_request
+     --event pull_request \
+     --delivery-profile production-ready
    ```
 
 5. Run the matching local gate, commit once, and push one coherent candidate.

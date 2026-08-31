@@ -96,6 +96,15 @@ without accumulating repeated snapshots. It never reads or writes `auth.json`.
 Restart Pi after any `.pi/`, `.devloops`, pin, or user-policy change because a
 running process retains the configuration loaded at startup.
 
+Delivery mode is not mutable global Pi state. Each public invocation names
+`prototype` or `production-ready` according to
+[the productive loop](productive-loop.md), and the latter is the safe default.
+The tracked `.pi/delivery-profiles.json` contract keeps prototype work local,
+provisional, single-reviewer, and non-mergeable. The read-only Pi audit checks
+that contract and both agent entrypoint spellings. After this profile contract
+changes, preserve the current branch/head and restart Pi from the canonical
+checkout before relying on it.
+
 The companion `--configure-git` command installs the repository-scoped local
 contribution hooks and signing defaults. `--check` validates both surfaces; it
 does not call an LLM or publish anything.

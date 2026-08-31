@@ -215,6 +215,71 @@ async function inspectMetrics(repoRoot) {
   }
 }
 
+async function inspectDeliveryProfiles(repoRoot) {
+  const problems = [];
+  try {
+    const profiles = JSON.parse(await readFile(path.join(repoRoot, ".pi", "delivery-profiles.json"), "utf8"));
+    const names = Object.keys(profiles.profiles ?? {}).sort();
+    if (profiles.schemaVersion !== 1) problems.push("schemaVersion must be 1");
+    if (profiles.defaultProfile !== "production-ready") problems.push("production-ready must remain the default");
+    if (JSON.stringify(names) !== JSON.stringify(["production-ready", "prototype"])) {
+      problems.push("profiles must contain exactly prototype and production-ready");
+    }
+
+    const prototype = profiles.profiles?.prototype;
+    if (prototype?.remoteMutation !== false || prototype?.mergeEligible !== false
+      || prototype?.evidenceClass !== "provisional") {
+      problems.push("prototype must be local-only, non-mergeable, and provisional");
+    }
+    if (prototype?.maximumReviewers !== 1) problems.push("prototype must use at most one reviewer");
+    if (JSON.stringify(prototype?.targets?.required) !== JSON.stringify(["basic"])) {
+      problems.push("prototype must require only the basic target");
+    }
+    if (JSON.stringify(prototype?.targets?.optionalHostedOnDemand) !== JSON.stringify(["unit-linux", "headless-linux"])
+      || prototype?.targets?.maximumFocusedQualifications !== 1) {
+      problems.push("prototype must allow at most one focused qualification and only bounded hosted targets");
+    }
+    if (prototype?.sloSeconds?.firstFeedback !== 180 || prototype?.sloSeconds?.focusedIteration !== 600) {
+      problems.push("prototype feedback and iteration SLOs must remain bounded");
+    }
+
+    const production = profiles.profiles?.["production-ready"];
+    if (production?.remoteMutation !== "authority-gated"
+      || production?.mergeEligible !== "after-required-gates"
+      || production?.evidenceClass !== "production") {
+      problems.push("production-ready must retain authority, gate, and evidence controls");
+    }
+    if (production?.maximumReviewers !== 2) problems.push("production-ready reviewer cap must remain two");
+
+    const promotion = profiles.promotion;
+    if (promotion?.explicit !== true || promotion?.refreshBase !== "origin/integration"
+      || promotion?.auditPrototypeGaps !== true || promotion?.invalidateProvisionalEvidence !== true
+      || promotion?.recomputeTargets !== true) {
+      problems.push("promotion must refresh integration, audit gaps, invalidate provisional evidence, and recompute targets");
+    }
+
+    const [devLoopAgent, rootAgent] = await Promise.all([
+      readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8"),
+      readFile(path.join(repoRoot, "AGENT.md"), "utf8"),
+    ]);
+    for (const [file, source] of [[".pi/agents/dev-loop.agent.md", devLoopAgent], ["AGENT.md", rootAgent]]) {
+      if (!source.includes("/dev-loop prototype issue <n>")) problems.push(`${file} is missing the prototype entrypoint`);
+      if (!source.includes("/dev-loop production-ready issue <n>")) problems.push(`${file} is missing the production-ready entrypoint`);
+    }
+    if (!devLoopAgent.includes("--delivery-profile <profile>")) {
+      problems.push(".pi/agents/dev-loop.agent.md does not bind the profile into the handoff envelope");
+    }
+  } catch (error) {
+    problems.push(error.message);
+  }
+
+  return check("delivery-profiles", problems.length ? "fail" : "pass",
+    problems.length
+      ? "Tracked delivery profiles are incomplete or unsafe"
+      : "Prototype and production-ready profiles have bounded selection and promotion rules",
+    problems.length ? problems : undefined);
+}
+
 /**
  * Worktree creation needs only host-capacity admission. It deliberately does
  * not depend on Pi being installed, user policy being configured, documentation
@@ -330,6 +395,8 @@ export async function auditPi({
     devloopBounds.every((pattern) => pattern.test(devloops))
       ? "Dev-loop review, queue, retry, and integration merge concurrency are bounded"
       : "One or more dev-loop constitutional bounds are missing"));
+
+  checks.push(await inspectDeliveryProfiles(repoRoot));
 
   if (includeOperational) {
     checks.push(...inspectOperationalState(repoRoot));

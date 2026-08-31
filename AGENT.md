@@ -71,6 +71,16 @@ platform boundaries.
 
 Follow [the productive loop](docs/factory/productive-loop.md):
 
+- `/dev-loop prototype issue <n>` selects a local, provisional loop for one
+  hypothesis: basic plus explicitly relevant focused checks, at most one
+  reviewer, no push/PR/hosted-CI wait, and no merge-readiness claim.
+- `/dev-loop production-ready issue <n>` selects the normal affected-target,
+  draft, CI, and pre-approval loop. It is the default when no profile is named.
+- Promotion is explicit: refresh `origin/integration`, audit prototype gaps,
+  invalidate provisional evidence, recompute targets, and run production gates.
+  Both profiles retain issue/worktree, contribution, security, process, and
+  disk invariants.
+
 1. Keep one remotely driven candidate per parent session and at most two active
    managed delivery worktrees per Git common checkout on a host. Parallel
    parents own different issue worktrees.
@@ -104,7 +114,8 @@ Run focused checks first. The path planner chooses proportional target lanes:
 node scripts/ci/target-plan.mjs \
   --base "$(git merge-base HEAD origin/integration)" \
   --head HEAD \
-  --event pull_request
+  --event pull_request \
+  --delivery-profile production-ready
 ```
 
 - L0 `basic`: policy, formatting, architecture, lint, and production compilation

@@ -4,6 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  DeliveryProfile,
   HOSTED_TARGETS,
   HostedTarget,
   Profile,
@@ -87,6 +88,44 @@ test("integration and release profiles are complete backstops", () => {
   for (const profile of [Profile.INTEGRATION, Profile.RELEASE]) {
     assert.deepEqual(makeTargetPlan(["README.md"], { profile }).targets, HOSTED_TARGETS);
   }
+});
+
+test("prototype delivery stays basic until a focused target is requested", () => {
+  for (const paths of [
+    ["crates/foundation/src/lib.rs"],
+    ["flake.lock"],
+    [],
+  ]) {
+    const plan = makeTargetPlan(paths, { deliveryProfile: DeliveryProfile.PROTOTYPE });
+    assert.equal(plan.deliveryProfile, DeliveryProfile.PROTOTYPE);
+    assert.deepEqual(plan.targets, [HostedTarget.BASIC]);
+  }
+
+  const focused = makeTargetPlan(["apps/oxid-headless/src/main.rs"], {
+    deliveryProfile: DeliveryProfile.PROTOTYPE,
+    extraTargets: [HostedTarget.HEADLESS_LINUX],
+  });
+  assert.deepEqual(focused.targets, [HostedTarget.BASIC, HostedTarget.HEADLESS_LINUX]);
+});
+
+test("prototype delivery cannot masquerade as an integration or release run", () => {
+  for (const profile of [Profile.INTEGRATION, Profile.RELEASE]) {
+    assert.throws(
+      () => makeTargetPlan(["README.md"], { deliveryProfile: DeliveryProfile.PROTOTYPE, profile }),
+      /prototype delivery is local-only/u,
+    );
+  }
+  assert.throws(
+    () => makeTargetPlan(["README.md"], { deliveryProfile: "fast-ish" }),
+    /unknown delivery profile/u,
+  );
+  assert.throws(
+    () => makeTargetPlan(["README.md"], {
+      deliveryProfile: DeliveryProfile.PROTOTYPE,
+      extraTargets: [HostedTarget.COVERAGE_LINUX],
+    }),
+    /not available in prototype delivery/u,
+  );
 });
 
 test("known on-demand targets can be added and unknown targets are rejected", () => {
