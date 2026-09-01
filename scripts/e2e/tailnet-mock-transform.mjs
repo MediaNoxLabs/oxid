@@ -10,8 +10,8 @@ import { pathToFileURL } from "node:url";
 import { exactPublicOrigin } from "./tailnet-origin-policy.mjs";
 import { mockKycExternalUrl } from "./tailnet-mock-route.mjs";
 
-const PORTAL_COMMIT = "22ae5369b6f939e6b20648f4b85dd993527748ef";
-const PORTAL_TREE = "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10";
+const PORTAL_COMMIT = "25499870f84d77173c46e4af3021311decfb840b";
+const PORTAL_TREE = "2d845d2293603dfd8adce5362c8a9941e6ba78a9";
 const PINNED_MOCK_SHA256 = "68613b89b01ca53d1d9c33f6c14393ac310459aded26b2d337c05bd2f95113c6";
 const MOCK_FILE = "didit-tailnet.yml";
 const RECEIPT_FILE = "didit-tailnet-receipt.json";

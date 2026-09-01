@@ -21,7 +21,7 @@ pub use passport_vault::{
     PassportVaultUiServices,
 };
 
-use std::{fmt, future::Future, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fmt, future::Future, sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
 #[cfg(feature = "ui-profile-dev")]
@@ -9011,16 +9011,13 @@ fn credential_page_after_change(
 
 const CREDENTIAL_REVERIFICATION_APPLIED_MARKER: &str = "Credential reverification applied";
 
-const PASSPORT_FIRST_NAME: &str = "/credentialSubject/firstName";
-const PASSPORT_LAST_NAME: &str = "/credentialSubject/lastName";
 const PASSPORT_DATE_OF_BIRTH: &str = "/credentialSubject/dateOfBirth";
 
 #[component]
 fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut disclosure_state = use_signal(|| None::<Result<CredentialDisclosureView, String>>);
-    let mut revealed_first = use_signal(|| None::<String>);
-    let mut revealed_last = use_signal(|| None::<String>);
+    let mut revealed_claims = use_signal(BTreeMap::<String, String>::new);
     let mut age_threshold = use_signal(|| 18_u8);
     let mut plan_notice = use_signal(|| None::<String>);
     let mut operation_busy = use_signal(|| false);
@@ -9060,28 +9057,21 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
             }
         },
         Some(Ok(disclosure)) => {
-            let first = disclosure
+            let revealable = disclosure
                 .candidates
                 .iter()
-                .find(|candidate| candidate.claim_path == PASSPORT_FIRST_NAME)
-                .cloned();
-            let last = disclosure
-                .candidates
-                .iter()
-                .find(|candidate| candidate.claim_path == PASSPORT_LAST_NAME)
-                .cloned();
+                .filter(|candidate| candidate.privacy_tier == "selective_disclosure")
+                .cloned()
+                .collect::<Vec<_>>();
             let date_of_birth = disclosure
                 .candidates
                 .iter()
                 .find(|candidate| candidate.claim_path == PASSPORT_DATE_OF_BIRTH)
                 .cloned();
-            let first_service = services.reveal_credential_claim();
-            let last_service = services.reveal_credential_claim();
+            let reveal_service = services.reveal_credential_claim();
             let preview_service = services.preview_credential_disclosure();
-            let first_profile = profile_id.clone();
-            let first_credential = credential_id.clone();
-            let last_profile = profile_id.clone();
-            let last_credential = credential_id.clone();
+            let reveal_profile = profile_id.clone();
+            let reveal_credential = credential_id.clone();
             let preview_profile = profile_id;
             let preview_credential = credential_id;
             rsx! {
@@ -9089,106 +9079,73 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                     div { class: "passport-claims__heading",
                         div {
                             p { class: "card-eyebrow", "{ui::credential_schema(&disclosure.schema_id)}" }
-                            h3 { "Available proofs" }
+                            h3 { "Credential attributes" }
                         }
-                        span { class: "status-pill", "Holder controlled" }
+                        span { class: "status-pill", "Stored privately" }
                     }
                     p { class: "form-hint",
-                        "Reveal is local to this screen. Preview builds no verifier presentation and sends nothing."
+                        "These attributes belong to this credential. Reveal is local to this screen; preview sends nothing and builds no verifier presentation."
                     }
-                    if let Some(candidate) = first {
-                        article { class: "passport-claim",
-                            div {
-                                span { class: "passport-claim__tier", "{ui::claim_privacy(&candidate.privacy_tier)}" }
-                                h4 { "{candidate.label}" }
-                                if let Some(value) = revealed_first.read().as_deref() {
-                                    p { class: "passport-claim__value privacy-value", "{value}" }
-                                } else {
-                                    p { "Encrypted until locally revealed." }
-                                }
-                            }
-                            button {
-                                class: "secondary-action", r#type: "button",
-                                disabled: operation_busy(),
-                                aria_label: if revealed_first.read().is_some() { "Hide First name" } else { "Reveal First name locally" },
-                                onclick: move |_| {
-                                    if revealed_first.read().is_some() {
-                                        revealed_first.set(None);
-                                    } else {
-                                        let service = first_service.clone();
-                                        let profile_id = first_profile.clone();
-                                        let credential_id = first_credential.clone();
-                                        operation_busy.set(true);
-                                        spawn(async move {
-                                            let result = run_ui_blocking(move || {
-                                                service.execute(RevealCredentialClaimCommand {
-                                                    profile_id,
-                                                    credential_id,
-                                                    claim_path: PASSPORT_FIRST_NAME.to_owned(),
-                                                })
-                                            })
-                                            .await;
-                                            match result {
-                                                Ok(Ok(claim)) => {
-                                                    revealed_first.set(Some(claim.value().to_owned()));
-                                                    plan_notice.set(Some("First name revealed only on this device screen.".to_owned()));
-                                                }
-                                                Ok(Err(error)) => plan_notice.set(Some(credential_operation_message(error))),
-                                                Err(error) => plan_notice.set(Some(error.to_string())),
-                                            }
-                                            operation_busy.set(false);
-                                        });
+                    for candidate in revealable {
+                        {
+                            let claim_path = candidate.claim_path.clone();
+                            let claim_label = candidate.label.clone();
+                            let is_revealed = revealed_claims.read().contains_key(&claim_path);
+                            let revealed_value = revealed_claims.read().get(&claim_path).cloned();
+                            let service = reveal_service.clone();
+                            let profile_id = reveal_profile.clone();
+                            let credential_id = reveal_credential.clone();
+                            rsx! {
+                                article { class: "passport-claim", key: "{claim_path}",
+                                    div {
+                                        span { class: "passport-claim__tier", "{ui::claim_privacy(&candidate.privacy_tier)}" }
+                                        h4 { "{claim_label}" }
+                                        if let Some(value) = revealed_value.as_deref() {
+                                            p { class: "passport-claim__value privacy-value", "{value}" }
+                                        } else {
+                                            p { "Encrypted until locally revealed." }
+                                        }
                                     }
-                                },
-                                if revealed_first.read().is_some() { "Hide" } else { "Reveal locally" }
-                            }
-                        }
-                    }
-                    if let Some(candidate) = last {
-                        article { class: "passport-claim",
-                            div {
-                                span { class: "passport-claim__tier", "{ui::claim_privacy(&candidate.privacy_tier)}" }
-                                h4 { "{candidate.label}" }
-                                if let Some(value) = revealed_last.read().as_deref() {
-                                    p { class: "passport-claim__value privacy-value", "{value}" }
-                                } else {
-                                    p { "Encrypted until locally revealed." }
-                                }
-                            }
-                            button {
-                                class: "secondary-action", r#type: "button",
-                                disabled: operation_busy(),
-                                aria_label: if revealed_last.read().is_some() { "Hide Last name" } else { "Reveal Last name locally" },
-                                onclick: move |_| {
-                                    if revealed_last.read().is_some() {
-                                        revealed_last.set(None);
-                                    } else {
-                                        let service = last_service.clone();
-                                        let profile_id = last_profile.clone();
-                                        let credential_id = last_credential.clone();
-                                        operation_busy.set(true);
-                                        spawn(async move {
-                                            let result = run_ui_blocking(move || {
-                                                service.execute(RevealCredentialClaimCommand {
-                                                    profile_id,
-                                                    credential_id,
-                                                    claim_path: PASSPORT_LAST_NAME.to_owned(),
-                                                })
-                                            })
-                                            .await;
-                                            match result {
-                                                Ok(Ok(claim)) => {
-                                                    revealed_last.set(Some(claim.value().to_owned()));
-                                                    plan_notice.set(Some("Last name revealed only on this device screen.".to_owned()));
-                                                }
-                                                Ok(Err(error)) => plan_notice.set(Some(credential_operation_message(error))),
-                                                Err(error) => plan_notice.set(Some(error.to_string())),
+                                    button {
+                                        class: "secondary-action", r#type: "button",
+                                        disabled: operation_busy(),
+                                        aria_label: if is_revealed { "Hide {claim_label}" } else { "Reveal {claim_label} locally" },
+                                        onclick: move |_| {
+                                            if revealed_claims.read().contains_key(&claim_path) {
+                                                revealed_claims.write().remove(&claim_path);
+                                                plan_notice.set(Some(format!("{claim_label} hidden again.")));
+                                            } else {
+                                                let service = service.clone();
+                                                let profile_id = profile_id.clone();
+                                                let credential_id = credential_id.clone();
+                                                let claim_path = claim_path.clone();
+                                                let claim_label = claim_label.clone();
+                                                operation_busy.set(true);
+                                                spawn(async move {
+                                                    let result = run_ui_blocking(move || {
+                                                        service.execute(RevealCredentialClaimCommand {
+                                                            profile_id,
+                                                            credential_id,
+                                                            claim_path: claim_path.clone(),
+                                                        })
+                                                        .map(|claim| (claim_path, claim.value().to_owned()))
+                                                    })
+                                                    .await;
+                                                    match result {
+                                                        Ok(Ok((claim_path, value))) => {
+                                                            revealed_claims.write().insert(claim_path, value);
+                                                            plan_notice.set(Some(format!("{claim_label} revealed only on this device screen.")));
+                                                        }
+                                                        Ok(Err(error)) => plan_notice.set(Some(credential_operation_message(error))),
+                                                        Err(error) => plan_notice.set(Some(error.to_string())),
+                                                    }
+                                                    operation_busy.set(false);
+                                                });
                                             }
-                                            operation_busy.set(false);
-                                        });
+                                        },
+                                        if is_revealed { "Hide" } else { "Reveal locally" }
                                     }
-                                },
-                                if revealed_last.read().is_some() { "Hide" } else { "Reveal locally" }
+                                }
                             }
                         }
                     }
@@ -9221,13 +9178,8 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                         class: "primary-action", r#type: "button",
                         disabled: operation_busy(),
                         onclick: move |_| {
-                            let mut reveal_claim_paths = Vec::new();
-                            if revealed_first.read().is_some() {
-                                reveal_claim_paths.push(PASSPORT_FIRST_NAME.to_owned());
-                            }
-                            if revealed_last.read().is_some() {
-                                reveal_claim_paths.push(PASSPORT_LAST_NAME.to_owned());
-                            }
+                            let reveal_claim_paths =
+                                revealed_claims.read().keys().cloned().collect::<Vec<_>>();
                             let service = preview_service.clone();
                             let profile_id = preview_profile.clone();
                             let credential_id = preview_credential.clone();
@@ -9534,6 +9486,12 @@ fn CredentialsPage(
                 manual_credential_review_lock(),
             );
             let issuance_busy = issuance_action() != CredentialIssuanceAction::Idle;
+            let issuance_terminal =
+                credential_issuance_review_is_terminal(prepared_issuance.read().as_ref());
+            let issuance_succeeded = prepared_issuance
+                .read()
+                .as_ref()
+                .is_some_and(|review| review.state == "succeeded");
             let issuance_action_label = credential_issuance_action_label(issuance_action());
             rsx! {
                 section { class: "page-heading",
@@ -9543,8 +9501,24 @@ fn CredentialsPage(
                 }
                 article { class: "surface-card credential-receive-card",
                     p { class: "card-eyebrow", "OpenID4VCI 1.0 Final" }
-                    h2 { "Accept a credential offer" }
-                    p { class: "form-hint", "Preview an embedded offer before consent. The pre-authorized code, access token, nonce, and signed proof remain inside the protocol adapter." }
+                    h2 {
+                        if issuance_succeeded {
+                            "Credential added to wallet"
+                        } else if issuance_terminal {
+                            "Credential offer closed"
+                        } else {
+                            "Accept a credential offer"
+                        }
+                    }
+                    p { class: "form-hint",
+                        if issuance_succeeded {
+                            "The offer review is closed. Your credential is in the protected inventory below."
+                        } else if issuance_terminal {
+                            "The offer review is closed. No further action is available for this one-time offer."
+                        } else {
+                            "Preview an embedded offer before consent. The pre-authorized code, access token, nonce, and signed proof remain inside the protocol adapter."
+                        }
+                    }
                     if let Some(review) = prepared_issuance.read().as_ref() {
                         p {
                             class: "form-hint",
@@ -9552,6 +9526,8 @@ fn CredentialsPage(
                             aria_label: "Credential offer URI cleared after private admission",
                             if review.state == "succeeded" {
                                 "The exchange is complete. The transient offer URI, grant, access token, nonce, and proof were cleared."
+                            } else if credential_issuance_review_is_terminal(Some(review)) {
+                                "The offer is closed. Its transient URI, one-time grant, and any protocol secrets were cleared."
                             } else {
                                 "The offer is admitted to private review. Its URI and one-time grant were cleared instead of being shown in this field."
                             }
@@ -9589,124 +9565,126 @@ fn CredentialsPage(
                             "Start another offer"
                         }
                     }
-                    if let Some(offer) = demo_offer {
+                    if !issuance_terminal {
+                        if let Some(offer) = demo_offer {
+                            button {
+                                class: "secondary-action",
+                                r#type: "button",
+                                disabled: issuance_busy
+                                    || credential_issuance_review_blocks_replacement(
+                                        prepared_issuance.read().as_ref(),
+                                    ),
+                                onclick: move |_| {
+                                    offer_draft.set(CredentialOfferDraft::editable(offer.clone()));
+                                    prepared_issuance.set(None);
+                                    issuance_consent.set(false);
+                                    issuance_notice.set(Some("Standalone credential offer loaded. Preview it before accepting.".to_owned()));
+                                },
+                                "Use standalone demo offer"
+                            }
+                        }
                         button {
-                            class: "secondary-action",
+                            class: "primary-action",
                             r#type: "button",
                             disabled: issuance_busy
                                 || credential_issuance_review_blocks_replacement(
                                     prepared_issuance.read().as_ref(),
-                                ),
-                            onclick: move |_| {
-                                offer_draft.set(CredentialOfferDraft::editable(offer.clone()));
-                                prepared_issuance.set(None);
-                                issuance_consent.set(false);
-                                issuance_notice.set(Some("Standalone credential offer loaded. Preview it before accepting.".to_owned()));
-                            },
-                            "Use standalone demo offer"
-                        }
-                    }
-                    button {
-                        class: "primary-action",
-                        r#type: "button",
-                        disabled: issuance_busy
-                            || credential_issuance_review_blocks_replacement(
-                                prepared_issuance.read().as_ref(),
-                            )
-                            || offer_draft.read().offer_for_prepare().trim().is_empty(),
-                        onclick: {
-                            let service = services.prepare_credential_issuance();
-                            let profile_id = profile_id.clone();
-                            move |_| {
-                                // Preview admission is a synchronous single-flight
-                                // transaction. The action write guard closes duplicate
-                                // events before any review reservation or task can start.
-                                {
-                                    let mut action = issuance_action.write();
-                                    if !begin_credential_issuance_action_value(
-                                        &mut action,
-                                        CredentialIssuanceAction::Previewing,
+                                )
+                                || offer_draft.read().offer_for_prepare().trim().is_empty(),
+                            onclick: {
+                                let service = services.prepare_credential_issuance();
+                                let profile_id = profile_id.clone();
+                                move |_| {
+                                    // Preview admission is a synchronous single-flight
+                                    // transaction. The action write guard closes duplicate
+                                    // events before any review reservation or task can start.
+                                    {
+                                        let mut action = issuance_action.write();
+                                        if !begin_credential_issuance_action_value(
+                                            &mut action,
+                                            CredentialIssuanceAction::Previewing,
+                                        ) {
+                                            return;
+                                        }
+                                    }
+                                    if credential_issuance_review_blocks_replacement(
+                                        prepared_issuance.read().as_ref(),
                                     ) {
+                                        issuance_action.set(CredentialIssuanceAction::Idle);
                                         return;
                                     }
-                                }
-                                if credential_issuance_review_blocks_replacement(
-                                    prepared_issuance.read().as_ref(),
-                                ) {
-                                    issuance_action.set(CredentialIssuanceAction::Idle);
-                                    return;
-                                }
-                                let offer = offer_draft.read().offer_for_prepare().trim().to_owned();
-                                if offer.is_empty() {
-                                    issuance_action.set(CredentialIssuanceAction::Idle);
-                                    return;
-                                }
-                                let Some(manual_review_reserved) =
-                                    reserve_credential_preview_review_admission(
-                                        &pending_identity_request,
-                                        &mut manual_credential_review_lock,
-                                    )
-                                else {
-                                    issuance_action.set(CredentialIssuanceAction::Idle);
-                                    return;
-                                };
-                                let service = service.clone();
-                                let profile_id = profile_id.clone();
-                                prepared_issuance.set(None);
-                                issuance_consent.set(false);
-                                issuance_notice.set(None);
-                                scrub_pending_identity_request(
-                                    &mut pending_identity_request,
-                                    IdentityRequestKind::CredentialIssuance,
-                                );
-                                spawn(async move {
-                                    match run_ui_future(async move {
-                                        service.execute(PrepareCredentialIssuanceCommand { profile_id, offer }).await
-                                    })
-                                    .await
-                                    {
-                                        Ok(Ok(preview)) => {
-                                            offer_draft.write().clear_imported();
-                                            scrub_pending_identity_request(
-                                                &mut pending_identity_request,
-                                                IdentityRequestKind::CredentialIssuance,
-                                            );
-                                            prepared_issuance.set(Some(preview));
-                                            issuance_consent.set(false);
-                                            issuance_notice.set(Some("Offer preview ready. Review the issuer and requested credential before consenting.".to_owned()));
-                                        }
-                                        Ok(Err(error)) => {
-                                            wipe_pending_identity_request(
-                                                &mut pending_identity_request,
-                                                Some(IdentityRequestKind::CredentialIssuance),
-                                            );
-                                            release_manual_credential_review_after_confirmed_prepare_failure(
-                                                &mut manual_credential_review_lock,
-                                                manual_review_reserved,
-                                            );
-                                            offer_draft.write().clear_imported();
-                                            prepared_issuance.set(None);
-                                            issuance_consent.set(false);
-                                            let message = credential_issuance_terminal_error(&error)
-                                                .map(CredentialIssuanceTerminalError::message)
-                                                .map(str::to_owned)
-                                                .unwrap_or_else(|| credential_issuance_message(error));
-                                            issuance_notice.set(Some(message));
-                                        }
-                                        Err(error) => {
-                                            offer_draft.write().clear_imported();
-                                            prepared_issuance.set(None);
-                                            issuance_consent.set(false);
-                                            issuance_notice.set(Some(format!(
-                                                "{error}. Offer preparation could not be confirmed; leave this review to discard any retained protocol session before navigating away."
-                                            )));
-                                        }
+                                    let offer = offer_draft.read().offer_for_prepare().trim().to_owned();
+                                    if offer.is_empty() {
+                                        issuance_action.set(CredentialIssuanceAction::Idle);
+                                        return;
                                     }
-                                    issuance_action.set(CredentialIssuanceAction::Idle);
-                                });
-                            }
-                        },
-                        if issuance_action() == CredentialIssuanceAction::Previewing { "Checking offer…" } else { "Preview credential offer" }
+                                    let Some(manual_review_reserved) =
+                                        reserve_credential_preview_review_admission(
+                                            &pending_identity_request,
+                                            &mut manual_credential_review_lock,
+                                        )
+                                    else {
+                                        issuance_action.set(CredentialIssuanceAction::Idle);
+                                        return;
+                                    };
+                                    let service = service.clone();
+                                    let profile_id = profile_id.clone();
+                                    prepared_issuance.set(None);
+                                    issuance_consent.set(false);
+                                    issuance_notice.set(None);
+                                    scrub_pending_identity_request(
+                                        &mut pending_identity_request,
+                                        IdentityRequestKind::CredentialIssuance,
+                                    );
+                                    spawn(async move {
+                                        match run_ui_future(async move {
+                                            service.execute(PrepareCredentialIssuanceCommand { profile_id, offer }).await
+                                        })
+                                        .await
+                                        {
+                                            Ok(Ok(preview)) => {
+                                                offer_draft.write().clear_imported();
+                                                scrub_pending_identity_request(
+                                                    &mut pending_identity_request,
+                                                    IdentityRequestKind::CredentialIssuance,
+                                                );
+                                                prepared_issuance.set(Some(preview));
+                                                issuance_consent.set(false);
+                                                issuance_notice.set(Some("Offer preview ready. Review the issuer and requested credential before consenting.".to_owned()));
+                                            }
+                                            Ok(Err(error)) => {
+                                                wipe_pending_identity_request(
+                                                    &mut pending_identity_request,
+                                                    Some(IdentityRequestKind::CredentialIssuance),
+                                                );
+                                                release_manual_credential_review_after_confirmed_prepare_failure(
+                                                    &mut manual_credential_review_lock,
+                                                    manual_review_reserved,
+                                                );
+                                                offer_draft.write().clear_imported();
+                                                prepared_issuance.set(None);
+                                                issuance_consent.set(false);
+                                                let message = credential_issuance_terminal_error(&error)
+                                                    .map(CredentialIssuanceTerminalError::message)
+                                                    .map(str::to_owned)
+                                                    .unwrap_or_else(|| credential_issuance_message(error));
+                                                issuance_notice.set(Some(message));
+                                            }
+                                            Err(error) => {
+                                                offer_draft.write().clear_imported();
+                                                prepared_issuance.set(None);
+                                                issuance_consent.set(false);
+                                                issuance_notice.set(Some(format!(
+                                                    "{error}. Offer preparation could not be confirmed; leave this review to discard any retained protocol session before navigating away."
+                                                )));
+                                            }
+                                        }
+                                        issuance_action.set(CredentialIssuanceAction::Idle);
+                                    });
+                                }
+                            },
+                            if issuance_action() == CredentialIssuanceAction::Previewing { "Checking offer…" } else { "Preview credential offer" }
+                        }
                     }
                     if issuance_busy {
                         p {
@@ -9803,9 +9781,17 @@ fn CredentialsPage(
                         }
                     }
                     if let Some(preview) = prepared_issuance.read().clone() {
-                        div { class: "credential-offer-preview",
+                        div { class: if credential_issuance_review_is_terminal(Some(&preview)) { "credential-issued-receipt" } else { "credential-offer-preview" },
                             div { class: "consent-preview__heading",
-                                h3 { "Credential offer preview" }
+                                h3 {
+                                    if preview.state == "succeeded" {
+                                        "Saved to your wallet"
+                                    } else if credential_issuance_review_is_terminal(Some(&preview)) {
+                                        "Offer closed"
+                                    } else {
+                                        "Credential offer preview"
+                                    }
+                                }
                                 span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
                             }
                             if preview.state == "succeeded" {
@@ -9862,7 +9848,7 @@ fn CredentialsPage(
                                         aria_label: "Consent to credential issuance",
                                         aria_describedby: "credential-issuance-consent-guidance",
                                         checked: issuance_consent(),
-                                        onchange: move |event| issuance_consent.set(event.checked()),
+                                        oninput: move |event| issuance_consent.set(event.checked()),
                                     }
                                     span { "I reviewed this issuer and consent to receive the credential using my active DID." }
                                 }
@@ -10066,51 +10052,59 @@ fn CredentialsPage(
                         "{CREDENTIAL_REVERIFICATION_APPLIED_MARKER}"
                     }
                 }
-                article { class: "surface-card credential-receive-card",
-                    p { class: "card-eyebrow", "Standalone credential inbox" }
-                    h2 { "Receive the public identity fixture" }
-                    p { class: "form-hint", "Exercises the same storage and cryptographic verification ports as future protocol ingress. It is clearly marked as a standalone development fixture." }
-                    button {
-                        class: "primary-action", r#type: "button", disabled: receiving,
-                        onclick: move |_| {
-                            state.set(CredentialPageState::Ready { credentials: retained.clone(), receiving: true, operation_error: None, reverification_applied: false });
-                            let service = receive_service.clone();
-                            let profile_id = receive_profile.clone();
-                            let mut next = retained.clone();
-                            spawn(async move {
-                                match run_ui_future(async move {
-                                    service.execute(CredentialProfileQuery { profile_id }).await
-                                })
-                                .await
-                                {
-                                    Ok(Ok(credential)) => {
-                                        next.retain(|existing| existing.id != credential.id);
-                                        next.push(credential);
-                                        next.sort_by(|left, right| left.id.cmp(&right.id));
-                                        state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None, reverification_applied: false });
+                if cfg!(feature = "ui-profile-dev") {
+                    article { class: "surface-card credential-receive-card",
+                        p { class: "card-eyebrow", "Developer fixture" }
+                        h2 { "Receive a standalone test credential" }
+                        p { class: "form-hint", "This bypasses OpenID4VCI and exists only in the explicit developer profile." }
+                        button {
+                            class: "primary-action", r#type: "button", disabled: receiving,
+                            onclick: move |_| {
+                                state.set(CredentialPageState::Ready { credentials: retained.clone(), receiving: true, operation_error: None, reverification_applied: false });
+                                let service = receive_service.clone();
+                                let profile_id = receive_profile.clone();
+                                let mut next = retained.clone();
+                                spawn(async move {
+                                    match run_ui_future(async move {
+                                        service.execute(CredentialProfileQuery { profile_id }).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(Ok(credential)) => {
+                                            next.retain(|existing| existing.id != credential.id);
+                                            next.push(credential);
+                                            next.sort_by(|left, right| left.id.cmp(&right.id));
+                                            state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None, reverification_applied: false });
+                                        }
+                                        Ok(Err(error)) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)), reverification_applied: false }),
+                                        Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(error.to_string()), reverification_applied: false }),
                                     }
-                                    Ok(Err(error)) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)), reverification_applied: false }),
-                                    Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(error.to_string()), reverification_applied: false }),
-                                }
-                            });
-                        },
-                        if receiving { "Receiving and verifying…" } else { "Receive standalone credential" }
-                    }
-                    if let Some(error) = operation_error.as_deref() {
-                        p {
-                            class: "field-error credential-operation-error",
-                            role: "alert",
-                            strong { "Credential operation error" }
-                            br {}
-                            "{error}"
+                                });
+                            },
+                            if receiving { "Receiving and verifying…" } else { "Receive standalone credential" }
                         }
+                    }
+                }
+                if let Some(error) = operation_error.as_deref() {
+                    p {
+                        class: "field-error credential-operation-error",
+                        role: "alert",
+                        strong { "Credential operation error" }
+                        br {}
+                        "{error}"
                     }
                 }
                 if credentials.is_empty() {
                     article { class: "empty-state surface-card",
                         span { class: "empty-state__mark", aria_hidden: "true", "◇" }
                         h2 { "No credentials yet" }
-                        p { "Receive the standalone fixture to prove protected storage and issuer-proof verification." }
+                        p {
+                            if cfg!(feature = "ui-profile-dev") {
+                                "Scan an offer or use the developer fixture to add a test credential."
+                            } else {
+                                "Scan a credential offer to review and add your first credential."
+                            }
+                        }
                         span { class: "status-pill", "Profile scoped" }
                     }
                 } else {
@@ -12595,6 +12589,15 @@ mod tests {
         }
         assert!(source.contains("aria_busy: true"));
         assert!(source.contains("aria_describedby: \"credential-issuance-consent-guidance\""));
+        let issuance_consent = source
+            .split("id: \"credential-issuance-consent\"")
+            .nth(1)
+            .expect("credential issuance consent input")
+            .split("}")
+            .next()
+            .expect("credential issuance consent attributes");
+        assert!(issuance_consent.contains("oninput:"));
+        assert!(!issuance_consent.contains("onchange:"));
     }
 
     #[test]

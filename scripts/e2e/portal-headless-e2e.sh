@@ -6,9 +6,9 @@ export LC_ALL=C
 CDPATH=
 
 readonly PORTAL_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
-readonly PORTAL_COMMIT="22ae5369b6f939e6b20648f4b85dd993527748ef"
-readonly PORTAL_TREE="74d8d1a5b87c160ea554006e47d5f3edc3cd3e10"
-readonly PORTAL_PROVENANCE_SHA256="cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87"
+readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
+readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
+readonly PORTAL_PROVENANCE_SHA256="63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7"
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 readonly EVIDENCE="${OXID_PORTAL_EVIDENCE_PATH:-$REPO_ROOT/target/portal-headless-e2e/evidence.json}"
 readonly RUN_TREE="${TMPDIR:-/tmp}/oxid-portal-source-$$"

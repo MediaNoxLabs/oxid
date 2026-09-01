@@ -43,11 +43,11 @@ use super::{
 mod response;
 use response::*;
 
-pub const PORTAL_INTEGRATION_COMMIT: &str = "22ae5369b6f939e6b20648f4b85dd993527748ef";
-pub const PORTAL_INTEGRATION_TREE: &str = "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10";
+pub const PORTAL_INTEGRATION_COMMIT: &str = "25499870f84d77173c46e4af3021311decfb840b";
+pub const PORTAL_INTEGRATION_TREE: &str = "2d845d2293603dfd8adce5362c8a9941e6ba78a9";
 pub const PORTAL_PROFILE_SOURCE_COMMIT: &str = "76e8edf394a4cb37ca822037272d543c68f25f71";
 pub const PORTAL_PROVENANCE_SHA256: &str =
-    "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87";
+    "63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7";
 const PORTAL_CONFIGURATION_ID: &str = "digital_passport_v1";
 const PORTAL_FORMAT: &str = "midnight_cbor_phase1";
 const PORTAL_FAMILY: &str = "digital-passport";
@@ -64,10 +64,10 @@ const MAX_SECRET_BYTES: usize = 4_096;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const BUNDLED_SOURCE_LOCK: &[u8] = include_bytes!(
-    "../../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/source-lock.json"
+    "../../../../fixtures/laceid-portal/25499870f84d77173c46e4af3021311decfb840b/source-lock.json"
 );
 const BUNDLED_PROVENANCE: &[u8] = include_bytes!(
-    "../../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef/openid4vci-final/provenance.json"
+    "../../../../fixtures/laceid-portal/25499870f84d77173c46e4af3021311decfb840b/openid4vci-final/provenance.json"
 );
 
 /// Payload-free deployment/source-lock authentication errors.

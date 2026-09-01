@@ -6,8 +6,8 @@ export LC_ALL=C
 CDPATH=
 
 readonly PORTAL_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
-readonly PORTAL_COMMIT="22ae5369b6f939e6b20648f4b85dd993527748ef"
-readonly PORTAL_TREE="74d8d1a5b87c160ea554006e47d5f3edc3cd3e10"
+readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
+readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
 readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly OPERATION="${1:-automated}"
 case "$OPERATION" in automated|manual-start|manual-status|manual-stop|--manual-supervise) ;; *)
@@ -113,7 +113,7 @@ manual_session_load() {
       and (.mock.transformReceiptSha256 | test("^[0-9a-f]{64}$"))
       and .mock.externalPath == "/kyc/mock-verification"
       and .mock.upstreamPath == "/mock-verification"
-      and .page == {html:true,mockRoute:true}
+      and .page == {html:true,mockRoute:true,holderBootstrap:true}
     ' "$MANUAL_RECEIPT" >/dev/null || return 1
   manual_support_pid="$(jq -r '.support.pid' "$MANUAL_RECEIPT")"
   manual_support_command_sha="$(jq -r '.support.commandSha256' "$MANUAL_RECEIPT")"

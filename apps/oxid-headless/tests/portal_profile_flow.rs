@@ -270,15 +270,15 @@ impl PortalServer {
         let jwk = json!({"crv":"Jubjub","kty":"EC","x":ISSUER_X,"y":ISSUER_Y});
         let jwk_digest = hex::encode(Sha256::digest(serde_json::to_vec(&jwk).expect("jwk")));
         let manifest = json!({
-            "integrationCommit":"22ae5369b6f939e6b20648f4b85dd993527748ef",
-            "integrationTree":"74d8d1a5b87c160ea554006e47d5f3edc3cd3e10",
+            "integrationCommit":"25499870f84d77173c46e4af3021311decfb840b",
+            "integrationTree":"2d845d2293603dfd8adce5362c8a9941e6ba78a9",
             "issuerDid": STANDALONE_COMPACT_PASSPORT_ISSUER_DID,
             "issuerJubjubJwk": jwk,
             "issuerJubjubJwkSha256": jwk_digest,
             "issuerMethod": ISSUER_METHOD,
             "issuerOrigin": self.origin,
             "issuerResolverOrigin": self.origin,
-            "provenanceSha256": "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87",
+            "provenanceSha256": "63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7",
             "schema": "oxid-portal-deployment-v3"
         });
         let bytes = serde_json::to_vec(&manifest).expect("manifest");

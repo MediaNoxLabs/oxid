@@ -170,6 +170,13 @@ function issuanceEvidenceExpression() {
       && Array.from(records[0].querySelectorAll(".status-pill.success"))
         .some((element) => element.textContent.trim() === "Valid")
       && document.body.innerText.includes("Credential policy · issuer passed · time passed · trust passed · revocation not checked")
+      && document.body.innerText.includes("Credential attributes")
+      && ["First name", "Last name", "Date of birth", "Document number", "Issuing state"]
+        .every((label) => records[0].innerText.includes(label))
+      && document.body.innerText.includes("Saved to your wallet")
+      && !document.body.innerText.includes("Credential offer preview")
+      && !Array.from(document.querySelectorAll("button"))
+        .some((element) => element.textContent.trim() === "Receive standalone credential")
       && !document.body.innerText.includes("John") && !document.body.innerText.includes("Doe");
   })()`;
 }
@@ -211,6 +218,25 @@ async function click(label, timeoutMs = 20_000) {
   if (!(await evaluate(`(() => { const element = ${button(label)}; element.click(); return true; })()`))) {
     throw new Error(`could not click ${label}`);
   }
+}
+
+async function touchCheckbox(selector, description) {
+  await waitFor(`Boolean(document.querySelector(${JSON.stringify(selector)}))`, description);
+  const point = await evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    element.scrollIntoView({ block: "center", inline: "center" });
+    const rect = element.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  await command("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: point.x, y: point.y }],
+  });
+  await command("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await waitFor(
+    `document.querySelector(${JSON.stringify(selector)})?.checked === true`,
+    `${description} touch state`,
+  );
 }
 
 async function ensureProfile() {
@@ -318,7 +344,7 @@ try {
     if (await evaluate('Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")')) {
       throw new Error("managed DID creation ran without activated development custody");
     }
-    await click("Bootstrap active DID for test issuer");
+    await click("Publish active holder DID to test issuer");
     await waitFor(
       'document.body.innerText.includes("Public DID document is available to the current test issuer")',
       "explicit holder DID bootstrap",
@@ -456,7 +482,7 @@ try {
     await preview();
     await waitFor('document.body.innerText.includes("Credential offer preview")', "Portal preview", 30_000);
     await waitFor('Boolean(document.querySelector("#credential-issuance-consent"))', "issuance consent");
-    await evaluate('document.querySelector("#credential-issuance-consent").click()');
+    await touchCheckbox("#credential-issuance-consent", "issuance consent");
     await setProxyMode("unavailable");
     await click("Accept and issue credential");
     await waitFor(
@@ -513,7 +539,7 @@ try {
     await preview();
     await waitFor('document.body.innerText.includes("Credential offer preview")', "Portal preview", 30_000);
     await waitFor('Boolean(document.querySelector("#credential-issuance-consent"))', "issuance consent");
-    await evaluate('document.querySelector("#credential-issuance-consent").click()');
+    await touchCheckbox("#credential-issuance-consent", "issuance consent");
     await click("Accept and issue credential");
     try {
       await waitFor(issuanceCompletionExpression(), "Portal issuance", 90_000);
@@ -527,7 +553,13 @@ try {
       valid: Array.from(document.querySelectorAll(".credential-record")).length === 1
         && document.body.innerText.includes("Valid"),
       policy: document.body.innerText.includes("Credential policy · issuer passed · time passed · trust passed · revocation not checked"),
-      claimsHidden: !document.body.innerText.includes("John") && !document.body.innerText.includes("Doe")
+      claimsHidden: !document.body.innerText.includes("John") && !document.body.innerText.includes("Doe"),
+      offerReviewClosed: !document.body.innerText.includes("Credential offer preview")
+        && document.body.innerText.includes("Saved to your wallet"),
+      standaloneInboxAbsent: !Array.from(document.querySelectorAll("button"))
+        .some((element) => element.textContent.trim() === "Receive standalone credential"),
+      attributesListed: ["First name", "Last name", "Date of birth", "Document number", "Issuing state"]
+        .every((label) => document.querySelector(".credential-record")?.innerText.includes(label))
     })`);
     const counts = await counters();
     if (!Object.values(result).every(Boolean)) {
@@ -543,11 +575,14 @@ try {
       token: 1,
     }, "successful issuance");
     Object.assign(measurements, {
+      attributesListed: result.attributesListed,
       claimsHidden: result.claimsHidden,
       exactBundleImported: true,
       explicitConsent: true,
       managedAuthenticationProof: true,
+      offerReviewClosed: result.offerReviewClosed,
       separateJubjubAssertionBinding: true,
+      standaloneInboxAbsent: result.standaloneInboxAbsent,
       strictFinalExchange: true,
       warmIngress: true,
     });

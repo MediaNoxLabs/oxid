@@ -30,10 +30,10 @@ use oxid_identity_domain::MidnightDid;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
-const PORTAL_INTEGRATION_COMMIT: &str = "22ae5369b6f939e6b20648f4b85dd993527748ef";
-const PORTAL_INTEGRATION_TREE: &str = "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10";
+const PORTAL_INTEGRATION_COMMIT: &str = "25499870f84d77173c46e4af3021311decfb840b";
+const PORTAL_INTEGRATION_TREE: &str = "2d845d2293603dfd8adce5362c8a9941e6ba78a9";
 const PORTAL_PROVENANCE_SHA256: &str =
-    "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87";
+    "63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7";
 const PORTAL_ISSUER_RESOLVER: &str = "http://127.0.0.1:9092";
 const INDEXER_WS: &str = "ws://127.0.0.1:8088/api/v4/graphql/ws";
 const INDEXER_HTTP: &str = "http://127.0.0.1:8088/api/v4/graphql";
