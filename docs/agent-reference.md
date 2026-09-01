@@ -590,9 +590,10 @@ public DID document contains an authentication relationship.
 
 ADR-0101 keeps Portal `804de0a9e58cf48ece3cc6c24b2245bb70bc80f1`
 as source-derived negative contract evidence only. ADR-0102 pins merged Portal
-`integration` commit `22ae5369b6f939e6b20648f4b85dd993527748ef`, tree
-`74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`, and the existing Final-profile
-provenance digest. Native desktop/headless development selects the strict HTTP
+`integration` commit `25499870f84d77173c46e4af3021311decfb840b`, tree
+`2d845d2293603dfd8adce5362c8a9941e6ba78a9`, and refreshed Final-profile
+provenance digest `63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7`.
+Native desktop/headless development selects the strict HTTP
 adapter through an absolute manifest path plus exact digest. The
 `portal-headless-e2e` target fetches that exact Lace integration tree and runs
 its production-ready Rust issuer with Lace's supported Smocker Didit seam; it

@@ -16,7 +16,7 @@ const PROFILE_FIXTURE_ROOT: &str = concat!(
 );
 const SOURCE_LOCK_ROOT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../../fixtures/laceid-portal/22ae5369b6f939e6b20648f4b85dd993527748ef"
+    "/../../../fixtures/laceid-portal/25499870f84d77173c46e4af3021311decfb840b"
 );
 
 fn sha256(bytes: &[u8]) -> String {
@@ -30,7 +30,7 @@ fn manifest_bytes(origin: &str) -> Vec<u8> {
     let jwk_digest = sha256(jwk.as_bytes());
     format!(
         concat!(
-            r#"{{"integrationCommit":"22ae5369b6f939e6b20648f4b85dd993527748ef","integrationTree":"74d8d1a5b87c160ea554006e47d5f3edc3cd3e10","issuerDid":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","issuerJubjubJwk":{jwk},"issuerJubjubJwkSha256":"{jwk_digest}","issuerMethod":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef#key-assert","issuerOrigin":"{origin}","issuerResolverOrigin":"{origin}","provenanceSha256":"cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87","schema":"oxid-portal-deployment-v3"}}"#
+            r#"{{"integrationCommit":"25499870f84d77173c46e4af3021311decfb840b","integrationTree":"2d845d2293603dfd8adce5362c8a9941e6ba78a9","issuerDid":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","issuerJubjubJwk":{jwk},"issuerJubjubJwkSha256":"{jwk_digest}","issuerMethod":"did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef#key-assert","issuerOrigin":"{origin}","issuerResolverOrigin":"{origin}","provenanceSha256":"63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7","schema":"oxid-portal-deployment-v3"}}"#
         ),
         jwk = jwk,
         jwk_digest = jwk_digest,
@@ -103,15 +103,15 @@ fn deployment_manifest_requires_exact_digest_source_profile_and_canonical_public
 
     for replacement in [
         (
-            "22ae5369b6f939e6b20648f4b85dd993527748ef",
+            "25499870f84d77173c46e4af3021311decfb840b",
             "a25ec8d04882eabd4ac7b784c70fc2f0c152faae",
         ),
         (
-            "74d8d1a5b87c160ea554006e47d5f3edc3cd3e10",
+            "2d845d2293603dfd8adce5362c8a9941e6ba78a9",
             "68b4597524f88a0ae2253439a44dab0dc60cbb6f",
         ),
         (
-            "cf86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87",
+            "63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7",
             "df86f4ddb06131d7570c835e8c6c62d524e8179fe6a53436b20d2d4e72b44d87",
         ),
     ] {

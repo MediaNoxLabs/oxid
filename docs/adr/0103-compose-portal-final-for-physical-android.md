@@ -115,6 +115,16 @@ and closed booleans. It excludes identifiers, endpoints, protocol artifacts,
 claims, credentials, proofs, keys, capabilities, device serials, and tailnet
 identity.
 
+## Amendment — 2026-09-01
+
+Portal PR #34 landed the reviewed redeemed-offer lifecycle at integration
+commit `25499870f84d77173c46e4af3021311decfb840b`, tree
+`2d845d2293603dfd8adce5362c8a9941e6ba78a9`, with refreshed provenance
+SHA-256 `63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7`.
+That identity supersedes the runtime pin above without changing this ADR's
+transport, custody, consent, evidence, or cleanup boundaries. Redeemed offers
+now become unavailable to the browser instead of leaving a stale reusable QR.
+
 ## Consequences
 
 Holder bootstrap is explicit and holder-controlled. Only the compile-gated
