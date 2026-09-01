@@ -1641,3 +1641,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod issue_157_tests;
