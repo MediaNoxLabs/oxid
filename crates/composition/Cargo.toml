@@ -13,6 +13,9 @@ default = []
 # Public standalone genesis custody for explicit development app profiles.
 # Normal composition does not compile the fixture authority.
 standalone-development = ["oxid-adapter-storage-dev/development-fixture"]
+# Sanitized health projection for an explicitly selected local or Tailnet
+# standalone app profile. It never enters normal or production composition.
+standalone-readiness = ["oxid-adapter-deployment-profile/readiness"]
 # Native oxid-headless-only development admission for the exact local Portal +
 # standalone bundle. Other consumers compile without this escape hatch.
 headless-portal-local = []
@@ -72,6 +75,7 @@ oxid-passport-vault-application.workspace = true
 oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
+oxid-capabilities-application.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

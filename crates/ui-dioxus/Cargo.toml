@@ -17,6 +17,9 @@ mobile = ["dioxus/mobile"]
 app-profile-authority = []
 ui-profile-dev = ["dep:oxid-capabilities-application"]
 ui-profile-demo = []
+# Read-only projection of an app-selected standalone route profile. This
+# feature has no endpoint input and cannot change composition.
+standalone-deployment-profile = ["dep:oxid-capabilities-application"]
 # Visible safety marker for the shared, publicly spendable standalone genesis
 # wallet. This feature carries presentation only; composition owns authority.
 public-standalone-genesis = []

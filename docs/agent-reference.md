@@ -2245,6 +2245,14 @@ to silence the shell probe.
   unrelated mappings with `reverse --remove-all`. The prototype exposes its
   localhost/Tailscale entries through a runtime network picker; Oxid's
   compile-time split is intentional hardening, not copied behavior. The public
+  Settings projection may report only the closed profile identity and
+  independent indexer/node/prover/SSI readiness values. Keep raw URLs, DNS and
+  TLS errors, peer data, and response bodies below the adapter boundary. Mobile
+  readiness resolves and probes the routes selected by the host launcher; it
+  must never call the Tailscale control plane, enumerate peers, fall back to a
+  different host, or become a runtime endpoint picker. Tailscale Services are
+  an optional administrator-managed follow-up, not a local harness dependency.
+  The public
   undeployed placeholder validates composition only and must be replaced by
   profile-derived account binding before sync. Every persistent live/standalone
   composition must attach the same `JsonWalletProfileRepository` instance to

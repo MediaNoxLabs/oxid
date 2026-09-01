@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-19
-- Source: Blueprint §§3–8, 12–13, 16–18, 21; reviewed prototype route profiles; issues #2/#32/#89
+- Source: Blueprint §§3–8, 12–13, 16–18, 21; reviewed prototype route profiles; issues #2/#32/#89/#245
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`
 - Implementation state: Opt-in localhost simulator/desktop and Android
   physical-device tailnet profiles implemented with public standalone-genesis
@@ -95,6 +95,33 @@ commit them. A marker records that Oxid owns the temporary Serve configuration;
 the paired down command resets it only when that marker exists and leaves the
 generated local environment file in place.
 
+Expose one read-only deployment card in Settings for these two builds. Its
+application projection is deliberately closed: profile id, label,
+`undeployed` network identity, `local` or `tailnet` route class, and independent
+`ready`, `unavailable`, or `not_configured` values for indexer, node, prover,
+and SSI. The UI cannot represent a URL, select a peer, or change composition.
+The adapter validates that every local route is loopback or every Tailnet route
+uses HTTPS/WSS on one canonical `*.ts.net` MagicDNS identity before it is
+installed. A refresh performs bounded HTTP and WebSocket handshakes, discards
+response bodies and transport errors, and reports only those closed values.
+
+Discovery remains host-owned. `run-android-tailnet.sh` reads
+`tailscale status --json`, validates the laptop's current MagicDNS name, checks
+the exact owned Serve listeners, and exports the complete route set to one
+build invocation. The phone performs ordinary DNS resolution and authenticated
+TLS/WebSocket handshakes against that already-selected identity. It does not
+call a Tailscale control-plane API, enumerate peers, or accept a runtime
+endpoint. DNS, ACL, TLS, Tailscale-client, or service failure therefore appears
+only as an unavailable service and never causes fallback to another route.
+
+[Tailscale Services](https://tailscale.com/kb/1552/tailscale-services) could
+later replace the device-specific MagicDNS identity with a stable named
+service. It is not a local-development prerequisite: Services require an
+administrator-defined resource, a tag-identified host, approval or an
+auto-approval policy, and a compatible Tailscale client. Adopting it belongs in
+[follow-up #251](https://github.com/MediaNoxLabs/oxid/issues/251) with explicit
+tailnet-administration and migration ownership.
+
 ## Validation
 
 On 2026-08-20, `just ios-standalone-local-smoke` passed its fresh-install
@@ -142,6 +169,9 @@ standard output before the actual `-list-avds` result.
   local/tailnet profile requires a rebuild; production discovery remains open
   work. This is deliberately stricter than the prototype's runtime network
   picker.
+- Readiness is observation, not discovery authority. The Settings card cannot
+  reveal configured endpoints, repair Tailscale, bypass ACLs, or switch to a
+  reachable peer.
 - The initial public address is not evidence of balance freshness or
   settlement. Only profile-derived binding plus independent live NIGHT, DUST,
   and shielded synchronization can become wallet display state.

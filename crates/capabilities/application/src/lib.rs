@@ -2,6 +2,14 @@
 
 #![forbid(unsafe_code)]
 
+mod deployment_profile;
+
+pub use deployment_profile::{
+    DeploymentProfileService, DeploymentProfileView, DeploymentReadinessPort, DeploymentRouteClass,
+    DeploymentServiceReadiness, DeploymentServiceSnapshot, GetDeploymentProfileUseCase,
+    StandaloneDeploymentProfile,
+};
+
 /// Public, non-secret composition facts used to build the capability manifest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CapabilityManifestContext {

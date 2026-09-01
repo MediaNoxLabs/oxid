@@ -149,6 +149,11 @@ fn default_native_root_facade_remains_source_compatible() {
     let _ = compose_headless_standalone_with_all_checkpoints;
     #[cfg(feature = "standalone-development")]
     let _ = compose_mobile_public_genesis_standalone_from_routes;
+    #[cfg(all(feature = "standalone-development", feature = "standalone-readiness"))]
+    {
+        let _ = compose_mobile_public_genesis_local_standalone_from_routes;
+        let _ = compose_mobile_public_genesis_tailnet_standalone_from_routes;
+    }
     let _ = compose_mobile_development_standalone_from_routes;
     let _ = || compose_in_memory_with_compact_presentation_artifacts(std::path::PathBuf::new());
 

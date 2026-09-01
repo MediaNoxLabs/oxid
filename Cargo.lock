@@ -5580,9 +5580,15 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
+ "futures",
  "hex",
+ "oxid-capabilities-application",
+ "reqwest 0.13.4",
+ "rustls",
  "serde",
  "serde_json",
+ "tokio",
+ "tokio-tungstenite",
  "url",
 ]
 
@@ -5986,6 +5992,7 @@ dependencies = [
  "oxid-adapter-storage-memory",
  "oxid-adapter-storage-mobile",
  "oxid-adapter-vc-midnight",
+ "oxid-capabilities-application",
  "oxid-credential-application",
  "oxid-diagnostics-application",
  "oxid-identity-application",

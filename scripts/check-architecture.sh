@@ -128,7 +128,8 @@ check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-diagnostics-memory \
   oxid-diagnostics-application
-check_workspace_dependencies oxid-adapter-deployment-profile
+check_workspace_dependencies oxid-adapter-deployment-profile \
+  oxid-capabilities-application
 check_workspace_dependencies oxid-adapter-storage-dev \
   oxid-adapter-backup-portable oxid-foundation oxid-platform-ports \
   oxid-wallet-application oxid-wallet-domain
@@ -200,7 +201,8 @@ check_workspace_dependencies oxid-composition \
   oxid-adapter-storage-identity-json oxid-adapter-vc-midnight \
   oxid-adapter-storage-memory oxid-adapter-storage-mobile \
   oxid-adapter-storage-dev oxid-adapter-midnight \
-  oxid-credential-application oxid-diagnostics-application oxid-identity-application \
+  oxid-capabilities-application oxid-credential-application \
+  oxid-diagnostics-application oxid-identity-application \
   oxid-passport-vault-application oxid-platform-ports oxid-presentation-application \
   oxid-protocol-application \
   oxid-wallet-application

@@ -122,6 +122,7 @@ pub enum HeadlessCompositionError {
     PortalConfigurationUnavailable,
     PortalRequiresStandaloneSimulation,
     InvalidPortalConfiguration,
+    InvalidStandaloneDeploymentProfile,
     PublicStandaloneGenesisRequiresUndeployed,
 }
 
@@ -172,6 +173,7 @@ impl std::fmt::Display for HeadlessCompositionError {
                 "Portal issuance cannot be combined with live Midnight or alternate resolver configuration"
             }
             Self::InvalidPortalConfiguration => "invalid Portal deployment configuration",
+            Self::InvalidStandaloneDeploymentProfile => "invalid standalone deployment profile",
             Self::PublicStandaloneGenesisRequiresUndeployed => {
                 "public standalone genesis custody requires the undeployed network"
             }

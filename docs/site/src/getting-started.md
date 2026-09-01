@@ -154,10 +154,27 @@ other profiles remain random.
 After deriving account `0/0`, choose **Sync now** to load NIGHT, shielded NIGHT,
 and DUST independently. Treat every asset on this public wallet as disposable
 test value: anyone can derive the same authority.
+Open **Settings & backup** and review **Standalone deployment** to confirm the
+build selected `standalone-tailnet` and to refresh indexer, node, prover, and
+SSI independently. The card intentionally shows no hostname or endpoint. An
+unavailable row means the already-selected MagicDNS/TLS route did not pass its
+bounded check; confirm Tailscale is connected on the phone, ACL access is
+granted, and `just standalone-phone-up` is still running, then choose **Check
+again**. The wallet never enumerates Tailnet peers or changes routes at runtime.
+For the owner-run physical check, verify indexer, node, and prover are ready;
+SSI is ready for a Portal build and `not_configured` for the wallet-only build.
+Briefly disconnect Tailscale on the phone and confirm a refresh fails closed
+without changing the `standalone-tailnet` label, then reconnect and refresh.
 With the local stack running, `just standalone-public-balances` proves the exact
 three genesis projections through the same live application ports. Restart the
 standalone stack first if an authorized funding test spent the shared fixture.
 Stop the owned containers and Serve routes with `just standalone-down`.
+
+Optional future deployments may use
+[Tailscale Services](https://tailscale.com/kb/1552/tailscale-services) for a
+stable service name. That administrator-managed setup is intentionally not
+required for this laptop development loop and is tracked in
+[issue #251](https://github.com/MediaNoxLabs/oxid/issues/251).
 
 Physical identity-ingress evidence is intentionally interactive and never
 clears application data. Generate the deterministic public offer with

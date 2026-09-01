@@ -987,6 +987,7 @@ where
     > = passport_vault_contract_calls;
 
     ApplicationServices {
+        deployment_profile: None,
         diagnostic_events,
         get_diagnostic_snapshot,
         clear_diagnostics,

@@ -3,6 +3,19 @@
 use std::sync::Arc;
 
 #[cfg(all(
+    feature = "standalone-readiness",
+    feature = "standalone-development",
+    not(target_arch = "wasm32")
+))]
+use oxid_adapter_deployment_profile::StandaloneDeploymentReadiness;
+#[cfg(all(
+    feature = "standalone-readiness",
+    feature = "standalone-development",
+    not(target_arch = "wasm32")
+))]
+use oxid_capabilities_application::{DeploymentProfileService, StandaloneDeploymentProfile};
+
+#[cfg(all(
     not(target_arch = "wasm32"),
     any(
         all(not(target_os = "ios"), not(target_os = "android")),
@@ -22,7 +35,18 @@ use super::portal::PortalIdentityConfiguration;
         feature = "mobile-portal"
     )
 ))]
-use oxid_adapter_midnight::{MidnightIndexerConfigError, MidnightStandaloneConfigError};
+use oxid_adapter_midnight::MidnightStandaloneConfig;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        all(not(target_os = "ios"), not(target_os = "android")),
+        all(
+            feature = "mobile-portal",
+            any(target_os = "ios", target_os = "android")
+        )
+    )
+))]
+use oxid_adapter_midnight::protected_standalone_midnight_wallet;
 #[cfg(all(
     not(target_arch = "wasm32"),
     any(
@@ -32,7 +56,7 @@ use oxid_adapter_midnight::{MidnightIndexerConfigError, MidnightStandaloneConfig
         feature = "mobile-portal"
     )
 ))]
-use oxid_adapter_midnight::{MidnightStandaloneConfig, protected_standalone_midnight_wallet};
+use oxid_adapter_midnight::{MidnightIndexerConfigError, MidnightStandaloneConfigError};
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_midnight::{
     MidnightSubmissionJournalConfig, protected_simulated_midnight_wallet,
@@ -102,6 +126,14 @@ use super::wiring::compose_with_adapters_and_presentation;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_platform_system::OsRandom;
 use oxid_adapter_platform_system::SystemClock;
+
+#[cfg(all(
+    feature = "standalone-readiness",
+    feature = "standalone-development",
+    feature = "mobile-portal",
+    any(target_os = "ios", target_os = "android")
+))]
+const MOBILE_PORTAL_READINESS_URL: &str = "http://127.0.0.1:18090";
 #[cfg(all(
     not(target_arch = "wasm32"),
     any(
@@ -277,6 +309,66 @@ pub fn compose_mobile_public_genesis_standalone_from_routes(
         .ok_or(HeadlessCompositionError::PublicStandaloneGenesisRequiresUndeployed)
 }
 
+/// Wires public standalone genesis to immutable loopback routes and exposes a
+/// sanitized local-profile readiness capability.
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "standalone-development",
+    feature = "standalone-readiness"
+))]
+pub fn compose_mobile_public_genesis_local_standalone_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
+    let services = compose_mobile_public_genesis_standalone_from_routes(
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+    )?;
+    with_standalone_deployment_profile(
+        services,
+        StandaloneDeploymentProfile::Local,
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+        None,
+    )
+}
+
+/// Wires public standalone genesis to immutable MagicDNS/TLS routes and
+/// exposes a sanitized Tailnet-profile readiness capability.
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "standalone-development",
+    feature = "standalone-readiness"
+))]
+pub fn compose_mobile_public_genesis_tailnet_standalone_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
+    let services = compose_mobile_public_genesis_standalone_from_routes(
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+    )?;
+    with_standalone_deployment_profile(
+        services,
+        StandaloneDeploymentProfile::Tailnet,
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+        None,
+    )
+}
+
 /// Wires the exact manifest-authenticated Portal identity profile into the
 /// explicit standalone-local mobile development composition.
 ///
@@ -370,11 +462,23 @@ pub fn compose_mobile_public_genesis_portal_standalone_from_routes(
     let portal =
         PortalIdentityConfiguration::from_bytes(deployment_manifest, deployment_manifest_sha256)
             .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
-    compose_mobile_public_genesis_portal_from_config(
+    let services = compose_mobile_public_genesis_portal_from_config(
         config,
         portal,
         CredentialPresentationComposition::Standalone,
-    )
+    )?;
+    #[cfg(feature = "standalone-readiness")]
+    return with_standalone_deployment_profile(
+        services,
+        StandaloneDeploymentProfile::Local,
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+        Some(MOBILE_PORTAL_READINESS_URL),
+    );
+    #[cfg(not(feature = "standalone-readiness"))]
+    Ok(services)
 }
 
 /// Wires the explicitly named public-genesis profile to Tailnet Portal issuance.
@@ -405,10 +509,53 @@ pub fn compose_mobile_public_genesis_portal_tailnet_from_routes(
         public_origin,
     )
     .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
-    compose_mobile_public_genesis_portal_from_config(
+    let services = compose_mobile_public_genesis_portal_from_config(
         config,
         portal,
         CredentialPresentationComposition::Standalone,
+    )?;
+    #[cfg(feature = "standalone-readiness")]
+    return with_standalone_deployment_profile(
+        services,
+        StandaloneDeploymentProfile::Tailnet,
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+        Some(public_origin),
+    );
+    #[cfg(not(feature = "standalone-readiness"))]
+    Ok(services)
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "standalone-development",
+    feature = "standalone-readiness"
+))]
+fn with_standalone_deployment_profile(
+    services: ApplicationServices,
+    profile: StandaloneDeploymentProfile,
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+    ssi_url: Option<&str>,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
+    let readiness = StandaloneDeploymentReadiness::new(
+        profile,
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+        ssi_url,
+    )
+    .map_err(|_| HeadlessCompositionError::InvalidStandaloneDeploymentProfile)?;
+    Ok(
+        services.with_deployment_profile(Arc::new(DeploymentProfileService::new(
+            profile,
+            Arc::new(readiness),
+        ))),
     )
 }
 
@@ -551,4 +698,42 @@ fn mobile_standalone_config_from_routes(
         placeholder.value(),
     )
     .map_err(HeadlessCompositionError::InvalidMidnightStandaloneConfiguration)
+}
+
+#[cfg(all(
+    test,
+    not(target_arch = "wasm32"),
+    feature = "standalone-development",
+    feature = "standalone-readiness"
+))]
+mod deployment_profile_tests {
+    use super::*;
+
+    #[test]
+    fn local_profile_installs_the_bounded_projection() {
+        let services = compose_mobile_public_genesis_local_standalone_from_routes(
+            "ws://127.0.0.1:8088/api/v4/graphql/ws",
+            "http://127.0.0.1:8088/api/v4/graphql",
+            "ws://127.0.0.1:9944",
+            "http://127.0.0.1:6300",
+        )
+        .expect("valid local profile");
+
+        assert!(services.deployment_profile().is_some());
+    }
+
+    #[test]
+    fn tailnet_profile_rejects_personal_ip_routes() {
+        let result = compose_mobile_public_genesis_tailnet_standalone_from_routes(
+            "wss://100.64.0.1:8443/api/v4/graphql/ws",
+            "https://100.64.0.1:8443/api/v4/graphql",
+            "wss://100.64.0.1:10000",
+            "https://100.64.0.1",
+        );
+
+        assert!(matches!(
+            result,
+            Err(HeadlessCompositionError::InvalidStandaloneDeploymentProfile)
+        ));
+    }
 }
