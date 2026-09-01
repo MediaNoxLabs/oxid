@@ -113,7 +113,7 @@ manual_session_load() {
       and (.mock.transformReceiptSha256 | test("^[0-9a-f]{64}$"))
       and .mock.externalPath == "/kyc/mock-verification"
       and .mock.upstreamPath == "/mock-verification"
-      and .page == {html:true,mockRoute:true}
+      and .page == {html:true,mockRoute:true,holderBootstrap:true}
     ' "$MANUAL_RECEIPT" >/dev/null || return 1
   manual_support_pid="$(jq -r '.support.pid' "$MANUAL_RECEIPT")"
   manual_support_command_sha="$(jq -r '.support.commandSha256' "$MANUAL_RECEIPT")"
