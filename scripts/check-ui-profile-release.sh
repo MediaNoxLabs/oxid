@@ -64,12 +64,39 @@ assert_public_fixture_feature_absent() {
     echo "$label oxid-app release profile enables public standalone development custody" >&2
     exit 1
   fi
+  if has_feature "$composition_features" preprod-observation ||
+    has_feature "$ui_features" preprod-observation; then
+    echo "$label oxid-app release profile enables owner-root PreProd recovery" >&2
+    exit 1
+  fi
   if has_feature "$ui_features" public-standalone-genesis; then
     echo "$label oxid-app release profile enables the public-genesis warning UI" >&2
     exit 1
   fi
   if has_feature "$storage_dev_features" development-fixture; then
     echo "$label oxid-app release profile enables arbitrary development fixture custody" >&2
+    exit 1
+  fi
+}
+
+assert_preprod_observation_feature_present() {
+  local label="$1"
+  local target="$2"
+  load_feature_graph "$label" "preprod-observation" "$target"
+  local composition_features
+  local storage_dev_features
+  local ui_features
+  composition_features="$(resolved_features "$label" oxid-composition)"
+  storage_dev_features="$(resolved_features "$label" oxid-adapter-storage-dev)"
+  ui_features="$(resolved_features "$label" oxid-ui-dioxus)"
+  if ! has_feature "$composition_features" preprod-observation ||
+    ! has_feature "$ui_features" preprod-observation; then
+    echo "$label does not enable both PreProd observation boundaries" >&2
+    exit 1
+  fi
+  if has_feature "$composition_features" standalone-development ||
+    has_feature "$storage_dev_features" development-fixture; then
+    echo "$label mixes PreProd recovery with development fixture custody" >&2
     exit 1
   fi
 }
@@ -150,6 +177,20 @@ assert_public_fixture_feature_present \
   "iOS standalone Portal" "standalone-portal" "aarch64-apple-ios"
 assert_public_fixture_feature_present \
   "Android standalone Portal Tailnet" "standalone-portal-tailnet" "aarch64-linux-android"
+assert_preprod_observation_feature_present \
+  "iOS PreProd observation" "aarch64-apple-ios"
+assert_preprod_observation_feature_present \
+  "Android PreProd observation" "aarch64-linux-android"
+if cargo check -p oxid-app --no-default-features \
+  --features preprod-observation >"$failure_log" 2>&1; then
+  echo "preprod-observation compiled for a non-mobile host" >&2
+  exit 1
+fi
+if ! rg -q 'preprod-observation is available only on iOS and Android' "$failure_log"; then
+  echo "preprod-observation host rejection failed for an unexpected reason" >&2
+  sed -n '1,120p' "$failure_log" >&2
+  exit 1
+fi
 if cargo check -p oxid-app --no-default-features \
   --features desktop,ui-profile-dev >"$failure_log" 2>&1; then
   echo "ui-profile-dev compiled without an explicit standalone composition" >&2
@@ -569,7 +610,7 @@ if rg -a -q \
   exit 1
 fi
 if rg -a -q \
-  'OXID_PREPROD_MASTER_SEED_HEX|OXID_ENABLE_LIVE_PREPROD_E2E|OXID_PREPROD_E2E_CASE_INDEX|OXID_PREPROD_E2E_STATE_DIR|OXID_ACKNOWLEDGE_PREPROD_PUBLIC_PROVER_PRIVACY|OXID_PREPROD_FUNDING_MANIFEST_V[12]|OXID_PREPROD_FUNDING_OBSERVATION_V1|Preprod E2E wallet A|Preprod E2E wallet B|oxid-preprod-registration-e2e-2026-08|lace-proof-pub\.preprod\.midnight\.network' \
+  'OXID_PREPROD_MASTER_SEED_HEX|OXID_ENABLE_LIVE_PREPROD_E2E|OXID_PREPROD_E2E_CASE_INDEX|OXID_PREPROD_E2E_STATE_DIR|OXID_ACKNOWLEDGE_PREPROD_PUBLIC_PROVER_PRIVACY|OXID_PREPROD_FUNDING_MANIFEST_V[12]|OXID_PREPROD_FUNDING_OBSERVATION_V1|Preprod E2E wallet A|Preprod E2E wallet B|oxid-preprod-registration-e2e-2026-08|lace-proof-pub\.preprod\.midnight\.network|Recover existing PreProd wallet|Midnight wallet root \(64 lowercase hex characters\)' \
   "$release_binary"; then
   echo "normal release binary contains the preprod registration funding harness" >&2
   exit 1

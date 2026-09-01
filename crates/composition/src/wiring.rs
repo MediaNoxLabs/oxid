@@ -1013,6 +1013,7 @@ where
         initialize_wallet_security,
         unlock_wallet,
         lock_wallet,
+        wallet_root_recovery: None,
         export_portable_wallet_backup,
         recover_portable_wallet_backup,
         export_complete_wallet_backup,

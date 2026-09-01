@@ -64,6 +64,14 @@ standalone-tailnet = []
 # Explicit simulator/emulator composition using production native custody and
 # deterministic standalone wallet/SSI adapters.
 standalone-native-custody = []
+# Explicit mobile owner journey for importing an existing root into native
+# custody and observing authenticated PreProd balances. It is mutually
+# exclusive with every standalone profile.
+preprod-observation = [
+  "mobile",
+  "oxid-composition/preprod-observation",
+  "oxid-ui-dioxus/preprod-observation",
+]
 # Opt-in iOS/Android standalone proof conformance harness. This embeds the
 # reviewed Compact artifact closure and selects the foreground-only worker;
 # normal mobile and production builds remain proof-disabled.

@@ -14,7 +14,10 @@ use std::sync::Arc;
 ))]
 use super::portal::PortalIdentityConfiguration;
 use oxid_adapter_did_midnight::StandaloneDidResolver;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
 use oxid_adapter_did_midnight::{HttpDidResolver, HttpDidResolverConfig};
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -28,7 +31,10 @@ use oxid_adapter_did_midnight::{HttpDidResolver, HttpDidResolverConfig};
 ))]
 use oxid_adapter_openid4vci::PortalOid4vciClientFactory;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
 use super::environment::MIDNIGHT_DID_RESOLVER_URL_ENV;
 use super::environment::{CREDENTIAL_KEY_PATH_ENV, CREDENTIAL_STORE_PATH_ENV, DID_STORE_PATH_ENV};
 use oxid_adapter_storage_credential_json::EncryptedJsonCredentialRepository;

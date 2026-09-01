@@ -20,6 +20,9 @@ ui-profile-demo = []
 # Visible safety marker for the shared, publicly spendable standalone genesis
 # wallet. This feature carries presentation only; composition owns authority.
 public-standalone-genesis = []
+# Owner-entered root recovery UI. Normal desktop/web/mobile artifacts do not
+# compile its controls or copy.
+preprod-observation = []
 # Strictly test-only in-process driver for environments where WKWebView does
 # not expose rendered controls through macOS Accessibility.
 desktop-test-click-driver = ["dep:dioxus-document"]

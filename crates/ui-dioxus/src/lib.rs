@@ -114,6 +114,11 @@ use oxid_wallet_application::{
     WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
     WalletTransferSubmissionView,
 };
+#[cfg(feature = "preprod-observation")]
+use oxid_wallet_application::{
+    RECOVER_WALLET_ROOT_SUMMARY, RECOVER_WALLET_ROOT_TITLE, RecoverWalletRootCommand,
+    RecoverWalletRootUseCase, WalletRootSeed,
+};
 use zeroize::{Zeroize, Zeroizing};
 
 use diagnostics::DiagnosticsPage;
@@ -233,6 +238,8 @@ pub struct WalletUiServices {
     recover_portable_wallet_backup: Arc<dyn RecoverPortableWalletBackupUseCase>,
     export_complete_wallet_backup: Arc<dyn ExportCompleteWalletBackupUseCase>,
     recover_complete_wallet_backup: Arc<dyn RecoverCompleteWalletBackupUseCase>,
+    #[cfg(feature = "preprod-observation")]
+    wallet_root_recovery: Option<WalletRootRecoveryUiServices>,
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
     select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
@@ -641,6 +648,28 @@ pub struct WalletSecurityUiServices {
     unlock_wallet: Arc<dyn UnlockWalletUseCase>,
     lock_wallet: Arc<dyn LockWalletUseCase>,
     backup: WalletBackupUiServices,
+    #[cfg(feature = "preprod-observation")]
+    root_recovery: Option<WalletRootRecoveryUiServices>,
+}
+
+/// Explicit owner-root recovery capability supplied only by an authenticated,
+/// observation-only production deployment composition.
+#[cfg(feature = "preprod-observation")]
+#[derive(Clone)]
+pub struct WalletRootRecoveryUiServices {
+    network_id: String,
+    recover: Arc<dyn RecoverWalletRootUseCase>,
+}
+
+#[cfg(feature = "preprod-observation")]
+impl WalletRootRecoveryUiServices {
+    #[must_use]
+    pub fn new(network_id: String, recover: Arc<dyn RecoverWalletRootUseCase>) -> Self {
+        Self {
+            network_id,
+            recover,
+        }
+    }
 }
 
 /// Complete and legacy custody-only backup use cases plus native document transport.
@@ -689,7 +718,16 @@ impl WalletSecurityUiServices {
             unlock_wallet,
             lock_wallet,
             backup,
+            #[cfg(feature = "preprod-observation")]
+            root_recovery: None,
         }
+    }
+
+    #[cfg(feature = "preprod-observation")]
+    #[must_use]
+    pub fn with_root_recovery(mut self, recovery: WalletRootRecoveryUiServices) -> Self {
+        self.root_recovery = Some(recovery);
+        self
     }
 }
 
@@ -948,6 +986,8 @@ impl WalletUiServices {
             recover_portable_wallet_backup: security.backup.recover_custody,
             export_complete_wallet_backup: security.backup.export_complete,
             recover_complete_wallet_backup: security.backup.recover_complete,
+            #[cfg(feature = "preprod-observation")]
+            wallet_root_recovery: security.root_recovery,
             list_wallet_networks: account.list_wallet_networks,
             select_wallet_network: account.select_wallet_network,
             derive_wallet_account: account.derive_wallet_account,
@@ -1681,6 +1721,10 @@ enum OnboardingStep {
     Create,
     Protect(WalletProfileView),
     Restore,
+    #[cfg(feature = "preprod-observation")]
+    RecoverRootProfile,
+    #[cfg(feature = "preprod-observation")]
+    RecoverRoot(WalletProfileView),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1688,6 +1732,49 @@ enum OnboardingProtectionState {
     Idle,
     Working,
     Failed(String),
+}
+
+#[cfg(feature = "preprod-observation")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WalletRootRecoveryUiState {
+    Idle,
+    Working,
+    Failed(String),
+}
+
+#[cfg(feature = "preprod-observation")]
+#[derive(Default)]
+struct WalletRootInput(Zeroizing<String>);
+
+#[cfg(feature = "preprod-observation")]
+impl WalletRootInput {
+    fn new(value: String) -> Self {
+        Self(Zeroizing::new(value))
+    }
+
+    fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn take(&mut self) -> Zeroizing<String> {
+        std::mem::replace(&mut self.0, Zeroizing::new(String::new()))
+    }
+
+    fn clear(&mut self) {
+        self.0.zeroize();
+        self.0.clear();
+    }
+}
+
+#[cfg(feature = "preprod-observation")]
+impl fmt::Debug for WalletRootInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("WalletRootInput([REDACTED])")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3404,9 +3491,14 @@ pub fn App() -> Element {
                 {demo_gateway_banner}
                 ProfileGateway {
                     state: session,
+                    lifecycle_wake: identity_link_wake,
                     on_selected: move |profile| {
                         profile_session.set(ProfileSessionState::Active(profile));
                         navigation.write().select_primary(PrimaryDestination::Home);
+                    },
+                    on_root_recovered: move |profile| {
+                        profile_session.set(ProfileSessionState::Active(profile));
+                        navigation.write().select_primary(PrimaryDestination::Wallet);
                     },
                     on_retry: move |_| {
                         let services = services.clone();
@@ -3691,6 +3783,9 @@ pub fn App() -> Element {
                             active_profile: active_profile.clone(),
                             lifecycle_wake: identity_link_wake,
                             secret_mode,
+                            on_root_recovered: move |_| {
+                                navigation.write().select_primary(PrimaryDestination::Wallet);
+                            },
                             on_open_profile: move |_| navigation.write().push(Route::Profile),
                             on_open_diagnostics: move |_| navigation.write().push(Route::Diagnostics),
                         }
@@ -3900,7 +3995,9 @@ fn profile_monogram(display_name: &str, fallback: &str) -> String {
 #[component]
 fn ProfileGateway(
     state: ProfileSessionState,
+    lifecycle_wake: Signal<u64>,
     on_selected: EventHandler<WalletProfileView>,
+    on_root_recovered: EventHandler<WalletProfileView>,
     on_retry: EventHandler<MouseEvent>,
 ) -> Element {
     let brand = consume_context::<BrandProfile>();
@@ -3917,7 +4014,7 @@ fn ProfileGateway(
             }
         },
         ProfileSessionState::Onboarding => rsx! {
-            OnboardingFlow { on_selected }
+            OnboardingFlow { lifecycle_wake, on_selected, on_root_recovered }
         },
         ProfileSessionState::Choosing(profiles) => rsx! {
             section { class: "page-heading onboarding-heading",
@@ -3969,9 +4066,33 @@ fn ProfileGateway(
 }
 
 #[component]
-fn OnboardingFlow(on_selected: EventHandler<WalletProfileView>) -> Element {
+fn OnboardingFlow(
+    lifecycle_wake: Signal<u64>,
+    on_selected: EventHandler<WalletProfileView>,
+    on_root_recovered: EventHandler<WalletProfileView>,
+) -> Element {
+    #[cfg(feature = "preprod-observation")]
+    let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
     let mut step = use_signal(|| OnboardingStep::Welcome);
+    #[cfg(feature = "preprod-observation")]
+    let root_recovery_choice = if services.wallet_root_recovery.is_some() {
+        rsx! {
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                onclick: move |_| step.set(OnboardingStep::RecoverRootProfile),
+                "Recover existing PreProd wallet"
+            }
+        }
+    } else {
+        rsx! {}
+    };
+    #[cfg(not(feature = "preprod-observation"))]
+    let root_recovery_choice = {
+        let _ = (lifecycle_wake, on_root_recovered);
+        rsx! {}
+    };
 
     match step.read().clone() {
         OnboardingStep::Welcome => rsx! {
@@ -3993,6 +4114,7 @@ fn OnboardingFlow(on_selected: EventHandler<WalletProfileView>) -> Element {
                     onclick: move |_| step.set(OnboardingStep::Restore),
                     "Restore from backup"
                 }
+                {root_recovery_choice}
             }
         },
         OnboardingStep::Create => rsx! {
@@ -4038,6 +4160,40 @@ fn OnboardingFlow(on_selected: EventHandler<WalletProfileView>) -> Element {
                 on_recovered: move |profile| on_selected.call(profile),
             }
         },
+        #[cfg(feature = "preprod-observation")]
+        OnboardingStep::RecoverRootProfile => rsx! {
+            section { class: "page-heading onboarding-heading",
+                button {
+                    class: "text-action",
+                    r#type: "button",
+                    aria_label: "Back to onboarding choices",
+                    onclick: move |_| step.set(OnboardingStep::Welcome),
+                    "← Back"
+                }
+                p { class: "eyebrow", "PreProd recovery" }
+                h1 { "Name this recovered wallet" }
+                p { "Create an empty public profile before installing the owner root behind device protection." }
+            }
+            ProfileManager {
+                profiles: Vec::new(),
+                active_profile_id: None,
+                onboarding: true,
+                on_selected: move |profile| step.set(OnboardingStep::RecoverRoot(profile)),
+            }
+        },
+        #[cfg(feature = "preprod-observation")]
+        OnboardingStep::RecoverRoot(profile) => {
+            let recovered_profile = profile.clone();
+            let cancelled_profile = profile.clone();
+            rsx! {
+                WalletRootRecoveryForm {
+                    profile,
+                    lifecycle_wake,
+                    on_recovered: move |_| on_root_recovered.call(recovered_profile.clone()),
+                    on_cancel: move |_| on_selected.call(cancelled_profile.clone()),
+                }
+            }
+        }
     }
 }
 
@@ -4266,6 +4422,149 @@ fn complete_recovery_message(summary: &CompleteWalletRecoverySummary) -> String 
         "Recovered {} protected key(s), {} DID record(s), and {} credential(s).",
         summary.restored_key_count, summary.restored_did_count, summary.restored_credential_count,
     )
+}
+
+#[cfg(feature = "preprod-observation")]
+#[component]
+fn WalletRootRecoveryForm(
+    profile: WalletProfileView,
+    lifecycle_wake: Signal<u64>,
+    on_recovered: EventHandler<WalletProfileView>,
+    on_cancel: Option<EventHandler<WalletProfileView>>,
+) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let Some(capability) = services.wallet_root_recovery.clone() else {
+        return rsx! {};
+    };
+    let mut root_input = use_signal(WalletRootInput::default);
+    let mut confirmed = use_signal(|| false);
+    let mut state = use_signal(|| WalletRootRecoveryUiState::Idle);
+    let busy = matches!(*state.read(), WalletRootRecoveryUiState::Working);
+    let can_recover = !busy && confirmed() && !root_input.read().is_empty();
+    let mut lifecycle_root = root_input;
+    let mut lifecycle_confirmation = confirmed;
+    use_effect(move || {
+        let _generation = lifecycle_wake();
+        lifecycle_root.write().clear();
+        lifecycle_confirmation.set(false);
+    });
+    let feedback = match state.read().clone() {
+        WalletRootRecoveryUiState::Idle => rsx! {},
+        WalletRootRecoveryUiState::Working => rsx! {
+            div { class: "result", role: "status", aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                p { "Waiting for device authorization and deriving the canonical account…" }
+            }
+        },
+        WalletRootRecoveryUiState::Failed(message) => rsx! {
+            div { class: "result error", role: "alert",
+                strong { "PreProd recovery did not finish" }
+                p { "{message}" }
+                p { "The root field was cleared. Re-enter it to retry." }
+            }
+        },
+    };
+    let network_id = capability.network_id.clone();
+    let recover = Arc::clone(&capability.recover);
+    let recovery_profile = profile.clone();
+    let cancel_profile = profile.clone();
+
+    rsx! {
+        section { class: "profile-card surface-card complete-recovery-card",
+            p { class: "card-eyebrow", "Existing Midnight wallet" }
+            h2 { "Recover on {ui::midnight_network(&network_id)}" }
+            p {
+                "Enter the existing Midnight wallet root only into this field. It is installed into this empty profile behind native device protection, then account 0/address 0 is derived for balance observation."
+            }
+            p { class: "backup-warning",
+                strong { "Read-only PreProd journey. " }
+                "This profile can synchronize NIGHT, shielded token, and DUST balances. Sending, DUST registration, proving, and submission are not offered."
+            }
+            label { r#for: "wallet-root-seed", "Midnight wallet root (64 lowercase hex characters)"
+                input {
+                    id: "wallet-root-seed",
+                    r#type: "password",
+                    minlength: 64,
+                    maxlength: 64,
+                    autocomplete: "off",
+                    autocapitalize: "none",
+                    spellcheck: false,
+                    disabled: busy,
+                    value: root_input.read().as_str(),
+                    oninput: move |event| root_input.set(WalletRootInput::new(event.value())),
+                }
+            }
+            label { class: "confirmation-row",
+                input {
+                    r#type: "checkbox",
+                    checked: confirmed(),
+                    disabled: busy,
+                    onchange: move |event| confirmed.set(event.checked()),
+                }
+                "I confirm recovery into this empty profile and understand that the existing root will replace no local custody."
+            }
+            div { class: "transfer-actions",
+                if let Some(cancel) = on_cancel {
+                    button {
+                        class: "secondary-action",
+                        r#type: "button",
+                        disabled: busy,
+                        onclick: move |_| {
+                            root_input.write().clear();
+                            confirmed.set(false);
+                            cancel.call(cancel_profile.clone());
+                        },
+                        "Cancel"
+                    }
+                }
+                button {
+                    class: "primary-action",
+                    r#type: "button",
+                    disabled: !can_recover,
+                    onclick: move |_| {
+                        let raw = root_input.write().take();
+                        confirmed.set(false);
+                        let root = match WalletRootSeed::parse_hex(&raw) {
+                            Ok(root) => root,
+                            Err(error) => {
+                                state.set(WalletRootRecoveryUiState::Failed(error.to_string()));
+                                return;
+                            }
+                        };
+                        let recover = Arc::clone(&recover);
+                        let profile = recovery_profile.clone();
+                        let profile_id = profile.id.clone();
+                        state.set(WalletRootRecoveryUiState::Working);
+                        spawn(async move {
+                            let result = run_ui_blocking(move || {
+                                recover.execute(RecoverWalletRootCommand {
+                                    profile_id,
+                                    root,
+                                    confirmation: SensitiveOperationConfirmation {
+                                        title: RECOVER_WALLET_ROOT_TITLE.to_owned(),
+                                        summary: RECOVER_WALLET_ROOT_SUMMARY.to_owned(),
+                                        confirmed: true,
+                                    },
+                                })
+                            })
+                            .await;
+                            match result {
+                                Ok(Ok(_)) => on_recovered.call(profile),
+                                Ok(Err(error)) => state.set(
+                                    WalletRootRecoveryUiState::Failed(error.to_string()),
+                                ),
+                                Err(error) => state.set(
+                                    WalletRootRecoveryUiState::Failed(error.to_string()),
+                                ),
+                            }
+                        });
+                    },
+                    if busy { "Recovering…" } else { "Authorize and recover" }
+                }
+            }
+            {feedback}
+        }
+    }
 }
 
 #[component]
@@ -5206,6 +5505,10 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
 #[component]
 fn AssetsPage(active_profile: WalletProfileView, secret_mode: SecretModeController) -> Element {
     let services = consume_context::<WalletUiServices>();
+    #[cfg(feature = "preprod-observation")]
+    let observation_only = services.wallet_root_recovery.is_some();
+    #[cfg(not(feature = "preprod-observation"))]
+    let observation_only = false;
     let mut state = use_signal(|| AccountPageState::Loading);
     let profile_id = active_profile.id.clone();
     let services_for_load = services.clone();
@@ -5333,7 +5636,7 @@ fn AssetsPage(active_profile: WalletProfileView, secret_mode: SecretModeControll
                     span { "Midnight network" }
                     select {
                         value: "{selected_network_id}",
-                        disabled: is_busy,
+                        disabled: is_busy || observation_only,
                         onchange: move |event| {
                             let network_id = event.value();
                             let services = select_services.clone();
@@ -5380,9 +5683,12 @@ fn AssetsPage(active_profile: WalletProfileView, secret_mode: SecretModeControll
                             }
                         }
                     }
+                    if observation_only {
+                        small { "The authenticated deployment fixes this recovered wallet to PreProd." }
+                    }
                 }
 
-                if protection_available && (!protection_unlocked || !protected_account) {
+                if wallet_write_actions_available(observation_only) && protection_available && (!protection_unlocked || !protected_account) {
                     article { class: "surface-card development-card",
                         p { class: "card-eyebrow", "Standalone development" }
                         h2 {
@@ -5471,14 +5777,22 @@ fn AssetsPage(active_profile: WalletProfileView, secret_mode: SecretModeControll
                     },
                 }
 
-                DustRegistrationPanel {
-                    profile_id: active_profile.id.clone(),
-                    availability: dust_registration_availability(
-                        protection_unlocked,
-                        protected_account,
-                        account.sync.state == "synced",
-                        unavailable,
-                    ),
+                if observation_only {
+                    article { class: "surface-card account-sync-card", role: "status",
+                        p { class: "card-eyebrow", "PreProd observation" }
+                        h2 { "Balances only" }
+                        p { "This recovery profile exposes synchronization and receive addresses only. Sending, DUST registration, proving, and transaction submission are disabled for this slice." }
+                    }
+                } else {
+                    DustRegistrationPanel {
+                        profile_id: active_profile.id.clone(),
+                        availability: dust_registration_availability(
+                            protection_unlocked,
+                            protected_account,
+                            account.sync.state == "synced",
+                            unavailable,
+                        ),
+                    }
                 }
 
                 div { class: "dashboard-grid",
@@ -5501,9 +5815,11 @@ fn AssetsPage(active_profile: WalletProfileView, secret_mode: SecretModeControll
                     AccountActivityCard { account: (*account).clone(), unavailable }
                 }
 
-                SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
+                if wallet_write_actions_available(observation_only) {
+                    SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
+                }
 
-                if protected_account && protection_unlocked && account.sync.state == "synced" {
+                if wallet_write_actions_available(observation_only) && protected_account && protection_unlocked && account.sync.state == "synced" {
                     if let (Some(unshielded), Some(shielded)) = (
                         account.addresses.iter().find(|address| address.kind == "unshielded"),
                         account.addresses.iter().find(|address| address.kind == "shielded"),
@@ -5519,6 +5835,10 @@ fn AssetsPage(active_profile: WalletProfileView, secret_mode: SecretModeControll
             }
         }
     }
+}
+
+const fn wallet_write_actions_available(observation_only: bool) -> bool {
+    !observation_only
 }
 
 #[component]
@@ -10303,6 +10623,7 @@ fn SettingsPage(
     active_profile: WalletProfileView,
     lifecycle_wake: Signal<u64>,
     secret_mode: SecretModeController,
+    on_root_recovered: EventHandler<WalletProfileView>,
     on_open_profile: EventHandler<MouseEvent>,
     on_open_diagnostics: EventHandler<MouseEvent>,
 ) -> Element {
@@ -10803,6 +11124,33 @@ fn SettingsPage(
         }
         SecurityCapabilityState::Loading | SecurityCapabilityState::Failed(_) => rsx! {},
     };
+    #[cfg(feature = "preprod-observation")]
+    let root_recovery_card = match security.read().clone() {
+        SecurityCapabilityState::Ready(status)
+            if status.state_name() == "Uninitialized"
+                && services.wallet_root_recovery.is_some() =>
+        {
+            let profile = active_profile.clone();
+            rsx! {
+                WalletRootRecoveryForm {
+                    profile,
+                    lifecycle_wake,
+                    on_recovered: move |profile| {
+                        secret_mode.rearm();
+                        on_root_recovered.call(profile);
+                    },
+                }
+            }
+        }
+        SecurityCapabilityState::Loading
+        | SecurityCapabilityState::Ready(_)
+        | SecurityCapabilityState::Failed(_) => rsx! {},
+    };
+    #[cfg(not(feature = "preprod-observation"))]
+    let root_recovery_card = {
+        let _ = on_root_recovered;
+        rsx! {}
+    };
 
     rsx! {
         section { class: "page-heading",
@@ -10824,6 +11172,7 @@ fn SettingsPage(
             }
         }
         {security_card}
+        {root_recovery_card}
         {backup_card}
         article { class: "settings-card surface-card",
             div {
@@ -10926,6 +11275,28 @@ const LUCIDE_EYE_OFF: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="2
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "preprod-observation")]
+    #[test]
+    fn owner_root_input_is_redacted_and_cleared_by_cancel_or_take() {
+        let secret = "31".repeat(32);
+        let mut input = WalletRootInput::new(secret.clone());
+        assert_eq!(format!("{input:?}"), "WalletRootInput([REDACTED])");
+        assert!(!format!("{input:?}").contains(&secret));
+        input.clear();
+        assert!(input.is_empty());
+
+        let mut input = WalletRootInput::new(secret);
+        let taken = input.take();
+        assert_eq!(taken.len(), 64);
+        assert!(input.is_empty());
+    }
+
+    #[test]
+    fn observation_profile_never_admits_wallet_write_actions() {
+        assert!(!wallet_write_actions_available(true));
+        assert!(wallet_write_actions_available(false));
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]

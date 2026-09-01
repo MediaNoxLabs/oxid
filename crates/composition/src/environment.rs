@@ -191,7 +191,10 @@ pub(super) enum HeadlessEnvironmentPolicy {
     NativeHeadlessProcess,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct PortalAdjacentEnvironmentSettings {
     presentation_artifacts: bool,
@@ -205,7 +208,10 @@ pub(super) struct PortalAdjacentEnvironmentSettings {
     passport_vault_store: bool,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
 impl PortalAdjacentEnvironmentSettings {
     fn conflicts_with_general_policy(self) -> bool {
         self.midnight_did_resolver
@@ -269,7 +275,10 @@ impl PortalAdjacentEnvironmentSettings {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
 pub(super) fn validate_portal_environment_combination(
     policy: HeadlessEnvironmentPolicy,
     midnight_values: &[Option<String>; 7],
@@ -331,6 +340,8 @@ pub(super) struct HeadlessEnvironmentPlan {
 pub(super) fn load_headless_environment_plan(
     policy: HeadlessEnvironmentPolicy,
 ) -> Result<HeadlessEnvironmentPlan, HeadlessCompositionError> {
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let _ = policy;
     #[cfg(any(target_os = "ios", target_os = "android"))]
     if std::env::var_os(OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH_ENV).is_some()
         || std::env::var_os(OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256_ENV).is_some()

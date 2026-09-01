@@ -14,6 +14,7 @@ fn composition_exposes_every_application_capability() {
     drop(services.initialize_wallet_security());
     drop(services.unlock_wallet());
     drop(services.lock_wallet());
+    assert!(services.wallet_root_recovery().is_none());
     drop(services.export_portable_wallet_backup());
     drop(services.recover_portable_wallet_backup());
     drop(services.export_complete_wallet_backup());
