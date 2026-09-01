@@ -118,7 +118,9 @@ jobs:
     needs: plan
     if: needs.plan.outputs.unit_linux == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Keep the unit command within its 5-10 minute target while reserving two
+    # bounded minutes for Nix/cache setup, metrics, and GitHub post-job cleanup.
+    timeout-minutes: 12
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
