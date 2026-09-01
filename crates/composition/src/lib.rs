@@ -14,11 +14,8 @@ compile_error!("mobile-portal-tailnet is available only on Android");
 #[cfg(all(
     not(target_arch = "wasm32"),
     any(
-        all(not(target_os = "ios"), not(target_os = "android")),
-        all(
-            feature = "mobile-portal",
-            any(target_os = "ios", target_os = "android")
-        )
+        not(any(target_os = "ios", target_os = "android")),
+        feature = "mobile-portal"
     )
 ))]
 mod portal;
