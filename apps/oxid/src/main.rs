@@ -172,7 +172,7 @@ fn main() {
     let application = {
         const OXID_STANDALONE_PORTAL_PROFILE: &str = "OXID_STANDALONE_PORTAL_PROFILE";
         let _ = OXID_STANDALONE_PORTAL_PROFILE;
-        oxid_composition::compose_mobile_development_portal_standalone_from_routes(
+        oxid_composition::compose_mobile_public_genesis_portal_standalone_from_routes(
             "ws://127.0.0.1:8088/api/v4/graphql/ws",
             "http://127.0.0.1:8088/api/v4/graphql",
             "ws://127.0.0.1:9944",
@@ -193,7 +193,7 @@ fn main() {
         target_os = "android",
         not(target_arch = "wasm32")
     ))]
-    let application = oxid_composition::compose_mobile_development_portal_tailnet_from_routes(
+    let application = oxid_composition::compose_mobile_public_genesis_portal_tailnet_from_routes(
         env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
         env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
         env!("OXID_BUILD_MIDNIGHT_NODE_WS_URL"),
@@ -232,7 +232,7 @@ fn main() {
     let application = {
         const OXID_STANDALONE_TAILNET_PROFILE: &str = "OXID_STANDALONE_TAILNET_PROFILE";
         let _ = OXID_STANDALONE_TAILNET_PROFILE;
-        oxid_composition::compose_mobile_development_standalone_from_routes(
+        oxid_composition::compose_mobile_public_genesis_standalone_from_routes(
             env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
             env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
             env!("OXID_BUILD_MIDNIGHT_NODE_WS_URL"),
@@ -251,7 +251,7 @@ fn main() {
     let application = {
         const OXID_STANDALONE_LOCAL_PROFILE: &str = "OXID_STANDALONE_LOCAL_PROFILE";
         let _ = OXID_STANDALONE_LOCAL_PROFILE;
-        oxid_composition::compose_mobile_development_standalone_from_routes(
+        oxid_composition::compose_mobile_public_genesis_standalone_from_routes(
             "ws://127.0.0.1:8088/api/v4/graphql/ws",
             "http://127.0.0.1:8088/api/v4/graphql",
             "ws://127.0.0.1:9944",

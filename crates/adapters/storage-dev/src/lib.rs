@@ -32,7 +32,12 @@ use oxid_wallet_domain::{
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 use zeroize::Zeroizing;
 
+#[cfg(feature = "development-fixture")]
+mod development_fixture;
 mod jubjub_schnorr;
+
+#[cfg(feature = "development-fixture")]
+pub use development_fixture::DevelopmentWalletFixtureProtection;
 
 const KEY_REFERENCE_ATTEMPTS: usize = 8;
 const P256_SCALAR_ATTEMPTS: usize = 128;
@@ -57,6 +62,24 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
             random,
             profiles: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    /// Initializes one explicitly identified development profile from a typed root.
+    ///
+    /// This adapter remains process-local and explicitly insecure. Generic
+    /// randomness is still used for every key reference, nonce, generated key,
+    /// and ordinary profile root; the supplied value can never satisfy those
+    /// requests accidentally.
+    #[cfg(feature = "development-fixture")]
+    pub(crate) fn initialize_with_root_seed(
+        &self,
+        profile_id: &WalletProfileId,
+        root_seed: Zeroizing<[u8; 32]>,
+    ) -> Result<WalletSecurityStatus, WalletSecurityPortError>
+    where
+        N: RandomPort,
+    {
+        self.initialize_profile(profile_id, Some(root_seed))
     }
 
     fn profiles(
@@ -91,6 +114,38 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
             return Err(WalletSecurityPortError::Locked);
         }
         Ok(profile)
+    }
+
+    fn initialize_profile(
+        &self,
+        profile_id: &WalletProfileId,
+        root_seed: Option<Zeroizing<[u8; 32]>>,
+    ) -> Result<WalletSecurityStatus, WalletSecurityPortError>
+    where
+        N: RandomPort,
+    {
+        let mut profiles = self.profiles()?;
+        if profiles.contains_key(profile_id.as_str()) {
+            return Err(WalletSecurityPortError::AlreadyInitialized);
+        }
+        let root_seed = if let Some(root_seed) = root_seed {
+            root_seed
+        } else {
+            let mut root_seed = Zeroizing::new([0_u8; 32]);
+            self.random
+                .fill_bytes(root_seed.as_mut())
+                .map_err(|_| WalletSecurityPortError::Unavailable)?;
+            root_seed
+        };
+        profiles.insert(
+            profile_id.as_str().to_owned(),
+            DevelopmentProfile {
+                state: WalletProtectionState::Unlocked,
+                root_seed,
+                keys: BTreeMap::new(),
+            },
+        );
+        Ok(development_status(WalletProtectionState::Unlocked))
     }
 
     fn new_reference(
@@ -352,23 +407,7 @@ where
         &self,
         profile_id: &WalletProfileId,
     ) -> Result<WalletSecurityStatus, WalletSecurityPortError> {
-        let mut profiles = self.profiles()?;
-        if profiles.contains_key(profile_id.as_str()) {
-            return Err(WalletSecurityPortError::AlreadyInitialized);
-        }
-        let mut root_seed = Zeroizing::new([0_u8; 32]);
-        self.random
-            .fill_bytes(root_seed.as_mut())
-            .map_err(|_| WalletSecurityPortError::Unavailable)?;
-        profiles.insert(
-            profile_id.as_str().to_owned(),
-            DevelopmentProfile {
-                state: WalletProtectionState::Unlocked,
-                root_seed,
-                keys: BTreeMap::new(),
-            },
-        );
-        Ok(development_status(WalletProtectionState::Unlocked))
+        self.initialize_profile(profile_id, None)
     }
 
     fn unlock(
@@ -980,6 +1019,28 @@ mod tests {
 
     fn profile_id() -> WalletProfileId {
         WalletProfileId::parse("profile_test").expect("profile reference is valid")
+    }
+
+    #[test]
+    #[cfg(feature = "development-fixture")]
+    fn typed_root_seed_applies_only_to_the_explicit_profile() {
+        let mut expected = [0_u8; 32];
+        expected[31] = 1;
+        let adapter = DevelopmentWalletSecurity::new(
+            Arc::new(FixedClock),
+            Arc::new(IncrementingRandom::new()),
+        );
+        let first = profile_id();
+        let second = WalletProfileId::parse("profile_second").expect("second profile");
+
+        adapter.initialize(&first).expect("initialize first");
+        adapter
+            .initialize_with_root_seed(&second, Zeroizing::new(expected))
+            .expect("initialize explicit fixture profile");
+
+        let profiles = adapter.profiles().expect("profile state");
+        assert_eq!(*profiles[first.as_str()].root_seed, [17_u8; 32]);
+        assert_eq!(*profiles[second.as_str()].root_seed, expected);
     }
 
     fn generate(

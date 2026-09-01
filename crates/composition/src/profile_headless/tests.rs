@@ -7,6 +7,103 @@ use oxid_adapter_midnight::MidnightLocalProvingConfig;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn ordinary_standalone_composition_keeps_os_random_profile_custody() {
+    use std::sync::Mutex;
+
+    use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;
+    use oxid_platform_ports::{PlatformError, RandomPort};
+    use oxid_wallet_application::{
+        CreateWalletProfileCommand, WalletDerivedSecretUsePort, WalletHdPath,
+        WalletHdPathComponent, WalletProfileSecurityCommand,
+    };
+    use oxid_wallet_domain::WalletProfileId;
+
+    struct FixedRandom(Mutex<u8>);
+
+    impl RandomPort for FixedRandom {
+        fn fill_bytes(&self, destination: &mut [u8]) -> Result<(), PlatformError> {
+            let mut value = self
+                .0
+                .lock()
+                .map_err(|_| PlatformError::RandomnessUnavailable)?;
+            destination.fill(*value);
+            *value = value.wrapping_add(1);
+            Ok(())
+        }
+    }
+
+    fn first_child<N: RandomPort>(
+        security: &DevelopmentWalletSecurity<SystemClock, N>,
+        profile_id: &WalletProfileId,
+    ) -> [u8; 32] {
+        let path = WalletHdPath::new(vec![
+            WalletHdPathComponent::new(0, true).expect("child path"),
+        ])
+        .expect("child path");
+        let mut child = [0_u8; 32];
+        security
+            .use_derived_secret(profile_id, &path, &mut |secret| {
+                child.copy_from_slice(secret);
+                Ok(())
+            })
+            .expect("derive test child");
+        child
+    }
+
+    let placeholder = oxid_adapter_midnight::standalone_configuration_placeholder_address()
+        .expect("placeholder address");
+    let config = MidnightStandaloneConfig::new(
+        "undeployed",
+        "ws://127.0.0.1:8088/api/v4/graphql/ws",
+        "http://127.0.0.1:8088/api/v4/graphql",
+        "ws://127.0.0.1:9944",
+        "http://127.0.0.1:6300",
+        placeholder.value(),
+    )
+    .expect("standalone configuration");
+    let clock = Arc::new(SystemClock);
+    let security = Arc::new(DevelopmentWalletSecurity::new(
+        Arc::clone(&clock),
+        Arc::new(FixedRandom(Mutex::new(17))),
+    ));
+    let profiles = Arc::new(InMemoryWalletProfileRepository::new());
+    let application = compose_headless_standalone_with_security(
+        config,
+        clock,
+        Arc::clone(&security),
+        profiles,
+        |security| security,
+    );
+    let profile = application
+        .create_wallet_profile()
+        .execute(CreateWalletProfileCommand {
+            display_name: crate::standalone_genesis::PUBLIC_STANDALONE_PROFILE_NAME.to_owned(),
+        })
+        .expect("create named profile");
+    application
+        .initialize_wallet_security()
+        .execute(WalletProfileSecurityCommand {
+            profile_id: profile.id.clone(),
+        })
+        .expect("ordinary initialization");
+    let profile_id = WalletProfileId::parse(profile.id).expect("profile id");
+
+    let expected = DevelopmentWalletSecurity::new(
+        Arc::new(SystemClock),
+        Arc::new(FixedRandom(Mutex::new(17))),
+    );
+    expected
+        .initialize(&profile_id)
+        .expect("expected random initialization");
+
+    assert_eq!(
+        first_child(security.as_ref(), &profile_id),
+        first_child(&expected, &profile_id)
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn explicit_live_compositions_are_constructible_without_network_io() {
     const ADDRESS: &str =
         "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";

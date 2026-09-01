@@ -10,6 +10,9 @@ publish = false
 
 [features]
 default = []
+# Public standalone genesis custody for explicit development app profiles.
+# Normal composition does not compile the fixture authority.
+standalone-development = ["oxid-adapter-storage-dev/development-fixture"]
 # Native oxid-headless-only development admission for the exact local Portal +
 # standalone bundle. Other consumers compile without this escape hatch.
 headless-portal-local = []
@@ -75,6 +78,7 @@ midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-zswap.workspace = true
+oxid-wallet-domain.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 zeroize.workspace = true

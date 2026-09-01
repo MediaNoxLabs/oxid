@@ -229,6 +229,12 @@
           ]
         },
         {
+          "name": "standalone-development-wallet",
+          "modulePathPrefixes": [
+            "crates/composition/src/standalone_genesis"
+          ]
+        },
+        {
           "name": "funded-finality-evidence",
           "modulePathPrefixes": [
             "crates/composition/src/standalone_funding_tests"

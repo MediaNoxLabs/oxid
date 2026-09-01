@@ -5,8 +5,8 @@
 - Source: Blueprint §§3–8, 12–13, 16–18, 21; reviewed prototype route profiles; issues #2/#32/#89
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`
 - Implementation state: Opt-in localhost simulator/desktop and Android
-  physical-device tailnet profiles implemented; production and native-custody
-  composition unchanged
+  physical-device tailnet profiles implemented with public standalone-genesis
+  development custody; production and native-custody composition unchanged
 
 ## Context
 
@@ -56,8 +56,29 @@ Keep network identity separate from transport. The profile still selects the
 single `undeployed` Midnight network. A public fixture address validates the
 transport at composition time only; after profile activation, the existing
 account derivation use case binds the profile's protected derived address and
-the live adapter discards any cached placeholder state. No fixture key, seed,
-or funded account is added.
+the live adapter discards any cached placeholder state.
+
+The explicitly named `public_genesis` live constructors supply the undeployed
+chain's public scalar-one genesis root only when development custody initializes
+the unique profile named `Oxid Demo Wallet`. Duplicate fixture names fail
+closed, and every other profile uses OS randomness regardless of initialization
+order. This is intentionally public test authority, not protected wallet
+material: anyone can derive it and spend funds assigned to it. A typed
+profile-specific initializer keeps the fixture out of the generic random port;
+every nonce, key reference, and generated key still uses OS randomness.
+The fixture is absent from normal and native-custody composition and never
+enters UI/application DTOs or logs. The fixture adapter itself is compiled only
+by the explicit composition feature selected from
+`oxid-app/standalone-development`. The release guard proves both adapter and
+composition feature edges are absent from the normal graph and present in the
+development graph. Cargo feature unification cannot change the behavior of the
+existing OS-random constructors; the app calls the fixture constructors by
+their explicit names. Every such app build renders an always-visible warning
+and requires the user to choose **Use public demo wallet** before creating the
+exact fixture profile. Ordinary profile creation still defaults to **My
+wallet**. This exception exists only so the live Wallet can synchronize the
+chain's known NIGHT, shielded, and DUST state through the ordinary protected
+ports.
 
 Package a repository-owned Docker Compose harness using the exact reviewed
 prototype image versions for node, indexer, and proof server. Containers bind
@@ -91,6 +112,26 @@ standard output before the actual `-list-avds` result.
 
 - A physical phone can use the same typed standalone adapters without a
   hard-coded personal address or a generic native/JavaScript command channel.
+- Only the unique `Oxid Demo Wallet` profile in an explicit public-genesis build
+  is the shared public genesis wallet. It is suitable only for local demos and
+  tests; it provides no privacy, ownership, or safe-funding guarantee. Duplicate
+  fixture names fail closed; ordinary profiles remain OS-random.
+- Profile labels are immutable in the current model. Any future rename feature
+  must preserve or explicitly migrate the typed fixture binding; it must not
+  silently grant shared authority by renaming an ordinary profile.
+- Restored custody is never overwritten: initialization fails with
+  `AlreadyInitialized`. Restoring only public metadata with the reserved name
+  deliberately opts that otherwise-uninitialized development profile into the
+  public fixture; it grants no private authority because the root is public.
+- The normalized reserved name is the development composition protocol, not a
+  UI authorization boundary. The UI button is a safe convenience; headless and
+  test callers may opt in with the same exact name because the scalar-one root
+  is already public. Compile-time feature and network capabilities remain the
+  authority boundary.
+- Exact genesis balances are an owner-run, live-stack acceptance check before a
+  demo or pinned image/preset change. Routine CI keeps this ignored to avoid a
+  heavyweight mutable stack; its always-on contract pins the recipe and stack
+  inputs, while `just standalone-public-balances` proves the numeric values.
 - iOS Simulator, Android emulator, and native desktop development can use the
   real loopback stack without conflating it with deterministic simulation. Only
   transport differs between localhost and tailnet; network identity, account
@@ -101,13 +142,16 @@ standard output before the actual `-list-avds` result.
   local/tailnet profile requires a rebuild; production discovery remains open
   work. This is deliberately stricter than the prototype's runtime network
   picker.
-- The initial public address is not evidence of ownership, funding, sync, or
-  settlement. Only the profile-derived binding can become wallet state.
+- The initial public address is not evidence of balance freshness or
+  settlement. Only profile-derived binding plus independent live NIGHT, DUST,
+  and shielded synchronization can become wallet display state.
 - Every persistent live/standalone constructor gives the Midnight adapter the
   exact same public profile repository used by the application services. The
   selected network and non-secret derivation coordinates therefore survive a
   process restart; process-local development custody still returns honestly as
-  uninitialized and withholds the former account addresses after that restart.
+  uninitialized and withholds the former account addresses. Reinitializing the
+  uniquely named public fixture profile restores the same public root; ordinary
+  profiles continue to receive fresh OS-random roots.
 - The prototype's reviewed
   `wallet-core/queries/midnight-indexer/unshielded_transactions.subscription.graphql`
   does not request transaction fees, so its working sync flow does not exercise

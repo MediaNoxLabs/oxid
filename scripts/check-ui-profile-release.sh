@@ -4,7 +4,100 @@
 set -euo pipefail
 
 failure_log="$(mktemp)"
-trap 'rm -f "$failure_log"' EXIT
+feature_graph_log="$(mktemp)"
+trap 'rm -f "$failure_log" "$feature_graph_log"' EXIT
+
+load_feature_graph() {
+  local label="$1"
+  local features="$2"
+  local target="${3:-}"
+  local cargo_tree_args=(-p oxid-app --edges normal --prefix none --format '{p}|{f}')
+  if [[ -n "$features" ]]; then
+    cargo_tree_args+=(--no-default-features --features "$features")
+  fi
+  if [[ -n "$target" ]]; then
+    cargo_tree_args+=(--target "$target")
+  fi
+  if ! cargo tree "${cargo_tree_args[@]}" >"$feature_graph_log"; then
+    echo "$label feature graph could not be resolved" >&2
+    exit 1
+  fi
+}
+
+resolved_features() {
+  local label="$1"
+  local package="$2"
+  local line
+  local matches
+  matches="$(rg "^${package} v[^|]*\\|" "$feature_graph_log" || true)"
+  matches="$(printf '%s\n' "$matches" | sed -E 's/ \(\*\)$//' | LC_ALL=C sort -u)"
+  if [[ -z "$matches" ]]; then
+    echo "$label feature graph does not contain $package" >&2
+    exit 1
+  fi
+  if [[ "$(printf '%s\n' "$matches" | wc -l | tr -d ' ')" != "1" ]]; then
+    echo "$label feature graph contains ambiguous versions of $package" >&2
+    exit 1
+  fi
+  line="$matches"
+  printf '%s\n' "${line#*|}"
+}
+
+has_feature() {
+  local features="$1"
+  local feature="$2"
+  [[ ",$features," == *",$feature,"* ]]
+}
+
+assert_public_fixture_feature_absent() {
+  local label="$1"
+  local features="$2"
+  local target="${3:-}"
+  load_feature_graph "$label" "$features" "$target"
+  local composition_features
+  local storage_dev_features
+  local ui_features
+  composition_features="$(resolved_features "$label" oxid-composition)"
+  storage_dev_features="$(resolved_features "$label" oxid-adapter-storage-dev)"
+  ui_features="$(resolved_features "$label" oxid-ui-dioxus)"
+  if has_feature "$composition_features" standalone-development; then
+    echo "$label oxid-app release profile enables public standalone development custody" >&2
+    exit 1
+  fi
+  if has_feature "$ui_features" public-standalone-genesis; then
+    echo "$label oxid-app release profile enables the public-genesis warning UI" >&2
+    exit 1
+  fi
+  if has_feature "$storage_dev_features" development-fixture; then
+    echo "$label oxid-app release profile enables arbitrary development fixture custody" >&2
+    exit 1
+  fi
+}
+
+assert_public_fixture_feature_present() {
+  local label="$1"
+  local features="$2"
+  local target="${3:-}"
+  load_feature_graph "$label" "$features" "$target"
+  local composition_features
+  local storage_dev_features
+  local ui_features
+  composition_features="$(resolved_features "$label" oxid-composition)"
+  storage_dev_features="$(resolved_features "$label" oxid-adapter-storage-dev)"
+  ui_features="$(resolved_features "$label" oxid-ui-dioxus)"
+  if ! has_feature "$composition_features" standalone-development; then
+    echo "$label does not enable the bounded public-genesis composition capability" >&2
+    exit 1
+  fi
+  if ! has_feature "$ui_features" public-standalone-genesis; then
+    echo "$label does not enable the public-genesis warning UI" >&2
+    exit 1
+  fi
+  if ! has_feature "$storage_dev_features" development-fixture; then
+    echo "$label does not enable the bounded development fixture custody adapter" >&2
+    exit 1
+  fi
+}
 
 mode="${1:-all}"
 case "$mode" in
@@ -18,6 +111,45 @@ esac
 # The incoming profile is presentation-only but still must never be selectable
 # against the fail-closed production composition.
 if [[ "$mode" != "--artifact" ]]; then
+assert_public_fixture_feature_absent "default" ""
+assert_public_fixture_feature_absent "desktop" "desktop"
+assert_public_fixture_feature_absent "iOS mobile" "mobile" "aarch64-apple-ios"
+assert_public_fixture_feature_absent "Android mobile" "mobile" "aarch64-linux-android"
+assert_public_fixture_feature_absent "web" "web" "wasm32-unknown-unknown"
+# Bare transport selectors are deliberately invalid: without explicit custody
+# they must neither enable the fixture nor compile. The negative cargo checks
+# below prove the expected diagnostic; these graph checks prove no authority was
+# granted before compilation rejects the incomplete profile.
+assert_public_fixture_feature_absent \
+  "bare iOS standalone local route" "mobile,standalone-local" "aarch64-apple-ios"
+assert_public_fixture_feature_absent \
+  "bare Android standalone Tailnet route" "mobile,standalone-tailnet" "aarch64-linux-android"
+assert_public_fixture_feature_absent \
+  "iOS native mobile" "mobile,standalone-native-custody" "aarch64-apple-ios"
+assert_public_fixture_feature_absent \
+  "Android native mobile" "mobile,standalone-native-custody" "aarch64-linux-android"
+assert_public_fixture_feature_absent \
+  "iOS native proving" "mobile,standalone-native-proving-artifacts" "aarch64-apple-ios"
+assert_public_fixture_feature_absent \
+  "Android native proving" "mobile,standalone-native-proving-artifacts" "aarch64-linux-android"
+assert_public_fixture_feature_absent \
+  "iOS native mobile developer UI" \
+  "mobile,standalone-native-custody,ui-profile-dev" "aarch64-apple-ios"
+assert_public_fixture_feature_absent \
+  "Android native proving developer UI" \
+  "mobile,standalone-native-proving-artifacts,ui-profile-dev" "aarch64-linux-android"
+assert_public_fixture_feature_present \
+  "standalone development" "standalone-development"
+assert_public_fixture_feature_present \
+  "iOS standalone local" \
+  "mobile,standalone-development,standalone-local" "aarch64-apple-ios"
+assert_public_fixture_feature_present \
+  "Android standalone Tailnet" \
+  "mobile,standalone-development,standalone-tailnet" "aarch64-linux-android"
+assert_public_fixture_feature_present \
+  "iOS standalone Portal" "standalone-portal" "aarch64-apple-ios"
+assert_public_fixture_feature_present \
+  "Android standalone Portal Tailnet" "standalone-portal-tailnet" "aarch64-linux-android"
 if cargo check -p oxid-app --no-default-features \
   --features desktop,ui-profile-dev >"$failure_log" 2>&1; then
   echo "ui-profile-dev compiled without an explicit standalone composition" >&2
@@ -167,6 +299,29 @@ fi
 # caller provenance. Direct selection remains runtime-inert because only the
 # app-owned standalone-portal branch calls the explicit Portal constructor; the
 # identity-ingress unit suite below proves the default constructor rejects the trigger.
+
+if ! rg -qxF 'standalone-development = ["oxid-adapter-storage-dev/development-fixture"]' crates/composition/Cargo.toml; then
+  echo "oxid-composition/standalone-development must enable only bounded fixture custody" >&2
+  exit 1
+fi
+composition_fixture_name="$(sed -n 's/^pub(super) const PUBLIC_STANDALONE_PROFILE_NAME: &str = "\([^"]*\)";$/\1/p' crates/composition/src/standalone_genesis.rs)"
+ui_fixture_name="$(sed -n 's/^const PUBLIC_STANDALONE_PROFILE_NAME: &str = "\([^"]*\)";$/\1/p' crates/ui-dioxus/src/lib.rs)"
+if [[ -z "$composition_fixture_name" || "$composition_fixture_name" != "$ui_fixture_name" ]]; then
+  echo "public standalone fixture profile names drifted between composition and UI" >&2
+  exit 1
+fi
+app_standalone_development_members="$(awk '
+  /^standalone-development = \[/ { capture=1; next }
+  capture && /^\]/ { exit }
+  capture { gsub(/[",[:space:]]/, ""); if (length) print }
+' apps/oxid/Cargo.toml | sort)"
+expected_app_standalone_development_members="$(printf '%s\n' \
+  oxid-composition/standalone-development \
+  oxid-ui-dioxus/public-standalone-genesis | sort)"
+if [ "$app_standalone_development_members" != "$expected_app_standalone_development_members" ]; then
+  echo "oxid-app/standalone-development feature wiring is not exact" >&2
+  exit 1
+fi
 
 composition_portal_members="$(awk '
   /^mobile-portal = \[/ { capture=1; next }
@@ -383,17 +538,30 @@ if rg -a -q 'OXID_STANDALONE_PORTAL_PROFILE' "$release_binary"; then
   exit 1
 fi
 if rg -a -q \
+  'OXID_PUBLIC_STANDALONE_GENESIS_WALLET|Public genesis wallet capability|publicly spendable test authority|Oxid Demo Wallet' \
+  "$release_binary"; then
+  echo "normal release binary contains the public standalone genesis warning or marker" >&2
+  exit 1
+fi
+if rg -a -q \
   'OXID_DESKTOP_PORTAL_TEST_PROFILE|portal-offer\.capability|Oxid Desktop Test' \
   "$release_binary"; then
   echo "normal release binary contains the ARM64 desktop test profile" >&2
   exit 1
 fi
-if rg -a -q \
-  'OXID_STANDALONE_LOCAL_PROFILE|ws://127\.0\.0\.1:8088/api/v4/graphql/ws|http://127\.0\.0\.1:8088/api/v4/graphql|ws://127\.0\.0\.1:9944|http://127\.0\.0\.1:6300' \
-  "$release_binary"; then
-  echo "normal release binary contains the standalone local profile or its routes" >&2
-  exit 1
-fi
+standalone_local_release_values=(
+  'OXID_STANDALONE_LOCAL_PROFILE'
+  'ws://127.0.0.1:8088/api/v4/graphql/ws' # nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
+  'http://127.0.0.1:8088/api/v4/graphql'
+  'ws://127.0.0.1:9944' # nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
+  'http://127.0.0.1:6300'
+)
+for forbidden_value in "${standalone_local_release_values[@]}"; do
+  if rg -a -F -q -- "$forbidden_value" "$release_binary"; then
+    echo "normal release binary contains the standalone local profile or its routes" >&2
+    exit 1
+  fi
+done
 if rg -a -q \
   'OXID_STANDALONE_FUNDER_SEED_HEX|OXID_ENABLE_LIVE_STANDALONE_FUNDING|Ephemeral funded recipient|Standalone funding authority|Ephemeral shielded recipient|Standalone shielded funding authority' \
   "$release_binary"; then

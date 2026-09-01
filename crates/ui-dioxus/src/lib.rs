@@ -130,6 +130,8 @@ const CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS: &str =
     "Credential issuance terminal error: protocol unavailable";
 const CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS: &str =
     "Credential issuance protocol error: protocol unavailable";
+const NATIVE_SHIELDED_NIGHT_TOKEN_TYPE: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 #[cfg(not(target_arch = "wasm32"))]
 const UI_BLOCKING_TASK_STACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -3187,6 +3189,65 @@ fn developer_profile_banner() -> Element {
     rsx! {}
 }
 
+#[cfg(feature = "public-standalone-genesis")]
+const PUBLIC_STANDALONE_GENESIS_MARKER: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
+#[cfg(feature = "public-standalone-genesis")]
+const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
+
+fn profile_creation_default_name() -> String {
+    "My wallet".to_owned()
+}
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_fixture_profile_exists(profiles: &[WalletProfileView]) -> bool {
+    profiles
+        .iter()
+        .any(|profile| profile.display_name == PUBLIC_STANDALONE_PROFILE_NAME)
+}
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_fixture_choice_label(fixture_exists: bool, fixture_selected: bool) -> &'static str {
+    if fixture_exists {
+        "Public demo wallet already exists"
+    } else if fixture_selected {
+        "Public demo wallet selected"
+    } else {
+        "Use public demo wallet"
+    }
+}
+
+fn public_fixture_name_conflicts(profiles: &[WalletProfileView], candidate: &str) -> bool {
+    #[cfg(feature = "public-standalone-genesis")]
+    {
+        // `ProfileName::parse` applies the same trim before persistence.
+        candidate.trim() == PUBLIC_STANDALONE_PROFILE_NAME
+            && public_fixture_profile_exists(profiles)
+    }
+    #[cfg(not(feature = "public-standalone-genesis"))]
+    {
+        let _ = (profiles, candidate);
+        false
+    }
+}
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_standalone_genesis_banner() -> Element {
+    rsx! {
+        aside {
+            class: "developer-profile-banner",
+            role: "alert",
+            "data-wallet-authority": PUBLIC_STANDALONE_GENESIS_MARKER,
+            strong { "Public genesis wallet capability" }
+            span { "Only the unique “Oxid Demo Wallet” profile can use shared, publicly spendable test authority; other profiles remain random. No privacy or ownership is implied." }
+        }
+    }
+}
+
+#[cfg(not(feature = "public-standalone-genesis"))]
+fn public_standalone_genesis_banner() -> Element {
+    rsx! {}
+}
+
 /// Brand-agnostic Dioxus incoming adapter and mobile-first application shell.
 #[component]
 pub fn App() -> Element {
@@ -3339,6 +3400,7 @@ pub fn App() -> Element {
                 aria_hidden: if demo_gateway_hidden { "true" } else { "false" },
                 inert: html_boolean_attribute(demo_gateway_inert),
                 {developer_profile_banner()}
+                {public_standalone_genesis_banner()}
                 {demo_gateway_banner}
                 ProfileGateway {
                     state: session,
@@ -3446,6 +3508,7 @@ pub fn App() -> Element {
             aria_hidden: if demo_shell_hidden { "true" } else { "false" },
             inert: html_boolean_attribute(demo_shell_inert),
             {developer_profile_banner()}
+            {public_standalone_genesis_banner()}
             {demo_shell_banner}
             header { class: "app-header",
                 button {
@@ -4216,11 +4279,31 @@ fn ProfileManager(
     let brand = consume_context::<BrandProfile>();
     let create_wallet_profile = services.create_wallet_profile();
     let select_wallet_profile = services.select_wallet_profile();
+    let default_display_name = profile_creation_default_name();
     let mut profile_list = use_signal(|| profiles);
-    let mut display_name = use_signal(|| "My wallet".to_owned());
+    let mut display_name = use_signal(|| default_display_name);
     let mut state = use_signal(|| CreationState::Idle);
     let busy = matches!(*state.read(), CreationState::Working);
-    let can_submit = !busy && !display_name.read().trim().is_empty();
+    let fixture_name_conflict =
+        public_fixture_name_conflicts(&profile_list.read(), display_name.read().trim());
+    let can_submit = !busy && !display_name.read().trim().is_empty() && !fixture_name_conflict;
+    #[cfg(feature = "public-standalone-genesis")]
+    let public_fixture_choice = {
+        let fixture_exists = public_fixture_profile_exists(&profile_list.read());
+        let fixture_selected = display_name.read().trim() == PUBLIC_STANDALONE_PROFILE_NAME;
+        rsx! {
+            p { class: "form-hint", "For a disposable local demo, explicitly select the shared public wallet. Anyone can spend its funds." }
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                disabled: busy || fixture_exists || fixture_selected,
+                onclick: move |_| display_name.set(PUBLIC_STANDALONE_PROFILE_NAME.to_owned()),
+                {public_fixture_choice_label(fixture_exists, fixture_selected)}
+            }
+        }
+    };
+    #[cfg(not(feature = "public-standalone-genesis"))]
+    let public_fixture_choice = rsx! {};
 
     let feedback = match state.read().clone() {
         CreationState::Idle => rsx! {
@@ -4319,6 +4402,10 @@ fn ProfileManager(
                 value: "{display_name}",
                 oninput: move |event| display_name.set(event.value()),
             }
+            if fixture_name_conflict {
+                p { class: "form-hint", role: "alert", "The public demo profile already exists. Choose a different profile name." }
+            }
+            {public_fixture_choice}
             button {
                 class: "primary-action",
                 r#type: "button",
@@ -4346,6 +4433,7 @@ fn ProfileManager(
                         match result {
                             Ok(Ok((created, selected))) => {
                                 profile_list.write().push(created);
+                                display_name.set(profile_creation_default_name());
                                 state.set(CreationState::Created(selected.clone()));
                                 on_selected.call(selected);
                             }
@@ -5686,6 +5774,7 @@ fn AccountSyncCard(
             let owned_notes = shielded
                 .owned_note_count
                 .map_or_else(|| "—".to_owned(), |count| count.to_string());
+            let shielded_night = home_shielded_value(&shielded);
             let retained_dust = dust.clone();
             let retained_shielded = shielded.clone();
             let action_services = services.clone();
@@ -5711,15 +5800,16 @@ fn AccountSyncCard(
                         }
                         div { class: "account-sync-card__row",
                             div {
-                                strong { class: "privacy-value", "{owned_notes} shielded notes" }
+                                strong { class: "privacy-value", "{shielded_night}" }
+                                small { "Shielded NIGHT · {owned_notes} protected notes" }
                                 small { "{shielded_sync_note(&shielded)}" }
                             }
                             span { class: "{dust_status_pill_class(&shielded.state)}", "{ui::sync_state(&shielded.state)}" }
                         }
                     }
-                    if !shielded.balances.is_empty() {
+                    if non_native_shielded_balances(&shielded).next().is_some() {
                         div { class: "activity-list", aria_label: "Shielded token balances",
-                            for balance in shielded.balances.iter() {
+                            for balance in non_native_shielded_balances(&shielded) {
                                 div { class: "activity-row", key: "{balance.token_type_hex}",
                                     span { class: "activity-row__mark", aria_hidden: "true", "◈" }
                                     div {
@@ -7904,12 +7994,31 @@ fn newest_credential(credentials: &[CredentialView]) -> Option<&CredentialView> 
 }
 
 fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
+    if let Some(balance) = status
+        .balances
+        .iter()
+        .find(|balance| balance.token_type_hex == NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
+    {
+        let amount = ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units);
+        return if status.is_complete() {
+            amount
+        } else {
+            format!("{amount} · last known")
+        };
+    }
+    if !status.is_complete() {
+        return "—".to_owned();
+    }
+    ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0")
+}
+
+fn non_native_shielded_balances(
+    status: &WalletShieldedSyncView,
+) -> impl Iterator<Item = &oxid_wallet_application::WalletShieldedTokenBalanceView> {
     status
         .balances
         .iter()
-        .find(|balance| balance.token_type_hex == "0".repeat(64))
-        .map(|balance| ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units))
-        .unwrap_or_else(|| ui::sync_state(&status.state).to_owned())
+        .filter(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
 }
 
 fn home_shielded_detail(status: &WalletShieldedSyncView) -> String {
@@ -11965,6 +12074,40 @@ mod tests {
         assert_eq!(profile_monogram("---", "oxid"), "O");
     }
 
+    #[cfg(feature = "public-standalone-genesis")]
+    #[test]
+    fn public_fixture_requires_explicit_selection_and_duplicates_are_blocked() {
+        assert_eq!(profile_creation_default_name(), "My wallet");
+        let profiles = vec![WalletProfileView {
+            id: "profile_demo".to_owned(),
+            display_name: PUBLIC_STANDALONE_PROFILE_NAME.to_owned(),
+            created_at_millis: 1,
+        }];
+
+        assert!(public_fixture_profile_exists(&profiles));
+        assert!(public_fixture_name_conflicts(
+            &profiles,
+            PUBLIC_STANDALONE_PROFILE_NAME
+        ));
+        assert!(public_fixture_name_conflicts(
+            &profiles,
+            "  Oxid Demo Wallet  "
+        ));
+        assert!(!public_fixture_name_conflicts(&profiles, "Another wallet"));
+        assert_eq!(
+            public_fixture_choice_label(false, false),
+            "Use public demo wallet"
+        );
+        assert_eq!(
+            public_fixture_choice_label(false, true),
+            "Public demo wallet selected"
+        );
+        assert_eq!(
+            public_fixture_choice_label(true, false),
+            "Public demo wallet already exists"
+        );
+    }
+
     #[test]
     fn compact_policy_summary_keeps_revocation_truthful() {
         let credential = CredentialView {
@@ -12246,6 +12389,49 @@ mod tests {
             shielded_sync_note(&shielded_status("stalled", Some(1), Some(2)))
                 .contains("last consistent checkpoint")
         );
+    }
+
+    #[test]
+    fn shielded_night_balance_distinguishes_zero_from_unavailable() {
+        let synced_zero = shielded_status("synced", Some(2), Some(2));
+        assert_eq!(home_shielded_value(&synced_zero), "0 NIGHT");
+
+        let mut funded = shielded_status("synced", Some(2), Some(2));
+        funded.balances = vec![oxid_wallet_application::WalletShieldedTokenBalanceView {
+            token_type_hex: NATIVE_SHIELDED_NIGHT_TOKEN_TYPE.to_owned(),
+            atomic_units: "1500000".to_owned(),
+        }];
+        assert_eq!(home_shielded_value(&funded), "1.5 NIGHT");
+
+        let unavailable = shielded_status("unavailable", None, None);
+        assert_eq!(home_shielded_value(&unavailable), "—");
+        assert!(home_shielded_detail(&unavailable).contains(ui::sync_state("unavailable")));
+
+        for incomplete in ["cached", "cancelled", "stalled"] {
+            let mut status = shielded_status(incomplete, Some(2), Some(2));
+            status.balances = funded.balances.clone();
+            assert_eq!(home_shielded_value(&status), "1.5 NIGHT · last known");
+            assert!(home_shielded_detail(&status).contains(ui::sync_state(incomplete)));
+        }
+    }
+
+    #[test]
+    fn shielded_token_rows_exclude_native_night_and_preserve_other_tokens() {
+        let mut status = shielded_status("synced", Some(2), Some(2));
+        status.balances = vec![
+            oxid_wallet_application::WalletShieldedTokenBalanceView {
+                token_type_hex: NATIVE_SHIELDED_NIGHT_TOKEN_TYPE.to_owned(),
+                atomic_units: "1".to_owned(),
+            },
+            oxid_wallet_application::WalletShieldedTokenBalanceView {
+                token_type_hex: "aa".repeat(32),
+                atomic_units: "2".to_owned(),
+            },
+        ];
+
+        let rows = non_native_shielded_balances(&status).collect::<Vec<_>>();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].token_type_hex, "aa".repeat(32));
     }
 
     #[test]

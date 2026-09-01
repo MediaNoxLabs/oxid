@@ -96,6 +96,11 @@ or production readiness. The ordinary commands remain proof-disabled.
 
 ## Physical Android against the laptop standalone stack
 
+Repository launchers select development custody first, which adds
+`standalone-development`, and only then add the `standalone-local` or
+`standalone-tailnet` transport flag. Bare transport flags are intentionally
+non-compiling because a route must never choose custody implicitly.
+
 Connect the laptop and phone to the same tailnet, authorize USB debugging, and
 ensure no Android emulator or iOS simulator is running. Then use:
 
@@ -109,6 +114,17 @@ TLS-terminated Tailscale Serve routes and the phone command embeds their current
 MagicDNS URLs only in the explicit `standalone-tailnet` development build. No
 personal IP, local password, or endpoint is committed. The profile is
 incompatible with native custody and is excluded from normal release artifacts.
+Choose **Use public demo wallet**, then create the uniquely named **Oxid Demo
+Wallet** profile in either live standalone build. This explicit action opts in
+to the chain's shared public genesis wallet; the ordinary form still defaults
+to **My wallet** with random custody. Duplicate fixture names fail closed and
+other profiles remain random.
+After deriving account `0/0`, choose **Sync now** to load NIGHT, shielded NIGHT,
+and DUST independently. Treat every asset on this public wallet as disposable
+test value: anyone can derive the same authority.
+With the local stack running, `just standalone-public-balances` proves the exact
+three genesis projections through the same live application ports. Restart the
+standalone stack first if an authorized funding test spent the shared fixture.
 Stop the owned containers and Serve routes with `just standalone-down`.
 
 Physical identity-ingress evidence is intentionally interactive and never

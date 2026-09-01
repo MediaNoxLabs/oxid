@@ -122,6 +122,7 @@ pub enum HeadlessCompositionError {
     PortalConfigurationUnavailable,
     PortalRequiresStandaloneSimulation,
     InvalidPortalConfiguration,
+    PublicStandaloneGenesisRequiresUndeployed,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -171,6 +172,9 @@ impl std::fmt::Display for HeadlessCompositionError {
                 "Portal issuance cannot be combined with live Midnight or alternate resolver configuration"
             }
             Self::InvalidPortalConfiguration => "invalid Portal deployment configuration",
+            Self::PublicStandaloneGenesisRequiresUndeployed => {
+                "public standalone genesis custody requires the undeployed network"
+            }
         };
         formatter.write_str(message)
     }

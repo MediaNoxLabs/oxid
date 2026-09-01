@@ -183,6 +183,7 @@ pub fn compose_authenticated_production(
             portal_test_ingress: None,
         },
         PassportVaultRepositoryComposition::unavailable(),
+        |security| security,
     ))
 }
 
@@ -217,5 +218,6 @@ pub fn compose() -> ApplicationServices {
             portal_test_ingress: None,
         },
         PassportVaultRepositoryComposition::unavailable(),
+        |security| security,
     )
 }

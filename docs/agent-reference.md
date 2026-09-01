@@ -2257,7 +2257,20 @@ to silence the shell probe.
   compatibility choice unless a pinned image/schema upgrade is made atomically.
   Development custody remains process-local: after process death, retain the
   public association but report uninitialized protection and withhold the
-  former addresses. This private harness is not verified public App Link or
+  former addresses until initialization. The live local/tailnet app calls
+  explicitly named `public_genesis` constructors; additive Cargo features must
+  never change the existing OS-random constructor behavior. Those constructors
+  supply the public scalar-one standalone genesis root through development
+  custody's typed profile-specific initializer only for the unique `Oxid Demo
+  Wallet` profile. Duplicate fixture names fail closed, initialization order is
+  irrelevant, and generic randomness stays OS-backed for ordinary profile
+  roots, nonces, references, and generated keys. The root is shared public
+  test authority, never private wallet material, and must remain absent from
+  normal/native-custody artifacts, UI DTOs, logs, and diagnostics. Every build
+  that includes it must render the `OXID_PUBLIC_STANDALONE_GENESIS_WALLET`
+  warning before and after profile selection. Balance
+  display still requires independent live NIGHT, DUST, and shielded sync. This
+  private harness is not verified public App Link or
   production-discovery evidence. Both live profiles share one undeployed chain
   identity, the same typed adapters, and the same durable public
   profile/account binding; only transport differs. Deterministic

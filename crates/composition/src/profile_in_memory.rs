@@ -99,6 +99,7 @@ pub(super) fn compose_in_memory_with_presentation(
             portal_test_ingress: None,
         },
         PassportVaultRepositoryComposition::process_local(),
+        |security| security,
     );
     #[cfg(not(target_arch = "wasm32"))]
     {
