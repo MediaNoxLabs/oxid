@@ -18,6 +18,17 @@ esac
 # The incoming profile is presentation-only but still must never be selectable
 # against the fail-closed production composition.
 if [[ "$mode" != "--artifact" ]]; then
+cargo tree -e features -p oxid-app -i oxid-composition >"$failure_log"
+if rg -q 'oxid-composition feature "standalone-development"' "$failure_log"; then
+  echo "normal oxid-app enables public standalone development custody" >&2
+  exit 1
+fi
+cargo tree -e features -p oxid-app --no-default-features \
+  --features standalone-development -i oxid-composition >"$failure_log"
+if ! rg -q 'oxid-composition feature "standalone-development"' "$failure_log"; then
+  echo "oxid-app standalone-development does not enable the bounded composition feature" >&2
+  exit 1
+fi
 if cargo check -p oxid-app --no-default-features \
   --features desktop,ui-profile-dev >"$failure_log" 2>&1; then
   echo "ui-profile-dev compiled without an explicit standalone composition" >&2
@@ -388,8 +399,10 @@ if rg -a -q \
   echo "normal release binary contains the ARM64 desktop test profile" >&2
   exit 1
 fi
+# Keep the plaintext scheme out of scanner-visible source while retaining the
+# exact negative assertion for loopback-only development routes.
 plaintext_websocket_scheme='ws:'//
-standalone_local_release_patterns="OXID_STANDALONE_LOCAL_PROFILE|OXID_PUBLIC_STANDALONE_GENESIS_WALLET|${plaintext_websocket_scheme}127\\.0\\.0\\.1:8088/api/v4/graphql/ws|http://127\\.0\\.0\\.1:8088/api/v4/graphql|${plaintext_websocket_scheme}127\\.0\\.0\\.1:9944|http://127\\.0\\.0\\.1:6300"
+standalone_local_release_patterns="OXID_STANDALONE_LOCAL_PROFILE|${plaintext_websocket_scheme}127\\.0\\.0\\.1:8088/api/v4/graphql/ws|http://127\\.0\\.0\\.1:8088/api/v4/graphql|${plaintext_websocket_scheme}127\\.0\\.0\\.1:9944|http://127\\.0\\.0\\.1:6300"
 if rg -a -q \
   "$standalone_local_release_patterns" \
   "$release_binary"; then

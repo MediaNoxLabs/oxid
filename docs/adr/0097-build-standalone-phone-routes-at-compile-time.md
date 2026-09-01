@@ -64,9 +64,12 @@ its first profile. This is intentionally public test authority, not protected
 wallet material: anyone can derive it and spend funds assigned to it. Every
 later nonce, key reference, and additional profile root uses OS randomness.
 The fixture is absent from normal and native-custody composition, never enters
-UI/application DTOs or logs, and carries a release-exclusion marker. This
-exception exists only so the live Wallet can synchronize the chain's known
-NIGHT, shielded, and DUST state through the ordinary protected ports.
+UI/application DTOs or logs, and is compiled only by the explicit composition
+feature selected from `oxid-app/standalone-development`. The release guard
+proves that feature edge is absent from the normal graph and present in the
+development graph. This exception exists only so the live Wallet can
+synchronize the chain's known NIGHT, shielded, and DUST state through the
+ordinary protected ports.
 
 Package a repository-owned Docker Compose harness using the exact reviewed
 prototype image versions for node, indexer, and proof server. Containers bind

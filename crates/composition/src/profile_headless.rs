@@ -24,7 +24,10 @@ use super::passport_vault::{
     with_simulated_passport_vault_calls,
 };
 use super::services::ApplicationServices;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(test, feature = "standalone-development")
+))]
 use super::standalone_genesis::StandaloneDevelopmentRandom;
 use super::wiring::{
     compose_with_adapters, compose_with_adapters_and_credential_profile,
@@ -298,7 +301,10 @@ pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> Applicat
 /// Wires the explicit compile-time mobile development profile to the public
 /// undeployed genesis wallet. Ordinary runtime-selected headless standalone
 /// composition continues to initialize an OS-random wallet root.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(test, feature = "standalone-development")
+))]
 pub(super) fn compose_public_genesis_standalone(
     config: MidnightStandaloneConfig,
 ) -> ApplicationServices {

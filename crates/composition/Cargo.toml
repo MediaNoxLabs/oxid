@@ -10,6 +10,9 @@ publish = false
 
 [features]
 default = []
+# Public standalone genesis custody for explicit development app profiles.
+# Normal composition does not compile the fixture authority.
+standalone-development = []
 # Native oxid-headless-only development admission for the exact local Portal +
 # standalone bundle. Other consumers compile without this escape hatch.
 headless-portal-local = []

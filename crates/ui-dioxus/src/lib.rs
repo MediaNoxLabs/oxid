@@ -7915,11 +7915,7 @@ fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
     {
         return ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units);
     }
-    if matches!(
-        status.state.as_str(),
-        "synced" | "cached" | "cancelled" | "stalled"
-    ) && status.owned_note_count.is_some()
-    {
+    if status.state == "synced" && status.owned_note_count.is_some() {
         return ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0");
     }
     ui::sync_state(&status.state).to_owned()
@@ -12278,6 +12274,11 @@ mod tests {
             home_shielded_value(&unavailable),
             ui::sync_state("unavailable")
         );
+
+        for incomplete in ["cached", "cancelled", "stalled"] {
+            let status = shielded_status(incomplete, Some(2), Some(2));
+            assert_eq!(home_shielded_value(&status), ui::sync_state(incomplete));
+        }
     }
 
     #[test]

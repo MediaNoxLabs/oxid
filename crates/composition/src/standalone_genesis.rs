@@ -41,11 +41,12 @@ impl StandaloneDevelopmentRandom {
 impl RandomPort for StandaloneDevelopmentRandom {
     fn fill_bytes(&self, destination: &mut [u8]) -> Result<(), PlatformError> {
         let mut root = self.root()?;
-        if let Some(seed) = root.take() {
+        if let Some(seed) = root.as_ref() {
             if destination.len() != seed.len() {
                 return Err(PlatformError::RandomnessUnavailable);
             }
             destination.copy_from_slice(seed.as_ref());
+            root.take();
             return Ok(());
         }
         drop(root);
@@ -77,6 +78,12 @@ mod tests {
             random.fill_bytes(&mut wrong_size),
             Err(PlatformError::RandomnessUnavailable)
         );
+
+        let mut root = [0_u8; 32];
+        random
+            .fill_bytes(&mut root)
+            .expect("a malformed request must not consume the public root");
+        assert_eq!(root, PUBLIC_STANDALONE_GENESIS_ROOT);
     }
 
     #[test]

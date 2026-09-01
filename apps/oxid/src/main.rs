@@ -171,9 +171,7 @@ fn main() {
     ))]
     let application = {
         const OXID_STANDALONE_PORTAL_PROFILE: &str = "OXID_STANDALONE_PORTAL_PROFILE";
-        const OXID_PUBLIC_STANDALONE_GENESIS_WALLET: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
         let _ = OXID_STANDALONE_PORTAL_PROFILE;
-        let _ = OXID_PUBLIC_STANDALONE_GENESIS_WALLET;
         oxid_composition::compose_mobile_development_portal_standalone_from_routes(
             "ws://127.0.0.1:8088/api/v4/graphql/ws",
             "http://127.0.0.1:8088/api/v4/graphql",
@@ -196,8 +194,6 @@ fn main() {
         not(target_arch = "wasm32")
     ))]
     let application = {
-        const OXID_PUBLIC_STANDALONE_GENESIS_WALLET: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
-        let _ = OXID_PUBLIC_STANDALONE_GENESIS_WALLET;
         oxid_composition::compose_mobile_development_portal_tailnet_from_routes(
             env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
             env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
@@ -237,9 +233,7 @@ fn main() {
     ))]
     let application = {
         const OXID_STANDALONE_TAILNET_PROFILE: &str = "OXID_STANDALONE_TAILNET_PROFILE";
-        const OXID_PUBLIC_STANDALONE_GENESIS_WALLET: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
         let _ = OXID_STANDALONE_TAILNET_PROFILE;
-        let _ = OXID_PUBLIC_STANDALONE_GENESIS_WALLET;
         oxid_composition::compose_mobile_development_standalone_from_routes(
             env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
             env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
@@ -258,9 +252,7 @@ fn main() {
     ))]
     let application = {
         const OXID_STANDALONE_LOCAL_PROFILE: &str = "OXID_STANDALONE_LOCAL_PROFILE";
-        const OXID_PUBLIC_STANDALONE_GENESIS_WALLET: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
         let _ = OXID_STANDALONE_LOCAL_PROFILE;
-        let _ = OXID_PUBLIC_STANDALONE_GENESIS_WALLET;
         oxid_composition::compose_mobile_development_standalone_from_routes(
             "ws://127.0.0.1:8088/api/v4/graphql/ws",
             "http://127.0.0.1:8088/api/v4/graphql",
