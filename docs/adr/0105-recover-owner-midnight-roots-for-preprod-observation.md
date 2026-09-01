@@ -58,6 +58,11 @@ projects public NIGHT, shielded tokens/notes, and DUST with their existing
 live/cached/stalled freshness. Network selection is fixed, and the
 observation-only UI omits DUST registration, transfer preparation,
 authorization, proving, submission, and submission recovery controls.
+Native root installation and public account-association persistence are two
+durability boundaries. If the latter fails after installation, recovery is
+still reported as installed: the Wallet page offers an explicit native unlock
+and idempotent account `0/0` completion action without asking for or importing
+the root again. An uninitialized cancelled profile cannot invoke that action.
 
 The secret input is cleared before work is scheduled and again on cancel,
 navigation/unmount, failure, and mobile lifecycle wake. Intermediates remain in
@@ -92,7 +97,8 @@ caches remain rebuildable and are not treated as backup authority.
 
 - Application tests cover canonical/malformed input, redacted commands,
   confirmation ordering, initialized or associated profiles, authorization
-  denial/retry, canonical derivation, and duplicate rejection.
+  denial/retry, canonical derivation, partial derivation recovery, and duplicate
+  rejection.
 - Mobile-storage tests cover denial without initialization, one-shot install,
   deterministic derivation after adapter restart, and duplicate refusal.
 - UI tests cover redacted/cleared secret state and the observation-only write

@@ -157,6 +157,13 @@ pub fn compose_authenticated_production(
         any(target_os = "ios", target_os = "android")
     ))]
     let authenticated_network_id = deployment.profile.midnight().network_id().to_owned();
+    #[cfg(all(
+        feature = "preprod-observation",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    if authenticated_network_id != "preprod" {
+        return Err(ProductionDeploymentCompositionError::InvalidMidnightProfile);
+    }
     let did_resolver = HttpDidResolverConfig::new(deployment.profile.ssi().did_resolver_url())
         .map(HttpDidResolver::new)
         .map_err(|_| ProductionDeploymentCompositionError::InvalidSsiProfile)?;

@@ -16,7 +16,7 @@ mod wallet_root_recovery;
 
 use assets_page::AssetsPage;
 #[cfg(test)]
-use assets_page::wallet_write_actions_available;
+use assets_page::{wallet_account_activation_available, wallet_write_actions_available};
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
 pub use diagnostics::DiagnosticsUiServices;
 use dids::DidsPage;
@@ -10824,6 +10824,31 @@ mod tests {
         assert!(wallet_write_actions_available(false));
     }
 
+    #[test]
+    fn observation_profile_finishes_only_an_installed_recovered_account() {
+        assert!(!wallet_account_activation_available(
+            true,
+            true,
+            "Uninitialized",
+            false,
+        ));
+        assert!(wallet_account_activation_available(
+            true, true, "Locked", false,
+        ));
+        assert!(wallet_account_activation_available(
+            true, true, "Unlocked", false,
+        ));
+        assert!(!wallet_account_activation_available(
+            true, true, "Unlocked", true,
+        ));
+        assert!(wallet_account_activation_available(
+            false,
+            true,
+            "Uninitialized",
+            false,
+        ));
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn blocking_wallet_operations_execute_off_the_caller_thread() {
@@ -12687,7 +12712,7 @@ mod tests {
     fn protocol_error_feedback_renders_a_durable_sanitized_terminal_status() {
         let source = include_str!("lib.rs");
         let rendered_source = source
-            .split("#[cfg(test)]")
+            .split("\n#[cfg(test)]\nmod tests {")
             .next()
             .expect("production source precedes tests");
         assert_eq!(

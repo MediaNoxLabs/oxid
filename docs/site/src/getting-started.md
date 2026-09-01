@@ -120,6 +120,9 @@ The build is deliberately observation-only: it offers no send, DUST
 registration, proving, or submission controls. Cancelling or backgrounding the
 app clears the input. Failed native authorization leaves the empty profile
 retryable; successful recovery is one-shot and duplicate import is rejected.
+If account metadata could not be persisted after that one-shot installation,
+Wallet offers **Authorize and finish account**; it never asks for the root a
+second time.
 If the signed deployment profile or live node genesis cannot be authenticated,
 startup fails closed before the recovery screen is available.
 

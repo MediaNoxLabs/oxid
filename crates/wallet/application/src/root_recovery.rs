@@ -135,6 +135,7 @@ pub struct WalletRootRecoveryView {
     pub network_id: String,
     pub account_index: u32,
     pub address_index: u32,
+    pub canonical_account_ready: bool,
 }
 
 pub trait RecoverWalletRootUseCase: Send + Sync {
@@ -276,14 +277,16 @@ where
         self.protection
             .recover_root(&profile_id, command.root)
             .map_err(WalletRootRecoveryError::Custody)?;
-        self.networks
-            .derive_account(&profile_id, 0, 0)
-            .map_err(WalletRootRecoveryError::Network)?;
+        // The root is durably installed once native authorization succeeds.
+        // Account metadata is independently retryable from the wallet screen;
+        // never misreport an installed root as a retryable import failure.
+        let canonical_account_ready = self.networks.derive_account(&profile_id, 0, 0).is_ok();
 
         Ok(WalletRootRecoveryView {
             network_id: self.network_id.as_str().to_owned(),
             account_index: 0,
             address_index: 0,
+            canonical_account_ready,
         })
     }
 }
@@ -338,6 +341,7 @@ mod tests {
         status: Mutex<WalletSecurityStatus>,
         recovered: Mutex<Option<[u8; 32]>>,
         deny_recovery: Mutex<bool>,
+        deny_derivation: Mutex<bool>,
         derive_count: Mutex<u8>,
         network: ChainNetwork,
     }
@@ -360,6 +364,7 @@ mod tests {
                 )),
                 recovered: Mutex::new(None),
                 deny_recovery: Mutex::new(false),
+                deny_derivation: Mutex::new(false),
                 derive_count: Mutex::new(0),
                 network: ChainNetwork::new(
                     ChainKind::Midnight,
@@ -511,6 +516,9 @@ mod tests {
             address_index: u32,
         ) -> Result<DerivedChainAccount, WalletAccountPortError> {
             *self.derive_count.lock().expect("derive count") += 1;
+            if *self.deny_derivation.lock().expect("derivation denial") {
+                return Err(WalletAccountPortError::Unavailable);
+            }
             DerivedChainAccount::new(
                 self.network.id().clone(),
                 ChainAccountId::parse("account_preprod_0").expect("account id"),
@@ -619,12 +627,37 @@ mod tests {
         assert_eq!(recovered.network_id, "preprod");
         assert_eq!(recovered.account_index, 0);
         assert_eq!(recovered.address_index, 0);
+        assert!(recovered.canonical_account_ready);
         assert!(state.recovered.lock().expect("root").is_some());
         assert_eq!(*state.derive_count.lock().expect("derive count"), 1);
         assert_eq!(
             service.execute(command(true)),
             Err(WalletRootRecoveryError::ProfileNotEmpty)
         );
+    }
+
+    #[test]
+    fn installed_root_reports_account_derivation_as_separately_retryable() {
+        let state = Arc::new(TestState::new());
+        *state.deny_derivation.lock().expect("derivation denial") = true;
+        let service = WalletRootRecoveryService::new(
+            Arc::clone(&state),
+            Arc::clone(&state),
+            Arc::clone(&state),
+            "preprod".to_owned(),
+        )
+        .expect("service");
+
+        let recovered = service
+            .execute(command(true))
+            .expect("root installation remains successful");
+        assert!(!recovered.canonical_account_ready);
+        assert!(state.recovered.lock().expect("root").is_some());
+        assert_eq!(
+            state.status.lock().expect("status").state(),
+            WalletProtectionState::Unlocked
+        );
+        assert_eq!(*state.derive_count.lock().expect("derive count"), 1);
     }
 
     #[test]

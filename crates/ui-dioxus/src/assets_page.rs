@@ -191,11 +191,28 @@ pub(super) fn AssetsPage(
                     }
                 }
 
-                if wallet_write_actions_available(observation_only) && protection_available && (!protection_unlocked || !protected_account) {
+                if observation_only && protection_available && security.state_name() == "Uninitialized" {
                     article { class: "surface-card development-card",
-                        p { class: "card-eyebrow", "Standalone development" }
+                        p { class: "card-eyebrow", "PreProd recovery" }
+                        h2 { "Wallet root not installed" }
+                        p { "Finish owner-root recovery from Settings before deriving or synchronizing this profile." }
+                    }
+                }
+
+                if wallet_account_activation_available(
+                    observation_only,
+                    protection_available,
+                    security.state_name(),
+                    protected_account,
+                ) {
+                    article { class: "surface-card development-card",
+                        p { class: "card-eyebrow", if observation_only { "PreProd recovery" } else { "Standalone development" } }
                         h2 {
-                            if security.state_name() == "Uninitialized" {
+                            if observation_only && security.state_name() == "Locked" {
+                                "Unlock recovered PreProd wallet"
+                            } else if observation_only {
+                                "Finish recovered PreProd account"
+                            } else if security.state_name() == "Uninitialized" {
                                 "Activate protected test account"
                             } else if security.state_name() == "Locked" {
                                 "Unlock protected test account"
@@ -203,12 +220,18 @@ pub(super) fn AssetsPage(
                                 "Derive protected NIGHT account"
                             }
                         }
-                        p { "This opt-in simulator/emulator mode uses process-local development custody. It is not durable production key protection." }
+                        p {
+                            if observation_only {
+                                "Native custody already holds the recovered root. Authorize account 0/address 0 derivation without entering the root again."
+                            } else {
+                                "This opt-in simulator/emulator mode uses process-local development custody. It is not durable production key protection."
+                            }
+                        }
                         button {
                             class: "primary-action",
                             r#type: "button",
                             disabled: is_busy,
-                            aria_label: "Activate protected Midnight account",
+                            aria_label: if observation_only { "Finish recovered PreProd account" } else { "Activate protected Midnight account" },
                             onclick: move |_| {
                                 activate_state.set(AccountPageState::Ready {
                                     networks: activate_networks.clone(),
@@ -261,7 +284,13 @@ pub(super) fn AssetsPage(
                                     }
                                 });
                             },
-                            if is_busy { "Activating…" } else { "Activate development wallet" }
+                            if is_busy {
+                                "Activating…"
+                            } else if observation_only {
+                                "Authorize and finish account"
+                            } else {
+                                "Activate development wallet"
+                            }
                         }
                     }
                 }
@@ -342,4 +371,15 @@ pub(super) fn AssetsPage(
 
 pub(super) const fn wallet_write_actions_available(observation_only: bool) -> bool {
     !observation_only
+}
+
+pub(super) fn wallet_account_activation_available(
+    observation_only: bool,
+    protection_available: bool,
+    protection_state: &str,
+    protected_account: bool,
+) -> bool {
+    protection_available
+        && (!observation_only || protection_state != "Uninitialized")
+        && (protection_state != "Unlocked" || !protected_account)
 }
