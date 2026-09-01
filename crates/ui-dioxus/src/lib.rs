@@ -12314,10 +12314,12 @@ mod tests {
 
         let unavailable = shielded_status("unavailable", None, None);
         assert_eq!(home_shielded_value(&unavailable), "—");
+        assert!(home_shielded_detail(&unavailable).contains(ui::sync_state("unavailable")));
 
         for incomplete in ["cached", "cancelled", "stalled"] {
             let status = shielded_status(incomplete, Some(2), Some(2));
             assert_eq!(home_shielded_value(&status), "—");
+            assert!(home_shielded_detail(&status).contains(ui::sync_state(incomplete)));
         }
     }
 

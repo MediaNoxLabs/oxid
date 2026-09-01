@@ -457,7 +457,7 @@ fn compose_development_portal_with_security<N>(
     clock: Arc<SystemClock>,
     security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
     profiles: Arc<JsonWalletProfileRepository>,
-    protection_override: Option<Arc<dyn WalletProtectionPort>>,
+    protection_for_security: Option<Arc<dyn WalletProtectionPort>>,
 ) -> ApplicationServices
 where
     N: oxid_platform_ports::RandomPort + 'static,
@@ -473,7 +473,7 @@ where
         midnight,
         credential_presentation,
         HeadlessCredentialProfile::Portal(Box::new(portal)),
-        protection_override,
+        protection_for_security,
     );
     with_passport_vault_state_source(services, passport_vault_state_source)
 }

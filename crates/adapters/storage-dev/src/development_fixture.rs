@@ -15,7 +15,9 @@ use super::DevelopmentWalletSecurity;
 ///
 /// The root remains inside development custody. Profiles with any other name
 /// continue to initialize from the adapter's random source, and an ambiguous
-/// fixture name fails closed before custody changes.
+/// fixture name fails closed before custody changes. Because display names are
+/// user-editable, assigning the fixture name is an explicit opt-in to the
+/// shared root when that profile is initialized.
 pub struct DevelopmentWalletFixtureProtection<R, C, N> {
     profiles: Arc<R>,
     security: Arc<DevelopmentWalletSecurity<C, N>>,
@@ -65,13 +67,13 @@ where
             .iter()
             .filter(|profile| profile.display_name().as_str() == self.profile_name)
             .collect::<Vec<_>>();
-        if matching_profiles.len() > 1 {
+        let requested_fixture_profile = matching_profiles
+            .iter()
+            .any(|profile| profile.id() == profile_id);
+        if requested_fixture_profile && matching_profiles.len() > 1 {
             return Err(WalletSecurityPortError::Conflict);
         }
-        if matching_profiles
-            .first()
-            .is_some_and(|profile| profile.id() == profile_id)
-        {
+        if requested_fixture_profile {
             self.security
                 .initialize_with_root_seed(profile_id, *self.root_seed)
         } else {
@@ -203,10 +205,12 @@ mod tests {
     fn rejects_duplicate_profile_names() {
         let profiles = Arc::new(InMemoryWalletProfileRepository::new());
         let first = wallet_profile("profile_first", "Public fixture");
+        let ordinary = wallet_profile("profile_ordinary", "Ordinary wallet");
         profiles.save(first.clone()).expect("save first");
         profiles
             .save(wallet_profile("profile_second", "Public fixture"))
             .expect("save second");
+        profiles.save(ordinary.clone()).expect("save ordinary");
         let protection = DevelopmentWalletFixtureProtection::new(
             profiles,
             Arc::new(adapter()),
@@ -218,5 +222,8 @@ mod tests {
             protection.initialize(first.id()),
             Err(WalletSecurityPortError::Conflict)
         );
+        protection
+            .initialize(ordinary.id())
+            .expect("duplicate fixture names do not block ordinary profiles");
     }
 }

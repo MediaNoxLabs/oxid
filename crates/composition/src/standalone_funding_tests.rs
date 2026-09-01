@@ -696,7 +696,7 @@ fn compose_live_with_protection<N>(
     dust_checkpoints: Option<MidnightDustCheckpointConfig>,
     shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
     journal: Option<MidnightSubmissionJournalConfig>,
-    protection_override: Option<Arc<dyn WalletProtectionPort>>,
+    protection_for_security: Option<Arc<dyn WalletProtectionPort>>,
 ) -> ApplicationServices
 where
     N: RandomPort + 'static,
@@ -720,7 +720,7 @@ where
         midnight,
         CredentialPresentationComposition::Standalone,
         HeadlessCredentialProfile::Standalone,
-        protection_override,
+        protection_for_security,
     )
 }
 
@@ -1170,16 +1170,18 @@ fn preprod_transfer_policy_is_positive_bounded_and_amount_observed() {
 }
 
 #[test]
-fn public_balance_contract_tracks_the_exact_standalone_image_pins() {
+fn public_balance_contract_tracks_the_exact_standalone_image_and_preset_pins() {
     let manifest = include_str!("../../../scripts/standalone-stack.yml");
-    for image in [
+    for required_setting in [
         "midnightntwrk/indexer-standalone:4.0.0",
         "midnightntwrk/midnight-node:0.22.3",
         "midnightntwrk/proof-server:8.0.3",
+        "APP__APPLICATION__NETWORK_ID: \"undeployed\"",
+        "CFG_PRESET: \"dev\"",
     ] {
         assert!(
-            manifest.contains(image),
-            "standalone image pin changed without updating the exact public balance contract: {image}"
+            manifest.contains(required_setting),
+            "standalone stack pin changed without updating the exact public balance contract: {required_setting}"
         );
     }
 }
@@ -1188,10 +1190,12 @@ fn public_balance_contract_tracks_the_exact_standalone_image_pins() {
 /// undeployed genesis wallet without accepting or emitting private input.
 ///
 /// This is ignored because it requires the repository-owned standalone stack.
-/// The pinned standalone genesis time places its generating NIGHT at the
-/// protocol's five-DUST-per-NIGHT cap, so chain uptime cannot increase this
-/// projection further. Restart the stack before the check if another explicitly
-/// authorized test has spent the shared public fixture or changed its notes.
+/// The image pins plus the node's pinned `dev` preset define the exact genesis
+/// allocations and note count. The pinned genesis time places its generating
+/// NIGHT at the protocol's five-DUST-per-NIGHT cap, so chain uptime cannot
+/// increase this projection further. Restart the stack before the check if
+/// another explicitly authorized test has spent the shared public fixture or
+/// changed its notes.
 #[test]
 #[ignore = "requires explicit live standalone stack"]
 fn public_standalone_genesis_balances_are_exact() {

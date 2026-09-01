@@ -251,6 +251,12 @@ if ! rg -qxF 'standalone-development = []' crates/composition/Cargo.toml; then
   echo "oxid-composition/standalone-development must remain an additive-edge-free capability flag" >&2
   exit 1
 fi
+composition_fixture_name="$(sed -n 's/^pub(super) const PUBLIC_STANDALONE_PROFILE_NAME: &str = "\([^"]*\)";$/\1/p' crates/composition/src/standalone_genesis.rs)"
+ui_fixture_name="$(sed -n 's/^const PUBLIC_STANDALONE_PROFILE_NAME: &str = "\([^"]*\)";$/\1/p' crates/ui-dioxus/src/lib.rs)"
+if [[ -z "$composition_fixture_name" || "$composition_fixture_name" != "$ui_fixture_name" ]]; then
+  echo "public standalone fixture profile names drifted between composition and UI" >&2
+  exit 1
+fi
 app_standalone_development_members="$(awk '
   /^standalone-development = \[/ { capture=1; next }
   capture && /^\]/ { exit }

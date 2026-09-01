@@ -295,7 +295,9 @@ pub(super) fn compose_with_adapters_and_credential_profile<R, S, M>(
     midnight: Arc<M>,
     credential_presentation: CredentialPresentationComposition,
     credential_profile: HeadlessCredentialProfile,
-    protection_override: Option<Arc<dyn WalletProtectionPort>>,
+    // When supplied, this lifecycle view must delegate to the same `security`
+    // instance used below for key derivation and portable backup.
+    protection_for_security: Option<Arc<dyn WalletProtectionPort>>,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository
@@ -388,7 +390,7 @@ where
             portal_test_ingress,
         },
         headless_passport_vault_repository(),
-        protection_override,
+        protection_for_security,
     )
 }
 
@@ -398,7 +400,9 @@ pub(super) fn compose_with_identity_adapters<R, S, M>(
     midnight: Arc<M>,
     identity_adapters: IdentityAdapters,
     passport_vault_repository: PassportVaultRepositoryComposition,
-    protection_override: Option<Arc<dyn WalletProtectionPort>>,
+    // This may narrow initialization policy, but must wrap the same `security`
+    // instance so lifecycle, derivation, and backup cannot diverge.
+    protection_for_security: Option<Arc<dyn WalletProtectionPort>>,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository
@@ -541,7 +545,7 @@ where
         repository,
         Arc::clone(&clock),
     ));
-    let protection_port = protection_override.unwrap_or_else(|| {
+    let protection_port = protection_for_security.unwrap_or_else(|| {
         let protection: Arc<dyn WalletProtectionPort> = security.clone();
         protection
     });

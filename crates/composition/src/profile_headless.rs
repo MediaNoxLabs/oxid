@@ -299,7 +299,7 @@ fn compose_headless_standalone_with_security<N, R>(
     clock: Arc<SystemClock>,
     security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
     profiles: Arc<R>,
-    protection_override: Option<Arc<dyn WalletProtectionPort>>,
+    protection_for_security: Option<Arc<dyn WalletProtectionPort>>,
 ) -> ApplicationServices
 where
     N: oxid_platform_ports::RandomPort + 'static,
@@ -320,7 +320,7 @@ where
             midnight,
             CredentialPresentationComposition::Standalone,
             HeadlessCredentialProfile::Standalone,
-            protection_override,
+            protection_for_security,
         ),
         passport_vault_state_source,
     )
