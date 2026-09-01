@@ -5,7 +5,7 @@
 - Blueprint source: Sections 3, 6, 13, 14, 18, and 19
 - Source: [issue #145](https://github.com/MediaNoxLabs/oxid/issues/145)
 - Amends: ADR-0001, ADR-0002, ADR-0020, and ADR-0024
-- Implementation state: the policy and baseline are recorded; no Rust source or crate extraction is part of this decision
+- Implementation state: headless, desktop Dioxus, and composition façades are delivered; Midnight remains ordered next; no crate extraction is part of this decision
 
 ## Context
 
@@ -172,7 +172,7 @@ Delivery order is:
 
 1. `apps/oxid-headless/src/lib.rs` under issue #146;
 2. `crates/ui-dioxus/src/lib.rs` under issue #49, with desktop-focused evidence;
-3. `crates/composition/src/lib.rs` under issue #147 in a later delivery;
+3. `crates/composition/src/lib.rs` under issue #147;
 4. `crates/adapters/midnight/src/lib.rs` under issue #148 in a later delivery.
 
 Android, iOS, simulator, emulator, physical-device, and private-credential work
@@ -192,8 +192,8 @@ protocol, custody, credential, ledger, composition, or UI behavior changes.
   consumers; source size remains a review signal rather than a gate.
 - The first work can be validated with headless and desktop-focused checks;
   mobile and sensitive-data gates remain neither weakened nor claimed.
-- Composition and Midnight cohesion remain visible debt with an explicit later
-  order rather than being mixed into the incoming-adapter work.
+- Midnight cohesion remains visible debt with an explicit later order rather
+  than being mixed into the incoming-adapter work.
 
 ## Validation for decomposition deliveries
 
@@ -208,6 +208,24 @@ protocol, custody, credential, ledger, composition, or UI behavior changes.
   desktop compile or smoke check under every affected UI profile.
 - Run the repository's ordinary strict gate before integration; do not reduce
   coverage, architecture, lint, security, DCO, or signature requirements.
+
+## Implementation traceability
+
+- Issue [#146](https://github.com/MediaNoxLabs/oxid/issues/146) applies this
+  decision to `apps/oxid-headless`. Its baseline scopes ownership and the
+  façade ratchet to that crate; later delivery issues add their own crate entry
+  when their decomposition lands.
+- The headless façade owns transport and explicit cross-capability routing.
+  Private modules own the protocol envelope, wire translation, application-port
+  invocation, and capability-focused tests without creating new public paths.
+- Issue [#147](https://github.com/MediaNoxLabs/oxid/issues/147) applies this
+  decision to `crates/composition`. The 4,966-line crate root becomes a
+  51-line façade over private environment parsing, environment-selected
+  assembly, identity, profile, Passport Vault, application-service, and
+  explicit wiring modules. A native external-consumer contract pins the
+  default-native root name surface, feature-selected names on their applicable
+  builds, and all 106 `ApplicationServices` getters; the façade ownership map
+  admits no exclusions or temporary exceptions.
 
 ## Rejected alternatives
 

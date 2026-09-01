@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 1,
+  "crates": [
+    {
+      "name": "oxid-headless",
+      "sourceRoot": "apps/oxid-headless/src",
+      "facadeFiles": [
+        "apps/oxid-headless/src/lib.rs"
+      ],
+      "facadeMaximumPhysicalLines": 350,
+      "facadeMaximumPhysicalLinesByPath": {
+        "apps/oxid-headless/src/lib.rs": 350
+      },
+      "capabilityOwners": [
+        {
+          "name": "wallet-accounts",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/accounts"
+          ]
+        },
+        {
+          "name": "identity-protocols",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/identity_protocols"
+          ]
+        },
+        {
+          "name": "system-and-diagnostics",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/system"
+          ]
+        },
+        {
+          "name": "wallet-profiles",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/wallet_profiles"
+          ]
+        },
+        {
+          "name": "did-lifecycle",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/dids"
+          ]
+        },
+        {
+          "name": "midnight-wallet",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/midnight_wallet"
+          ]
+        },
+        {
+          "name": "passport-vault",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/passport_vault"
+          ]
+        },
+        {
+          "name": "wallet-security",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/security"
+          ]
+        },
+        {
+          "name": "wire-parameters",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/parameters"
+          ]
+        },
+        {
+          "name": "wire-errors",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/errors"
+          ]
+        },
+        {
+          "name": "wire-projections",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/projections"
+          ]
+        },
+        {
+          "name": "protocol-envelope",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/protocol"
+          ]
+        },
+        {
+          "name": "executable-shell",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/main"
+          ]
+        }
+      ],
+      "exclusions": [],
+      "temporaryExceptions": []
+    },
+    {
+      "name": "oxid-ui-dioxus",
+      "sourceRoot": "crates/ui-dioxus/src",
+      "facadeFiles": [
+        "crates/ui-dioxus/src/lib.rs"
+      ],
+      "facadeMaximumPhysicalLines": 12950,
+      "facadeMaximumPhysicalLinesByPath": {
+        "crates/ui-dioxus/src/lib.rs": 12950
+      },
+      "capabilityOwners": [
+        {
+          "name": "brand-profile",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/brand"
+          ]
+        },
+        {
+          "name": "desktop-test-driver",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/desktop_test_driver"
+          ]
+        },
+        {
+          "name": "diagnostics",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/diagnostics"
+          ]
+        },
+        {
+          "name": "presentation-labels",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/labels"
+          ]
+        },
+        {
+          "name": "passport-vault",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/passport_vault"
+          ]
+        },
+        {
+          "name": "profile-guard",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/profile_guard"
+          ]
+        }
+      ],
+      "exclusions": [],
+      "temporaryExceptions": []
+    },
+    {
+      "name": "oxid-composition",
+      "sourceRoot": "crates/composition/src",
+      "facadeFiles": [
+        "crates/composition/src/lib.rs"
+      ],
+      "facadeMaximumPhysicalLines": 51,
+      "facadeMaximumPhysicalLinesByPath": {
+        "crates/composition/src/lib.rs": 51
+      },
+      "capabilityOwners": [
+        {
+          "name": "environment-policy",
+          "modulePathPrefixes": [
+            "crates/composition/src/environment"
+          ]
+        },
+        {
+          "name": "identity-composition",
+          "modulePathPrefixes": [
+            "crates/composition/src/identity"
+          ]
+        },
+        {
+          "name": "passport-vault-bridge",
+          "modulePathPrefixes": [
+            "crates/composition/src/passport_vault"
+          ]
+        },
+        {
+          "name": "headless-profiles",
+          "modulePathPrefixes": [
+            "crates/composition/src/profile_headless"
+          ]
+        },
+        {
+          "name": "environment-selected-profile",
+          "modulePathPrefixes": [
+            "crates/composition/src/profile_environment"
+          ]
+        },
+        {
+          "name": "in-memory-profile",
+          "modulePathPrefixes": [
+            "crates/composition/src/profile_in_memory"
+          ]
+        },
+        {
+          "name": "mobile-profiles",
+          "modulePathPrefixes": [
+            "crates/composition/src/profile_mobile"
+          ]
+        },
+        {
+          "name": "production-profile",
+          "modulePathPrefixes": [
+            "crates/composition/src/profile_production"
+          ]
+        },
+        {
+          "name": "application-services",
+          "modulePathPrefixes": [
+            "crates/composition/src/services"
+          ]
+        },
+        {
+          "name": "capability-wiring",
+          "modulePathPrefixes": [
+            "crates/composition/src/wiring"
+          ]
+        },
+        {
+          "name": "portal-profile",
+          "modulePathPrefixes": [
+            "crates/composition/src/portal"
+          ]
+        },
+        {
+          "name": "funded-finality-evidence",
+          "modulePathPrefixes": [
+            "crates/composition/src/standalone_funding_tests"
+          ]
+        },
+        {
+          "name": "composition-contract-tests",
+          "modulePathPrefixes": [
+            "crates/composition/src/verification"
+          ]
+        }
+      ],
+      "exclusions": [],
+      "temporaryExceptions": []
+    }
+  ]
+}

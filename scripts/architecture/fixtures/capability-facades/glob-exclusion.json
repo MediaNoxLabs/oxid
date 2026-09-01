@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "crates": [
+    {
+      "name": "fixture-adapter",
+      "sourceRoot": "fixture/src",
+      "facadeFiles": [
+        "fixture/src/lib.rs",
+        "fixture/src/shell.rs"
+      ],
+      "facadeMaximumPhysicalLines": 4,
+      "facadeMaximumPhysicalLinesByPath": {
+        "fixture/src/lib.rs": 2,
+        "fixture/src/shell.rs": 2
+      },
+      "capabilityOwners": [
+        {
+          "name": "fixture-capability",
+          "modulePathPrefixes": [
+            "fixture/src/capability"
+          ]
+        }
+      ],
+      "exclusions": [
+        {
+          "path": "fixture/src/*.rs",
+          "classification": "fixture"
+        }
+      ],
+      "temporaryExceptions": []
+    }
+  ]
+}

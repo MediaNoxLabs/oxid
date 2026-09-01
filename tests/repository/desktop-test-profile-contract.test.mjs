@@ -213,4 +213,8 @@ test("normal release gate excludes every desktop-test marker and localhost route
   assert.match(release, /OXID_DESKTOP_PORTAL_TEST_PROFILE/);
   assert.match(release, /desktop-portal-test compiled outside ARM64 macOS/);
   assert.match(release, /portal-offer\\\.capability/);
+  assert.match(
+    release,
+    /rg -qF "\$runtime_authority_marker" apps\/oxid\/src\/main\.rs crates\/composition\/src/,
+  );
 });
