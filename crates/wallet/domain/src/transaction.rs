@@ -2,7 +2,7 @@
 
 use std::{error::Error, fmt};
 
-use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
+use oxid_foundation::{UnixTimestampMillis, opaque_id_type};
 
 use crate::{
     AssetBalance, ChainAccountId, ChainAddress, ChainAddressKind, ChainBlockId, ChainNetworkId,
@@ -12,34 +12,14 @@ use crate::{
 /// Maximum number of public inputs that a wallet transfer preview may report.
 pub const MAX_WALLET_TRANSFER_INPUTS: u16 = 256;
 
-/// Opaque handle for transaction material retained by an outgoing adapter.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct WalletTransactionDraftId(OpaqueId);
-
-impl WalletTransactionDraftId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    /// Opaque handle for transaction material retained by an outgoing adapter.
+    pub struct WalletTransactionDraftId;
 }
 
-/// Public challenge binding authorization to one exact retained draft.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct WalletTransactionAuthorizationChallenge(OpaqueId);
-
-impl WalletTransactionAuthorizationChallenge {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    /// Public challenge binding authorization to one exact retained draft.
+    pub struct WalletTransactionAuthorizationChallenge;
 }
 
 /// Lifecycle state of retained transaction material.

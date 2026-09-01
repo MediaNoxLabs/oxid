@@ -4,39 +4,19 @@
 
 use std::{collections::BTreeSet, error::Error, fmt};
 
-use oxid_foundation::{OpaqueId, OpaqueIdError};
+use oxid_foundation::{OpaqueId, opaque_id_type};
 
 const MAX_TEXT_CHARACTERS: usize = 2_048;
 const MAX_CLAIM_PATH_CHARACTERS: usize = 512;
 const MAX_REQUESTED_CLAIMS: usize = 64;
 const MAX_CANDIDATES: usize = 64;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CredentialPresentationId(OpaqueId);
-
-impl CredentialPresentationId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    pub struct CredentialPresentationId;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PresentationProfileId(OpaqueId);
-
-impl PresentationProfileId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    pub struct PresentationProfileId;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

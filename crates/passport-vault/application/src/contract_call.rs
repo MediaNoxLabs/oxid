@@ -2,7 +2,7 @@
 
 use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
-use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
+use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis, opaque_id_type};
 use oxid_passport_vault_domain::PassportVaultPolicy;
 use oxid_platform_ports::{ClockPort, PlatformError, RandomPort};
 
@@ -18,32 +18,12 @@ pub const MAX_PASSPORT_VAULT_CALL_SUBMISSION_HISTORY: usize = 128;
 pub const AUTHORIZE_PASSPORT_VAULT_CALL_INTENT: &str = "AUTHORIZE_PASSPORT_VAULT_CALL";
 pub const SUBMIT_PASSPORT_VAULT_CALL_INTENT: &str = "SUBMIT_PASSPORT_VAULT_CALL";
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PassportVaultCallDraftId(OpaqueId);
-
-impl PassportVaultCallDraftId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    pub struct PassportVaultCallDraftId;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PassportVaultCallAuthorizationChallenge(OpaqueId);
-
-impl PassportVaultCallAuthorizationChallenge {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    pub struct PassportVaultCallAuthorizationChallenge;
 }
 
 /// Closed set of state-changing Passport Vault circuits supported by Oxid.
