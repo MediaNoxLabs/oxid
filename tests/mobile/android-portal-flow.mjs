@@ -213,6 +213,25 @@ async function click(label, timeoutMs = 20_000) {
   }
 }
 
+async function touchCheckbox(selector, description) {
+  await waitFor(`Boolean(document.querySelector(${JSON.stringify(selector)}))`, description);
+  const point = await evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    element.scrollIntoView({ block: "center", inline: "center" });
+    const rect = element.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  await command("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: point.x, y: point.y }],
+  });
+  await command("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await waitFor(
+    `document.querySelector(${JSON.stringify(selector)})?.checked === true`,
+    `${description} touch state`,
+  );
+}
+
 async function ensureProfile() {
   await waitFor("Boolean(document.body)", "document body", 60_000);
   await waitFor(
@@ -456,7 +475,7 @@ try {
     await preview();
     await waitFor('document.body.innerText.includes("Credential offer preview")', "Portal preview", 30_000);
     await waitFor('Boolean(document.querySelector("#credential-issuance-consent"))', "issuance consent");
-    await evaluate('document.querySelector("#credential-issuance-consent").click()');
+    await touchCheckbox("#credential-issuance-consent", "issuance consent");
     await setProxyMode("unavailable");
     await click("Accept and issue credential");
     await waitFor(
@@ -513,7 +532,7 @@ try {
     await preview();
     await waitFor('document.body.innerText.includes("Credential offer preview")', "Portal preview", 30_000);
     await waitFor('Boolean(document.querySelector("#credential-issuance-consent"))', "issuance consent");
-    await evaluate('document.querySelector("#credential-issuance-consent").click()');
+    await touchCheckbox("#credential-issuance-consent", "issuance consent");
     await click("Accept and issue credential");
     try {
       await waitFor(issuanceCompletionExpression(), "Portal issuance", 90_000);

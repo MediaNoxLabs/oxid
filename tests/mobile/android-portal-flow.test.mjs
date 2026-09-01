@@ -68,3 +68,16 @@ test("issue accepts either the completion notice or the protected valid-record s
   assert.match(terminal, /const diagnosticState = await evaluate\(issuanceDiagnosticExpression\(\)\);/u);
   assert.match(terminal, /payload-free counters \$\{JSON\.stringify\(diagnosticCounts\)\} and state \$\{JSON\.stringify\(diagnosticState\)\}/u);
 });
+
+test("Android issuance consent crosses a real touch boundary", () => {
+  assert.match(source, /async function touchCheckbox\(selector, description\)/u);
+  assert.match(source, /Input\.dispatchTouchEvent/u);
+  assert.equal(
+    source.match(/await touchCheckbox\("#credential-issuance-consent", "issuance consent"\);/gu)?.length,
+    2,
+  );
+  assert.doesNotMatch(
+    source,
+    /evaluate\('document\.querySelector\("#credential-issuance-consent"\)\.click\(\)'\)/u,
+  );
+});

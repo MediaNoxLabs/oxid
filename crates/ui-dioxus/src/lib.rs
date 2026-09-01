@@ -9862,7 +9862,7 @@ fn CredentialsPage(
                                         aria_label: "Consent to credential issuance",
                                         aria_describedby: "credential-issuance-consent-guidance",
                                         checked: issuance_consent(),
-                                        onchange: move |event| issuance_consent.set(event.checked()),
+                                        oninput: move |event| issuance_consent.set(event.checked()),
                                     }
                                     span { "I reviewed this issuer and consent to receive the credential using my active DID." }
                                 }
@@ -12595,6 +12595,15 @@ mod tests {
         }
         assert!(source.contains("aria_busy: true"));
         assert!(source.contains("aria_describedby: \"credential-issuance-consent-guidance\""));
+        let issuance_consent = source
+            .split("id: \"credential-issuance-consent\"")
+            .nth(1)
+            .expect("credential issuance consent input")
+            .split("}")
+            .next()
+            .expect("credential issuance consent attributes");
+        assert!(issuance_consent.contains("oninput:"));
+        assert!(!issuance_consent.contains("onchange:"));
     }
 
     #[test]
