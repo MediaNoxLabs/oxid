@@ -38,7 +38,10 @@ desktop-portal-test = [
 # Opt-in native development route profile for the laptop-hosted standalone
 # stack. Routes are immutable loopback constants; Android emulators reach them
 # only through repository-owned adb reverse mappings.
-standalone-local = []
+standalone-local = [
+  "oxid-composition/standalone-readiness",
+  "oxid-ui-dioxus/standalone-deployment-profile",
+]
 # Simulator/emulator-only Portal profile. These feature dependencies make the
 # required mobile development/local composition explicit. `build.rs` also
 # requires the authenticated transient profile-authority manifest emitted only
@@ -60,7 +63,10 @@ standalone-portal-tailnet = [
 # Opt-in physical-device route profile for a TLS-terminated standalone stack.
 # Every route is supplied at compile time by the repository launcher; normal
 # and native-custody builds cannot select it.
-standalone-tailnet = []
+standalone-tailnet = [
+  "oxid-composition/standalone-readiness",
+  "oxid-ui-dioxus/standalone-deployment-profile",
+]
 # Explicit simulator/emulator composition using production native custody and
 # deterministic standalone wallet/SSI adapters.
 standalone-native-custody = []

@@ -4,6 +4,8 @@
 
 mod assets_page;
 mod brand;
+#[cfg(feature = "standalone-deployment-profile")]
+mod deployment_profile;
 #[cfg(feature = "desktop-test-click-driver")]
 mod desktop_test_driver;
 mod diagnostics;
@@ -18,6 +20,8 @@ use assets_page::AssetsPage;
 #[cfg(test)]
 use assets_page::{wallet_account_activation_available, wallet_write_actions_available};
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
+#[cfg(feature = "standalone-deployment-profile")]
+use deployment_profile::DeploymentProfileCard;
 pub use diagnostics::DiagnosticsUiServices;
 use dids::DidsPage;
 #[cfg(feature = "ui-profile-dev")]
@@ -223,6 +227,8 @@ where
 /// Incoming capabilities made available to Dioxus by the composition root.
 #[derive(Clone)]
 pub struct WalletUiServices {
+    #[cfg(feature = "standalone-deployment-profile")]
+    deployment_profile: Option<Arc<dyn oxid_capabilities_application::GetDeploymentProfileUseCase>>,
     #[cfg(feature = "ui-profile-dev")]
     developer_capabilities: Vec<CapabilityView>,
     get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
@@ -971,6 +977,8 @@ impl WalletUiServices {
         let authentication = identity.authentication;
         let ingress = identity.ingress;
         Self {
+            #[cfg(feature = "standalone-deployment-profile")]
+            deployment_profile: None,
             #[cfg(feature = "ui-profile-dev")]
             developer_capabilities: Vec::new(),
             get_diagnostic_snapshot: diagnostics.get,
@@ -1063,6 +1071,25 @@ impl WalletUiServices {
             passport_vault_state_persistence: vault.state_persistence,
             passport_vault_contract_calls: vault.contract_calls,
         }
+    }
+
+    /// Attaches the read-only profile selected by the application build.
+    #[cfg(feature = "standalone-deployment-profile")]
+    #[must_use]
+    pub fn with_deployment_profile(
+        mut self,
+        deployment_profile: Arc<dyn oxid_capabilities_application::GetDeploymentProfileUseCase>,
+    ) -> Self {
+        self.deployment_profile = Some(deployment_profile);
+        self
+    }
+
+    #[cfg(feature = "standalone-deployment-profile")]
+    #[must_use]
+    pub fn deployment_profile(
+        &self,
+    ) -> Option<Arc<dyn oxid_capabilities_application::GetDeploymentProfileUseCase>> {
+        self.deployment_profile.as_ref().map(Arc::clone)
     }
 
     /// Adds the public, shared capability manifest to a developer-profile UI.
@@ -10677,6 +10704,10 @@ fn SettingsPage(
         let _ = on_root_recovered;
         rsx! {}
     };
+    #[cfg(feature = "standalone-deployment-profile")]
+    let deployment_profile_card = rsx! { DeploymentProfileCard {} };
+    #[cfg(not(feature = "standalone-deployment-profile"))]
+    let deployment_profile_card = rsx! {};
 
     rsx! {
         section { class: "page-heading",
@@ -10700,6 +10731,7 @@ fn SettingsPage(
         {security_card}
         {root_recovery_card}
         {backup_card}
+        {deployment_profile_card}
         article { class: "settings-card surface-card",
             div {
                 p { class: "card-eyebrow", "Privacy" }

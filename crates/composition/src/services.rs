@@ -8,6 +8,7 @@ use oxid_adapter_midnight::{MidnightContractCallFundingPort, MidnightContractCal
 
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_vc_midnight::ProtectedDigitalPassportPresentationSource;
+use oxid_capabilities_application::GetDeploymentProfileUseCase;
 use oxid_credential_application::{
     DeleteCredentialUseCase, GetCredentialDisclosureUseCase, GetCredentialUseCase,
     ListCredentialsUseCase, PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase,
@@ -74,6 +75,7 @@ use oxid_wallet_application::{
 /// Application capabilities shared by every incoming adapter.
 #[derive(Clone)]
 pub struct ApplicationServices {
+    pub(super) deployment_profile: Option<Arc<dyn GetDeploymentProfileUseCase>>,
     pub(super) diagnostic_events: Arc<dyn DiagnosticEventSinkPort>,
     pub(super) get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
     pub(super) clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
@@ -239,6 +241,23 @@ impl WalletRootRecoveryCapability {
 mod tests;
 
 impl ApplicationServices {
+    /// Returns the bounded standalone deployment projection only when an
+    /// explicit local or Tailnet development profile composed it.
+    #[must_use]
+    pub fn deployment_profile(&self) -> Option<Arc<dyn GetDeploymentProfileUseCase>> {
+        self.deployment_profile.as_ref().map(Arc::clone)
+    }
+
+    #[cfg(feature = "standalone-readiness")]
+    #[must_use]
+    pub(super) fn with_deployment_profile(
+        mut self,
+        deployment_profile: Arc<dyn GetDeploymentProfileUseCase>,
+    ) -> Self {
+        self.deployment_profile = Some(deployment_profile);
+        self
+    }
+
     #[must_use]
     pub fn diagnostic_events(&self) -> Arc<dyn DiagnosticEventSinkPort> {
         Arc::clone(&self.diagnostic_events)

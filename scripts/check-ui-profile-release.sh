@@ -69,6 +69,13 @@ assert_public_fixture_feature_absent() {
     echo "$label oxid-app release profile enables owner-root PreProd recovery" >&2
     exit 1
   fi
+  if [[ "$label" != bare* ]]; then
+    if has_feature "$composition_features" standalone-readiness ||
+      has_feature "$ui_features" standalone-deployment-profile; then
+      echo "$label oxid-app release profile enables standalone deployment discovery" >&2
+      exit 1
+    fi
+  fi
   if has_feature "$ui_features" public-standalone-genesis; then
     echo "$label oxid-app release profile enables the public-genesis warning UI" >&2
     exit 1
@@ -123,6 +130,13 @@ assert_public_fixture_feature_present() {
   if ! has_feature "$storage_dev_features" development-fixture; then
     echo "$label does not enable the bounded development fixture custody adapter" >&2
     exit 1
+  fi
+  if [[ "$label" != "standalone development" ]]; then
+    if ! has_feature "$composition_features" standalone-readiness ||
+      ! has_feature "$ui_features" standalone-deployment-profile; then
+      echo "$label does not expose the bounded standalone deployment profile" >&2
+      exit 1
+    fi
   fi
 }
 
@@ -320,6 +334,23 @@ fi
 
 cargo check -p oxid-app --no-default-features \
   --features desktop,standalone-development,standalone-local
+
+# The physical launcher owns service selection. Keep the current laptop
+# MagicDNS lookup and the complete route set in one process; the app receives
+# no runtime discovery input.
+for launcher_contract in \
+  'status="$(tailscale status --json)"' \
+  "tailnet_dns_name=\"\$(jq -r '.Self.DNSName | rtrimstr(\".\")' <<<\"\$status\")\"" \
+  'export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:8443/api/v4/graphql/ws"' \
+  'export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:8443/api/v4/graphql"' \
+  'export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:10000"' \
+  'export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name"' \
+  'exec "$repository_root/scripts/run-android-emulator.sh"'; do
+  if ! rg -qF "$launcher_contract" scripts/run-android-tailnet.sh; then
+    echo "physical Tailnet launcher contract drifted: $launcher_contract" >&2
+    exit 1
+  fi
+done
 
 if [ "$(uname -s)-$(uname -m)" = "Darwin-arm64" ]; then
   cargo check -p oxid-app --no-default-features --features desktop-portal-test
@@ -572,6 +603,10 @@ if rg -a -q \
 fi
 if rg -a -q 'OXID_STANDALONE_TAILNET_PROFILE' "$release_binary"; then
   echo "normal release binary contains the standalone tailnet profile" >&2
+  exit 1
+fi
+if rg -a -q 'OXID_STANDALONE_DEPLOYMENT_PROFILE' "$release_binary"; then
+  echo "normal release binary contains the standalone deployment projection" >&2
   exit 1
 fi
 if rg -a -q 'OXID_STANDALONE_PORTAL_PROFILE' "$release_binary"; then

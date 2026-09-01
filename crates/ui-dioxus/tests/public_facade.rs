@@ -128,3 +128,10 @@ fn developer_manifest_context_remains_at_the_crate_root() {
     assert_public_path(CapabilityManifestContext::new);
     assert_public_path(WalletUiServices::with_developer_capabilities);
 }
+
+#[cfg(feature = "standalone-deployment-profile")]
+#[test]
+fn deployment_profile_capability_remains_on_the_wallet_facade() {
+    assert_public_path(WalletUiServices::with_deployment_profile);
+    assert_public_path(WalletUiServices::deployment_profile);
+}
