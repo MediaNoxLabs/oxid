@@ -112,6 +112,12 @@
           ]
         },
         {
+          "name": "decentralized-identities",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/dids"
+          ]
+        },
+        {
           "name": "desktop-test-driver",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/desktop_test_driver"
