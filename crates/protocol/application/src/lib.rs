@@ -661,7 +661,10 @@ impl RefuseCredentialIssuanceUseCase for CredentialIssuanceService {
             if session.profile_id != profile_id {
                 return Err(CredentialIssuanceError::NotFound);
             }
-            if session.state != CredentialIssuanceState::AwaitingConsent {
+            if !matches!(
+                session.state,
+                CredentialIssuanceState::AwaitingConsent | CredentialIssuanceState::Failed
+            ) {
                 return Err(CredentialIssuanceError::InvalidState);
             }
         }
@@ -673,6 +676,7 @@ impl RefuseCredentialIssuanceUseCase for CredentialIssuanceService {
             .get_mut(&issuance_id)
             .ok_or(CredentialIssuanceError::NotFound)?;
         session.state = CredentialIssuanceState::Refused;
+        session.failure_code = None;
         Ok(session.view(&issuance_id))
     }
 }
@@ -1456,6 +1460,53 @@ mod tests {
             ),
             Err(CredentialIssuanceError::InvalidState)
         );
+    }
+
+    #[test]
+    fn failed_issuance_can_be_explicitly_discarded() {
+        let service = service();
+        let prepared = prepare(&service);
+        let failure = futures_lite(AcceptCredentialIssuanceUseCase::execute(
+            &service,
+            AcceptCredentialIssuanceCommand {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id.clone(),
+                holder_did: "did:midnight:undeployed:reject".to_owned(),
+                method_id: "did:midnight:undeployed:reject#auth-1".to_owned(),
+                holder_binding_method_id: "did:midnight:undeployed:reject#holder-jubjub-1"
+                    .to_owned(),
+                confirmed: true,
+                intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
+            },
+        ));
+        assert_eq!(
+            failure,
+            Err(CredentialIssuanceError::Protocol(
+                IssuanceProtocolError::InvalidProof
+            ))
+        );
+
+        let failed = GetCredentialIssuanceUseCase::execute(
+            &service,
+            CredentialIssuanceQuery {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id.clone(),
+            },
+        )
+        .expect("failed issuance remains inspectable");
+        assert_eq!(failed.state, "failed");
+        assert_eq!(failed.failure_code.as_deref(), Some("invalid_proof"));
+
+        let discarded = RefuseCredentialIssuanceUseCase::execute(
+            &service,
+            RefuseCredentialIssuanceCommand {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id,
+            },
+        )
+        .expect("failed issuance should be discardable");
+        assert_eq!(discarded.state, "refused");
+        assert_eq!(discarded.failure_code, None);
     }
 
     struct AuthenticationProtocol;
